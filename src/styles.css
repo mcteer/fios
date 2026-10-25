@@ -1423,6 +1423,19 @@ a {
     padding-right: 12px;
   }
 }
+.web-sources {
+  margin-top: 14px;
+  padding: 10px 12px;
+  border: 1px solid var(--border, #333);
+  border-radius: 10px;
+  font-size: 0.85em;
+  overflow-wrap: anywhere;
+}
+.web-sources p { margin: 0 0 8px; }
+.web-sources summary { cursor: pointer; padding: 4px 0; }
+.web-sources small { display: block; opacity: 0.75; margin: 4px 0 10px; }
+.web-sources a:focus-visible,
+.web-sources summary:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

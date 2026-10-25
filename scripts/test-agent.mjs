@@ -10,14 +10,7 @@ const child = spawn(
   [
     "-I",
     "-B",
-    "-m",
-    "unittest",
-    "discover",
-    "-s",
-    "tests/agent",
-    "-p",
-    "test_*.py",
-    "-v",
+    "tests/fixtures/run-agent-tests.py",
   ],
   {
     cwd: root,

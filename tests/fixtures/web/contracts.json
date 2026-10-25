@@ -1,0 +1,29 @@
+{
+  "status_reasons": {
+    "pending": null,
+    "not_requested": "no_tool_call",
+    "disabled": "operator_disabled",
+    "privacy_skipped": "privacy_policy",
+    "retrieved": "page_evidence",
+    "partial": "partial_evidence",
+    "snippets_only": "snippet_evidence",
+    "empty": "no_results",
+    "blocked": "provider_blocked",
+    "rate_limited": "rate_limit",
+    "timeout": "tool_timeout",
+    "unavailable": "retrieval_unavailable",
+    "context_limit": "context_budget",
+    "cancelled": "run_cancelled",
+    "error": "tool_error"
+  },
+  "initial": {
+    "v": 1,
+    "phase": "idle",
+    "outcome": "pending",
+    "reason": null,
+    "tool_attempted": false,
+    "evidence_state": "none",
+    "retrieved_at": null,
+    "sources": []
+  }
+}

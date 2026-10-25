@@ -1,3 +1,4 @@
+import {validateSearchInput,validateSearchStatus,validateManifest} from './web-protocol.js';
 export const REQUEST_LIMIT = 32 * 1024 * 1024;
 export const EVENT_LIMIT = 1024 * 1024;
 export const TEXT_CHUNK_UNITS = 32 * 1024;
@@ -13,6 +14,7 @@ export const ERROR_CODES = new Set([
   "unsupported_output",
   "output_limit",
   "internal_error",
+  "search_tool_protocol", "search_budget_exceeded", "agent_context_limit",
 ]);
 export class ProtocolError extends Error {
   constructor() {
@@ -74,13 +76,16 @@ function context(items) {
   }
 }
 export function parseCommand(v) {
-  if (v?.v !== 1) fail();
+  if (v?.v !== 2) fail();
   if (v.type === "shutdown") fields(v, ["v", "type"]);
   else if (v.type === "cancel") {
     fields(v, ["v", "type", "run_id"]);
     correlated(v);
   } else if (v.type === "run") {
-    fields(v, ["v", "type", "run_id", "model", "context"]);
+    fields(v, ["v", "type", "run_id", "model", "context"], ['search_input']);
+    if (Object.hasOwn(v,'search_input')) {
+      try {validateSearchInput(v.search_input);} catch {fail();}
+    }
     correlated(v);
     text(v.model);
     if (!v.model || Buffer.byteLength(v.model) > 1024) fail();
@@ -89,7 +94,7 @@ export function parseCommand(v) {
   return v;
 }
 export function parseEvent(v) {
-  if (v?.v !== 1) fail();
+  if (v?.v !== 2) fail();
   if (v.type === "ready") fields(v, ["v", "type"]);
   else {
     correlated(v);
@@ -99,6 +104,15 @@ export function parseEvent(v) {
       fields(v, [...base, "content"]);
       text(v.content);
       if (v.content.length > TEXT_CHUNK_UNITS) fail();
+    } else if (v.type === 'search_status') {
+      fields(v,[...base,'status']);
+      try {validateSearchStatus(v.status);} catch {fail();}
+    } else if (v.type === 'search_sources') {
+      fields(v,[...base,'manifest']);
+      try {validateManifest(v.manifest);} catch {fail();}
+    } else if (v.type === 'answer_reset') {
+      fields(v,[...base,'reason']);
+      if (v.reason!=='tool_requested') fail();
     } else if (v.type === "done") {
       fields(v, [...base, "status"]);
       if (!["complete", "interrupted"].includes(v.status)) fail();

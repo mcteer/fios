@@ -11,6 +11,8 @@ Reconciled 2026-10-25 at the user's request to close all current specs. This is 
 | 005 — Host/model readiness | Complete, merged/deployed; native supporting-service topology rejected and superseded by 006 | [Tasks](005-model-host-readiness/tasks.md), [validation](005-model-host-readiness/validation.md), [PR #2](https://github.com/mcteer/fios/pull/2) |
 | 006 — Containerized supporting services | Complete, merged/deployed; three healthy services in the OrbStack Fios stack, no native supporting jobs | [Tasks](006-container-support-services/tasks.md), [validation](006-container-support-services/validation.md), [PR #3](https://github.com/mcteer/fios/pull/3) |
 
+Spec 007 was opened after that closeout: [live web search](007-live-web-search/spec.md) is implemented on its feature branch, **not closed or deployed**. Its [validation record](007-live-web-search/validation.md) separates passing mock/container checks from blocked live-provider acceptance, unrun explicitly opt-in model testing and pending reviewed delivery.
+
 ## Evidence boundaries
 
 Baseline production release `84418cdf2ec9d08e44e3bf0f6f59872734be5983` passed 47 Node, 29 Python and 8 browser tests, independent PR/main CI, hardened ARM64 upgrade/rollback/backup restore, authenticated discovery and production browser/installed-Python checks. Real local `mlx-community/gemma-4-e4b-it-4bit` inference returned the expected `Fios connected` from a text attachment, streamed to completion and cleaned up the temporary conversation. No Studio-model inference, real vision understanding, native compute-cancellation guarantee, RDMA performance or cluster failover is asserted. Those are scope limits, not secretly completed tests.

@@ -59,6 +59,15 @@ export function mockMlx(port = 0) {
     });
     const emit = (value) =>
       res.write("data: " + JSON.stringify(value) + "\n\n");
+    if (data.messages.at(-1).role==='tool') {
+      emit(chunk({content:'Python fixture version 3.11 [S1]. Unknown citation [S5].'},'stop'));
+      return res.end('data: [DONE]\n\n');
+    }
+    if (text.includes('Python release web evidence')) {
+      emit(chunk({content:'Preliminary text to be reset.'}));
+      emit(chunk({tool_calls:[{index:0,id:'search-1',type:'function',function:{name:'web_search',arguments:JSON.stringify({query:text.includes('evidence slow')?'Python release slow':'Python release'})}}]},'tool_calls'));
+      return res.end('data: [DONE]\n\n');
+    }
     if (text.includes("OUTPUT_LIMIT")) {
       emit(chunk({ content: "x".repeat(500001) }));
       return res.end("data: [DONE]\n\n");

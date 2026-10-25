@@ -53,7 +53,7 @@ test("legacy SQLite records/blobs survive upgrade, real Agent continuation, rest
       await app.request(`/api/chats/${fixture.chat.id}`)
     ).json();
     assert.deepEqual(
-      detail.messages.map(({ attachments, ...m }) => m),
+      detail.messages.map(({ attachments, web, ...m }) => m),
       before.messages.map((m) => ({ ...m })),
     );
     const stream = await (

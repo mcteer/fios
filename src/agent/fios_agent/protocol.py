@@ -5,7 +5,8 @@ import json
 from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, field_validator, model_validator
+from .web.types import RunSearchInput, Manifest, REASONS
 
 REQUEST_LIMIT = 32 * 1024 * 1024
 EVENT_LIMIT = 1024 * 1024
@@ -60,7 +61,7 @@ class ContextItem(StrictModel):
 
 
 class Envelope(StrictModel):
-    v: Literal[1]
+    v: Literal[2]
 
     @field_validator("v", mode="before")
     @classmethod
@@ -85,6 +86,14 @@ class Run(Correlated):
     type: Literal["run"]
     model: str
     context: Annotated[list[ContextItem], Field(min_length=1)]
+    search_input: RunSearchInput | None = None
+
+    @model_validator(mode='before')
+    @classmethod
+    def nonnull_provenance(cls,value):
+        if isinstance(value,dict) and 'search_input' in value and value['search_input'] is None:
+            raise ValueError('Invalid provenance.')
+        return value
 
     @field_validator("model")
     @classmethod
@@ -129,6 +138,34 @@ class Delta(Correlated):
         return value
 
 
+class SearchStatus(Correlated):
+    type: Literal['search_status']
+    status: dict
+
+    @field_validator('status')
+    @classmethod
+    def valid_status(cls, value):
+        if set(value) != {'phase','outcome','reason','tool_attempted'}:
+            raise ValueError('status_fields')
+        Manifest(v=1,**value,evidence_state='none',retrieved_at=None,sources=[]) if value.get('outcome') not in ('retrieved','partial','snippets_only') else cls._evidence_status(value)
+        return value
+
+    @staticmethod
+    def _evidence_status(value):
+        if value.get('phase')!='finished' or value.get('tool_attempted') is not True or value.get('reason')!=REASONS.get(value.get('outcome')):
+            raise ValueError('status')
+
+
+class SearchSources(Correlated):
+    type: Literal['search_sources']
+    manifest: Manifest
+
+
+class AnswerReset(Correlated):
+    type: Literal['answer_reset']
+    reason: Literal['tool_requested']
+
+
 class Done(Correlated):
     type: Literal["done"]
     status: Literal["complete", "interrupted"]
@@ -140,12 +177,13 @@ class Error(Correlated):
         "busy", "invalid_request", "model_unavailable", "upstream_unavailable", "upstream_http",
         "upstream_timeout", "incomplete_stream", "invalid_stream",
         "unsupported_output", "output_limit", "internal_error",
+        "search_tool_protocol", "search_budget_exceeded", "agent_context_limit",
     ]
     upstream_status: Annotated[int, Field(ge=400, le=599)] | None = None
 
 
 _command = TypeAdapter(Annotated[Run | Cancel | Shutdown, Field(discriminator="type")])
-_event = TypeAdapter(Annotated[Ready | Progress | Delta | Done | Error, Field(discriminator="type")])
+_event = TypeAdapter(Annotated[Ready | Progress | Delta | SearchStatus | SearchSources | AnswerReset | Done | Error, Field(discriminator="type")])
 
 
 def _parse(adapter, value):
@@ -213,7 +251,8 @@ class FrameDecoder:
 def encode_frame(value, limit=EVENT_LIMIT) -> bytes:
     try:
         if isinstance(value, BaseModel):
-            value = value.model_dump(exclude_none=True)
+            value = value.model_dump(exclude_unset=True)
+            if value.get('upstream_status','absent') is None: value.pop('upstream_status',None)
         raw = json.dumps(value, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode("utf-8")
         if len(raw) > limit:
             raise ProtocolError()

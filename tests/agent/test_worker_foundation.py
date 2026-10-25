@@ -28,7 +28,7 @@ class WorkerFoundationTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_readiness_without_network_then_eof_shutdown(self):
         child = await self.start()
-        self.assertEqual(await self.frame(child), {"v": 1, "type": "ready"})
+        self.assertEqual(await self.frame(child), {"v": 2, "type": "ready"})
         child.stdin.close()
         self.assertEqual(await asyncio.wait_for(child.wait(), 2), 0)
         self.assertEqual(await child.stderr.read(), b"")
@@ -57,16 +57,16 @@ class WorkerFoundationTests(unittest.IsolatedAsyncioTestCase):
         await self.frame(child)
         run_id = str(uuid4())
         frames = [
-            {"v": 1, "type": "run", "run_id": run_id, "model": "test/model",
+            {"v": 2, "type": "run", "run_id": run_id, "model": "test/model",
              "context": [{"role": "user", "content": "hello"}]},
-            {"v": 1, "type": "cancel", "run_id": str(uuid4())},
-            {"v": 1, "type": "cancel", "run_id": run_id},
-            {"v": 1, "type": "cancel", "run_id": run_id},
+            {"v": 2, "type": "cancel", "run_id": str(uuid4())},
+            {"v": 2, "type": "cancel", "run_id": run_id},
+            {"v": 2, "type": "cancel", "run_id": run_id},
         ]
         child.stdin.write(b"".join(json.dumps(f).encode() + b"\n" for f in frames))
         await child.stdin.drain()
         self.assertEqual((await self.frame(child))["type"], "started")
-        self.assertEqual(await self.frame(child), {"v": 1, "type": "done", "run_id": run_id, "status": "interrupted"})
+        self.assertEqual(await self.frame(child), {"v": 2, "type": "done", "run_id": run_id, "status": "interrupted"})
         child.stdin.close()
         self.assertEqual(await asyncio.wait_for(child.wait(), 2), 0)
 
@@ -74,13 +74,13 @@ class WorkerFoundationTests(unittest.IsolatedAsyncioTestCase):
         child = await self.start()
         await self.frame(child)
         run_id = str(uuid4())
-        child.stdin.write(json.dumps({"v": 1, "type": "run", "run_id": run_id,
+        child.stdin.write(json.dumps({"v": 2, "type": "run", "run_id": run_id,
             "model": "test/model@peer", "context": [{"role": "user", "content": "SENSITIVE_MARKER"}]}).encode() + b"\n")
         await child.stdin.drain()
         self.assertEqual((await self.frame(child))["type"], "started")
         terminal = await self.frame(child)
-        self.assertEqual(terminal, {"v": 1, "type": "error", "run_id": run_id, "code": "model_unavailable"})
-        child.stdin.write(b'{"v":1,"type":"shutdown"}\n')
+        self.assertEqual(terminal, {"v": 2, "type": "error", "run_id": run_id, "code": "model_unavailable"})
+        child.stdin.write(b'{"v":2,"type":"shutdown"}\n')
         await child.stdin.drain()
         self.assertEqual(await asyncio.wait_for(child.wait(), 2), 0)
         self.assertNotIn(b"SENSITIVE_MARKER", await child.stderr.read())

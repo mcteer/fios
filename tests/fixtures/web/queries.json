@@ -1,0 +1,14 @@
+{
+  "allowed": [
+    {"current": "Python 3.11 release notes", "query": "Python 3.11 release notes"},
+    {"current": "What is the latest release?", "previous": "Python release notes", "query": "latest Python release"}
+  ],
+  "denied": [
+    {"current": "Python release", "query": "attachmentcanary2026 release"},
+    {"current": "Python release", "query": "site:internal.lab Python"},
+    {"current": "private: Python release", "query": "Python release"},
+    {"current": "Python release", "query": "Python https://example.com"},
+    {"current": "password=hunter2 Python release", "query": "Python release"},
+    {"current": "Python release", "query": "Python\u202erelease"}
+  ]
+}

@@ -1,0 +1,86 @@
+# Research — Harness-Native DuckDuckGo Search Tool
+
+Date: 2026-10-25. Original planning observations below are historical; implementation/test outcomes are recorded separately in validation.md. No new real-model inference or production service changes have occurred.
+
+**Implementation note:** direct `certifi==2026.10.23` uses the already-locked Mozilla CA bundle (MPL-2.0), not a newly installed trust root or verification bypass. A container-only diagnostic found managed Python's default trust context failed certificate verification; explicitly supplying `certifi.where()` fixed TLS. The next installed-provider acceptance reached the fixed search endpoint but was blocked after two HTTP attempts. Do not reinterpret planning-time HTML access as a passing runtime acceptance check. The provider-only driver exercises the installed Python adapter directly with a fixed nonsensitive query; actual tool/Agent invocation is separately tested through installed-package mocks.
+
+## 1. Architecture authority and rejected draft
+
+**User decision:** automatic search, implemented **inside the Pydantic AI harness as a search tool**. The earlier assistant-selected Node/Express retrieval pipeline and deterministic intent classifier were rejected and are withdrawn, along with proposed npm dependencies. They are not alternatives the implementation may silently restore. The architecture below implements the user's direction; exact budgets/security mechanisms are explicit plan proposals for review.
+
+A single Pydantic Agent registers only `web_search(query)`; the selected model chooses whether to call it. Python validates arguments, searches DuckDuckGo, optionally retrieves readable pages, returns bounded evidence to the same agent and emits safe progress/provenance over the private pipe. Node remains supervisor/API/storage/UI relay, never a search caller. No new container/service is needed: all code ships in the existing app image/private worker, consistent with OrbStack-only supporting workloads.
+
+## 2. DuckDuckGo feasibility — observed, not an API guarantee
+
+**Decision:** fixed `https://html.duckduckgo.com/html/` organic-result adapter, one query/no pagination. Honest `Fios/0.1` user agent, no cookies/auth/proxies, no impersonation or challenge bypass. A malformed/challenged result is a safe failure, including HTTP 202 or a challenge body with HTTP 200. Do not switch to Lite/another engine automatically.
+
+**Public sources inspected:**
+- [Official non-JavaScript search help](https://duckduckgo.com/duckduckgo-help-pages/features/non-javascript): HTML and Lite versions are offered, with fewer features than JavaScript search.
+- [Privacy policy](https://duckduckgo.com/privacy): identifiable search histories are not stored; connection/device data is processed temporarily for service/security; anonymous queries may inform trends. Visiting other sites is separate. Fios HTTP retrieval does not inherit a DuckDuckGo browser's protection automatically.
+- [Terms](https://duckduckgo.com/terms) and linked [Acceptable Use Policy](https://duckduckgo.com/acceptable-use): as-is/as-available; unauthorized access/interference forbidden and access may be suspended. No SLA or full-search API license inferred. Recheck restrictions at implementation/release; respect denial rather than evade it.
+- [HTML robots](https://html.duckduckgo.com/robots.txt): observed 200 with `User-agent: *` / `Allow: /`. This is an observation, not permanent authorization.
+- `https://duckduckgo.com/api` redirected to a search page; it did not establish a supported full-search JSON API. Instant Answers are not organic search.
+
+**Nonsensitive query:** `Python 3.11 release notes`, same honest user-agent/identity encoding.
+
+| Research probe | Result | Limit of conclusion |
+| --- | --- | --- |
+| Native Python HTTP client, once | 202; 14,296 bytes; human/duck challenge | A native client can be blocked; not usable result data |
+| Disposable hardened ARM64 app-image container, once; bridge network, 128 MiB/0.25 CPU, no volumes/socket/listener | 200; 33,151 bytes; 10 `result__a` links; no detected challenge | Container result access possible, not reliability or a tested Python tool integration |
+
+The successful container probe used Node only as a one-shot research HTTP client, **not proposed production retrieval placement**. No result pages followed, model invoked, CAPTCHA solved or restriction bypassed. Implementation must repeat a nonsensitive **Python harness-tool** smoke and verify extraction before claiming live integration.
+
+**Rejected library default:** [DDGS README](https://github.com/deedy5/ddgs) describes multi-engine metasearch and `backend="auto"` plus optional API/MCP/proxy modes. Its name is not proof of DuckDuckGo-only traffic. A fixed provider adapter avoids fallback/MCP dependencies and keeps provenance explicit, at the cost of HTML-selector drift that tests/live checks must surface.
+
+## 3. Pinned Pydantic AI APIs and lifecycle
+
+Research read installed **pydantic-ai-slim 2.61.0** implementation and matching tag docs. Documentation site requests returned HTTP errors; the version-pinned upstream Markdown was read instead:
+- [Tools](https://github.com/pydantic/pydantic-ai/blob/v2.61.0/docs/tools.md), [advanced tools](https://github.com/pydantic/pydantic-ai/blob/v2.61.0/docs/tools-advanced.md).
+- [Agent streaming/cancellation/limits](https://github.com/pydantic/pydantic-ai/blob/v2.61.0/docs/agent.md), [OpenAI](https://github.com/pydantic/pydantic-ai/blob/v2.61.0/docs/models/openai.md).
+- [Hooks](https://github.com/pydantic/pydantic-ai/blob/v2.61.0/docs/hooks.md), [message history](https://github.com/pydantic/pydantic-ai/blob/v2.61.0/docs/message-history.md), [capabilities](https://github.com/pydantic/pydantic-ai/blob/v2.61.0/docs/capabilities/overview.md).
+
+**Decisions tied to inspected APIs:**
+- Register one `Tool` named `web_search`, `takes_ctx=True`, `max_retries=0`, `sequential=True`, `requires_approval=False`; use `RunContext` dependencies for cancellation, budgets, safe query eligibility and metadata emission. No builtin/provider-hosted search, output tool, MCP, capability discovery or extra model.
+- Per-tool `prepare` can return `None` to remove search after the attempt or when administratively disabled/safety-ineligible. It is not an intent classifier. On a final continuation no tools are advertised.
+- `UsageLimits(request_limit=2, tool_calls_limit=1)` bounds the agent loop, but the installed docs explicitly say successful calls only count toward tool_calls_limit and SDK/transport retry attempts are not equivalent to request_limit. Add independent one-attempt latch and actual-model-POST counter, with retries zero at all layers. Reject invalid/unknown/parallel calls before any tool side effect.
+- Expected network/safety failures return a fixed bounded tool result, consuming the attempt, so the same agent can explain missing evidence once. Do not raise `ModelRetry`; malformed schema is terminal with max_retries=0. Do not rely on the SDK tool `timeout=` to represent timeout as ordinary evidence failure: its documented behavior is a retryable failure. Catch the internal 15-second deadline inside the tool instead.
+- Keep `run_stream_events`, which follows the full graph even for text before tool calls. `run_stream` can treat early text as final and skip tools; do not replace it. `ToolCallPart`/`ToolCallPartDelta` must be recognized but never emitted as answer/reasoning. Function tool events are distinct from answer parts.
+- Use a narrowly scoped `Hooks.before_model_request` capability for same-ID/readiness/cancellation/raw-budget checks, context size and removal of transient thinking before continuation. In 2.61.0 the supported lifecycle is capabilities/hooks; do not assume an obsolete constructor `history_processors` option. No broad instrumentation/autoload capabilities.
+- **Existing bug risk exposed by extra steps:** current `SentinelObserver` is reused for one response. Each actual model request now needs a new observer and independently required `[DONE]`; step 1's sentinel must not make an incomplete step 2 successful.
+- Keep final success dependent on successful final Agent result **and every dispatched response's sentinel**. Aggregate output units across steps; never reset the safety counter when clearing preliminary text.
+
+Installed MLX-Serve `agent-skills/mlx-serve/chat.md` documents Chat Completions `tools`/`tool_choice`. This proves server API vocabulary, not particular Gemma/Studio model/template behavior. Chat readiness remains separate from tool ability. Real tool selection/continuation for an exact model is a future opt-in release check; the previous simple Gemma smoke did not test tools.
+
+## 4. Python-only public HTTP boundary
+
+**Decision:** separate public-web transport in `src/agent/fios_agent/web/http.py`, not the trusted MLX discovery/inference transport. Use existing **httpx2 2.16.0 / httpcore2 2.16.0**, a small `AsyncBaseTransport` adapter backed by `AsyncConnectionPool(network_backend=...)`, and a custom public-only `AsyncNetworkBackend`. Inspected installed public exports include `AsyncNetworkBackend`, `AnyIOBackend`, `AsyncNetworkStream`; no monkeypatching private pools needed.
+
+The backend resolves A/AAAA using bounded cancellable DNS, rejects any disallowed answer, chooses one approved numeric address and delegates TCP connection to `AnyIOBackend` using that literal only. Verify remote peer matches; preserve original hostname for TLS SNI/certificate and Host. No second hostname resolution, alternate-IP retry, cross-origin connection reuse, proxy environment or Unix socket. All redirects are manual and revalidated before connection. TLS validation always enabled. DNS queries use the container's configured resolver as infrastructure, not an arbitrary DNS/DoH destination supplied by a tool.
+
+**New proposed exact direct pins:** `dnspython==2.9.0` (ISC; Python >=3.11; no extras), `Protego==0.7.0` (BSD-3-Clause; Python >=3.10; no dependencies), plus explicitly declare already-locked `httpcore2==2.16.0` because application code will import it directly. [dnspython metadata](https://pypi.org/pypi/dnspython/2.9.0/json), [Protego metadata](https://pypi.org/pypi/Protego/0.7.0/json). No Node dependencies. Full frozen transitive lock/audit/build verification belongs to implementation; none installed during planning.
+
+CPython 3.11 `ipaddress.is_global` alone is insufficient: complement it with a reviewed conservative deny set from [IANA IPv4](https://www.iana.org/assignments/iana-ipv4-special-registry/iana-ipv4-special-registry.xhtml)/[IPv6 special-purpose registries](https://www.iana.org/assignments/iana-ipv6-special-registry/iana-ipv6-special-registry.xhtml), including shared, documentation, multicast, mapped/translation/transition and reserved ranges. Deny IP-literal URLs, credentials, ambiguous encodings, default-port violations, local/single-label names and configured MLX hostnames explicitly. Block mixed public/private DNS results, CNAMEs to local names and rebinding. [OWASP SSRF guidance](https://cheatsheetseries.owasp.org/cheatsheets/Server_Side_Request_Forgery_Prevention_Cheat_Sheet.html) informs test cases; validation must occur at connection time, not only before `httpx.get`.
+
+Use stdlib HTMLParser with bounded incremental extraction of DDG elements and page text; ignore scripts/styles/forms/templates/navigation, never run JS or request embedded resources. Parser work must be killable: a small installed Python parser subprocess in the **same container**, isolated mode, empty/allowlisted environment, bounded stdin/stdout, RLIMIT_AS 64 MiB/RLIMIT_CPU 1 second and one-second parent deadline. Linux parent-death signal plus explicit reap prevents orphan helpers when the supervisor kills Python. It is an internal harness helper, not a new service/architecture boundary; no DB, secrets, listener, tool, shell or host process. Parent cancellation kills/reaps it. Text/plain bypasses HTML parser with equal byte/text bounds. Identity/UTF-8 only in v1; reject unsupported/compressed responses rather than silently unbounded decompression.
+
+## 5. Argument privacy and evidence trust
+
+The model legitimately sees the existing local context. Therefore the old draft's claim that a query constructor never sees attachments is not applicable: validate **model-proposed arguments** before external access. Server passes current and optional preceding raw user prose separately from attachment-expanded context; Python derives a conservative eligible vocabulary (max 2,000 UTF-16 units per turn) and fixed generic search words. Query max 256 units/12 tokens, tokens must be traceable to eligible user terms or the generic list, with at least one substantive current/preceding topic term. No argument-supplied URL/headers/provider or freeform filter operators. Skip when current text is empty, code-like, attached-document-only, private-marked, credential-like or otherwise ineligible. Do not silently rewrite a rejected query and send it.
+
+This constrains paraphrases and some legitimate searches; transparent rejection is preferable to external leakage. It does not perfectly classify unknown sensitive prose already typed into eligible user text. Document that residual risk. Attachment canaries and retrieved/assistant-only tokens must be rejected even if the local model copies them into tool arguments.
+
+The one-attempt latch prevents malicious page text from causing further search. Sources remain data in a tool return, with fixed caution instructions. Never emit raw arguments, provider errors or full tool results to logs/browser. Citation linkage verifies manifest membership only, not truth/claim entailment.
+
+## 6. Persistence, streaming and compatibility
+
+Add a separate `web_retrieval` table keyed to assistant messages (cascade delete); do not change old message column layout/positional inserts. Store safe manifest/outcome/time/evidence-delivery state; queries, pages, excerpts, intermediate tool transcript and reasoning stay ephemeral. Hash/length of the exact excerpt records what was supplied without retaining its content. Startup recovers incomplete retrieval state. Existing old app can ignore the new table; explicitly test old-version deletes cascading, upgrade→old→new and actual restore before declaring schema-compatible rollback.
+
+Use private IPC v2 for the coordinated image upgrade. New fields are bounded raw-user provenance; new events are safe search status/manifest and answer-reset. No Node `search()` entry point. Finalize context fitting before the first immutable source manifest; the before-model hook rechecks without rewriting it. Persist a nonempty finished status and its first source manifest atomically before relaying them. Only evidence_state advances on HTTP200 for the continuation, and citation markers remain inert until sent_to_model. Exact status/reason/nullability/transition rules are centralized in data-model.md. Preliminary streamed text may be cleared when a validated tool call begins; explicit reset event clears UI and persisted preliminary answer, while reasoning stays transient and total output counts remain cumulative. Continued text streams normally. Stopped pre-tool partial text remains interrupted unless it was explicitly reset; no end-of-run aggregate duplication.
+
+## 7. Proposed first-release budgets and validation boundary
+
+One attempted tool, at most two real model POSTs, same exact ID; one query, five results, three page chains, two redirects/chain, two concurrent public sockets, fourteen total HTTP attempts including robots/redirects. Five-second search request, four-second other request, two-second DNS, one-second parser and fifteen-second tool deadline; first limit wins. Bodies <=1 MiB each / 5 MiB aggregate, robots <=64 KiB; evidence <=64 KiB serialized and <=16,000 UTF-16 units, excerpts <=3,000 units/source. Full continuation text budget remains 400,000 units inclusive of intermediate text/args/results; no user truncation.
+
+Worker-wide limiter: >=5 seconds between provider searches, max12/minute; 60-second minimum cooldown on challenge/429, honoring the full valid Retry-After without a15-minute cap. A malformed/conflicting/nonrepresentable present header suppresses provider requests for the worker lifetime; missing header uses60s. No restart/worker rotation to evade a known restriction; this memory-only limiter is not durable across restarts. No replay queue/retry. Rules cache <=128 origins/one hour, no result/query cache. Robots fetched through same transport per origin; 404=no rules, disallow/401/403/429/5xx/timeout/oversize/invalid=skip. No robots redirects; honor crawl-delay or skip if it would exceed the tool deadline. These are proposed bounded mechanics, not a provider rate-limit entitlement.
+
+CI exercises the **real installed Agent with mock native tool-call responses**, not a Python function called directly as a substitute for integration. Live provider extraction and real model tool behavior are separate gates. Planning does not perform those future tests or authorize inference. Provider blocking/model incompatibility remain release risks with explicit safe outcomes, not reasons to switch engines/models/architecture.

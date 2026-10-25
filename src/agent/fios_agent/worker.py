@@ -30,6 +30,7 @@ class Settings:
     api_key: str
     peers: dict[str, str] = field(default_factory=dict)
     readiness_file: str | None = None
+    web_search: str = 'auto'
 
     @classmethod
     def from_environment(cls):
@@ -43,9 +44,11 @@ class Settings:
         # Force port validation without leaking its value on failure.
         parsed.port
         from .availability import peer_configuration
+        mode=os.environ.get('FIOS_WEB_SEARCH','auto')
+        if mode not in ('auto','off'): raise ValueError('Invalid configuration.')
         return cls(base.rstrip("/"), os.environ.get("MLX_API_KEY") or "fios-local-no-key",
                    peer_configuration(os.environ.get("MLX_PEER_URLS", "{}")),
-                   os.environ.get("MLX_READINESS_FILE") or None)
+                   os.environ.get("MLX_READINESS_FILE") or None, mode)
 
 
 class OutputProtocol(asyncio.streams.FlowControlMixin):
@@ -89,7 +92,7 @@ class Worker:
 
     async def execute(self, command: Run, token: CancellationToken):
         from .harness import run_agent
-        await self.emit({"v": 1, "type": "started", "run_id": command.run_id})
+        await self.emit({"v": 2, "type": "started", "run_id": command.run_id})
         await run_agent(command, token, self.emit, self.settings)
 
     async def run_task(self, command, token):
@@ -101,7 +104,7 @@ class Worker:
             raise
         except Exception:
             diagnostic("internal_error", run_id=command.run_id)
-            await self.emit({"v": 1, "type": "error", "run_id": command.run_id, "code": "internal_error"})
+            await self.emit({"v": 2, "type": "error", "run_id": command.run_id, "code": "internal_error"})
         finally:
             self.active = None
 
@@ -118,7 +121,7 @@ class Worker:
 
     async def serve(self):
         decoder = FrameDecoder(REQUEST_LIMIT)
-        await self.emit({"v": 1, "type": "ready"})
+        await self.emit({"v": 2, "type": "ready"})
         try:
             while chunk := await self.reader.read(65536):
                 for raw in decoder.feed(chunk):
@@ -130,7 +133,7 @@ class Worker:
                             self.active[1].cancel()
                     elif isinstance(command, Run):
                         if self.active:
-                            await self.emit({"v": 1, "type": "error", "run_id": command.run_id, "code": "busy"})
+                            await self.emit({"v": 2, "type": "error", "run_id": command.run_id, "code": "busy"})
                         else:
                             # Allocate before another frame can deliver immediate cancellation.
                             token = CancellationToken()

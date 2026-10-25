@@ -35,11 +35,11 @@ const collect = async (events) => {
 };
 
 test("private protocol is strict, bounded, and preserves UTF8 across chunks", () => {
-  const run = { v: 1, type: "run", run_id: randomUUID(), ...input() };
+  const run = { v: 2, type: "run", run_id: randomUUID(), ...input() };
   assert.equal(parseCommand(run).model, run.model);
   for (const patch of [
     { v: true },
-    { v: 2 },
+    { v: 1 },
     { key: "secret" },
     { run_id: "bad" },
     { model: "é".repeat(513) },
@@ -61,13 +61,13 @@ test("private protocol is strict, bounded, and preserves UTF8 across chunks", ()
     ProtocolError,
   );
   assert.throws(
-    () => parseEvent({ v: 1, type: "ready", extra: true }),
+    () => parseEvent({ v: 2, type: "ready", extra: true }),
     ProtocolError,
   );
   assert.throws(
     () =>
       parseEvent({
-        v: 1,
+        v: 2,
         type: "error",
         run_id: run.run_id,
         code: "sensitive",
@@ -77,7 +77,7 @@ test("private protocol is strict, bounded, and preserves UTF8 across chunks", ()
   assert.throws(
     () =>
       parseEvent({
-        v: 1,
+        v: 2,
         type: "delta",
         run_id: run.run_id,
         content: "a".repeat(32769),
