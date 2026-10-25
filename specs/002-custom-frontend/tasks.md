@@ -8,9 +8,11 @@
 - [x] T006 Test unit/API/browser behavior and live gateway streaming.
 - [x] T007 Document operation, security limits and acceptance evidence.
 - [x] T008 Inspect the accessible reference screenshot and implement the reference-driven dark layout.
-- [ ] T009 Obtain user approval of the revised visual design.
+- [x] T009 Obtain user approval of the revised visual design. Accepted by the user's 2026-10-25 instruction to close all specs after the outstanding visual-approval item was explicitly identified.
 
-### Welcome wordmark placement adjustment
+**Closeout (2026-10-25): Complete.** The current deployed design is accepted. Placement/wordmark notes below are historical intermediate checkpoints, not outstanding work. Subsequent browser regression and production UI checks passed (see validation.md); acceptance is not a claim of pixel-perfect reference matching.
+
+### Historical welcome wordmark placement adjustments
 
 - [x] Lower the welcome-screen Fios wordmark without moving the prompt or composer (responsive desktop offset; 24px on mobile).
 - Validation: `npm run build` passed. Browser visual verification pending.

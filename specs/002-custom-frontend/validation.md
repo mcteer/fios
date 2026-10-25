@@ -1,5 +1,13 @@
 # Feature 002 validation
 
+## Final closeout — 2026-10-25
+
+Complete and accepted. After the remaining visual-approval item was explicitly identified, the user instructed: “Ok, close it all out, please.” This accepts the current revised design; it does not assert pixel-perfect identity with the reference. All implementation tasks are complete.
+
+Later regression evidence: feature 006 passed 47 Node/29 Python/8 browser tests, exact-head CI and merged-main CI ([PR #3](https://github.com/mcteer/fios/pull/3)). Production at `84418cdf2ec9d08e44e3bf0f6f59872734be5983` was checked in the actual authenticated browser: three Online host indicators and five enabled model choices. A separately authorized production Gemma attachment/streaming test returned `Fios connected`, completed successfully and deleted its temporary chat. These are distinct checks, not real vision/PDF semantic-quality claims.
+
+The entries below preserve historical checkpoints; statements about uncommitted work or pending approval at those checkpoints are superseded by this closeout.
+
 Validated on the Mac Mini under OrbStack, 2026-10-23 local date.
 
 ## Automated checks passed
