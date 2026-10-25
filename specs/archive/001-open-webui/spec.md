@@ -1,6 +1,8 @@
 # 001 — Fios inference frontend
 
-Status: Deployed; backend connectivity verified; administrator/browser acceptance pending
+Status: Retired; superseded by [feature 002](../../002-custom-frontend/spec.md). See [ADR 0001](../../../docs/adr/0001-replace-open-webui-with-custom-frontend.md).
+
+Historical validation at retirement: deployed and backend connectivity verified; administrator/browser acceptance remained pending. The requirements below describe the retired approach, not the current deployment.
 
 ## Context
 

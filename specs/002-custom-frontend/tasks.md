@@ -29,3 +29,8 @@
 - Validation: `npm test` passed; Docker production rebuild and health check passed; live SVG asset fetch verified. Browser visual verification pending.
 
 - Replaced hand-drawn rounded wordmark with outlined Space Grotesk SemiBold lettering for a geometric, technical appearance. Bundled SIL font license; no external font requests. Existing placement preserved. Docker rebuild and health check passed; live SVG verified. Visual browser verification pending.
+
+### Architecture decision record
+
+- [x] Added retrospective ADR 0001 for replacing Open WebUI, linked it from README and marked archived feature 001 retired/superseded while preserving historical validation status.
+- Validation: checked changed Markdown local links and `git diff --check`; documentation-only change, no runtime tests required.
