@@ -1,0 +1,77 @@
+{
+  "chat": {
+    "id": "legacy-chat",
+    "title": "Synthetic legacy conversation",
+    "model": "test/coding-model",
+    "updated": 1002
+  },
+  "messages": [
+    {
+      "id": "legacy-user-1",
+      "role": "user",
+      "content": "Review the old files.",
+      "status": "complete",
+      "created": 1000,
+      "model": ""
+    },
+    {
+      "id": "legacy-assistant-1",
+      "role": "assistant",
+      "content": "The legacy value is 42.",
+      "status": "complete",
+      "created": 1000,
+      "model": "test/coding-model"
+    },
+    {
+      "id": "legacy-user-2",
+      "role": "user",
+      "content": "What is in this image?",
+      "status": "complete",
+      "created": 1001,
+      "model": ""
+    },
+    {
+      "id": "legacy-assistant-2",
+      "role": "assistant",
+      "content": "A partial legacy answer.",
+      "status": "interrupted",
+      "created": 1002,
+      "model": "test/coding-model"
+    }
+  ],
+  "attachments": [
+    {
+      "id": "legacy-file-1",
+      "message_id": "legacy-user-1",
+      "name": "legacy.js",
+      "mime": "text/plain",
+      "size": 19,
+      "kind": "text",
+      "text": "const legacy = 42;\n",
+      "data_base64": null,
+      "sha256": "e074dbd1e438928b56cd2c388df3faab354f2dd60f8dfc05cd8edba0a11d7bb7"
+    },
+    {
+      "id": "legacy-file-2",
+      "message_id": "legacy-user-1",
+      "name": "legacy.pdf",
+      "mime": "text/plain",
+      "size": 27,
+      "kind": "text",
+      "text": "Extracted legacy PDF text.\n",
+      "data_base64": null,
+      "sha256": "d5938c5dbe4793e5d4527d88b67baf8b3e1ee9b5a8c8ddc2e5b352e177dcc6a2"
+    },
+    {
+      "id": "legacy-file-3",
+      "message_id": "legacy-user-2",
+      "name": "pixel.png",
+      "mime": "image/png",
+      "size": 68,
+      "kind": "image",
+      "text": null,
+      "data_base64": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j7N8AAAAASUVORK5CYII=",
+      "sha256": "48341fe71b21471efdad7e78c0585f2d6abceb4e8bd01aed2aa48c91a7c576d8"
+    }
+  ]
+}

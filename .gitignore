@@ -2,8 +2,12 @@
 .env.*
 !.env.example
 .venv/
+venv/
 __pycache__/
-*.pyc
+*.py[cod]
+*.egg-info/
+build/
+*.log
 .DS_Store
 backups/
 node_modules/

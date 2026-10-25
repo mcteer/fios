@@ -25,29 +25,6 @@ export function validSession(token, secret, now = Date.now()) {
   );
 }
 
-// Handles arbitrary network chunk boundaries, CRLF and multi-line SSE data.
-export async function* sseData(body) {
-  const decoder = new TextDecoder();
-  let buffer = "",
-    data = [];
-  for await (const chunk of body) {
-    buffer += decoder.decode(chunk, { stream: true });
-    let pos;
-    while ((pos = buffer.indexOf("\n")) >= 0) {
-      const line = buffer.slice(0, pos).replace(/\r$/, "");
-      buffer = buffer.slice(pos + 1);
-      if (!line) {
-        if (data.length) yield data.join("\n");
-        data = [];
-      } else if (line.startsWith("data:"))
-        data.push(line.slice(5).replace(/^ /, ""));
-    }
-  }
-  buffer += decoder.decode();
-  if (buffer.startsWith("data:")) data.push(buffer.slice(5).trim());
-  if (data.length) yield data.join("\n");
-}
-
 export function buildContext(messages, attachments) {
   let count = 0,
     imageBytes = 0;
