@@ -4,7 +4,7 @@
 
 **Created**: 2026-10-25
 
-**Status**: Implemented and validated locally and in hosted CI (Node 22/24 unit/API, browser, audits, native ARM64 container recovery). User authorized merge only after green CI on the latest PR SHA; PR #1 tracks the merge outcome. Production deployment is separate and has not been performed. Real inference remains opt-in and untested for this feature.
+**Status**: Complete and closed (2026-10-25). Merged through PR #1 as `64c05daa26f3b34a8636af3f400e44c4e8c37a1d` after exact-head green CI. Deployed with subsequent approved releases; production revision `84418cdf2ec9d08e44e3bf0f6f59872734be5983` passed the explicitly authorized real Gemma attachment/streaming/completion smoke test. Temporary test conversation deleted; no retry, substitution or Studio model used. See validation.md for evidence and limits.
 
 **Input**: User description: "Add Pydantic AI (slim version) as our base agent harness. Going forward, all interactions with this interface should utilize the Pydantic harness to interact with the backend language models."
 
