@@ -1,0 +1,14 @@
+node_modules
+dist
+data
+.env
+.env.*
+.git
+.specify
+.agents
+specs
+tests
+docs
+backups
+playwright-report
+test-results

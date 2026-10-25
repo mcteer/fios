@@ -1,0 +1,9 @@
+# Plan
+
+React/Vite frontend, Express backend, Node built-in SQLite for durable conversations and attachment blobs. Production image builds frontend then serves both assets and same-origin API in a non-root Node 24 container. MLX base URL defaults to host.docker.internal:11234/v1. A stable generated signing secret and local access password protect the single-user interface. Cookie authentication, login rate limiting, same-origin write checks, bounded uploads, resource-limited PDF parsing workers, sanitized Markdown (no raw HTML), and security headers are baseline protections.
+
+Use streaming fetch to backend SSE, incremental UTF-8/SSE parsing, explicit done/error events, request cancellation, persisted partial output, and per-conversation generation locks. Save user turn plus attachments before inference. Save assistant completion/interruption even when the browser disconnects. Failed requests do not silently appear successful.
+
+Design revised against the user's successfully inspected MLX-Serve screenshot: charcoal canvas, inset lighter sidebar, off-white sans-serif typography, centered Fios wordmark and welcome heading, compact action pills, dark rounded composer near the middle of the empty-state canvas, blue circular send control, and model selector inside the composer. Composer remains bottom-anchored during conversations. See `design-reference.md` for reference-specific acceptance criteria. Preserve attachment chips, readable syntax-highlighted code, and responsive mobile navigation.
+
+Validation: unit tests for stream framing, context construction, auth/storage/attachment constraints; production build; container health and unauthorized checks; authenticated discovery and streaming against an already-loaded Studio model; persistence/recreation and deletion checks; browser automation for UX if available. Record unverified cases explicitly.
