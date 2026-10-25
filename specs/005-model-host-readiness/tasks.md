@@ -1,6 +1,6 @@
 # Tasks: Model and Host Readiness
 
-Implementation/local/hosted validation T001–T011 complete. Delivery T012 is gated on the final documentation commit's CI and merged-main CI; its actual administrative outcome is recorded in [PR #2](https://github.com/mcteer/fios/pull/2) and the completion report rather than pretending a pre-merge artifact proves deployment.
+Complete and closed (2026-10-25), T001–T012 complete. [PR #2](https://github.com/mcteer/fios/pull/2) merged as `867da7d` and deployed with stopped backup/verification; validation.md records the observed outcome. The native bridge/launchd work described in historical T004/T010 was subsequently rejected and replaced by spec 006's container services. Do not restore it; all supporting services belong in OrbStack.
 
 ## Phase 1 — Setup
 - [X] T001 Specify and research observed MLX health/catalog behavior in specs/005-model-host-readiness/spec.md and research.md. (FR-001–009)
@@ -22,7 +22,7 @@ Implementation/local/hosted validation T001–T011 complete. Delivery T012 is ga
 ## Phase 5 — US3: Verified delivery
 - [X] T010 [US3] Implement scripts/deploy.mjs and scripts/install-deployment.mjs for outbound-only exact-green-main local delivery and stable reviewed launchd programs. Document peer/observer configuration and safe delivery in .env.example, compose.yaml, README.md and AGENTS.md; test release backup/rollback in tests/deployment.test.js and scripts/check-agent-container.mjs without production data. (FR-003,009)
 - [X] T011 [US3] Run all local and hosted release gates; record observed results in specs/005-model-host-readiness/validation.md and open the dedicated PR. (FR-008–009)
-- [ ] T012 [US3] After green latest-head and merged-main CI, deploy the approved immutable revision with backup/rollback safety; verify production health/authenticated discovery and record deployed revision in the PR and completion report. (FR-009)
+- [X] T012 [US3] After green latest-head and merged-main CI, deploy the approved immutable revision with backup/rollback safety; verify production health/authenticated discovery and record deployed revision in the PR and completion report. (FR-009)
 
 ## Dependencies and Strategy
 

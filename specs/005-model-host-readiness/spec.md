@@ -2,7 +2,7 @@
 
 **Feature Branch**: `005-model-host-readiness`
 **Created**: 2026-10-25
-**Status**: Implemented and verified locally and in hosted CI, including authorized local MLX interruption/recovery and hardened real-gateway discovery. Exact-head merge and actual production delivery are tracked separately in PR #2 and the completion report.
+**Status**: Complete and closed (2026-10-25). PR #2 merged as `867da7d8be7e6f5df7c77d6bd61e7f80d23ba7d0` after green exact-head/main CI and was deployed with backup/verification. Spec 006 supersedes the rejected native supporting-service topology: readiness and delivery now run in the OrbStack Compose stack. Preserve the readiness behavior; never restore the historical native installer. See validation.md for release and interruption/recovery evidence.
 **Input**: Fix the availability gap, including serving-host health and advertised models; test local Gemma disappearance/recovery before merging and deploying production.
 
 ## User Scenarios & Testing
@@ -65,7 +65,7 @@ Malformed/oversized catalogs, bounded slow probes, unauthorized peers, mismatche
 - **SC-002**: Host health and model availability recover within one refresh after restoration, without a different model being selected.
 - **SC-003**: Local Gemma stop/start is observed before release, with the original service restored and no real inference required.
 - **SC-004**: Existing regression suites and new availability checks pass locally and in hosted CI before merge; production revision and non-inference verification are reported separately.
-- **SC-005**: Loss of the native host observer invalidates peer readiness within 5 seconds; expired or endpoint-mismatched evidence produces zero inference attempts in automated tests.
+- **SC-005**: Loss of the host observer (containerized under spec 006) invalidates peer readiness within 5 seconds; expired or endpoint-mismatched evidence produces zero inference attempts in automated tests.
 
 ## Assumptions
 

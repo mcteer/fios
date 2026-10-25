@@ -6,7 +6,9 @@ Date: 2026-10-25. Branch: `005-model-host-readiness`.
 
 Read constitution and upstream Spec Kit prompts, resolved active feature templates/path, specified/clarified/planned/tasks/analyzed before release. Requirements quality checklist: 16/16 passing (read-only during implementation). No extension hooks configured. Ten functional requirements plus five success criteria have task/test/release coverage; no unresolved constitutional exception. Follow-up operations work implements the user's previously requested automatic delivery policy rather than silently leaving merge-only delivery in place.
 
-Current source checkpoint: implementation and local/hosted validation complete; merge and production outcomes must be recorded separately in [PR #2](https://github.com/mcteer/fios/pull/2) and the completion report. Do not infer production deployment from these local results.
+Complete and closed (2026-10-25), T001–T012 complete. [PR #2](https://github.com/mcteer/fios/pull/2) merged as `867da7d8be7e6f5df7c77d6bd61e7f80d23ba7d0` after [final-head CI](https://github.com/mcteer/fios/actions/runs/40215790648) and [merged-main CI](https://github.com/mcteer/fios/actions/runs/40215969091), all six checks green. That revision was deployed at 17:22:53 UTC, retaining `fios:rollback-1a174160f55` and stopped-data backup `fios_fios-data/backups/before-1a174160f55`.
+
+The user rejected native supporting processes. [PR #3](https://github.com/mcteer/fios/pull/3), spec 006, removed the native jobs/programs and supersedes all native installation instructions below. Production `84418cdf2ec9d08e44e3bf0f6f59872734be5983` has three healthy Fios-stack containers, and authenticated API/browser/installed Python agree on three healthy hosts and five available models. Native MLX/RDMA remain unchanged. The explicitly authorized local Gemma real-inference smoke subsequently passed; see spec 004 validation. Historical pre-merge/initial-deployment entries below are retained as chronology, not open tasks or current deployment instructions.
 
 ## Local automated checks
 
@@ -60,7 +62,7 @@ A final native lock smoke test rejected the initial deprecated PID-file utility:
 
 The final evidence/documentation and native-lock refinement commit must itself pass all checks before exact-head merge. A merged-main push must independently pass before the local delivery agent may deploy. Administrative release outcome T012 is tracked by PR #2 and the completion report; this pre-merge file does not claim an installation or production upgrade has already occurred.
 
-## Delivery requirements still enforced after this source checkpoint
+## Historical delivery requirements at the pre-merge checkpoint (completed; native topology superseded by 006)
 
 Open the dedicated PR, require all latest-head CI checks, merge only the checked head, wait for successful merged-main CI, and install reviewed stable native observer/local delivery programs from clean main. The local outbound-only agent must build/archive that exact approved revision, retain prior image/stopped-data backup, verify health/authenticated catalog/Python readiness and image revision, and publish actual outcome. No hosted CI production access or remote runner is introduced. A user login plus working local Docker/GitHub CLI is required; report any installation/rollout block rather than claiming success.
 
