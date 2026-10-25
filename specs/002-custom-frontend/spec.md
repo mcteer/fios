@@ -1,6 +1,6 @@
 # 002 — Professional Fios chat
 
-Status: Implemented and deployed; automated/live checks passed; user visual approval pending
+Status: Complete and closed (2026-10-25). Implemented and deployed; automated/live checks passed. User accepted the current visual design by instructing closeout after the visual-approval item was identified. See validation.md for acceptance and later production regression evidence.
 
 ## Requirements
 
