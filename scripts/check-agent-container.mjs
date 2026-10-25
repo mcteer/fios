@@ -86,6 +86,15 @@ async function send(content) {
 try {
   await command(["image", "inspect", previous, "--format", "{{.Id}}"]);
   await command(["build", "-t", image, "."]);
+  await command(["build", "-f", "Dockerfile.deployer", "-t", image + "-delivery", "."]);
+  await command(["run", "--rm", "--network", "none", "--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--tmpfs", "/tmp:size=32m,mode=1777", "--entrypoint", "node", image + "-delivery", "--input-type=module", "-e", `
+    import assert from 'node:assert/strict';import{existsSync,writeFileSync}from'node:fs';import{spawnSync}from'node:child_process';import{runLocked}from'/controller/deploy.mjs';
+    assert.ok(!existsSync('/var/run/docker.sock'));
+    for(const [p,a] of [['git',['--version']],['docker',['compose','version']],['docker',['buildx','version']],['flock',['--version']]])assert.equal(spawnSync(p,a).status,0);
+    writeFileSync('/tmp/owner.mjs',"import{existsSync,writeFileSync}from'node:fs';writeFileSync('/tmp/ready','1');while(!existsSync('/tmp/done'))await new Promise(r=>setTimeout(r,10));");
+    const first=runLocked('/tmp/owner.mjs',[],'/tmp/locks');for(let i=0;i<500&&!existsSync('/tmp/ready');i++)await new Promise(r=>setTimeout(r,10));assert.ok(existsSync('/tmp/ready'));
+    assert.equal(await runLocked('/tmp/owner.mjs',[],'/tmp/locks'),75);writeFileSync('/tmp/done','1');assert.equal(await first,0);assert.equal(await runLocked('/tmp/owner.mjs',[],'/tmp/locks'),0);
+    console.log('Container management toolchain and Linux kernel lock verified without Docker socket.');`]);
   env.FIOS_AGENT_TEST_IMAGE = previous;
   await compose("up", "-d", "--wait");
   await login();
@@ -110,6 +119,17 @@ try {
   env.FIOS_AGENT_TEST_IMAGE = image;
   await compose("up", "-d", "--wait");
   await login();
+  await compose('up','-d','observer');
+  async function peerState(){return (await (await request('/api/models')).json()).models.find(m=>m.id==='test/coding-model@studio-a')?.availability;}
+  for(let i=0;i<50&&await peerState()!=='available';i++)await new Promise(r=>setTimeout(r,100));
+  assert.equal(await peerState(),'available');
+  await compose('kill','-s','SIGKILL','observer');
+  await new Promise(r=>setTimeout(r,5200));
+  assert.equal(await peerState(),'unknown','dead container evidence must expire');
+  await compose('up','-d','observer');
+  for(let i=0;i<50&&await peerState()!=='available';i++)await new Promise(r=>setTimeout(r,100));
+  assert.equal(await peerState(),'available');
+  console.log('Container observer named-volume readiness, forced-stop expiry and restart recovery passed.');
   const upgraded = await (await request(`/api/chats/${chatId}`)).json();
   assert.deepEqual(upgraded.messages, original.messages);
   assert.match(
@@ -261,7 +281,8 @@ try {
   );
   console.log("Build/test log:", log);
 } finally {
-  await compose("down", "--volumes", "--remove-orphans").catch(() => {});
+  await compose("--profile", "support-test", "down", "--volumes", "--remove-orphans").catch(() => {});
   for (const tag of rollbackTags) await command(["image", "rm", tag]).catch(() => {});
   await command(["image", "rm", image]).catch(() => {});
+  await command(["image", "rm", image + "-delivery"]).catch(() => {});
 }

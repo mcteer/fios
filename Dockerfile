@@ -29,6 +29,7 @@ COPY --from=agent-build /opt/venv /opt/venv
 COPY --chown=node:node package.json ./
 COPY --chown=node:node server ./server
 COPY --chown=node:node src/agent ./src/agent
+COPY --chown=node:node scripts/observe-hosts.mjs ./scripts/observe-hosts.mjs
 RUN mkdir -p /app/data && chown node:node /app/data
 USER node
 EXPOSE 3000

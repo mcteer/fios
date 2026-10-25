@@ -1,0 +1,8 @@
+# Research
+
+- Decision: remove native jobs immediately, preserve old deployment evidence/backups. Rationale: explicit user instruction supersedes spec 005 workaround. Both former GUI LaunchAgents were idle/observer-only when removed; no MLX/RDMA process was stopped.
+- Decision: named-volume readiness sidecar using the existing pinned app image. Fresh actual probes from the hardened app container and an isolated host-network container reached both Studio health APIs (HTTP 200), unlike the earlier observation. Underlying connectivity change was not conclusively diagnosed; do not claim a network fix or retain the native workaround.
+- Decision: separate trusted management container, no ports/source mounts. The existing native manager already had Docker authority; its replacement explicitly retains that authority through a management-only socket, never the app. Alternative native schedulers rejected by user; hosted production runners/SSH rejected by security policy.
+- Decision: bounded public GitHub GETs and 180-second polling, not host gh credentials. Idle rate 20 requests/hour; active check/recheck traffic remains bounded and rate limiting fails closed.
+- Decision: digest-pinned Node 24.15.0 Alpine; repository policy inspected for exact git 2.52.0-r0, Docker CLI 29.5.2-r0, Compose 2.40.3-r6, buildx 0.30.1-r6, util-linux 2.41.6-r1. No packages installed on macOS.
+- Decision: Linux flock, no-deps app rollouts, stable separately reviewed supporting images. Kernel locks survive stale file contents and release on process death; support services are not restarted mid-data transaction. Do not interrupt an active controller rollout; preserved backup/images provide operator recovery after host power loss.
