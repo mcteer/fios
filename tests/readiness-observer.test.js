@@ -7,7 +7,7 @@ import {observe} from '../scripts/observe-hosts.mjs';
 import {discover} from '../src/agent/availability.js';
 import {mockMlx} from './mock-mlx.js';
 
-test('native observer shares fresh endpoint-bound metadata; offline, expired, tampered and missing observations fail closed',async()=>{
+test('container observer shares fresh endpoint-bound metadata; offline, expired, tampered and missing observations fail closed',async()=>{
   const gateway=await mockMlx(),peer=await mockMlx();
   gateway.addPeer();
   const root=mkdtempSync(join(tmpdir(),'fios-observer-'));
@@ -18,7 +18,7 @@ test('native observer shares fresh endpoint-bound metadata; offline, expired, ta
     return fetch(url,opts);
   }};
   try{
-    await observe({repo:root,output});
+    await observe({output,env:{MLX_BASE_URL:gateway.url,MLX_PEER_URLS:JSON.stringify({'studio-a':peer.url})}});
     let result=await discover(options);
     assert.equal(result.models.find(m=>m.peer).availability,'available');
     assert.equal(gateway.requests.length+peer.requests.length,0);

@@ -140,5 +140,7 @@ export function mockMlx(port = 0) {
     ),
   );
 }
-if (process.argv[1]?.endsWith("mock-mlx.js"))
-  await mockMlx(Number(process.env.MOCK_PORT || 3322));
+if (process.argv[1]?.endsWith("mock-mlx.js")) {
+  const mock=await mockMlx(Number(process.env.MOCK_PORT || 3322));
+  if(process.env.MOCK_PEER==='1')mock.addPeer();
+}

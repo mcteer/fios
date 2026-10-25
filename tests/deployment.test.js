@@ -37,6 +37,7 @@ test('stopped backup precedes replacement; exact image and old-image/backup refe
   const up=f.calls.findIndex(c=>c.args[0]==='up');
   assert.ok(stop<backup&&backup<up);
   assert.equal(f.calls[up].selected,f.image);
+  assert.ok(f.calls[up].args.includes('--no-deps'),'app transaction must not restart supporting services');
   assert.ok(f.calls[backup].args.includes('--network'));
   assert.equal(result.previousImage,'fios:rollback-abc-123');
   assert.equal(result.backup,'disposable_data/backups/before-abc-123');

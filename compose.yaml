@@ -2,9 +2,12 @@ name: fios
 services:
   fios:
     build: .
-    image: ${FIOS_IMAGE:-fios:0.1.0}
+    image: ${FIOS_IMAGE:-fios:current}
     restart: unless-stopped
     init: true
+    depends_on:
+      readiness:
+        condition: service_healthy
     ports:
       - "127.0.0.1:3000:3000"
     environment:
@@ -16,10 +19,7 @@ services:
       MLX_READINESS_FILE: /run/fios-readiness/peers.json
     volumes:
       - fios-data:/app/data
-      - type: bind
-        source: ${FIOS_READINESS_DIR:-./data/readiness}
-        target: /run/fios-readiness
-        read_only: true
+      - fios-readiness:/run/fios-readiness:ro
     read_only: true
     tmpfs:
       - /tmp:size=64m,mode=1777
@@ -28,16 +28,73 @@ services:
     mem_limit: 1g
     cpus: 2
     healthcheck:
-      test:
-        [
-          CMD,
-          node,
-          -e,
-          "fetch('http://127.0.0.1:3000/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
-        ]
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:3000/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
       interval: 30s
       timeout: 5s
       start_period: 15s
       retries: 3
+  readiness:
+    build: .
+    image: ${FIOS_READINESS_IMAGE:-fios:current}
+    command: [node, scripts/observe-hosts.mjs]
+    restart: unless-stopped
+    init: true
+    environment:
+      MLX_BASE_URL: ${MLX_BASE_URL:-http://host.docker.internal:11234/v1}
+      MLX_API_KEY: ${MLX_API_KEY:-}
+      MLX_PEER_URLS: ${MLX_PEER_URLS:-}
+    volumes:
+      - fios-readiness:/app/data
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 128m
+    cpus: 0.25
+    healthcheck:
+      test: [CMD, node, -e, "const fs=require('node:fs');const p='/app/data/peers.json';JSON.parse(fs.readFileSync(p));if(Date.now()-fs.statSync(p).mtimeMs>5000)process.exit(1)"]
+      interval: 5s
+      timeout: 2s
+      start_period: 5s
+      retries: 2
+  deployer:
+    build:
+      context: .
+      dockerfile: Dockerfile.deployer
+    image: fios-deployer:1
+    container_name: fios-deployer
+    restart: unless-stopped
+    init: true
+    # Explicit trusted manager: Docker API access is daemon-wide. Never add this mount to app/observer.
+    user: "0:0"
+    environment:
+      FIOS_PASSWORD: ${FIOS_PASSWORD:?Run scripts/setup.sh}
+      SESSION_SECRET: ${SESSION_SECRET:?Run scripts/setup.sh}
+      MLX_BASE_URL: ${MLX_BASE_URL:-http://host.docker.internal:11234/v1}
+      MLX_API_KEY: ${MLX_API_KEY:-}
+      MLX_PEER_URLS: ${MLX_PEER_URLS:-}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - fios-deployment:/state
+    networks: [delivery]
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 512m
+    cpus: 1
+    stop_grace_period: 30s
+    healthcheck:
+      test: [CMD, node, -e, "const fs=require('node:fs');if(Date.now()-Number(fs.readFileSync('/state/heartbeat','utf8'))>1500000)process.exit(1)"]
+      interval: 60s
+      timeout: 2s
+      start_period: 30s
+      retries: 3
 volumes:
   fios-data:
+  fios-readiness:
+  fios-deployment:
+networks:
+  delivery:
