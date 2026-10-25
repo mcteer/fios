@@ -33,6 +33,7 @@ import {
 import { sseEvents } from "./stream.js";
 import { useModelCatalog } from "./useModelCatalog.js";
 import "./styles.css";
+import WebSources, {citationPlugin} from './components/WebSources.jsx';
 
 async function api(path, options = {}) {
   const res = await fetch("/api" + path, {
@@ -140,10 +141,10 @@ const mdComponents = {
     <span className="muted">[Image: {alt || "external image blocked"}]</span>
   ),
 };
-function RichText({ content }) {
+function RichText({ content, web }) {
   return (
     <Markdown
-      remarkPlugins={[remarkGfm]}
+      remarkPlugins={[remarkGfm,citationPlugin(web)]}
       rehypePlugins={[rehypeHighlight]}
       components={mdComponents}
     >
@@ -561,6 +562,11 @@ function Workspace({ onLogout }) {
                 : m,
             ),
           }));
+        if(['search','sources','answer_reset'].includes(event)) {
+          if(event==='answer_reset')setReasoning('');
+          setChat(prev=>({...prev,messages:prev.messages.map((m,i)=>i===prev.messages.length-1?
+            event==='answer_reset'?{...m,content:''}:event==='sources'?{...m,web:data}:{...m,web:{...m.web,...data}}:m)}));
+        }
         if (event === "reasoning") setReasoning((prev) => prev + data.content);
         if (event === "error") setError(data.error);
         if (event === "done") done = true;
@@ -828,7 +834,7 @@ function Workspace({ onLogout }) {
                     ) : (
                       <div className="prose">
                         {m.content ? (
-                          <RichText content={m.content} />
+                          <RichText content={m.content} web={m.web} />
                         ) : m.status === "streaming" ? (
                           <div className="thinking">
                             <span />
@@ -843,6 +849,7 @@ function Workspace({ onLogout }) {
                               : "Response stopped before any text was received."}
                           </span>
                         )}
+                        <WebSources web={m.web} />
                         {m.status === "streaming" && m.content && (
                           <span className="stream-cursor" />
                         )}

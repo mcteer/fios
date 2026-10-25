@@ -16,6 +16,7 @@ services:
   app:
     image: ${FIOS_AGENT_TEST_IMAGE:?Test script must set its isolated image}
     environment:
+      FIOS_AGENT_PYTHON: /app/test-web-python
       FIOS_PASSWORD: isolated-container-test-password
       SESSION_SECRET: isolated-container-test-signing-secret-not-production
       MLX_BASE_URL: http://mock:3322/v1
@@ -25,6 +26,8 @@ services:
     ports:
       - "127.0.0.1:${FIOS_AGENT_TEST_PORT:?Test script must select a free local port}:3000"
     volumes:
+      - ./fixtures/web-python-container:/app/test-web-python:ro
+      - ./fixtures/web-worker.py:/app/test-web-worker.py:ro
       - agent-data:/app/data
       - observer-data:/run/fios-readiness:ro
     read_only: true

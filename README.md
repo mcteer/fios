@@ -37,7 +37,7 @@ Browser :3000 → Fios container (React + Express + SQLite)
                 Mac Studios / existing RDMA cluster
 ```
 
-Inference stays native on macOS. Express queries `/v1/models`; **all model inference runs through Pydantic AI slim**, using streaming Chat Completions and preserving exact model IDs and peer suffixes. The agent code lives in `src/agent/`. There is no direct-call fallback, automatic inference retry, model substitution, tool execution or external telemetry. Python has no network listener and never opens SQLite. Login, catalog, conversation management and health checks are not agent runs. It does not configure RDMA, change model files, or provide execution sandboxes. A peer-qualified model ID alone does not prove distributed inference.
+Inference stays native on macOS. Express queries `/v1/models`; **all model inference runs through Pydantic AI slim**, using streaming Chat Completions and preserving exact model IDs and peer suffixes. The agent code lives in `src/agent/`. There is no direct-call fallback, automatic inference retry, model substitution, arbitrary tool execution or external telemetry. **Spec 007 is implemented on its feature branch, not deployed; live acceptance is pending:** its sole exception is an automatic agent-invoked `web_search(query)` tool inside the same Python harness, using DuckDuckGo only. Python owns query/privacy validation, bounded public retrieval and evidence integration; Express does not decide or execute searches. The reviewed first-release envelope allows one attempted search and at most two actual same-ID model requests, with zero retries. No-tool turns remain one request. No other tools, MCP, shell/file execution, classifier pass, alternate engine or new service is authorized. Queries and site requests leave the machine; privacy-oriented search is not anonymity or perfect sensitive-data detection. Sources will indicate supplied evidence, not factual verification. Previously deployed images remain no-tools; the new branch's mocked tool integration passes, but the latest live DuckDuckGo check was blocked and no named model has yet passed a newly authorized real tool-cycle test. Python has no network listener and never opens SQLite. Login, catalog, conversation management and health checks are not agent runs. It does not configure RDMA, change model files, or provide execution sandboxes. A peer-qualified model ID alone does not prove distributed inference.
 
 ## Install / run
 
@@ -61,6 +61,7 @@ The application container runs as UID 1000, with a read-only root filesystem, no
 | `SESSION_SECRET` | Stable generated cookie-signing secret, minimum 32 characters |
 | `MLX_BASE_URL`   | Defaults to `http://host.docker.internal:11234/v1`            |
 | `MLX_API_KEY`    | Optional real key if MLX authentication is enabled            |
+| `FIOS_WEB_SEARCH` | `auto` (default) or `off`; only the Python agent may decide/invoke search. No provider URL override. Apply an off override to app and the trusted controller environment through reviewed Compose configuration so automatic delivery retains it. |
 | `FIOS_AGENT_PYTHON` | Local development interpreter override; defaults to `.venv/bin/python`. The image fixes `/opt/venv/bin/python`; do not use a host path in Compose. |
 
 Edit `.env`, then run `docker compose up -d` to apply environment changes. If changing the password, also rotate `SESSION_SECRET` to invalidate existing sessions. Cookies expire after seven days. Login attempts are rate-limited; logging out clears the current browser's cookie. This is a single-user workspace, not a multi-user account system.
@@ -75,6 +76,16 @@ Edit `.env`, then run `docker compose up -d` to apply environment changes. If ch
 - Images are forwarded to MLX as multimodal content, not OCR'd by Fios. Quality depends on the selected model. Unsupported files are rejected rather than silently omitted.
 
 Fios sends up to 8,192 output tokens per request, supports one active generation at a time, and aborts if MLX produces no stream data for 180 seconds. Cold starts may take time. Health probes never load models. Attachments, prompts and replies are stored locally without application-level encryption; protect your disk and backups. Do not attach untrusted or sensitive material indiscriminately.
+
+### Automatic web evidence (spec 007 branch)
+
+The selected local model can invoke only `web_search(query)`. Python validates the query against bounded eligible plain-user terms before public DuckDuckGo/page requests. Attachments, assistant/page-only terms, recognized credentials/private/code patterns and ambiguous provenance are rejected. This conservative filter can reject legitimate paraphrases and cannot identify every sensitive phrase typed by a user. Queries/connection metadata leave the machine; search is not anonymous.
+
+Each turn permits one attempted search and at most two actual same-ID model requests, with zero retries. Search uses one fixed DuckDuckGo HTML endpoint, at most five sources/three page chains, fourteen HTTP attempts/two sockets, a 15-second tool deadline, 1 MiB bodies/5 MiB aggregate and 16,000 UTF-16 units/64 KiB evidence. DNS/IP/redirect checks pin a public numeric destination while retaining hostname certificate verification with the locked certifi CA bundle. Robots, access denials and full Retry-After restrictions are honored. No JavaScript/login/CAPTCHA solving, provider switch, generic fetch tool or hidden no-tools retry is provided.
+
+The UI shows progress, failure/no-search notices, page versus snippet evidence and sources supplied to the model. Citation IDs resolve only against that answer's supplied manifest; sources are **not factual verification**. Preliminary text is cleared if a tool call follows it. Query arguments, pages, excerpts, tool transcripts and reasoning are ephemeral; safe source URLs/titles/times/hashes/outcomes persist with the answer and cascade on deletion. Old images may omit the new metadata but preserve it across compatible rollback/re-upgrade. Health checks never search or infer.
+
+A model that declines tools or rejects tool parameters is not silently replaced. The provider can block access, and chat readiness does not certify tool competence. Live provider acceptance and an explicitly authorized exact-model tool cycle are separate gates; mock tests do not prove either.
 
 ## Checks and development
 
@@ -132,7 +143,7 @@ If the UI opens but models do not load, use **Reconnect** or refresh models from
 
 ### Model and host readiness
 
-`GET /api/models` returns authenticated model and serving-host observations. The picker shows host online/offline/unverified state and model availability separately from Loaded/On demand. A healthy host presenting an unloaded model is available on demand; discovery never loads it. Stale gateway peer listings cannot establish readiness: Express rejects unavailable/unverified targets before saving messages, and the Python harness independently preflights the exact target before its single possible inference request. No retry, substitution or fallback is added.
+`GET /api/models` returns authenticated model and serving-host observations. The picker shows host online/offline/unverified state and model availability separately from Loaded/On demand. A healthy host presenting an unloaded model is available on demand; discovery never loads it. Stale gateway peer listings cannot establish readiness: Express rejects unavailable/unverified targets before saving messages, and the Python harness independently preflights the exact target before each permitted inference request (one normally; at most two for a single search-tool cycle). No retry, substitution or fallback is added.
 
 Configure `MLX_PEER_URLS` privately as a JSON map of **exact peer name** to trusted `/v1` base. Unconfigured peers stay unverified. Catalog-provided URLs are never followed and gateway credentials are never forwarded to peers. Direct native/development clients probe the configured hosts; unauthorized hosts require operator configuration rather than guessed credentials.
 

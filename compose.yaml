@@ -17,6 +17,7 @@ services:
       MLX_API_KEY: ${MLX_API_KEY:-}
       MLX_PEER_URLS: ${MLX_PEER_URLS:-}
       MLX_READINESS_FILE: /run/fios-readiness/peers.json
+      FIOS_WEB_SEARCH: ${FIOS_WEB_SEARCH:-auto}
     volumes:
       - fios-data:/app/data
       - fios-readiness:/run/fios-readiness:ro
@@ -69,6 +70,7 @@ services:
     # Explicit trusted manager: Docker API access is daemon-wide. Never add this mount to app/observer.
     user: "0:0"
     environment:
+      FIOS_WEB_SEARCH: ${FIOS_WEB_SEARCH:-auto}
       FIOS_PASSWORD: ${FIOS_PASSWORD:?Run scripts/setup.sh}
       SESSION_SECRET: ${SESSION_SECRET:?Run scripts/setup.sh}
       MLX_BASE_URL: ${MLX_BASE_URL:-http://host.docker.internal:11234/v1}

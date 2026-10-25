@@ -20,7 +20,7 @@ class WorkerTests(unittest.IsolatedAsyncioTestCase):
             finally:
                 cleaned.set()
         worker.execute=execute
-        command=parse_command({'v':1,'type':'run','run_id':str(uuid4()),'model':'test/model',
+        command=parse_command({'v':2,'type':'run','run_id':str(uuid4()),'model':'test/model',
                                'context':[{'role':'user','content':'hello'}]})
         task=asyncio.create_task(worker.run_task(command,token))
         worker.active=(command,token,task)

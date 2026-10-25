@@ -8,6 +8,7 @@ import { equal, signSession, validSession, buildContext } from "./lib.js";
 import { parseAttachment } from "./attachments.js";
 import { AgentClient } from "../src/agent/client.js";
 import { discover } from "../src/agent/availability.js";
+import {initialManifest,validateManifest} from '../src/agent/web-protocol.js';
 
 const agent = new AgentClient();
 const agentError = (error) => {
@@ -260,13 +261,20 @@ app.post(
         );
       }
       controller.signal.throwIfAborted();
-      agent.validate({ model: modelId, context });
+      const previous=[...history].reverse().find(m=>m.role==='user');
+      const provenance=(value)=>typeof value==='string'&&value.length<=2000?value:null;
+      const search_input={current_text:provenance(text),current_has_attachments:files.length>0,
+        previous_text:provenance(previous?.content??null),previous_has_attachments:oldFiles.some(f=>f.message_id===previous?.id),
+        current_elided:text.length>2000,previous_elided:(previous?.content?.length??0)>2000};
+      agent.validate({ model: modelId, context, search_input });
       store.db.exec("BEGIN");
       let user;
       try {
         user = store.add(id, "user", pending.content);
         files.forEach((f) => store.file(user.id, f));
         assistant = store.add(id, "assistant", "", "streaming", modelId);
+        store.web(assistant.id,initialManifest());
+        assistant.web=initialManifest();
         const title = history.length
           ? null
           : (text || files[0]?.name || "New conversation")
@@ -293,13 +301,36 @@ app.post(
       heartbeat = setInterval(() => {
         if (!res.destroyed) res.write(": keepalive\n\n");
       }, 15000);
-      let completed = false,
+      let completed = false, pendingStatus=null, statusCount=0, sourceCount=0, reset=false,
         lastSave = Date.now();
       for await (const event of agent.run(
-        { model: modelId, context },
+        { model: modelId, context, search_input },
         { signal: controller.signal },
       )) {
-        if (event.type === "delta") {
+        if(pendingStatus && event.type!=='search_sources') throw Object.assign(new Error('Missing source manifest.'),{code:'agent_protocol_error'});
+        if(event.type==='search_status') {
+          if(++statusCount>16) throw Object.assign(new Error('Metadata limit.'),{code:'agent_protocol_error'});
+          const state=event.status;
+          if(['retrieved','partial','snippets_only'].includes(state.outcome)) pendingStatus=state;
+          else {
+            const web={...initialManifest(),...state};
+            store.web(assistant.id,web);
+            emit('search',state);
+          }
+        } else if(event.type==='search_sources') {
+          if(++sourceCount>2) throw Object.assign(new Error('Metadata limit.'),{code:'agent_protocol_error'});
+          const web=validateManifest(event.manifest);
+          if(sourceCount===1 && (!pendingStatus||Object.keys(pendingStatus).some(k=>pendingStatus[k]!==web[k]))) throw Object.assign(new Error('Source status mismatch.'),{code:'agent_protocol_error'});
+          store.web(assistant.id,web);
+          if(pendingStatus) emit('search',pendingStatus);
+          pendingStatus=null;
+          emit('sources',web);
+        } else if(event.type==='answer_reset') {
+          if(reset) throw Object.assign(new Error('Duplicate answer reset.'),{code:'agent_protocol_error'});
+          reset=true; content=''; reasoning='';
+          store.update(assistant.id,'','streaming');
+          emit('answer_reset',{reason:'tool_requested'});
+        } else if (event.type === "delta") {
           content += event.content;
           emit("delta", { content: event.content });
         } else if (event.type === "reasoning") {
@@ -325,6 +356,7 @@ app.post(
           lastSave = Date.now();
         }
       }
+      if(pendingStatus) throw Object.assign(new Error('Missing source manifest.'),{code:'agent_protocol_error'});
       if (!completed)
         throw Object.assign(new Error("Incomplete agent stream."), {
           code: "incomplete_stream",
@@ -342,6 +374,11 @@ app.post(
     } finally {
       clearInterval(heartbeat);
       if (assistant) {
+        const web=store.readWeb(assistant.id);
+        if(web&&web.phase!=='finished') {
+          const outcome=status==='interrupted'?'cancelled':'error';
+          store.web(assistant.id,{...web,phase:'finished',outcome,reason:outcome==='cancelled'?'run_cancelled':'tool_error'});
+        }
         store.update(assistant.id, content, status);
         store.touch(id, store.get(id)?.model || "");
         emit("done", { id: assistant.id, status });

@@ -29,6 +29,7 @@ export function childEnvironment(env = process.env) {
     "MLX_API_KEY",
     "MLX_PEER_URLS",
     "MLX_READINESS_FILE",
+    "FIOS_WEB_SEARCH",
   ])
     if (typeof env[key] === "string") result[key] = env[key];
   result.MLX_BASE_URL ||= "http://host.docker.internal:11234/v1";
@@ -219,7 +220,10 @@ export class AgentClient {
               null,
               run.cancelled ? "interrupted" : event.status,
             );
-        } else if (!run.cancelled) await run.events.push(event);
+        } else if (!run.cancelled) {
+          if (['search_status','search_sources','answer_reset'].includes(event.type)) this.resetIdle(run);
+          await run.events.push(event);
+        }
       }
     }
     decoder.finish();
@@ -263,7 +267,7 @@ export class AgentClient {
       // Terminal frame cannot be held hostage by an abandoned consumer.
       if (run.cancelled) run.events.cancelPending();
       run.events
-        .push({ v: 1, type: "done", run_id: run.id, status })
+        .push({ v: 2, type: "done", run_id: run.id, status })
         .then(() => run.events.end());
     } else run.events.end(error || unavailable());
     run.resolveFinished();
@@ -273,7 +277,7 @@ export class AgentClient {
     run.cancelled = true;
     clearTimeout(run.idle);
     run.events.cancelPending();
-    this.write(run.worker, { v: 1, type: "cancel", run_id: run.id }).catch(() =>
+    this.write(run.worker, { v: 2, type: "cancel", run_id: run.id }).catch(() =>
       this.fail(run.worker, unavailable()),
     );
     run.term = setTimeout(
@@ -288,15 +292,16 @@ export class AgentClient {
   validate(input, id = randomUUID()) {
     if (
       !input ||
-      Object.keys(input).some((key) => !["model", "context"].includes(key))
+      Object.keys(input).some((key) => !["model", "context", "search_input"].includes(key))
     )
       throw new ProtocolError();
     const frame = parseCommand({
-      v: 1,
+      v: 2,
       type: "run",
       run_id: id,
       model: input.model,
       context: input.context,
+      ...(input.search_input ? {search_input:input.search_input} : {}),
     });
     // Check framing bound before spawning, persistence or sending a byte.
     encodeFrame(frame);
@@ -356,7 +361,7 @@ export class AgentClient {
     const worker = this.worker;
     if (!worker) return;
     if (worker.ready)
-      await this.write(worker, { v: 1, type: "shutdown" }).catch(() => {});
+      await this.write(worker, { v: 2, type: "shutdown" }).catch(() => {});
     else worker.child.kill("SIGTERM");
     const term = setTimeout(
       () => worker.child.kill("SIGTERM"),

@@ -28,7 +28,7 @@ class HarnessTests(unittest.IsolatedAsyncioTestCase):
             return httpx2.Response(status, headers={'content-type':'text/event-stream'}, content=frames)
         events = []
         async def emit(event): events.append(event)
-        command = parse_command({'v':1,'type':'run','run_id':str(uuid4()),'model':'test/model@studio-a',
+        command = parse_command({'v':2,'type':'run','run_id':str(uuid4()),'model':'test/model@studio-a',
                                  'context':[{'role':'user','content':'hello'}]})
         await run_agent(command, CancellationToken(), emit, Settings('http://127.0.0.1:1/v1','local',{'studio-a':'http://peer/v1'},snapshot),
                         transport=httpx2.MockTransport(handler))

@@ -1,0 +1,4 @@
+#!/bin/sh
+# Test-only executable interpreter shim. Never packaged into the app image.
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
+exec "$ROOT/.venv/bin/python" -I -B "$ROOT/tests/fixtures/web-worker.py"

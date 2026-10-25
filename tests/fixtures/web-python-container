@@ -1,0 +1,2 @@
+#!/bin/sh
+exec /opt/venv/bin/python -I -B /app/test-web-worker.py

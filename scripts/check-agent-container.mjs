@@ -131,11 +131,18 @@ try {
   assert.equal(await peerState(),'available');
   console.log('Container observer named-volume readiness, forced-stop expiry and restart recovery passed.');
   const upgraded = await (await request(`/api/chats/${chatId}`)).json();
-  assert.deepEqual(upgraded.messages, original.messages);
+  assert.deepEqual(upgraded.messages.map(({web,...m})=>m), original.messages.map(({web,...m})=>m));
   assert.match(
     await (await send("after harness upgrade")).text(),
     /event: delta/,
   );
+  const searchStream=await (await send('Python release web evidence')).text();
+  assert.match(searchStream,/event: answer_reset/);
+  const searched=await (await request(`/api/chats/${chatId}`)).json();
+  assert.equal(searched.messages.at(-1).web.evidence_state,'sent_to_model');
+  assert.equal(searched.messages.at(-1).web.sources[0].kind,'page');
+  assert.doesNotMatch(searched.messages.at(-1).content,/Preliminary text/);
+  console.log('Installed Agent search → public fixture → same-model continuation and Linux bounded parser passed.');
   const stream = await send("SLOW_RESPONSE");
   const reader = stream.body.getReader();
   let text = "";
@@ -193,7 +200,10 @@ try {
   const c=new AgentClient(); const b=Buffer.alloc(10*1024*1024,120);Buffer.from('89504e470d0a1a0a','hex').copy(b);
   const url='data:image/png;base64,'+b.toString('base64');
   try{for await(const e of c.run({model:'test/coding-model',context:[{role:'user',content:[{type:'text',text:'🧵'.repeat(200000)},...Array.from({length:2},()=>({type:'image_url',image_url:{url}}))]}]})){await new Promise(r=>setTimeout(r,30));}}
-  finally{await c.close();}console.log('bounded-context-ok');`,
+  finally{await c.close();}
+  const search=new AgentClient({python:'/app/test-web-python'});let sources=false;
+  try{for await(const e of search.run({model:'test/coding-model',context:[{role:'user',content:[{type:'text',text:'x'.repeat(370000)},...Array.from({length:2},()=>({type:'image_url',image_url:{url}}))]},{role:'assistant',content:'Earlier context retained.'},{role:'user',content:'Python release web evidence'}],search_input:{current_text:'Python release web evidence',previous_text:null,current_has_attachments:false,previous_has_attachments:true,current_elided:false,previous_elided:false}})){if(e.type==='search_sources'&&e.manifest.evidence_state==='sent_to_model')sources=true;}}
+  finally{await search.close();}if(!sources)throw new Error('maximum-context tool evidence not supplied');console.log('bounded-context-and-search-ok');`,
   );
   // Kill a test parent inside the container; Compose init must reap its orphan.
   await compose(
@@ -212,6 +222,14 @@ try {
   for(let i=0;i<100;i++){const f='/proc/'+pid+'/stat';if(!existsSync(f)||readFileSync(f,'utf8').split(' ')[2]==='Z'){live=false;break;}await new Promise(r=>setTimeout(r,20));}
   if(live)throw new Error('orphan worker');console.log('parent-death-cleanup-ok');`,
   );
+  await compose('exec','-T','app','node','--input-type=module','-e',`
+    import{spawn}from'node:child_process';import{existsSync,readFileSync}from'node:fs';
+    const source="import subprocess,sys,time;from fios_agent.web import parser;p=subprocess.Popen([sys.executable,'-I','-B',parser.__file__,'page'],stdin=subprocess.PIPE,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,env={});print(p.pid,flush=True);time.sleep(60)";
+    const parent=spawn('/opt/venv/bin/python',['-I','-B','-c',source],{stdio:['ignore','pipe','ignore']});
+    const pid=await new Promise((resolve,reject)=>{let text='';parent.stdout.on('data',b=>{text+=b;if(text.includes('\\n'))resolve(Number(text.trim()));});setTimeout(()=>reject(new Error('parser readiness timeout')),5000).unref();});
+    parent.kill('SIGKILL');let live=true;
+    for(let i=0;i<100;i++){const path='/proc/'+pid+'/stat';if(!existsSync(path)||readFileSync(path,'utf8').split(' ')[2]==='Z'){live=false;break;}await new Promise(r=>setTimeout(r,20));}
+    if(live)throw new Error('orphan parser helper');console.log('parser-parent-death-cleanup-ok');`);
   const peak = Number(
     await compose(
       "exec",
@@ -233,8 +251,24 @@ try {
   await compose("up", "-d", "--wait");
   await login();
   const rolled = await (await request(`/api/chats/${chatId}`)).json();
-  assert.deepEqual(rolled.messages, after.messages);
-  await compose("stop", "app");
+  assert.deepEqual(rolled.messages.map(({web,...m})=>m), after.messages.map(({web,...m})=>m));
+  await compose('stop','app');
+  env.FIOS_AGENT_TEST_IMAGE=image;
+  await compose('up','-d','--wait');
+  await login();
+  const reupgraded=await (await request(`/api/chats/${chatId}`)).json();
+  assert.deepEqual(reupgraded.messages,after.messages);
+  await compose('stop','app');
+  env.FIOS_AGENT_TEST_IMAGE=previous;
+  await compose('up','-d','--wait');
+  await login();
+  assert.equal((await request(`/api/chats/${chatId}`,{method:'DELETE'})).status,204);
+  await compose('stop','app');
+  // One-shot database inspection only while the app is stopped. No concurrent owner.
+  env.FIOS_AGENT_TEST_IMAGE=image;
+  await compose('run','--rm','--no-deps','--entrypoint','node','app','--input-type=module','-e',
+    "import{DatabaseSync}from'node:sqlite';const d=new DatabaseSync('/app/data/fios.sqlite');if(d.prepare('SELECT count(*) AS n FROM web_retrieval').get().n!==0)throw new Error('old deletion failed to cascade');d.close();");
+  env.FIOS_AGENT_TEST_IMAGE=previous;
   // Restore the actual stopped-volume backup as a separate rehearsal.
   await compose(
     "run",

@@ -27,6 +27,13 @@ async function walk(path) {
       /(?:from\s*|import\s*\()["'][^"']*agent\//.test(text)
     )
       failures.push(name + ": browser imports agent");
+    if (!harness && /html\.duckduckgo\.com|\bddgs\b|web_search\s*\(/.test(text))
+      failures.push(name + ': search orchestration outside harness');
+    if (harness && /\bTool\s*\(/.test(text) && name !== 'src/agent/fios_agent/web/tool.py')
+      failures.push(name + ': unexpected tool registration');
+    if (name === 'src/agent/fios_agent/web/tool.py' &&
+        (!text.includes("Tool(web_search,name='web_search'") || !text.includes('max_retries=0') || !text.includes('sequential=True') || !text.includes('requires_approval=False')))
+      failures.push(name + ': search tool policy changed');
     if (
       harness &&
       /@\w+\.tool\b|MCPServer|FallbackModel|instrument_all\(|logfire\.configure\(/.test(

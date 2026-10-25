@@ -25,7 +25,7 @@ export default defineConfig({
       reuseExistingServer: false,
       env: {
         FIOS_AGENT_PYTHON:
-          process.env.FIOS_AGENT_PYTHON || resolve(".venv/bin/python"),
+          resolve('tests/fixtures/web-python'),
         PORT: "3311",
         HOST: "127.0.0.1",
         DB_PATH: "./data/browser-test.sqlite",
