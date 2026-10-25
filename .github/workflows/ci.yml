@@ -1,0 +1,161 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+  schedule:
+    - cron: "17 6 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    name: Tests (Node ${{ matrix.node }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ["22.23.4", "24.15.0"]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff # v6
+        with:
+          version: "0.13.5"
+          python-version: "3.11.17"
+          enable-cache: true
+      - name: Install frozen dependencies
+        run: |
+          npm ci
+          uv lock --check
+          uv sync --locked --no-editable
+          git diff --exit-code -- package-lock.json uv.lock
+      - name: Build frontend and run real-harness mock-backed suites
+        run: |
+          npm run build
+          npm test
+          node scripts/check-agent-boundary.mjs
+
+  browser:
+    name: Browser regressions
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24.15.0"
+          cache: npm
+      - uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff # v6
+        with:
+          version: "0.13.5"
+          python-version: "3.11.17"
+          enable-cache: true
+      - name: Install dependencies and Chromium
+        run: |
+          npm ci
+          uv sync --locked --no-editable
+          npx playwright install --with-deps chromium
+      - name: Build and test browser flows against mock MLX
+        run: |
+          npm run build
+          npx playwright test
+      - name: Preserve mock-only failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: browser-failure-diagnostics
+          path: |
+            test-results/
+            playwright-report/
+          retention-days: 7
+          if-no-files-found: ignore
+
+  audit:
+    name: Dependency audits
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24.15.0"
+          cache: npm
+      - uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff # v6
+        with:
+          version: "0.13.5"
+          python-version: "3.11.17"
+          enable-cache: true
+      - name: Audit locked Node and Python dependencies
+        run: |
+          npm ci
+          npm audit --audit-level=low
+          uv sync --locked --no-editable
+          uvx --python 3.11.17 --from pip-audit==2.10.1 pip-audit --path .venv/lib/python3.11/site-packages
+
+  container:
+    name: ARM64 container and rollback
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 25
+    env:
+      FIOS_AGENT_ROLLBACK_IMAGE: fios-ci-baseline:${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24.15.0"
+      - name: Build immutable pre-harness baseline for recovery tests
+        run: |
+          mkdir -p "$RUNNER_TEMP/fios-ci-baseline"
+          git archive 526f8c9747ac17b0ba6df5261338f0b60134d24b | tar -x -C "$RUNNER_TEMP/fios-ci-baseline"
+          docker build -t "$FIOS_AGENT_ROLLBACK_IMAGE" "$RUNNER_TEMP/fios-ci-baseline"
+      - name: Validate Compose with ephemeral test-only settings
+        env:
+          FIOS_PASSWORD: ci-only-ephemeral-workspace-password
+          SESSION_SECRET: ci-only-ephemeral-session-secret-not-production
+        run: docker compose --env-file /dev/null config --quiet
+      - name: Test hardened image, limits, cancellation, upgrade, rollback and restore
+        env:
+          TMPDIR: ${{ runner.temp }}
+        run: node scripts/check-agent-container.mjs
+      - name: Preserve mock-only container logs on failure
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: container-failure-diagnostics
+          path: ${{ runner.temp }}/fios-agent-test-*.log
+          retention-days: 7
+          if-no-files-found: ignore
+
+  gate:
+    name: CI gate
+    if: always()
+    needs: [tests, browser, audit, container]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Require every prerequisite to succeed
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          node -e 'const results=JSON.parse(process.env.RESULTS);for(const [name,job] of Object.entries(results)){console.log(name+": "+job.result);if(job.result!=="success")process.exitCode=1;}'

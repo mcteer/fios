@@ -113,6 +113,12 @@ npm run dev
 
 Visit Vite's printed localhost address. Requests are proxied to Express; the backend database defaults to local `data/fios.sqlite`, separate from Docker's volume. Never run the backend directly against a database already open in another application instance.
 
+### Continuous integration
+
+[CI](https://github.com/mcteer/fios/actions/workflows/ci.yml) runs on PRs, pushes to `main`, manual dispatch and weekly scheduled runs. Required checks cover clean locked installs and unit/API tests on Node 22/24, Chromium browser regressions, builds/inference boundaries, npm/Python advisory scans, and a native ARM64 hardened-container upgrade/rollback/backup-restore rehearsal. The immutable pre-harness source commit is built as the disposable rollback baseline; no local production image is assumed on hosted runners.
+
+The stable **CI gate** succeeds only when every required job succeeds; failed, cancelled or skipped jobs fail the gate. Actions are SHA-pinned, repository permissions are read-only, and no production secrets or live MLX access are used. Only mock-data browser/container diagnostics are retained on failure, for seven days. CI does not deploy the app or prove real inference/RDMA behavior. Require green checks on the exact latest PR commit before merging.
+
 ## Operations
 
 ```sh

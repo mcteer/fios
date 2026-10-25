@@ -140,6 +140,14 @@ tests/                         # existing tests retained; additions below (no ex
 
 See [quickstart.md](quickstart.md) and [validation.md](validation.md). Test the actual Python Agent in API/browser flows; fake workers are only for protocol fault injection. Count mock requests to catch SDK retries and unauthorized inference. Cover [DONE]-only success, usage-only chunks, missing sentinel even after finish reason, invalid JSON, empty streams, tool requests, slow/absent output, worker crashes/hangs and stop races. Compare stored pre-upgrade message/attachment data before and after, then check continuation and deletion. Test maximum Unicode/image context and backpressure under the existing container cap. Audit emitted logs and built browser assets for secret/content or worker-source leakage. Keep temporary test DBs separate and stop every instance before reopening its DB.
 
+## Hosted CI release gate (user-requested follow-up)
+
+Add `.github/workflows/ci.yml` to this feature PR. Run on pull requests, pushes to main, manual dispatch and a weekly advisory/regression schedule. Use pinned action SHAs, read-only repository permissions, no persisted checkout credentials, cancellation of obsolete runs, explicit timeouts and no production secrets or live MLX access.
+
+Required jobs: Linux Node 22.23.4/24.15.0 clean install/build/Node+Python tests and boundary guard; Chromium browser regressions; npm and pinned Python advisory scans; native `ubuntu-24.04-arm` hardened image/rollback/restore tests. Build the rollback image from archived pre-harness commit `526f8c9747ac17b0ba6df5261338f0b60134d24b` into a temporary directory, not a production image/volume or a moving main checkout. Container tests use only mock MLX and disposable resources. Build frontend before Node security tests that inspect emitted assets. Retain mock-only browser diagnostics briefly on failure.
+
+A stable `CI gate` depends on every job, runs even if prerequisites fail, and fails on failed/cancelled/skipped prerequisites. Validate workflow syntax and run hosted checks on the exact latest PR SHA before merging. Do not infer green CI from local tests or zero registered checks. No branch-protection administration changes are implied by this workflow.
+
 ## Complexity Tracking
 
 No constitution violations. Explicit cost: shipping/supervising Python and a small versioned IPC protocol. This is preferable to replacing the backend or introducing a network service for a single-user, single-run system.

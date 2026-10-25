@@ -8,6 +8,10 @@ Fios is a custom React/Vite frontend and Express/SQLite backend. Open WebUI is r
 
 Going forward, each spec must have its own dedicated branch and pull request. Before creating or changing a spec or implementing its work, create or switch to its branch (for example, `004-feature-name`). Keep that spec's artifacts, implementation, tests, and validation evidence together on the branch; do not combine unrelated specs in one PR. Open a PR targeting `main` that links the spec and summarizes changes, validation results, and any pending checks. Do not commit spec work directly to `main`; merge through the PR after review and approval. This policy applies to new specs and subsequent work on existing specs.
 
+## Continuous integration
+
+`.github/workflows/ci.yml` validates locked installs, Node 22/24 unit/API tests, build/boundary checks, Chromium regressions, npm/Python audits and a native ARM64 hardened-container recovery rehearsal. CI is mock-only: no production secrets, live MLX hosts, real inference or deployment. Keep actions SHA-pinned and permissions read-only; do not use `pull_request_target` to execute PR code with secrets. The aggregate `CI gate` must pass with every prerequisite successful on the exact latest PR SHA before merging; zero checks is not green CI. A passing workflow does not authorize production deployment or cluster changes.
+
 ## Agent harness
 
 All interface-originated language-model inference must go through the Pydantic AI slim harness under `src/agent/`. No direct inference fallback, automatic retries, model substitution, tool execution or cloud telemetry. Express owns authentication, discovery, uploads and SQLite; Python is a private pipe worker and must never open the database or expose a listener. Preserve exact model IDs, browser SSE behavior and attachment/history semantics.

@@ -13,6 +13,7 @@
 ### Session 2026-10-25
 
 - User-confirmed constraints: use the slim Pydantic AI distribution, require the harness for all interface-originated model inference, and place agent code in `src/agent/`.
+- Subsequent user instruction: add appropriate project CI to this PR and merge only after CI is green; FR-015/SC-007 extend this feature's release gate accordingly.
 - Clarification review found no critical product ambiguities requiring another question. Non-inference actions remain outside agent runs; integration topology and provider compatibility are planning decisions, not new product scope. See [clarification review](clarification.md).
 
 ## User Scenarios & Testing *(mandatory)*
@@ -89,6 +90,7 @@ As a maintainer, I can extend Fios knowing that every interface-originated langu
 - **FR-012**: Deployment and operational documentation MUST explain harness configuration, lifecycle, dependency installation, health versus inference checks, and troubleshooting without exposing secrets. Tests MUST NOT open the production database concurrently with the running app.
 - **FR-013**: Agent implementation code MUST reside in `src/agent/`. The implementation plan MUST account for this location when defining packaging, deployment, tests, and the boundary with the existing frontend and backend.
 - **FR-014**: Diagnostics MUST identify failed runs and their lifecycle stage without recording prompts, response/reasoning content, attachment contents, passwords, credentials, or complete environment settings. No external telemetry or cloud inference may be enabled by this migration.
+- **FR-015**: Automated CI MUST validate clean locked installation, supported Node runtimes, actual-harness mock-backed tests, frontend build, browser regressions, inference boundaries, dependency advisories, and the hardened ARM64 image including upgrade/rollback/restore. CI MUST require no production secrets, MLX hosts or real inference. A stable aggregate check MUST fail if any required job fails, is cancelled or is skipped.
 
 ### Key Entities
 
@@ -106,6 +108,7 @@ As a maintainer, I can extend Fios knowing that every interface-originated langu
 - **SC-004**: In controlled streaming tests, response text is visible before generation completes, and a stop action ends the active run and upstream request within two seconds.
 - **SC-005**: Controlled tests for failure before output, partial-stream failure, and harness unavailability each leave no active generation and allow the next valid message to complete.
 - **SC-006**: Deployment health checks and model-list refreshes cause zero inference requests; automated validation requires no real model loading or cluster configuration changes.
+- **SC-007**: Before this feature is merged, its latest PR commit MUST have successful hosted CI results for every required job and the aggregate gate; zero-check/pending states do not count as passing.
 
 ## Assumptions
 

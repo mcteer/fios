@@ -3,7 +3,7 @@
 **Input**: Design documents in `specs/004-pydantic-agent-harness/`.
 **Prerequisites**: spec.md, plan.md, research.md, data-model.md, contracts/, quickstart.md.
 **Tests**: Mandatory under FR-010. Write failing tests before their implementation; never substitute a fake worker for real-Agent integration coverage.
-**Status**: All 47 implementation/validation/delivery tasks complete. Submitted in [PR #1](https://github.com/mcteer/fios/pull/1) from the dedicated feature branch. Production deployment and merge approval remain separate. See validation.md.
+**Status**: Original 47 tasks complete; user-requested hosted CI and conditional merge are tracked in T048–T052 below. [PR #1](https://github.com/mcteer/fios/pull/1) remains the dedicated feature PR. Production deployment remains separate. See validation.md.
 
 Format: `- [ ] Tnnn [P?] [USn?] Description with file paths`. `[P]` means different files can be worked on concurrently after the stated dependencies/gates, not permission to skip them. Requirements-checklist completion does not complete these tasks.
 
@@ -103,6 +103,16 @@ Format: `- [ ] Tnnn [P?] [USn?] Description with file paths`. `[P]` means differ
 - [X] T045 Rehearse stop/backup/recreate/rollback against only the disposable volume via `scripts/check-agent-container.mjs`, never two instances on one DB; document old/new image references, data fidelity and cleanup in `specs/004-pydantic-agent-harness/validation.md`. (FR-005, FR-012, SC-003)
 - [X] T046 Review all feature artifacts for stale claims and unchecked failures, run diff/link checks, and update `specs/004-pydantic-agent-harness/tasks.md`/`validation.md` honestly. Leave optional real inference and production deployment explicitly unverified unless separately approved and observed with `scripts/check.mjs`; do not load a large cold model. (FR-010, FR-012)
 - [X] T047 Commit completed feature work on `004-pydantic-agent-harness` and open its PR targeting `main`, linking `specs/004-pydantic-agent-harness/spec.md`, ADR 0002 and validation evidence; include the pending `AGENTS.md` per-spec branch/PR rule and identify it in the PR. No direct main commit or merge without review/approval. (project governance)
+
+## User-requested follow-up: Hosted CI and conditional merge
+
+- [X] T048 Extend `specs/004-pydantic-agent-harness/{spec.md,plan.md,tasks.md}` with CI acceptance and exact-head green merge gate, preserving mock-only isolation. (FR-015, SC-007)
+- [X] T049 Implement `.github/workflows/ci.yml` with pinned actions, minimal permissions, Node 22/24 unit/API/packaging coverage, browser/build checks, dependency audits, native ARM64 container recovery tests and a fail-closed aggregate gate. (FR-015)
+- [ ] T050 Validate `.github/workflows/ci.yml` locally and exercise/fix hosted CI against the latest PR commit; update `README.md` and `AGENTS.md` with checks and CI boundaries. (FR-015)
+- [ ] T051 Record observed hosted check results in `specs/004-pydantic-agent-harness/validation.md`, push the evidence and wait for every required check on that final SHA to pass. (SC-007)
+- [ ] T052 Merge PR #1 only after its exact latest SHA has green required checks; no admin bypass or zero-check merge. Record the merge outcome in the completion report; do not deploy production. (SC-007)
+
+Order: T048 → T049 → T050 → T051 → T052. These are release-gate follow-ups explicitly requested for this same PR, not another bundled product feature.
 
 ## Dependencies and Execution Order
 
