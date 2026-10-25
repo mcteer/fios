@@ -117,7 +117,7 @@ Visit Vite's printed localhost address. Requests are proxied to Express; the bac
 
 [CI](https://github.com/mcteer/fios/actions/workflows/ci.yml) runs on PRs, pushes to `main`, manual dispatch and weekly scheduled runs. Required checks cover clean locked installs and unit/API tests on Node 22/24, Chromium browser regressions, builds/inference boundaries, npm/Python advisory scans, and a native ARM64 hardened-container upgrade/rollback/backup-restore rehearsal. The immutable pre-harness source commit is built as the disposable rollback baseline; no local production image is assumed on hosted runners.
 
-The stable **CI gate** succeeds only when every required job succeeds; failed, cancelled or skipped jobs fail the gate. Actions are SHA-pinned, repository permissions are read-only, and no production secrets or live MLX access are used. Only mock-data browser/container diagnostics are retained on failure, for seven days. CI does not deploy the app or prove real inference/RDMA behavior. Require green checks on the exact latest PR commit before merging.
+The stable **CI gate** succeeds only when every required job succeeds; failed, cancelled or skipped jobs fail the gate. Actions are SHA-pinned, repository permissions are read-only, and no production secrets or live MLX access are used. Only mock-data browser/container diagnostics are retained on failure, for seven days. Hosted CI does not access production or prove real inference/RDMA behavior. Require green checks on the exact latest PR commit before merging. The local delivery agent below automatically deploys approved main revisions after their main-push CI passes.
 
 ## Operations
 
@@ -130,13 +130,35 @@ docker compose up -d --wait
 
 If the UI opens but models do not load, use **Reconnect** or refresh models from the picker. Check native MLX-Serve and `MLX_BASE_URL`. Container `localhost` is not the Mini: use `host.docker.internal`. An upstream failure is shown as an error, with any partial output retained. Do not blindly retry large cold-model loads.
 
+### Model and host readiness
+
+`GET /api/models` returns authenticated model and serving-host observations. The picker shows host online/offline/unverified state and model availability separately from Loaded/On demand. A healthy host presenting an unloaded model is available on demand; discovery never loads it. Stale gateway peer listings cannot establish readiness: Express rejects unavailable/unverified targets before saving messages, and the Python harness independently preflights the exact target before its single possible inference request. No retry, substitution or fallback is added.
+
+Configure `MLX_PEER_URLS` privately as a JSON map of **exact peer name** to trusted `/v1` base. Unconfigured peers stay unverified. Catalog-provided URLs are never followed and gateway credentials are never forwarded to peers. Direct native/development clients probe the configured hosts; unauthorized hosts require operator configuration rather than guessed credentials.
+
+On this deployment, live tests proved that native host access to the Studios works but direct container access does not. The native observer uses only health/catalog reads and shares atomic metadata through a **read-only directory bind**; it exposes no listener or Docker socket. Node and Python reject endpoint-mismatched, malformed, missing or older-than-5-second observations (future tolerance: 1 second). `MLX_READINESS_FILE` names the container file; `FIOS_READINESS_DIR` names only the metadata directory on the host. Never mount `.env` or host credentials into this directory. If the observer stops, peer readiness expires and sends are blocked. `/health` remains app liveness, not model readiness.
+
+### Automatic production delivery
+
+After an approved merge and successful CI on the exact merged main SHA, the **local** outbound-only delivery agent archives/builds that immutable revision, preserves the current image, stops the app, snapshots all data except prior backup directories, replaces the app, verifies health/authenticated discovery and Python non-inference readiness, and verifies the image revision label. Failed upgrades automatically restore and verify the prior image on the same compatible schema; new records are never discarded by automatic data restoration. Backups remain at `backups/before-…` **inside the application data volume**; previous images have unique `fios:rollback-…` tags. Protect/export these backups; same-volume copies alone do not protect against disk/volume loss. Schema-changing upgrades require an explicit compatibility/restore plan.
+
+Install or update reviewed stable programs only from **clean, green, merged main** on the authorized macOS host:
+
+```sh
+node scripts/install-deployment.mjs --install
+```
+
+This installs user LaunchAgents `lab.fios.readiness` (continuous read-only native observation) and `lab.fios.deploy` (60-second polling). An active user login, existing local Docker and authenticated GitHub CLI are prerequisites. No CI runner gets production access, no new listener/SSH/remote execution is enabled, and MLX/RDMA settings are untouched. The installer rejects an active deployment lock; native macOS `lockf` serializes installer/deployer execution and the kernel releases locks when the owner exits. The empty lock file is retained (`-k`) to preserve inode ordering; its existence is not itself a lock. Reviewed programs are copied into `~/Library/Application Support/Fios/deploy`, so switching developer branches cannot execute unmerged code. Re-run the installer after approved changes to the observer/deployer themselves.
+
+State and sanitized logs are in that private directory. The agent changes only `FIOS_IMAGE` after verification; installation sets the observer bind path. Existing credentials are preserved. A failed upgraded SHA is not repeatedly redeployed; inspect the failure/rollback outcome before authorizing recovery. Transient pre-deployment failures can be retried by later polls. To pause delivery, unload only `lab.fios.deploy` with `launchctl bootout gui/$(id -u)/lab.fios.deploy`; keep the observer running for readiness. Do not interrupt an active upgrade. A successful merge is not proof of deployment: verify `state.json`, the running image revision and non-inference health/discovery, and report actual outcomes.
+
 ### Agent lifecycle and troubleshooting
 
 `/health` is app liveness, not proof of agent or MLX readiness. The Python worker starts lazily on generation, sends a versioned readiness handshake within 10 seconds, and stays available for later runs. If startup fails, generation returns 503 before inserting messages; login, history and model discovery remain usable. After a worker crash, only a **new user request** can start its replacement—the failed request is never replayed.
 
 Stop/disconnect cancels the Agent and closes upstream streams. An unresponsive worker is terminated after one second and killed after 1.5 seconds; controlled tests verify cleanup within two seconds. Real remote compute cancellation remains MLX's responsibility. Missing upstream completion markers and malformed streams are errors, not successful answers; received answer text is retained. Reasoning text is transient and is not saved or replayed.
 
-Diagnostics contain only run ID, lifecycle phase, safe error code and elapsed time. `agent_unavailable` usually means interpreter/package installation or worker startup failed; check `FIOS_AGENT_PYTHON` and reinstall the package. `agent_protocol_error` means worker framing/version failure. `upstream_http`, `upstream_unavailable`, `upstream_timeout`, `incomplete_stream`, and `output_limit` distinguish gateway/output failures. Do not enable raw SDK HTTP/debug logs or paste credentials/content into logs. The SDK banner is disabled and untrusted child stderr is not forwarded verbatim.
+Diagnostics contain only run ID, lifecycle phase, safe error code and elapsed time. `agent_unavailable` usually means interpreter/package installation or worker startup failed; check `FIOS_AGENT_PYTHON` and reinstall the package. `agent_protocol_error` means worker framing/version failure. `model_unavailable` indicates a rejected readiness preflight; check the picker hosts, explicit peer configuration and native observer freshness. `upstream_http`, `upstream_unavailable`, `upstream_timeout`, `incomplete_stream`, and `output_limit` distinguish gateway/output failures. Do not enable raw SDK HTTP/debug logs or paste credentials/content into logs. The SDK banner is disabled and untrusted child stderr is not forwarded verbatim.
 
 ### Backup / restore
 
@@ -168,6 +190,6 @@ Keep the default `127.0.0.1` port binding. LAN/public exposure is not configured
 
 ## Spec Kit and project history
 
-Upstream GitHub Spec Kit scaffolding is in `.specify/`, with generic-agent prompts in `.agents/commands/`. Read the [constitution](.specify/memory/constitution.md), then the active numbered feature's spec, plan, tasks and validation evidence (currently [feature 004](specs/004-pydantic-agent-harness/spec.md)). Each spec gets its own branch and reviewed PR targeting `main`; never commit spec work directly to `main`. Use specify → clarify → plan → tasks → analyze → implement for future features.
+Upstream GitHub Spec Kit scaffolding is in `.specify/`, with generic-agent prompts in `.agents/commands/`. Read the [constitution](.specify/memory/constitution.md), then the active numbered feature's spec, plan, tasks and validation evidence (currently [feature 005](specs/005-model-host-readiness/spec.md)). Each spec gets its own branch and reviewed PR targeting `main`; never commit spec work directly to `main`. Use specify → clarify → plan → tasks → analyze → implement for future features.
 
-[ADR 0002](docs/adr/0002-pydantic-agent-harness.md) records the Pydantic AI harness design; its acceptance remains subject to feature PR review. [ADR 0001](docs/adr/0001-replace-open-webui-with-custom-frontend.md) records the decision to replace Open WebUI with the purpose-built Fios frontend. The Open WebUI attempt is retired under `specs/archive/001-open-webui/`; its container/images were removed. The detached legacy `fios_webui-data` volume was preserved to avoid unapproved data loss and is not used by Fios. [Studio sandbox research](docs/sandboxes.md) remains a separate future feature.
+[ADR 0002](docs/adr/0002-pydantic-agent-harness.md) records the Pydantic AI harness design; it was accepted with feature PR #1. [ADR 0001](docs/adr/0001-replace-open-webui-with-custom-frontend.md) records the decision to replace Open WebUI with the purpose-built Fios frontend. The Open WebUI attempt is retired under `specs/archive/001-open-webui/`; its container/images were removed. The detached legacy `fios_webui-data` volume was preserved to avoid unapproved data loss and is not used by Fios. [Studio sandbox research](docs/sandboxes.md) remains a separate future feature.

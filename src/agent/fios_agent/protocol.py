@@ -11,7 +11,7 @@ REQUEST_LIMIT = 32 * 1024 * 1024
 EVENT_LIMIT = 1024 * 1024
 TEXT_CHUNK_UNITS = 32 * 1024
 ERROR_CODES = (
-    "busy", "invalid_request", "upstream_unavailable", "upstream_http",
+    "busy", "invalid_request", "model_unavailable", "upstream_unavailable", "upstream_http",
     "upstream_timeout", "incomplete_stream", "invalid_stream",
     "unsupported_output", "output_limit", "internal_error",
 )
@@ -137,7 +137,7 @@ class Done(Correlated):
 class Error(Correlated):
     type: Literal["error"]
     code: Literal[
-        "busy", "invalid_request", "upstream_unavailable", "upstream_http",
+        "busy", "invalid_request", "model_unavailable", "upstream_unavailable", "upstream_http",
         "upstream_timeout", "incomplete_stream", "invalid_stream",
         "unsupported_output", "output_limit", "internal_error",
     ]

@@ -18,9 +18,10 @@ async function login(page) {
 const coding = {
   id: "test/coding-model",
   loaded: true,
+  availability: "available",
   capabilities: ["chat", "vision"],
 };
-const other = { id: "test/new-model", loaded: false, capabilities: ["chat"] };
+const other = { id: "test/new-model", loaded: false, capabilities: ["chat"], availability: "available" };
 async function poll(page) {
   // Let network responses settle before advancing across the 12s request deadline.
   await page.clock.runFor(100);
@@ -54,7 +55,7 @@ test("catalog automatically adds/removes models, clears stale selection and reco
   catalog = [
     coding,
     other,
-    { id: "test/added-by-poll", capabilities: ["chat"] },
+    { id: "test/added-by-poll", capabilities: ["chat"], availability: "available" },
   ];
   await poll(page);
   await expect(
@@ -129,7 +130,7 @@ test("refreshes on picker open, focus, visibility and reconnect, without polling
       json: {
         models: [
           coding,
-          { id: `test/refresh-${revision}`, capabilities: ["chat"] },
+          { id: `test/refresh-${revision}`, capabilities: ["chat"], availability: "available" },
         ],
       },
     });

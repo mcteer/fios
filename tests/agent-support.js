@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { once } from "node:events";
 import { mockMlx } from "./mock-mlx.js";
 
-export async function agentApp({ python, database, directory } = {}) {
+export async function agentApp({ python, database, directory, peers } = {}) {
   const mock = await mockMlx();
   const dir = directory || mkdtempSync(join(tmpdir(), "fios-agent-"));
   let child,
@@ -22,6 +22,7 @@ export async function agentApp({ python, database, directory } = {}) {
         DB_PATH: database || join(dir, "test.sqlite"),
         MLX_BASE_URL: mock.url,
         MLX_API_KEY: "isolated-mock-key",
+        MLX_PEER_URLS: JSON.stringify(peers || {"studio-a": mock.url}),
         SESSION_SECRET: "isolated-test-secret-".repeat(3),
         FIOS_PASSWORD: password,
         ...(python ? { FIOS_AGENT_PYTHON: python } : {}),

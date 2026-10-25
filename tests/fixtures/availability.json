@@ -1,0 +1,10 @@
+[
+  {"name":"unloaded is available","gateway":[{"id":"org/model","loaded":false}],"peers":{},"expected":[["available","ok",false]]},
+  {"name":"peer loaded state is direct not cached","gateway":[{"id":"org/model@p","loaded":false,"lan_peer":"p","capabilities":["chat"]}],"peers":{"p":[{"id":"org/model","loaded":true,"capabilities":["chat"]}]},"expected":[["available","ok",true]]},
+  {"name":"stale peer model absent","gateway":[{"id":"org/model@p","lan_peer":"p"}],"peers":{"p":[]},"expected":[["unavailable","not_advertised",false]]},
+  {"name":"unknown host","gateway":[{"id":"org/model@p","lan_peer":"p"}],"peers":{},"expected":[["unknown","host_unverified",false]]},
+  {"name":"mismatched suffix","gateway":[{"id":"org/model@other","lan_peer":"p"}],"peers":{"p":[{"id":"org/model"}]},"expected":[["unknown","host_unverified",false]]},
+  {"name":"reserved gateway name cannot bypass explicit peer trust","gateway":[{"id":"org/model"},{"id":"org/model@gateway","lan_peer":"gateway"}],"peers":{},"expected":[["available","ok",false],["unknown","host_unverified",false]]},
+  {"name":"unmarked remote id","gateway":[{"id":"org/model@p"}],"peers":{},"expected":[["unknown","host_unverified",false]]},
+  {"name":"host no longer offers chat","gateway":[{"id":"org/model@p","lan_peer":"p","capabilities":["chat"]}],"peers":{"p":[{"id":"org/model","capabilities":["image"]}]},"expected":[["unavailable","not_advertised",false]]}
+]

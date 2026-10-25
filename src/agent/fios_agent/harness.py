@@ -8,6 +8,7 @@ from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.profiles.openai import OpenAIModelProfile
 from pydantic_ai.providers.openai import OpenAIProvider
 
+from .availability import discover
 from .context import translate_context, ContextError
 from .protocol import text_chunks, utf16_length
 from .transport import SentinelObserver, ObservingTransport, StreamFailure
@@ -27,6 +28,14 @@ async def run_agent(command, token, emit, settings, *, transport=None):
         await event('activity')
     try:
         history, prompt = translate_context(command.context)
+        catalog = await discover(settings, transport=transport)
+        selected = next((m for m in catalog['models'] if m['id'] == command.model), None)
+        if token.cancelled:
+            await event('done', status='interrupted')
+            return
+        if selected is None or selected['availability'] != 'available':
+            await event('error', code='model_unavailable')
+            return
         async with httpx2.AsyncClient(
             transport=ObservingTransport(observer, activity, inner=transport), trust_env=False,
             follow_redirects=False, headers={'Accept-Encoding': 'identity'},

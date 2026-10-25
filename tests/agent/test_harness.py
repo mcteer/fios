@@ -15,9 +15,13 @@ class HarnessTests(unittest.IsolatedAsyncioTestCase):
         guard.start()
         self.addCleanup(guard.stop)
 
-    async def request(self, frames, status=200):
+    async def request(self, frames, status=200, snapshot=None):
         requests = []
         async def handler(request):
+            if request.method == 'GET':
+                if request.url.path == '/health': return httpx2.Response(200, json={'status':'ok'})
+                model = {'id':'test/model'} if request.url.host == 'peer' else {'id':'test/model@studio-a','lan_peer':'studio-a'}
+                return httpx2.Response(200, json={'data':[model]})
             requests.append(request)
             if isinstance(status, Exception):
                 raise status
@@ -26,7 +30,7 @@ class HarnessTests(unittest.IsolatedAsyncioTestCase):
         async def emit(event): events.append(event)
         command = parse_command({'v':1,'type':'run','run_id':str(uuid4()),'model':'test/model@studio-a',
                                  'context':[{'role':'user','content':'hello'}]})
-        await run_agent(command, CancellationToken(), emit, Settings('http://127.0.0.1:1/v1','local'),
+        await run_agent(command, CancellationToken(), emit, Settings('http://127.0.0.1:1/v1','local',{'studio-a':'http://peer/v1'},snapshot),
                         transport=httpx2.MockTransport(handler))
         return requests, events
 
@@ -53,6 +57,21 @@ class HarnessTests(unittest.IsolatedAsyncioTestCase):
         requests, events = await self.request(b'', httpx2.ReadTimeout('test timeout'))
         self.assertEqual(len(requests), 1)
         self.assertEqual(events[-1]['code'], 'upstream_timeout')
+
+    async def test_missing_or_expired_peer_evidence_prevents_inference(self):
+        import tempfile, json
+        from pathlib import Path
+        import hashlib
+        with tempfile.TemporaryDirectory() as directory:
+            file=Path(directory)/'peers.json'
+            requests, events = await self.request(b'', snapshot=str(file))
+            self.assertEqual(requests, [])
+            self.assertEqual(events[-1]['code'], 'model_unavailable')
+            file.write_text(json.dumps({'v':1,'peers':[{'name':'studio-a','endpointHash':hashlib.sha256(b'http://peer/v1').hexdigest(),
+                'status':'available','reason':'ok','checkedAt':0,'models':[{'id':'test/model'}]}]}))
+            requests, events = await self.request(b'', snapshot=str(file))
+            self.assertEqual(requests, [])
+            self.assertEqual(events[-1]['code'], 'model_unavailable')
 
     async def test_missing_sentinel_is_not_completion(self):
         requests, events = await self.request(b'data: {"choices":[]}\n\n')

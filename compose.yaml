@@ -2,7 +2,7 @@ name: fios
 services:
   fios:
     build: .
-    image: fios:0.1.0
+    image: ${FIOS_IMAGE:-fios:0.1.0}
     restart: unless-stopped
     init: true
     ports:
@@ -12,8 +12,14 @@ services:
       SESSION_SECRET: ${SESSION_SECRET:?Run scripts/setup.sh}
       MLX_BASE_URL: ${MLX_BASE_URL:-http://host.docker.internal:11234/v1}
       MLX_API_KEY: ${MLX_API_KEY:-}
+      MLX_PEER_URLS: ${MLX_PEER_URLS:-}
+      MLX_READINESS_FILE: /run/fios-readiness/peers.json
     volumes:
       - fios-data:/app/data
+      - type: bind
+        source: ${FIOS_READINESS_DIR:-./data/readiness}
+        target: /run/fios-readiness
+        read_only: true
     read_only: true
     tmpfs:
       - /tmp:size=64m,mode=1777

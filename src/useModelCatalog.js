@@ -4,6 +4,7 @@ export const MODEL_REFRESH_MS = 30_000;
 
 export function useModelCatalog(request) {
   const [models, setModels] = useState([]);
+  const [hosts, setHosts] = useState([]);
   const [selected, setSelected] = useState(
     () => localStorage.getItem("fios-model") || "",
   );
@@ -27,11 +28,15 @@ export function useModelCatalog(request) {
         throw new Error("Invalid model catalog received.");
       if (!mounted.current || inFlight.current !== controller) return;
       setModels(payload.models);
-      setModelsState("ready");
-      setModelsError("");
+      setHosts(payload.hosts || []);
+      const gatewayDown = payload.hosts?.some(h => h.name === "gateway" && h.status !== "available");
+      setModelsState(gatewayDown ? "error" : "ready");
+      setModelsError(gatewayDown ? "MLX-Serve gateway unavailable or unverified. Retrying automatically." : "");
     } catch (error) {
       if (!mounted.current || inFlight.current !== controller) return;
       setModelsState("error");
+      setModels(previous => previous.map(m => ({...m, availability: "unknown", reason: "host_unverified"})));
+      setHosts(previous => previous.map(h => ({...h, status: "unknown", reason: "host_unverified"})));
       setModelsError(
         "Model discovery unavailable. Retrying automatically. " +
           (error.name === "AbortError"
@@ -72,7 +77,8 @@ export function useModelCatalog(request) {
       // Only initial discovery can choose a default. Never silently replace a removed model.
       if (!selected) {
         setSelected(
-          models.find((model) => model.loaded)?.id || models[0]?.id || "",
+          models.find(model => model.availability === "available" && model.loaded)?.id ||
+          models.find(model => model.availability === "available")?.id || "",
         );
         return;
       }
@@ -88,6 +94,7 @@ export function useModelCatalog(request) {
 
   return {
     models,
+    hosts,
     selected,
     setSelected,
     modelsState,
