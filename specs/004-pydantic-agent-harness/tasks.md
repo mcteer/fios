@@ -3,7 +3,7 @@
 **Input**: Design documents in `specs/004-pydantic-agent-harness/`.
 **Prerequisites**: spec.md, plan.md, research.md, data-model.md, contracts/, quickstart.md.
 **Tests**: Mandatory under FR-010. Write failing tests before their implementation; never substitute a fake worker for real-Agent integration coverage.
-**Status**: Implementation and mandatory validation complete (T001–T046). Feature commit/PR tracking is finalized in T047; production deployment is not part of this implementation checkpoint. See validation.md.
+**Status**: All 47 implementation/validation/delivery tasks complete. Submitted in [PR #1](https://github.com/mcteer/fios/pull/1) from the dedicated feature branch. Production deployment and merge approval remain separate. See validation.md.
 
 Format: `- [ ] Tnnn [P?] [USn?] Description with file paths`. `[P]` means different files can be worked on concurrently after the stated dependencies/gates, not permission to skip them. Requirements-checklist completion does not complete these tasks.
 
@@ -102,7 +102,7 @@ Format: `- [ ] Tnnn [P?] [USn?] Description with file paths`. `[P]` means differ
 - [X] T044 Run `docker compose config --quiet`, boundary checker and isolated container checker; extend `scripts/check-agent-container.mjs` as needed to measure worst-case accepted Unicode/image input and slow-consumer memory under 1 GiB/2 CPU, image import readiness and stop deadlines; record actual results in `specs/004-pydantic-agent-harness/validation.md`. (FR-007, FR-010, FR-012, SC-004)
 - [X] T045 Rehearse stop/backup/recreate/rollback against only the disposable volume via `scripts/check-agent-container.mjs`, never two instances on one DB; document old/new image references, data fidelity and cleanup in `specs/004-pydantic-agent-harness/validation.md`. (FR-005, FR-012, SC-003)
 - [X] T046 Review all feature artifacts for stale claims and unchecked failures, run diff/link checks, and update `specs/004-pydantic-agent-harness/tasks.md`/`validation.md` honestly. Leave optional real inference and production deployment explicitly unverified unless separately approved and observed with `scripts/check.mjs`; do not load a large cold model. (FR-010, FR-012)
-- [ ] T047 Commit completed feature work on `004-pydantic-agent-harness` and open its PR targeting `main`, linking `specs/004-pydantic-agent-harness/spec.md`, ADR 0002 and validation evidence; include the pending `AGENTS.md` per-spec branch/PR rule and identify it in the PR. No direct main commit or merge without review/approval. (project governance)
+- [X] T047 Commit completed feature work on `004-pydantic-agent-harness` and open its PR targeting `main`, linking `specs/004-pydantic-agent-harness/spec.md`, ADR 0002 and validation evidence; include the pending `AGENTS.md` per-spec branch/PR rule and identify it in the PR. No direct main commit or merge without review/approval. (project governance)
 
 ## Dependencies and Execution Order
 
