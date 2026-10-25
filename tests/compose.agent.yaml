@@ -1,0 +1,44 @@
+services:
+  mock:
+    image: ${FIOS_AGENT_TEST_IMAGE:?Test script must set its isolated image}
+    command: [node, /app/mock-mlx.js]
+    environment:
+      MOCK_PORT: "3322"
+      MOCK_HOST: "0.0.0.0"
+    volumes:
+      - ./mock-mlx.js:/app/mock-mlx.js:ro
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    init: true
+    networks: [isolated]
+  app:
+    image: ${FIOS_AGENT_TEST_IMAGE:?Test script must set its isolated image}
+    environment:
+      FIOS_PASSWORD: isolated-container-test-password
+      SESSION_SECRET: isolated-container-test-signing-secret-not-production
+      MLX_BASE_URL: http://mock:3322/v1
+      MLX_API_KEY: isolated-container-test-key
+    ports:
+      - "127.0.0.1:${FIOS_AGENT_TEST_PORT:?Test script must select a free local port}:3000"
+    volumes:
+      - agent-data:/app/data
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 1g
+    cpus: 2
+    init: true
+    depends_on: [mock]
+    networks: [isolated]
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:3000/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+networks:
+  isolated: {}
+volumes:
+  agent-data:

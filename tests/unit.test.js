@@ -4,7 +4,6 @@ import {
   equal,
   signSession,
   validSession,
-  sseData,
   buildContext,
 } from "../server/lib.js";
 import { openStore } from "../server/store.js";
@@ -21,15 +20,6 @@ test("session signatures expire and reject tampering", () => {
   assert.ok(!validSession(undefined, "a".repeat(64)));
   assert.ok(equal("secret", "secret"));
   assert.ok(!equal("secret", "secreT"));
-});
-test("upstream SSE parser handles split UTF8, CRLF and multiline data", async () => {
-  const bytes = encode('data: {"text":"café"}\r\n\r\ndata: [DONE]\n\n');
-  async function* chunks() {
-    for (const byte of bytes) yield new Uint8Array([byte]);
-  }
-  const data = [];
-  for await (const x of sseData(chunks())) data.push(x);
-  assert.deepEqual(data, ['{"text":"café"}', "[DONE]"]);
 });
 test("browser SSE parser preserves split event frames", async () => {
   const data = encode(

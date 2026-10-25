@@ -29,13 +29,15 @@ Press **Enter** to send or **Shift+Enter** for a new line. Select a model from t
 
 ```text
 Browser :3000 → Fios container (React + Express + SQLite)
+                    ↓ private process pipes (no new network listener)
+                Pydantic AI slim Python agent
                     ↓ http://host.docker.internal:11234/v1
                 Mini's native MLX-Serve gateway
                     ↓ existing LAN routing / distributed configuration
                 Mac Studios / existing RDMA cluster
 ```
 
-Inference stays native on macOS. Fios uses `/v1/models` and streaming `/v1/chat/completions`, preserving exact model IDs and peer suffixes. It does not configure RDMA, change model files, or provide execution sandboxes. A peer-qualified model ID alone does not prove distributed inference.
+Inference stays native on macOS. Express queries `/v1/models`; **all model inference runs through Pydantic AI slim**, using streaming Chat Completions and preserving exact model IDs and peer suffixes. The agent code lives in `src/agent/`. There is no direct-call fallback, automatic inference retry, model substitution, tool execution or external telemetry. Python has no network listener and never opens SQLite. Login, catalog, conversation management and health checks are not agent runs. It does not configure RDMA, change model files, or provide execution sandboxes. A peer-qualified model ID alone does not prove distributed inference.
 
 ## Install / run
 
@@ -59,6 +61,7 @@ The production container runs as UID 1000, with a read-only root filesystem, no 
 | `SESSION_SECRET` | Stable generated cookie-signing secret, minimum 32 characters |
 | `MLX_BASE_URL`   | Defaults to `http://host.docker.internal:11234/v1`            |
 | `MLX_API_KEY`    | Optional real key if MLX authentication is enabled            |
+| `FIOS_AGENT_PYTHON` | Local development interpreter override; defaults to `.venv/bin/python`. The image fixes `/opt/venv/bin/python`; do not use a host path in Compose. |
 
 Edit `.env`, then run `docker compose up -d` to apply environment changes. If changing the password, also rotate `SESSION_SECRET` to invalidate existing sessions. Cookies expire after seven days. Login attempts are rate-limited; logging out clears the current browser's cookie. This is a single-user workspace, not a multi-user account system.
 
@@ -75,22 +78,31 @@ Fios sends up to 8,192 output tokens per request, supports one active generation
 
 ## Checks and development
 
-Node 22.13+ is required locally; the production image uses pinned Node 24. Dependencies are pinned in `package-lock.json`.
+Node 22.13+ is required locally; production uses digest-pinned Node 24.15.0, uv 0.13.5 and CPython 3.11.17. Install uv 0.13.5 locally, then use the frozen Python setup below. npm dependencies are pinned in `package-lock.json`; Python provider dependencies are pinned in `pyproject.toml` and fully resolved in `uv.lock`. Production has no runtime package downloads.
 
 ```sh
 npm ci
-npm test                     # unit + API tests against mock MLX
+uv python install 3.11.17
+uv sync --locked --no-editable
+# After editing Python source, rebuild its non-editable installed package:
+# uv sync --locked --no-editable --reinstall-package fios-agent
+npm test                     # Node + Python tests; real harness, mock MLX
 npm run build
 npx playwright install chromium
 npx playwright test          # desktop/mobile browser tests against mock MLX
 npm audit
+uvx --python 3.11.17 --from pip-audit==2.10.1 pip-audit --path .venv/lib/python3.11/site-packages
+node scripts/check-agent-boundary.mjs
+# Isolated image/volume tests; defaults to fios:0.1.0 as the prior image.
+# Override FIOS_AGENT_ROLLBACK_IMAGE if using another already-built prior version.
+node scripts/check-agent-container.mjs
 node scripts/check.mjs       # real authenticated gateway discovery; no inference
 # Opt-in: sends a temporary attachment + prompt, then deletes the test chat.
 # May load the selected model. Use an already-loaded or suitably small model.
 node scripts/check.mjs 'EXACT_ADVERTISED_MODEL_ID'
 ```
 
-Browser tests use their own ports and `data/browser-test.sqlite`, never the production volume. Screenshots are written into ignored `test-results/`. These tests do not prove real model behavior; see `specs/002-custom-frontend/validation.md` for live evidence.
+Browser/API tests use the actual Python Agent against mock MLX, isolated ports and databases (`data/browser-test.sqlite` for browsers), never the production volume. Fake worker processes are used only for supervision fault tests. Container tests create a unique Compose project/image/network/volume, bind only a free localhost port, rehearse old → new → old image rollback and backup restore, and clean up only their own resources. Screenshots are written into ignored `test-results/`. These tests do not prove real model behavior; see `specs/002-custom-frontend/validation.md` for live evidence.
 
 For frontend hot reload, run the backend locally (stop the container first to free port 3000), then Vite in a second terminal:
 
@@ -111,6 +123,14 @@ docker compose up -d --wait
 ```
 
 If the UI opens but models do not load, use **Reconnect** or refresh models from the picker. Check native MLX-Serve and `MLX_BASE_URL`. Container `localhost` is not the Mini: use `host.docker.internal`. An upstream failure is shown as an error, with any partial output retained. Do not blindly retry large cold-model loads.
+
+### Agent lifecycle and troubleshooting
+
+`/health` is app liveness, not proof of agent or MLX readiness. The Python worker starts lazily on generation, sends a versioned readiness handshake within 10 seconds, and stays available for later runs. If startup fails, generation returns 503 before inserting messages; login, history and model discovery remain usable. After a worker crash, only a **new user request** can start its replacement—the failed request is never replayed.
+
+Stop/disconnect cancels the Agent and closes upstream streams. An unresponsive worker is terminated after one second and killed after 1.5 seconds; controlled tests verify cleanup within two seconds. Real remote compute cancellation remains MLX's responsibility. Missing upstream completion markers and malformed streams are errors, not successful answers; received answer text is retained. Reasoning text is transient and is not saved or replayed.
+
+Diagnostics contain only run ID, lifecycle phase, safe error code and elapsed time. `agent_unavailable` usually means interpreter/package installation or worker startup failed; check `FIOS_AGENT_PYTHON` and reinstall the package. `agent_protocol_error` means worker framing/version failure. `upstream_http`, `upstream_unavailable`, `upstream_timeout`, `incomplete_stream`, and `output_limit` distinguish gateway/output failures. Do not enable raw SDK HTTP/debug logs or paste credentials/content into logs. The SDK banner is disabled and untrusted child stderr is not forwarded verbatim.
 
 ### Backup / restore
 
@@ -142,6 +162,6 @@ Keep the default `127.0.0.1` port binding. LAN/public exposure is not configured
 
 ## Spec Kit and project history
 
-Upstream GitHub Spec Kit scaffolding is in `.specify/`, with generic-agent prompts in `.agents/commands/`. Read the [constitution](.specify/memory/constitution.md), then [feature 002](specs/002-custom-frontend/spec.md), its plan, tasks and validation evidence. Use specify → clarify → plan → tasks → analyze → implement for future features.
+Upstream GitHub Spec Kit scaffolding is in `.specify/`, with generic-agent prompts in `.agents/commands/`. Read the [constitution](.specify/memory/constitution.md), then the active numbered feature's spec, plan, tasks and validation evidence (currently [feature 004](specs/004-pydantic-agent-harness/spec.md)). Each spec gets its own branch and reviewed PR targeting `main`; never commit spec work directly to `main`. Use specify → clarify → plan → tasks → analyze → implement for future features.
 
-[ADR 0001](docs/adr/0001-replace-open-webui-with-custom-frontend.md) records the decision to replace Open WebUI with the purpose-built Fios frontend. The Open WebUI attempt is retired under `specs/archive/001-open-webui/`; its container/images were removed. The detached legacy `fios_webui-data` volume was preserved to avoid unapproved data loss and is not used by Fios. [Studio sandbox research](docs/sandboxes.md) remains a separate future feature.
+[ADR 0002](docs/adr/0002-pydantic-agent-harness.md) records the Pydantic AI harness design; its acceptance remains subject to feature PR review. [ADR 0001](docs/adr/0001-replace-open-webui-with-custom-frontend.md) records the decision to replace Open WebUI with the purpose-built Fios frontend. The Open WebUI attempt is retired under `specs/archive/001-open-webui/`; its container/images were removed. The detached legacy `fios_webui-data` volume was preserved to avoid unapproved data loss and is not used by Fios. [Studio sandbox research](docs/sandboxes.md) remains a separate future feature.

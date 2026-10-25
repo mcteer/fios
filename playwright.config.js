@@ -1,5 +1,6 @@
 import { defineConfig } from "@playwright/test";
 import { rmSync } from "node:fs";
+import { resolve } from "node:path";
 for (const suffix of ["", "-shm", "-wal"])
   rmSync("./data/browser-test.sqlite" + suffix, { force: true });
 export default defineConfig({
@@ -23,6 +24,8 @@ export default defineConfig({
       url: "http://127.0.0.1:3311/health",
       reuseExistingServer: false,
       env: {
+        FIOS_AGENT_PYTHON:
+          process.env.FIOS_AGENT_PYTHON || resolve(".venv/bin/python"),
         PORT: "3311",
         HOST: "127.0.0.1",
         DB_PATH: "./data/browser-test.sqlite",

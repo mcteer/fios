@@ -1,0 +1,20 @@
+[build-system]
+requires = ["hatchling==1.32.4"]
+build-backend = "hatchling.build"
+
+[project]
+name = "fios-agent"
+version = "0.1.0"
+description = "Private Pydantic AI harness for the Fios workspace"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+  "pydantic-ai-slim[openai]==2.61.0",
+  "openai==3.37.0",
+  "httpx2==2.16.0",
+]
+
+[tool.uv]
+required-version = "==0.13.5"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/agent/fios_agent"]
