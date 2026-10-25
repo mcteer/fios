@@ -4,7 +4,11 @@ Date: 2026-10-25. Branch: `004-pydantic-agent-harness`.
 
 ## Result
 
-Implementation and required local/mock/browser/isolated-container validation are complete, including the original 47 tasks and four CI implementation/evidence tasks. Initial implementation commit: `1a9de23`. Delivery is tracked in [PR #1](https://github.com/mcteer/fios/pull/1), with the dedicated feature branch pushed to origin. The user authorized merging only once hosted CI is green on the exact latest PR SHA; the PR state and completion report are authoritative for the external merge action (T052). Production has **not** been upgraded. Review/merge and production deployment are separate operations; no real inference or native cluster change was needed for these tests.
+Complete and closed (2026-10-25), all T001–T052 complete. Initial implementation `1a9de23`; [PR #1](https://github.com/mcteer/fios/pull/1) merged as `64c05daa26f3b34a8636af3f400e44c4e8c37a1d` after all six exact-head checks passed ([final PR CI](https://github.com/mcteer/fios/actions/runs/40208026801), [merged-main CI](https://github.com/mcteer/fios/actions/runs/40208173668)). Production rollout was separately authorized and subsequently completed, including the container-only stack in [PR #3](https://github.com/mcteer/fios/pull/3). Implementation-stage observations below are historical, not current outstanding gates.
+
+## Authorized real production inference — 2026-10-25
+
+After the user explicitly said “proceed”, ran `node scripts/check.mjs 'mlx-community/gemma-4-e4b-it-4bit'` against production `84418cdf2ec9d08e44e3bf0f6f59872734be5983`. Authentication and discovery succeeded; the exact local model was initially on demand. A temporary text attachment contained `workspace_name = "Fios connected"`. The real Fios → Pydantic AI → native MLX-Serve request streamed **`Fios connected`**, reported successful completion and passed the attachment-context assertion. The script's finally cleanup deleted the temporary test conversation successfully. No fallback, automatic retry, substitution or Studio-model inference was used. The model may remain loaded; no unload was requested. This verifies real text/attachment inference and completion, not all models, vision semantics or real remote compute cancellation.
 
 ## Planning and implementation history
 
@@ -84,7 +88,7 @@ This evidence commit must itself pass hosted CI before merge. The merge operatio
 
 ## Deliberately not claimed
 
-- No production deployment or native inference test has been performed for this feature. Real inference remains opt-in with an exact already-loaded or appropriately small advertised model.
+- Production deployment and the explicitly authorized local Gemma inference test are verified above. No real Studio-model inference, real vision understanding or large cold-model behavior is claimed.
 - Mock image fidelity is not evidence of real model image understanding.
 - Closing/cancelling the client stream is verified; remote native MLX compute termination, cluster failover, distributed RDMA performance and large cold-model behavior are not claimed.
-- ADR 0002 is accepted for integration by the user's conditional merge approval. This is not production deployment approval. Merge must go through PR #1 only after successful hosted checks on its exact latest head; no direct-to-main feature commit is authorized.
+- ADR 0002 is accepted. Conditional exact-head merge approval, subsequent production-delivery authorization and the later explicit real-inference authorization were distinct events; none authorizes native cluster changes or direct-to-main feature commits.

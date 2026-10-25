@@ -3,7 +3,7 @@
 **Input**: Design documents in `specs/004-pydantic-agent-harness/`.
 **Prerequisites**: spec.md, plan.md, research.md, data-model.md, contracts/, quickstart.md.
 **Tests**: Mandatory under FR-010. Write failing tests before their implementation; never substitute a fake worker for real-Agent integration coverage.
-**Status**: Original 47 tasks and four CI implementation/evidence tasks (T048–T051) complete. T052 is the externally tracked release action: [PR #1](https://github.com/mcteer/fios/pull/1) is authoritative for its merge outcome, which is also reported in the completion response. Production deployment remains separate. See validation.md.
+**Status**: Complete and closed (2026-10-25), T001–T052 complete. PR #1 merged as `64c05da` after exact-head green CI. Subsequent approved releases deployed the harness; production `84418cd` passed the user-authorized real Gemma attachment/streaming test. See validation.md. The implementation strategy below is historical sequencing, not an outstanding delivery gate.
 
 Format: `- [ ] Tnnn [P?] [USn?] Description with file paths`. `[P]` means different files can be worked on concurrently after the stated dependencies/gates, not permission to skip them. Requirements-checklist completion does not complete these tasks.
 
@@ -110,7 +110,7 @@ Format: `- [ ] Tnnn [P?] [USn?] Description with file paths`. `[P]` means differ
 - [X] T049 Implement `.github/workflows/ci.yml` with pinned actions, minimal permissions, Node 22/24 unit/API/packaging coverage, browser/build checks, dependency audits, native ARM64 container recovery tests and a fail-closed aggregate gate. (FR-015)
 - [X] T050 Validate `.github/workflows/ci.yml` locally and exercise/fix hosted CI against the latest PR commit; update `README.md` and `AGENTS.md` with checks and CI boundaries. (FR-015)
 - [X] T051 Record observed hosted check results in `specs/004-pydantic-agent-harness/validation.md`, push the evidence and wait for every required check on that final SHA to pass. (SC-007)
-- **T052 — release action (tracked by PR state, not a pre-merge source checkbox):** Merge PR #1 only after its exact latest SHA has green required checks; no admin bypass or zero-check merge. Record the actual merge outcome in the completion report and PR; do not deploy production. (SC-007)
+- [X] T052 Merge PR #1 only after its exact latest SHA has green required checks; no admin bypass or zero-check merge. Completed as `64c05daa26f3b34a8636af3f400e44c4e8c37a1d`; [PR #1](https://github.com/mcteer/fios/pull/1) records the merge. The original merge-only instruction was later superseded by the user's approved automatic-delivery policy; production deployment and real inference were separately authorized and observed. (SC-007)
 
 Order: T048 → T049 → T050 → T051 → T052. These are release-gate follow-ups explicitly requested for this same PR, not another bundled product feature.
 
