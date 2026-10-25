@@ -2,7 +2,7 @@
 
 **Feature Branch**: `005-model-host-readiness`
 **Created**: 2026-10-25
-**Status**: Implemented and locally verified, including authorized local MLX interruption/recovery and hardened real-gateway discovery. Hosted CI, merge and actual production delivery are tracked separately in the PR and completion report.
+**Status**: Implemented and verified locally and in hosted CI, including authorized local MLX interruption/recovery and hardened real-gateway discovery. Exact-head merge and actual production delivery are tracked separately in PR #2 and the completion report.
 **Input**: Fix the availability gap, including serving-host health and advertised models; test local Gemma disappearance/recovery before merging and deploying production.
 
 ## User Scenarios & Testing

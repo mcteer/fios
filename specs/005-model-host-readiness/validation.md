@@ -6,7 +6,7 @@ Date: 2026-10-25. Branch: `005-model-host-readiness`.
 
 Read constitution and upstream Spec Kit prompts, resolved active feature templates/path, specified/clarified/planned/tasks/analyzed before release. Requirements quality checklist: 16/16 passing (read-only during implementation). No extension hooks configured. Ten functional requirements plus five success criteria have task/test/release coverage; no unresolved constitutional exception. Follow-up operations work implements the user's previously requested automatic delivery policy rather than silently leaving merge-only delivery in place.
 
-Current source checkpoint: implementation and local validation complete; hosted CI, merge and production outcomes must be recorded separately in the feature PR and completion report. Do not infer production deployment from these local results.
+Current source checkpoint: implementation and local/hosted validation complete; merge and production outcomes must be recorded separately in [PR #2](https://github.com/mcteer/fios/pull/2) and the completion report. Do not infer production deployment from these local results.
 
 ## Local automated checks
 
@@ -51,6 +51,12 @@ Implemented the native metadata-only observer and read-only directory bind. A on
 - Exact local Gemma available on demand.
 
 No app listener, database, production volume or Docker socket was present in this image probe; only health/catalog reads occurred. Temporary observer, images and metadata directory were cleaned up. Only the explicit peer allowlist was appended to private deployment configuration; credentials were left unchanged and never printed.
+
+## Hosted CI
+
+[Run 40215063982](https://github.com/mcteer/fios/actions/runs/40215063982), implementation commit `623928babf530da66a73b0a0e0d1a729d242ba2e`: **all six checks passed** — Node 22.23.4, Node 24.15.0, browser regressions, dependency audits, native ARM64 container/rollback and aggregate CI gate. Each Node runtime ran 43 Node and 29 Python tests; browsers ran 8 tests. Hosted ARM64 peak: **530 MiB**; delivery-agent backup/verified upgrade/injected failure → automatic image rollback passed. No production access or real inference occurred in CI.
+
+The final evidence/documentation commit must itself pass all checks before exact-head merge. A merged-main push must independently pass before the local delivery agent may deploy. Administrative release outcome T012 is tracked by PR #2 and the completion report; this pre-merge file does not claim an installation or production upgrade has already occurred.
 
 ## Delivery requirements still enforced after this source checkpoint
 
