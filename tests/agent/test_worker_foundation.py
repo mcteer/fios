@@ -79,7 +79,7 @@ class WorkerFoundationTests(unittest.IsolatedAsyncioTestCase):
         await child.stdin.drain()
         self.assertEqual((await self.frame(child))["type"], "started")
         terminal = await self.frame(child)
-        self.assertEqual(terminal, {"v": 1, "type": "error", "run_id": run_id, "code": "upstream_unavailable"})
+        self.assertEqual(terminal, {"v": 1, "type": "error", "run_id": run_id, "code": "model_unavailable"})
         child.stdin.write(b'{"v":1,"type":"shutdown"}\n')
         await child.stdin.drain()
         self.assertEqual(await asyncio.wait_for(child.wait(), 2), 0)

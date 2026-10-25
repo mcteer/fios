@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
 import { createServer } from "node:net";
+import { deployRelease } from "./deploy.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const id = randomUUID().slice(0, 12),
@@ -60,6 +61,7 @@ const compose = (...args) =>
     { capture: true },
   );
 let origin, cookie, chatId;
+const rollbackTags = [];
 async function login() {
   origin = "http://127.0.0.1:" + port;
   const r = await fetch(origin + "/api/login", {
@@ -233,6 +235,23 @@ try {
   console.log(
     "Isolated old → harness → old image rollback and backup restore passed.",
   );
+  const composeRelease = async (selected, args) => {
+    env.FIOS_AGENT_TEST_IMAGE = selected;
+    return compose(...args);
+  };
+  rollbackTags.push("fios:rollback-" + id + "-1");
+  await deployRelease({image, service: "app", run: args => command(args, {capture: true}), compose: composeRelease, stamp: id + "-1"});
+  env.FIOS_AGENT_TEST_IMAGE = previous;
+  await compose("up", "-d", "--wait");
+  rollbackTags.push("fios:rollback-" + id + "-2");
+  await assert.rejects(() => deployRelease({image, service: "app", run: args => command(args, {capture: true}),
+    compose: async (selected, args) => {
+      if (selected === image && args[0] === "exec") throw new Error("Injected post-upgrade verification failure");
+      return composeRelease(selected, args);
+    }, stamp: id + "-2"}), /deployment_failed_previous_image_restored/);
+  await login();
+  assert.deepEqual((await (await request(`/api/chats/${chatId}`)).json()).messages, original.messages);
+  console.log("Delivery agent stopped-volume backup, verified upgrade and automatic failed-upgrade rollback passed.");
   console.log(
     "Images:",
     previous,
@@ -243,5 +262,6 @@ try {
   console.log("Build/test log:", log);
 } finally {
   await compose("down", "--volumes", "--remove-orphans").catch(() => {});
+  for (const tag of rollbackTags) await command(["image", "rm", tag]).catch(() => {});
   await command(["image", "rm", image]).catch(() => {});
 }

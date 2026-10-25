@@ -5,7 +5,7 @@ import asyncio
 import json
 import os
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from urllib.parse import urlsplit
 
 from pydantic_ai import CancellationToken
@@ -28,6 +28,8 @@ def diagnostic(code: str, *, run_id: str | None = None):
 class Settings:
     base_url: str
     api_key: str
+    peers: dict[str, str] = field(default_factory=dict)
+    readiness_file: str | None = None
 
     @classmethod
     def from_environment(cls):
@@ -40,7 +42,10 @@ class Settings:
             raise ValueError("Invalid configuration.")
         # Force port validation without leaking its value on failure.
         parsed.port
-        return cls(base.rstrip("/"), os.environ.get("MLX_API_KEY") or "fios-local-no-key")
+        from .availability import peer_configuration
+        return cls(base.rstrip("/"), os.environ.get("MLX_API_KEY") or "fios-local-no-key",
+                   peer_configuration(os.environ.get("MLX_PEER_URLS", "{}")),
+                   os.environ.get("MLX_READINESS_FILE") or None)
 
 
 class OutputProtocol(asyncio.streams.FlowControlMixin):

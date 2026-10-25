@@ -7,6 +7,7 @@ import { openStore } from "./store.js";
 import { equal, signSession, validSession, buildContext } from "./lib.js";
 import { parseAttachment } from "./attachments.js";
 import { AgentClient } from "../src/agent/client.js";
+import { discover } from "../src/agent/availability.js";
 
 const agent = new AgentClient();
 const agentError = (error) => {
@@ -14,6 +15,7 @@ const agentError = (error) => {
     agent_unavailable:
       "Agent unavailable. Check the installed Python runtime and agent package.",
     agent_protocol_error: "Agent communication failed. Try a new request.",
+    model_unavailable: "The selected model or its serving host is unavailable or unverified. Refresh model availability.",
     upstream_http: `MLX-Serve returned HTTP ${error.upstreamStatus || 502}.`,
     upstream_timeout: "MLX-Serve timed out. Partial output was saved.",
     upstream_unavailable:
@@ -114,42 +116,20 @@ app.use("/api", (req, res, next) =>
 app.post("/api/logout", (req, res) =>
   res.clearCookie(cookieName, { path: "/" }).json({ ok: true }),
 );
-const headers = {
-  "Content-Type": "application/json",
-  ...(process.env.MLX_API_KEY
-    ? { Authorization: `Bearer ${process.env.MLX_API_KEY}` }
-    : {}),
-};
-let cachedModels = [],
-  cachedAt = 0;
-async function models(force = false) {
-  if (!force && Date.now() - cachedAt < 10000) return cachedModels;
-  const response = await fetch(`${base}/models`, {
-    headers,
-    signal: AbortSignal.timeout(10000),
-  });
-  if (!response.ok)
-    throw Object.assign(
-      new Error(`MLX-Serve model discovery failed (HTTP ${response.status}).`),
-      { status: 502 },
-    );
-  const payload = await response.json();
-  if (!Array.isArray(payload.data))
-    throw new Error("MLX-Serve returned an invalid model catalog.");
-  cachedModels = payload.data
-    .filter((m) => m.capabilities?.includes("chat") || !m.capabilities?.length)
-    .map((m) => ({
-      id: m.id,
-      loaded: !!m.loaded,
-      capabilities: m.capabilities || [],
-      peer: m.lan_peer || null,
-    }));
-  cachedAt = Date.now();
-  return cachedModels;
+let cachedModels = [];
+async function modelCatalog(signal) {
+  const result = await discover({base, signal});
+  const current = new Set(result.models.map(m => m.id));
+  const gatewayUp = result.hosts[0].status === "available";
+  const removed = cachedModels.filter(m => !current.has(m.id)).map(m => ({...m,
+    availability: "unavailable", reason: gatewayUp ? "not_advertised" : "gateway_unavailable"}));
+  // Keep a bounded recent selection history, never stale ready observations.
+  result.models = [...result.models, ...removed].slice(0, 512);
+  cachedModels = result.models;
+  return result;
 }
-app.get("/api/models", async (req, res) =>
-  res.json({ models: await models(true) }),
-);
+async function models(signal) { return (await modelCatalog(signal)).models; }
+app.get("/api/models", async (req, res) => res.json(await modelCatalog()));
 app.get("/api/chats", (req, res) => res.json(store.list()));
 app.post("/api/chats", (req, res) => res.status(201).json(store.create("")));
 app.get("/api/chats/:id", (req, res) => {
@@ -239,7 +219,9 @@ app.post(
           { status: 413 },
         );
       const files = await Promise.all((req.files || []).map(parseAttachment));
-      const model = (await models(true)).find((m) => m.id === modelId);
+      const model = (await models(controller.signal)).find((m) => m.id === modelId);
+      if (model && model.availability !== "available")
+        throw Object.assign(new Error("The selected model or its serving host is unavailable or unverified. Refresh model availability."), {status: 503});
       if (!model)
         throw Object.assign(
           new Error("Choose a chat model currently advertised by MLX-Serve."),

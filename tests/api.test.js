@@ -144,11 +144,11 @@ test("authenticated API: discovery, attachments, streaming, errors, stop, persis
       method: "POST",
       body: form("Do not send to a removed model"),
     });
-    assert.equal(staleSend.status, 400);
+    assert.equal(staleSend.status, 503);
     const updated = await request("/models");
     assert.equal(updated.headers.get("cache-control"), "no-store");
     assert.equal(
-      (await updated.json()).models.some((m) => m.id === "test/coding-model"),
+      (await updated.json()).models.some((m) => m.id === "test/coding-model" && m.availability === "available"),
       false,
     );
     mock.catalog.push({ id: "test/added-model", capabilities: ["chat"] });

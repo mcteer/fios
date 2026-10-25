@@ -27,6 +27,8 @@ export function childEnvironment(env = process.env) {
     "LC_ALL",
     "MLX_BASE_URL",
     "MLX_API_KEY",
+    "MLX_PEER_URLS",
+    "MLX_READINESS_FILE",
   ])
     if (typeof env[key] === "string") result[key] = env[key];
   result.MLX_BASE_URL ||= "http://host.docker.internal:11234/v1";

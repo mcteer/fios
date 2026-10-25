@@ -5,6 +5,7 @@ export const ERROR_CODES = new Set([
   "busy",
   "invalid_request",
   "upstream_unavailable",
+  "model_unavailable",
   "upstream_http",
   "upstream_timeout",
   "incomplete_stream",

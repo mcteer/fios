@@ -151,6 +151,15 @@ function RichText({ content }) {
     </Markdown>
   );
 }
+function availabilityLabel(model) {
+  if (model.availability === "available") return model.loaded ? "Loaded" : "On demand";
+  const reasons = {
+    host_down: "Host offline", not_advertised: "Model not presented",
+    host_unverified: "Host not verified", unauthorized: "Host authorization required",
+    invalid_catalog: "Invalid host response", gateway_unavailable: "Gateway offline",
+  };
+  return `${model.availability === "unknown" ? "Unverified" : "Unavailable"} · ${reasons[model.reason] || "Refresh availability"}`;
+}
 function ModelPicker({
   pickerRef,
   picker,
@@ -159,6 +168,7 @@ function ModelPicker({
   modelsState,
   selected,
   models,
+  hosts,
   setSelected,
   refreshModels,
 }) {
@@ -186,7 +196,7 @@ function ModelPicker({
         </span>
         <ChevronDown size={12} />
         <span
-          className={"status-dot " + (modelsState === "error" ? "offline" : "")}
+          className={"status-dot " + (modelsState === "error" || (selected && !models.some(m => m.id === selected && m.availability === "available")) ? "offline" : "")}
         />
       </button>
       {picker && (
@@ -201,6 +211,9 @@ function ModelPicker({
               <RefreshCw size={13} />
             </IconButton>
           </div>
+          <div className="model-host-status" aria-label="Serving host status">
+            {hosts.map(host => <p key={host.name}>{host.name === "gateway" ? "Gateway / This Mac" : host.name}: {host.status === "available" ? "Online" : host.status === "unknown" ? "Unverified" : "Offline"}{typeof host.modelCount === "number" ? ` · ${host.modelCount} models` : ""}</p>)}
+          </div>
           {models.length === 0 ? (
             <p>No chat models available.</p>
           ) : (
@@ -211,7 +224,7 @@ function ModelPicker({
                   "model-option " + (m.id === selected ? "selected" : "")
                 }
                 key={m.id}
-                disabled={modelsState !== "ready"}
+                disabled={modelsState !== "ready" || m.availability !== "available"}
                 onClick={() => {
                   setSelected(m.id);
                   setPicker(false);
@@ -223,7 +236,7 @@ function ModelPicker({
                     {m.peer || "This Mac"}
                     {m.capabilities.includes("vision")
                       ? " · Vision"
-                      : ""} · {m.loaded ? "Loaded" : "On demand"}
+                      : ""} · {availabilityLabel(m)}
                   </small>
                 </span>
                 {m.id === selected && <Check size={15} />}
@@ -365,6 +378,7 @@ function Workspace({ onLogout }) {
     [chat, setChat] = useState(null);
   const {
     models,
+    hosts,
     selected,
     setSelected,
     modelsState,
@@ -494,7 +508,7 @@ function Workspace({ onLogout }) {
       (!draft.trim() && !files.length) ||
       !selected ||
       modelsState !== "ready" ||
-      !models.some((m) => m.id === selected)
+      !models.some((m) => m.id === selected && m.availability === "available")
     )
       return;
     sendLock.current = true;
@@ -947,6 +961,7 @@ function Workspace({ onLogout }) {
                   modelsState={modelsState}
                   selected={selected}
                   models={models}
+                  hosts={hosts}
                   setSelected={setSelected}
                   refreshModels={refreshModels}
                 />
@@ -983,7 +998,7 @@ function Workspace({ onLogout }) {
                       !selected ||
                       loading ||
                       modelsState !== "ready" ||
-                      !models.some((m) => m.id === selected)
+                      !models.some((m) => m.id === selected && m.availability === "available")
                     }
                   >
                     <ArrowUp size={20} />

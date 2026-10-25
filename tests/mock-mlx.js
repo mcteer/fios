@@ -3,6 +3,7 @@ import { createServer } from "node:http";
 export function mockMlx(port = 0) {
   const requests = [],
     connections = [];
+  const health = {status: 200};
   const catalog = [
     {
       id: "test/coding-model",
@@ -13,6 +14,10 @@ export function mockMlx(port = 0) {
     { id: "test/image-generator", capabilities: ["image"] },
   ];
   const server = createServer(async (req, res) => {
+    if (req.url === "/health") {
+      res.writeHead(health.status, {"Content-Type": "application/json"});
+      return res.end(JSON.stringify({status: health.status === 200 ? "ok" : "down"}));
+    }
     if (req.url === "/v1/models")
       return res
         .setHeader("Content-Type", "application/json")
@@ -120,6 +125,7 @@ export function mockMlx(port = 0) {
         requests,
         connections,
         catalog,
+        health,
         addPeer(id = "test/coding-model@studio-a") {
           catalog.push({
             id,

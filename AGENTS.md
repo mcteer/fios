@@ -10,7 +10,27 @@ Going forward, each spec must have its own dedicated branch and pull request. Be
 
 ## Continuous integration
 
-`.github/workflows/ci.yml` validates locked installs, Node 22/24 unit/API tests, build/boundary checks, Chromium regressions, npm/Python audits and a native ARM64 hardened-container recovery rehearsal. CI is mock-only: no production secrets, live MLX hosts, real inference or deployment. Keep actions SHA-pinned and permissions read-only; do not use `pull_request_target` to execute PR code with secrets. The aggregate `CI gate` must pass with every prerequisite successful on the exact latest PR SHA before merging; zero checks is not green CI. A passing workflow does not authorize production deployment or cluster changes.
+`.github/workflows/ci.yml` validates locked installs, Node 22/24 unit/API tests, build/boundary checks, Chromium regressions, npm/Python audits and a native ARM64 hardened-container recovery rehearsal. CI is mock-only: no production secrets, live MLX hosts, real inference or deployment. Keep actions SHA-pinned and permissions read-only; do not use `pull_request_target` to execute PR code with secrets. The aggregate `CI gate` must pass with every prerequisite successful on the exact latest PR SHA before merging; zero checks is not green CI. CI validates changes; the production delivery policy below defines the required deployment that follows a successful merge. Neither CI nor deployment authorizes cluster changes.
+
+## Production delivery
+
+A successful merge to `main` must lead to automatic production deployment after CI passes on the exact merged commit. Merge-only delivery is not the expected endpoint. Routine Fios application deployment under these safeguards does not require another approval after an approved merge.
+
+Required sequence: merge → green `main` CI → build the exact merged revision → preserve the currently deployed image/revision → stop the application and back up its persistent data → deploy → verify application health and authenticated gateway discovery without inference. Build before stopping the application to minimize downtime. Serialize deployments and never open the same SQLite file from two application instances.
+
+If deployment or verification fails, automatically restore the previous known-good application image/configuration and verify recovery. Restore the stopped-volume backup if data compatibility requires it; preserve the failed deployment's data for diagnosis rather than overwriting or deleting it blindly. Keep backups and rollback images until successful verification. If safe rollback cannot be completed, stop the rollout and report the failure explicitly.
+
+Deployment must remain on the existing authorized application host, preserve credentials, authentication, localhost binding, persistent volumes and container hardening, and must not expose the Docker socket to the app or PR jobs. Automatic application deployment does not authorize MLX/RDMA changes, new remote-execution access, public/LAN exposure, real inference or removal of legacy data.
+
+Keep CI and deployment status distinct in reports: identify the deployed commit and observed verification result. Green CI or a merged PR is not proof of deployment. If the deployment mechanism is missing, disabled or blocked, report that gap explicitly and do not call the delivery complete. Documentation alone does not implement automatic deployment.
+
+## Model and host readiness
+
+Express and the Python harness must independently gate the exact selected model on gateway/serving-host health and that host's own advertised model catalog. A cached peer entry is not proof of readiness. Unloaded but advertised on a healthy host means available on demand; discovery must never load models or run inference. Probe only explicit `MLX_PEER_URLS`; never follow catalog URLs or forward gateway credentials to peers.
+
+The hardened production container cannot directly reach the Studio interfaces in the observed environment. `scripts/observe-hosts.mjs` performs native read-only checks and atomically shares metadata through a read-only directory bind, not a listener or Docker socket. Both runtimes must validate endpoint fingerprints and reject missing, malformed, future-dated or older-than-5-second observations. Unknown/unavailable targets cannot be sent and must not trigger fallback/substitution. Preserve this fail-closed behavior when changing discovery or the harness.
+
+`node scripts/install-deployment.mjs --install` installs the native observer and outbound-only local delivery agent from clean, green, merged main only. Do not install code from an unmerged worktree or run production deployment from a PR/hosted CI runner. Keep installed programs pinned to reviewed source, serialize upgrades with the native lock, and exercise `tests/deployment.test.js` plus `scripts/check-agent-container.mjs` before changing release safety. Record the actual deployed revision, backup and verification separately from CI results.
 
 ## Agent harness
 
