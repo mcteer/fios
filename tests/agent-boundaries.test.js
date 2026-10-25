@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { once } from "node:events";
 import { AgentClient } from "../src/agent/client.js";
 import { agentApp } from "./agent-support.js";
 import { mockMlx } from "./mock-mlx.js";
@@ -54,20 +55,40 @@ test("idle watchdog observes actual data, not synthetic keepalives; worker can r
   const mock = await mockMlx();
   const client = new AgentClient({
     env: { MLX_BASE_URL: mock.url },
-    idleMs: 300,
+    idleMs: 10000,
   });
   try {
-    const events = [];
-    for await (const e of client.run({
-      model: "test/coding-model",
-      context: [{ role: "user", content: "NO_FIRST_TOKEN" }],
-    }))
-      events.push(e);
-    assert.equal(events.at(-1).status, "interrupted");
     await client.ready();
+    const events = [];
+    const received = once(mock.server, "request", {
+      signal: AbortSignal.timeout(10000),
+    });
+    const firstRun = (async () => {
+      for await (const e of client.run({
+        model: "test/coding-model",
+        context: [{ role: "user", content: "NO_FIRST_TOKEN" }],
+      }))
+        events.push(e);
+    })();
+    await Promise.race([
+      received,
+      firstRun.then(() => {
+        throw new Error("Idle run ended before reaching mock MLX");
+      }),
+    ]);
+    // Measure upstream idleness, not variable cold HTTP/Agent initialization time.
+    client.options.idleMs = 300;
+    const idleStart = Date.now();
+    client.resetIdle(client.current);
+    await firstRun;
+    assert.equal(events.at(-1).status, "interrupted");
+    assert.ok(Date.now() - idleStart >= 250);
+    assert.ok(Date.now() - idleStart < 2300);
+    await client.ready();
+    const crashed = client.worker;
     process.kill(client.pid, "SIGKILL");
-    await new Promise((r) => setTimeout(r, 50));
-    client.options.idleMs = 2000;
+    await crashed.exit;
+    client.options.idleMs = 10000;
     const next = [];
     for await (const e of client.run({
       model: "test/coding-model",
