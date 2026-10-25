@@ -1,6 +1,6 @@
 # ADR 0002: Route Fios inference through a private Pydantic AI worker
 
-Status: Proposed — user selected Pydantic AI slim and `src/agent/`; integration design awaits feature PR review. Implemented and mock/browser/isolated-container tested on the feature branch; not deployed to production.
+Status: Accepted for integration — user authorized merging [PR #1](https://github.com/mcteer/fios/pull/1) conditional on successful CI for its exact latest head. Implemented and locally/hosted-CI tested with mock MLX, browser regressions and isolated ARM64 recovery checks. Acceptance does not authorize production deployment; production remains unchanged.
 
 Date: 2026-10-25
 

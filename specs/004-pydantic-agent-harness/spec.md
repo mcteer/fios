@@ -4,7 +4,7 @@
 
 **Created**: 2026-10-25
 
-**Status**: Implemented and validated on the feature branch (unit/API/browser/isolated ARM64 container); awaiting PR review and approved production deployment. Real inference remains opt-in and untested for this feature.
+**Status**: Implemented and validated locally and in hosted CI (Node 22/24 unit/API, browser, audits, native ARM64 container recovery). User authorized merge only after green CI on the latest PR SHA; PR #1 tracks the merge outcome. Production deployment is separate and has not been performed. Real inference remains opt-in and untested for this feature.
 
 **Input**: User description: "Add Pydantic AI (slim version) as our base agent harness. Going forward, all interactions with this interface should utilize the Pydantic harness to interact with the backend language models."
 

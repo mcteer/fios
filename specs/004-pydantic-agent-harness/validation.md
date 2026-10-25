@@ -4,7 +4,7 @@ Date: 2026-10-25. Branch: `004-pydantic-agent-harness`.
 
 ## Result
 
-Implementation and required local/mock/browser/isolated-container validation are complete; all 47 tracked tasks are checked. Implementation commit: `1a9de23`. Submitted for review in [PR #1](https://github.com/mcteer/fios/pull/1), with the dedicated feature branch pushed to origin. Production has **not** been upgraded. Review/merge and production deployment are separate operations; no real inference or native cluster change was needed for these tests.
+Implementation and required local/mock/browser/isolated-container validation are complete, including the original 47 tasks and four CI implementation/evidence tasks. Initial implementation commit: `1a9de23`. Delivery is tracked in [PR #1](https://github.com/mcteer/fios/pull/1), with the dedicated feature branch pushed to origin. The user authorized merging only once hosted CI is green on the exact latest PR SHA; the PR state and completion report are authoritative for the external merge action (T052). Production has **not** been upgraded. Review/merge and production deployment are separate operations; no real inference or native cluster change was needed for these tests.
 
 ## Planning and implementation history
 
@@ -60,9 +60,31 @@ Latest successful test image: `fios-agent-test:aaf865a6-b4f` (removed after vali
 
 Two initial test-harness runs exposed OrbStack behavior around dynamic port reporting and `internal: true` network port publishing. They were cleaned up. The test harness now selects a free localhost port explicitly and uses a separate ordinary bridge network, with no mock host port. This was a test-network correction, not a production network or cluster change.
 
+## Hosted CI follow-up
+
+The user requested project CI before merging this PR. Added `.github/workflows/ci.yml`, scoped this release-gate extension in FR-015/SC-007, and updated operating/agent guidance.
+
+- Triggers: PR, push to main, manual dispatch and weekly schedule. No path filters that could silently omit a gate.
+- Read-only repository permissions, no persisted checkout credentials, SHA-pinned actions, explicit timeouts and cancellation of superseded runs. No production secrets, native hosts, real model inference, remote execution or deployment.
+- Node **22.23.4** and **24.15.0** on Ubuntu 24.04: clean npm/frozen Python install, lockfile consistency, build, **34 Node + 23 Python tests each**, and boundary guard.
+- Chromium browser job: **7 passed** with installed frozen Python harness and mock MLX.
+- Dependency audit job: npm reports **zero vulnerabilities**; pinned pip-audit reports **no known third-party vulnerabilities**, with the local non-PyPI package explicitly skipped as documented above.
+- Native `ubuntu-24.04-arm` job: builds the immutable pre-harness commit `526f8c9747ac17b0ba6df5261338f0b60134d24b` as its disposable baseline, then runs hardened image, cancellation, maximum-context, parent-death, upgrade/rollback and actual backup restore tests. Peak observed in the green run: **530 MiB** under the unchanged 1 GiB cap. Compose validation uses ephemeral test-only settings and suppresses resolved output.
+- Mock-only failure diagnostics have seven-day retention. The stable `CI gate` requires every job to succeed and fails on failed, cancelled or skipped prerequisites. It does not convert missing or pending checks to success.
+- Local validation: **actionlint 1.7.12 passed** (release checksum verified); all action references are full SHA pins. The gate's actual Node expression was exercised against **16 combinations** of successful/failed/cancelled/skipped prerequisites and returned the expected exit status for each.
+
+Observed runs:
+
+1. [40206877273](https://github.com/mcteer/fios/actions/runs/40206877273), commit `aab51b7`: all six job/check results green on the first hosted run. GitHub warned that initial action versions used deprecated Node 20 runtimes.
+2. Upgraded to SHA-pinned current releases: checkout **7.0.1**, setup-node **7.1.0**, setup-uv **10.3.2**, upload-artifact **7.0.2**, without changing application dependencies. [40207384697](https://github.com/mcteer/fios/actions/runs/40207384697) surfaced an existing Node 24 test timing race: the 300 ms test-only watchdog could expire before a busy runner submitted its first mock request. The aggregate gate correctly failed; no failed-check bypass or blind retry was used.
+3. Fixed that test in `7960f67`: observe the mock request before arming the short idle deadline, and await actual worker exit instead of a 50 ms sleep. Production watchdog/cancellation settings were not relaxed. Five consecutive local focused runs passed.
+4. [40207715628](https://github.com/mcteer/fios/actions/runs/40207715628), commit `7960f67c45a6a6b2ebe7548781ceb6b9c74f34b2`: **all six checks green**, covering both Node runtimes, browser regressions, audits, native ARM64 container recovery and aggregate gate with the current action pins and deterministic regression.
+
+This evidence commit must itself pass hosted CI before merge. The merge operation must match the exact checked PR head SHA and must not use administrator bypass. No branch-protection settings or production deployment changes are made by adding CI.
+
 ## Deliberately not claimed
 
 - No production deployment or native inference test has been performed for this feature. Real inference remains opt-in with an exact already-loaded or appropriately small advertised model.
 - Mock image fidelity is not evidence of real model image understanding.
 - Closing/cancelling the client stream is verified; remote native MLX compute termination, cluster failover, distributed RDMA performance and large cold-model behavior are not claimed.
-- ADR 0002 remains Proposed until feature PR review/acceptance. The feature must not be merged directly to main without review and approval.
+- ADR 0002 is accepted for integration by the user's conditional merge approval. This is not production deployment approval. Merge must go through PR #1 only after successful hosted checks on its exact latest head; no direct-to-main feature commit is authorized.
