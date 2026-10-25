@@ -1,6 +1,6 @@
 # Feature Specification: Containerized Supporting Services
 
-**Branch**: `006-container-support-services` | **Created**: 2026-10-25 | **Status**: Implemented and locally verified; hosted CI and production migration pending separately gated release.
+**Branch**: `006-container-support-services` | **Created**: 2026-10-25 | **Status**: Complete and closed (2026-10-25). PR #3 merged as `84418cdf2ec9d08e44e3bf0f6f59872734be5983` after exact-head green CI and independently green merged-main CI. All three OrbStack Fios services were deployed and verified healthy; no native supporting jobs remain. See validation.md for backup, controller, API/browser and installed-Python evidence.
 
 ## User Scenarios & Testing
 

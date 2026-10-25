@@ -1,6 +1,15 @@
 # Validation — Containerized Supporting Services
 
-2026-10-25; branch `006-container-support-services`. Source checkpoint: local implementation/validation complete; hosted CI, merge and actual production migration remain separately gated. Record administrative release outcome in the PR/completion report rather than claiming a pre-merge source file proves deployment.
+2026-10-25; complete and closed, T001–T008 complete. [PR #3](https://github.com/mcteer/fios/pull/3) merged exact checked head `fdfedcdc2727e275207d7858efe3f92ab6b3ea18` after [all six PR checks](https://github.com/mcteer/fios/actions/runs/40219923110). Merge `84418cdf2ec9d08e44e3bf0f6f59872734be5983` independently passed [all six main checks](https://github.com/mcteer/fios/actions/runs/40220107435), then was deployed. Earlier local-check observations below are historical evidence, not pending release actions.
+
+## Production closeout
+
+- Built app/observer and management images from an immutable archive of checked main, with the exact revision label. All three services were healthy in the OrbStack Fios Compose project: `fios-fios-1`, `fios-readiness-1`, `fios-deployer`.
+- Stopped-data backup `fios_fios-data/backups/before-1a17445f6d3` and prior image `fios:rollback-1a17445f6d3` retained; verified completion marker/SQLite file without opening the database. Original data volume and credentials preserved.
+- Authenticated production API, actual browser and installed Python harness agreed: three healthy serving hosts and five available models, including exact local Gemma. Browser showed three Online indicators and five enabled choices; no private screenshots/conversation content captured.
+- Only controller had the Docker socket; app metadata mount was read-only, app resource bounds unchanged at 1 GiB/2 CPU. No host checkout/config mounts or supporting-service ports. Native jobs/plists/installation directory absent; MLX/RDMA unchanged.
+- Containerized controller's actual Docker connection and buildx/private configuration passed a disposable no-RUN scratch build; probe removed. Seeded sanitized deployed-revision state and observed independent persistent polls at 18:15:14 and 18:18:15 UTC, both correctly reporting unchanged, with fresh heartbeat. No native scheduler.
+- Later, explicitly authorized real production Gemma attachment/streaming/completion smoke passed and temporary chat was deleted; detailed inference evidence is in spec 004 validation. This is distinct from non-inference readiness verification; no Studio inference or real vision-quality claim.
 
 ## Immediate authorized revert
 
@@ -30,6 +39,6 @@ Eight functional requirements and five success criteria map to T001–T008; no u
 
 Public discovery requires the latest exact-main push workflow plus all required checks, repeats both before stopping, rejects redirects/oversized responses, and caps real API requests at 50/hour with server-reset backoff. Idle polling is 20/hour. Linux flock guards the full controller loop, forwards shutdown to the lock-owning process and has kernel-released ownership. Supporting images stay stable while the app is stopped/backed-up/replaced; automatic compatible-image rollback uses `--no-deps` and preserves new records. Incompatible migrations/power loss still require the preserved backup/image and an operator recovery plan; do not interrupt an active rollout.
 
-## Release gates
+## Release gates — satisfied
 
-Require final-head green CI, reviewed exact-head merge, then independently green merged-main CI. Build reviewed images with revision labels, start the container observer, perform the one-shot serialized stopped-backup app migration, verify authenticated Node/Python discovery and browser model states, and only then start the persistent container controller with sanitized seeded state. Verify all three services share the Fios project and only controller has the socket. No production migration or persistent unmerged controller execution is claimed at this checkpoint.
+Final-head CI, exact-head merge, independently green merged-main CI, stopped-backup production migration, authenticated/browser/Python verification and persistent container-controller startup were all observed above. No unmerged controller code was executed against production. User requested formal closeout after the remaining documentation/acceptance items were identified; this record reconciles those outcomes without inventing further test coverage.
