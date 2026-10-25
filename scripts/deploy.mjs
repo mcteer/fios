@@ -22,6 +22,14 @@ export async function execute(program,args,{cwd,env=process.env,timeout=20*60*10
     child.on('close',code=>{clearTimeout(timer);code===0?resolveResult(output.trim()):reject(new Error('command_failed'));});
   });
 }
+export async function runLocked(script,args,state) {
+  mkdirSync(state,{recursive:true,mode:0o700});
+  return new Promise(resolveResult=>{
+    const child=spawn('/usr/bin/lockf',['-k','-s','-t','0',join(state,'deploy.lock'),process.execPath,script,...args,'--lock-held'],{stdio:['ignore','inherit','inherit'],shell:false});
+    child.on('error',()=>resolveResult(1));
+    child.on('close',code=>resolveResult(code??1));
+  });
+}
 const backupCode = `const fs=require('node:fs');const path=require('node:path');const root='/app/data';const name=process.argv[1];if(!/^before-[a-f0-9-]+$/.test(name))throw new Error('invalid_backup');const dest=path.join(root,'backups',name);fs.mkdirSync(dest,{recursive:true,mode:0o700});for(const f of fs.readdirSync(root)){if(f!=='backups')fs.cpSync(path.join(root,f),path.join(dest,f),{recursive:true,errorOnExist:true,force:false});}fs.writeFileSync(path.join(dest,'complete'),'stopped-volume snapshot\\n',{mode:0o600});`;
 const verifyCode = `const origin='http://127.0.0.1:3000';const health=await fetch(origin+'/health');if(!health.ok)throw new Error('health_failed');const login=await fetch(origin+'/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:process.env.FIOS_PASSWORD})});if(!login.ok)throw new Error('login_failed');const cookie=login.headers.get('set-cookie')?.split(';')[0];if(!cookie)throw new Error('session_failed');const response=await fetch(origin+'/api/models',{headers:{Cookie:cookie}});if(!response.ok)throw new Error('discovery_failed');const data=await response.json();if(!Array.isArray(data.models)||!data.models.length)throw new Error('empty_catalog');if(data.hosts&&(!data.hosts.some(h=>h.name==='gateway'&&h.status==='available')||!data.models.some(m=>m.availability==='available')))throw new Error('gateway_unavailable');console.log('Authenticated non-inference discovery verified: '+data.models.length+' models');`;
 
@@ -70,9 +78,6 @@ function record(value){console.log(JSON.stringify({phase:'deploy',time:new Date(
 export async function poll({repo,state,repository='mcteer/fios'}) {
   if(process.platform!=='darwin')throw new Error('macos_application_host_required');
   mkdirSync(state,{recursive:true,mode:0o700});
-  const lock=join(state,'deploy.pid');
-  // macOS shlock atomically serializes runs and reclaims locks whose owner has exited.
-  try{await execute('/usr/bin/shlock',['-p',String(process.pid),'-f',lock]);}catch{return {status:'busy'};}
   const stateFile=join(state,'state.json');
   let stored={};
   let sha;
@@ -129,7 +134,7 @@ export async function poll({repo,state,repository='mcteer/fios'}) {
     if(sha)atomicJson(stateFile,{...stored,...(code!=='deployment_blocked'?{failedSha:sha}:{}),lastError:code,failedAt:new Date().toISOString()});
     record({status:code,sha});
     throw new Error(code);
-  } finally {rmSync(lock,{force:true});}
+  }
 }
 
 if(process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url)) {
@@ -137,6 +142,12 @@ if(process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url)) {
   const option=(key,fallback)=>{const i=args.indexOf(key);return i<0?fallback:args[i+1];};
   const repo=resolve(option('--repo',fileURLToPath(new URL('../',import.meta.url))));
   const state=resolve(option('--state',join(homedir(),'Library','Application Support','Fios','deploy')));
-  try {const result=await poll({repo,state});if(result.status!=='deployed')record(result);}
-  catch {process.exitCode=1;}
+  if(process.platform!=='darwin'){record({status:'macos_application_host_required'});process.exitCode=1;}
+  else if(!args.includes('--lock-held')){
+    const code=await runLocked(fileURLToPath(import.meta.url),args,state);
+    if(code===75)record({status:'busy'});else process.exitCode=code;
+  }else{
+    try {const result=await poll({repo,state});if(result.status!=='deployed')record(result);}
+    catch {process.exitCode=1;}
+  }
 }

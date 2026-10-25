@@ -1,15 +1,18 @@
 // Explicit macOS installation from clean, checked merged main. No remote runner/listener.
-import {mkdirSync,writeFileSync,renameSync,existsSync,rmSync} from 'node:fs';
+import {mkdirSync,writeFileSync,renameSync,existsSync} from 'node:fs';
 import {homedir} from 'node:os';
 import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {execute,greenChecks} from './deploy.mjs';
+import {execute,greenChecks,runLocked} from './deploy.mjs';
 
 if(process.platform!=='darwin'||!process.argv.includes('--install')){
   console.error('Usage on the authorized macOS application host: node scripts/install-deployment.mjs --install');
   process.exitCode=1;
+}else if(!process.argv.includes('--lock-held')){
+  const state=join(homedir(),'Library','Application Support','Fios','deploy');
+  const code=await runLocked(fileURLToPath(import.meta.url),process.argv.slice(2),state);
+  if(code===75){console.error('Installation blocked by an active deployment.');process.exitCode=1;}else process.exitCode=code;
 }else{
-  let lock;
   try{
     const repo=fileURLToPath(new URL('../',import.meta.url));
     if(await execute('git',['status','--porcelain'],{cwd:repo}))throw new Error('dirty');
@@ -20,9 +23,6 @@ if(process.platform!=='darwin'||!process.argv.includes('--install')){
     if(!greenChecks(checks.check_runs))throw new Error('not_green');
     const state=join(homedir(),'Library','Application Support','Fios','deploy');
     mkdirSync(join(state,'bin'),{recursive:true,mode:0o700});
-    const candidateLock=join(state,'deploy.pid');
-    await execute('/usr/bin/shlock',['-p',String(process.pid),'-f',candidateLock]);
-    lock=candidateLock;
     const program=join(state,'bin','deploy.mjs');
     const copy=async(source,destination)=>{
       const content=await execute('git',['show',`${sha}:${source}`],{cwd:repo});
@@ -62,5 +62,5 @@ if(process.platform!=='darwin'||!process.argv.includes('--install')){
   }catch{
     console.error('Installation blocked. Require clean checked main, private .env, idle deployment lock, local Docker/GitHub access and an active macOS login session. No credentials were printed.');
     process.exitCode=1;
-  }finally{if(lock)rmSync(lock,{force:true});}
+  }
 }

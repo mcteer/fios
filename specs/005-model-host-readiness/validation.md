@@ -56,7 +56,9 @@ No app listener, database, production volume or Docker socket was present in thi
 
 [Run 40215063982](https://github.com/mcteer/fios/actions/runs/40215063982), implementation commit `623928babf530da66a73b0a0e0d1a729d242ba2e`: **all six checks passed** — Node 22.23.4, Node 24.15.0, browser regressions, dependency audits, native ARM64 container/rollback and aggregate CI gate. Each Node runtime ran 43 Node and 29 Python tests; browsers ran 8 tests. Hosted ARM64 peak: **530 MiB**; delivery-agent backup/verified upgrade/injected failure → automatic image rollback passed. No production access or real inference occurred in CI.
 
-The final evidence/documentation commit must itself pass all checks before exact-head merge. A merged-main push must independently pass before the local delivery agent may deploy. Administrative release outcome T012 is tracked by PR #2 and the completion report; this pre-merge file does not claim an installation or production upgrade has already occurred.
+A final native lock smoke test rejected the initial deprecated PID-file utility: its stale-lock behavior did not meet recovery expectations. Replaced it with the platform-recommended kernel-backed `lockf -k -s -t 0` wrapper around both deployment and installation. Actual macOS tests verified that concurrent execution is blocked, stale file contents are irrelevant, and owner termination releases the lock. Deployment unit regressions and syntax checks passed after this refinement; no production process or data was touched by these lock tests.
+
+The final evidence/documentation and native-lock refinement commit must itself pass all checks before exact-head merge. A merged-main push must independently pass before the local delivery agent may deploy. Administrative release outcome T012 is tracked by PR #2 and the completion report; this pre-merge file does not claim an installation or production upgrade has already occurred.
 
 ## Delivery requirements still enforced after this source checkpoint
 
