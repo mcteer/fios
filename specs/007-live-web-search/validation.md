@@ -1,6 +1,46 @@
 # Spec 007 implementation and acceptance evidence
 
-## Status (2026-10-25)
+## Approved SearXNG fix — current checkpoint
+
+Original PR#8 merged as `b3db969cc7b529205c738644c38529fa4d02f51f`, passed independent main CI40244490679 and was automatically deployed/healthy. The user then explicitly selected our own SearXNG **container with the existing stack**, as a fix to007 rather than a new spec. The following current record supersedes DDG-only/no-new-service assumptions in the historical checkpoint below.
+
+### Fix implementation
+
+- Python retains the sole automatic `web_search` function tool and all privacy/model-count/context/cancel/manifest/IPC/storage/UI controls. `web/searxng.py` replaces the direct-DDG adapter. Its separate unauthenticated, nonredirecting, no-proxy client reaches only `http://searxng:8080/search` with a validated query and fixed JSON/general/en/safe-search/page1 parameters. No endpoint environment override or generic private fetch is provided. Result URLs still pass the unchanged public-only page/robots DNS/IP/redirect/TLS checks, including rejection of the gateway as a source.
+- `Dockerfile.searxng` derives from official index digest `sha256:23482d8ecf7ddf66029479468ea04c1bb11d2b65785a17a7e629e2ffd13296ca`, version2026.10.25-54ca1d9cf/source54ca1d9cfb08674f66261d7f351b063558dfcc62, AGPL-3.0-or-later. The app's frozen Python29-package lock is unchanged. The supporting image has its own packaged Python/dependencies, not the app interpreter.
+- Compose adds `searxng` only:977:977, read-only/cap-drop/no-new-privileges,256MiB/0.5CPU, disposable tmpfs, random process-local secret, no published ports/app credentials/SQLite/socket/host checkout mounts, no retained access/query logs. App↔gateway uses an internal-only network; SearXNG has a distinct egress network. Static `/healthz` checks do not issue a query and do not prove upstream availability.
+- Bing/Brave are an explicit concurrent upstream set, not a fallback ladder or local index. Queries leave the machine through those engines. Configured request timeout3s/max4s/retries0; no proxy/Tor/key or custom CAPTCHA workaround. SearXNG owns engine networking, outside the custom page transport; do not claim identical pinned-IP/header/robots policies or14 total wire requests across both processes. The harness still counts at most14 attempts, including the one gateway request, and bounds its full tool to15s. Already-started service engine work can finish under its timeout after app cancellation; no post-cancel model continuation is permitted.
+- JSON responses/body/header/result count/field types are bounded; arbitrary answer/infobox data is ignored. Malformed/schema/redirect/private-result/rate/error cases fail safely; zero results with upstream errors is unavailable, and real sources with upstream errors remain partial. No raw query, response, title, URL or body is printed by the acceptance driver: safe counts/status only.
+
+### Actual checks
+
+| Check | Observed result |
+| --- | --- |
+| Failing-first installed test | `test_searxng.py` initially failed because the installed module did not exist; after noneditable rebuild it passed |
+| Frozen noneditable rebuild / `npm ci` | Pass; app lock remains29 packages |
+| `npm test` | **57 Node/API +81 Python tests passed** |
+| `npm run build` / Playwright | Pass / **11 browser tests passed** |
+| App Node/Python dependency audits | No known vulnerabilities; first-party `fios-agent` not on PyPI remains an explicit skip |
+| SearXNG installed Python distributions | Exported version-only metadata from the pinned image under network-none; pip-audit2.10.1 `--no-deps --disable-pip` found no known vulnerabilities. Does not audit OS packages, vendored engine source or certify security; CI now repeats this check |
+| Boundary checker / quiet Compose / diff check | Pass, no resolved credentials printed |
+| ARM64 app/tool + upgrade/rollback/restore rehearsal | Pass, **610MiB** peak under unchanged1GiB/2CPU; actual installed-Agent mock JSON continuation, max/near-limit context/images/evidence, metadata retention/old deletion cascade, stopped backup/restore and injected failed-upgrade rollback |
+| Offline SearXNG image/config/static health | Pass with `--network none`, nonroot/read-only/256MiB/.5CPU, exact Bing/Brave set and JSON-only configuration; added to the existing ARM64 CI check, no live query |
+| Actual SearXNG provider-only acceptance | **Pass/partial**: gateway HTTP200,10 results,5 retained sources,2 fetched pages,6 harness HTTP attempts,1 failed upstream. This is actual organic/page access, not all-engine availability or real model competence |
+| New native model inference | **Not run; fresh exact-ID opt-in still required** |
+
+The provider driver initially returned unavailable despite valid SearXNG results because its Python process was PID1. The parser correctly rejects a PID1 parent to prevent orphans; using `docker run --init` fixed the driver. The guard was not weakened. Early diagnostic runs did not prove retrieval and are not counted as passes. Metrics contain only response status and counts. The final successful fixed-query run used disposable Compose resources and cleaned up containers/networks/images; no production DB/model/service was used.
+
+Logs: `/tmp/fios-searxng-final-tests.log`, `/tmp/fios-searxng-final-browser.log`, `/tmp/fios-searxng-final-container.log`, `/tmp/fios-searxng-audit.log`; detailed610MiB rehearsal `/var/folders/hq/9t1wgm2x713f5qykp8y8wldc0000gn/T/fios-agent-test-27aae54c-cdd.log`. Provider-only driver reports counts without retaining captured queries/pages. No new real-model inference was authorized/performed.
+
+### Release state
+
+Fix branch `fix/007-searxng`; production remains on the original007 release at this source checkpoint. F007 (dedicated reviewed PR/exact-head CI/independent green main/service provision/controller delivery) is pending. Build/start supporting SearXNG only from clean green merged main, not a feature-branch test image. The stable controller remains app-only during its SQLite transaction; provision the support service separately with README commands. Record subsequent exact-head/run/deployment outcomes in the PR, not a self-referential source commit. T039/SC-007 remains unrun regardless of provider-only success.
+
+## Historical checkpoint before original PR#8 merge (2026-10-25)
+
+Everything below records that earlier implementation state, not the current provider or release status.
+
+### Original status (2026-10-25)
 
 Core implementation exists on `007-live-web-search`, **not merged/deployed or formally closed**. Passing mocks are not live-provider/model acceptance. Production remains the previously checked main release; no native inference, model loading, RDMA, public ports, persistent supporting services or production database were changed by implementation/testing.
 

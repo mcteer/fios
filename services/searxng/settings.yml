@@ -1,0 +1,35 @@
+# Explicit simultaneous upstream set, not a retry/fallback ladder. No DDG.
+use_default_settings:
+  engines:
+    keep_only: [bing, brave]
+general:
+  debug: false
+  enable_metrics: false
+search:
+  formats: [json]
+  autocomplete: ""
+  safe_search: 1
+  default_lang: en
+server:
+  bind_address: "0.0.0.0"
+  port: 8080
+  limiter: false
+  public_instance: false
+  image_proxy: false
+  method: GET
+  # Replaced by a process-local cryptographically random SEARXNG_SECRET.
+  secret_key: "ephemeral-key-required-from-bootstrap"
+outgoing:
+  request_timeout: 3.0
+  max_request_timeout: 4.0
+  retries: 0
+  pool_connections: 2
+  pool_maxsize: 2
+  enable_http2: false
+engines:
+  - name: bing
+    disabled: false
+    timeout: 3.0
+  - name: brave
+    disabled: false
+    timeout: 3.0

@@ -4,7 +4,11 @@ Date: 2026-10-25. Original planning observations below are historical; implement
 
 **Implementation note:** direct `certifi==2026.10.23` uses the already-locked Mozilla CA bundle (MPL-2.0), not a newly installed trust root or verification bypass. A container-only diagnostic found managed Python's default trust context failed certificate verification; explicitly supplying `certifi.where()` fixed TLS. The next installed-provider acceptance reached the fixed search endpoint but was blocked after two HTTP attempts. Do not reinterpret planning-time HTML access as a passing runtime acceptance check. The provider-only driver exercises the installed Python adapter directly with a fixed nonsensitive query; actual tool/Agent invocation is separately tested through installed-package mocks.
 
-## 1. Architecture authority and rejected draft
+## Approved SearXNG fix
+
+The user subsequently selected local SearXNG in the existing Compose stack and explicitly retained spec007. Direct-DDG constraints below are historical, not current authority. Pinned official SearXNG image index `sha256:23482d8ecf7ddf66029479468ea04c1bb11d2b65785a17a7e629e2ffd13296ca` identifies version2026.10.25-54ca1d9cf/source54ca1d9cfb08674f66261d7f351b063558dfcc62, AGPL-3.0-or-later, ARM64+amd64. Upstream Dockerfile/entrypoint/settings were inspected; our derivative bypasses root/config-mutation entrypoint, uses977:977, immutable config, random process-local secret and static `/healthz`. Bing/Brave are the explicit concurrent engine set; engine request timeout3s/max4s, retries0, no proxies/Tor. SearXNG owns its upstream networking, not the harness's pinned-IP page transport; this boundary change is explicit. All installed service Python distribution versions were audited with pinned pip-audit2.10.1: no known vulnerabilities (image/OS/source security is not thereby certified). See validation.md for actual live5-source/2-page partial evidence and remaining model gate.
+
+## 1. Historical architecture authority and rejected draft
 
 **User decision:** automatic search, implemented **inside the Pydantic AI harness as a search tool**. The earlier assistant-selected Node/Express retrieval pipeline and deterministic intent classifier were rejected and are withdrawn, along with proposed npm dependencies. They are not alternatives the implementation may silently restore. The architecture below implements the user's direction; exact budgets/security mechanisms are explicit plan proposals for review.
 

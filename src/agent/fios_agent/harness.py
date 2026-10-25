@@ -16,7 +16,7 @@ from .context import translate_context,ContextError
 from .protocol import text_chunks,utf16_length
 from .transport import SentinelObserver,ObservingTransport,StreamFailure
 from .web.query import eligible_terms
-from .web.duckduckgo import result
+from .web.searxng import result
 from .web.tool import search_tool,manifest
 
 INSTRUCTIONS=('You are Fios, a precise and helpful coding assistant. Format code with fenced Markdown blocks '

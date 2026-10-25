@@ -4,6 +4,15 @@ import {readFileSync} from 'node:fs';
 import {spawnSync} from 'node:child_process';
 import {successfulMainRun,github} from '../scripts/deploy.mjs';
 
+test('SearXNG is a pinned nonroot Compose service, isolated from credentials and public ports',()=>{
+ const source=readFileSync('compose.yaml','utf8');
+ const search=source.split('\n  searxng:')[1].split('\n  deployer:')[0];
+ for(const forbidden of ['ports:','docker.sock','fios-data','MLX_API_KEY','SESSION_SECRET','FIOS_PASSWORD'])assert.ok(!search.includes(forbidden));
+ for(const required of ['user: "977:977"','read_only: true','cap_drop: [ALL]','networks: [search, search-egress]','driver: none','/healthz','mem_limit: 256m'])assert.ok(search.includes(required));
+ assert.match(source,/search:\n    internal: true/);
+ assert.match(readFileSync('Dockerfile.searxng','utf8'),/FROM docker.io\/searxng\/searxng@sha256:[a-f0-9]{64}/);
+ assert.ok(readFileSync('scripts/check-web-search.mjs','utf8').includes("'--rm','--init'"),'live parser driver must not run Python as PID1');
+});
 test('latest exact-main push workflow is required, not an older success or PR/manual run',()=>{
   const sha='a'.repeat(40),good={head_sha:sha,head_branch:'main',event:'push',status:'completed',conclusion:'success'};
   assert.equal(successfulMainRun([good],sha),true);

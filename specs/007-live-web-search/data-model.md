@@ -41,7 +41,7 @@ This is the exhaustive schema1 mapping, not an example list. `reason` is the ind
 | `privacy_skipped` | `privacy_policy` | Missing/ineligible provenance or rejected query |
 | `retrieved` | `page_evidence` | Nonempty retained evidence, all page-backed |
 | `partial` | `partial_evidence` | At least one page-backed source with other snippets/skipped pages |
-| `snippets_only` | `snippet_evidence` | Nonempty retained evidence, all DDG snippets |
+| `snippets_only` | `snippet_evidence` | Nonempty retained evidence, all SearXNG snippets |
 | `empty` | `no_results` | Recognized zero organic results |
 | `blocked` | `provider_blocked` | Provider challenge/access refusal |
 | `rate_limited` | `rate_limit` | Local limiter or provider cooldown/429 |

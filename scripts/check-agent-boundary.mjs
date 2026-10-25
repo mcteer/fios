@@ -27,7 +27,7 @@ async function walk(path) {
       /(?:from\s*|import\s*\()["'][^"']*agent\//.test(text)
     )
       failures.push(name + ": browser imports agent");
-    if (!harness && /html\.duckduckgo\.com|\bddgs\b|web_search\s*\(/.test(text))
+    if (!harness && /html\.duckduckgo\.com|http:\/\/searxng:8080\/search|\bddgs\b|web_search\s*\(/.test(text))
       failures.push(name + ': search orchestration outside harness');
     if (harness && /\bTool\s*\(/.test(text) && name !== 'src/agent/fios_agent/web/tool.py')
       failures.push(name + ': unexpected tool registration');

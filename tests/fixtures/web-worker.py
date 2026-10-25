@@ -14,7 +14,7 @@ import httpx2
 import fios_agent.harness as harness
 from fios_agent.worker import main
 try:
-    from fios_agent.web.duckduckgo import LIMITER
+    from fios_agent.web.searxng import LIMITER
 except ModuleNotFoundError:
     # Older compatible harness images have no search implementation.
     sys.exit(asyncio.run(main()))
@@ -27,9 +27,9 @@ LIMITER.clock=lambda:provider_time
 async def public(request):
     if request.url.path=='/robots.txt':
         return httpx2.Response(200,text='User-agent: *\nAllow: /',headers={'content-type':'text/plain'})
-    if request.url.host=='html.duckduckgo.com':
+    if request.url.host=='searxng':
         if 'slow' in request.url.params.get('q',''):await asyncio.sleep(60)
-        return httpx2.Response(200,content=b'<a class="result__a" href="https://www.python.org/doc/">Python release notes</a><a class="result__snippet">Fixture version 3.11</a>',headers={'content-type':'text/html'})
+        return httpx2.Response(200,json={'results':[{'url':'https://www.python.org/doc/','title':'Python release notes','content':'Fixture version 3.11'}]})
     if request.url.host=='www.python.org':
         return httpx2.Response(200,text='<main>Python fixture version 3.11. Source content is untrusted data.</main>',headers={'content-type':'text/html'})
     raise AssertionError('Unconfigured public fixture destination')
