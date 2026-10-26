@@ -171,6 +171,7 @@ class PublicHTTP:
     def __init__(self, *, forbidden=(), transport=None, check=lambda:None):
         self.check=check
         self.forbidden=forbidden
+        self.test_transport=transport  # Installed-package tests only; no environment bypass.
         self.attempts=0
         self.total=0
         self.deadline=time.monotonic()+15

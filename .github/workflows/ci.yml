@@ -109,6 +109,11 @@ jobs:
           npm audit --audit-level=low
           uv sync --locked --no-editable
           uvx --python 3.11.17 --from pip-audit==2.10.1 pip-audit --path .venv/lib/python3.11/site-packages
+      - name: Audit installed SearXNG image Python distributions (no search/network in container)
+        run: |
+          docker build -f Dockerfile.searxng -t fios-searxng-audit .
+          docker run --rm --network none --entrypoint /usr/local/searxng/.venv/bin/python fios-searxng-audit -c 'from importlib.metadata import distributions;print("\n".join(sorted(d.metadata["Name"]+"=="+d.version for d in distributions())))' > "$RUNNER_TEMP/searxng-requirements.txt"
+          uvx --python 3.11.17 --from pip-audit==2.10.1 pip-audit --no-deps --disable-pip -r "$RUNNER_TEMP/searxng-requirements.txt"
 
   container:
     name: ARM64 container and rollback
@@ -137,7 +142,9 @@ jobs:
       - name: Test hardened image, limits, cancellation, upgrade, rollback and restore
         env:
           TMPDIR: ${{ runner.temp }}
-        run: node scripts/check-agent-container.mjs
+        run: |
+          node scripts/check-agent-container.mjs
+          node scripts/check-searxng-container.mjs
       - name: Preserve mock-only container logs on failure
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

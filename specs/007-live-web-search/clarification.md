@@ -2,7 +2,11 @@
 
 Date: 2026-10-25. Branch: `007-live-web-search`. Scope: complete planning through analysis, not implementation.
 
-## User decisions
+## Subsequent approved fix (authoritative)
+
+After PR#8 was merged/deployed, the user selected **our own local SearXNG**, explicitly required it to run **in a container with the rest of the stack**, and instructed that this is a **fix within spec007, not a new spec**. This supersedes the original DDG-only/no-additional-search-service restrictions below, but preserves harness-owned automatic invocation, local MLX inference and all model/IPC/privacy/storage controls. The service uses an explicit Bing/Brave upstream set, not a local index or a silent fallback to DDG. Queries still leave the machine through those engines. No new real-model inference was authorized.
+
+## Historical original user decisions
 
 Two questions asked and answered across the clarification conversation:
 

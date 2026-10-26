@@ -8,7 +8,7 @@ from pydantic_ai import CancellationToken
 from fios_agent.harness import run_agent
 from fios_agent.protocol import parse_command,parse_event
 from fios_agent.worker import Settings
-from fios_agent.web.duckduckgo import LIMITER
+from fios_agent.web.searxng import LIMITER
 
 
 def frame(delta,finish=None):
@@ -44,8 +44,8 @@ class ToolIntegrationTests(unittest.IsolatedAsyncioTestCase):
             web.append(str(req.url))
             if cancel_public: token.cancel()
             if req.url.path=='/robots.txt': return httpx2.Response(200,text='User-agent: *\nAllow: /',headers={'content-type':'text/plain'})
-            if req.url.host=='html.duckduckgo.com':
-                return httpx2.Response(200,content=b'<a class="result__a" href="https://www.python.org/doc/">Python</a><a class="result__snippet">Release notes</a>',headers={'content-type':'text/html'})
+            if req.url.host=='searxng':
+                return httpx2.Response(200,json={'results':[{'url':'https://www.python.org/doc/','title':'Python','content':'Release notes'}]})
             return httpx2.Response(200,text='<main>Python fixture version 3.11</main>',headers={'content-type':'text/html'})
         async def emit(value): parse_event(value); events.append(value)
         command=parse_command({'v':2,'type':'run','run_id':str(uuid4()),'model':'test/model',

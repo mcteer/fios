@@ -3,32 +3,33 @@
 **Feature Branch**: `007-live-web-search`
 **Created**: 2026-10-25
 **Status**: Specified and clarified; planning artifacts only, implementation not started.
-**Input**: Add DuckDuckGo live web search as retrieval-augmented generation for local models. User chose automatic activation and explicitly requires a **search tool inside the Pydantic AI harness**.
+**Input**: Add live web search as retrieval-augmented generation for local models. **Approved fix:** the user selected a locally hosted SearXNG service in the existing OrbStack Compose stack to replace blocked direct DuckDuckGo retrieval; keep this change in spec007, not a new spec. User chose automatic activation and explicitly requires a **search tool inside the Pydantic AI harness**.
 
 ## Clarifications
 
 ### Session 2026-10-25
 
-- Q: How should web search be activated? → A: **B — automatic**. The user does not enable it separately for each message. DuckDuckGo is the requested provider.
+- Q: How should web search be activated? → A: **B — automatic**. The user does not enable it separately for each message. DuckDuckGo was the original provider; the subsequent explicit SearXNG fix supersedes that restriction.
 - User architecture constraint: “This needs to be built into the Pydantic harness.” Search is not a Node/Express pre-generation pipeline or a separate service.
 - Q: Should the agent invoke a search tool or should retrieval be a pre-generation stage inside the harness? → A: **“Inside the harness as a search tool.”** The Pydantic agent decides when and what to search.
 - The earlier assistant-chosen deterministic intent router, Node retrieval modules and associated npm dependencies are withdrawn. They must not be implemented.
 - Scope of this workflow: specify → clarify → plan → tasks → read-only analyze, with user-authorized document remediation and repeated analysis until planning findings are resolved. No implementation, deployment or new real model inference is requested.
-- Privacy clarification: DuckDuckGo is privacy-oriented but queries/connection metadata leave the machine; independently fetched sites see requests. Minimize disclosures without imposing repeated consent prompts. No anonymity or infallible secret-detection guarantee.
+- Fix clarification: SearXNG runs as a container in the existing stack, reachable only through its internal API. It is a metasearch gateway, not a local index: eligible queries are sent to the explicit Bing/Brave engine set concurrently; no automatic fallback ladder, proxy rotation or DDG retry.
+- Privacy clarification: queries/connection metadata leave the machine through SearXNG's configured upstream engines; independently fetched sites see requests. Minimize disclosures without imposing repeated consent prompts. No anonymity or infallible secret-detection guarantee.
 
 ## User Scenarios & Testing
 
 ### User Story 1 — Agent automatically searches for evidence (Priority: P1)
 
-As a user, I ask a current-information question and the selected local model can call DuckDuckGo through the Pydantic harness, read the result and answer with sources. I do not choose a search mode.
+As a user, I ask a current-information question and the selected local model can call the internal SearXNG API through the Pydantic harness, read the result and answer with sources. I do not choose a search mode.
 
 **Why this priority**: This is the requested model capability, not an unrelated preprocessor deciding for the model.
 
 **Independent Test**: The installed real Pydantic agent with a mock MLX tool-call stream invokes only the registered search tool, consumes fixture evidence and continues with the same exact model; a no-tool stream makes no external request.
 
 **Acceptance Scenarios**:
-1. **Given** the selected model requests `web_search`, **when** the harness accepts a safe query, **then** DuckDuckGo evidence returns as a real Pydantic tool result and the same agent continues to an answer.
-2. **Given** the model answers a self-contained task without requesting the tool, **when** its response completes, **then** there are no DuckDuckGo/page requests or hidden classification-model calls.
+1. **Given** the selected model requests `web_search`, **when** the harness accepts a safe query, **then** SearXNG evidence returns as a real Pydantic tool result and the same agent continues to an answer.
+2. **Given** the model answers a self-contained task without requesting the tool, **when** its response completes, **then** there are no SearXNG/page requests or hidden classification-model calls.
 3. **Given** a follow-up about a prior public topic, **when** the model forms a query, **then** it may use only bounded eligible current/preceding user terms, not leak attachments or the transcript through tool arguments.
 4. **Given** a completed tool result, **when** answer generation continues, **then** final answer text streams with existing cancellation/partial-output semantics and exact model identity preserved.
 5. **Given** a selected model cannot produce supported tool calls, **when** it declines search or the server rejects tool parameters, **then** Fios reports no search/the error honestly, without substituting a model, forcing a Node search or automatically retrying without tools.
@@ -69,7 +70,7 @@ As the operator, I want only bounded read-only search, not arbitrary agent capab
 - Tool-capable protocol does not prove a particular model knows when/how to call tools; chat/host readiness is not a tool-support certification.
 - Text and tool-call fragments interleaved in one response, malformed arguments, unknown names, duplicate/parallel calls, missing `[DONE]` on either model response.
 - Prompt injection, private prose not recognizable by patterns, query terms copied from attachments, alternate alphabets/encodings and ambiguous follow-ups.
-- DuckDuckGo HTML changes, HTTP 202 challenges, 429, no results, unavailable page, robots denial, contradictory/stale sources and absent publication dates.
+- SearXNG schema changes, upstream engine failures/challenges, HTTP 429, no results, unavailable page, robots denial, contradictory/stale sources and absent publication dates.
 - Cancellation before arguments finish, during DNS/body/parser work, after a result but before continuation, or while Node is persisting progress.
 - Existing context near its limit; generated intermediate text/arguments plus tool results also consume the continuation budget. No silent loss of user data.
 - Restart/crash during retrieval; upgrade→old image→new image with provenance present; deleting a conversation under an older compatible version.
@@ -79,14 +80,14 @@ As the operator, I want only bounded read-only search, not arbitrary agent capab
 ### Functional Requirements
 
 - **FR-001**: The **Pydantic AI agent** MUST decide automatically whether to call the search tool and supply its query. No deterministic intent router, separate classifier generation, per-message activation or consent prompt may replace that decision. The tool is offered by default subject only to safety/configuration/budget gates.
-- **FR-002**: The only search provider MUST be DuckDuckGo. Verify actual organic web-result access; Instant Answers are not general search. Challenges/unavailability MUST NOT trigger alternative engines, proxy rotation, CAPTCHA bypass or hidden retries.
+- **FR-002**: The search backend MUST be our own SearXNG container. Use an explicit versioned Bing/Brave upstream set, queried concurrently rather than as a retry/fallback ladder. Verify actual organic results and page evidence; static service health is not upstream readiness. Challenges/unavailability MUST NOT trigger engine-set changes, proxy rotation, CAPTCHA bypass or hidden retries.
 - **FR-003**: The harness MUST validate model-generated queries at the external boundary. It MUST NOT export full transcripts, attachment contents, application credentials or raw tool arguments by default. Only bounded eligible user-authored terms plus a fixed generic search vocabulary may be sent; recognized secret/private-context/code patterns, ambiguous eligibility and out-of-bound arguments MUST be rejected. Document the limits of sensitive-data detection honestly.
 - **FR-004**: Retrieval MUST be read-only and bounded in calls/results/bytes/time, public-web-only, with URL/redirect/DNS/connection validation. No scripts, arbitrary URL-fetch tool, cookies, application credentials, unsafe scheme, private-address request or unrestricted browsing.
 - **FR-005**: Sources MUST be marked untrusted in the tool result, separate from application instructions; they MUST NOT authorize new capabilities. Only `web_search` is allowed. No command/file tools, MCP, provider-hosted search, cloud inference or fallback.
-- **FR-006**: Decisions, argument validation, retrieval and evidence integration MUST execute inside the existing Python Pydantic harness. Node/Express only supplies bounded user-text provenance, supervises/cancels, relays validated progress and owns storage/UI. No search orchestration or provider/page networking in Node/Express and no additional search service.
+- **FR-006**: Decisions, argument validation, retrieval and evidence integration MUST execute inside the existing Python Pydantic harness. Node/Express only supplies bounded user-text provenance, supervises/cancels, relays validated progress and owns storage/UI. No search orchestration or provider/page networking in Node/Express The sole additional search service is the approved SearXNG container; it does not execute model inference or own conversation state.
 - **FR-007**: The UI MUST expose actual retrieval progress/outcome, safe source titles/URLs, snippet-versus-page evidence and retrieval time. Citations MUST map to sources supplied in that run; a source list MUST NOT be presented as automatic factual verification. Publication date MUST NOT be invented from retrieval time.
 - **FR-008**: No-tool, disabled, rejected, no-results, partial, blocked and timeout outcomes MUST remain distinguishable. A failed tool may return a bounded safe failure result to let the agent explain its limits; it MUST NOT silently retry. Saved sources/outcomes survive reload and are removed with their conversation; ephemeral queries/pages/tool transcripts are not persisted/replayed.
-- **FR-009**: All new runtime functionality MUST ship in the existing application container. Agent/search execution code MUST stay under `src/agent/`; API, persistence and UI integration remain in their existing server/frontend locations. No native helper, public listener, app Docker socket or cluster/RDMA changes. Python remains a private supervised worker without SQLite access. Health/startup checks invoke neither search nor inference. Logs exclude queries, arguments, page bodies, prompts, secrets and reasoning.
+- **FR-009**: All new runtime functionality MUST ship in the existing application container. Agent/search execution code MUST stay under `src/agent/`; API, persistence and UI integration remain in their existing server/frontend locations. No native helper, public/LAN listener, app Docker socket or cluster/RDMA changes. SearXNG's internal listener has no published port, application credentials, SQLite mounts or Docker socket; use a pinned image, nonroot/read-only resource bounds and no retained query logs. Python remains a private supervised worker without SQLite access. Health/startup checks invoke neither search nor inference. Logs exclude queries, arguments, page bodies, prompts, secrets and reasoning.
 - **FR-010**: Tests MUST exercise actual Pydantic tool invocation/continuation against mock MLX, SSRF/privacy/cancellation/streaming/persistence/browser boundaries and container upgrade/rollback. CI is mock-only. Live provider tests use nonsensitive queries and are separate from model inference; new real model inference requires explicit opt-in. Deliver only via exact-head green PR/main CI and existing backup/verification/rollback policy.
 - **FR-011**: Honor site restrictions/robots/access-denial/rate limits. No scripts, credentialed pages, evasion or link crawling. Skipped pages may leave clearly labeled snippet-only evidence; no assertion that an unread page was inspected.
 - **FR-012**: Context validation MUST include intermediate model parts/tool arguments/results before continuation. Never silently truncate user history/attachments to make evidence fit. Omit evidence with a visible context-limit outcome if needed; if even a bounded failure continuation cannot fit, stop with a safe context error.

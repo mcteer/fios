@@ -1,7 +1,11 @@
-"""One fixed-provider search plus bounded public pages. Never model orchestration."""
+"""Fixed internal SearXNG JSON gateway plus independently guarded public pages.
+
+The gateway is an explicit private-service exception, never a general URL fetch.
+No model/client argument can change its host, port, path, engines or pagination.
+"""
 import asyncio
 from collections import deque
-from datetime import timezone
+import json
 from email.utils import parsedate_to_datetime
 import hashlib
 import math
@@ -49,6 +53,35 @@ class ProviderLimiter:
 
 
 LIMITER=ProviderLimiter()
+ENDPOINT='http://searxng:8080/search'
+
+
+async def gateway(query,http):
+    http.check()
+    if http.attempts>=14: raise WebFailure()
+    http.attempts+=1
+    remaining=http.deadline-time.monotonic()
+    if remaining<=0:raise TimeoutError()
+    # Separate unauthenticated client. PublicHTTP's private-address ban stays
+    # intact; only this exact internal API can be contacted here.
+    transport=http.test_transport or httpx2.AsyncHTTPTransport(retries=0)
+    async with asyncio.timeout(min(6,remaining)),httpx2.AsyncClient(
+        transport=transport,trust_env=False,follow_redirects=False,timeout=5,
+        headers={'User-Agent':'Fios/0.1','Accept':'application/json','Accept-Encoding':'identity'}) as client:
+        async with client.stream('GET',ENDPOINT,params={'q':query,'format':'json',
+            'categories':'general','language':'en','safesearch':'1','pageno':'1'}) as response:
+            if (sum(len(k)+len(v)+4 for k,v in response.headers.raw)>32768
+                or response.headers.get('content-encoding','identity').lower()!='identity'):
+                raise WebFailure()
+            body=bytearray()
+            async for chunk in response.aiter_bytes():
+                http.check()
+                http.total+=len(chunk)
+                if len(body)+len(chunk)>1048576 or http.total>5*1048576:raise WebFailure()
+                body.extend(chunk)
+            http.check()
+            http.gateway_status=response.status_code
+            return response.status_code,response.headers,bytes(body)
 
 
 def clipped(text,limit):
@@ -68,11 +101,6 @@ def result(outcome,sources=()):
 def target_url(value,forbidden):
     if value.startswith('//'): value='https:'+value
     u=urlsplit(value)
-    if u.hostname in ('duckduckgo.com','html.duckduckgo.com') and u.path.startswith('/l/'):
-        args=parse_qs(u.query)
-        if len(args.get('uddg',[]))!=1: raise WebFailure()
-        value=args['uddg'][0]
-    u=urlsplit(value)
     query=urlencode([(k,v) for k,values in parse_qs(u.query,keep_blank_values=True).items()
                      if not k.lower().startswith('utm_') and k.lower() not in ('fbclid','gclid') for v in values])
     return validate_url(urlunsplit((u.scheme,u.netloc,u.path,query,'')),forbidden)
@@ -85,12 +113,7 @@ async def search(query,*,http,limiter=LIMITER,progress=None):
     try:
         async with asyncio.timeout(max(0,http.deadline-time.monotonic())):
             rules=Robots(http)
-            provider='https://html.duckduckgo.com/html/?'+urlencode({'q':query})
-            if not await rules.allowed(provider):
-                retry=rules.last_headers.get_list('retry-after') if rules.last_headers is not None else []
-                limiter.block(retry[0] if len(retry)==1 else 'invalid' if retry else None)
-                return result('blocked')
-            status,headers,raw=await http.get(provider,seconds=5)
+            status,headers,raw=await gateway(query,http)
             if status in (202,401,403,429):
                 retry=headers.get_list('retry-after')
                 limiter.block(retry[0] if len(retry)==1 else 'invalid' if retry else None)
@@ -99,24 +122,33 @@ async def search(query,*,http,limiter=LIMITER,progress=None):
                 retry=headers.get_list('retry-after')
                 limiter.block(retry[0] if len(retry)==1 else 'invalid' if retry else None)
                 return result('unavailable')
-            media,_=decode_text(headers,raw)
-            if media!='text/html': return result('unavailable')
-            parsed=await parse_document(raw,'provider')
-            if parsed['state']=='blocked':
-                limiter.block(None); return result('blocked')
-            if parsed['state']=='empty': return result('empty')
-            if parsed['state']!='results': return result('unavailable')
+            if headers.get('content-type','').split(';')[0].strip().lower()!='application/json':return result('unavailable')
+            parsed=json.loads(raw)
+            if (type(parsed) is not dict or type(parsed.get('results')) is not list
+                or len(parsed['results'])>100):return result('unavailable')
+            http.gateway_results=len(parsed['results'])
+            errors=parsed.get('unresponsive_engines',[])
+            http.gateway_failed_engines=len(errors) if type(errors) is list else None
+            if not parsed['results']:
+                return result('unavailable' if parsed.get('unresponsive_engines') else 'empty')
+            http.gateway_valid_rows=0
+            http.gateway_valid_urls=0
             candidates=[]; seen=set()
             for item in parsed['results']:
+                if type(item) is not dict or any(type(item.get(k)) is not str for k in ('url','title','content')):continue
+                if any(len(item[k].encode('utf-8'))>65536 for k in ('title','content')):continue
+                http.gateway_valid_rows+=1
                 try: url=target_url(item['url'],http.forbidden)
                 except ValueError: continue
+                http.gateway_valid_urls+=1
                 if url in seen: continue
                 seen.add(url)
-                candidates.append((url,item))
+                snippet=(await parse_document(item['content'].encode('utf-8'),'page'))['text']
+                candidates.append((url,{'title':item['title'],'snippet':snippet}))
                 if len(candidates)==5: break
             if not candidates: return result('unavailable')
             await notify('fetching')
-            sources=[]; skipped=False
+            sources=[]; skipped=bool(errors)
             for index,(url,item) in enumerate(candidates):
                 excerpt=item['snippet']; kind='snippet'; truncated=False
                 if index<3:
@@ -149,5 +181,5 @@ async def search(query,*,http,limiter=LIMITER,progress=None):
             if not sources: return result('unavailable')
             pages=sum(s.kind=='page' for s in sources)
             return result('snippets_only' if not pages else 'partial' if skipped or pages<len(sources) else 'retrieved',sources)
-    except TimeoutError: return result('timeout')
-    except (ValueError,OSError,httpcore2.NetworkError,httpcore2.TimeoutException,httpcore2.ProtocolError,httpx2.HTTPError): return result('unavailable')
+    except (TimeoutError,httpcore2.TimeoutException,httpx2.TimeoutException): return result('timeout')
+    except (ValueError,RecursionError,OSError,httpcore2.NetworkError,httpcore2.TimeoutException,httpcore2.ProtocolError,httpx2.HTTPError): return result('unavailable')

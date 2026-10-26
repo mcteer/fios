@@ -8,6 +8,7 @@ services:
     depends_on:
       readiness:
         condition: service_healthy
+    networks: [default, search]
     ports:
       - "127.0.0.1:3000:3000"
     environment:
@@ -59,6 +60,33 @@ services:
       timeout: 2s
       start_period: 5s
       retries: 2
+  searxng:
+    build:
+      context: .
+      dockerfile: Dockerfile.searxng
+    image: ${FIOS_SEARXNG_IMAGE:-fios-searxng:1}
+    restart: unless-stopped
+    init: true
+    user: "977:977"
+    networks: [search, search-egress]
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+      - /etc/searxng:size=1m,uid=977,gid=977,mode=0700
+      - /var/cache/searxng:size=16m,uid=977,gid=977,mode=0700
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 256m
+    cpus: 0.5
+    # Never retain upstream errors/access logs that could contain queries.
+    logging:
+      driver: none
+    healthcheck:
+      test: [CMD, /usr/local/searxng/.venv/bin/python, -c, "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8080/healthz',timeout=2).close()"]
+      interval: 30s
+      timeout: 3s
+      start_period: 30s
+      retries: 3
   deployer:
     build:
       context: .
@@ -100,3 +128,6 @@ volumes:
   fios-deployment:
 networks:
   delivery:
+  search:
+    internal: true
+  search-egress:

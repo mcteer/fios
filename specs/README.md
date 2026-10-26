@@ -11,7 +11,7 @@ Reconciled 2026-10-25 at the user's request to close all current specs. This is 
 | 005 — Host/model readiness | Complete, merged/deployed; native supporting-service topology rejected and superseded by 006 | [Tasks](005-model-host-readiness/tasks.md), [validation](005-model-host-readiness/validation.md), [PR #2](https://github.com/mcteer/fios/pull/2) |
 | 006 — Containerized supporting services | Complete, merged/deployed; three healthy services in the OrbStack Fios stack, no native supporting jobs | [Tasks](006-container-support-services/tasks.md), [validation](006-container-support-services/validation.md), [PR #3](https://github.com/mcteer/fios/pull/3) |
 
-Spec 007 was opened after that closeout: [live web search](007-live-web-search/spec.md) is implemented on its feature branch, **not closed or deployed**. Its [validation record](007-live-web-search/validation.md) separates passing mock/container checks from blocked live-provider acceptance, unrun explicitly opt-in model testing and pending reviewed delivery.
+Spec 007 was opened after that closeout: [live web search](007-live-web-search/spec.md) was merged/deployed through [PR#8](https://github.com/mcteer/fios/pull/8), but is **not fully live-model accepted/closed**. The user's subsequent SearXNG fix remains within007. Its [validation record](007-live-web-search/validation.md) distinguishes historical blocked DDG acceptance from successful partial SearXNG provider retrieval, separately opt-in/unrun real-model competence and exact-commit release evidence.
 
 ## Evidence boundaries
 

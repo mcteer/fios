@@ -1,0 +1,9 @@
+# Immutable official multi-architecture image; AGPL-3.0-or-later.
+FROM docker.io/searxng/searxng@sha256:23482d8ecf7ddf66029479468ea04c1bb11d2b65785a17a7e629e2ffd13296ca
+COPY --chown=977:977 services/searxng/settings.yml /usr/local/searxng/fios-settings.yml
+COPY --chown=977:977 services/searxng/start.py /usr/local/searxng/fios-start.py
+ENV SEARXNG_SETTINGS_PATH=/usr/local/searxng/fios-settings.yml \
+    GRANIAN_HOST=0.0.0.0 GRANIAN_PORT=8080 GRANIAN_WORKERS=1 \
+    PYTHONDONTWRITEBYTECODE=1
+USER 977:977
+ENTRYPOINT ["/usr/local/searxng/.venv/bin/python", "/usr/local/searxng/fios-start.py"]

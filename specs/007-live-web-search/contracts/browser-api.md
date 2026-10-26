@@ -4,7 +4,7 @@ Existing authenticated message POST/stop/detail/delete endpoints remain. **No `/
 
 ## Request path
 
-Express mechanically extracts <=2,000-unit current and immediately preceding plain user prose with attachment/elision flags and sends it privately to Python alongside canonical local context. It does not judge intent, form a query, perform DuckDuckGo/page HTTP or inject evidence. Existing authentication, same-origin checks, single-active-run slot, limits, pre-persistence admission/worker readiness and localhost binding remain.
+Express mechanically extracts <=2,000-unit current and immediately preceding plain user prose with attachment/elision flags and sends it privately to Python alongside canonical local context. It does not judge intent, form a query, perform SearXNG/page HTTP or inject evidence. Existing authentication, same-origin checks, single-active-run slot, limits, pre-persistence admission/worker readiness and localhost binding remain.
 
 ## SSE extensions
 
