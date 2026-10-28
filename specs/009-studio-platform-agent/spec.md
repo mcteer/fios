@@ -2,7 +2,7 @@
 
 **Feature Branch**: `009-studio-platform-agent`
 **Created**: 2026-10-26
-**Status**: Implementation in progress:29/55 tasks complete,26 incomplete. Current work is source/build development;009 is not deployed and operational acceptance remains pending.
+**Status**: Implementation in progress:30/55 tasks complete,25 incomplete. Current work is source/build development;009 is not deployed and operational acceptance remains pending.
 **Input**: A platform management agent per Studio that starts on boot with a watchdog, tracks/manages MLX-Serve and OrbStack, tracks active model requests and hardware utilization, dispatches only temporary agent-sandbox containers with complete lifecycle cleanup, and uses local MLX models for authorized tasks and sandbox interactions. Administrative SSH access is available as `mcteer@<Studio>`; ask the user to perform any required privileged commands.
 
 ## Offline RAM-planning convenience
