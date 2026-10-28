@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "model": "fixture/model",
+  "host": "fixture-host",
+  "profile_hash": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+  "native_epoch": "native-fixture-one",
+  "policy_sha256": "1cf3a27e1f6490b4cfce433f7770c1fcea53c581bd513ed4c368ea4df7fa993a",
+  "policy_input_units": 504,
+  "input_units": 128000,
+  "output_units": 64000,
+  "job_output_units": 256000,
+  "output_chunk_units": 8192,
+  "maximum_posts": 4,
+  "live_workers": 2,
+  "worker_memory_bytes": 536870912
+}

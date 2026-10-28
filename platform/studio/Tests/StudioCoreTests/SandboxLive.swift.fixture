@@ -1,0 +1,66 @@
+import Foundation
+import CryptoKit
+import Darwin
+
+@main struct SandboxLive {
+    static func main() {
+        do {try run()}
+        catch {
+            let tag=(error as? RuntimeError).map {String(describing:$0)} ?? "other"
+            FileHandle.standardError.write(Data("Sandbox fixture bounds failed: \(tag)\n".utf8));exit(1)
+        }
+    }
+    static func run() throws {
+        let args=CommandLine.arguments
+        guard args.count==6 || (args.count==7 && args[6]=="limits") else {throw RuntimeError.invalid}
+        let limits=args.count==7
+        func phase(_ text:String) {if limits {print("METRIC: trusted sandbox phase=\(text)");fflush(nil)}}
+        phase("verify-executable")
+        let executable=try VerifiedExecutable(path:args[1],sha256:args[2])
+        let runtime=try DockerRuntime(executable:executable,socket:args[3])
+        let job=UUID().uuidString.lowercased()
+        let configuration=try SandboxConfiguration(job:job,nonce:String(repeating:"a",count:64),image:args[4],memory:512<<20,cpus:1)
+        phase("create")
+        let id=try runtime.create(configuration)
+        defer { try? runtime.removeOwned(configuration,savedID:id) }
+        phase("inspect")
+        let inspected=try runtime.command(["inspect","--type=container",id])
+        guard inspected.status==0 else { throw RuntimeError.identity }
+        let records=try JSONSerialization.jsonObject(with:inspected.output) as! [[String:Any]]
+        let host=records[0]["HostConfig"] as! [String:Any]
+        if limits {
+            let security=host["SecurityOpt"] as? [String] ?? []
+            let memory=host["Memory"] as? Int ?? -1,swap=host["MemorySwap"] as? Int ?? -1
+            let pids=host["PidsLimit"] as? Int ?? -1,nanocpus=host["NanoCpus"] as? Int ?? -1
+            let bare=security.contains("no-new-privileges"),explicit=security.contains("no-new-privileges:true")
+            print("METRIC: trusted inspect memory=\(memory) swap=\(swap) pids=\(pids) nanocpus=\(nanocpus) nnp_bare=\(bare) nnp_true=\(explicit)")
+            fflush(nil)
+        }
+        guard host["NetworkMode"] as? String == "none",host["ReadonlyRootfs"] as? Bool == true,
+              host["Memory"] as? Int == 512<<20,host["MemorySwap"] as? Int == 512<<20,
+              host["PidsLimit"] as? Int == 64,host["NanoCpus"] as? Int == 1_000_000_000,
+              host["CapDrop"] as? [String] == ["ALL"],
+              (host["SecurityOpt"] as? [String])?.contains("no-new-privileges:true") == true,
+              (host["Binds"] as? [String] ?? []).isEmpty else { throw RuntimeError.identity }
+        phase("start")
+        let result=try runtime.command(["start","--attach",id],timeout:10)
+        let output=String(decoding:result.output,as:UTF8.self)
+        for line in output.split(separator:"\n") where line.hasPrefix("METRIC: ") {print(line)}
+        fflush(nil)
+        guard result.status==0,output.contains("ISOLATION_PASS"),!limits || output.contains("LIMITS_PASS") else {throw RuntimeError.identity}
+        // The same labels/name/image are still insufficient with a different
+        // saved ID. Do not target the unrelated sentinel by label or prefix.
+        do { try runtime.removeOwned(configuration,savedID:args[5]);throw RuntimeError.invalid }
+        catch RuntimeError.identity {}
+        if limits {
+            let began=ProcessInfo.processInfo.systemUptime
+            try runtime.removeOwned(configuration,savedID:id)
+            let remaining=try runtime.command(["ps","--all","--no-trunc","--filter","id="+id,"--format","{{.ID}}"],timeout:2)
+            let elapsed=ProcessInfo.processInfo.systemUptime-began
+            guard remaining.status==0,remaining.output.isEmpty,elapsed<=60 else {throw RuntimeError.identity}
+            print("METRIC: one known full-ID owned sandbox acknowledged removal and successful empty exact-ID query cleanup_ms=\(Int(elapsed*1000)); no pending create/model request in this finite fixture, not general atomic/native quiescence")
+            fflush(nil)
+        }
+        print("PASS: real isolated runtime caps, filesystem/network/credential checks and foreign-object refusal")
+    }
+}

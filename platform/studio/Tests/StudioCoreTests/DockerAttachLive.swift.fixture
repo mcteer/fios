@@ -1,0 +1,322 @@
+import Foundation
+import Darwin
+import CryptoKit
+
+private func inventoryCPU()throws->UInt64 {
+    var usage=rusage_info_v2()
+    let code=withUnsafeMutablePointer(to:&usage) {$0.withMemoryRebound(to:rusage_info_t?.self,capacity:1) {proc_pid_rusage(getpid(),RUSAGE_INFO_V2,$0)}}
+    guard code==0 else {throw RuntimeError.launch}
+    return usage.ri_user_time+usage.ri_system_time+usage.ri_child_user_time+usage.ri_child_system_time
+}
+private struct MeasuredVMInventory:NativeVMInventoryReading {
+    let source:VerifiedVMInventory
+    func capture()throws->NativeVMInventory {
+        let began=try inventoryCPU(),value=try source.capture()
+        let consumed=try inventoryCPU()-began
+        print("METRIC: native inventory self_plus_reaped_child_cpu_ms=\(Int(ProcessCPU.seconds(ticks:consumed)*1000)); read-only CLI source breakdown, not idle acceptance")
+        return value
+    }
+}
+
+@main struct AttachLive {
+    static func main() {
+        do {try run()}
+        catch {FileHandle.standardError.write(Data("Attach fixture bound or cleanup failed\n".utf8));exit(1)}
+    }
+    static func run() throws {
+        let args=CommandLine.arguments
+        guard args.count==8 || args.count==9 else {throw RuntimeError.invalid}
+        let runtime=try DockerRuntime(executable:VerifiedExecutable(path:args[1],sha256:args[2]),socket:args[3])
+        let config=try SandboxConfiguration(job:args[5],nonce:args[6],image:args[4],memory:512<<20,cpus:1)
+        let companion:ObservationCompanion? = args.count==9 && args[7]=="runner-shared-300" ? ObservationCompanion():nil
+        defer {companion?.stop()}
+        if let companion {try companion.start(supervisor:args[8])}
+        if args[7]=="probe" {
+            let directory=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            defer {
+                try? FileManager.default.removeItem(at:directory)
+            }
+            let journal=try Journal(directory:directory.appendingPathComponent("state"))
+            let nativePath=URL(fileURLWithPath:"/usr/local/bin/orbctl").resolvingSymlinksInPath().path
+            let nativeSHA=SHA256.hash(data:try Data(contentsOf:URL(fileURLWithPath:nativePath))).map {String(format:"%02x",$0)}.joined()
+            let profile=SHA256.hash(data:Data(("isolated-finite-vm-bootstrap:"+nativeSHA+args[2]+config.image).utf8)).map {String(format:"%02x",$0)}.joined()
+            let inventory=VerifiedVMInventory(executable:try VerifiedExecutable(path:nativePath,sha256:nativeSHA))
+            let kernel=try OwnedVMResourceReader(runtime:runtime,approvedImages:[config.image],directMetadata:true)
+            let collector=VMEnvelopeReader(kernel:kernel,inventory:inventory,nativeProfileHash:profile,physical:ProcessInfo.processInfo.physicalMemory)
+            let jobs=JobController(journal:journal,executor:try SandboxExecutor(runtime:runtime,allowedImages:[config.image],resourceReader:collector),collectVM:true)
+            let artifacts=AsyncArtifacts(store:try ArtifactStore(directory:directory.appendingPathComponent("exports")))
+            let tasks=TaskController(journal:journal,broker:ModelBroker(journal:journal))
+            let controller=SandboxTaskController(journal:journal,jobs:jobs,tasks:tasks,artifacts:artifacts,socket:args[3],peerUID:geteuid())
+            let stamp=HostResources.nowMilliseconds()
+            let permission=try VMProbePermission(reviewedImage:config.image,reviewDigest:profile,managerEpoch:UUID().uuidString.lowercased(),issued:stamp,id:config.job,nonce:config.nonce)
+            func sample(_ now:Int64)->ResourceSample {ResourceSample(sampledAt:now,physical:128<<30,available:64<<30,vmAvailable:nil,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal)}
+            var admission=AdmissionPolicy(),observed=false,finished=false
+            _=try VMProbeCoordinator(journal:journal,jobs:jobs,sandbox:controller).begin(permission:permission,sample:sample(stamp),admission:&admission,now:stamp)
+            let deadline=ProcessInfo.processInfo.systemUptime+27
+            while !finished && ProcessInfo.processInfo.systemUptime<deadline {
+                let now=HostResources.nowMilliseconds()
+                let updates=try controller.tick(now:now,uptime:ProcessInfo.processInfo.systemUptime,sample:sample(now),admission:&admission,source:{_ in nil},nativeCapacityProven:false)
+                if jobs.vmAvailable(now:now) != nil {observed=true}
+                guard updates.output.isEmpty,updates.model.isEmpty,updates.artifactResults.isEmpty else {throw RuntimeError.invalid}
+                for done in updates.finished {guard done.job==config.job,done.codeComplete,done.exitVerified else {throw RuntimeError.invalid};finished=true}
+                Thread.sleep(forTimeInterval:0.02)
+            }
+            guard observed,finished,try journal.jobs().first?.state == .removed,try journal.unresolvedCount()==0,try journal.requestCount(job:config.job)==0 else {throw RuntimeError.deadline}
+            print("PASS: actual one-use finite VM bootstrap with initially unknown VM bytes, fixed10s code/no model scope, real composed kernel envelope and owned exit/removal; fake host headroom, isolated review only, NOT production enrollment or recurring service")
+            return
+        }
+        if args[7]=="controller" || args[7]=="controller-model" {
+            guard args.count==9 else {throw RuntimeError.invalid}
+            let directory=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            defer {try? FileManager.default.removeItem(at:directory)}
+            let journal=try Journal(directory:directory.appendingPathComponent("state"))
+            let python=URL(fileURLWithPath:args[8]).resolvingSymlinksInPath()
+            let pythonSHA=SHA256.hash(data:try Data(contentsOf:python)).map {String(format:"%02x",$0)}.joined()
+            let factory=try PythonWorkerFactory(invocation:args[8],executableSHA256:pythonSHA,policySHA256:"1cf3a27e1f6490b4cfce433f7770c1fcea53c581bd513ed4c368ea4df7fa993a")
+            let tasks=TaskController(journal:journal,broker:ModelBroker(journal:journal,factory:factory))
+            let jobs=JobController(journal:journal,executor:try SandboxExecutor(runtime:runtime,allowedImages:[config.image]))
+            let artifacts=AsyncArtifacts(store:try ArtifactStore(directory:directory.appendingPathComponent("exports"),availableBytes:{100<<30}))
+            let controller=SandboxTaskController(journal:journal,jobs:jobs,tasks:tasks,artifacts:artifacts,socket:args[3],peerUID:geteuid())
+            let stamp=HostResources.nowMilliseconds(),owner=String(repeating:"a",count:64)
+            let job=try DurableJob(id:config.job,idempotency:UUID().uuidString.lowercased(),ownerHash:owner,requestHash:String(repeating:"b",count:64),created:stamp,lifetime:30000)
+            _=try journal.reserveSandbox(job:job,configuration:config)
+            let modelCase=args[7]=="controller-model"
+            let root=URL(fileURLWithPath:FileManager.default.currentDirectoryPath)
+            let mock=Process(),input=Pipe(),output=Pipe(),epoch=UUID().uuidString.lowercased()
+            var base=""
+            if modelCase {
+                let mockDirectory=URL(fileURLWithPath:"/tmp/fios-sdk-"+UUID().uuidString.lowercased())
+                try FileManager.default.createDirectory(at:mockDirectory,withIntermediateDirectories:false,attributes:[.posixPermissions:0o700])
+                mock.executableURL=URL(fileURLWithPath:args[8]);mock.arguments=["-I","-B",root.appendingPathComponent("tests/fixtures/platform/native-server.py").path,mockDirectory.path,epoch]
+                mock.environment=["PATH":"/usr/bin:/bin","LANG":"C"]
+                mock.standardInput=input;mock.standardOutput=output;mock.standardError=FileHandle.nullDevice
+                try mock.run()
+                let fd=output.fileHandleForReading.fileDescriptor
+                guard fcntl(fd,F_SETFL,O_NONBLOCK)>=0 else {throw RuntimeError.launch}
+                var ready=Data()
+                let limit=ProcessInfo.processInfo.systemUptime+5
+                while !ready.contains(10) && ProcessInfo.processInfo.systemUptime<limit {
+                    var bytes=[UInt8](repeating:0,count:4096)
+                    let n=Darwin.read(fd,&bytes,bytes.count)
+                    if n>0 {ready.append(contentsOf:bytes.prefix(n))}
+                    guard ready.count<=4096 else {throw RuntimeError.outputLimit}
+                    Thread.sleep(forTimeInterval:0.01)
+                }
+                guard let info=try JSONSerialization.jsonObject(with:ready) as? [String:Any],let port=info["port"] as? Int,(1...65535).contains(port) else {throw RuntimeError.launch}
+                base="http://127.0.0.1:\(port)/v1"
+                // Native fixture path is trusted test metadata, not task input.
+                try Data(mockDirectory.path.utf8).write(to:directory.appendingPathComponent("mock-path"))
+            }
+            defer {
+                if modelCase {
+                    try? input.fileHandleForWriting.close()
+                    let end=ProcessInfo.processInfo.systemUptime+2
+                    while mock.isRunning && ProcessInfo.processInfo.systemUptime<end {Thread.sleep(forTimeInterval:0.01)}
+                    if mock.isRunning {kill(mock.processIdentifier,SIGKILL)}
+                    if !mock.isRunning {mock.waitUntilExit()}
+                    if let path=try? String(contentsOf:directory.appendingPathComponent("mock-path"),encoding:.utf8) {try? FileManager.default.removeItem(atPath:path)}
+                }
+            }
+            let mockPath=modelCase ? try String(contentsOf:directory.appendingPathComponent("mock-path"),encoding:.utf8):""
+            func binding()->WorkerDispatchBinding? {
+                guard modelCase else {return nil}
+                let snapshot=NativeSnapshot(host:"fixture-host",endpointHash:PythonWorkerFactory.digest(base),nativeEpoch:"native-fixture-one",sequence:1,sampledAt:HostResources.nowMilliseconds(),allClientLifecycleCoverage:true,residentModel:"fixture/idle-other",outstandingOwners:0,loading:false)
+                return WorkerDispatchBinding(baseURL:base,guardPath:mockPath+"/observe.sock",host:"fixture-host",profileHash:String(repeating:"f",count:64),managerEpoch:epoch,canonicalModel:"fixture/model",nativeModel:"fixture/model",nativeSnapshot:snapshot,nativeCompatibilityAccepted:true,apiKey:nil)
+            }
+            let source=modelCase ? try Data(contentsOf:root.appendingPathComponent("tests/fixtures/platform/sandbox-task.py")):Data("print('COORDINATOR_PASS')\n".utf8)
+            try controller.register(id:config.job,owner:owner,source:source,inputSHA256:SHA256.hash(data:source).map {String(format:"%02x",$0)}.joined(),binding:binding(),now:stamp)
+            var admission=AdmissionPolicy(),text=Data(),finished=false
+            let end=ProcessInfo.processInfo.systemUptime+25
+            while !finished && ProcessInfo.processInfo.systemUptime<end {
+                let now=HostResources.nowMilliseconds()
+                let sample=ResourceSample(sampledAt:now,physical:128<<30,available:64<<30,vmAvailable:8<<30,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal)
+                let updates=try controller.tick(now:now,uptime:ProcessInfo.processInfo.systemUptime,sample:sample,admission:&admission,source:{_ in binding()},nativeCapacityProven:modelCase)
+                for output in updates.output {guard output.job==config.job else {throw RuntimeError.identity};text.append(output.data)}
+                for done in updates.finished {guard done.job==config.job,done.codeComplete,done.exitVerified else {throw RuntimeError.invalid};finished=true}
+                Thread.sleep(forTimeInterval:0.02)
+            }
+            let expected=modelCase ? "SANDBOX_TASK_PASS\n{\"version\":1,\"type\":\"service.force\"}\n":"COORDINATOR_PASS\n"
+            guard finished,String(decoding:text,as:UTF8.self)==expected,try journal.jobs().first?.state == .removed,try journal.unresolvedCount()==0 else {throw RuntimeError.deadline}
+            if modelCase {
+                guard try journal.requestCount(job:config.job)==1 else {throw RuntimeError.invalid}
+                let index=try JSONSerialization.jsonObject(with:Data(contentsOf:directory.appendingPathComponent("exports/index.json"))) as! [String:Any]
+                guard let records=index["records"] as? [[String:Any]],records.count==1,let artifactID=records[0]["id"] as? String else {throw RuntimeError.invalid}
+                let downloadRequest=UUID().uuidString.lowercased()
+                try artifacts.download(request:downloadRequest,id:artifactID,owner:owner,now:HostResources.nowMilliseconds())
+                var exported=Data(),downloaded=false
+                let downloadEnd=ProcessInfo.processInfo.systemUptime+3
+                while !downloaded && ProcessInfo.processInfo.systemUptime<downloadEnd {
+                    for result in artifacts.drain() {
+                        guard result.request==downloadRequest,case .success(.download(var stream))=result.result else {throw RuntimeError.invalid}
+                        var ended=false
+                        while !ended {
+                            switch try stream.next(now:HostResources.nowMilliseconds()) {
+                            case .begin:break
+                            case .chunk(_,let value):exported.append(Data(base64Encoded:value)!)
+                            case .end:ended=true
+                            }
+                        }
+                        downloaded=true
+                    }
+                    Thread.sleep(forTimeInterval:0.01)
+                }
+                guard downloaded,exported==Data("EXPLICIT_ARTIFACT_ONLY".utf8) else {throw RuntimeError.invalid}
+                print("PASS: actual asynchronous sandbox controller → installed private factory/broker/guard → HTTP/SSE MOCK → sandbox → durable explicit artifact; stdout stays data, exit0/removal verified; NO real inference/native acceptance")
+            } else {
+                print("PASS: actual asynchronous sandbox controller create/verified attach/start/finite code/output/exit0/owned removal, fake resource telemetry and no model permission")
+            }
+            return
+        }
+        let id=try runtime.create(config)
+        defer {try? runtime.removeOwned(config,savedID:id)}
+        let attach=try DockerAttach(socketPath:args[3],configuration:config,savedID:id,peerUID:geteuid(),now:ProcessInfo.processInfo.systemUptime)
+        defer {attach.close()}
+        let deadline=ProcessInfo.processInfo.systemUptime+5
+        while !attach.ready && ProcessInfo.processInfo.systemUptime<deadline {
+            _=try attach.poll(now:ProcessInfo.processInfo.systemUptime);Thread.sleep(forTimeInterval:0.005)
+        }
+        guard attach.ready else {throw RuntimeError.deadline}
+        let started=try runtime.command(["start",id])
+        guard started.status==0 else {throw RuntimeError.launch}
+        if ["runner","runner-shared","runner-shared-300"].contains(args[7]) {
+            let nativePath=URL(fileURLWithPath:"/usr/local/bin/orbctl").resolvingSymlinksInPath().path
+            let nativeSHA=SHA256.hash(data:try Data(contentsOf:URL(fileURLWithPath:nativePath))).map {String(format:"%02x",$0)}.joined()
+            let inventory=MeasuredVMInventory(source:VerifiedVMInventory(executable:try VerifiedExecutable(path:nativePath,sha256:nativeSHA)))
+            // Actual local read-only source experiment, not release enrollment.
+            let profile=SHA256.hash(data:Data(("isolated-vm-envelope-fixture:"+nativeSHA+args[2]+config.image).utf8)).map {String(format:"%02x",$0)}.joined()
+            let kernel=try OwnedVMResourceReader(runtime:runtime,approvedImages:[config.image],directMetadata:true)
+            let long=args[7]=="runner-shared-300"
+            let shared=args[7] != "runner"
+            let collector:any VMResourceReading
+            if shared {
+                let seed=try kernel.read(configuration:config,id:id,leaseUntil:HostResources.nowMilliseconds()+30000)
+                // Synthetic fixture review only. No production authority issuer.
+                let review=SHA256.hash(data:Data("TEST_ONLY_SHARED_KERNEL_COVERAGE".utf8)).map {String(format:"%02x",$0)}.joined()
+                let permission=try SharedVMKernelPermission(nativeProfileHash:profile,bootHash:seed.bootHash,reviewDigest:review)
+                collector=SharedKernelVMReader(kernel:kernel,cap:VerifiedVMCap(executable:try VerifiedExecutable(path:nativePath,sha256:nativeSHA)),permission:permission,physical:ProcessInfo.processInfo.physicalMemory)
+            }else {collector=VMEnvelopeReader(kernel:kernel,inventory:inventory,nativeProfileHash:profile,physical:ProcessInfo.processInfo.physicalMemory)}
+            let resources=try SandboxExecutor(runtime:runtime,allowedImages:[config.image],resourceReader:collector)
+            var earlySession:SandboxTaskSession?
+            if shared {
+                let code="#"+String(repeating:"x",count:(4<<20)-100)+"\nimport time\ntime.sleep(\(long ? 308 : 18))\nprint('ATTACH_RUNNER_PASS')\n"
+                let stamp=HostResources.nowMilliseconds()
+                let session=try SandboxTaskSession(source:Data(code.utf8),deadline:stamp+(long ? 330000 : 30000),now:stamp)
+                let end=ProcessInfo.processInfo.systemUptime+5
+                while !session.uploaded && ProcessInfo.processInfo.systemUptime<end {
+                    guard try session.poll(attach:attach,started:true,now:HostResources.nowMilliseconds(),uptime:ProcessInfo.processInfo.systemUptime).isEmpty else {throw RuntimeError.invalid}
+                    Thread.sleep(forTimeInterval:0.005)
+                }
+                guard session.uploaded else {throw RuntimeError.deadline};earlySession=session
+            }
+            func sourceUsage()throws->rusage_info_v2 {
+                var usage=rusage_info_v2()
+                let code=withUnsafeMutablePointer(to:&usage) {$0.withMemoryRebound(to:rusage_info_t?.self,capacity:1) {proc_pid_rusage(getpid(),RUSAGE_INFO_V2,$0)}}
+                guard code==0 else {throw RuntimeError.launch};return usage
+            }
+            func sourceCPU()throws->UInt64 {
+                let usage=try sourceUsage()
+                return usage.ri_user_time+usage.ri_system_time+usage.ri_child_user_time+usage.ri_child_system_time
+            }
+            let sourceStarted=ProcessInfo.processInfo.systemUptime,sourceBefore=try sourceCPU()
+            let initialRSS=try sourceUsage().ri_resident_size
+            let companionBefore=try companion?.sample()
+            let initialCombined=initialRSS+(companionBefore?.rss ?? 0)
+            var combinedPeak=initialCombined
+            var peakRSS=initialRSS
+            let count=long ? 150 : (shared ? 6:1)
+            var latest:VMKernelSample?
+            var lastRenewed=HostResources.nowMilliseconds()
+            func pollSourceChannel()throws {
+                if let earlySession {
+                    let stamp=HostResources.nowMilliseconds()
+                    // Finite fixture owns this source-only session; renewal
+                    // cannot extend its fixed330s absolute task deadline.
+                    if long && stamp-lastRenewed>=10000 {try earlySession.renew();lastRenewed=stamp}
+                    guard try earlySession.poll(attach:attach,started:true,now:stamp,uptime:ProcessInfo.processInfo.systemUptime).isEmpty else {throw RuntimeError.invalid}
+                }else {guard try attach.poll(now:ProcessInfo.processInfo.systemUptime).isEmpty else {throw RuntimeError.invalid}}
+            }
+            func waitUntil(_ time:TimeInterval)throws {
+                while ProcessInfo.processInfo.systemUptime<time {
+                    try autoreleasepool {try pollSourceChannel()}
+                    Thread.sleep(forTimeInterval:0.005)
+                }
+            }
+            for index in 0..<count {
+                if shared {try waitUntil(sourceStarted+Double(index)*2)}
+                try resources.submitResources(configuration:config,id:id,leaseUntil:HostResources.nowMilliseconds()+30000)
+                var observation:VMReadResult?
+                let observationDeadline=ProcessInfo.processInfo.systemUptime+5
+                while observation==nil && ProcessInfo.processInfo.systemUptime<observationDeadline {
+                    try autoreleasepool {try pollSourceChannel()}
+                    guard resources.drain().isEmpty else {throw RuntimeError.invalid}
+                    let values=resources.drainResources();guard values.count<=1 else {throw RuntimeError.invalid}
+                    observation=values.first;Thread.sleep(forTimeInterval:0.005)
+                }
+                guard let observation,observation.job==config.job,observation.runtimeID==id,case .success(let memory)=observation.result,
+                      memory.total>config.memory,memory.free<=memory.total,memory.bootHash.count==64,
+                      let envelope=memory.envelope,VMResources.remaining(envelope,expectedRuntimeHash:envelope.runtimeHash,now:HostResources.nowMilliseconds()) != nil else {throw RuntimeError.identity}
+                latest=memory
+                let currentRSS=try sourceUsage().ri_resident_size
+                peakRSS=max(peakRSS,currentRSS)
+                if let value=try companion?.sample() {combinedPeak=max(combinedPeak,currentRSS+value.rss)}
+            }
+            if shared {try waitUntil(sourceStarted+Double(count)*2)}
+            let consumed=try sourceCPU()-sourceBefore
+            let sourceMilliseconds=ProcessCPU.seconds(ticks:consumed)*1000
+            let label=long ? "shared-kernel TEST-ONLY review 150 captures/300s" : (shared ? "shared-kernel TEST-ONLY review six captures":"composed VM capture")
+            print("METRIC: \(label) wall_ms=\(Int((ProcessInfo.processInfo.systemUptime-sourceStarted)*1000)) self_plus_reaped_child_cpu_ms=\(Int(sourceMilliseconds)) equivalent_fixed2s_core_percent=\(String(format:"%.2f",sourceMilliseconds/(Double(count)*20))); isolated source only, not whole-agent idle acceptance")
+            let growth=peakRSS-initialRSS
+            print("METRIC: VM source only initial_rss_mib=\(initialRSS>>20) peak_rss_mib=\(peakRSS>>20) growth_mib=\(growth>>20); excludes manager/supervisor/daemon; not combined acceptance")
+            fflush(nil)
+            if let companionBefore,let after=try companion?.sample() {
+                guard after.cpu>=companionBefore.cpu else {throw RuntimeError.identity}
+                let milliseconds=sourceMilliseconds+ProcessCPU.seconds(ticks:after.cpu-companionBefore.cpu)*1000
+                let percent=milliseconds/(Double(count)*20),growth=combinedPeak-initialCombined
+                print("METRIC: simultaneous observation-only manager+supervisor+VM source, 256mixed terminal tombstones, seconds=300, combined_cpu_percent_one_core=\(String(format:"%.2f",percent)), initial_rss_mib=\(initialCombined>>20), sampled_combined_peak_rss_mib=\(combinedPeak>>20), growth_mib=\(growth>>20); exact process starts, excludes daemon/hypervisor; synthetic VM review, NOT enrolled/native acceptance")
+                fflush(nil)
+                guard percent<=5,combinedPeak<=256<<20,growth<=32<<20 else {throw RuntimeError.outputLimit}
+            }
+            if long {
+                guard sourceMilliseconds/(Double(count)*20)<=5,peakRSS<=256<<20,growth<=32<<20 else {throw RuntimeError.outputLimit}
+            }
+            guard let memory=latest,let envelope=memory.envelope else {throw RuntimeError.identity}
+            print("METRIC: observed VM total_mib=\(memory.total>>20) free_mib=\(memory.free>>20) configured_cap_mib=\(envelope.configuredCap>>20); observations only, not independent admission authority")
+            print("PASS: fixed different-UID metadata-only VM read inside an already-owned isolated runner; no extra container, shell or management authority")
+            let session:SandboxTaskSession
+            if let earlySession {session=earlySession}
+            else {
+                let code="#"+String(repeating:"x",count:(4<<20)-100)+"\nprint('ATTACH_RUNNER_PASS')\n"
+                let stamp=HostResources.nowMilliseconds()
+                session=try SandboxTaskSession(source:Data(code.utf8),deadline:stamp+30000,now:stamp)
+            }
+            var output=Data(),completed=false
+            let end=ProcessInfo.processInfo.systemUptime+12
+            while !attach.eof && ProcessInfo.processInfo.systemUptime<end {
+                for event in try session.poll(attach:attach,started:true,now:HostResources.nowMilliseconds(),uptime:ProcessInfo.processInfo.systemUptime) {
+                    switch event {
+                    case .output(_,_,let bytes):output.append(bytes)
+                    case .done(let success):completed=success
+                    default:throw RuntimeError.invalid
+                    }
+                }
+                Thread.sleep(forTimeInterval:0.005)
+            }
+            guard attach.eof,completed,String(decoding:output,as:UTF8.self)=="ATTACH_RUNNER_PASS\n" else {throw RuntimeError.invalid}
+            let status=try runtime.command(["wait",id],timeout:2)
+            guard status.status==0,String(decoding:status.output,as:UTF8.self).trimmingCharacters(in:.whitespacesAndNewlines)=="0" else {throw RuntimeError.launch}
+            print("PASS: actual isolated immutable Python runner, near4MiB finite upload, framed task output/completion and independent container exit0 over native Unix attach")
+            return
+        }
+        guard args[7]=="echo" else {throw RuntimeError.invalid}
+        let body=Data("{\"version\":1,\"type\":\"fixture\",\"content\":\"bounded\"}".utf8)
+        try attach.enqueue(Data([0,0,0,UInt8(body.count)])+body)
+        var values:[Data]=[]
+        while !attach.eof && ProcessInfo.processInfo.systemUptime<deadline {
+            values+=try attach.poll(now:ProcessInfo.processInfo.systemUptime);Thread.sleep(forTimeInterval:0.005)
+        }
+        guard attach.eof,values==[body] else {throw RuntimeError.invalid}
+        let result=try runtime.command(["wait",id],timeout:2)
+        guard result.status==0,String(decoding:result.output,as:UTF8.self).trimmingCharacters(in:.whitespacesAndNewlines)=="0" else {throw RuntimeError.launch}
+        print("PASS: actual isolated Unix Docker attach-before-start, framed stdin/stdout and clean exit; no subprocess transport/no model inference")
+    }
+}

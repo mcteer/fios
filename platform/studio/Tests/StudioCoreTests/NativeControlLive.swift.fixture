@@ -1,0 +1,30 @@
+import Foundation
+import Darwin
+
+@main
+struct NativeControlLive {
+    static func main() {
+        do {try run()} catch {FileHandle.standardError.write(Data("Native control fixture refused.\n".utf8));exit(1)}
+    }
+    static func run() throws {
+        let args=Array(CommandLine.arguments.dropFirst())
+        if args.count==7,args[0]=="--isolated-manager" {
+            guard args[1].hasPrefix("/tmp/") || args[1].hasPrefix("/private/tmp/"),let pid=Int32(args[6]),pid>1 else {throw NativeControlError.invalid}
+            let peer=NativeControlPeer(pid:pid,start:try WorkerResources.startIdentifier(pid:pid),executable:try VerifiedExecutable(path:args[3],sha256:args[4]))
+            // args[5] is a fixed source fixture marker, not a role or authority.
+            guard args[5]=="source-fixture-only" else {throw NativeControlError.invalid}
+            try ManagerRuntime.run(directory:URL(fileURLWithPath:args[1]),nativeControl:NativeControlClient(path:args[2],peer:peer))
+            return
+        }
+        guard args.count==8,args[0]=="--isolated",args[1].hasPrefix("/tmp/") || args[1].hasPrefix("/private/tmp/"),
+              let pid=Int32(args[4]),pid>1,let operation=NativeControlOperation(rawValue:UInt8(args[5]) ?? 255),
+              let sequence=UInt64(args[7]) else {throw NativeControlError.invalid}
+        let executable=try VerifiedExecutable(path:args[2],sha256:args[3])
+        let peer=NativeControlPeer(pid:pid,start:try WorkerResources.startIdentifier(pid:pid),executable:executable)
+        let client=NativeControlClient(path:args[1],peer:peer)
+        let value=try client.request(operation:operation,instance:args[6]=="-" ? nil:args[6],sequence:sequence)
+        let fields:[String:Any]=["status":value.status.rawValue,"instance":value.instance,"sequence":String(value.pauseSequence),
+            "owners":value.owners,"closed":value.closed,"uncertain":value.uncertain,"activity":"unknown"]
+        print(String(decoding:try JSONSerialization.data(withJSONObject:fields,options:[.sortedKeys]),as:UTF8.self))
+    }
+}

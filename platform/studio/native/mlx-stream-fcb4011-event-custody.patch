@@ -1,0 +1,22 @@
+diff --git a/csrc/mlx_event_shim.cpp b/csrc/mlx_event_shim.cpp
+index 4061adf..4a1566e 100644
+--- a/csrc/mlx_event_shim.cpp
++++ b/csrc/mlx_event_shim.cpp
+@@ -103,7 +103,7 @@ class WaitEvent : public mx::Primitive {
+     if (ev_->kind != KIND_METAL) return;
+     auto& enc = mx::metal::get_command_encoder(stream());
+     enc.end_encoding();
+-    enc.get_command_buffer()->encodeWait(ev_->mtl, value_);
++    enc.fios_encode_shared_wait(ev_->mtl, value_);
+     enc.barrier();
+     if (track_inputs_) {
+       for (int i = 0; i < n_gated_; i++) enc.set_input_array(inputs[i], 0);
+@@ -137,7 +137,7 @@ class SignalEvent : public mx::Primitive {
+     if (ev_->kind != KIND_METAL) return;
+     auto& enc = mx::metal::get_command_encoder(stream());
+     enc.end_encoding();
+-    enc.get_command_buffer()->encodeSignalEvent(ev_->mtl, value_);
++    enc.fios_encode_shared_signal(ev_->mtl, value_);
+     g_gpu_signals++;
+   }
+ 

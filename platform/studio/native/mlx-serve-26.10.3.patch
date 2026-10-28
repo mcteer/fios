@@ -1,0 +1,1412 @@
+diff --git a/build.zig b/build.zig
+index 0100fd9..e612db7 100644
+--- a/build.zig
++++ b/build.zig
+@@ -193,6 +193,10 @@ pub fn build(b: *std.Build) void {
+ 
+     // xatlas UV unwrapping + FQMS decimation (MIT, vendored) with C shims for the
+     // Hunyuan3D texture paint stage. See lib/{xatlas,fqms} + src/{uvwrap,mesh_simplify}.zig.
++    if (target.result.os.tag == .macos) {
++        mod.addIncludePath(b.path("lib/mlxc-src"));
++        mod.addCSourceFile(.{ .file = b.path("lib/device_owner_barrier.cpp"), .flags = &.{ "-std=c++20", "-O2" } });
++    }
+     mod.addCSourceFile(.{ .file = b.path("lib/xatlas/xatlas.cpp"), .flags = &.{ "-std=c++17", "-O2", "-DNDEBUG" } });
+     mod.addCSourceFile(.{ .file = b.path("lib/xatlas/xatlas_shim.cpp"), .flags = &.{ "-std=c++17", "-O2", "-DNDEBUG" } });
+     mod.addIncludePath(b.path("lib/xatlas"));
+@@ -286,6 +290,10 @@ pub fn build(b: *std.Build) void {
+     test_mod.addCSourceFile(.{ .file = b.path("lib/xatlas/xatlas.cpp"), .flags = &.{ "-std=c++17", "-O2", "-DNDEBUG" } });
+     test_mod.addCSourceFile(.{ .file = b.path("lib/xatlas/xatlas_shim.cpp"), .flags = &.{ "-std=c++17", "-O2", "-DNDEBUG" } });
+     test_mod.addIncludePath(b.path("lib/xatlas"));
++    if (target.result.os.tag == .macos) {
++        test_mod.addIncludePath(b.path("lib/mlxc-src"));
++        test_mod.addCSourceFile(.{ .file = b.path("lib/device_owner_barrier.cpp"), .flags = &.{ "-std=c++20", "-O2" } });
++    }
+     test_mod.addCSourceFile(.{ .file = b.path("lib/fqms/fqms_shim.cpp"), .flags = &.{ "-std=c++17", "-O2", "-DNDEBUG" } });
+     test_mod.addIncludePath(b.path("lib/fqms"));
+     addDs4Sources(b, test_mod);
+@@ -968,7 +976,14 @@ fn mlxStreamPkg(b: *std.Build, host: *std.Build.Module, dir: []const u8, root: [
+ /// (`src/plugin_host.zig`), with the read pool's scripted faults.
+ fn addMlxStreamTests(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode, filter: ?[]const u8, frameworks: ?[]const u8, root: []const u8, name: []const u8) *std.Build.Step.Compile {
+     const host = b.createModule(.{ .root_source_file = b.path("src/plugin_host.zig"), .target = target, .optimize = optimize, .link_libc = true, .link_libcpp = true });
++    const host_options = b.addOptions();
++    host_options.addOption([]const u8, "version", readAppVersion(b) orelse "0.0.0-dev");
++    host.addOptions("build_options", host_options);
+     addMlxLib(b, host);
++    if (target.result.os.tag == .macos) {
++        host.addIncludePath(b.path("lib/mlxc-src"));
++        host.addCSourceFile(.{ .file = b.path("lib/device_owner_barrier.cpp"), .flags = &.{ "-std=c++20", "-O2" } });
++    }
+     addExl3Module(b, host, target, optimize);
+     if (frameworks) |fw| host.addFrameworkPath(.{ .cwd_relative = fw });
+     for ([_][]const u8{ "IOKit", "CoreFoundation", "Foundation", "Metal", "IOSurface" }) |f| host.linkFramework(f, .{});
+diff --git a/lib/llama_shim/llama_shim.cpp b/lib/llama_shim/llama_shim.cpp
+index 392b72b..ad65f31 100644
+--- a/lib/llama_shim/llama_shim.cpp
++++ b/lib/llama_shim/llama_shim.cpp
+@@ -15,6 +15,8 @@
+ #endif
+ 
+ #include <algorithm>
++#include <atomic>
++#include <limits>
+ #include <cstdio>
+ #include <cstdlib>
+ #include <cstring>
+@@ -53,7 +55,21 @@ struct Row {
+ };
+ } // namespace
+ 
++// Process-local, non-reusable creator identity, not std::thread::id/PID alone.
++// No model/wire payload selects it; exhaustion yields no terminal receipt.
++static std::atomic<uint64_t> fios_llama_next_owner{0};
++static uint64_t fios_llama_owner() {
++    static thread_local const uint64_t owner = []() -> uint64_t {
++        uint64_t value = fios_llama_next_owner.load(std::memory_order_relaxed);
++        for (;;) {
++            if (value == std::numeric_limits<uint64_t>::max()) return 0;
++            if (fios_llama_next_owner.compare_exchange_weak(value, value + 1, std::memory_order_relaxed)) return value + 1;
++        }
++    }();
++    return owner;
++}
+ struct mlx_llama_ctx {
++    uint64_t fios_owner;
+     mlx_llama_engine *e;
+     struct llama_context *tgt;
+     struct llama_context *dft; // MTP head, NULL without MTP
+@@ -287,6 +303,7 @@ extern "C" mlx_llama_ctx *mlx_llama_ctx_create(mlx_llama_engine *e, const mlx_ll
+         copy_err(err, errlen, "out of memory allocating context");
+         return NULL;
+     }
++    c->fios_owner = fios_llama_owner();
+     c->e = e;
+     c->tgt = tgt;
+     c->dft = NULL;
+@@ -303,6 +320,18 @@ extern "C" mlx_llama_ctx *mlx_llama_ctx_create(mlx_llama_engine *e, const mlx_ll
+     return c;
+ }
+ 
++// Exact live context retained by caller. Partial backend primitive only:
++// target AND optional MTP draft must finish on their actual creator owner.
++// No loading, reinitialization, cache eviction, logs or inference replay.
++extern "C" int32_t mlx_llama_ctx_terminal(mlx_llama_ctx *c) {
++    if (!c || !c->tgt || !c->fios_owner || c->fios_owner != fios_llama_owner()) return 0;
++    try {
++        llama_synchronize(c->tgt);
++        if (c->dft) llama_synchronize(c->dft);
++        return 1;
++    } catch (...) { return 0; }
++}
++
+ extern "C" void mlx_llama_ctx_free(mlx_llama_ctx *c) {
+     if (!c) return;
+     if (c->dbatch) llama_batch_ext_free(c->dbatch);
+diff --git a/lib/llama_shim/llama_shim.h b/lib/llama_shim/llama_shim.h
+index 12bd0f7..21ca26c 100644
+--- a/lib/llama_shim/llama_shim.h
++++ b/lib/llama_shim/llama_shim.h
+@@ -82,6 +82,9 @@ typedef struct {
+ // dropped with a log line and mlx_llama_ctx_mtp_drafts() reports 0.
+ mlx_llama_ctx *mlx_llama_ctx_create(mlx_llama_engine *e, const mlx_llama_ctx_params *p, char *err, size_t errlen);
+ void mlx_llama_ctx_free(mlx_llama_ctx *c);
++// Partial terminal primitive on exact retained creator-owned target+MTP context.
++// 1 synchronized,0 missing/wrong-owner/failure; NOT all-client quiescence.
++int32_t mlx_llama_ctx_terminal(mlx_llama_ctx *c);
+ // Draft tokens per MTP round this context runs, 0 when it has no MTP context.
+ int32_t mlx_llama_ctx_mtp_drafts(mlx_llama_ctx *c);
+ 
+diff --git a/src/arch/llama.zig b/src/arch/llama.zig
+index 806d641..1c0b82d 100644
+--- a/src/arch/llama.zig
++++ b/src/arch/llama.zig
+@@ -317,6 +317,13 @@ pub const LlamaContext = struct {
+         self.allocator.destroy(self);
+     }
+ 
++    /// Native-internal partial terminal primitive. Caller retains this exact
++    /// context/model and runs on its creator; target+MTP are both synchronized.
++    /// Not enrolled all-client/registry authority and never model-granted.
++    pub fn terminal(self: *LlamaContext) Error!void {
++        if (ffi.mlx_llama_ctx_terminal(self.handle) != 1) return Error.SessionSyncFailed;
++    }
++
+     /// Draft tokens per MTP round, 0 without an MTP context.
+     pub fn mtpDrafts(self: *const LlamaContext) u32 {
+         return @intCast(ffi.mlx_llama_ctx_mtp_drafts(self.handle));
+diff --git a/src/llama_ffi.zig b/src/llama_ffi.zig
+index 1c9946d..43da296 100644
+--- a/src/llama_ffi.zig
++++ b/src/llama_ffi.zig
+@@ -69,6 +69,7 @@ pub const GgmlType = struct {
+ 
+ pub extern fn mlx_llama_ctx_create(e: *Engine, p: *const CtxParams, err: ?[*]u8, errlen: usize) ?*Ctx;
+ pub extern fn mlx_llama_ctx_free(c: ?*Ctx) void;
++pub extern fn mlx_llama_ctx_terminal(c: ?*Ctx) c_int;
+ pub extern fn mlx_llama_ctx_mtp_drafts(c: *Ctx) i32;
+ 
+ pub extern fn mlx_llama_seq_prefill(c: *Ctx, seq: i32, tokens: [*]const i32, n_tokens: i32, err: ?[*]u8, errlen: usize) i32;
+diff --git a/src/mlx.zig b/src/mlx.zig
+index 1f982ed..291853f 100644
+--- a/src/mlx.zig
++++ b/src/mlx.zig
+@@ -86,11 +86,83 @@ pub extern "c" fn mlx_stream_set(stream: *mlx_stream, src: mlx_stream) c_int;
+ pub extern "c" fn mlx_stream_equal(lhs: mlx_stream, rhs: mlx_stream) bool;
+ pub extern "c" fn mlx_stream_new_device(dev: mlx_device) mlx_stream;
+ pub extern "c" fn mlx_stream_free(s: mlx_stream) c_int;
+-pub extern "c" fn mlx_default_cpu_stream_new() mlx_stream;
+-pub extern "c" fn mlx_default_gpu_stream_new() mlx_stream;
++const fios_raw_cpu_default = @extern(*const fn () callconv(.c) mlx_stream, .{ .name = "mlx_default_cpu_stream_new" });
++const fios_raw_gpu_default = @extern(*const fn () callconv(.c) mlx_stream, .{ .name = "mlx_default_gpu_stream_new" });
++// Source-only annotation: preserve actual native default identity/behavior.
++// Failed custody is NOT adopted; raw getter may continue ordinary work while
++// private owner/coverage probes remain fail-closed. No inference is replayed.
++pub fn mlx_default_cpu_stream_new() mlx_stream {
++    return fiosOwnedDefault(0) orelse fios_raw_cpu_default();
++}
++pub fn mlx_default_gpu_stream_new() mlx_stream {
++    return fiosOwnedDefault(1) orelse fios_raw_gpu_default();
++}
++fn fiosOwnedDefault(dtype: u32) ?mlx_stream {
++    if (builtin.os.tag == .macos) {
++        if (!std.mem.endsWith(u8, @import("build_options").version, "-fios-source-fixture") or
++            std.c.getuid() == 0 or std.c.geteuid() != std.c.getuid()) return null;
++        const marker = std.c.getenv("FIOS_NATIVE_CONTROL") orelse return null;
++        if (!std.mem.eql(u8, std.mem.span(marker), "isolated-source-fixture")) return null;
++        var context: ?*anyopaque = null;
++        if (FiosStreamC.fios_mlx_owned_default_c_stream(FiosStreamC.fios_mlx_current_thread(), dtype, 0, &context) != 0 or context == null) return null;
++        return .{ .ctx = context };
++    }
++    return null;
++}
+ pub extern "c" fn mlx_stream_get_device(dev: *mlx_device, stream: mlx_stream) c_int;
+ pub extern "c" fn mlx_device_get_type(dtype: *mlx_device_type, dev: mlx_device) c_int;
+ 
++const FiosStreamC = struct {
++    const Result = extern struct { seen: u32 = 0, synchronized: u32 = 0 };
++    extern "c" fn fios_mlx_current_thread() u64;
++    extern "c" fn fios_mlx_owned_default_c_stream(owner: u64, dtype: u32, device: i32, context: *?*anyopaque) c_int;
++    extern "c" fn fios_mlx_owner_barrier(owner: u64, result: *Result) c_int;
++    extern "c" fn mlx_stream_get_index(index: *c_int, stream: mlx_stream) c_int;
++    extern "c" fn setenv(name: [*:0]const u8, value: [*:0]const u8, overwrite: c_int) c_int;
++    extern "c" fn unsetenv(name: [*:0]const u8) c_int;
++};
++test "fios native cleanup mlx-c source defaults have actual creation custody" {
++    if (builtin.os.tag != .macos or std.c.getuid() == 0 or std.c.getuid() != std.c.geteuid() or
++        !std.mem.endsWith(u8, @import("build_options").version, "-fios-source-fixture")) return error.SkipZigTest;
++    const a = std.testing.allocator;
++    const previous = if (std.c.getenv("FIOS_NATIVE_CONTROL")) |p| try a.dupeSentinel(u8, std.mem.span(p), 0) else null;
++    defer {
++        if (previous) |p| { _ = FiosStreamC.setenv("FIOS_NATIVE_CONTROL", p.ptr, 1); a.free(p); }
++        else { _ = FiosStreamC.unsetenv("FIOS_NATIVE_CONTROL"); }
++    }
++    try std.testing.expectEqual(@as(c_int, 0), FiosStreamC.setenv("FIOS_NATIVE_CONTROL", "isolated-source-fixture", 1));
++    const first = mlx_default_cpu_stream_new();
++    defer _ = mlx_stream_free(first);
++    const second = mlx_default_cpu_stream_new();
++    defer _ = mlx_stream_free(second);
++    try std.testing.expect(first.ctx != null and second.ctx != null and first.ctx != second.ctx);
++    var i: c_int = -1; var j: c_int = -1;
++    try std.testing.expectEqual(@as(c_int, 0), FiosStreamC.mlx_stream_get_index(&i, first));
++    try std.testing.expectEqual(@as(c_int, 0), FiosStreamC.mlx_stream_get_index(&j, second));
++    try std.testing.expectEqual(i, j);
++    var result: FiosStreamC.Result = .{};
++    try std.testing.expectEqual(@as(c_int, 0), FiosStreamC.fios_mlx_owner_barrier(FiosStreamC.fios_mlx_current_thread(), &result));
++    try std.testing.expectEqual(@as(u32, 1), result.seen);
++    try std.testing.expectEqual(@as(u32, 1), result.synchronized);
++    // Absent marker must NOT instrument an otherwise ordinary native caller.
++    // The fresh thread's genuine raw CPU default stays unregistered/unknown.
++    const Foreign = struct {
++        status: c_int = -1,
++        result: FiosStreamC.Result = .{},
++        fn run(self: *@This()) void {
++            const stream = mlx_default_cpu_stream_new();
++            defer _ = mlx_stream_free(stream);
++            self.status = FiosStreamC.fios_mlx_owner_barrier(FiosStreamC.fios_mlx_current_thread(), &self.result);
++        }
++    };
++    try std.testing.expectEqual(@as(c_int, 0), FiosStreamC.unsetenv("FIOS_NATIVE_CONTROL"));
++    var foreign: Foreign = .{};
++    const thread = try std.Thread.spawn(.{}, Foreign.run, .{&foreign});
++    thread.join();
++    try std.testing.expectEqual(@as(c_int, 3), foreign.status);
++    try std.testing.expectEqual(@as(u32, 0), foreign.result.synchronized);
++}
++
+ /// True when the stream targets a GPU that runs custom Metal kernels: every
+ /// `metal_kernel` helper gates on this, so on CUDA they all take the MLX-op path.
+ pub fn streamIsGpu(s: mlx_stream) bool {
+diff --git a/src/model_registry.zig b/src/model_registry.zig
+index da1f791..7e357b2 100644
+--- a/src/model_registry.zig
++++ b/src/model_registry.zig
+@@ -739,6 +739,19 @@ pub const ModelStatus = struct {
+ ///   3. Per-request handlers (Phase C) call `ensureLoaded(scheduler, id)`
+ ///      and `release`. The borrowed `*LoadedModel` is valid until `release`.
+ ///   4. `deinit` tears down every entry; the discovery result is freed.
++// Non-reusable process-local owner tags. Never infer release from OS TID/exit.
++pub const FiosPinOwners = struct {
++    next: std.atomic.Value(u64) = .init(0),
++    pub fn allocate(self: *FiosPinOwners) ?u64 {
++        var previous = self.next.load(.seq_cst);
++        while (previous != std.math.maxInt(u64)) {
++            if (self.next.cmpxchgWeak(previous, previous + 1, .seq_cst, .seq_cst)) |observed| previous = observed else return previous + 1;
++        }
++        return null;
++    }
++};
++var fios_pin_owners = FiosPinOwners{};
++threadlocal var fios_pin_owner: u64 = 0;
+ pub const ModelRegistry = struct {
+     allocator: std.mem.Allocator,
+     io: std.Io,
+@@ -780,6 +793,21 @@ pub const ModelRegistry = struct {
+     /// Bumped by every entry added and every state change (`/props`
+     /// `registry_generation`): a client re-reads `/v1/models` only when it moved.
+     generation: std.atomic.Value(u64) = .init(0),
++    // Partial probe epoch for reviewed canonical/borrow paths. Mutex-held
++    // (or single-threaded initialization); exhaustion is irreversible.
++    fios_probe_epoch: u64 = 1,
++    fios_probe_epoch_uncertain: bool = false,
++    // Partial access fence only: other known mutations invalidate it; not an
++    // all-writer/backend/context membership reservation or lifecycle permit.
++    fios_access_ticket: u64 = 0,
++    fios_access_owner: u64 = 0,
++    fios_access_epoch: u64 = 0,
++    fios_access_sequence: u64 = 0,
++    fios_access_pins: [64]*LoadedModel = undefined,
++    fios_access_pin_count: usize = 0,
++    fios_mutation_slots: [64]FiosMutationSlot = @splat(.{}),
++    fios_mutation_sequence: u64 = 0,
++    fios_mutation_count: usize = 0,
+ 
+     /// Running sum of `bytes_resident` across `.ready` entries. Updated
+     /// under `mutex` on every state transition.
+@@ -795,6 +823,18 @@ pub const ModelRegistry = struct {
+     /// pick needs.
+     lru_clock: i64,
+ 
++    const FiosMutationSlot = struct { owner: u64 = 0, ticket: u64 = 0 };
++    pub const FiosMutation = struct {
++        registry: *ModelRegistry, owner: u64, ticket: u64, slot: usize,
++        pub fn finish(self: *const FiosMutation) bool { return self.registry.fiosFinishMutation(self.*); }
++        fn failed(self: *const FiosMutation, err: anyerror) void {
++            switch (err) {
++                error.Canceled, error.Cancelled, error.Timeout, error.TimedOut, error.DeadlineExceeded => self.registry.fiosAbandonMutation(self.*),
++                else => {},
++            }
++        }
++    };
++
+     /// Create the registry. Takes ownership of `discovery` (if non-null)
+     /// and pre-populates entries from it.
+     ///
+@@ -876,6 +916,8 @@ pub const ModelRegistry = struct {
+     /// `registerStub` variant carrying the discovery-peeked `model_type` so
+     /// the stub can advertise arch-derived capabilities before loading.
+     pub fn registerStubWithArch(self: *ModelRegistry, id: []const u8, path: []const u8, bytes_on_disk: ?u64, arch_hint: []const u8) !*LoadedModel {
++        // Caller holds mutex, or single-threaded initialization.
++        if (self.fios_access_ticket != 0) return error.RegistryHeld;
+         if (self.entries.get(id) != null) return error.DuplicateId;
+ 
+         const stub = try self.allocator.create(LoadedModel);
+@@ -915,6 +957,7 @@ pub const ModelRegistry = struct {
+         // putNoClobber so we surface a stronger error than overwrite — the
+         // earlier `entries.get` guard makes this defensive.
+         try self.entries.putNoClobber(stub.id, stub);
++        self.fiosProbeChangedLocked();
+         _ = self.generation.fetchAdd(1, .monotonic);
+         return stub;
+     }
+@@ -933,6 +976,11 @@ pub const ModelRegistry = struct {
+     /// the entry after the basename (a `.gguf` file without its extension, as
+     /// `--model` names it).
+     pub fn registerByPath(self: *ModelRegistry, io: std.Io, abs_path: []const u8, id: ?[]const u8) ![]const u8 {
++        const preparing = try self.fiosBeginMutation();
++        defer _ = preparing.finish();
++        return self.registerByPathPrepared(io, abs_path, id) catch |err| { preparing.failed(err); return err; };
++    }
++    fn registerByPathPrepared(self: *ModelRegistry, io: std.Io, abs_path: []const u8, id: ?[]const u8) ![]const u8 {
+         var trimmed = abs_path;
+         while (trimmed.len > 0 and trimmed[trimmed.len - 1] == '/') trimmed = trimmed[0 .. trimmed.len - 1];
+         const base = std.fs.path.basename(trimmed);
+@@ -972,9 +1020,11 @@ pub const ModelRegistry = struct {
+     pub fn setDefault(self: *ModelRegistry, id: []const u8) !void {
+         self.mutex.lockUncancelable(self.io);
+         defer self.mutex.unlock(self.io);
++        if (self.fios_access_ticket != 0) return error.RegistryHeld;
+         const entry = self.entries.get(id) orelse return error.UnknownModelId;
+         self.default_id = entry.id;
+         self.default_promoted = false;
++        self.fiosProbeChangedLocked();
+     }
+ 
+     /// Look up an entry by its on-disk path (trailing slashes ignored).
+@@ -1010,6 +1060,11 @@ pub const ModelRegistry = struct {
+     /// re-reads its dir. Returns the number of stubs added. No roots (a
+     /// `--model`-only server) rescans nothing.
+     pub fn rescan(self: *ModelRegistry) !u32 {
++        const preparing = try self.fiosBeginMutation();
++        defer _ = preparing.finish();
++        return self.rescanPrepared() catch |err| { preparing.failed(err); return err; };
++    }
++    fn rescanPrepared(self: *ModelRegistry) !u32 {
+         const roots = if (self.discovery) |d| d.roots else &.{};
+         if (roots.len == 0) return 0;
+         var found = try model_discovery.discoverModelsMany(self.io, self.allocator, roots);
+@@ -1098,9 +1153,11 @@ pub const ModelRegistry = struct {
+         const entry = self.entries.get(id) orelse return error.UnknownModelId;
+ 
+         while (true) {
++            if (self.fios_access_ticket != 0) return error.RegistryHeld;
+             switch (entry.state) {
+                 .ready => {
+                     _ = entry.refcount.fetchAdd(1, .acq_rel);
++                    self.fiosProbeChangedLocked();
+                     return entry;
+                 },
+                 .loading, .evicting => {
+@@ -1113,8 +1170,138 @@ pub const ModelRegistry = struct {
+         }
+     }
+ 
++    /// Caller holds mutex (or single-threaded initialization). This records
++    /// known registry/borrow changes, NOT every backend transition/reservation.
++    pub fn fiosCurrentPinOwner() u64 { return fios_pin_owner; }
++    pub fn fiosPinOwner() ?u64 {
++        if (fios_pin_owner == 0) fios_pin_owner = fios_pin_owners.allocate() orelse return null;
++        return fios_pin_owner;
++    }
++    // Filesystem preparation stays represented across dropped-mutex work.
++    // Completion is exact-owner only, after later resource defers. Cancellation
++    // or deadline errors poison and retain the record, never refund authority.
++    pub fn fiosBeginMutation(self: *ModelRegistry) !FiosMutation {
++        self.mutex.lockUncancelable(self.io);
++        defer self.mutex.unlock(self.io);
++        if (self.fios_access_ticket != 0) return error.RegistryHeld;
++        if (self.fios_probe_epoch_uncertain) return error.RegistryUncertain;
++        const owner = fiosPinOwner() orelse { self.fios_probe_epoch_uncertain = true; return error.RegistryUncertain; };
++        if (self.fios_mutation_sequence == std.math.maxInt(u64) or std.math.maxInt(u64) - self.fios_probe_epoch < 2) {
++            self.fios_probe_epoch_uncertain = true;
++            return error.RegistryUncertain;
++        }
++        for (&self.fios_mutation_slots, 0..) |*slot, index| {
++            if (slot.ticket != 0) continue;
++            self.fios_mutation_sequence += 1;
++            self.fios_probe_epoch += 1;
++            slot.* = .{ .owner = owner, .ticket = self.fios_mutation_sequence };
++            self.fios_mutation_count += 1;
++            return .{ .registry = self, .owner = owner, .ticket = slot.ticket, .slot = index };
++        }
++        return error.RegistryBusy;
++    }
++    fn fiosMutationMatchesLocked(self: *ModelRegistry, lease: FiosMutation) bool {
++        if (lease.registry != self or lease.slot >= 64 or lease.owner == 0 or lease.owner != fios_pin_owner or lease.ticket == 0) return false;
++        const slot = self.fios_mutation_slots[lease.slot];
++        return slot.owner == lease.owner and slot.ticket == lease.ticket;
++    }
++    fn fiosAbandonMutation(self: *ModelRegistry, lease: FiosMutation) void {
++        self.mutex.lockUncancelable(self.io);
++        defer self.mutex.unlock(self.io);
++        if (self.fiosMutationMatchesLocked(lease)) self.fios_probe_epoch_uncertain = true;
++    }
++    fn fiosFinishMutation(self: *ModelRegistry, lease: FiosMutation) bool {
++        self.mutex.lockUncancelable(self.io);
++        defer self.mutex.unlock(self.io);
++        if (!self.fiosMutationMatchesLocked(lease)) return false;
++        if (self.fios_probe_epoch_uncertain or self.fios_probe_epoch == std.math.maxInt(u64) or self.fios_mutation_count == 0) {
++            self.fios_probe_epoch_uncertain = true;
++            return false;
++        }
++        self.fios_probe_epoch += 1; // BEFORE record clear; no timeout/exit path
++        self.fios_mutation_slots[lease.slot] = .{};
++        self.fios_mutation_count -= 1;
++        self.state_cond.broadcast(self.io);
++        return true;
++    }
++    // Caller holds mutex and has validated the exact pinned snapshot.
++    pub fn fiosReserveAccessLocked(self: *ModelRegistry, epoch: u64, owner: u64, pins: []*LoadedModel) ?u64 {
++        if (owner == 0 or owner != fios_pin_owner or self.fios_access_ticket != 0 or self.fios_mutation_count != 0 or pins.len > 64 or
++            self.fios_probe_epoch_uncertain or self.fios_probe_epoch != epoch) return null;
++        for (pins, 0..) |entry, i| {
++            if (self.entries.get(entry.id) != entry or entry.state != .ready or entry.refcount.load(.acquire) != 1) return null;
++            for (pins[0..i]) |earlier| if (earlier == entry) return null;
++        }
++        if (self.entries.count() > 64) return null;
++        var ready_count: usize = 0;
++        var members = self.entries.valueIterator();
++        while (members.next()) |slot| {
++            const entry = slot.*;
++            if (entry.state == .loading or entry.state == .evicting) return null;
++            const expected_refs: u32 = if (entry.state == .ready) 1 else 0;
++            if (entry.refcount.load(.acquire) != expected_refs) return null;
++            if (entry.state == .ready) ready_count += 1;
++        }
++        // Unique identity-checked ready pins + equal cardinality cover every
++        // ready registry entry, not external backend/context roots.
++        if (ready_count != pins.len) return null;
++        if (self.fios_access_sequence == std.math.maxInt(u64) or std.math.maxInt(u64) - epoch < 2) {
++            self.fios_probe_epoch_uncertain = true;
++            return null;
++        }
++        self.fios_access_sequence += 1;
++        self.fios_probe_epoch += 1;
++        self.fios_access_ticket = self.fios_access_sequence;
++        self.fios_access_owner = owner;
++        self.fios_access_epoch = self.fios_probe_epoch;
++        @memcpy(self.fios_access_pins[0..pins.len], pins);
++        self.fios_access_pin_count = pins.len;
++        return self.fios_access_ticket;
++    }
++    // Exact release + ref drops are one metadata transaction; no backend I/O,
++    // object destruction or timestamp refresh. Invalidated holds stay closed.
++    pub fn fiosReleaseAccessPins(self: *ModelRegistry, owner: u64, ticket: u64, pins: []*LoadedModel) bool {
++        self.mutex.lockUncancelable(self.io);
++        defer self.mutex.unlock(self.io);
++        if (owner == 0 or owner != fios_pin_owner or ticket == 0 or self.fios_access_ticket != ticket or
++            self.fios_access_owner != owner or pins.len != self.fios_access_pin_count) return false;
++        for (pins, 0..) |entry, i| if (entry != self.fios_access_pins[i]) return false;
++        if (self.fios_probe_epoch_uncertain or self.fios_probe_epoch != self.fios_access_epoch or
++            self.fios_probe_epoch == std.math.maxInt(u64) or pins.len > 64) {
++            self.fios_probe_epoch_uncertain = true;
++            return false;
++        }
++        for (pins, 0..) |entry, i| {
++            if (self.entries.get(entry.id) != entry or entry.state != .ready or entry.refcount.load(.acquire) != 1) {
++                self.fios_probe_epoch_uncertain = true;
++                return false;
++            }
++            for (pins[0..i]) |earlier| {
++                if (earlier == entry) { self.fios_probe_epoch_uncertain = true; return false; }
++            }
++        }
++        self.fios_probe_epoch += 1; // exhaustion checked BEFORE refs/gate clear
++        for (pins) |entry| _ = entry.refcount.fetchSub(1, .acq_rel);
++        self.fios_access_ticket = 0;
++        self.fios_access_owner = 0;
++        self.fios_access_epoch = 0;
++        self.fios_access_pin_count = 0;
++        self.state_cond.broadcast(self.io);
++        return true;
++    }
++    pub fn fiosProbeChangedLocked(self: *ModelRegistry) void {
++        if (self.fios_access_ticket != 0) { self.fios_probe_epoch_uncertain = true; return; }
++        if (self.fios_probe_epoch_uncertain) return;
++        if (self.fios_probe_epoch == std.math.maxInt(u64)) {
++            self.fios_probe_epoch_uncertain = true;
++            return;
++        }
++        self.fios_probe_epoch += 1;
++    }
++
+     /// An entry's state changed: wake the waiters and move the generation.
+     fn stateChanged(self: *ModelRegistry) void {
++        self.fiosProbeChangedLocked();
+         _ = self.generation.fetchAdd(1, .monotonic);
+         self.state_cond.broadcast(self.io);
+     }
+@@ -1294,6 +1481,7 @@ pub const ModelRegistry = struct {
+     /// Shared tail of `release` and `releaseStatus`. Caller holds `mutex`.
+     fn releaseRefLocked(self: *ModelRegistry, lm: *LoadedModel) void {
+         const prev = lm.refcount.fetchSub(1, .acq_rel);
++        self.fiosProbeChangedLocked();
+         std.debug.assert(prev > 0);
+         // Broadcast so an evictor waiting for refcount == 0 wakes.
+         if (prev == 1) self.state_cond.broadcast(self.io);
+diff --git a/src/scheduler.zig b/src/scheduler.zig
+index 9e12566..9ed64c9 100644
+--- a/src/scheduler.zig
++++ b/src/scheduler.zig
+@@ -32,6 +32,8 @@
+ //! plus a cv broadcast.
+ 
+ const std = @import("std");
++const fios_ownership = @import("request_ownership.zig");
++const fios_device = @import("device_owner.zig");
+ const depth_bounds = @import("mtp_depth_bounds.zig");
+ const mlx = @import("mlx.zig");
+ const ple_gpu = @import("ple_gpu.zig");
+@@ -432,6 +434,309 @@ pub var prefill_admission_refused_log: ?*const fn (*const model_mod.ModelConfig,
+ /// Invalidate the published hot-cache budget on unload/switch (`server.clearResolvedPrefixCacheMem`).
+ pub var hot_cache_budget_invalidate: ?*const fn () void = null;
+ 
++test "fios native cleanup retains request and model after connection release" {
++    const a = std.testing.allocator;
++    const io = std.testing.io;
++    if (@import("build_options").llama_engine)
++        try std.testing.expectEqual(@as(c_int, 0), @import("llama_ffi.zig").mlx_llama_ctx_terminal(null));
++    const registry = try ModelRegistry.init(a, io, null, 2, 0, null);
++    defer registry.deinit();
++    const model = try registry.registerStub("org/fios-native-fixture", "/fixture/never-loaded", null);
++    var config = std.mem.zeroInit(ModelConfig, .{ .model_type = "llama", .num_hidden_layers = 0 });
++    model.config = &config;
++    defer model.config = null; // CPU-only stack configuration, never model weights.
++    model.state = .ready;
++    model.refcount.store(1, .release); // The connection's existing borrow.
++    var connection_model_held = true;
++    defer if (connection_model_held) registry.releaseStatus(model);
++    var scheduler = std.mem.zeroInit(Scheduler, .{
++        .allocator = a, .io = io, .registry = registry, .queue_cap = 2,
++        .kv_quant_config = transformer_mod.KVQuantConfig.dense,
++    });
++    defer {
++        for (scheduler.pending.items) |pending| pending.deinit();
++        for (scheduler.cleanup_queue.items) |pending| pending.deinit();
++        scheduler.pending.deinit(a);
++        scheduler.cleanup_queue.deinit(a);
++    }
++    // A competing CPU preloader must not poison another caller's load or
++    // release its memory bill if it fails after that caller changed state.
++    for ([_]@TypeOf(model.state){ .ready, .loading, .evicting }) |state| {
++        model.state = state;
++        model.load_estimate = 128;
++        registry.reserved_bytes = 128;
++        scheduler.recordPreloadFailure(model, "FixturePreloadError");
++        try std.testing.expectEqual(state, model.state);
++        try std.testing.expectEqual(@as(u64, 128), model.load_estimate);
++        try std.testing.expectEqual(@as(u64, 128), registry.reserved_bytes);
++        try std.testing.expect(model.error_name == null);
++    }
++    model.state = .ready;
++    model.load_estimate = 0;
++    registry.reserved_bytes = 0;
++    const cold = try registry.registerStub("org/fios-native-cold", "/fixture/cold-never-loaded", null);
++    scheduler.recordPreloadFailure(cold, "FixturePreloadError");
++    try std.testing.expectEqual(@as(@TypeOf(cold.state), .error_state), cold.state);
++
++    // Actual ready fast-path borrows coexist without executing a model.
++    const same_a = try scheduler.ensureLoaded(model.id);
++    const same_b = try scheduler.ensureLoaded(model.id);
++    try std.testing.expectEqual(model, same_a);
++    try std.testing.expectEqual(model, same_b);
++    try std.testing.expectEqual(@as(u32, 3), model.refcount.load(.acquire));
++    registry.releaseStatus(same_a);
++    registry.releaseStatus(same_b);
++    try fios_ownership.shared.initialize(io, @splat(7));
++    const token = try fios_ownership.shared.enter(io);
++    var connection_owner_held = true;
++    defer if (connection_owner_held) fios_ownership.shared.leave(io, token) catch {};
++    try fios_ownership.shared.bind(io, token, model.id);
++    try fios_ownership.shared.bindAuxiliary(io, token, "org/fios-native-auxiliary");
++    try fios_ownership.shared.active(io, token);
++    fios_ownership.current = token;
++    defer fios_ownership.current = null;
++    // No inference thread, tokenization, weights, model load or MLX arrays:
++    // zero-layer Slot.init/complete/deinit exercise the actual ownership paths.
++    const slot = try scheduler.submit(.{
++        .prompt_ids = &.{1}, .sampling = .{}, .eos_token_ids = &.{},
++        .max_tokens = 1, .model = model,
++    });
++    try std.testing.expectEqual(@as(u32, 2), model.refcount.load(.acquire));
++    scheduler.complete(slot);
++    try std.testing.expectEqual(@as(usize, 1), scheduler.cleanup_queue.items.len);
++    try fios_ownership.shared.responding(io, token);
++    registry.releaseStatus(model);
++    connection_model_held = false;
++    try fios_ownership.shared.leave(io, token);
++    connection_owner_held = false;
++    try std.testing.expectEqual(@as(usize, 1), fios_ownership.shared.snapshot(io).owned);
++    try std.testing.expectEqual(@as(usize, 2), fios_ownership.shared.snapshot(io).model_count);
++    try std.testing.expectEqual(@as(u32, 1), model.refcount.load(.acquire));
++    registry.mutex.lockUncancelable(io);
++    const before = registry.pickLruEvictable("different-model", false);
++    registry.mutex.unlock(io);
++    try std.testing.expect(before == null);
++    const cleanup = scheduler.cleanup_queue.pop().?;
++    cleanup.deinit();
++    try std.testing.expectEqual(@as(u32, 0), model.refcount.load(.acquire));
++    try std.testing.expectEqual(@as(usize, 0), fios_ownership.shared.snapshot(io).owned);
++    try std.testing.expectEqual(@as(usize, 0), fios_ownership.shared.snapshot(io).model_count);
++    registry.mutex.lockUncancelable(io);
++    const after = registry.pickLruEvictable("different-model", false);
++    registry.mutex.unlock(io);
++    try std.testing.expectEqual(model, after.?);
++    // Actual registry preparation owner metadata; no I/O/model stand-in.
++    const preparing = try registry.fiosBeginMutation();
++    const preparing_quiet = fiosRegistryQuietGeneration(&scheduler);
++    if (preparing_quiet != null) std.debug.print("FIO_REGISTRY_ACTIVE_PREPARATION_ACCEPTED\n", .{});
++    try std.testing.expect(preparing_quiet == null);
++    var preparing_pins = FiosProbeModelPins{};
++    try std.testing.expect(fiosPinQuietRegistry(&scheduler, &preparing_pins) == null);
++    try std.testing.expectEqual(@as(usize, 0), preparing_pins.count);
++    var foreign_preparation_done = true;
++    const foreign_preparation = try std.Thread.spawn(.{}, struct {
++        fn finish(lease: *const ModelRegistry.FiosMutation, done: *bool) void {
++            _ = ModelRegistry.fiosPinOwner();
++            done.* = lease.finish();
++        }
++    }.finish, .{&preparing, &foreign_preparation_done});
++    foreign_preparation.join();
++    try std.testing.expectEqual(false, foreign_preparation_done);
++    try std.testing.expect(fiosRegistryQuietGeneration(&scheduler) == null);
++    try std.testing.expect(preparing.finish());
++    try std.testing.expect(!preparing.finish());
++    try std.testing.expect(fiosRegistryQuietGeneration(&scheduler) != null);
++    var owner_tags = FiosPinOwners{};
++    try std.testing.expectEqual(@as(u64, 1), owner_tags.allocate().?);
++    owner_tags.next.store(std.math.maxInt(u64) - 1, .seq_cst);
++    try std.testing.expectEqual(std.math.maxInt(u64), owner_tags.allocate().?);
++    try std.testing.expect(owner_tags.allocate() == null);
++    try std.testing.expect(owner_tags.allocate() == null);
++    // Registry refs protect residency during I/O/actor parking, not
++    // backend terminality or an all-participant transition reservation.
++    const pin_lru_before = model.last_used_ns;
++    const pin_idle_before = model.last_used_ms.load(.acquire);
++    var probe_pins = FiosProbeModelPins{};
++    const pin_epoch = fiosPinQuietRegistry(&scheduler, &probe_pins) orelse return error.UnexpectedRegistryBusy;
++    // A negative fixture that omits the ref must not underflow at cleanup.
++    var pins_live = model.refcount.load(.acquire) == 1;
++    defer if (pins_live) probe_pins.release(&scheduler);
++    try std.testing.expectEqual(@as(u32, 1), model.refcount.load(.acquire));
++    const foreign_pin_release = try std.Thread.spawn(.{}, struct {
++        fn release(pins: *FiosProbeModelPins, sch: *Scheduler) void { pins.release(sch); }
++    }.release, .{ &probe_pins, &scheduler });
++    foreign_pin_release.join();
++    try std.testing.expectEqual(@as(u32, 1), model.refcount.load(.acquire));
++    registry.mutex.lockUncancelable(io);
++    const pinned_victim = registry.pickLruEvictable("different-model", false);
++    registry.mutex.unlock(io);
++    try std.testing.expect(pinned_victim == null);
++    try std.testing.expect(fiosRegistryQuietGeneration(&scheduler) == null);
++    try std.testing.expectEqual(pin_epoch, fiosPinnedRegistryGeneration(&scheduler, &probe_pins).?);
++    registry.mutex.lockUncancelable(io);
++    const omitted_set = registry.fiosReserveAccessLocked(pin_epoch, probe_pins.owner, &.{});
++    registry.mutex.unlock(io);
++    if (omitted_set) |ticket| try std.testing.expect(registry.fiosReleaseAccessPins(probe_pins.owner, ticket, &.{}));
++    try std.testing.expectEqual(@as(?u64, null), omitted_set);
++    const pin_borrowed = try registry.ensureLoaded(model.id);
++    try std.testing.expect(fiosPinnedRegistryGeneration(&scheduler, &probe_pins) == null);
++    var rejected_pins = FiosProbeModelPins{};
++    try std.testing.expect(fiosPinQuietRegistry(&scheduler, &rejected_pins) == null);
++    try std.testing.expectEqual(@as(usize, 0), rejected_pins.count);
++    registry.releaseStatus(pin_borrowed);
++    try std.testing.expect(pin_epoch != fiosPinnedRegistryGeneration(&scheduler, &probe_pins).?);
++    probe_pins.release(&scheduler);
++    pins_live = false;
++    probe_pins.release(&scheduler);
++    try std.testing.expectEqual(@as(u32, 0), model.refcount.load(.acquire));
++    try std.testing.expectEqual(pin_lru_before, model.last_used_ns);
++    try std.testing.expectEqual(pin_idle_before, model.last_used_ms.load(.acquire));
++    // Same-looking ready→evicting→ready is NOT the same registry generation.
++    const registry_before = fiosRegistryQuietGeneration(&scheduler) orelse return error.UnexpectedRegistryBusy;
++    registry.mutex.lockUncancelable(io);
++    registry.markEvictingLocked(model);
++    registry.mutex.unlock(io);
++    try std.testing.expect(fiosRegistryQuietGeneration(&scheduler) == null);
++    registry.mutex.lockUncancelable(io);
++    registry.unmarkEvictingLocked(model);
++    registry.mutex.unlock(io);
++    const registry_after = fiosRegistryQuietGeneration(&scheduler) orelse return error.UnexpectedRegistryBusy;
++    try std.testing.expect(registry_before != registry_after);
++    _ = model.refcount.fetchAdd(1, .acq_rel);
++    try std.testing.expect(fiosRegistryQuietGeneration(&scheduler) == null);
++    registry.releaseStatus(model);
++    // A complete borrow/release ABA must invalidate an in-flight partial probe.
++    const borrow_before = fiosRegistryQuietGeneration(&scheduler).?;
++    const borrowed = try registry.ensureLoaded(model.id);
++    registry.releaseStatus(borrowed);
++    try std.testing.expect(borrow_before != fiosRegistryQuietGeneration(&scheduler).?);
++    const stub_before = fiosRegistryQuietGeneration(&scheduler).?;
++    _ = try registry.registerStub("org/fios-native-new", "/fixture/new-never-loaded", null);
++    try std.testing.expect(stub_before != fiosRegistryQuietGeneration(&scheduler).?);
++    const default_before = fiosRegistryQuietGeneration(&scheduler).?;
++    try registry.setDefault(model.id);
++    try std.testing.expect(default_before != fiosRegistryQuietGeneration(&scheduler).?);
++    const paused = try fios_ownership.shared.pauseAdmissions(io);
++    var pause_resumed = false;
++    defer {
++        if (!pause_resumed) {
++            fios_ownership.shared.resumeAdmissions(io, paused) catch {};
++            _ = fiosActorHeld(&scheduler);
++        }
++    }
++    try std.testing.expectError(error.Maintenance, fios_ownership.shared.enter(io));
++    try std.testing.expect(fios_ownership.shared.snapshot(io).admissions_closed);
++    // This CPU-only metadata scheduler has NO inference thread. Timeout must
++    // leave its heap request owned/one-slot bounded until explicit late reap.
++    const timed_probe = try scheduler.ownerStreamProbe();
++    try std.testing.expectEqual(fios_device.Outcome.timed_out, timed_probe.outcome);
++    try std.testing.expect(scheduler.fios_owner_probe != null);
++    try std.testing.expectEqual(@as(u32, 1), scheduler.fios_owner_probe.?.references.load(.acquire));
++    try std.testing.expectEqual(fios_device.Outcome.blocked, (try scheduler.ownerStreamProbe()).outcome);
++    // Actual scheduler probe path parks its actor even when backend defaults
++    // are unavailable. Failed probe/timeouts are NOT implicit resume.
++    processFiosOwnerProbe(&scheduler);
++    try std.testing.expect(scheduler.fios_owner_probe == null);
++    try std.testing.expect(fiosActorHeld(&scheduler));
++    // Real registry reference must survive the diagnostic return/parked actor.
++    // Metadata-only stub: NOT model/backend/enrollment acceptance.
++    try std.testing.expectEqual(@as(u32, 1), model.refcount.load(.acquire));
++    const parked_owner = scheduler.fios_model_pins.owner;
++    const foreign_parked_release = try std.Thread.spawn(.{}, struct {
++        fn release(sch: *Scheduler) void {
++            _ = fiosPinOwner();
++            sch.fios_model_pins.release(sch);
++        }
++    }.release, .{&scheduler});
++    foreign_parked_release.join();
++    try std.testing.expectEqual(parked_owner, scheduler.fios_model_pins.owner);
++    try std.testing.expectEqual(@as(u32, 1), model.refcount.load(.acquire));
++    registry.mutex.lockUncancelable(io);
++    const parked_victim = registry.pickLruEvictable("different-model", false);
++    registry.mutex.unlock(io);
++    try std.testing.expect(parked_victim == null);
++    // Partial access fence, not an all-writer/backend membership receipt.
++    const access_ticket = scheduler.fios_model_pins.registry_ticket;
++    const access_entries = scheduler.fios_model_pins.entries[0..scheduler.fios_model_pins.count];
++    try std.testing.expect(access_ticket != 0);
++    try std.testing.expect(!registry.fiosReleaseAccessPins(parked_owner, access_ticket + 1, access_entries));
++    try std.testing.expect(!registry.fiosReleaseAccessPins(parked_owner, access_ticket, access_entries[0..0]));
++    var foreign_access_release = true;
++    const foreign_access = try std.Thread.spawn(.{}, struct {
++        fn release(reg: *ModelRegistry, owner: u64, ticket: u64, entries: []*LoadedModel, result: *bool) void {
++            _ = ModelRegistry.fiosPinOwner();
++            result.* = reg.fiosReleaseAccessPins(owner, ticket, entries);
++        }
++    }.release, .{registry, parked_owner, access_ticket, access_entries, &foreign_access_release});
++    foreign_access.join();
++    try std.testing.expectEqual(false, foreign_access_release);
++    try std.testing.expectEqual(@as(u32, 1), model.refcount.load(.acquire));
++    // Balance unexpected borrows; print a bounded boolean, not model data.
++    const borrow_refused = if (registry.ensureLoaded(model.id)) |unexpected| refused: {
++        registry.releaseStatus(unexpected); break :refused false;
++    } else |err| err == error.RegistryHeld;
++    try std.testing.expectEqual(true, borrow_refused);
++    try std.testing.expectError(error.RegistryHeld, registry.setDefault(model.id));
++    // Existing ID/path and no-root scan: no new backend or dummy context.
++    registry.mutex.lockUncancelable(io);
++    const stub_refused = if (registry.registerStub(model.id, model.path, null)) |_| false else |err| err == error.RegistryHeld;
++    registry.mutex.unlock(io);
++    if (!stub_refused) std.debug.print("FIO_REGISTRY_STUB_FRONTDOOR_BYPASS\n", .{});
++    try std.testing.expectEqual(true, stub_refused);
++    const path_refused = if (registry.registerByPath(io, model.path, model.id)) |_| false else |err| err == error.RegistryHeld;
++    if (!path_refused) std.debug.print("FIO_REGISTRY_PATH_FRONTDOOR_BYPASS\n", .{});
++    try std.testing.expectEqual(true, path_refused);
++    const scan_refused = if (registry.rescan()) |_| false else |err| err == error.RegistryHeld;
++    if (!scan_refused) std.debug.print("FIO_REGISTRY_SCAN_FRONTDOOR_BYPASS\n", .{});
++    try std.testing.expectEqual(true, scan_refused);
++    try fios_ownership.shared.resumeAdmissions(io, paused);
++    pause_resumed = true;
++    try std.testing.expect(!fiosActorHeld(&scheduler));
++    try std.testing.expectEqual(@as(u32, 0), model.refcount.load(.acquire));
++    try std.testing.expect(!registry.fiosReleaseAccessPins(parked_owner, access_ticket, access_entries));
++    try std.testing.expectEqual(pin_lru_before, model.last_used_ns);
++    try std.testing.expectEqual(pin_idle_before, model.last_used_ms.load(.acquire));
++    // The private probe may not scan an unbounded native model registry.
++    while (registry.entries.count() < 64) {
++        var name: [96]u8 = undefined;
++        const id = try std.fmt.bufPrint(&name, "org/fios-native-cardinality-{d}", .{registry.entries.count()});
++        _ = try registry.registerStub(id, "/fixture/cardinality-never-loaded", null);
++    }
++    try std.testing.expect(fiosRegistryQuietGeneration(&scheduler) != null);
++    _ = try registry.registerStub("org/fios-native-cardinality-overflow", "/fixture/cardinality-never-loaded", null);
++    try std.testing.expect(fiosRegistryQuietGeneration(&scheduler) == null);
++    var oversized_pins = FiosProbeModelPins{};
++    try std.testing.expect(fiosPinQuietRegistry(&scheduler, &oversized_pins) == null);
++    try std.testing.expectEqual(@as(usize, 0), oversized_pins.count);
++    try std.testing.expectEqual(@as(u32, 0), model.refcount.load(.acquire));
++    // Restore the bounded metadata set before the independent epoch test.
++    const overflow = registry.entries.fetchRemove("org/fios-native-cardinality-overflow").?;
++    overflow.value.deinit();
++    registry.allocator.destroy(overflow.value);
++    // Pending preparation is retained on exhaustion BEFORE record clear.
++    // Metadata-only fault injection; fixture exit is NOT retirement evidence.
++    const terminal_preparation = try registry.fiosBeginMutation();
++    registry.mutex.lockUncancelable(io);
++    registry.fios_probe_epoch = std.math.maxInt(u64) - 1;
++    registry.fiosProbeChangedLocked();
++    registry.mutex.unlock(io);
++    try std.testing.expectEqual(std.math.maxInt(u64), registry.fios_probe_epoch);
++    try std.testing.expect(fiosRegistryQuietGeneration(&scheduler) == null);
++    try std.testing.expect(!terminal_preparation.finish());
++    try std.testing.expectEqual(@as(usize, 1), registry.fios_mutation_count);
++    if (registry.fios_mutation_slots[terminal_preparation.slot].ticket != terminal_preparation.ticket) std.debug.print("FIO_REGISTRY_PREPARATION_RECORD_CLEARED_ON_EXHAUSTION\n", .{});
++    try std.testing.expectEqual(terminal_preparation.ticket, registry.fios_mutation_slots[terminal_preparation.slot].ticket);
++    registry.mutex.lockUncancelable(io);
++    registry.fiosProbeChangedLocked();
++    registry.mutex.unlock(io);
++    try std.testing.expect(fiosRegistryQuietGeneration(&scheduler) == null);
++    registry.mutex.lockUncancelable(io);
++    registry.fiosProbeChangedLocked();
++    registry.mutex.unlock(io);
++    try std.testing.expect(fiosRegistryQuietGeneration(&scheduler) == null);
++    try std.testing.expectEqual(std.math.maxInt(u64), registry.fios_probe_epoch);
++}
++
+ pub const SlotState = enum { pending_prefill, decoding, finished, errored };
+ 
+ /// Result of `Slot.waitNext`. Driven by the inference thread; consumed by
+@@ -449,6 +754,9 @@ pub const NextResult = union(enum) {
+ 
+ /// Per-request state. Owned by the Scheduler from `submit` until `complete`.
+ pub const Slot = struct {
++    // Request and model ownership span deferred native cleanup after disconnect.
++    fios_owner: ?fios_ownership.Retained = null,
++    fios_registry: ?*ModelRegistry = null,
+     allocator: std.mem.Allocator,
+     /// io reference for Stopwatch / async-eval (captured from Scheduler).
+     io: std.Io,
+@@ -827,6 +1135,14 @@ pub const Slot = struct {
+     /// finished/errored it AND the connection thread has consumed the final
+     /// `done`/`err` from `waitNext`).
+     pub fn deinit(self: *Slot) void {
++        const owner = self.fios_owner;
++        const registry = self.fios_registry;
++        const model = self.model;
++        const io = self.io;
++        // Captures outlive allocator.destroy(self); model release precedes the
++        // final request release, and neither is inferred from socket exit.
++        defer if (owner) |held| held.release(io);
++        defer if (registry) |r| r.releaseStatus(model);
+         // ds4_session / llama_seq are borrowed from the model (persistent
+         // across requests) — never freed here. The claim on them is released
+         // in Scheduler.complete; they die with the model.
+@@ -1508,6 +1824,11 @@ pub const Scheduler = struct {
+ 
+     queue_mu: std.Io.Mutex,
+     queue_cond: std.Io.Condition,
++    fios_owner_thread: u64 = 0,
++    fios_actor_hold: fios_device.ActorPauseHold = .{},
++    fios_model_pins: FiosProbeModelPins = .{},
++    fios_owner_defaults_ready: bool = false,
++    fios_owner_probe: ?*fios_device.Request = null,
+     pending: std.ArrayList(*Slot),
+     decoding: std.ArrayList(*Slot),
+     /// Slots a Neural Engine worker runs (`runAneSlot`), off the inference thread.
+@@ -1886,6 +2207,13 @@ pub const Scheduler = struct {
+         const eff_kv_quant = params.kv_quant_config orelse slot_config.kv_quant_override orelse self.kv_quant_config;
+         const slot = try Slot.init(self.allocator, self.io, slot_config, params, eff_kv_quant);
+         errdefer slot.deinit();
++        slot.fios_owner = try fios_ownership.retainCurrent(self.io);
++        if (slot.fios_owner != null) {
++            // Clone the caller's already-held reference, including if an
++            // explicit unload has marked evicting while waiting for it.
++            try fios_ownership.retainReference(&params.model.refcount);
++            slot.fios_registry = self.registry;
++        }
+ 
+         self.queue_mu.lockUncancelable(self.io);
+         defer self.queue_mu.unlock(self.io);
+@@ -2055,6 +2383,14 @@ pub const Scheduler = struct {
+         return gen_mod.estimatePeakResidentBytes(self.io, entry.path, peeked);
+     }
+ 
++    fn recordPreloadFailure(self: *Scheduler, entry: *LoadedModel, name: []const u8) void {
++        self.registry.mutex.lockUncancelable(self.io);
++        defer self.registry.mutex.unlock(self.io);
++        // CPU preload runs outside the mutex. Another caller may now own a
++        // load/eviction or a ready model: never release its bill or poison it.
++        if (entry.state == .unloaded) self.registry.markErrorLocked(entry, name);
++    }
++
+     /// Plan 05 Phase D: resolve `id_or_empty` ("" / "mlx-serve" → default)
+     /// to a refcounted, ready `*LoadedModel`. Cold-loads on demand: if the
+     /// entry is `.unloaded`, parses CPU state, picks an LRU victim if
+@@ -2096,9 +2432,7 @@ pub const Scheduler = struct {
+         var settings = model_settings.overrideFor(self.allocator, self.io, entry.path);
+         defer settings.deinit(self.allocator);
+         const cpu_state = preloadCpuState(self.allocator, self.io, entry.path, settings.ctx_size orelse self.gguf_ctx_size) catch |err| {
+-            self.registry.mutex.lockUncancelable(self.io);
+-            self.registry.markErrorLocked(entry, @errorName(err));
+-            self.registry.mutex.unlock(self.io);
++            self.recordPreloadFailure(entry, @errorName(err));
+             return error.LoadFailed;
+         };
+         // Ownership: on success transfers to the entry inside the
+@@ -2151,9 +2485,11 @@ pub const Scheduler = struct {
+ 
+             // Wait out any concurrent .loading / .evicting state.
+             wait_loop: while (true) {
++                if (self.registry.fios_access_ticket != 0) return error.RegistryHeld;
+                 switch (entry.state) {
+                     .ready => {
+                         _ = entry.refcount.fetchAdd(1, .acq_rel);
++                        self.registry.fiosProbeChangedLocked();
+                         self.registry.mutex.unlock(self.io);
+                         return entry;
+                     },
+@@ -2178,6 +2514,7 @@ pub const Scheduler = struct {
+             // From the claim: while victims unload or the queue waits, not the last load's numbers.
+             entry.load_progress.start(io_util.nowMsMonotonic(self.io));
+             _ = entry.refcount.fetchAdd(1, .acq_rel);
++            self.registry.fiosProbeChangedLocked();
+             pinned = true;
+ 
+             // Estimate post-load bytes (see `gateEstimateBytes` for why a media
+@@ -2338,6 +2675,32 @@ pub const Scheduler = struct {
+         return self.registry.loadErrorNameDupe(alloc, id_or_empty);
+     }
+ 
++    // Partial MLX primitive only; NOT all-backend/device/quiescence authority.
++    // Sender timeout retains scheduler ownership and never replays the probe.
++    pub fn ownerStreamProbe(self: *Scheduler) !fios_device.Reading {
++        const snapshot = fios_ownership.shared.snapshot(self.io);
++        if (!snapshot.initialized or !snapshot.admissions_closed or snapshot.owned != 0 or snapshot.uncertain)
++            return .{};
++        const request = try self.allocator.create(fios_device.Request);
++        request.* = .{ .allocator = self.allocator, .instance = snapshot.instance, .pause_sequence = snapshot.admission_pause };
++        self.queue_mu.lockUncancelable(self.io);
++        if (self.shutdown.load(.acquire) or self.fios_owner_probe != null) {
++            self.queue_mu.unlock(self.io);
++            self.allocator.destroy(request);
++            return .{};
++        }
++        self.fios_owner_probe = request;
++        self.queue_cond.broadcast(self.io);
++        self.queue_mu.unlock(self.io);
++        const deadline = (std.Io.Timeout{ .duration = .{ .raw = .fromMilliseconds(1500), .clock = .awake } }).toDeadline(self.io);
++        request.done_mu.lockUncancelable(self.io);
++        while (!request.done) request.done_cond.waitTimeout(self.io, &request.done_mu, deadline) catch break;
++        const reading = if (request.done) request.reading else fios_device.Reading{ .outcome = .timed_out };
++        request.done_mu.unlock(self.io);
++        request.release();
++        return reading;
++    }
++
+     /// Run a media-generation job on the inference thread. Posts `req` to the
+     /// gen queue and blocks the calling (connection) thread until the
+     /// inference thread has run the job body to completion. The job writes its
+@@ -5691,7 +6054,7 @@ pub fn armShutdownDeadline(slot: *std.atomic.Value(i64), now_ms: i64, secs: u32)
+ }
+ 
+ fn hasWorkPendingLocked(sch: *const Scheduler) bool {
+-    return sch.pending.items.len > 0 or
++    return sch.fios_owner_probe != null or sch.pending.items.len > 0 or
+         sch.decoding.items.len > 0 or
+         sch.vision_queue.items.len > 0 or
+         sch.embed_queue.items.len > 0 or
+@@ -5701,6 +6064,165 @@ fn hasWorkPendingLocked(sch: *const Scheduler) bool {
+         sch.unload_queue.items.len > 0;
+ }
+ 
++fn finishFiosOwnerProbe(sch: *Scheduler, reading: fios_device.Reading) void {
++    sch.queue_mu.lockUncancelable(sch.io);
++    const request = sch.fios_owner_probe;
++    sch.fios_owner_probe = null;
++    sch.queue_mu.unlock(sch.io);
++    if (request) |probe| {
++        probe.done_mu.lockUncancelable(sch.io);
++        probe.reading = reading;
++        probe.done = true;
++        probe.done_cond.broadcast(sch.io);
++        probe.done_mu.unlock(sch.io);
++        probe.release();
++    }
++}
++// Lexical owner-thread borrows only; no wire capability or transition grant.
++const FiosPinOwners = model_registry_mod.FiosPinOwners;
++fn fiosPinOwner() ?u64 { return ModelRegistry.fiosPinOwner(); }
++const FiosProbeModelPins = struct {
++    entries: [64]*LoadedModel = undefined,
++    count: usize = 0,
++    owner: u64 = 0,
++    registry_ticket: u64 = 0,
++    fn adopt(self: *FiosProbeModelPins, source: *FiosProbeModelPins) !void {
++        if (self.owner != 0 or self.count != 0 or source.owner == 0 or
++            source.owner != ModelRegistry.fiosCurrentPinOwner() or source.registry_ticket != 0 or source.count > 64) return error.InvalidModelPinOwner;
++        @memcpy(self.entries[0..source.count], source.entries[0..source.count]);
++        self.count = source.count;
++        self.owner = source.owner;
++        source.count = 0;
++        source.owner = 0;
++    }
++    fn contains(self: *const FiosProbeModelPins, model: *LoadedModel) bool {
++        for (self.entries[0..self.count]) |entry| if (entry == model) return true;
++        return false;
++    }
++    fn release(self: *FiosProbeModelPins, sch: *Scheduler) void {
++        if (self.owner == 0 or self.owner != ModelRegistry.fiosCurrentPinOwner()) return;
++        if (self.registry_ticket != 0) {
++            if (!sch.registry.fiosReleaseAccessPins(self.owner, self.registry_ticket, self.entries[0..self.count])) return;
++        } else for (self.entries[0..self.count]) |entry| sch.registry.releaseStatus(entry);
++        self.count = 0;
++        self.owner = 0;
++        self.registry_ticket = 0;
++    }
++};
++// Registry mutex held; pins account for exactly our refs, not new borrowers.
++fn fiosRegistryGenerationLocked(sch: *Scheduler, pins: ?*const FiosProbeModelPins) ?u64 {
++    if (sch.registry.fios_probe_epoch_uncertain or sch.registry.fios_mutation_count != 0 or sch.registry.entries.count() > 64) return null;
++    if (sch.registry.fios_access_ticket != 0) {
++        const held = pins orelse return null;
++        if (held.registry_ticket != sch.registry.fios_access_ticket or held.owner != sch.registry.fios_access_owner) return null;
++    }
++    if (pins) |held| {
++        if (held.count > 64 or held.owner == 0 or held.owner != ModelRegistry.fiosCurrentPinOwner()) return null;
++        for (held.entries[0..held.count]) |entry| {
++            if (sch.registry.entries.get(entry.id) != entry) return null;
++        }
++    }
++    var entries = sch.registry.entries.valueIterator();
++    while (entries.next()) |entry| {
++        const own: u32 = if (pins) |held| @intFromBool(held.contains(entry.*)) else 0;
++        if (entry.*.state == .loading or entry.*.state == .evicting or entry.*.refcount.load(.acquire) != own) return null;
++    }
++    return sch.registry.fios_probe_epoch;
++}
++// Epoch is partial; retained refs cover registry-managed residency during I/O,
++// NOT every backend/model/context transition or an atomic reservation.
++fn fiosRegistryQuietGeneration(sch: *Scheduler) ?u64 {
++    sch.registry.mutex.lockUncancelable(sch.io);
++    defer sch.registry.mutex.unlock(sch.io);
++    return fiosRegistryGenerationLocked(sch, null);
++}
++fn fiosPinnedRegistryGeneration(sch: *Scheduler, pins: *const FiosProbeModelPins) ?u64 {
++    sch.registry.mutex.lockUncancelable(sch.io);
++    defer sch.registry.mutex.unlock(sch.io);
++    return fiosRegistryGenerationLocked(sch, pins);
++}
++fn fiosPinQuietRegistry(sch: *Scheduler, pins: *FiosProbeModelPins) ?u64 {
++    sch.registry.mutex.lockUncancelable(sch.io);
++    defer sch.registry.mutex.unlock(sch.io);
++    if (pins.count != 0) return null;
++    _ = fiosRegistryGenerationLocked(sch, null) orelse return null;
++    var entries = sch.registry.entries.valueIterator();
++    var count: usize = 0;
++    while (entries.next()) |entry| {
++        if (entry.*.state == .ready) {
++            pins.entries[count] = entry.*;
++            count += 1;
++        }
++    }
++    if (std.math.maxInt(u64) - sch.registry.fios_probe_epoch < count * 2) {
++        sch.registry.fios_probe_epoch_uncertain = true;
++        return null;
++    }
++    pins.owner = fiosPinOwner() orelse return null;
++    for (pins.entries[0..count]) |entry| {
++        _ = entry.refcount.fetchAdd(1, .acq_rel);
++        sch.registry.fiosProbeChangedLocked();
++        pins.count += 1;
++    }
++    return sch.registry.fios_probe_epoch;
++}
++fn fiosReserveRegistryAccess(sch: *Scheduler, pins: *FiosProbeModelPins, epoch: u64) ?u64 {
++    sch.registry.mutex.lockUncancelable(sch.io);
++    defer sch.registry.mutex.unlock(sch.io);
++    const current = fiosRegistryGenerationLocked(sch, pins) orelse return null;
++    if (current != epoch) return null;
++    pins.registry_ticket = sch.registry.fiosReserveAccessLocked(epoch, pins.owner, pins.entries[0..pins.count]) orelse return null;
++    return sch.registry.fios_probe_epoch;
++}
++fn fiosActorHeld(sch: *Scheduler) bool {
++    if (sch.fios_actor_hold.sequence == 0) return sch.fios_model_pins.owner != 0;
++    const snapshot = fios_ownership.shared.snapshot(sch.io);
++    const blocked = sch.fios_actor_hold.blocks(snapshot.instance, snapshot.admissions_closed, snapshot.admission_pause);
++    if (!blocked) sch.fios_model_pins.release(sch);
++    return blocked or sch.fios_model_pins.owner != 0;
++}
++fn processFiosOwnerProbe(sch: *Scheduler) void {
++    sch.queue_mu.lockUncancelable(sch.io);
++    const request = sch.fios_owner_probe;
++    const quiet = sch.pending.items.len == 0 and sch.decoding.items.len == 0 and sch.offloaded.items.len == 0 and
++        sch.vision_queue.items.len == 0 and sch.embed_queue.items.len == 0 and sch.cleanup_queue.items.len == 0 and
++        sch.load_queue.items.len == 0 and sch.gen_queue.items.len == 0 and sch.unload_queue.items.len == 0 and
++        sch.ane_builds.load(.acquire) == 0;
++    sch.queue_mu.unlock(sch.io);
++    const probe = request orelse return;
++    const before = fios_ownership.shared.snapshot(sch.io);
++    if (!quiet or !before.admissions_closed or before.owned != 0 or before.uncertain or
++        before.admission_pause != probe.pause_sequence or !std.mem.eql(u8, &before.instance, &probe.instance))
++    {
++        finishFiosOwnerProbe(sch, .{});
++        return;
++    }
++    var model_pins = FiosProbeModelPins{};
++    var registry_before = fiosPinQuietRegistry(sch, &model_pins) orelse { finishFiosOwnerProbe(sch, .{}); return; };
++    defer model_pins.release(sch);
++    sch.fios_actor_hold.reserve(before.instance, before.admission_pause) catch { finishFiosOwnerProbe(sch, .{}); return; };
++    // Transfer the exact references to the parked actor. Diagnostic return,
++    // failed backend sync and sender timeout are never implicit release.
++    sch.fios_model_pins.adopt(&model_pins) catch { finishFiosOwnerProbe(sch, .{}); return; };
++    registry_before = fiosReserveRegistryAccess(sch, &sch.fios_model_pins, registry_before) orelse { finishFiosOwnerProbe(sch, .{}); return; };
++    if (sch.fios_owner_defaults_ready) {
++        // Partial creation-wrapper hold only, not raw MLX/model/backend scope.
++        // The actual owner releases it with parking only after coherent resume.
++        sch.fios_actor_hold.reserveOwnedRegistry(sch.fios_owner_thread, fios_device.ownedRegistryHooks()) catch {
++            finishFiosOwnerProbe(sch, .{ .outcome = .failed });
++            return;
++        };
++    }
++    // No queue/registry/tracker mutex across backend synchronization. The
++    // function runs ONLY here, on the actual captured inference/device owner.
++    var reading = if (sch.fios_owner_defaults_ready) fios_device.synchronize(sch.fios_owner_thread) else fios_device.Reading{ .outcome = .failed };
++    const after = fios_ownership.shared.snapshot(sch.io);
++    const registry_after = fiosPinnedRegistryGeneration(sch, &sch.fios_model_pins);
++    if (registry_after == null or registry_after.? != registry_before or !after.admissions_closed or after.owned != 0 or after.uncertain or
++        after.admission_pause != probe.pause_sequence or !std.mem.eql(u8, &after.instance, &probe.instance)) reading = .{};
++    finishFiosOwnerProbe(sch, reading);
++}
++
+ /// Poll interval for the idle-eviction sweep, given the configured window.
+ ///
+ /// A quarter of the window, so a model is evicted within ~1.25x the configured
+@@ -5713,6 +6235,15 @@ pub fn idleEvictTickMs(window_ms: i64) i64 {
+ fn inferenceLoop(ctx: ThreadCtx) void {
+     const sch = ctx.scheduler;
+     const params = ctx.params;
++    sch.fios_owner_thread = fios_device.currentThread();
++    // Explicit SOURCE FIXTURE only: create/record CPU/GPU defaults here before
++    // startup work. No arrays/models/kernels, no foreign/default adoption.
++    const fios_marker = std.c.getenv("FIOS_NATIVE_CONTROL");
++    if (std.c.getuid() != 0 and std.c.geteuid() == std.c.getuid() and
++        std.mem.endsWith(u8, @import("build_options").version, "-fios-source-fixture") and
++        fios_marker != null and std.mem.eql(u8, std.mem.span(fios_marker.?), "isolated-source-fixture"))
++        sch.fios_owner_defaults_ready = fios_device.initializeDefaults(sch.fios_owner_thread);
++    defer finishFiosOwnerProbe(sch, .{});
+     // Covers shutdown and startup-load failure.
+     defer sleep_inhibit.release();
+ 
+@@ -5749,6 +6280,14 @@ fn inferenceLoop(ctx: ThreadCtx) void {
+     }
+ 
+     while (!sch.shutdown.load(.acquire)) {
++        processFiosOwnerProbe(sch);
++        // Partial probe parks this owner, including later housekeeping/queued
++        // transitions. This is NOT a registry/all-backend terminal receipt.
++        if (fiosActorHeld(sch)) {
++            sleep_inhibit.setActive(false);
++            std.Io.sleep(sch.io, .fromMilliseconds(10), .real) catch {};
++            continue;
++        }
+         // Phase D: cold-load drain. Process ONE load per tick — loading a
+         // model is heavy (~seconds; weight read + JIT compile + warmup)
+         // and we want the rest of the inference loop to stay responsive.
+diff --git a/src/server.zig b/src/server.zig
+index 720b2c6..f725cf3 100644
+--- a/src/server.zig
++++ b/src/server.zig
+@@ -1,4 +1,8 @@
+ const std = @import("std");
++const fios_ownership = @import("request_ownership.zig");
++const fios_control = @import("control_transport.zig");
++const fios_device = @import("device_owner.zig");
++const fios_requests = &fios_ownership.shared;
+ const crt = @import("crt.zig");
+ const win_io = @import("win_io.zig");
+ const builtin = @import("builtin");
+@@ -1971,6 +1975,11 @@ const StartupResponder = struct {
+     }
+ };
+ 
++fn fiosOwnerProbe(context: *anyopaque) fios_device.Reading {
++    const scheduler: *scheduler_mod.Scheduler = @ptrCast(@alignCast(context));
++    return scheduler.ownerStreamProbe() catch .{};
++}
++
+ pub fn serve(
+     io: std.Io,
+     allocator: std.mem.Allocator,
+@@ -1984,6 +1993,9 @@ pub fn serve(
+     port: u16,
+     cfg: ServerConfig,
+ ) !void {
++    var fios_instance: [16]u8 = undefined;
++    std.Io.random(io, &fios_instance);
++    try fios_requests.initialize(io, fios_instance);
+     server_config = cfg;
+     // Before `Scheduler.init`: that call is the model load and every load-time bill inside it
+     // asks for the KV width.
+@@ -2014,6 +2026,8 @@ pub fn serve(
+     );
+     defer scheduler.deinit();
+     startup.stop();
++    const native_control = try fios_control.Bridge.start(io, allocator, build_options.version, .{ .context = scheduler, .probe = &fiosOwnerProbe });
++    defer if (native_control) |control| control.stop();
+     global_scheduler = scheduler;
+     defer global_scheduler = null;
+     // The inference thread's evict-or-refuse hook (#353); the scheduler has no server import.
+@@ -2301,7 +2315,13 @@ pub fn serve(
+             accepted_stream.close(io);
+             continue;
+         };
++        const ownership = fios_requests.enter(io) catch {
++            accepted_stream.close(io);
++            allocator.destroy(args);
++            continue;
++        };
+         args.* = .{
++            .ownership = ownership,
+             .allocator = allocator,
+             .accepted_stream = accepted_stream,
+             .io = io,
+@@ -2313,6 +2333,7 @@ pub fn serve(
+             log.err("spawn conn thread failed: {}\n", .{err});
+             _ = active_conn_threads.fetchSub(1, .acq_rel);
+             accepted_stream.close(io);
++            fios_requests.leave(io, ownership) catch {};
+             allocator.destroy(args);
+             continue;
+         };
+@@ -2355,6 +2376,7 @@ pub fn serve(
+ /// returns. The accepted stream is moved into a stack-allocated `Conn`
+ /// inside the thread.
+ const ConnThreadArgs = struct {
++    ownership: fios_ownership.Token,
+     allocator: std.mem.Allocator,
+     accepted_stream: std.Io.net.Stream,
+     io: std.Io,
+@@ -2365,10 +2387,17 @@ fn handleConnectionThread(args: *ConnThreadArgs) void {
+     // shutdown drain in `serve` only sees this thread leave once it has fully
+     // returned from `complete()` and closed its socket.
+     defer _ = active_conn_threads.fetchSub(1, .acq_rel);
++    // Copies survive allocator.destroy(args). Ownership ends after socket close,
++    // never at cancellation, handler error, or the last generated token.
++    const ownership = args.ownership;
++    const ownership_io = args.io;
++    defer fios_requests.leave(ownership_io, ownership) catch {};
++    fios_ownership.current = ownership;
++    defer fios_ownership.current = null;
+     var conn: Conn = undefined;
+     Conn.init(&conn, args.accepted_stream, args.io);
+     defer conn.close();
+-    handleConnection(args.allocator, &conn) catch |err| {
++    handleConnection(args.allocator, &conn, ownership) catch |err| {
+         switch (err) {
+             error.WriteFailed, error.ReadFailed => {
+                 // error.WriteFailed/ReadFailed collapses BrokenPipe + ConnectionResetByPeer
+@@ -2521,6 +2550,7 @@ fn readRequestWithin(allocator: std.mem.Allocator, stream: *Conn, limit_ms: i64)
+ fn handleConnection(
+     allocator: std.mem.Allocator,
+     stream: *Conn,
++    ownership: fios_ownership.Token,
+ ) !void {
+     // Plan 05: resolve which model this request targets. The registry was
+     // set up in `serve()`; per-POST routing happens after we read the body
+@@ -2603,6 +2633,21 @@ fn handleConnection(
+         }
+     }
+ 
++    // Development observation only: no all-client authority until detached
++    // workers, auxiliary models and destructive routes have a complete audit.
++    // Neither an API key nor LAN sharing permits remote access to this route.
++    if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/v1/fios/activity")) {
++        if (!peerIsLoopback(stream) or isTunneledRequest(request[0..header_end_pos])) {
++            try sendErrorResponse(allocator, stream, "403 Forbidden", "forbidden", "Local observation only", 403);
++            return;
++        }
++        const snapshot = fios_requests.snapshot(stream.io);
++        var activity_buffer: [1024]u8 = undefined;
++        const body = try fios_ownership.renderSnapshot(snapshot, &activity_buffer);
++        try sendResponseQuiet(stream, "200 OK", "application/json", body);
++        return;
++    }
++
+     // ── Plan 05: routes that don't depend on a loaded model (connectivity
+     //    probes + CORS preflight + listing endpoints). Handle these BEFORE
+     //    `scheduler.ensureLoaded` so they don't trigger a cold load of the
+@@ -2705,7 +2750,7 @@ fn handleConnection(
+         // get a 404 here even though the main dispatch path below falls
+         // back to default for SDK compatibility.
+         log.debug("POST /v1/load-model -> 200\n", .{});
+-        try handleLoadModelStrict(allocator, stream, request_body);
++        try handleLoadModelStrict(allocator, stream, request_body, ownership);
+         return;
+     }
+     // Any method: a status route never reaches `ensureLoaded`, whatever its body names.
+@@ -2873,7 +2918,11 @@ fn handleConnection(
+             return;
+         }
+     }
+-    const lm = scheduler.ensureLoaded(requested_model_id) catch |err| {
++    // Bind before CPU preparation, admission, eviction planning or a cold load.
++    // Resolve the registered identity, not a client alias or a truncated buffer.
++    const ownership_entry = registry.resolveEntry(requested_model_id) catch null;
++    if (ownership_entry) |entry| try fios_requests.bind(stream.io, ownership, entry.id);
++    const lm = scheduler.ensureLoaded(if (ownership_entry) |entry| entry.id else requested_model_id) catch |err| {
+         // Headless gen-only boot (media models resident, no default chat
+         // model): /props keeps answering with the live memory counters —
+         // the app's tray polls it, and a 503 here read as "0 MB".
+@@ -2887,6 +2936,10 @@ fn handleConnection(
+     // A status read must not look like use — see `isStatusRoute`.
+     const status_read = isStatusRoute(method, path);
+     defer if (status_read) scheduler.releaseStatus(lm) else scheduler.release(lm);
++    if (ownership_entry != null) try fios_requests.active(stream.io, ownership);
++    defer if (ownership_entry != null) {
++        fios_requests.responding(stream.io, ownership) catch {};
++    };
+ 
+     // A model loaded on demand freezes its own auto-context here, for the same
+     // reason the `--model` primary does at startup: the number we advertise is
+@@ -7800,7 +7853,7 @@ fn handleModelsRescan(allocator: std.mem.Allocator, stream: *Conn) !void {
+ /// Plan 05 Phase E: explicit cold-load. Strict on unknown ids (404 — the
+ /// caller asked for a specific id, not "anything"). Routes through
+ /// scheduler.ensureLoaded so eviction/back-pressure kicks in.
+-fn handleLoadModelStrict(allocator: std.mem.Allocator, stream: *Conn, request_body: []const u8) !void {
++fn handleLoadModelStrict(allocator: std.mem.Allocator, stream: *Conn, request_body: []const u8, ownership: fios_ownership.Token) !void {
+     const scheduler = global_scheduler orelse {
+         try sendErrorResponse(allocator, stream, "503 Service Unavailable", "internal_error", "Scheduler not ready", 503);
+         return;
+@@ -7885,11 +7938,17 @@ fn handleLoadModelStrict(allocator: std.mem.Allocator, stream: *Conn, request_bo
+         .id => |id| requested_id = id,
+         else => {},
+     };
+-    const lm = scheduler.ensureLoaded(requested_id) catch |err| {
++    const ownership_entry = scheduler.registry.resolveEntry(requested_id) catch null;
++    if (ownership_entry) |entry| try fios_requests.bind(stream.io, ownership, entry.id);
++    const lm = scheduler.ensureLoaded(if (ownership_entry) |entry| entry.id else requested_id) catch |err| {
+         try sendEnsureLoadedError(allocator, stream, scheduler, requested_id, err);
+         return;
+     };
+     defer scheduler.release(lm);
++    if (ownership_entry != null) try fios_requests.active(stream.io, ownership);
++    defer if (ownership_entry != null) {
++        fios_requests.responding(stream.io, ownership) catch {};
++    };
+     // Promotion happens only past ensureLoaded's error switch: a load that
+     // FAILED must never steal the default from a model that answers.
+     if (make_default) {
+@@ -8030,6 +8089,7 @@ fn handleTranscriptions(allocator: std.mem.Allocator, stream: *Conn, body: []con
+             try sendErrorResponse(allocator, stream, "400 Bad Request", "invalid_request_error", "diarized_json needs Nemotron 3 Diarization, which is not on disk or did not load: download " ++ DIARIZER_REPO ++ " beside the ASR model", 400);
+             return;
+         }).id;
++        try fios_ownership.bindAuxiliaryCurrent(stream.io, id);
+         diarizer = global_scheduler.?.ensureLoaded(id) catch |err| blk: {
+             log.warn("  diarizer {s} did not load ({s}): one speaker\n", .{ id, @errorName(err) });
+             break :blk null;
+@@ -8054,16 +8114,19 @@ fn handleTranscriptions(allocator: std.mem.Allocator, stream: *Conn, body: []con
+         defer if (timed) |*x| x.deinit(allocator);
+         if (aligner) |*al| {
+             if (t.text.len > 0 and al.languages & transcription_mod.languageBit(t.language orelse "") != 0) {
+-                if (al.lm == null) al.lm = global_scheduler.?.ensureLoaded(al.id) catch |err| blk: {
+-                    // verbose_json still answers without times; srt and vtt cannot.
+-                    if (form.format != .verbose_json) {
+-                        try sendEnsureLoadedError(allocator, stream, global_scheduler.?, al.id, err);
+-                        return;
+-                    }
+-                    log.warn("  aligner {s} did not load ({s}): segments without word times\n", .{ al.id, @errorName(err) });
+-                    al.languages = 0;
+-                    break :blk null;
+-                };
++                if (al.lm == null) {
++                    try fios_ownership.bindAuxiliaryCurrent(stream.io, al.id);
++                    al.lm = global_scheduler.?.ensureLoaded(al.id) catch |err| blk: {
++                        // verbose_json still answers without times; srt and vtt cannot.
++                        if (form.format != .verbose_json) {
++                            try sendEnsureLoadedError(allocator, stream, global_scheduler.?, al.id, err);
++                            return;
++                        }
++                        log.warn("  aligner {s} did not load ({s}): segments without word times\n", .{ al.id, @errorName(err) });
++                        al.languages = 0;
++                        break :blk null;
++                    };
++                }
+                 if (al.lm) |alm| timed = (try alignPiece(allocator, stream, alm, pcm[start..end], t.text, t.language.?, who, start * 1000 / transcription_mod.SAMPLE_RATE)) orelse return;
+             }
+         }
+@@ -8179,6 +8242,7 @@ fn findCompanion(arch_hint: []const u8) ?*LoadedModel {
+ 
+ fn findAligner(allocator: std.mem.Allocator) !?Aligner {
+     const entry = findCompanion("qwen3_forced_aligner") orelse return null;
++    try fios_ownership.bindAuxiliaryCurrent(global_registry.?.io, entry.id);
+     var config = model_mod.parseConfig(global_registry.?.io, allocator, entry.path) catch return null;
+     defer config.deinit(allocator);
+     const fa = config.forced_aligner orelse return null;
+@@ -14413,7 +14477,7 @@ test "the route-existence 404 is answered BEFORE the model is resolved" {
+     // answer has to precede `ensureLoaded`, not sit in one of its error arms.
+     const src = @embedFile("server.zig");
+     const gate = "if (!routeExists(" ++ "path)) {";
+-    const resolve = "scheduler.ensureLoaded(" ++ "requested_model_id)";
++    const resolve = "const lm = scheduler.ensureLoaded(if (ownership_entry) |entry| entry.id else " ++ "requested_model_id)";
+     const gate_at = std.mem.indexOf(u8, src, gate) orelse return error.GateMissing;
+     const resolve_at = std.mem.indexOf(u8, src, resolve) orelse return error.ResolveMissing;
+     try std.testing.expect(gate_at < resolve_at);

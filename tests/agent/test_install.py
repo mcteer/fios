@@ -4,6 +4,14 @@ from importlib.metadata import version
 
 
 class InstallationTests(unittest.TestCase):
+    def test_platform_entry_is_installed_not_checkout(self):
+        from pathlib import Path
+        import sysconfig
+        from fios_agent import platform_guard, platform_protocol, platform_worker
+        site=Path(sysconfig.get_path('purelib')).resolve()
+        for module in (platform_guard,platform_protocol,platform_worker):
+            self.assertTrue(Path(module.__file__).resolve().is_relative_to(site),'Private platform entry must use the installed distribution')
+
     def test_pinned_runtime_imports(self):
         import fios_agent
         import pydantic_ai

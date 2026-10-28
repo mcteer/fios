@@ -1,0 +1,12 @@
+(version 1)
+; Trusted source tests only. No host policy or installed service changes.
+; Preserve Unix IPC/files/process fixtures. Only the runner-selected ephemeral
+; loopback mock endpoint may use IP; deny configured native endpoints, all
+; other loopback ports and all non-loopback IPs for tests and descendants.
+(allow default)
+(deny network*)
+(allow network*
+  (local unix-socket)
+  (remote unix-socket)
+  (local ip (param "FIOS_MOCK_ENDPOINT"))
+  (remote ip (param "FIOS_MOCK_ENDPOINT")))
