@@ -54,6 +54,7 @@ struct PolicyTestRunner {
             ("session",runSessionTests),
             ("session operations",runSessionOperationTests),
             ("root policy file",runRootPolicyFileTests),
+            ("session enrollment",runSessionEnrollmentTests),
             ("sandbox lifecycle",runSandboxLifecycleTests),
             ("sandbox safety",runSandboxSafetyTests),
             ("sandbox journal",runSandboxJournalTests),

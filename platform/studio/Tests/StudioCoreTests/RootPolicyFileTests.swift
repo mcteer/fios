@@ -22,5 +22,12 @@ func runRootPolicyFileTests() throws {
     let link=directory.appendingPathComponent("root-policy-alias")
     try FileManager.default.createSymbolicLink(atPath:link.path,withDestinationPath:path)
     do {_=try RootPolicyFile.read(path:link.path,maximum:65536,expectedSHA256:hash);fatalError("User alias minted root enrollment authority")}catch ControlError.unauthorized {}
+    let executablePath="/usr/bin/true"
+    let executableHash=SHA256.hash(data:try Data(contentsOf:URL(fileURLWithPath:executablePath))).map {String(format:"%02x",$0)}.joined()
+    try RootPolicyFile.verifyExecutable(VerifiedExecutable(path:executablePath,sha256:executableHash))
+    do {try RootPolicyFile.verifyExecutable(VerifiedExecutable(path:executablePath,sha256:String(repeating:"0",count:64)));fatalError("Immutable executable hash mismatch accepted")}catch ControlError.unauthorized {}
+    let copied=directory.appendingPathComponent("never-executed")
+    try FileManager.default.copyItem(atPath:executablePath,toPath:copied.path)
+    do {try RootPolicyFile.verifyExecutable(VerifiedExecutable(path:copied.path,sha256:executableHash));fatalError("User-writable executable tree enrolled")}catch ControlError.unauthorized {}
     print("PASS: anchored root-owned immutable policy-file read, genuine public OS metadata/hash proof, size/path alias and same-user/symlink refusal; no installation or privileged writes")
 }

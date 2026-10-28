@@ -45,3 +45,33 @@ same-binary peers and a counter-only fake actuator. Its optional
 `--mutate-eof` mode changes only a private temporary source copy and is expected
 to fail specifically at the authenticated partial-stream non-dispatch check.
 Neither mode invokes AppKit lifecycle, launchd, a model or a production runtime.
+
+## Installation enrollment source boundary
+
+`SessionEnrollmentDocument` accepts at most4096 bytes with exactly these fields:
+`version:1`, `purpose:"reviewed_session_launch"`, nonzero integer `uid`, one of
+the two approved Studio `host` names, canonical absolute `state_path`, and
+lowercase SHA256 `review_sha256`, `manager_sha256`, `session_sha256`,
+`mlx_application_sha256`, `orbstack_application_sha256`. The review hash identifies
+the operator's review receipt; it is not automatic proof of whole-repository,
+installed dependency or native all-client provenance. No executable path, role,
+argv, environment, arbitrary host, tools or activation flag is accepted.
+
+The separate `SessionEnrolledPolicy.load` source factory reads only
+`/Library/Application Support/Fios/Studio/session-enrollment.json` through
+`RootPolicyFile`; its initializer is private. Missing policy returns no enrolled
+authority. Malformed/inaccessible policy or a different user/host/state refuses.
+The factory verifies root-protected manager/helper executable paths and hashes,
+then the calling entry point's actual UID/PID/start/kernel path/hash for its fixed
+manager or session role. It constructs fixed `MLXCore` and `OrbStack` executable
+pins; the future actuator must independently validate approved immutable app
+resources/identity before effects. The factory is not called by production entry
+points yet, and no policy is generated or installed by these source fixtures.
+
+Immutable-file checks reject writable or non-root parents, symlinks, explicit
+ACL objects, hardlinked files, wrong permissions/hash and changed descriptor/name
+metadata. These checks prove the current protected file, not mapped-code lifetime
+or a completed release/enrollment. The reviewed installer must serialize updates,
+stop old processes and establish the full approved artifact/resource provenance.
+Ordinary lifecycle, native quiescence, inference and sandbox grants remain
+independent; this launch-only document cannot establish them.
