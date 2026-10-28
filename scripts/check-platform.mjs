@@ -33,6 +33,14 @@ try {
   mkdirSync(setidLockDirectory,{mode:0o700});
   const setidLock=join(setidLockDirectory,'manager.lock');
   copyFileSync('/usr/bin/true',setidLock);chmodSync(setidLock,0o4700);
+  // A copied Apple platform binary is not a portable liveness witness.
+  // Compile this exact portable, finite sentinel before
+  // entering Seatbelt; the test requires an actual startup acknowledgement.
+  const censusSource=join(directory,'CensusSentinel.swift'),censusBinary=join(directory,'census-sentinel');
+  copyFileSync(resolve(root,'platform/studio/Tests/StudioCoreTests/CensusSentinel.swift.fixture'),censusSource);
+  const censusBuild=spawnSync('swiftc',['-parse-as-library','-swift-version','6','-warnings-as-errors','-O',censusSource,'-o',censusBinary],{cwd:root,stdio:'inherit',timeout:30000});
+  if(censusBuild.error)throw censusBuild.error;
+  if(censusBuild.status!==0)throw Error('Portable census fixture build failed');
   const sources = ['Sources/StudioCore', 'Tests/StudioCoreTests'].flatMap(part => {
     const path = resolve(root, 'platform/studio', part);
     return readdirSync(path).filter(name => name.endsWith('.swift')).sort().map(name => join(path, name));
@@ -42,7 +50,7 @@ try {
     ['swiftc', ['-swift-version', '6', '-warnings-as-errors', ...(process.argv[3]==='--release'?['-O']:[]), '-I', resolve(root, 'platform/studio/Sources/CSQLite'), ...sources, '-o', binary]],
     ['/usr/bin/sandbox-exec', ['-D', `FIOS_MOCK_ENDPOINT=localhost:${port}`, '-f', resolve(root, 'tests/fixtures/platform/mock-network.sb'), binary]],
   ]) {
-    const result = spawnSync(command, args, { cwd: root, stdio: 'inherit', timeout: 120_000, env: { ...process.env, FIOS_PLATFORM_MOCK_PORT: String(port), FIOS_PLATFORM_SETID_FIXTURE: setidFixture, FIOS_PLATFORM_LOCK_SETID_FIXTURE: setidLock } });
+    const result = spawnSync(command, args, { cwd: root, stdio: 'inherit', timeout: 120_000, env: { ...process.env, FIOS_PLATFORM_MOCK_PORT: String(port), FIOS_PLATFORM_SETID_FIXTURE: setidFixture, FIOS_PLATFORM_LOCK_SETID_FIXTURE: setidLock, FIOS_PLATFORM_CENSUS_FIXTURE:censusBinary } });
     if (result.error) throw result.error;
     if (result.status !== 0) throw new Error(`Platform policy validation failed (${result.status ?? result.signal})`);
   }

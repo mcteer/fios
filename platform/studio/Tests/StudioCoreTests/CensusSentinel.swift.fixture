@@ -1,0 +1,17 @@
+import Darwin
+
+// Disposable one-shot census witness. Its parent holds stdin open; parent
+// exit closes that pipe. A finite alarm also bounds an abandoned fixture.
+@main struct CensusSentinel {
+    static func main() {
+        _=alarm(30)
+        let ready=Array("READY\n".utf8)
+        guard ready.withUnsafeBytes({Darwin.write(STDOUT_FILENO,$0.baseAddress!,$0.count)})==ready.count else {return}
+        var byte:UInt8=0
+        while true {
+            let count=Darwin.read(STDIN_FILENO,&byte,1)
+            if count<0,errno==EINTR {continue}
+            if count<=0 {return}
+        }
+    }
+}

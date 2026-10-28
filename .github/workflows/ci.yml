@@ -184,7 +184,15 @@ jobs:
       - name: Build native package and run disposable local checks
         run: |
           uv sync --locked --no-editable
-          swift --version
+          # This job is the macOS15 compatibility/mock lane, not a release
+          # artifact build. The release producer separately enforces6.4/SDK27.
+          node --input-type=module - <<'NODE'
+          import {execFileSync} from 'node:child_process';
+          const version=execFileSync('/usr/bin/swift',['--version'],{encoding:'utf8'});
+          if(!version.includes('Apple Swift version 6.1.2 ')||!version.includes('swiftlang-6.1.2.1.2'))throw Error('Unreviewed CI compatibility toolchain');
+          console.log(version.trim());
+          console.log('Compatibility SDK: '+execFileSync('/usr/bin/xcrun',['--show-sdk-version'],{encoding:'utf8'}).trim());
+          NODE
           swift build --package-path platform/studio
           node scripts/check-platform.mjs --mock
           node scripts/check-platform.mjs --mock --release

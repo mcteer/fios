@@ -6,22 +6,22 @@ func runWorkerCensusTests() throws {
     try FileManager.default.createDirectory(at:directory,withIntermediateDirectories:false,attributes:[.posixPermissions:0o700])
     defer {try? FileManager.default.removeItem(at:directory)}
     let executable=directory.appendingPathComponent("private-sentinel")
-    try FileManager.default.copyItem(at:URL(fileURLWithPath:"/bin/sleep"),to:executable)
+    guard let fixture=ProcessInfo.processInfo.environment["FIOS_PLATFORM_CENSUS_FIXTURE"],fixture.hasPrefix("/") else {throw RuntimeError.identity}
+    try FileManager.default.copyItem(at:URL(fileURLWithPath:fixture),to:executable)
     try FileManager.default.setAttributes([.posixPermissions:0o700],ofItemAtPath:executable.path)
-    // Copied Apple platform binaries cannot execute outside their sealed
-    // location until this disposable copy is ad-hoc signed. No app modified.
-    let sign=Process();sign.executableURL=URL(fileURLWithPath:"/usr/bin/codesign");sign.arguments=["--force","--sign","-","--timestamp=none",executable.path]
-    sign.standardInput=FileHandle.nullDevice;sign.standardOutput=FileHandle.nullDevice;sign.standardError=FileHandle.nullDevice
-    try sign.run();sign.waitUntilExit();guard sign.terminationStatus==0 else {throw RuntimeError.identity}
     let policy=try WorkerCensusPolicy(reviewDigest:String(repeating:"a",count:64),historicalExecutablePaths:[executable.path,URL(fileURLWithPath:CommandLine.arguments[0]).resolvingSymlinksInPath().path])
     var journal:Journal?=try Journal(directory:directory.appendingPathComponent("state"))
     let id=UUID().uuidString.lowercased()
     try journal!.claim(job:id,attempt:0,model:"fixture/model")
     let nonce=try journal!.planWorkerLaunch(job:id,attempt:0)
-    let foreign=Process();foreign.executableURL=executable;foreign.arguments=["30"]
-    foreign.standardInput=FileHandle.nullDevice;foreign.standardOutput=FileHandle.nullDevice;foreign.standardError=FileHandle.nullDevice
+    let foreign=Process(),input=Pipe(),output=Pipe();foreign.executableURL=executable;foreign.arguments=[]
+    foreign.standardInput=input;foreign.standardOutput=output;foreign.standardError=FileHandle.nullDevice
     try foreign.run()
     defer {if foreign.isRunning {foreign.terminate()};foreign.waitUntilExit()}
+    output.fileHandleForWriting.closeFile()
+    var ready=pollfd(fd:output.fileHandleForReading.fileDescriptor,events:Int16(POLLIN),revents:0)
+    guard poll(&ready,1,2000)>0,try output.fileHandleForReading.read(upToCount:6)==Data("READY\n".utf8),foreign.isRunning else {fatalError("Census sentinel failed its actual startup handshake")}
+    defer {try? input.fileHandleForWriting.close();try? output.fileHandleForReading.close()}
     journal=nil;journal=try Journal(directory:directory.appendingPathComponent("state"))
     var held=AdmissionPolicy()
     let recovery=try WorkerReconciler(journal:journal!,admission:&held,census:policy)
