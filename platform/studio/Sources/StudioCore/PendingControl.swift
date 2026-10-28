@@ -10,10 +10,14 @@ final class PendingControl {
     private var input=Data(),output=Data()
     private var expected:Int?
     private var processed=false
+    private let maximum:Int
+    private let requireEOF:Bool
+    private var waitingEOF=false
     private var offset=0
     private(set) var closed=false
-    init(fd:Int32,role:ControlRole,now:TimeInterval) {
-        self.fd=fd;self.role=role;deadline=now+2
+    init(fd:Int32,role:ControlRole,now:TimeInterval,maximum:Int=65536,requireEOF:Bool=false) {
+        precondition((1...65536).contains(maximum))
+        self.fd=fd;self.role=role;deadline=now+2;self.maximum=maximum;self.requireEOF=requireEOF
     }
     deinit { close() }
     func close() { if !closed { closed=true;Darwin.close(fd);fd = -1 };input.removeAll();output.removeAll() }
@@ -23,6 +27,14 @@ final class PendingControl {
     func read(now:TimeInterval) throws -> Data? {
         try check(now)
         guard !processed else { return nil }
+        if waitingEOF {
+            var byte:UInt8=0
+            let count=Darwin.read(fd,&byte,1)
+            if count<0 && [EAGAIN,EWOULDBLOCK,EINTR].contains(errno) {return nil}
+            guard count==0 else {close();throw ControlError.invalid_request}
+            processed=true;waitingEOF=false
+            let result=Data(input.dropFirst(4));input.removeAll();return result
+        }
         var bytes=[UInt8](repeating:0,count:4096)
         let remaining=(expected.map {$0+4} ?? 4)-input.count
         let count=Darwin.read(fd,&bytes,min(bytes.count,remaining+1))
@@ -31,12 +43,13 @@ final class PendingControl {
         input.append(contentsOf:bytes.prefix(count))
         if expected==nil && input.count>=4 {
             let size=input.prefix(4).reduce(0) { ($0<<8)|Int($1) }
-            guard (1...65536).contains(size) else { close();throw ControlError.invalid_request }
+            guard (1...maximum).contains(size) else { close();throw ControlError.invalid_request }
             expected=size
         }
         if let expected {
             guard input.count<=expected+4 else { close();throw ControlError.invalid_request }
             if input.count==expected+4 {
+                if requireEOF {waitingEOF=true;return nil}
                 processed=true
                 let result=Data(input.dropFirst(4));input.removeAll()
                 return result

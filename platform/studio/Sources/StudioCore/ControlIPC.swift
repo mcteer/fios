@@ -26,10 +26,10 @@ public enum ControlFrames {
         }
         return result
     }
-    public static func read(fd:Int32,deadline:TimeInterval) throws -> Data {
+    public static func read(fd:Int32,deadline:TimeInterval,maximum:Int=65536) throws -> Data {
         let header=try exact(fd:fd,count:4,deadline:deadline)
         let count=header.reduce(0) { ($0 << 8) | Int($1) }
-        guard count > 0, count <= 65_536 else { throw ControlError.invalid_request }
+        guard (1...65536).contains(maximum),count > 0, count <= maximum else { throw ControlError.invalid_request }
         return try exact(fd:fd,count:count,deadline:deadline)
     }
     public static func write(fd:Int32,data:Data,deadline:TimeInterval) throws {

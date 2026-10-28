@@ -21,7 +21,7 @@ enum SessionLaunchResult:Equatable {
     case started(ServiceIdentity)
 }
 
-private struct SessionLaunchRequest {
+struct SessionLaunchRequest {
     let id:String
     let operation:String
     let service:ManagedService
@@ -64,7 +64,7 @@ final class SessionLaunchGate {
     }
 
     func handle(_ data:Data,peer:NativeControlPeer,uid:uid_t,consoleReady:Bool,now:Int64,
-                launch:(ManagedService)throws->SessionLaunchResult)throws->SessionLaunchResult {
+                launch:(ManagedService,String)throws->SessionLaunchResult)throws->SessionLaunchResult {
         guard uid>0,uid==geteuid(),getuid()==geteuid() else {throw ControlError.unauthorized}
         let request=try SessionLaunchRequest(data)
         // Socket integration must obtain UID/PID from kernel peer credentials,
@@ -96,7 +96,7 @@ final class SessionLaunchGate {
         // durable launch intent is required across helper restart/cache loss.
         entries[request.id]=Entry(service:request.service,result:.uncertain)
         let outcome:SessionLaunchResult
-        do {outcome=try launch(request.service)} catch {return .uncertain}
+        do {outcome=try launch(request.service,request.id)} catch {return .uncertain}
         switch outcome {
         case .notSent:entries[request.id]?.result = .notSent
         case .started(let identity):

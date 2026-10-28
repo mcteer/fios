@@ -20,35 +20,35 @@ func runSessionOperationTests() throws {
     }
     let first=try packet(id)
     for extra in [["argv":["/bin/sh"]],["role":"operator"],["path":"/Applications/Foreign.app"]] as [[String:Any]] {
-        do {_ = try gate.handle(packet(UUID().uuidString.lowercased(),extra:extra),peer:peer,uid:geteuid(),consoleReady:true,now:1000,launch:{_ in calls+=1;return .uncertain});fatalError("Session accepted caller-selected authority")}catch ControlError.invalid_request {}
+        do {_ = try gate.handle(packet(UUID().uuidString.lowercased(),extra:extra),peer:peer,uid:geteuid(),consoleReady:true,now:1000,launch:{_,_ in calls+=1;return .uncertain});fatalError("Session accepted caller-selected authority")}catch ControlError.invalid_request {}
     }
-    do {_ = try gate.handle(first,peer:peer,uid:0,consoleReady:true,now:1000,launch:{_ in calls+=1;return .uncertain});fatalError("Root caller acquired session launch authority")}catch ControlError.unauthorized {}
+    do {_ = try gate.handle(first,peer:peer,uid:0,consoleReady:true,now:1000,launch:{_,_ in calls+=1;return .uncertain});fatalError("Root caller acquired session launch authority")}catch ControlError.unauthorized {}
     let foreign=NativeControlPeer(pid:peer.pid,start:peer.start+1,executable:manager)
-    do {_ = try gate.handle(first,peer:foreign,uid:geteuid(),consoleReady:true,now:1000,launch:{_ in calls+=1;return .uncertain});fatalError("Reused manager PID acquired launch authority")}catch ControlError.unauthorized {}
+    do {_ = try gate.handle(first,peer:foreign,uid:geteuid(),consoleReady:true,now:1000,launch:{_,_ in calls+=1;return .uncertain});fatalError("Reused manager PID acquired launch authority")}catch ControlError.unauthorized {}
     guard calls==0 else {fatalError("Rejected session packet invoked native transport")}
-    guard try gate.handle(first,peer:peer,uid:geteuid(),consoleReady:false,now:1000,launch:{_ in calls+=1;return .uncertain}) == .notSent else {fatalError("Missing GUI session dispatched a launch")}
-    guard try gate.handle(first,peer:peer,uid:geteuid(),consoleReady:true,now:1001,launch:{_ in calls+=1;return .uncertain}) == .notSent,calls==0 else {fatalError("Consumed not-sent request replayed after session change")}
+    guard try gate.handle(first,peer:peer,uid:geteuid(),consoleReady:false,now:1000,launch:{_,_ in calls+=1;return .uncertain}) == .notSent else {fatalError("Missing GUI session dispatched a launch")}
+    guard try gate.handle(first,peer:peer,uid:geteuid(),consoleReady:true,now:1001,launch:{_,_ in calls+=1;return .uncertain}) == .notSent,calls==0 else {fatalError("Consumed not-sent request replayed after session change")}
     let uncertain=try packet(UUID().uuidString.lowercased())
-    guard try gate.handle(uncertain,peer:peer,uid:geteuid(),consoleReady:true,now:1002,launch:{service in guard service == .mlx else {fatalError("Wrong fixed service")};calls+=1;return .uncertain}) == .uncertain,
-          try gate.handle(uncertain,peer:peer,uid:geteuid(),consoleReady:true,now:1003,launch:{_ in calls+=1;return .notSent}) == .uncertain,calls==1 else {fatalError("Unknown launch was replayed or rewritten")}
+    guard try gate.handle(uncertain,peer:peer,uid:geteuid(),consoleReady:true,now:1002,launch:{service,_ in guard service == .mlx else {fatalError("Wrong fixed service")};calls+=1;return .uncertain}) == .uncertain,
+          try gate.handle(uncertain,peer:peer,uid:geteuid(),consoleReady:true,now:1003,launch:{_,_ in calls+=1;return .notSent}) == .uncertain,calls==1 else {fatalError("Unknown launch was replayed or rewritten")}
     let wrongInstance=try packet(UUID().uuidString.lowercased(),instance:UUID().uuidString.lowercased())
-    guard try gate.handle(wrongInstance,peer:peer,uid:geteuid(),consoleReady:true,now:1004,launch:{_ in calls+=1;return .uncertain}) == .wrongInstance,calls==1 else {fatalError("Another helper generation accepted a command")}
+    guard try gate.handle(wrongInstance,peer:peer,uid:geteuid(),consoleReady:true,now:1004,launch:{_,_ in calls+=1;return .uncertain}) == .wrongInstance,calls==1 else {fatalError("Another helper generation accepted a command")}
     let next=try packet(UUID().uuidString.lowercased())
-    guard try gate.handle(next,peer:peer,uid:geteuid(),consoleReady:true,now:999,launch:{_ in calls+=1;return .uncertain}) == .uncertain,
-          try gate.handle(next,peer:peer,uid:geteuid(),consoleReady:true,now:2000,launch:{_ in calls+=1;return .uncertain}) == .uncertain,calls==1 else {fatalError("Session clock rollback reopened execution")}
+    guard try gate.handle(next,peer:peer,uid:geteuid(),consoleReady:true,now:999,launch:{_,_ in calls+=1;return .uncertain}) == .uncertain,
+          try gate.handle(next,peer:peer,uid:geteuid(),consoleReady:true,now:2000,launch:{_,_ in calls+=1;return .uncertain}) == .uncertain,calls==1 else {fatalError("Session clock rollback reopened execution")}
     // A second synthetic profile uses this actual test image as its approved
     // app. No application is launched; the gate must independently verify the
     // real UID/path/hash/kernel-start tuple before acknowledging callback data.
     let proofGate=try SessionLaunchGate(manager:manager,approvedHashes:[.mlx:hash,.orbstack:hash])
     var proofCalls=0
     let badIdentity=try packet(UUID().uuidString.lowercased(),instance:proofGate.instance,profile:proofGate.profile,extra:["service":"orbstack"])
-    guard try proofGate.handle(badIdentity,peer:peer,uid:geteuid(),consoleReady:true,now:1000,launch:{_ in proofCalls+=1;return .started(ServiceIdentity(pid:peer.pid,start:peer.start,sha256:appHash))}) == .uncertain else {fatalError("Unapproved started identity was accepted")}
+    guard try proofGate.handle(badIdentity,peer:peer,uid:geteuid(),consoleReady:true,now:1000,launch:{_,_ in proofCalls+=1;return .started(ServiceIdentity(pid:peer.pid,start:peer.start,sha256:appHash))}) == .uncertain else {fatalError("Unapproved started identity was accepted")}
     let completedID=UUID().uuidString.lowercased(),completed=try packet(completedID,instance:proofGate.instance,profile:proofGate.profile)
     let identity=ServiceIdentity(pid:peer.pid,start:peer.start,sha256:hash)
-    guard try proofGate.handle(completed,peer:peer,uid:geteuid(),consoleReady:true,now:1001,launch:{_ in proofCalls+=1;return .started(identity)}) == .started(identity) else {fatalError("Actual approved process identity was refused")}
+    guard try proofGate.handle(completed,peer:peer,uid:geteuid(),consoleReady:true,now:1001,launch:{_,_ in proofCalls+=1;return .started(identity)}) == .started(identity) else {fatalError("Actual approved process identity was refused")}
     let lookup=try packet(completedID,instance:proofGate.instance,profile:proofGate.profile,extra:["operation":"lookup"])
-    guard try proofGate.handle(lookup,peer:peer,uid:geteuid(),consoleReady:true,now:1002,launch:{_ in proofCalls+=1;return .uncertain}) == .started(identity),proofCalls==2 else {fatalError("Acknowledged lookup replayed a launch")}
+    guard try proofGate.handle(lookup,peer:peer,uid:geteuid(),consoleReady:true,now:1002,launch:{_,_ in proofCalls+=1;return .uncertain}) == .started(identity),proofCalls==2 else {fatalError("Acknowledged lookup replayed a launch")}
     let unknown=try packet(UUID().uuidString.lowercased(),instance:proofGate.instance,profile:proofGate.profile,extra:["operation":"lookup"])
-    guard try proofGate.handle(unknown,peer:peer,uid:geteuid(),consoleReady:true,now:1003,launch:{_ in proofCalls+=1;return .notSent}) == .uncertain,proofCalls==2 else {fatalError("Missing helper history became non-dispatch proof")}
+    guard try proofGate.handle(unknown,peer:peer,uid:geteuid(),consoleReady:true,now:1003,launch:{_,_ in proofCalls+=1;return .notSent}) == .uncertain,proofCalls==2 else {fatalError("Missing helper history became non-dispatch proof")}
     print("PASS: fixed session launch wire, exact manager kernel identity/user, no caller argv/path/role, GUI gate, generation binding and once-only uncertain/not-sent replay fencing; fake transport only")
 }

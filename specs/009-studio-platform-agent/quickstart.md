@@ -31,6 +31,7 @@ node scripts/check-platform-process.mjs --isolated
 node scripts/check-platform-boot.mjs --isolated
 node scripts/check-platform-boot-state.mjs --isolated
 node scripts/check-platform-session.mjs --isolated
+node scripts/check-platform-session-control.mjs --isolated
 node scripts/check-platform-supervisor-lock.mjs --isolated
 node scripts/check-platform-supervisor-budget.mjs --isolated
 node scripts/check-platform-watchdog.mjs --isolated
