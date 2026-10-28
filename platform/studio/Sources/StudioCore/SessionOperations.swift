@@ -41,24 +41,26 @@ struct SessionLaunchRequest {
     }
 }
 
-// Source-only dispatcher for a future enrolled session transport. The real
+// Source-only dispatcher for the enrolled session transport. The real
 // helper does not instantiate this yet. Its manager/executable inputs must
 // come from reviewed immutable installation policy, never a request/session
-// observation file. No operation can select an executable, argv, URL or role.
+// observation file. Approved applications bind exact kernel paths and hashes.
+// No operation can select an executable, argv, URL or role.
 final class SessionLaunchGate {
     private struct Entry {let service:ManagedService;var result:SessionLaunchResult}
     let instance=UUID().uuidString.lowercased()
     let profile:String
     private let manager:VerifiedExecutable
-    private let pins:[ManagedService:String]
+    private let applications:[ManagedService:VerifiedExecutable]
     private var entries:[String:Entry]=[:]
     private var previous:Int64=0
     private var fenced=false
 
-    init(manager:VerifiedExecutable,approvedHashes:[ManagedService:String])throws {
+    init(manager:VerifiedExecutable,approvedApplications:[ManagedService:VerifiedExecutable])throws {
+        let approvedHashes=approvedApplications.mapValues(\.sha256)
         guard geteuid()>0,getuid()==geteuid(),Set(approvedHashes.keys)==Set(ManagedService.allCases),
               approvedHashes.values.allSatisfy(WireScalar.sha256) else {throw ControlError.unauthorized}
-        self.manager=manager;pins=approvedHashes
+        self.manager=manager;applications=approvedApplications
         let canonical=ManagedService.allCases.map {$0.rawValue+":"+approvedHashes[$0]!}.sorted().joined(separator:"\n")
         profile=SHA256.hash(data:Data(("fios-service-recovery-v1\n"+canonical).utf8)).map {String(format:"%02x",$0)}.joined()
     }
@@ -119,12 +121,12 @@ final class SessionLaunchGate {
     }
 
     private func verifiedStarted(_ identity:ServiceIdentity,service:ManagedService,uid:uid_t)throws->Bool {
-        guard identity.valid,identity.sha256==pins[service] else {return false}
+        guard identity.valid,let executable=applications[service],identity.sha256==executable.sha256 else {return false}
         var bytes=[CChar](repeating:0,count:4*Int(MAXPATHLEN))
         guard proc_pidpath(identity.pid,&bytes,UInt32(bytes.count))>0,
-              let path=String(bytes:bytes.prefix(while:{$0 != 0}).map {UInt8(bitPattern:$0)},encoding:.utf8) else {return false}
+              let path=String(bytes:bytes.prefix(while:{$0 != 0}).map {UInt8(bitPattern:$0)},encoding:.utf8),
+              path==executable.path else {return false}
         do {
-            let executable=try VerifiedExecutable(path:path,sha256:identity.sha256)
             let verified=try ServiceIdentity.verified(peer:NativeControlPeer(pid:identity.pid,start:identity.start,executable:executable),
                 expectedUID:uid,deadline:ProcessInfo.processInfo.systemUptime+2)
             return verified==identity

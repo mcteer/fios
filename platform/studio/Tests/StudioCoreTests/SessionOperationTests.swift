@@ -10,7 +10,7 @@ func runSessionOperationTests() throws {
     let manager=try VerifiedExecutable(path:path,sha256:hash),appHash=String(repeating:"a",count:64)
     let peer=NativeControlPeer(pid:getpid(),start:try WorkerResources.startIdentifier(pid:getpid()),executable:manager)
     _=try ServiceIdentity.verified(peer:peer,expectedUID:geteuid(),deadline:ProcessInfo.processInfo.systemUptime+2)
-    let gate=try SessionLaunchGate(manager:manager,approvedHashes:[.mlx:appHash,.orbstack:appHash])
+    let gate=try SessionLaunchGate(manager:manager,approvedApplications:[.mlx:try VerifiedExecutable(path:path,sha256:appHash),.orbstack:try VerifiedExecutable(path:path,sha256:appHash)])
     var calls=0
     let id=UUID().uuidString.lowercased()
     func packet(_ id:String,instance:String?=nil,profile:String?=nil,extra:[String:Any]=[:])throws->Data {
@@ -39,10 +39,13 @@ func runSessionOperationTests() throws {
     // A second synthetic profile uses this actual test image as its approved
     // app. No application is launched; the gate must independently verify the
     // real UID/path/hash/kernel-start tuple before acknowledging callback data.
-    let proofGate=try SessionLaunchGate(manager:manager,approvedHashes:[.mlx:hash,.orbstack:hash])
+    let proofGate=try SessionLaunchGate(manager:manager,approvedApplications:[.mlx:manager,.orbstack:manager])
     var proofCalls=0
     let badIdentity=try packet(UUID().uuidString.lowercased(),instance:proofGate.instance,profile:proofGate.profile,extra:["service":"orbstack"])
     guard try proofGate.handle(badIdentity,peer:peer,uid:geteuid(),consoleReady:true,now:1000,launch:{_,_ in proofCalls+=1;return .started(ServiceIdentity(pid:peer.pid,start:peer.start,sha256:appHash))}) == .uncertain else {fatalError("Unapproved started identity was accepted")}
+    let pathGate=try SessionLaunchGate(manager:manager,approvedApplications:[.mlx:try VerifiedExecutable(path:"/usr/bin/true",sha256:hash),.orbstack:manager])
+    let pathPacket=try packet(UUID().uuidString.lowercased(),instance:pathGate.instance,profile:pathGate.profile)
+    guard try pathGate.handle(pathPacket,peer:peer,uid:geteuid(),consoleReady:true,now:1000,launch:{_,_ in .started(ServiceIdentity(pid:peer.pid,start:peer.start,sha256:hash))}) == .uncertain else {fatalError("Started identity accepted matching hash at unapproved executable path")}
     let completedID=UUID().uuidString.lowercased(),completed=try packet(completedID,instance:proofGate.instance,profile:proofGate.profile)
     let identity=ServiceIdentity(pid:peer.pid,start:peer.start,sha256:hash)
     guard try proofGate.handle(completed,peer:peer,uid:geteuid(),consoleReady:true,now:1001,launch:{_,_ in proofCalls+=1;return .started(identity)}) == .started(identity) else {fatalError("Actual approved process identity was refused")}
@@ -52,7 +55,7 @@ func runSessionOperationTests() throws {
     guard try proofGate.handle(unknown,peer:peer,uid:geteuid(),consoleReady:true,now:1003,launch:{_,_ in proofCalls+=1;return .notSent}) == .uncertain,proofCalls==2 else {fatalError("Missing helper history became non-dispatch proof")}
     // Delayed native completions can resolve only the original outstanding
     // request. A timeout, new helper or unrelated presence cannot mint it.
-    let delayed=try SessionLaunchGate(manager:manager,approvedHashes:[.mlx:hash,.orbstack:hash])
+    let delayed=try SessionLaunchGate(manager:manager,approvedApplications:[.mlx:manager,.orbstack:manager])
     let delayedID=UUID().uuidString.lowercased()
     let delayedPacket=try packet(delayedID,instance:delayed.instance,profile:delayed.profile)
     guard try delayed.handle(delayedPacket,peer:peer,uid:geteuid(),consoleReady:true,now:1000,launch:{_,_ in .uncertain}) == .uncertain else {fatalError("Delayed launch was acknowledged early")}
@@ -66,7 +69,7 @@ func runSessionOperationTests() throws {
     let notSentID=UUID().uuidString.lowercased()
     guard try delayed.handle(packet(notSentID,instance:delayed.instance,profile:delayed.profile),peer:peer,uid:geteuid(),consoleReady:false,now:1002,launch:{_,_ in fatalError("No-session request dispatched")}) == .notSent,
           try !delayed.acknowledgeStarted(id:notSentID,service:.mlx,identity:identity) else {fatalError("Completion rewrote non-dispatch proof")}
-    let otherGeneration=try SessionLaunchGate(manager:manager,approvedHashes:[.mlx:hash,.orbstack:hash])
+    let otherGeneration=try SessionLaunchGate(manager:manager,approvedApplications:[.mlx:manager,.orbstack:manager])
     guard try !otherGeneration.acknowledgeStarted(id:delayedID,service:.mlx,identity:identity) else {fatalError("New helper adopted old completion")}
     let fencedID=UUID().uuidString.lowercased(),fencedPacket=try packet(fencedID,instance:delayed.instance,profile:delayed.profile)
     guard try delayed.handle(fencedPacket,peer:peer,uid:geteuid(),consoleReady:true,now:1003,launch:{_,_ in .uncertain}) == .uncertain,

@@ -13,7 +13,7 @@ import CryptoKit
         let image=try VerifiedExecutable(path:path,sha256:hash),directory=URL(fileURLWithPath:args[2])
         let pins:[ManagedService:String]=[.mlx:String(repeating:"a",count:64),.orbstack:String(repeating:"b",count:64)]
         if args[1]=="server" {
-            let server=try SessionControlServer(directory:directory,manager:image,approvedHashes:pins)
+            let server=try SessionControlServer(directory:directory,manager:image,approvedApplications:try pins.mapValues {try VerifiedExecutable(path:path,sha256:$0)})
             let stop=Termination();var count=0
             while !stop.requested {
                 try autoreleasepool {

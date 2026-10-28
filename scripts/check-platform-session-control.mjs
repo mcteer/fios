@@ -3,13 +3,15 @@
 // No root policy, GUI app, keychain, runtime, launchd or inference operation.
 import assert from 'node:assert/strict';
 import {spawn,spawnSync} from 'node:child_process';
-import {mkdtempSync,copyFileSync,readdirSync,readFileSync,existsSync,mkdirSync,rmSync} from 'node:fs';
+import {mkdtempSync,copyFileSync,readdirSync,readFileSync,writeFileSync,existsSync,mkdirSync,rmSync} from 'node:fs';
 import {join} from 'node:path';
 import {createConnection} from 'node:net';
 import {randomUUID} from 'node:crypto';
 import {setTimeout as delay} from 'node:timers/promises';
 import {fileURLToPath} from 'node:url';
-assert.equal(process.platform,'darwin');assert.notEqual(process.getuid(),0);assert.deepEqual(process.argv.slice(2),['--isolated']);
+assert.equal(process.platform,'darwin');assert.notEqual(process.getuid(),0);
+const mutation=process.argv[3]==='--mutate-eof';
+assert.deepEqual(process.argv.slice(2),mutation?['--isolated','--mutate-eof']:['--isolated']);
 const root=fileURLToPath(new URL('../',import.meta.url)),temporary=mkdtempSync('/tmp/fios009-session-rpc-'),state=join(temporary,'state');
 mkdirSync(state,{mode:0o700});const children=[],sockets=[];
 const exited=child=>child.exitCode!==null||child.signalCode!==null;
@@ -24,7 +26,11 @@ async function raw(value,extra=Buffer.alloc(0)){
 try {
  const core=join(root,'platform/studio/Sources/StudioCore'),source=join(temporary,'SessionTransport.swift'),binary=join(temporary,'session-rpc');
  copyFileSync(join(root,'platform/studio/Tests/StudioCoreTests/SessionTransport.swift.fixture'),source);
- const sources=readdirSync(core).filter(n=>n.endsWith('.swift')).sort().map(n=>join(core,n));
+ const sources=readdirSync(core).filter(n=>n.endsWith('.swift')).sort().map(n=>{
+  const original=join(core,n);if(!mutation||n!=='SessionControl.swift')return original;
+  const bytes=readFileSync(original,'utf8');assert.equal(bytes.split('maximum:1024,requireEOF:true').length,2);
+  const copy=join(temporary,n);writeFileSync(copy,bytes.replace('maximum:1024,requireEOF:true','maximum:1024,requireEOF:false'));return copy;
+ });
  const built=spawnSync('swiftc',['-swift-version','6','-warnings-as-errors','-I',join(root,'platform/studio/Sources/CSQLite'),...sources,source,'-o',binary],{cwd:root,encoding:'utf8',timeout:180000,maxBuffer:65536});
  assert.equal(built.status,0,'Session RPC fixture build failed: '+built.stderr);
  const server=spawn('/usr/bin/sandbox-exec',['-p','(version 1)(allow default)(deny network*)(allow network* (local unix-socket) (remote unix-socket))',binary,'server',state],{stdio:'ignore'});children.push(server);

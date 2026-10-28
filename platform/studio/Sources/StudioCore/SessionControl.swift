@@ -52,9 +52,9 @@ final class SessionControlServer {
     private let gate:SessionLaunchGate
     private let manager:VerifiedExecutable
     private var clients:[Connection]=[]
-    init(directory:URL,manager:VerifiedExecutable,approvedHashes:[ManagedService:String])throws {
+    init(directory:URL,manager:VerifiedExecutable,approvedApplications:[ManagedService:VerifiedExecutable])throws {
         owner=try SessionInstanceLock(directory:directory)
-        self.manager=manager;gate=try SessionLaunchGate(manager:manager,approvedHashes:approvedHashes)
+        self.manager=manager;gate=try SessionLaunchGate(manager:manager,approvedApplications:approvedApplications)
         listener=try UnixControlSocket(path:directory.appendingPathComponent("session-control.sock").path)
         let descriptor:[String:Any]=["version":1,"pid":getpid(),"uid":geteuid(),"process_start":try HostBoot.processStartIdentifier(pid:getpid()),
             "boot":try HostBoot.identity(),"instance":gate.instance,"profile":gate.profile]
