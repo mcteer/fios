@@ -50,5 +50,27 @@ func runSessionOperationTests() throws {
     guard try proofGate.handle(lookup,peer:peer,uid:geteuid(),consoleReady:true,now:1002,launch:{_,_ in proofCalls+=1;return .uncertain}) == .started(identity),proofCalls==2 else {fatalError("Acknowledged lookup replayed a launch")}
     let unknown=try packet(UUID().uuidString.lowercased(),instance:proofGate.instance,profile:proofGate.profile,extra:["operation":"lookup"])
     guard try proofGate.handle(unknown,peer:peer,uid:geteuid(),consoleReady:true,now:1003,launch:{_,_ in proofCalls+=1;return .notSent}) == .uncertain,proofCalls==2 else {fatalError("Missing helper history became non-dispatch proof")}
-    print("PASS: fixed session launch wire, exact manager kernel identity/user, no caller argv/path/role, GUI gate, generation binding and once-only uncertain/not-sent replay fencing; fake transport only")
+    // Delayed native completions can resolve only the original outstanding
+    // request. A timeout, new helper or unrelated presence cannot mint it.
+    let delayed=try SessionLaunchGate(manager:manager,approvedHashes:[.mlx:hash,.orbstack:hash])
+    let delayedID=UUID().uuidString.lowercased()
+    let delayedPacket=try packet(delayedID,instance:delayed.instance,profile:delayed.profile)
+    guard try delayed.handle(delayedPacket,peer:peer,uid:geteuid(),consoleReady:true,now:1000,launch:{_,_ in .uncertain}) == .uncertain else {fatalError("Delayed launch was acknowledged early")}
+    guard try !delayed.acknowledgeStarted(id:UUID().uuidString.lowercased(),service:.mlx,identity:identity),
+          try !delayed.acknowledgeStarted(id:delayedID,service:.orbstack,identity:identity),
+          try !delayed.acknowledgeStarted(id:delayedID,service:.mlx,identity:ServiceIdentity(pid:peer.pid,start:peer.start+1,sha256:hash)),
+          try delayed.acknowledgeStarted(id:delayedID,service:.mlx,identity:identity),
+          try !delayed.acknowledgeStarted(id:delayedID,service:.mlx,identity:identity) else {fatalError("Late acknowledgement correlation/identity/one-use check failed")}
+    let delayedLookup=try packet(delayedID,instance:delayed.instance,profile:delayed.profile,extra:["operation":"lookup"])
+    guard try delayed.handle(delayedLookup,peer:peer,uid:geteuid(),consoleReady:true,now:1001,launch:{_,_ in fatalError("Lookup replayed delayed launch")}) == .started(identity) else {fatalError("Delayed acknowledgement not retained")}
+    let notSentID=UUID().uuidString.lowercased()
+    guard try delayed.handle(packet(notSentID,instance:delayed.instance,profile:delayed.profile),peer:peer,uid:geteuid(),consoleReady:false,now:1002,launch:{_,_ in fatalError("No-session request dispatched")}) == .notSent,
+          try !delayed.acknowledgeStarted(id:notSentID,service:.mlx,identity:identity) else {fatalError("Completion rewrote non-dispatch proof")}
+    let otherGeneration=try SessionLaunchGate(manager:manager,approvedHashes:[.mlx:hash,.orbstack:hash])
+    guard try !otherGeneration.acknowledgeStarted(id:delayedID,service:.mlx,identity:identity) else {fatalError("New helper adopted old completion")}
+    let fencedID=UUID().uuidString.lowercased(),fencedPacket=try packet(fencedID,instance:delayed.instance,profile:delayed.profile)
+    guard try delayed.handle(fencedPacket,peer:peer,uid:geteuid(),consoleReady:true,now:1003,launch:{_,_ in .uncertain}) == .uncertain,
+          try delayed.handle(fencedPacket,peer:peer,uid:geteuid(),consoleReady:true,now:1000,launch:{_,_ in fatalError("Rollback replayed launch")}) == .uncertain,
+          try !delayed.acknowledgeStarted(id:fencedID,service:.mlx,identity:identity) else {fatalError("Late callback bypassed permanent clock fence")}
+    print("PASS: fixed session launch wire, exact manager kernel identity/user, no caller argv/path/role, GUI gate, generation binding, correlated delayed completion and once-only uncertain/not-sent replay fencing; fake transport only")
 }

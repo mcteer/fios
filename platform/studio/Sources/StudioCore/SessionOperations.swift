@@ -106,6 +106,18 @@ final class SessionLaunchGate {
         return entries[request.id]!.result
     }
 
+    // Called only by the helper's own completion closure on this serialized
+    // gate, never by IPC or a presence observer. Unknown IDs, other services,
+    // already-final results and another helper generation cannot resolve it.
+    @discardableResult
+    func acknowledgeStarted(id:String,service:ManagedService,identity:ServiceIdentity)throws->Bool {
+        guard !fenced,getuid()>0,getuid()==geteuid(),
+              let entry=entries[id],entry.service==service,entry.result == .uncertain,
+              try verifiedStarted(identity,service:service,uid:geteuid()) else {return false}
+        entries[id]?.result = .started(identity)
+        return true
+    }
+
     private func verifiedStarted(_ identity:ServiceIdentity,service:ManagedService,uid:uid_t)throws->Bool {
         guard identity.valid,identity.sha256==pins[service] else {return false}
         var bytes=[CChar](repeating:0,count:4*Int(MAXPATHLEN))

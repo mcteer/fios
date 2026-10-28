@@ -65,6 +65,12 @@ final class SessionControlServer {
         listener=nil // Unlink only while still holding the session writer lock.
         owner.release()
     }
+    // Local native callback only; this is intentionally absent from the wire
+    // operation enum. The caller serializes completions with poll().
+    @discardableResult
+    func acknowledgeStarted(id:String,service:ManagedService,identity:ServiceIdentity)throws->Bool {
+        try gate.acknowledgeStarted(id:id,service:service,identity:identity)
+    }
     func poll(consoleReady:Bool,now:Int64,launch:(ManagedService,String)throws->SessionLaunchResult)throws {
         guard let listener else {throw ControlError.internal_error}
         for _ in 0..<16 {
