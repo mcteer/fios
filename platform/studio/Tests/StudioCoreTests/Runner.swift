@@ -53,6 +53,7 @@ struct PolicyTestRunner {
             ("model protocol",runModelProtocolTests),
             ("session",runSessionTests),
             ("session operations",runSessionOperationTests),
+            ("root policy file",runRootPolicyFileTests),
             ("sandbox lifecycle",runSandboxLifecycleTests),
             ("sandbox safety",runSandboxSafetyTests),
             ("sandbox journal",runSandboxJournalTests),
