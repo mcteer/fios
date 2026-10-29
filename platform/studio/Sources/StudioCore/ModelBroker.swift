@@ -65,6 +65,7 @@ final class ModelBroker {
     }
     func submit(job id:String,owner:String,requestID:String,context:[ModelText],binding:WorkerDispatchBinding,
                 nativeCapacityProven:Bool,sample:ResourceSample,admission:inout AdmissionPolicy,now:Int64) throws {
+        guard try ServiceAdmissionPolicy.permits(journal:journal,model:true,sandbox:false) else {throw AdmissionError.capacity}
         guard let factory else {throw PolicyError.invalidObservation}
         try validate(context:context)
         let owned=try job(id,owner:owner,now:now)

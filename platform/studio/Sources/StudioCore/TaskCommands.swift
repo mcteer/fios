@@ -98,6 +98,7 @@ final class TaskCommands {
                     guard let allowed=binding(name),WireScalar.exactModel(allowed.canonicalModel,name),allowed.nativeCompatibilityAccepted else {throw TaskCommandError.model_unavailable}
                     model=allowed
                 } else {guard value["model"] is NSNull else {throw TaskCommandError.invalid_request};model=nil}
+                guard try ServiceAdmissionPolicy.permits(journal:journal,model:model != nil,sandbox:kind=="sandbox") else {throw TaskCommandError.native_unsupported}
                 let transfer=try ChunkTransfer(length:Int(length),sha256:hash,created:now,kind:.input)
                 let job:DurableJob
                 if kind=="model" {
@@ -137,6 +138,7 @@ final class TaskCommands {
                     // Recheck before consuming input/registering any execution;
                     // the catch path revokes without proving native absence.
                     guard enrolled,admissionOpen() else {throw TaskCommandError.native_unsupported}
+                    guard try ServiceAdmissionPolicy.permits(journal:journal,model:upload.binding != nil,sandbox:upload.kind=="sandbox") else {throw TaskCommandError.native_unsupported}
                     let data=try upload.transfer.finish(now:now);uploads.removeValue(forKey:id)
                     if upload.kind=="sandbox" {
                         let digest=SHA256.hash(data:data).map {String(format:"%02x",$0)}.joined()

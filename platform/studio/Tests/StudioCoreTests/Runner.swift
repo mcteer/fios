@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 
 @main
 struct PolicyTestRunner {
@@ -86,6 +87,8 @@ struct PolicyTestRunner {
             ("runtime endpoint",runRuntimeEndpointTests),
             ("runtime peer",runRuntimePeerTests),
             ("manager execution",runManagerExecutionTests),
+            ("sandbox source identity",runSandboxSourceIdentityTests),
+            ("service admission",runServiceAdmissionTests),
             ("admission",runAdmissionTests),
             ("admission boundaries",runAdmissionBoundaryTests),
             ("protocol",runProtocolTests),
@@ -99,20 +102,32 @@ struct PolicyTestRunner {
             ("job journal",runJobJournalTests),
             ("watchdog",runWatchdogTests)
         ]
+        func progress(_ name:String) {
+            FileHandle.standardError.write(Data(("Policy suite starting: "+name+"\n").utf8))
+        }
         for (name,check) in checks {
-            do {try check()} catch {
+            progress(name)
+            do {try check();fflush(nil)} catch {
                 // Suite name only: no SQL, argv, credentials or workload data.
                 FileHandle.standardError.write(Data(("Policy suite failed: "+name+"\n").utf8))
                 throw error
             }
         }
+        progress("activity coherence")
         ActivityCoherenceTests.run()
+        progress("detailed observations")
         try DetailedObservationTests.run()
+        progress("inference scopes")
         try InferenceScopeTests.run()
+        progress("worker RSS breach")
         try runWorkerRSSBreachTests()
+        progress("async worker start")
         try runAsyncWorkerStartTests()
+        progress("late worker recovery")
         try runLateWorkerRecoveryTests()
+        progress("migration")
         try MigrationTests.run()
+        progress("release staging")
         try runReleaseStagingTests()
         let tests = ActivityTests()
         try tests.testIdleRequiresAuthoritativeAllClientCoverage()

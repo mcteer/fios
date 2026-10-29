@@ -27,6 +27,7 @@ final class TaskController {
             return old // No replay, including reserved/reconciling/terminal jobs.
         }
         guard nativeCapacityProven,binding.nativeCompatibilityAccepted,
+              try ServiceAdmissionPolicy.permits(journal:journal,model:true,sandbox:false),
               try ActivityPolicy.permits(target:binding.canonicalModel,snapshot:binding.nativeSnapshot,now:now) else { throw AdmissionError.capacity }
         let owned=try journal.reserveJob(proposed)
         do {
@@ -49,6 +50,7 @@ final class TaskController {
         }
         try ModelBroker.restoreReservations(journal:journal,admission:&admission)
         guard nativeCapacityProven,binding.nativeCompatibilityAccepted,admission.resourcesSafe(sample,now:now,needsVM:false),
+              try ServiceAdmissionPolicy.permits(journal:journal,model:true,sandbox:false),
               try ActivityPolicy.permits(target:binding.canonicalModel,snapshot:binding.nativeSnapshot,now:now) else {throw AdmissionError.capacity}
         return try journal.reserveJob(DurableJob(id:UUID().uuidString.lowercased(),idempotency:idempotency,ownerHash:owner,requestHash:requestHash,created:now,lifetime:lifetime))
     }
@@ -60,6 +62,7 @@ final class TaskController {
         try broker.validate(context:context)
         var lease=saved.lease
         guard lease.valid(now:now),nativeCapacityProven,binding.nativeCompatibilityAccepted,
+              try ServiceAdmissionPolicy.permits(journal:journal,model:true,sandbox:false),
               try ActivityPolicy.permits(target:binding.canonicalModel,snapshot:binding.nativeSnapshot,now:now) else {throw AdmissionError.expired}
         do {
             try journal.transitionJob(id:id,to:.running,now:now)
@@ -79,10 +82,7 @@ final class TaskController {
         sandboxScopes[id]=SandboxScope(owner:owner,binding:binding,channel:try SandboxModelChannel(job:id,runtimeID:runtimeID))
     }
     private func sameScope(_ a:WorkerDispatchBinding,_ b:WorkerDispatchBinding)->Bool {
-        a.host==b.host && a.profileHash==b.profileHash && a.managerEpoch==b.managerEpoch
-            && WireScalar.exactModel(a.canonicalModel,b.canonicalModel) && WireScalar.exactModel(a.nativeModel,b.nativeModel)
-            && a.nativeSnapshot.endpointHash==b.nativeSnapshot.endpointHash
-            && a.nativeSnapshot.nativeEpoch==b.nativeSnapshot.nativeEpoch
+        ModelBroker.scopeIdentity(a)==ModelBroker.scopeIdentity(b)
     }
     func sandboxModelFrame(id:String,runtimeID:String,data:Data,binding:WorkerDispatchBinding,nativeCapacityProven:Bool,
                            sample:ResourceSample,admission:inout AdmissionPolicy,now:Int64,uptime:Int64) throws {
