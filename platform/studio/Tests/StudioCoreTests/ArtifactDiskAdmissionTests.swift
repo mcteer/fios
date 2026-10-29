@@ -11,7 +11,7 @@ func runArtifactDiskAdmissionTests() throws {
     let store=try ArtifactStore(directory:root,availableBytes:{entered.signal();release.wait();return floor+debt})
     let service=AsyncArtifacts(store:store)
     func sample(_ disk:UInt64)->ResourceSample {
-        ResourceSample(sampledAt:1000,physical:128<<30,available:64<<30,vmAvailable:8<<30,diskFree:disk,cpu:10,pressure:.normal,thermal:.nominal)
+        ResourceSample(sampledAt:1000,physical:128<<30,available:64<<30,vmAvailable:8<<30,diskFree:disk,cpu:10,pressure:.normal,thermal:.nominal,vmSampledAt:1000)
     }
     func workerDenied(_ value:ResourceSample)throws {
         var policy=AdmissionPolicy()

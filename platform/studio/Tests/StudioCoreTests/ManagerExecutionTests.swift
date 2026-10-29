@@ -17,7 +17,7 @@ func runManagerExecutionTests()throws {
     guard unknown.sampledAt==1000,unknown.available==nil,unknown.vmAvailable==nil,
           unknown.cpu==nil,unknown.diskFree==nil,unknown.pressure == .unknown,
           !ports.admissionOpen(),!ports.nativeCapacityProven(),ports.binding("fixture",managerEpoch:UUID().uuidString.lowercased())==nil else {fatalError("Missing manager source gained capacity or authority")}
-    let value=ResourceSample(sampledAt:1000,physical:128<<30,available:64<<30,vmAvailable:8<<30,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal)
+    let value=ResourceSample(sampledAt:1000,physical:128<<30,available:64<<30,vmAvailable:8<<30,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal,vmSampledAt:1000)
     let unavailable=try ManagerExecutionPorts(runtime:runtime,approvedImages:[image],resources:{_,_ in value})
     let cached=try ManagerExecutionPorts(runtime:runtime,approvedImages:[image],vmSource:.cached,resources:{_,_ in value})
     guard unavailable.sample(now:1000,cpu:10).vmAvailable==nil,

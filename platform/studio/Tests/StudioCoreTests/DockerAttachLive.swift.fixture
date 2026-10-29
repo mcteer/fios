@@ -129,7 +129,7 @@ private struct MeasuredVMInventory:NativeVMInventoryReading {
             let end=ProcessInfo.processInfo.systemUptime+25
             while !finished && ProcessInfo.processInfo.systemUptime<end {
                 let now=HostResources.nowMilliseconds()
-                let sample=ResourceSample(sampledAt:now,physical:128<<30,available:64<<30,vmAvailable:8<<30,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal)
+                let sample=ResourceSample(sampledAt:now,physical:128<<30,available:64<<30,vmAvailable:8<<30,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal,vmSampledAt:now)
                 let updates=try controller.tick(now:now,uptime:ProcessInfo.processInfo.systemUptime,sample:sample,admission:&admission,source:{_ in binding()},nativeCapacityProven:modelCase)
                 for output in updates.output {guard output.job==config.job else {throw RuntimeError.identity};text.append(output.data)}
                 for done in updates.finished {guard done.job==config.job,done.codeComplete,done.exitVerified else {throw RuntimeError.invalid};finished=true}

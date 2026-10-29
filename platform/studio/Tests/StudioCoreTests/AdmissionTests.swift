@@ -6,7 +6,26 @@ private func expectAdmissionReject(_ body: () throws -> Void) {
 func runAdmissionTests() throws {
     let resources = ResourceSample(sampledAt: 10_000, physical: 128 << 30, available: 64 << 30,
                                    vmAvailable: 8 << 30, diskFree: 100 << 30, cpu: 10,
-                                   pressure: .normal, thermal: .nominal)
+                                   pressure: .normal, thermal: .nominal, vmSampledAt:10_000)
+    var undatedAdmission=AdmissionPolicy()
+    let undatedVM=resources.replacingVM(8<<30)
+    do {
+        try undatedAdmission.reserve(job:UUID().uuidString.lowercased(),memory:512<<20,cpus:1,sample:undatedVM,now:10000)
+        fatalError("Undated VM capacity admitted")
+    } catch AdmissionError.stale {}
+    guard !undatedAdmission.resourcesSafe(undatedVM,now:10000,needsVM:true) else {fatalError("Undated VM capacity reported safe")}
+    try undatedAdmission.reserveWorker(key:"host-only",sample:undatedVM,now:10000)
+    for stamp:Int64 in [5000,11000] {
+        var exact=AdmissionPolicy()
+        let measured=resources.replacingVM(8<<30,sampledAt:stamp)
+        try exact.reserve(job:UUID().uuidString.lowercased(),memory:512<<20,cpus:1,sample:measured,now:10000)
+        guard exact.resourcesSafe(measured,now:10000,needsVM:true) else {fatalError("Exact VM timestamp boundary refused")}
+    }
+    for stamp:Int64 in [4999,11001,-1,Int64.max] {
+        var invalidVM=AdmissionPolicy()
+        let measured=resources.replacingVM(8<<30,sampledAt:stamp)
+        expectAdmissionReject {try invalidVM.reserve(job:UUID().uuidString.lowercased(),memory:512<<20,cpus:1,sample:measured,now:10000)}
+    }
     var sourceFreshness=AdmissionPolicy()
     let agedVM=resources.replacingVM(8<<30,sampledAt:4999)
     expectAdmissionReject {try sourceFreshness.reserve(job:UUID().uuidString.lowercased(),memory:512<<20,cpus:1,sample:agedVM,now:10000)}
@@ -31,7 +50,7 @@ func runAdmissionTests() throws {
     var recovered=AdmissionPolicy()
     try recovered.restoreSandbox(old)
     try recovered.restoreSandbox(old) // Idempotent accounting, no double charge.
-    let tight=ResourceSample(sampledAt:10_000,physical:64<<30,available:18<<30,vmAvailable:8<<30,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal)
+    let tight=ResourceSample(sampledAt:10_000,physical:64<<30,available:18<<30,vmAvailable:8<<30,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal,vmSampledAt:10_000)
     expectAdmissionReject {try recovered.reserveWorker(key:"new",sample:tight,now:10_000)}
     recovered.releaseProvenAbsent(job:old.job)
     try recovered.reserveWorker(key:"new",sample:tight,now:10_000)

@@ -23,8 +23,9 @@ struct AdmissionPolicy {
               available - native - owned >= newMemory
         else { throw AdmissionError.capacity }
         if needsVM {
-            let vmAt=sample.vmSampledAt ?? sample.sampledAt
-            guard vmAt>=0,vmAt<=ActivityPolicy.maximumTimestamp,(-1000...5000).contains(now-vmAt) else {throw AdmissionError.stale}
+            // A fresh host reading cannot date an independent VM reading.
+            guard let vmAt=sample.vmSampledAt,vmAt>=0,vmAt<=ActivityPolicy.maximumTimestamp,
+                  (-1000...5000).contains(now-vmAt) else {throw AdmissionError.stale}
             let committed=reservations.values.reduce(UInt64(0), { $0 + $1.memory })
             guard let vm=sample.vmAvailable,vm>=committed,vm-committed>=newMemory else { throw AdmissionError.capacity }
         }

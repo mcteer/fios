@@ -52,7 +52,7 @@ func runTaskCommandTests() throws {
     var open=true
     let commands=TaskCommands(journal:journal,tasks:tasks,sandbox:sandbox,artifacts:artifacts,approvedImages:[image],enrolled:true,peerUID:geteuid(),admissionOpen:{open})
     var admission=AdmissionPolicy()
-    let sample=ResourceSample(sampledAt:1000,physical:128<<30,available:64<<30,vmAvailable:8<<30,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal)
+    let sample=ResourceSample(sampledAt:1000,physical:128<<30,available:64<<30,vmAvailable:8<<30,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal,vmSampledAt:1000)
     func request(_ operation:String,_ fields:[String:Any],_ auth:String?=nil) throws -> ControlRequest {
         try ControlRequest.decode(JSONSerialization.data(withJSONObject:["version":1,"id":UUID().uuidString.lowercased(),"operation":operation,"payload":fields.merging(["owner":auth ?? token]) {_,new in new}]))
     }

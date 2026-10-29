@@ -4,7 +4,7 @@ func runAdmissionBoundaryTests() throws {
     let gib:UInt64=1<<30,worker:UInt64=512<<20
     func sample(physical:UInt64=128<<30,available:UInt64?=64<<30,vm:UInt64?=8<<30,disk:UInt64?=100<<30,
                 cpu:Double?=10,pressure:MemoryPressure = .normal,thermal:ThermalState = .nominal,at:Int64=10000)->ResourceSample {
-        ResourceSample(sampledAt:at,physical:physical,available:available,vmAvailable:vm,diskFree:disk,cpu:cpu,pressure:pressure,thermal:thermal)
+        ResourceSample(sampledAt:at,physical:physical,available:available,vmAvailable:vm,diskFree:disk,cpu:cpu,pressure:pressure,thermal:thermal,vmSampledAt:at)
     }
     func reject(_ value:ResourceSample,vm:Bool=false) throws {
         var policy=AdmissionPolicy()

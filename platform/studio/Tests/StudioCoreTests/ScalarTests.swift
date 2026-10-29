@@ -44,7 +44,7 @@ func runScalarTests() throws {
         "kind":"model","length":0,"sha256":PythonWorkerFactory.digest(""),"lifetime":900000,
         "model":decomposed,"image":NSNull(),"memory":0,"cpus":0]
     let request=try ControlRequest.decode(JSONSerialization.data(withJSONObject:["version":1,"id":UUID().uuidString.lowercased(),"operation":"job.create","payload":payload]))
-    let sample=ResourceSample(sampledAt:1000,physical:128<<30,available:64<<30,vmAvailable:8<<30,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal)
+    let sample=ResourceSample(sampledAt:1000,physical:128<<30,available:64<<30,vmAvailable:8<<30,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal,vmSampledAt:1000)
     var admission=AdmissionPolicy()
     do {_=try commands.handle(request,role:.task,sample:sample,admission:&admission,binding:{_ in binding},nativeCapacityProven:true,now:1000,uptime:1000)
         fatalError("Task model name used canonical Unicode equality to borrow a different grant")}

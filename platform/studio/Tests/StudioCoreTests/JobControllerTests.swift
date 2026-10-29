@@ -43,7 +43,7 @@ func runJobControllerTests() throws {
     let journal=try Journal(directory:directory),runtime=FakeSandboxExecutor()
     let controller=JobController(journal:journal,executor:runtime)
     var admission=AdmissionPolicy()
-    func sample(_ now:Int64,cpu:Double=10)->ResourceSample { ResourceSample(sampledAt:now,physical:128<<30,available:64<<30,vmAvailable:8<<30,diskFree:100<<30,cpu:cpu,pressure:.normal,thermal:.nominal) }
+    func sample(_ now:Int64,cpu:Double=10)->ResourceSample { ResourceSample(sampledAt:now,physical:128<<30,available:64<<30,vmAvailable:8<<30,diskFree:100<<30,cpu:cpu,pressure:.normal,thermal:.nominal,vmSampledAt:now) }
     let ids=[UUID().uuidString.lowercased(),UUID().uuidString.lowercased()]
     for (index,id) in ids.enumerated() {
         let stamp:Int64=10000+Int64(index)
@@ -115,7 +115,7 @@ func runGlobalHostPressureTests() throws {
     let controller=JobController(journal:journal,executor:runtime)
     var admission=AdmissionPolicy(),cancelled:[String]=[]
     func sample(_ now:Int64,cpu:Double=10,vm:UInt64?=8<<30)->ResourceSample {
-        ResourceSample(sampledAt:now,physical:128<<30,available:64<<30,vmAvailable:vm,diskFree:100<<30,cpu:cpu,pressure:.normal,thermal:.nominal)
+        ResourceSample(sampledAt:now,physical:128<<30,available:64<<30,vmAvailable:vm,diskFree:100<<30,cpu:cpu,pressure:.normal,thermal:.nominal,vmSampledAt:now)
     }
     let sandbox=UUID().uuidString.lowercased()
     let job=try DurableJob(id:sandbox,idempotency:UUID().uuidString.lowercased(),ownerHash:String(repeating:"a",count:64),requestHash:String(repeating:"b",count:64),created:10000)
@@ -165,7 +165,7 @@ func runVMControllerTests() throws {
     let journal=try Journal(directory:directory),runtime=FakeSandboxExecutor()
     let controller=JobController(journal:journal,executor:runtime,collectVM:true)
     var admission=AdmissionPolicy()
-    func sample(_ now:Int64)->ResourceSample {ResourceSample(sampledAt:now,physical:128<<30,available:64<<30,vmAvailable:8<<30,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal)}
+    func sample(_ now:Int64)->ResourceSample {ResourceSample(sampledAt:now,physical:128<<30,available:64<<30,vmAvailable:8<<30,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal,vmSampledAt:now)}
     let id=UUID().uuidString.lowercased(),job=try DurableJob(id:id,idempotency:UUID().uuidString.lowercased(),ownerHash:String(repeating:"a",count:64),requestHash:String(repeating:"b",count:64),created:10000)
     let config=try SandboxConfiguration(job:id,nonce:String(repeating:"a",count:64),image:"sha256:"+String(repeating:"b",count:64),memory:512<<20,cpus:1)
     try admission.reserve(job:id,memory:config.memory,cpus:1,sample:sample(10000),now:10000)
