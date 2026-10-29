@@ -44,6 +44,8 @@ node scripts/check-platform-attach.mjs --isolated
 
 Expected: failing-first evidence for new policy/contracts, then passing Swift, installed-Python and isolated runtime tests. Unit networking is guarded; service lifecycle operations use fake adapters. Container rehearsal uses its own labeled temporary test namespace with no production mounts/socket passed to untrusted images; trusted host test driver owns runtime control. Confirm unrelated sentinel container/volume survives. Record actual counts and commands in validation; do not reuse008 counts as009 evidence.
 
+Optional macOS source prerequisite, with the reviewed Zig0.17.0 executable: `node scripts/check-platform-native-startup.mjs --isolated --zig /ABS/zig`. It compiles libc-only disposable Debug/ReleaseSafe children, runs finite ownership/file-safety checks and removes only its private scratch. It does not start MLX/OrbStack or establish production singleton/native terminality. Adding `--mutate-lock` deliberately removes locking in a private copy and must fail the duplicate assertion.
+
 ## 2a. Implemented local CLI and explicit limits
 
 Commands below require existing private development state and the built `studioctl`; they do not install/start native applications or mint model permission. Replace placeholders locally; never paste credentials into argv, environment, logs or this document.
