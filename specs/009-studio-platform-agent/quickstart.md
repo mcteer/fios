@@ -29,6 +29,8 @@ node scripts/check-platform.mjs --mock
 node scripts/check-platform.mjs --mock --release
 # Explicit local disposable runtime measurements; uses existing fios:current, no pulls/models.
 node scripts/check-platform.mjs --isolated-metrics
+# Artifact-only staging/corruption/publication rehearsal; independently reviewed receipt required.
+node scripts/check-platform-staging.mjs --isolated --release /ABSOLUTE/REVIEWED_RELEASE --sha256 REVIEWED_MANIFEST_SHA
 node scripts/check-platform-process.mjs --isolated
 node scripts/check-platform-boot.mjs --isolated
 node scripts/check-platform-boot-state.mjs --isolated

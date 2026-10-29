@@ -20,6 +20,29 @@ node scripts/install-platform.mjs plan --release /ABSOLUTE/RELEASE_DIRECTORY --s
 
 The expected digest must come from the reviewed build receipt, not an untrusted package's own claim. File review rejects special/set-ID files before reading, opens nonblocking/no-follow to cover a raced FIFO, and checks exact descriptor/named inode metadata and byte count after reading. These are per-file observations, not an atomic whole-tree reservation; future installation must stage and independently reverify protected destination bytes before activation. The reviewer verifies the finite tree, receipt and every byte/mode, rejects links/extra files, and emits explicit blockers. Current packages cannot produce privileged commands. No SSH, launchctl, app/runtime lifecycle, inference, RDMA/network change or deletion is performed. Unknown/apply/rollback/uninstall commands fail closed. This is a review scaffold, **not completion of T049**.
 
+## Verified offline artifact copy
+
+A newly reviewed CLI built from this source supports a data-only staging operation:
+
+```sh
+studioctl stage-release --from /ABSOLUTE/REVIEWED_DEVELOPMENT_RELEASE --sha256 REVIEWED_MANIFEST_SHA --to /ABSOLUTE/PRIVATE_PARENT/NEW_COPY
+node scripts/install-platform.mjs plan --release /ABSOLUTE/PRIVATE_PARENT/NEW_COPY --sha256 REVIEWED_MANIFEST_SHA --host fios-edge-a.lab
+```
+
+The native copier checks the independent manifest digest, strict JSON, schema8/development/activation-disabled flags and the fixed nine-artifact path/mode/size/hash surface. It does not issue an enrollment or attest the remaining metadata; the Node reviewer independently validates the complete release schema/tree before and after copying. Use a separately reviewed current CLI; historical artifacts may not implement `stage-release`. No packaged program is executed by the copier.
+
+Only an unprivileged account may copy into a fresh directory beneath its own0700 parent. Descriptor-relative no-follow/nonblocking operations reject links, special files, changed inodes, extra entries, nested source destinations and unsafe permissions/ACLs. Copies use bounded buffers, cooperative30s deadline checks (filesystem syscalls are not preempted),≤256MiB of artifacts plus a≤64KiB receipt and≥10GiB remaining disk headroom. Every artifact is rehashed from its destination descriptor. Final directory names must still resolve to the verified copied descriptors. Files/directories are fsynced before no-replace atomic publication; an existing destination, including one appearing during publication, is preserved. Failure before publication retains the generated `.fios-stage-UUID` copy for diagnosis. A durability failure after rename explicitly reports publication uncertainty: inspect/verify the requested destination before retrying, never infer absence or overwrite it.
+
+The resulting files are private **development data**, not a root-protected immutable installation. Source and prior copies remain intact; no journal, credential, configuration, launchd, socket, runtime object or native model is accessed. Protecting/reverifying an installed destination, completing the release tree and reviewing activation remain T049 work.
+
+Finite isolated validation against an independently reviewed development receipt:
+
+```sh
+node scripts/check-platform-staging.mjs --isolated --release /ABSOLUTE/REVIEWED_RELEASE --sha256 REVIEWED_MANIFEST_SHA
+```
+
+This runs Debug/optimized metadata fixtures, actual current-CLI copying and full Node verification, plus private source witnesses for corrupted copied bytes, a destination race, substituted copied-directory binding and post-publication uncertainty. The private helper/SwiftPM build runs with IP networking denied; no installed operation or native inference occurs. Expected corrupted/partial copies contain only known fixture artifact bytes and are discarded with the rehearsal namespace.
+
 ## Offline journal/export snapshot and fresh-directory restore
 
 After separately authorized shutdown of **both supervisor and manager**, the native CLI supports:

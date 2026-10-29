@@ -110,6 +110,7 @@ struct PolicyTestRunner {
         try DetailedObservationTests.run()
         try InferenceScopeTests.run()
         try MigrationTests.run()
+        try runReleaseStagingTests()
         let tests = ActivityTests()
         try tests.testIdleRequiresAuthoritativeAllClientCoverage()
         try tests.testQueuedPreparingAndResponseOwnersAreBusy()

@@ -2,7 +2,7 @@ import Foundation
 import StudioCore
 
 let arguments=CommandLine.arguments
-let usage="Usage: studioctl --state ABSOLUTE_PRIVATE_DIRECTORY status|activity|resources|supervisor|task|export; service mlx|orbstack running|maintenance|stopped|drain|force prepare|force confirm TOKEN SCOPE_DIGEST; backup|backup-state --to ABSOLUTE_NEW_PATH; verify-backup --sha256 REVIEWED_DIGEST; restore-state|migrate-state-seven --sha256 REVIEWED_DIGEST --to ABSOLUTE_NEW_DIRECTORY\n       studioctl plan-memory --ram-gib POSITIVE_GIB\n"
+let usage="Usage: studioctl --state ABSOLUTE_PRIVATE_DIRECTORY status|activity|resources|supervisor|task|export; service mlx|orbstack running|maintenance|stopped|drain|force prepare|force confirm TOKEN SCOPE_DIGEST; backup|backup-state --to ABSOLUTE_NEW_PATH; verify-backup --sha256 REVIEWED_DIGEST; restore-state|migrate-state-seven --sha256 REVIEWED_DIGEST --to ABSOLUTE_NEW_DIRECTORY\n       studioctl plan-memory --ram-gib POSITIVE_GIB\n       studioctl stage-release --from ABSOLUTE_REVIEWED_RELEASE --sha256 REVIEWED_MANIFEST_SHA --to ABSOLUTE_NEW_DIRECTORY\n"
 if arguments.count==2 && ["--help","-h"].contains(arguments[1]) {
     FileHandle.standardOutput.write(Data(usage.utf8))
     exit(0)
@@ -23,6 +23,20 @@ if arguments.count==4,arguments[1]=="plan-memory",arguments[2]=="--ram-gib",
     } catch {
         FileHandle.standardError.write(Data("studioctl: cannot render RAM plan\n".utf8))
         exit(1)
+    }
+}
+// Artifact copying only; no state socket, journal, service or execution path.
+if arguments.count==8,arguments[1]=="stage-release",arguments[2]=="--from",arguments[3].hasPrefix("/"),arguments[4]=="--sha256",arguments[6]=="--to",arguments[7].hasPrefix("/") {
+    do {
+        let receipt=try PlatformReleaseStaging.create(source:URL(fileURLWithPath:arguments[3]),expectedSHA256:arguments[5],destination:URL(fileURLWithPath:arguments[7]))
+        let value:[String:Any]=["ok":true,"scope":"hash_bound_development_artifact_copy","manifest_sha256":receipt.manifestSHA256,"artifacts":receipt.artifacts,"bytes":receipt.bytes,"activation":false,"installed":false]
+        FileHandle.standardOutput.write(try JSONSerialization.data(withJSONObject:value,options:[.sortedKeys]));FileHandle.standardOutput.write(Data([10]));exit(0)
+    }catch PlatformReleaseStagingError.retained(let name) {
+        FileHandle.standardError.write(Data(("studioctl: staging failed; retained private copy "+name+"\n").utf8));exit(1)
+    }catch PlatformReleaseStagingError.publicationUncertain {
+        FileHandle.standardError.write(Data("studioctl: staging publication uncertain; inspect destination before retrying\n".utf8));exit(1)
+    }catch {
+        FileHandle.standardError.write(Data("studioctl: staging refused\n".utf8));exit(1)
     }
 }
 let offlineBackup=arguments.count==6 && ["backup","backup-state"].contains(arguments[3]) && arguments[4]=="--to" && arguments[5].hasPrefix("/")
