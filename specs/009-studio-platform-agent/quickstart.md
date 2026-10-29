@@ -21,6 +21,7 @@ npx playwright test
 npm audit
 uvx --python 3.11.17 --from pip-audit==2.10.1 pip-audit --path .venv/lib/python3.11/site-packages
 node scripts/check-agent-boundary.mjs
+node scripts/check-agent-container.mjs
 docker compose config --quiet
 
 # Implemented dependency-free Swift tests (local XCTest/macros unavailable).
@@ -63,6 +64,15 @@ Expected: failing-first evidence for new policy/contracts, then passing Swift, i
 `check-platform-container.mjs --isolated` builds only disposable images from the already-cached immutable `fios:current` ID, with build networking/pulls disabled. A finite hardened sibling listener has only an existing Docker-private bridge address and no published ports; the tested sandbox remains network-none. A private host file, container and empty uniquely named volume act as unchanged sentinels. Three separately reaped journal helpers exercise actual create/inspect/remove and result loss across restart; an absent private Unix endpoint injects transport loss without stopping OrbStack. Exact-ID absence releases only owned sandbox state, while a never-dispatched synthetic native claim remains uncertain. This does not establish daemon-reboot recovery, genuine native terminality, reviewed image/profile enrollment or either Studio's installed acceptance. On uncertainty, the driver retains its receipt/state/resources and performs no parent cleanup; inspect the reported private directory rather than pruning or replaying creation.
 
 For the runtime endpoint postcheck's causal test, `node scripts/check-platform.mjs --mock --mutate-runtime-postcheck` must fail at `Successful local command hid a changed runtime endpoint`. It mutates only a private Core source copy and a generated fake endpoint; it does not contact the installed daemon. Ordinary `--mock`/`--mock --release` must pass the genuine command, metadata and attach checks.
+
+Finite private failure checks for the current teardown/durability boundaries:
+
+```sh
+node scripts/check-platform.mjs --mock --mutate-command-reap
+node scripts/check-platform.mjs --mock --mutate-service-ack-durability
+```
+
+Each command must exit nonzero at its exact runtime witness: `COMMAND_SLOT_RELEASED_UNPROVEN_CHILD` or `SERVICE_RECOVERY_ACK_PUBLISHED_BEFORE_DURABILITY`. A compiler error or timeout is not evidence. The first uses a metadata-only Process double naming the live test PID and never signals it; the second fails an actual atomic rename inside disposable state. Production source is unchanged. Normal Debug/optimized suites must pass. A local child exit releases only proven local process capacity; a durable launch acknowledgement clears only that correlated service intent. Neither proves native request completion or an absent daemon effect.
 
 Optional macOS source prerequisite, with the reviewed Zig0.17.0 executable: `node scripts/check-platform-native-startup.mjs --isolated --zig /ABS/zig`. It compiles libc-only disposable Debug/ReleaseSafe children, runs finite ownership/file-safety checks and removes only its private scratch. It does not start MLX/OrbStack or establish production singleton/native terminality. Adding `--mutate-lock` deliberately removes locking in a private copy and must fail the duplicate assertion.
 
@@ -125,7 +135,7 @@ No live tests occur as a side effect of CI or planning. Give the user the exact 
 
 ## 5. Release, rollback and uninstall rehearsal
 
-Reviewed PR with six exact-head checks plus native mock/macOS package checks feeding the CI gate; independently green merged main. No PR-built container gets production credentials or a host runtime socket. Existing app delivery remains app-only; native rollout is a separately approved operation from reviewed artifacts.
+Reviewed PR with all seven exact-head checks successful, including the aggregate CI gate; independently green merged main. No PR-built container gets production credentials or a host runtime socket. Existing app delivery remains app-only; native rollout is a separately approved operation from reviewed artifacts.
 
 Disable admission; revoke leases; reconcile owned containers/native requests; stop the manager only after safe state/explicit unresolved-work handling. Back up its separate DB/export manifest and previous executable/config with the manager stopped. Upgrade one host, verify signature/hash/schema/service identity and non-inference health. On failure restore compatible prior artifacts/state, preserving unresolved ownership rather than clearing it. If old version cannot preserve safety, remain in observation/maintenance mode and report blocked rollback.
 
