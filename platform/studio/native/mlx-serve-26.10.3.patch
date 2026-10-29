@@ -251,7 +251,7 @@ index 1f982ed..291853f 100644
  /// `metal_kernel` helper gates on this, so on CUDA they all take the MLX-op path.
  pub fn streamIsGpu(s: mlx_stream) bool {
 diff --git a/src/model_registry.zig b/src/model_registry.zig
-index da1f791..6ca5396 100644
+index da1f791..2eace51 100644
 --- a/src/model_registry.zig
 +++ b/src/model_registry.zig
 @@ -18,6 +18,7 @@
@@ -262,15 +262,54 @@ index da1f791..6ca5396 100644
  const distributed = @import("distributed.zig");
  const model_mod = @import("model.zig");
  const transformer_mod = @import("transformer.zig");
-@@ -158,6 +159,7 @@ pub const ReasoningMarker = struct {
+@@ -158,6 +159,8 @@ pub const ReasoningMarker = struct {
  };
  
  pub const LoadedModel = struct {
++    fios_cleanup_uncertain: std.atomic.Value(bool) = .init(false),
 +    fios_request_eviction: ?fios_ownership.ModelMutation = null,
      allocator: std.mem.Allocator,
  
      /// Identifier exposed via `/v1/models` and the request `model` field.
-@@ -739,7 +741,22 @@ pub const ModelStatus = struct {
+@@ -394,14 +397,26 @@ pub const LoadedModel = struct {
+         self.ane = null;
+     }
+ 
+-    /// Free all owned state. Safe to call regardless of `state` — null
+-    /// model fields are skipped. Mlx-allocating fields are freed in
++    /// Free owned state only without known borrows/cleanup uncertainty.
++    /// False retains every field: callers must preserve the entry and its
++    /// accounting. This is not backend-terminal authority. Null fields are
++    /// skipped. Mlx-allocating fields are freed in
+     /// drafter → vision → transformer → weights order to mirror the
+     /// dependency chain in `Scheduler.deinit`. Note: mlx-allocating frees
+     /// must run on the scheduler's inference thread (thread-local GPU
+     /// stream); the caller arranges this via `unloadResident` invoked
+     /// from the inference thread before registry teardown.
+-    pub fn deinit(self: *LoadedModel) void {
++    // Caller still owns the enclosing reference and registry transition.
++    // This refuses known borrows; it is not an atomic backend reservation.
++    fn fiosMayDeinit(self: *LoadedModel) bool {
++        if (self.fios_cleanup_uncertain.load(.acquire) or self.refcount.load(.acquire) != 0) {
++            self.fios_cleanup_uncertain.store(true, .release);
++            return false;
++        }
++        return true;
++    }
++    pub fn deinit(self: *LoadedModel) bool {
++        if (!self.fiosMayDeinit()) return false;
+         if (self.llama_ctx) |ctx| {
+             ctx.free();
+             self.llama_ctx = null;
+@@ -530,6 +545,7 @@ pub const LoadedModel = struct {
+         if (self.arch_hint.len > 0) self.allocator.free(self.arch_hint);
+         self.allocator.free(self.id);
+         self.allocator.free(self.path);
++        return true;
+     }
+ 
+     /// Free the CPU-only state `unloadResident` deliberately RETAINS —
+@@ -739,7 +755,22 @@ pub const ModelStatus = struct {
  ///   3. Per-request handlers (Phase C) call `ensureLoaded(scheduler, id)`
  ///      and `release`. The borrowed `*LoadedModel` is valid until `release`.
  ///   4. `deinit` tears down every entry; the discovery result is freed.
@@ -293,7 +332,7 @@ index da1f791..6ca5396 100644
      allocator: std.mem.Allocator,
      io: std.Io,
  
-@@ -780,6 +797,21 @@ pub const ModelRegistry = struct {
+@@ -780,6 +811,21 @@ pub const ModelRegistry = struct {
      /// Bumped by every entry added and every state change (`/props`
      /// `registry_generation`): a client re-reads `/v1/models` only when it moved.
      generation: std.atomic.Value(u64) = .init(0),
@@ -315,7 +354,7 @@ index da1f791..6ca5396 100644
  
      /// Running sum of `bytes_resident` across `.ready` entries. Updated
      /// under `mutex` on every state transition.
-@@ -795,6 +827,18 @@ pub const ModelRegistry = struct {
+@@ -795,6 +841,18 @@ pub const ModelRegistry = struct {
      /// pick needs.
      lru_clock: i64,
  
@@ -334,15 +373,31 @@ index da1f791..6ca5396 100644
      /// Create the registry. Takes ownership of `discovery` (if non-null)
      /// and pre-populates entries from it.
      ///
-@@ -848,10 +892,38 @@ pub const ModelRegistry = struct {
+@@ -835,7 +893,7 @@ pub const ModelRegistry = struct {
+         // on-demand. Allocation failures here roll back any partial
+         // entries via errdefer so we don't leak strings on OOM.
+         if (discovery) |d| {
+-            errdefer self.deinitInternal();
++            errdefer _ = self.deinitInternal();
+             for (d.models) |m| {
+                 _ = try self.registerStubWithArch(m.id, m.path, m.bytes_on_disk, m.model_type);
+             }
+@@ -848,19 +906,56 @@ pub const ModelRegistry = struct {
      /// each entry. Called once at server shutdown after the scheduler has
      /// joined (so the inference thread isn't mid-load).
      pub fn deinit(self: *ModelRegistry) void {
+-        self.deinitInternal();
 +        if (!self.fiosBeginTeardown()) return;
-         self.deinitInternal();
++        if (!self.deinitInternal()) return;
          self.allocator.destroy(self);
      }
  
+-    fn deinitInternal(self: *ModelRegistry) void {
+-        var it = self.entries.valueIterator();
+-        while (it.next()) |entry_ptr| {
+-            const entry = entry_ptr.*;
+-            entry.deinit();
+-            self.allocator.destroy(entry);
 +    // Metadata lifetime only, NOT a backend/device terminal receipt. Never
 +    // destroy a holder's registry or refund an unresolved preparation/borrow.
 +    // Reserve the metadata frontdoors, then drop the mutex before destructors.
@@ -356,7 +411,7 @@ index da1f791..6ca5396 100644
 +        var entries = self.entries.valueIterator();
 +        while (entries.next()) |value| {
 +            const entry = value.*;
-+            if (entry.state == .loading or entry.state == .evicting or entry.refcount.load(.acquire) != 0 or entry.fios_request_eviction != null) {
++            if (entry.fios_cleanup_uncertain.load(.acquire) or entry.state == .loading or entry.state == .evicting or entry.refcount.load(.acquire) != 0 or entry.fios_request_eviction != null) {
 +                self.fios_probe_epoch_uncertain = true;
 +                return false;
 +            }
@@ -370,10 +425,28 @@ index da1f791..6ca5396 100644
 +        return true;
 +    }
 +
-     fn deinitInternal(self: *ModelRegistry) void {
-         var it = self.entries.valueIterator();
-         while (it.next()) |entry_ptr| {
-@@ -876,6 +948,8 @@ pub const ModelRegistry = struct {
++    fn deinitInternal(self: *ModelRegistry) bool {
++        while (self.entries.count() != 0) {
++            var it = self.entries.iterator();
++            const row = it.next().?;
++            const removed = self.entries.fetchRemove(row.key_ptr.*).?;
++            if (!removed.value.deinit()) {
++                // No borrowed metadata was freed. Restore its exact existing
++                // slot without allocation; completed entries are already gone,
++                // so a partial refusal never leaves dangling map pointers.
++                self.entries.putAssumeCapacity(removed.key, removed.value);
++                self.fios_probe_epoch_uncertain = true;
++                return false;
++            }
++            self.allocator.destroy(removed.value);
+         }
+         self.entries.deinit();
+         if (self.discovery) |*d| d.deinit();
++        return true;
+     }
+ 
+     /// Insert an `.unloaded` stub for a model. Returns the heap-allocated
+@@ -876,6 +971,8 @@ pub const ModelRegistry = struct {
      /// `registerStub` variant carrying the discovery-peeked `model_type` so
      /// the stub can advertise arch-derived capabilities before loading.
      pub fn registerStubWithArch(self: *ModelRegistry, id: []const u8, path: []const u8, bytes_on_disk: ?u64, arch_hint: []const u8) !*LoadedModel {
@@ -382,7 +455,7 @@ index da1f791..6ca5396 100644
          if (self.entries.get(id) != null) return error.DuplicateId;
  
          const stub = try self.allocator.create(LoadedModel);
-@@ -915,6 +989,7 @@ pub const ModelRegistry = struct {
+@@ -915,6 +1012,7 @@ pub const ModelRegistry = struct {
          // putNoClobber so we surface a stronger error than overwrite — the
          // earlier `entries.get` guard makes this defensive.
          try self.entries.putNoClobber(stub.id, stub);
@@ -390,7 +463,7 @@ index da1f791..6ca5396 100644
          _ = self.generation.fetchAdd(1, .monotonic);
          return stub;
      }
-@@ -933,6 +1008,11 @@ pub const ModelRegistry = struct {
+@@ -933,6 +1031,11 @@ pub const ModelRegistry = struct {
      /// the entry after the basename (a `.gguf` file without its extension, as
      /// `--model` names it).
      pub fn registerByPath(self: *ModelRegistry, io: std.Io, abs_path: []const u8, id: ?[]const u8) ![]const u8 {
@@ -402,7 +475,7 @@ index da1f791..6ca5396 100644
          var trimmed = abs_path;
          while (trimmed.len > 0 and trimmed[trimmed.len - 1] == '/') trimmed = trimmed[0 .. trimmed.len - 1];
          const base = std.fs.path.basename(trimmed);
-@@ -972,9 +1052,11 @@ pub const ModelRegistry = struct {
+@@ -972,9 +1075,11 @@ pub const ModelRegistry = struct {
      pub fn setDefault(self: *ModelRegistry, id: []const u8) !void {
          self.mutex.lockUncancelable(self.io);
          defer self.mutex.unlock(self.io);
@@ -414,7 +487,7 @@ index da1f791..6ca5396 100644
      }
  
      /// Look up an entry by its on-disk path (trailing slashes ignored).
-@@ -1010,6 +1092,11 @@ pub const ModelRegistry = struct {
+@@ -1010,6 +1115,11 @@ pub const ModelRegistry = struct {
      /// re-reads its dir. Returns the number of stubs added. No roots (a
      /// `--model`-only server) rescans nothing.
      pub fn rescan(self: *ModelRegistry) !u32 {
@@ -426,7 +499,7 @@ index da1f791..6ca5396 100644
          const roots = if (self.discovery) |d| d.roots else &.{};
          if (roots.len == 0) return 0;
          var found = try model_discovery.discoverModelsMany(self.io, self.allocator, roots);
-@@ -1098,9 +1185,11 @@ pub const ModelRegistry = struct {
+@@ -1098,9 +1208,11 @@ pub const ModelRegistry = struct {
          const entry = self.entries.get(id) orelse return error.UnknownModelId;
  
          while (true) {
@@ -438,7 +511,7 @@ index da1f791..6ca5396 100644
                      return entry;
                  },
                  .loading, .evicting => {
-@@ -1113,8 +1202,138 @@ pub const ModelRegistry = struct {
+@@ -1113,8 +1225,138 @@ pub const ModelRegistry = struct {
          }
      }
  
@@ -577,7 +650,7 @@ index da1f791..6ca5396 100644
          _ = self.generation.fetchAdd(1, .monotonic);
          self.state_cond.broadcast(self.io);
      }
-@@ -1149,10 +1368,22 @@ pub const ModelRegistry = struct {
+@@ -1149,10 +1391,22 @@ pub const ModelRegistry = struct {
      /// ensureLoaded callers wait on `.evicting`. Returns immediately;
      /// caller MUST call `waitForRefcountZeroLocked` to drain readers
      /// before freeing GPU memory.
@@ -601,7 +674,7 @@ index da1f791..6ca5396 100644
      }
  
      /// Phase D: block until `entry.refcount == 0`. Caller holds `mutex`.
-@@ -1176,6 +1407,7 @@ pub const ModelRegistry = struct {
+@@ -1176,6 +1430,7 @@ pub const ModelRegistry = struct {
          entry.state = .unloaded;
          entry.error_name = null;
          self.stateChanged();
@@ -609,7 +682,7 @@ index da1f791..6ca5396 100644
      }
  
      /// Phase D: count of currently-loaded (`.ready` or `.evicting`) entries.
-@@ -1294,6 +1526,7 @@ pub const ModelRegistry = struct {
+@@ -1294,6 +1549,7 @@ pub const ModelRegistry = struct {
      /// Shared tail of `release` and `releaseStatus`. Caller holds `mutex`.
      fn releaseRefLocked(self: *ModelRegistry, lm: *LoadedModel) void {
          const prev = lm.refcount.fetchSub(1, .acq_rel);
@@ -617,7 +690,7 @@ index da1f791..6ca5396 100644
          std.debug.assert(prev > 0);
          // Broadcast so an evictor waiting for refcount == 0 wakes.
          if (prev == 1) self.state_cond.broadcast(self.io);
-@@ -1431,6 +1664,7 @@ pub const ModelRegistry = struct {
+@@ -1431,6 +1687,7 @@ pub const ModelRegistry = struct {
          std.debug.assert(entry.state == .evicting);
          entry.state = .ready;
          self.stateChanged();
@@ -625,7 +698,7 @@ index da1f791..6ca5396 100644
      }
  
      /// `live_bytes` is what the allocator holds right now (weights + KV + caches + wired
-@@ -1450,7 +1684,7 @@ pub const ModelRegistry = struct {
+@@ -1450,7 +1707,7 @@ pub const ModelRegistry = struct {
          var freed_live: u64 = 0;
          var freed_slots: u32 = 0;
          if (forced) |v| {
@@ -634,7 +707,7 @@ index da1f791..6ca5396 100644
              out[0] = v;
              n = 1;
              freed = v.bytes_resident;
-@@ -1479,7 +1713,10 @@ pub const ModelRegistry = struct {
+@@ -1479,7 +1736,10 @@ pub const ModelRegistry = struct {
                  for (out[0..n]) |v| self.unmarkEvictingLocked(v);
                  return null;
              }
@@ -646,7 +719,7 @@ index da1f791..6ca5396 100644
              freed += victim.bytes_resident;
              freed_live += liveBytesFreed(victim);
              freed_slots += @intFromBool(takesSlot(victim));
-@@ -1520,7 +1757,7 @@ pub const ModelRegistry = struct {
+@@ -1520,7 +1780,7 @@ pub const ModelRegistry = struct {
          var free = room;
          var n: usize = 0;
          while (free < need and n < out.len) : (n += 1) {
@@ -655,8 +728,42 @@ index da1f791..6ca5396 100644
              out[n] = idle[n];
              free +|= idle[n].bytes_resident;
          }
+@@ -2687,3 +2947,33 @@ test "UnloadMark: models unloaded together count as one pending release" {
+     m.record(1_200 + UNLOAD_SETTLE_MS + 1, 5);
+     try testing.expectEqual(@as(u64, 5), m.bytes);
+ }
++
++test "fios loaded model teardown preserves partial registry map on refusal" {
++    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
++    defer arena.deinit(); // Known metadata only, no native terminal assertion.
++    const a = arena.allocator();
++    const registry = try ModelRegistry.init(a, std.testing.io, null, 2, 0, null);
++    _ = try registry.registerStub("org/fios-partial-a", "/fixture/never-loaded-a", null);
++    _ = try registry.registerStub("org/fios-partial-b", "/fixture/never-loaded-b", null);
++    var it = registry.entries.valueIterator();
++    const quiet = it.next().?.*;
++    const borrowed = it.next().?.*;
++    const quiet_id = try a.dupe(u8, quiet.id);
++    const borrowed_id = try a.dupe(u8, borrowed.id);
++    borrowed.state = .ready;
++    _ = try registry.ensureLoaded(borrowed.id);
++    // Directly exercise this private recovery branch. Public teardown first
++    // preflights every entry; it must never free the registry on refusal.
++    if (registry.deinitInternal()) {
++        std.debug.print("FIO_PARTIAL_REGISTRY_TEARDOWN_DROPPED_BORROW\n", .{});
++        return error.FiosPartialRegistryDestroyed;
++    }
++    try std.testing.expectEqual(@as(usize, 1), registry.entries.count());
++    try std.testing.expect(registry.entries.get(quiet_id) == null);
++    try std.testing.expect(registry.entries.get(borrowed_id) == borrowed);
++    try std.testing.expect(borrowed.fios_cleanup_uncertain.load(.acquire));
++    try std.testing.expectEqualStrings(borrowed_id, borrowed.id);
++    registry.releaseStatus(borrowed);
++    try std.testing.expect(!registry.deinitInternal());
++    try std.testing.expectEqual(@as(usize, 1), registry.entries.count());
++}
 diff --git a/src/scheduler.zig b/src/scheduler.zig
-index 9e12566..626e7fe 100644
+index 9e12566..55d1794 100644
 --- a/src/scheduler.zig
 +++ b/src/scheduler.zig
 @@ -32,6 +32,8 @@
@@ -677,42 +784,72 @@ index 9e12566..626e7fe 100644
      /// Registry that owns the entry to populate + provides snapshot/eviction
      /// bookkeeping. Outlives the scheduler.
      registry: *ModelRegistry,
-@@ -432,6 +436,598 @@ pub var prefill_admission_refused_log: ?*const fn (*const model_mod.ModelConfig,
+@@ -432,6 +436,628 @@ pub var prefill_admission_refused_log: ?*const fn (*const model_mod.ModelConfig,
  /// Invalidate the published hot-cache budget on unload/switch (`server.clearResolvedPrefixCacheMem`).
  pub var hot_cache_budget_invalidate: ?*const fn () void = null;
  
++const FiosMetadataAllocatorWatch = struct {
++    inner: std.mem.Allocator,
++    frees: usize = 0,
++    const Self = @This();
++    fn allocator(self: *Self) std.mem.Allocator {
++        return .{ .ptr = self, .vtable = &.{ .alloc = alloc, .resize = resize, .remap = remap, .free = free } };
++    }
++    fn alloc(ctx: *anyopaque, len: usize, alignment: std.mem.Alignment, ret: usize) ?[*]u8 {
++        const self: *Self = @ptrCast(@alignCast(ctx));
++        return self.inner.rawAlloc(len, alignment, ret);
++    }
++    fn resize(ctx: *anyopaque, memory: []u8, alignment: std.mem.Alignment, len: usize, ret: usize) bool {
++        const self: *Self = @ptrCast(@alignCast(ctx));
++        return self.inner.rawResize(memory, alignment, len, ret);
++    }
++    fn remap(ctx: *anyopaque, memory: []u8, alignment: std.mem.Alignment, len: usize, ret: usize) ?[*]u8 {
++        const self: *Self = @ptrCast(@alignCast(ctx));
++        return self.inner.rawRemap(memory, alignment, len, ret);
++    }
++    fn free(ctx: *anyopaque, memory: []u8, alignment: std.mem.Alignment, ret: usize) void {
++        const self: *Self = @ptrCast(@alignCast(ctx));
++        self.frees += 1;
++        self.inner.rawFree(memory, alignment, ret);
++    }
++};
++test "fios loaded model teardown preserves borrowed metadata" {
++    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
++    defer arena.deinit(); // Known metadata only, never backend completion.
++    var watch = FiosMetadataAllocatorWatch{ .inner = arena.allocator() };
++    const a = watch.allocator();
++    const registry = try ModelRegistry.init(a, std.testing.io, null, 2, 0, null);
++    const model = try registry.registerStub("org/fios-loaded-teardown", "/fixture/never-loaded", null);
++    model.state = .ready;
++    _ = try registry.ensureLoaded(model.id);
++    watch.frees = 0;
++    _ = model.deinit();
++    // Observe before dereferencing any metadata the old path has freed.
++    if (watch.frees != 0) {
++        std.debug.print("FIO_LOADED_MODEL_TEARDOWN_DROPPED_BORROW\n", .{});
++        return error.FiosBorrowedModelDestroyed;
++    }
++    try std.testing.expect(model.fios_cleanup_uncertain.load(.acquire));
++    try std.testing.expectEqual(@as(u32, 1), model.refcount.load(.acquire));
++    try std.testing.expectEqualStrings("org/fios-loaded-teardown", model.id);
++    registry.releaseStatus(model);
++    var scheduler = std.mem.zeroInit(Scheduler, .{
++        .allocator = a, .io = std.testing.io, .registry = registry, .queue_cap = 2,
++        .kv_quant_config = transformer_mod.KVQuantConfig.dense,
++    });
++    try std.testing.expect(fiosRegistryQuietGeneration(&scheduler) == null);
++    watch.frees = 0;
++    registry.deinit();
++    try std.testing.expectEqual(@as(usize, 0), watch.frees);
++}
++
 +test "fios registry teardown preserves held metadata before any destruction" {
-+    const Watch = struct {
-+        inner: std.mem.Allocator,
-+        frees: usize = 0,
-+        const Self = @This();
-+        fn allocator(self: *Self) std.mem.Allocator {
-+            return .{ .ptr = self, .vtable = &.{ .alloc = alloc, .resize = resize, .remap = remap, .free = free } };
-+        }
-+        fn alloc(ctx: *anyopaque, len: usize, alignment: std.mem.Alignment, ret: usize) ?[*]u8 {
-+            const self: *Self = @ptrCast(@alignCast(ctx));
-+            return self.inner.rawAlloc(len, alignment, ret);
-+        }
-+        fn resize(ctx: *anyopaque, memory: []u8, alignment: std.mem.Alignment, len: usize, ret: usize) bool {
-+            const self: *Self = @ptrCast(@alignCast(ctx));
-+            return self.inner.rawResize(memory, alignment, len, ret);
-+        }
-+        fn remap(ctx: *anyopaque, memory: []u8, alignment: std.mem.Alignment, len: usize, ret: usize) ?[*]u8 {
-+            const self: *Self = @ptrCast(@alignCast(ctx));
-+            return self.inner.rawRemap(memory, alignment, len, ret);
-+        }
-+        fn free(ctx: *anyopaque, memory: []u8, alignment: std.mem.Alignment, ret: usize) void {
-+            const self: *Self = @ptrCast(@alignCast(ctx));
-+            self.frees += 1;
-+            self.inner.rawFree(memory, alignment, ret);
-+        }
-+    };
 +    for ([_]enum { access, preparation, borrow, loading, evicting, uncertain, quiet }{ .access, .preparation, .borrow, .loading, .evicting, .uncertain, .quiet }) |kind| {
 +        // Scoped metadata arena only: no model/config/backend exists. Dropping
 +        // this test namespace is NOT context retirement or a terminal receipt.
 +        var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
 +        defer arena.deinit();
-+        var watch = Watch{ .inner = arena.allocator() };
++        var watch = FiosMetadataAllocatorWatch{ .inner = arena.allocator() };
 +        const a = watch.allocator();
 +        const registry = try ModelRegistry.init(a, std.testing.io, null, 2, 0, null);
 +        const model = try registry.registerStub("org/fios-teardown-fixture", "/fixture/never-loaded", null);
@@ -1247,7 +1384,7 @@ index 9e12566..626e7fe 100644
 +    try std.testing.expectEqual(@as(u32, 0), model.refcount.load(.acquire));
 +    // Restore the bounded metadata set before the independent epoch test.
 +    const overflow = registry.entries.fetchRemove("org/fios-native-cardinality-overflow").?;
-+    overflow.value.deinit();
++    try std.testing.expect(overflow.value.deinit());
 +    registry.allocator.destroy(overflow.value);
 +    // Pending preparation is retained on exhaustion BEFORE record clear.
 +    // Metadata-only fault injection; fixture exit is NOT retirement evidence.
@@ -1276,7 +1413,7 @@ index 9e12566..626e7fe 100644
  pub const SlotState = enum { pending_prefill, decoding, finished, errored };
  
  /// Result of `Slot.waitNext`. Driven by the inference thread; consumed by
-@@ -449,6 +1045,9 @@ pub const NextResult = union(enum) {
+@@ -449,6 +1075,9 @@ pub const NextResult = union(enum) {
  
  /// Per-request state. Owned by the Scheduler from `submit` until `complete`.
  pub const Slot = struct {
@@ -1286,7 +1423,7 @@ index 9e12566..626e7fe 100644
      allocator: std.mem.Allocator,
      /// io reference for Stopwatch / async-eval (captured from Scheduler).
      io: std.Io,
-@@ -827,6 +1426,14 @@ pub const Slot = struct {
+@@ -827,6 +1456,14 @@ pub const Slot = struct {
      /// finished/errored it AND the connection thread has consumed the final
      /// `done`/`err` from `waitNext`).
      pub fn deinit(self: *Slot) void {
@@ -1301,7 +1438,7 @@ index 9e12566..626e7fe 100644
          // ds4_session / llama_seq are borrowed from the model (persistent
          // across requests) — never freed here. The claim on them is released
          // in Scheduler.complete; they die with the model.
-@@ -1130,6 +1737,7 @@ pub const VisionItem = union(enum) {
+@@ -1130,6 +1767,7 @@ pub const VisionItem = union(enum) {
  /// to `scheduler.submit(.{ .vision_embeddings = arr, ... })` and the slot's
  /// `deinit` will free it.
  pub const VisionEncodeRequest = struct {
@@ -1309,7 +1446,7 @@ index 9e12566..626e7fe 100644
      /// Plan 05 Phase D: target model whose `vision_encoder` services this
      /// request. The conn thread holds a refcount (via `ensureLoaded`) for
      /// the duration of the call.
-@@ -1165,6 +1773,7 @@ pub const VisionEncodeRequest = struct {
+@@ -1165,6 +1803,7 @@ pub const VisionEncodeRequest = struct {
  /// the float vectors into `results` (caller frees). Mirrors the
  /// VisionEncodeRequest pattern.
  pub const EmbedRequest = struct {
@@ -1317,7 +1454,7 @@ index 9e12566..626e7fe 100644
      /// Plan 05 Phase D: target model whose `transformer` services this
      /// request. The conn thread holds a refcount for the duration.
      model: *model_registry_mod.LoadedModel,
-@@ -1197,6 +1806,8 @@ pub const EmbedRequest = struct {
+@@ -1197,6 +1836,8 @@ pub const EmbedRequest = struct {
  /// victim `.evicting` and waited for refcount == 0, so freeing GPU memory
  /// is safe.
  pub const LoadRequest = struct {
@@ -1326,7 +1463,7 @@ index 9e12566..626e7fe 100644
      /// Target entry to populate. Already transitioned to `.loading` by
      /// the conn thread before posting; the inference thread completes the
      /// load and calls `registry.markReadyLocked(entry, bytes)` or
-@@ -1306,6 +1917,8 @@ pub const LoadRequest = struct {
+@@ -1306,6 +1947,8 @@ pub const LoadRequest = struct {
  /// owning thread. Decoupled via an opaque ctx + runner so this module needs
  /// no dependency on `server.zig`/`gen.zig` — `server.zig` owns the job body.
  pub const GenRequest = struct {
@@ -1335,7 +1472,7 @@ index 9e12566..626e7fe 100644
      /// Opaque job payload (a `*GenJob` in server.zig).
      ctx: *anyopaque,
      /// Runs the job body on the inference thread. Must not return an error
-@@ -1508,6 +2121,11 @@ pub const Scheduler = struct {
+@@ -1508,6 +2151,11 @@ pub const Scheduler = struct {
  
      queue_mu: std.Io.Mutex,
      queue_cond: std.Io.Condition,
@@ -1347,7 +1484,7 @@ index 9e12566..626e7fe 100644
      pending: std.ArrayList(*Slot),
      decoding: std.ArrayList(*Slot),
      /// Slots a Neural Engine worker runs (`runAneSlot`), off the inference thread.
-@@ -1886,6 +2504,13 @@ pub const Scheduler = struct {
+@@ -1886,6 +2534,13 @@ pub const Scheduler = struct {
          const eff_kv_quant = params.kv_quant_config orelse slot_config.kv_quant_override orelse self.kv_quant_config;
          const slot = try Slot.init(self.allocator, self.io, slot_config, params, eff_kv_quant);
          errdefer slot.deinit();
@@ -1361,7 +1498,7 @@ index 9e12566..626e7fe 100644
  
          self.queue_mu.lockUncancelable(self.io);
          defer self.queue_mu.unlock(self.io);
-@@ -2055,6 +2680,14 @@ pub const Scheduler = struct {
+@@ -2055,6 +2710,14 @@ pub const Scheduler = struct {
          return gen_mod.estimatePeakResidentBytes(self.io, entry.path, peeked);
      }
  
@@ -1376,7 +1513,7 @@ index 9e12566..626e7fe 100644
      /// Plan 05 Phase D: resolve `id_or_empty` ("" / "mlx-serve" → default)
      /// to a refcounted, ready `*LoadedModel`. Cold-loads on demand: if the
      /// entry is `.unloaded`, parses CPU state, picks an LRU victim if
-@@ -2072,6 +2705,15 @@ pub const Scheduler = struct {
+@@ -2072,6 +2735,15 @@ pub const Scheduler = struct {
      ///   error.LoadFailed        — inference thread reported a load failure.
      ///   error.Shutdown          — scheduler is shutting down.
      pub fn ensureLoaded(self: *Scheduler, id_or_empty: []const u8) !*LoadedModel {
@@ -1392,7 +1529,7 @@ index 9e12566..626e7fe 100644
          // A lost GPU context fails every MLX call: nothing is loaded or served until a restart.
          if (mlx.gpuContextLost()) return error.GpuContextLost;
          // Fast path: ready entries. registry.ensureLoaded handles waiting
-@@ -2085,8 +2727,6 @@ pub const Scheduler = struct {
+@@ -2085,8 +2757,6 @@ pub const Scheduler = struct {
          // Slow path: cold load. Resolve the entry. Re-acquire mutex and
          // re-check state — between the fast-path call and now another
          // caller could have completed the load.
@@ -1401,7 +1538,7 @@ index 9e12566..626e7fe 100644
          // CPU-only pre-load: parse config / load tokenizer / load chat
          // config. Cheap (~tens of ms); kept outside the mutex so other
          // requests on other models stay unblocked. On failure, mark the
-@@ -2096,9 +2736,7 @@ pub const Scheduler = struct {
+@@ -2096,9 +2766,7 @@ pub const Scheduler = struct {
          var settings = model_settings.overrideFor(self.allocator, self.io, entry.path);
          defer settings.deinit(self.allocator);
          const cpu_state = preloadCpuState(self.allocator, self.io, entry.path, settings.ctx_size orelse self.gguf_ctx_size) catch |err| {
@@ -1412,7 +1549,7 @@ index 9e12566..626e7fe 100644
              return error.LoadFailed;
          };
          // Ownership: on success transfers to the entry inside the
-@@ -2151,9 +2789,11 @@ pub const Scheduler = struct {
+@@ -2151,9 +2819,11 @@ pub const Scheduler = struct {
  
              // Wait out any concurrent .loading / .evicting state.
              wait_loop: while (true) {
@@ -1424,7 +1561,7 @@ index 9e12566..626e7fe 100644
                          self.registry.mutex.unlock(self.io);
                          return entry;
                      },
-@@ -2178,6 +2818,7 @@ pub const Scheduler = struct {
+@@ -2178,6 +2848,7 @@ pub const Scheduler = struct {
              // From the claim: while victims unload or the queue waits, not the last load's numbers.
              entry.load_progress.start(io_util.nowMsMonotonic(self.io));
              _ = entry.refcount.fetchAdd(1, .acq_rel);
@@ -1432,7 +1569,7 @@ index 9e12566..626e7fe 100644
              pinned = true;
  
              // Estimate post-load bytes (see `gateEstimateBytes` for why a media
-@@ -2230,6 +2871,7 @@ pub const Scheduler = struct {
+@@ -2230,6 +2901,7 @@ pub const Scheduler = struct {
  
          // ── Stage 2: build + post LoadRequest, wait for completion.
          var req = LoadRequest{
@@ -1440,7 +1577,7 @@ index 9e12566..626e7fe 100644
              .entry = entry,
              .config = owned.config,
              .tok = owned.tok,
-@@ -2338,11 +2980,42 @@ pub const Scheduler = struct {
+@@ -2338,11 +3010,42 @@ pub const Scheduler = struct {
          return self.registry.loadErrorNameDupe(alloc, id_or_empty);
      }
  
@@ -1483,7 +1620,7 @@ index 9e12566..626e7fe 100644
          {
              self.queue_mu.lockUncancelable(self.io);
              defer self.queue_mu.unlock(self.io);
-@@ -2352,7 +3025,9 @@ pub const Scheduler = struct {
+@@ -2352,7 +3055,9 @@ pub const Scheduler = struct {
          }
          req.done_mu.lockUncancelable(self.io);
          while (!req.done) req.done_cond.waitUncancelable(self.io, &req.done_mu);
@@ -1493,7 +1630,7 @@ index 9e12566..626e7fe 100644
      }
  
      /// Free a model's resident GPU state, returning its registry stub to
-@@ -2398,7 +3073,10 @@ pub const Scheduler = struct {
+@@ -2398,7 +3103,10 @@ pub const Scheduler = struct {
                      return;
                  }
              }
@@ -1505,7 +1642,7 @@ index 9e12566..626e7fe 100644
              self.registry.waitForRefcountZeroLocked(entry);
              self.registry.mutex.unlock(self.io);
          }
-@@ -2432,6 +3110,7 @@ pub const Scheduler = struct {
+@@ -2432,6 +3140,7 @@ pub const Scheduler = struct {
      /// as `encodeVision`: post + block + return results. Caller frees the
      /// returned rows + outer slice (allocated with `req.allocator`).
      pub fn computeEmbeddings(self: *Scheduler, req: *EmbedRequest) ![][]f32 {
@@ -1513,7 +1650,7 @@ index 9e12566..626e7fe 100644
          self.queue_mu.lockUncancelable(self.io);
          self.embed_queue.append(self.allocator, req) catch |err| {
              self.queue_mu.unlock(self.io);
-@@ -2462,6 +3141,7 @@ pub const Scheduler = struct {
+@@ -2462,6 +3171,7 @@ pub const Scheduler = struct {
      /// The request struct must outlive this call, but since the call blocks,
      /// a stack allocation in the caller works.
      pub fn encodeVision(self: *Scheduler, req: *VisionEncodeRequest) !mlx.mlx_array {
@@ -1521,7 +1658,7 @@ index 9e12566..626e7fe 100644
          // Post + wake.
          self.queue_mu.lockUncancelable(self.io);
          self.vision_queue.append(self.allocator, req) catch |err| {
-@@ -4606,7 +5286,46 @@ fn loadGlmHead(allocator: std.mem.Allocator, config: *const model_mod.ModelConfi
+@@ -4606,7 +5316,46 @@ fn loadGlmHead(allocator: std.mem.Allocator, config: *const model_mod.ModelConfi
  /// On any error the partial state has already been freed via errdefer; the
  /// caller decides how to surface (startup → recordLoadError + signal
  /// started; on-demand → req.error_name + done broadcast).
@@ -1568,7 +1705,7 @@ index 9e12566..626e7fe 100644
      // ── ds4 fast path: when the caller passed `ds4_path`, the model is a
      //    GGUF served by the embedded ds4 engine. The MLX scaffolding
      //    (weights/Transformer/vision/drafter/JIT/warmup) is entirely
-@@ -5691,7 +6410,7 @@ pub fn armShutdownDeadline(slot: *std.atomic.Value(i64), now_ms: i64, secs: u32)
+@@ -5691,7 +6440,7 @@ pub fn armShutdownDeadline(slot: *std.atomic.Value(i64), now_ms: i64, secs: u32)
  }
  
  fn hasWorkPendingLocked(sch: *const Scheduler) bool {
@@ -1577,7 +1714,7 @@ index 9e12566..626e7fe 100644
          sch.decoding.items.len > 0 or
          sch.vision_queue.items.len > 0 or
          sch.embed_queue.items.len > 0 or
-@@ -5701,6 +6420,165 @@ fn hasWorkPendingLocked(sch: *const Scheduler) bool {
+@@ -5701,6 +6450,165 @@ fn hasWorkPendingLocked(sch: *const Scheduler) bool {
          sch.unload_queue.items.len > 0;
  }
  
@@ -1642,7 +1779,7 @@ index 9e12566..626e7fe 100644
 +    var entries = sch.registry.entries.valueIterator();
 +    while (entries.next()) |entry| {
 +        const own: u32 = if (pins) |held| @intFromBool(held.contains(entry.*)) else 0;
-+        if (entry.*.state == .loading or entry.*.state == .evicting or entry.*.refcount.load(.acquire) != own) return null;
++        if (entry.*.fios_cleanup_uncertain.load(.acquire) or entry.*.state == .loading or entry.*.state == .evicting or entry.*.refcount.load(.acquire) != own) return null;
 +    }
 +    return sch.registry.fios_probe_epoch;
 +}
@@ -1743,7 +1880,7 @@ index 9e12566..626e7fe 100644
  /// Poll interval for the idle-eviction sweep, given the configured window.
  ///
  /// A quarter of the window, so a model is evicted within ~1.25x the configured
-@@ -5713,6 +6591,15 @@ pub fn idleEvictTickMs(window_ms: i64) i64 {
+@@ -5713,6 +6621,15 @@ pub fn idleEvictTickMs(window_ms: i64) i64 {
  fn inferenceLoop(ctx: ThreadCtx) void {
      const sch = ctx.scheduler;
      const params = ctx.params;
@@ -1759,7 +1896,7 @@ index 9e12566..626e7fe 100644
      // Covers shutdown and startup-load failure.
      defer sleep_inhibit.release();
  
-@@ -5749,6 +6636,14 @@ fn inferenceLoop(ctx: ThreadCtx) void {
+@@ -5749,6 +6666,14 @@ fn inferenceLoop(ctx: ThreadCtx) void {
      }
  
      while (!sch.shutdown.load(.acquire)) {
@@ -1774,7 +1911,7 @@ index 9e12566..626e7fe 100644
          // Phase D: cold-load drain. Process ONE load per tick — loading a
          // model is heavy (~seconds; weight read + JIT compile + warmup)
          // and we want the rest of the inference loop to stay responsive.
-@@ -6203,6 +7098,12 @@ fn slotStateBytes(s: *const Slot) u64 {
+@@ -6203,6 +7128,12 @@ fn slotStateBytes(s: *const Slot) u64 {
  /// not the scheduler's borrowed-view singleton — each LoadedModel has its
  /// own vision encoder when applicable.
  fn runVisionEncode(sch: *Scheduler, req: *VisionEncodeRequest) void {
@@ -1787,7 +1924,7 @@ index 9e12566..626e7fe 100644
      const vision_enc = req.model.vision_encoder orelse {
          finishVisionRequest(sch, req, "VisionEncoderNotLoaded");
          return;
-@@ -6414,6 +7315,12 @@ fn finishVisionRequest(sch: *Scheduler, req: *VisionEncodeRequest, err_name: []c
+@@ -6414,6 +7345,12 @@ fn finishVisionRequest(sch: *Scheduler, req: *VisionEncodeRequest, err_name: []c
  /// forward pass via `generate.computeEmbeddingsBatch(xfm, ...)`, which resets
  /// the global xfm.cache before every sub-batch, and wakes the conn thread.
  fn runEmbedRequest(sch: *Scheduler, req: *EmbedRequest) void {
@@ -1800,7 +1937,7 @@ index 9e12566..626e7fe 100644
      const xfm_ptr = req.model.transformer.?;
      // Held in a local: the request lives on the waiting thread's stack and is gone once `done` is observed.
      const vision = req.vision_embeddings;
-@@ -6663,7 +7570,89 @@ pub fn genYieldEnabled(cuda: bool, env: ?[]const u8) bool {
+@@ -6663,7 +7600,89 @@ pub fn genYieldEnabled(cuda: bool, env: ?[]const u8) bool {
  /// connection. We bracket it with the model's `gen_busy` flag for visibility
  /// and signal `done` so the conn thread in `runGeneration` wakes. Several
  /// merged jobs (`takeMergeable`) run as one `run_many` call.
@@ -1890,7 +2027,7 @@ index 9e12566..626e7fe 100644
      const req = reqs[0];
      req.model.gen_busy = true;
      var gy = GenYield{ .sch = sch, .step_sw = io_util.Stopwatch.init(sch.io) };
-@@ -8304,6 +9293,10 @@ fn interleaveDecodeTick(sch: *Scheduler) u64 {
+@@ -8304,6 +9323,10 @@ fn interleaveDecodeTick(sch: *Scheduler) u64 {
  }
  
  fn runPrefill(sch: *Scheduler, slot: *Slot) !void {
@@ -1901,7 +2038,7 @@ index 9e12566..626e7fe 100644
      // Mark the phase for the whole of prefill, and clear both signals on EVERY
      // exit path (success, cancel, error). `requests_prefilling` flips at entry
      // so the panel isn't blind until the first chunk lands; the chunk loop in
-@@ -8815,6 +9808,10 @@ fn sumInflightGeneratedTokens(active: anytype) u64 {
+@@ -8815,6 +9838,10 @@ fn sumInflightGeneratedTokens(active: anytype) u64 {
  
  fn runDecodeTick(sch: *Scheduler, active: []*Slot) !void {
      if (active.len == 0) return;
