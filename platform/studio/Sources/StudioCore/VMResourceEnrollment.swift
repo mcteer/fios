@@ -65,7 +65,8 @@ struct VMResourceEnrolledPolicy {
     }
     func makeReader()throws->any VMResourceReading {
         let kernel=try OwnedVMResourceReader(runtime:runtime.runtime,approvedImages:document.metadataImages,directMetadata:true)
-        return VMResourceProfileReader(kernel:kernel,cap:runtime.capacity,profileHash:profileSHA256,reviewDigest:document.reviewSHA256,
+        let profile=VMResourceProfileReader(kernel:kernel,cap:runtime.capacity,profileHash:profileSHA256,reviewDigest:document.reviewSHA256,
             physical:ProcessInfo.processInfo.physicalMemory)
+        return RunningVMResourceReader(kernel:profile,running:runtime.running,expectedCLIHash:runtime.document.orbctlSHA256)
     }
 }

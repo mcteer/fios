@@ -9,8 +9,8 @@ import { fileURLToPath } from 'node:url';
 // No SSH, daemon socket, service lifecycle or live inference. The test binary
 // and descendants deny IP networking except one freshly allocated loopback
 // mock endpoint; configured native ports/other IPs stay denied. No fallback.
-if (![3,4].includes(process.argv.length) || process.argv[2] !== '--mock' || (process.argv.length===4 && !['--release','--mutate-runtime-postcheck','--mutate-manager-epoch','--mutate-activity-coverage','--mutate-inference-scope','--mutate-observation-native-sequence','--mutate-resource-freshness','--mutate-vm-profile-rebind'].includes(process.argv[3]))) {
-  throw new Error('Usage: node scripts/check-platform.mjs --mock [--release|--mutate-runtime-postcheck|--mutate-manager-epoch|--mutate-activity-coverage|--mutate-inference-scope|--mutate-observation-native-sequence|--mutate-resource-freshness|--mutate-vm-profile-rebind]');
+if (![3,4].includes(process.argv.length) || process.argv[2] !== '--mock' || (process.argv.length===4 && !['--release','--mutate-runtime-postcheck','--mutate-manager-epoch','--mutate-activity-coverage','--mutate-inference-scope','--mutate-observation-native-sequence','--mutate-resource-freshness','--mutate-vm-profile-rebind','--mutate-vm-running-gate'].includes(process.argv[3]))) {
+  throw new Error('Usage: node scripts/check-platform.mjs --mock [--release|--mutate-runtime-postcheck|--mutate-manager-epoch|--mutate-activity-coverage|--mutate-inference-scope|--mutate-observation-native-sequence|--mutate-resource-freshness|--mutate-vm-profile-rebind|--mutate-vm-running-gate]');
 }
 const root = fileURLToPath(new URL('../', import.meta.url));
 const directory = mkdtempSync(join(tmpdir(), 'fios-platform-policy-'));
@@ -46,6 +46,11 @@ try {
   const endpointBuild=spawnSync('swiftc',['-parse-as-library','-swift-version','6','-warnings-as-errors','-O',endpointSource,'-o',endpointBinary],{cwd:root,stdio:'inherit',timeout:30000});
   if(endpointBuild.error)throw endpointBuild.error;
   if(endpointBuild.status!==0)throw Error('Finite endpoint fixture build failed');
+  const vmStatusSource=join(directory,'VMRunningCLI.swift'),vmStatusBinary=join(directory,'vm-running-cli');
+  copyFileSync(resolve(root,'platform/studio/Tests/StudioCoreTests/VMRunningCLI.swift.fixture'),vmStatusSource);
+  const vmStatusBuild=spawnSync('swiftc',['-parse-as-library','-swift-version','6','-warnings-as-errors','-O',vmStatusSource,'-o',vmStatusBinary],{cwd:root,stdio:'inherit',timeout:30000});
+  if(vmStatusBuild.error)throw vmStatusBuild.error;
+  if(vmStatusBuild.status!==0)throw Error('Finite VM status fixture build failed');
   const sources = ['Sources/StudioCore', 'Tests/StudioCoreTests'].flatMap(part => {
     const path = resolve(root, 'platform/studio', part);
     return readdirSync(path).filter(name => name.endsWith('.swift')).sort().map(name => {
@@ -54,6 +59,7 @@ try {
         process.argv[3]==='--mutate-manager-epoch'?{file:'ManagerExecution.swift',check:'value.managerEpoch==managerEpoch,',replacement:''}:
         process.argv[3]==='--mutate-activity-coverage'?{file:'NativeActivityCoherence.swift',check:'sourceCoverage == .all_clients && coverage == .all_clients',replacement:'coverage == .all_clients'}:
         process.argv[3]==='--mutate-inference-scope'?{file:'Journal.swift',check:'try record.scope.encoded()==scope.encoded()',replacement:'true'}:
+        process.argv[3]==='--mutate-vm-running-gate'?{file:'VMRunning.swift',check:'            let proof=try running.capture(),before=now()',replacement:'            let proof=VMRunningProof(sourceSHA256:expectedCLIHash,sampledAt:stamp),before=now()'}:
         process.argv[3]==='--mutate-vm-profile-rebind'?{file:'VMResourceProfileReader.swift',check:'        let result=try bound!.read(configuration:configuration,id:id,leaseUntil:leaseUntil)',replacement:'        let result:VMKernelSample\n        do {result=try bound!.read(configuration:configuration,id:id,leaseUntil:leaseUntil)}\n        catch RuntimeError.launch {bound=nil;throw RuntimeError.launch}'}:
         process.argv[3]==='--mutate-resource-freshness'?{file:'ResourceObservation.swift',check:'fresh ? "observed":"stale"',replacement:'(fresh || !fresh) ? "observed":"stale"'}:
         process.argv[3]==='--mutate-observation-native-sequence'?{file:'ObservationExport.swift',check:'counter>nativeSequence',replacement:'counter>=nativeSequence'}:undefined;
@@ -70,7 +76,7 @@ try {
   ]) {
     // Compilation has its own finite hosted-runner allowance. Runtime tests
     // retain120s; no model, IPC, native-command or cleanup deadline is raised.
-    const result = spawnSync(command, args, { cwd: root, stdio: 'inherit', timeout: command==='swiftc'?300_000:120_000, env: { ...process.env, FIOS_PLATFORM_MOCK_PORT: String(port), FIOS_PLATFORM_SETID_FIXTURE: setidFixture, FIOS_PLATFORM_LOCK_SETID_FIXTURE: setidLock, FIOS_PLATFORM_CENSUS_FIXTURE:censusBinary, FIOS_PLATFORM_ENDPOINT_FIXTURE:endpointBinary } });
+    const result = spawnSync(command, args, { cwd: root, stdio: 'inherit', timeout: command==='swiftc'?300_000:120_000, env: { ...process.env, FIOS_PLATFORM_MOCK_PORT: String(port), FIOS_PLATFORM_SETID_FIXTURE: setidFixture, FIOS_PLATFORM_LOCK_SETID_FIXTURE: setidLock, FIOS_PLATFORM_CENSUS_FIXTURE:censusBinary, FIOS_PLATFORM_ENDPOINT_FIXTURE:endpointBinary, FIOS_PLATFORM_VM_STATUS_FIXTURE:vmStatusBinary } });
     if (result.error) throw result.error;
     if (result.status !== 0) throw new Error(`Platform policy validation failed (${result.status ?? result.signal})`);
   }

@@ -64,6 +64,7 @@ struct RuntimeEnrolledPolicy {
     private let orbctl:VerifiedExecutable
     var inventory:VerifiedVMInventory {VerifiedVMInventory(executable:orbctl,home:document.homePath)}
     var capacity:VerifiedVMCap {VerifiedVMCap(executable:orbctl,home:document.homePath)}
+    var running:VerifiedVMRunningProbe {VerifiedVMRunningProbe(executable:orbctl,home:document.homePath)}
     private init(document:RuntimeEnrollmentDocument,policySHA256:String,runtime:DockerRuntime,orbctl:VerifiedExecutable) {
         self.document=document;self.policySHA256=policySHA256;self.runtime=runtime;self.orbctl=orbctl
     }
