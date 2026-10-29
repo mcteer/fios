@@ -100,6 +100,8 @@ For the retained-CPU cleanup guard, append `--mutation-retained-cpu-cleanup` to 
 
 For resident-unload custody, append `--mutation-resident-unload` to the same four-pair command. It requires actual11pass/1fail of12 at `FIO_RESIDENT_REFUSAL_REPORTED_MEMORY_FREE` and source restoration. The positive metadata case verifies explicit request errors, eviction refusal and retained bytes after borrower release; it does not run a model or establish backend terminality.
 
+For durable service-scope regressions, `node scripts/check-platform.mjs --mock --mutate-force-request-identity` must exit nonzero at `FORCE_ACCEPTED_SUBSTITUTED_DURABLE_REQUEST`; `--mutate-drain-uncertainty-count` must exit nonzero at `DRAIN_ACCEPTED_SUBSTITUTED_DURABLE_REQUEST`. Each mutates only its disposable copied Swift source. Compiler failures are not runtime evidence. These cases validate exact durable request IDs and confer no native force/terminal authority.
+
 ## 2a. Implemented local CLI and explicit limits
 
 Commands below require existing private development state and the built `studioctl`; they do not install/start native applications or mint model permission. Replace placeholders locally; never paste credentials into argv, environment, logs or this document.

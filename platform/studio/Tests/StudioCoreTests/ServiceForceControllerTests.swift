@@ -6,9 +6,9 @@ func runServiceForceControllerTests()throws {
     let journal=try Journal(directory:directory),cache=ServiceDrainObservationCache(),epoch=UUID().uuidString.lowercased()
     let controller=try ServiceForceController(journal:journal,managerEpoch:epoch,observations:cache)
     let identity=ServiceIdentity(pid:42,start:100,sha256:String(repeating:"a",count:64))
-    func snapshot(stamp:Int64=1000,external:Bool?=true)throws->ServiceDrainSnapshot {
+    func snapshot(stamp:Int64=1000,external:Bool?=true,requests:[String]=[])throws->ServiceDrainSnapshot {
         ServiceDrainSnapshot(scope:try ServiceAffectedScope(service:.mlx,identity:identity,managerEpoch:epoch,nativeEpoch:"force-fixture",
-            nativeScopeDigest:String(repeating:"b",count:64),runtimeScopeDigest:nil,ownedJobs:[],unresolvedManagedRequests:[],sampledAt:stamp),
+            nativeScopeDigest:String(repeating:"b",count:64),runtimeScopeDigest:nil,ownedJobs:[],unresolvedManagedRequests:requests,sampledAt:stamp),
             nativeIdle:false,externalNativeWork:external,unmanagedRuntimeWork:nil)
     }
     cache.publish(try snapshot(),for:.mlx)
@@ -64,5 +64,35 @@ func runServiceForceControllerTests()throws {
     do {_=try controller.confirm(service:.mlx,role:.operator,token:good.token,scopeDigest:good.scopeDigest,now:1002);throw RuntimeError.identity}catch ServiceError.invalid {}
     cache.publish(try snapshot(stamp:1002,external:nil),for:.mlx)
     do {_=try controller.prepare(service:.mlx,role:.operator,now:1002);throw RuntimeError.identity}catch ServiceError.invalid {}
+    let requestJob=UUID().uuidString.lowercased(),requestID=UUID().uuidString.lowercased(),substitute=UUID().uuidString.lowercased()
+    try journal.claim(job:requestJob,attempt:0,model:"fixture/model",requestID:requestID)
+    try journal.markUncertain(job:requestJob,attempt:0)
+    cache.publish(try snapshot(stamp:1003,requests:[substitute]),for:.mlx)
+    do {
+        _=try controller.prepare(service:.mlx,role:.operator,now:1003)
+        FileHandle.standardError.write(Data("FORCE_ACCEPTED_SUBSTITUTED_DURABLE_REQUEST\n".utf8));throw RuntimeError.identity
+    }catch ServiceError.invalid {}
+    cache.publish(try snapshot(stamp:1003,requests:[requestID]),for:.mlx)
+    let exact=try controller.prepare(service:.mlx,role:.operator,now:1003)
+    guard try controller.confirm(service:.mlx,role:.operator,token:exact.token,scopeDigest:exact.scopeDigest,now:1003) == .forceQuit(identity),
+          try journal.unresolvedCount()==1,try journal.uncertainCount()==1 else {throw RuntimeError.identity}
+    let unbound=UUID().uuidString.lowercased()
+    try journal.claim(job:unbound,attempt:0,model:"fixture/model")
+    cache.publish(try snapshot(stamp:1004,requests:[requestID,unbound]),for:.mlx)
+    do {
+        _=try controller.prepare(service:.mlx,role:.operator,now:1004)
+        FileHandle.standardError.write(Data("FORCE_ACCEPTED_UNBOUND_DURABLE_REQUEST\n".utf8));throw RuntimeError.identity
+    }catch ServiceError.invalid {}
+    // IDs are unique per job in storage, so cross-job aliasing must remain
+    // unknown rather than collapsing two unresolved attempts into one ID.
+    let ambiguous=try Journal(directory:directory.appendingPathComponent("ambiguous"))
+    let shared=UUID().uuidString.lowercased()
+    for _ in 0..<2 {try ambiguous.claim(job:UUID().uuidString.lowercased(),attempt:0,model:"fixture/model",requestID:shared)}
+    let ambiguousController=try ServiceForceController(journal:ambiguous,managerEpoch:epoch,observations:cache)
+    cache.publish(try snapshot(stamp:1005,requests:[shared,UUID().uuidString.lowercased()]),for:.mlx)
+    do {
+        _=try ambiguousController.prepare(service:.mlx,role:.operator,now:1005)
+        FileHandle.standardError.write(Data("FORCE_COLLAPSED_AMBIGUOUS_DURABLE_REQUESTS\n".utf8));throw RuntimeError.identity
+    }catch ServiceError.invalid {}
     print("PASS: durable-maintenance-bound force consent, source/intent-loss consumption and one-use exact scope; synthetic metadata only, no actuator")
 }

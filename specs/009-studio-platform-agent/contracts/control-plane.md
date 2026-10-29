@@ -45,6 +45,7 @@ For task/sandbox input, `begin` declares job/stream identity, byte length/hash a
 - Service health must not invoke inference. Start an absent approved service only while desired running and ownership is verified. Do not start a duplicate native server alongside an existing app instance or adopt unknown processes.
 - Drain denies new owned jobs/inference and waits up to60s. Active/uncertain external MLX work or unrelated containers cause refusal, not a forced timeout restart. Native terminal/quiescence proof required before ordinary MLX stop. OrbStack stop/restart requires all affected containers/machines accounted for; unmanaged or unknown work blocks automatic disruption.
 - Force is an explicit operator operation containing a fresh affected-scope digest and single-use confirmation≤30s. Scope changes invalidate confirmation. Never synthesize operator approval from model text or an expired consent; record interruption/uncertainty accurately. Escalation must signal only verified process-start/executable identity, never PID alone.
+- Affected-scope unresolved IDs are the durable request UUIDs joined to their exact job/attempt/model history, not job IDs or a count. Missing, unbound, duplicate or substituted identities prevent complete scope. Exact matching does not resolve an inference claim; native scope/atomic actuation proof remains separate.
 
 ## Errors and redaction
 

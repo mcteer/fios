@@ -28,8 +28,9 @@ final class ServiceForceController {
               value.nativeIdle != nil,value.externalNativeWork != nil,
               service != .orbstack || value.unmanagedRuntimeWork != nil else {throw ServiceError.invalid}
         let known=Set(try journal.jobs().map(\.id))
-        guard Set(value.scope.ownedJobs).isSubset(of:known),
-              value.scope.unresolvedManagedRequests.count == (try journal.unresolvedCount()) else {throw ServiceError.invalid}
+        guard let requests=try journal.unresolvedRequestIDs(),
+              Set(value.scope.ownedJobs).isSubset(of:known),
+              Set(value.scope.unresolvedManagedRequests)==Set(requests) else {throw ServiceError.invalid}
         return current
     }
     func prepare(service:ManagedService,role:ControlRole,now:Int64)throws->ServiceForceChallenge {

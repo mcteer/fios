@@ -11,7 +11,7 @@ private func prepare(_ directory:URL)throws->(String,String) {
         try journal.transitionJob(id:id,to:.running,now:now)
     }
     for id in ids {
-        try journal.claim(job:id,attempt:0,model:"fixture/model")
+        try journal.claim(job:id,attempt:0,model:"fixture/model",requestID:id)
         _=try journal.planWorkerLaunch(job:id,attempt:0)
         try journal.markUncertain(job:id,attempt:0)
     }

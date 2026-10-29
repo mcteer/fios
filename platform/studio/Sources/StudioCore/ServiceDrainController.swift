@@ -58,8 +58,9 @@ final class ServiceDrainController {
         let jobs=try journal.jobs(),known=Set(jobs.map(\.id))
         // Never revoke a caller/cache-invented job or accept omitted durable
         // uncertainty as drain readiness. Full native proof remains separate.
-        guard Set(value.scope.ownedJobs).isSubset(of:known),
-              value.scope.unresolvedManagedRequests.count == (try journal.unresolvedCount()) else {throw ServiceError.invalid}
+        guard let requests=try journal.unresolvedRequestIDs(),
+              Set(value.scope.ownedJobs).isSubset(of:known),
+              Set(value.scope.unresolvedManagedRequests)==Set(requests) else {throw ServiceError.invalid}
         if let original {
             let remaining=Set(jobs.filter {original.contains($0.id) && $0.state != .removed}.map(\.id))
             guard remaining.isSubset(of:Set(value.scope.ownedJobs)) else {throw ServiceError.invalid}

@@ -23,8 +23,13 @@ func runServiceDrainControllerTests()throws {
     catch ServiceError.stale {}
     guard try journal.recordedDesired(service:.mlx)==nil else {throw JournalError.conflict}
     let owned=try job(),other=try job()
-    try journal.claim(job:other,attempt:0,model:"fixture/model")
+    try journal.claim(job:other,attempt:0,model:"fixture/model",requestID:other)
     try journal.markUncertain(job:other,attempt:0)
+    cache.publish(try snapshot(jobs:[owned],requests:[owned]),for:.mlx)
+    do {
+        _=try controller.begin(service:.mlx,role:.operator,now:1000,uptime:1000)
+        FileHandle.standardError.write(Data("DRAIN_ACCEPTED_SUBSTITUTED_DURABLE_REQUEST\n".utf8));throw JournalError.conflict
+    }catch ServiceError.invalid {}
     cache.publish(try snapshot(jobs:[owned],requests:[other]),for:.mlx)
     for role:ControlRole in [.observer,.task,.sandbox] {
         do {_=try controller.begin(service:.mlx,role:role,now:1000,uptime:1000);throw RuntimeError.identity}

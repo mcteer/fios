@@ -728,6 +728,23 @@ public final class Journal {
             models.append(model);uncertain = uncertain || sqlite3_column_int64(row,1)==1
         }
     }
+    // Exact durable request identities for affected-scope validation. A
+    // missing/unbound/ambiguous history row is unknown, never a job-ID fallback.
+    // Caller remains on the serialized single-writer owner; this grants no proof.
+    func unresolvedRequestIDs() throws -> [String]? {
+        let row=try statement("SELECT h.request_id FROM inference i LEFT JOIN request_history h ON i.job=h.job AND i.attempt=h.attempt AND i.model=h.model ORDER BY i.job,i.attempt")
+        defer {sqlite3_finalize(row)}
+        var ids:[String]=[],seen=Set<String>()
+        while true {
+            let code=sqlite3_step(row)
+            if code==SQLITE_DONE {return ids.sorted()}
+            guard code==SQLITE_ROW,ids.count<32 else {throw JournalError.invalid}
+            guard sqlite3_column_type(row,0)==SQLITE_TEXT else {return nil}
+            let bytes=try storedBytes(row,0,maximum:36)
+            guard let id=String(data:bytes,encoding:.utf8),WireScalar.uuid(id),seen.insert(id).inserted else {return nil}
+            ids.append(id)
+        }
+    }
     public func unresolvedCount() throws -> Int { try scalar("SELECT count(*) FROM inference") }
     public func uncertainCount() throws -> Int { try scalar("SELECT count(*) FROM inference WHERE uncertain=1") }
     public func setDesired(service: String, desired: String) throws {
