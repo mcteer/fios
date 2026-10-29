@@ -4,7 +4,11 @@ import Darwin
 func runWorkerRSSBreachTests()throws {
     guard let path=ProcessInfo.processInfo.environment["FIOS_PLATFORM_RSS_FIXTURE"] else {throw RuntimeError.invalid}
     let directory=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-    defer {try? FileManager.default.removeItem(at:directory)}
+    var cleanupProven=true
+    defer {
+        if cleanupProven {try? FileManager.default.removeItem(at:directory)}
+        else {FileHandle.standardError.write(Data("OWNED_WORKER_FIXTURE_RETAINED\n".utf8))}
+    }
     let journal=try Journal(directory:directory),id=UUID().uuidString.lowercased()
     let key="model:\(id):0",now=HostResources.nowMilliseconds()
     let sample=ResourceSample(sampledAt:now,physical:128<<30,available:64<<30,vmAvailable:nil,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal)
@@ -16,10 +20,13 @@ func runWorkerRSSBreachTests()throws {
     process.executableURL=URL(fileURLWithPath:path);process.arguments=[]
     process.environment=["PATH":"/usr/bin:/bin","LANG":"C"]
     process.standardInput=input;process.standardOutput=output;process.standardError=FileHandle.nullDevice
+    var cleanupGrant:WorkerGrant?
+    cleanupProven=false
+    defer {cleanupProven=finishOwnedWorkerFixture(process,grant:cleanupGrant)}
     try process.run()
-    defer {if process.isRunning {kill(process.processIdentifier,SIGKILL)};process.waitUntilExit()}
+    let captured=try WorkerGrant.capture(pid:process.processIdentifier);cleanupGrant=captured
     let started=Int64(ProcessInfo.processInfo.systemUptime*1000)
-    let worker=try PrivateWorker(process:process,input:input.fileHandleForWriting,output:output.fileHandleForReading,journal:journal,job:id,attempt:0,started:started,launchNonce:nonce)
+    let worker=try PrivateWorker(process:process,input:input.fileHandleForWriting,output:output.fileHandleForReading,journal:journal,job:id,attempt:0,started:started,capturedGrant:captured,launchNonce:nonce)
     let readiness=ProcessInfo.processInfo.systemUptime+5
     var resident:UInt64=0
     while ProcessInfo.processInfo.systemUptime<readiness {

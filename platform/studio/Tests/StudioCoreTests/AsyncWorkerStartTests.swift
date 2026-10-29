@@ -46,7 +46,11 @@ func runAsyncWorkerStartTests()throws {
 
 private func runLateCancelledWorkerBindingTest()throws {
     let directory=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-    defer {try? FileManager.default.removeItem(at:directory)}
+    var cleanupProven=true
+    defer {
+        if cleanupProven {try? FileManager.default.removeItem(at:directory)}
+        else {FileHandle.standardError.write(Data("OWNED_WORKER_FIXTURE_RETAINED\n".utf8))}
+    }
     let journal=try Journal(directory:directory),id=UUID().uuidString.lowercased(),epoch=UUID().uuidString.lowercased()
     let scope=InferenceScope(host:"fixture-host",endpointHash:String(repeating:"a",count:64),profileHash:String(repeating:"b",count:64),managerEpoch:epoch,nativeEpoch:"fixture-native",canonicalModel:"fixture/model",nativeModel:"fixture/model",sequence:1,sampledAt:1000)
     try journal.claim(job:id,attempt:0,model:"fixture/model",scope:scope)
@@ -54,9 +58,11 @@ private func runLateCancelledWorkerBindingTest()throws {
     let process=Process(),input=Pipe(),output=Pipe()
     process.executableURL=URL(fileURLWithPath:"/bin/sleep");process.arguments=["30"]
     process.standardInput=input;process.standardOutput=output;process.standardError=FileHandle.nullDevice
+    var cleanupGrant:WorkerGrant?
+    cleanupProven=false
+    defer {cleanupProven=finishOwnedWorkerFixture(process,grant:cleanupGrant)}
     try process.run()
-    defer {if process.isRunning {kill(process.processIdentifier,SIGKILL)};process.waitUntilExit()}
-    let grant=try WorkerGrant.capture(pid:process.processIdentifier)
+    let grant=try WorkerGrant.capture(pid:process.processIdentifier);cleanupGrant=grant
     try journal.markUncertain(job:id,attempt:0)
     do {
         try journal.bindWorker(job:id,attempt:0,grant:grant,nonce:UUID().uuidString.lowercased())

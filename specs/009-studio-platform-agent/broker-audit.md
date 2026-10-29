@@ -1,6 +1,6 @@
 # T044 broker audit
 
-Whole-task status: **complete** (T044 source and isolated worker acceptance). This audit separates the broker's own implementation/evidence gaps from native admission/profile/installed acceptance in T002/T022/T045/T051. No real inference or installed service action is authorized by these tests.
+Whole-task status: **open again**. Local source/isolated worker acceptance passes, but hosted CI run40918785180 stalls in the Python factory/broker fixture. Fixed phase diagnostics must identify and resolve this compatibility failure before whole-task completion. This audit separates the broker's own implementation/evidence gaps from native admission/profile/installed acceptance in T002/T022/T045/T051. No real inference or installed service action is authorized by these tests.
 
 | Requirement | Current source/evidence | Remaining work |
 | --- | --- | --- |

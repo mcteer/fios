@@ -3,12 +3,16 @@ import CryptoKit
 import Darwin
 
 func runPythonFactoryTests() throws {
+    func progress(_ phase:String) {FileHandle.standardError.write(Data(("Python factory fixture: "+phase+"\n").utf8))}
+    progress("begin")
     let root=URL(fileURLWithPath:FileManager.default.currentDirectoryPath)
     let invocation=root.appendingPathComponent(".venv/bin/python")
     let executable=invocation.resolvingSymlinksInPath()
     let sha=SHA256.hash(data:try Data(contentsOf:executable)).map {String(format:"%02x",$0)}.joined()
     let fixture=try JSONSerialization.jsonObject(with:Data(contentsOf:root.appendingPathComponent("tests/fixtures/platform/model.json"))) as! [String:Any]
+    progress("metadata begin")
     let factory=try PythonWorkerFactory(invocation:invocation.path,executableSHA256:sha,policySHA256:fixture["policy_sha256"] as! String)
+    progress("metadata ready")
     guard factory.metadata.policy_input_units==fixture["policy_input_units"] as? Int else { fatalError("Installed policy units diverged from cross-language fixture") }
     do {
         _=try PythonWorkerFactory(invocation:invocation.path,executableSHA256:String(repeating:"0",count:64),policySHA256:fixture["policy_sha256"] as! String)
@@ -31,13 +35,17 @@ func runPythonFactoryTests() throws {
           let selectedPort=Int(mockPort),(49152...65535).contains(selectedPort),String(selectedPort)==mockPort else {throw RuntimeError.invalid}
     mock.environment=["PATH":"/usr/bin:/bin","LANG":"C","FIOS_PLATFORM_MOCK_PORT":mockPort]
     mock.standardInput=input;mock.standardOutput=output;mock.standardError=FileHandle.nullDevice
+    progress("mock launch begin")
     try mock.run()
+    progress("mock launch ready")
     defer {
+        progress("mock cleanup begin")
         try? input.fileHandleForWriting.close();try? output.fileHandleForReading.close()
         let limit=ProcessInfo.processInfo.systemUptime+2
         while mock.isRunning && ProcessInfo.processInfo.systemUptime<limit { Thread.sleep(forTimeInterval:0.01) }
         if mock.isRunning { kill(mock.processIdentifier,SIGKILL) }
         if !mock.isRunning { mock.waitUntilExit() }
+        progress("mock cleanup done")
     }
     let fd=output.fileHandleForReading.fileDescriptor
     guard fcntl(fd,F_SETFL,O_NONBLOCK)>=0 else { throw RuntimeError.launch }
@@ -52,6 +60,7 @@ func runPythonFactoryTests() throws {
     }
     guard let descriptor=try JSONSerialization.jsonObject(with:ready) as? [String:Any],
           let port=descriptor["port"] as? Int,port==selectedPort else { throw RuntimeError.launch }
+    progress("mock endpoint ready")
     guard try ServiceHealthProbe(port:port).probe() == .healthy else {fatalError("Fixed mock GET /health unavailable")}
     // The native mock returns healthy ONLY for GET /health. Its later exact
     // POST counts must remain unchanged: health must never issue inference.
@@ -61,7 +70,9 @@ func runPythonFactoryTests() throws {
     let observation=NativeSnapshot(host:"fixture-host",endpointHash:hash,nativeEpoch:"native-fixture-one",sequence:1,sampledAt:timestamp,allClientLifecycleCoverage:true,residentModel:"fixture/idle-other",outstandingOwners:0,loading:false)
     let accepted=WorkerDispatchBinding(baseURL:base,guardPath:directory.appendingPathComponent("observe.sock").path,host:"fixture-host",profileHash:String(repeating:"f",count:64),managerEpoch:epoch,canonicalModel:"fixture/model",nativeModel:"fixture/model",nativeSnapshot:observation,nativeCompatibilityAccepted:true,apiKey:nil)
     let command=try JSONSerialization.data(withJSONObject:["v":1,"type":"run","job_id":job,"attempt":0,"epoch":epoch,"model":"fixture/model","endpoint_hash":hash,"expires_at":timestamp+5000,"context":[["role":"user","content":"fixture only"]]])
+    progress("direct worker launch begin")
     let worker=try factory.start(journal:journal,job:job,attempt:0,binding:accepted,command:command,now:timestamp)
+    progress("direct worker launch ready")
     let finish=ProcessInfo.processInfo.systemUptime+10
     var answer="",complete=false
     while !worker.reaped && ProcessInfo.processInfo.systemUptime<finish {
@@ -72,6 +83,7 @@ func runPythonFactoryTests() throws {
         Thread.sleep(forTimeInterval:0.01)
     }
     guard complete,answer=="MOCK_ONLY",worker.reaped,try journal.unresolvedCount()==0,try journal.workerGrants().isEmpty else { fatalError("Fixed production entry/independent guard/mock API roundtrip failed") }
+    progress("direct worker reaped")
     let broker=ModelBroker(journal:journal,factory:factory),owner=String(repeating:"a",count:64),scoped=UUID().uuidString.lowercased()
     _=try journal.reserveJob(DurableJob(id:scoped,idempotency:UUID().uuidString.lowercased(),ownerHash:owner,requestHash:String(repeating:"b",count:64),created:HostResources.nowMilliseconds()))
     try journal.transitionJob(id:scoped,to:.running)
@@ -81,9 +93,11 @@ func runPythonFactoryTests() throws {
     }
     func resources(_ now:Int64)->ResourceSample { ResourceSample(sampledAt:now,physical:128<<30,available:64<<30,vmAvailable:nil,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal) }
     var admission=AdmissionPolicy()
+    progress("broker rounds begin")
     for _ in 0..<4 {
         let time=HostResources.nowMilliseconds()
         try broker.submit(job:scoped,owner:owner,requestID:UUID().uuidString.lowercased(),context:[ModelText(role:"user",content:"fixture only")],binding:freshBinding(),nativeCapacityProven:true,sample:resources(time),admission:&admission,now:time)
+        progress("broker round submitted")
         let limit=ProcessInfo.processInfo.systemUptime+10
         var text="",done=false
         while broker.activeWorkers>0 && ProcessInfo.processInfo.systemUptime<limit {
@@ -104,6 +118,7 @@ func runPythonFactoryTests() throws {
     guard try journal.requestCount(job:scoped)==4,try journal.unresolvedCount()==0 else { fatalError("Broker lost durable finite budget") }
     try journal.transitionJob(id:scoped,to:.revoking)
     try journal.transitionJob(id:scoped,to:.removed)
+    progress("broker rounds reaped")
     let controller=TaskController(journal:journal,broker:broker),idempotency=UUID().uuidString.lowercased()
     let modelContext=[ModelText(role:"user",content:"fixture only")]
     let created=try controller.createModelJob(owner:owner,idempotency:idempotency,context:modelContext,binding:freshBinding(),nativeCapacityProven:true,sample:resources(time),admission:&admission,now:time)
@@ -117,6 +132,7 @@ func runPythonFactoryTests() throws {
     }
     let replay=try controller.createModelJob(owner:owner,idempotency:idempotency,context:modelContext,binding:freshBinding(),nativeCapacityProven:true,sample:resources(time),admission:&admission,now:time)
     guard modelText=="MOCK_ONLY",replay.id==created.id,replay.state == .removed,try journal.requestCount(job:created.id)==1 else { fatalError("Model-only lifecycle/data/idempotency failed") }
+    progress("model-only controller reaped")
     let uploadHash=String(repeating:"d",count:64),uploadStamp=HostResources.nowMilliseconds()
     let uploaded=try controller.reserveModelUpload(owner:owner,idempotency:UUID().uuidString.lowercased(),requestHash:uploadHash,binding:freshBinding(),nativeCapacityProven:true,sample:resources(uploadStamp),admission:&admission,now:uploadStamp)
     guard uploaded.state == .reserved,broker.activeWorkers==0,try journal.requestCount(job:uploaded.id)==0 else {fatalError("Input reservation dispatched before complete validation")}
@@ -132,6 +148,7 @@ func runPythonFactoryTests() throws {
     guard uploadText=="MOCK_ONLY",try journal.requestCount(job:uploaded.id)==1 else {fatalError("Validated reserved model input failed")}
     let replayUpload=try controller.startModelUpload(id:uploaded.id,owner:owner,requestHash:uploadHash,requestID:UUID().uuidString.lowercased(),context:[ModelText(role:"user",content:"fixture only")],binding:freshBinding(),nativeCapacityProven:true,sample:resources(HostResources.nowMilliseconds()),admission:&admission,now:HostResources.nowMilliseconds())
     guard replayUpload.state == .removed,broker.activeWorkers==0,try journal.requestCount(job:uploaded.id)==1 else {fatalError("Consumed input upload replayed")}
+    progress("model upload reaped")
     let exportService=AsyncArtifacts(store:try ArtifactStore(directory:directory.appendingPathComponent("gateway-exports"),availableBytes:{100<<30}))
     let noRuntime=JobController(journal:journal,executor:UnavailableSandboxRuntime())
     let unusedSandbox=SandboxTaskController(journal:journal,jobs:noRuntime,tasks:controller,artifacts:exportService,socket:"/fixture/no-runtime.sock",peerUID:geteuid())
@@ -169,6 +186,7 @@ func runPythonFactoryTests() throws {
     guard rpcDone,rpcText=="MOCK_ONLY",try journal.requestCount(job:rpcJob)==1 else {fatalError("Owner task API/model input/output stream failed")}
     _=try rpc("model.request",["phase":"end","job":rpcJob])
     guard try journal.requestCount(job:rpcJob)==1 else {fatalError("Task API model end replay spent another request")}
+    progress("owner RPC model reaped")
     // Fake runtime identity/lifecycle; real production Python/Unix/HTTP mock path.
     let sandboxID=UUID().uuidString.lowercased(),containerID=String(repeating:"c",count:64)
     let configuration=try SandboxConfiguration(job:sandboxID,nonce:String(repeating:"d",count:64),image:"sha256:"+String(repeating:"e",count:64),memory:512<<20,cpus:1)
@@ -198,6 +216,7 @@ func runPythonFactoryTests() throws {
     guard sandboxDone,sandboxText=="MOCK_ONLY",try journal.requestCount(job:sandboxID)==1 else { fatalError("Scoped sandbox model mediation failed") }
     try lifecycle.cancelled(job:sandboxID,now:HostResources.nowMilliseconds())
     _=try lifecycle.observed(job:sandboxID,presence:.absent,now:HostResources.nowMilliseconds(),resourcesSafe:true)
+    progress("sandbox-mediated model reaped")
     let active=[UUID().uuidString.lowercased(),UUID().uuidString.lowercased()]
     for id in active {
         let stamp=HostResources.nowMilliseconds()
@@ -205,6 +224,7 @@ func runPythonFactoryTests() throws {
         try journal.transitionJob(id:id,to:.running,now:stamp)
         try broker.submit(job:id,owner:owner,requestID:UUID().uuidString.lowercased(),context:[ModelText(role:"user",content:"fixture only")],binding:freshBinding(),nativeCapacityProven:true,sample:resources(stamp),admission:&admission,now:stamp)
     }
+    progress("two pending workers submitted")
     guard broker.activeWorkers==2 else { fatalError("Two scoped workers were not admitted") }
     do { try admission.reserveWorker(key:"third",sample:resources(time),now:time);fatalError("Third worker admitted") } catch AdmissionError.capacity {}
     let lost=ProcessInfo.processInfo.systemUptime
@@ -214,6 +234,7 @@ func runPythonFactoryTests() throws {
     }
     guard broker.activeWorkers==0,try journal.unresolvedCount()==2,try journal.workerGrants().isEmpty,
           try journal.jobs().filter({active.contains($0.id)}).allSatisfy({$0.state == .revoking}) else { fatalError("Source loss did not revoke/reap without clearing native uncertainty") }
+    progress("source-loss workers reaped")
     // Mock fixture reports only aggregate POST counts, never headers/prompts.
     var counts=Data()
     while true {
