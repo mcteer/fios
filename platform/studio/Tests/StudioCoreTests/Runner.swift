@@ -100,6 +100,7 @@ struct PolicyTestRunner {
             }
         }
         ActivityCoherenceTests.run()
+        try InferenceScopeTests.run()
         let tests = ActivityTests()
         try tests.testIdleRequiresAuthoritativeAllClientCoverage()
         try tests.testQueuedPreparingAndResponseOwnersAreBusy()

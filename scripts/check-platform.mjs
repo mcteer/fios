@@ -9,8 +9,8 @@ import { fileURLToPath } from 'node:url';
 // No SSH, daemon socket, service lifecycle or live inference. The test binary
 // and descendants deny IP networking except one freshly allocated loopback
 // mock endpoint; configured native ports/other IPs stay denied. No fallback.
-if (![3,4].includes(process.argv.length) || process.argv[2] !== '--mock' || (process.argv.length===4 && !['--release','--mutate-runtime-postcheck','--mutate-manager-epoch','--mutate-activity-coverage'].includes(process.argv[3]))) {
-  throw new Error('Usage: node scripts/check-platform.mjs --mock [--release|--mutate-runtime-postcheck|--mutate-manager-epoch|--mutate-activity-coverage]');
+if (![3,4].includes(process.argv.length) || process.argv[2] !== '--mock' || (process.argv.length===4 && !['--release','--mutate-runtime-postcheck','--mutate-manager-epoch','--mutate-activity-coverage','--mutate-inference-scope'].includes(process.argv[3]))) {
+  throw new Error('Usage: node scripts/check-platform.mjs --mock [--release|--mutate-runtime-postcheck|--mutate-manager-epoch|--mutate-activity-coverage|--mutate-inference-scope]');
 }
 const root = fileURLToPath(new URL('../', import.meta.url));
 const directory = mkdtempSync(join(tmpdir(), 'fios-platform-policy-'));
@@ -52,7 +52,8 @@ try {
       const source=join(path,name);
       const variant=process.argv[3]==='--mutate-runtime-postcheck'?{file:'Sandboxes.swift',check:'        try pinned?.verify(deadline:min(deadline,ProcessInfo.processInfo.systemUptime+2))',replacement:'        withExtendedLifetime(pinned) {}'}:
         process.argv[3]==='--mutate-manager-epoch'?{file:'ManagerExecution.swift',check:'value.managerEpoch==managerEpoch,',replacement:''}:
-        process.argv[3]==='--mutate-activity-coverage'?{file:'NativeActivityCoherence.swift',check:'sourceCoverage == .all_clients && coverage == .all_clients',replacement:'coverage == .all_clients'}:undefined;
+        process.argv[3]==='--mutate-activity-coverage'?{file:'NativeActivityCoherence.swift',check:'sourceCoverage == .all_clients && coverage == .all_clients',replacement:'coverage == .all_clients'}:
+        process.argv[3]==='--mutate-inference-scope'?{file:'Journal.swift',check:'try record.scope.encoded()==scope.encoded()',replacement:'true'}:undefined;
       if(!variant||part!=='Sources/StudioCore'||name!==variant.file)return source;
       const original=readFileSync(source,'utf8');
       if(original.split(variant.check).length!==2)throw Error('Private mutation boundary changed');

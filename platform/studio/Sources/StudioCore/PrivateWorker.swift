@@ -13,6 +13,7 @@ final class PrivateWorker {
     private let grant:WorkerGrant
     private let job:String
     private let attempt:Int
+    private let inferenceScope:InferenceScope?
     private var parser:ModelWorkerProtocol
     private var memory:WorkerMemoryGuard
     private let started:Int64
@@ -25,6 +26,7 @@ final class PrivateWorker {
     private var eof=false,revoked=false,terminal=false,nativeComplete=false
     private var cancelAt:Int64?
     private var actualPosts:Int?
+    private var dispatchRecorded=false
     private(set) var reaped=false
     private(set) var memorySamples=0
 
@@ -32,6 +34,7 @@ final class PrivateWorker {
         guard process.processIdentifier>1,try journal.hasClaim(job:job,attempt:attempt) else { throw JournalError.invalid }
         grant=try WorkerGrant.capture(pid:process.processIdentifier)
         self.process=process;self.input=input;self.output=output;self.journal=journal;self.job=job;self.attempt=attempt
+        inferenceScope=try journal.inferenceScope(job:job,attempt:attempt)?.scope
         parser=ModelWorkerProtocol(job:job,attempt:attempt);memory=try WorkerMemoryGuard(started:started)
         self.started=started;lastSample=started;lastPoll=started
         guard fcntl(input.fileDescriptor,F_SETFL,O_NONBLOCK)>=0,
@@ -60,6 +63,10 @@ final class PrivateWorker {
               WireScalar.exactModel(value["model"] as? String,expectedModel),value["endpoint_hash"] as? String==endpointHash,
               value["epoch"] as? String==epoch,let expiry=integer("expires_at"),
               expiry>now,expiry-now<=5000 else { throw ControlError.invalid_request }
+        if let inferenceScope {
+            guard WireScalar.exactModel(inferenceScope.nativeModel,expectedModel),
+                  inferenceScope.endpointHash==endpointHash,inferenceScope.managerEpoch==epoch else {throw ControlError.invalid_request}
+        }
         let size=UInt32(command.count)
         outgoing=Data([UInt8(size>>24),UInt8((size>>16)&255),UInt8((size>>8)&255),UInt8(size&255)])
         outgoing.append(command);commandAccepted=true
@@ -73,6 +80,16 @@ final class PrivateWorker {
             if process.isRunning { process.terminate() }
         }
         if !nativeComplete { try journal.markUncertain(job:job,attempt:attempt) }
+    }
+    private func resolve(_ outcome:InferenceState) throws {
+        if let inferenceScope {
+            try journal.resolveInference(job:job,attempt:attempt,scope:inferenceScope,outcome:outcome)
+        }else {
+            // Unbound claims exist only in the separate low-level fixtures.
+            // The composed ModelBroker always supplies persistent scope.
+            try journal.complete(job:job,attempt:attempt)
+        }
+        nativeComplete=true
     }
     func poll(now:Int64,authorized:Bool) throws -> [ModelWorkerEvent] {
         guard !reaped else { return [] }
@@ -93,6 +110,10 @@ final class PrivateWorker {
         if !revoked && sent<outgoing.count {
             if now-started>=10000 { try cancel(now:now) }
             else {
+                if !dispatchRecorded {
+                    if inferenceScope != nil {try journal.markDispatched(job:job,attempt:attempt)}
+                    dispatchRecorded=true
+                }
                 let count=outgoing.withUnsafeBytes { Darwin.write(input.fileDescriptor,$0.baseAddress!.advanced(by:sent),$0.count-sent) }
                 if count>0 {
                     sent+=count
@@ -122,7 +143,7 @@ final class PrivateWorker {
                 switch event {
                 case .complete:
                     terminal=true
-                    if !revoked { try journal.complete(job:job,attempt:attempt);nativeComplete=true;events.append(event) }
+                    if !revoked { try resolve(.complete);events.append(event) }
                 case .interrupted,.failed:
                     terminal=true
                     if !nativeComplete { try journal.markUncertain(job:job,attempt:attempt) }
@@ -145,7 +166,7 @@ final class PrivateWorker {
             // terminal and fully reaped child proves non-dispatch. Neither
             // cancellation nor child exit alone supplies this evidence.
             if !protocolBroken && terminal && actualPosts==0 && !nativeComplete {
-                try journal.complete(job:job,attempt:attempt);nativeComplete=true
+                try resolve(.not_sent)
             }
             if !terminal && !nativeComplete { try journal.markUncertain(job:job,attempt:attempt) }
         }

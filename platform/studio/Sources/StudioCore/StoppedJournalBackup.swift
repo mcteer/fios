@@ -50,7 +50,7 @@ public enum StoppedJournalBackup {
             guard sqlite3_step(stmt)==SQLITE_ROW else {throw JournalError.storage}
             return Int(sqlite3_column_int64(stmt,0))
         }
-        guard try scalar("PRAGMA application_id")==0x46495339,try scalar("PRAGMA user_version")==7 else {throw JournalError.invalid}
+        guard try scalar("PRAGMA application_id")==0x46495339,try scalar("PRAGMA user_version")==8 else {throw JournalError.invalid}
         let pages=try scalar("PRAGMA page_count"),pageSize=try scalar("PRAGMA page_size")
         guard pages>0,(512...65536).contains(pageSize),pages<=(64<<20)/pageSize else {throw JournalError.invalid}
         guard let operation=sqlite3_backup_init(target,"main",source,"main") else {throw JournalError.storage}
@@ -75,6 +75,6 @@ public enum StoppedJournalBackup {
         guard parent>=0 else {throw JournalError.storage};defer {close(parent)}
         guard fsync(parent)==0 else {throw JournalError.storage}
         success=true
-        return JournalBackupReceipt(schema:7,bytes:savedInfo.st_size,sha256:SHA256.hash(data:data).map {String(format:"%02x",$0)}.joined())
+        return JournalBackupReceipt(schema:8,bytes:savedInfo.st_size,sha256:SHA256.hash(data:data).map {String(format:"%02x",$0)}.joined())
     }
 }

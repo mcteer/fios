@@ -77,7 +77,7 @@ try {
     const refused=spawnSync(join(release,'bin/studioctl'),['--state',future,'backup-state','--to',join(scratch,'future-backup-must-not-exist')],{stdio:'ignore',timeout:2000});
     assert.equal(refused.status,1);assert.equal(digest(),before);
   }
-  console.log('PASS: verified old/new/old development artifacts, same-schema7 ownership/export preservation, stopped old backup→new verify/restore→old startup, future8 refusal without database mutation; disposable local state ONLY, no installed rollback/schema migration/native acceptance');
+  console.log('PASS: verified old/new/old development artifacts, same-schema8 ownership/export preservation, stopped old backup→new verify/restore→old startup, future9 refusal without database mutation; disposable local state ONLY, no installed rollback/schema migration/native acceptance');
 }finally {
   for(const child of children)await stop(child);
   if(children.every(exited))rmSync(scratch,{recursive:true,force:true});

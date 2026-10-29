@@ -18,10 +18,14 @@ func runJournalSchemaTests() throws {
     let cases:[(String,String,Bool)]=[
         ("missing-all","PRAGMA application_id=0x46495339; PRAGMA user_version=7;",false),
         ("missing-inference","DROP TABLE inference;",true),
+        ("missing-native-scopes","DROP TABLE inference_scopes;",true),
+        ("unknown-native-scope-column","ALTER TABLE inference_scopes ADD COLUMN future_proof TEXT;",true),
+        ("orphan-native-scope","INSERT INTO inference_scopes VALUES('00000000-0000-0000-0000-000000000001',0,'{}','reserved');",true),
         ("unknown-column","ALTER TABLE jobs ADD COLUMN foreign_state TEXT;",true),
         ("unknown-table","CREATE TABLE future_actions(id TEXT PRIMARY KEY);",true),
         ("missing-request-index","DROP INDEX request_identity;",true),
         ("weakened-service-check","DROP TABLE services; CREATE TABLE services(service TEXT PRIMARY KEY,desired TEXT NOT NULL);",true),
+        ("previous-unmigrated-layout","PRAGMA user_version=7;",true),
         ("unknown-older-layout","PRAGMA user_version=6;",true),
         ("sqlite-lookalike-table","CREATE TABLE sqliteX_future_actions(id TEXT PRIMARY KEY);",true),
         ("quoted-check-whitespace","DROP TABLE services; CREATE TABLE services(service TEXT PRIMARY KEY CHECK(service IN('m lx','orbstack')),desired TEXT NOT NULL CHECK(desired IN('running','maintenance','stopped')));",true)

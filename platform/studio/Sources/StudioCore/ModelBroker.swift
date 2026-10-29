@@ -70,7 +70,7 @@ final class ModelBroker {
         let key="model:\(id):\(ordinal)"
         // Reservation precedes both durable permission and actual process spawn.
         try admission.reserveWorker(key:key,sample:sample,now:now)
-        do { try journal.claim(job:id,attempt:ordinal,model:binding.canonicalModel,requestID:requestID) }
+        do { try journal.claim(job:id,attempt:ordinal,model:binding.canonicalModel,requestID:requestID,scope:binding.inferenceScope()) }
         catch { admission.releaseWorkerAfterReap(key:key);throw error } // No process was spawned.
         scopes[id]=scope
         let packet=try JSONSerialization.data(withJSONObject:["v":1,"type":"run","job_id":id,"attempt":ordinal,

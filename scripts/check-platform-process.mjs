@@ -118,7 +118,7 @@ try {
   const stoppedBackup=spawnSync(join(bin,'studioctl'),['--state',state,'backup','--to',join(state,'snapshot.sqlite')],{encoding:'utf8',timeout:3000});
   assert.equal(stoppedBackup.status,0,'Stopped platform journal snapshot failed');
   const receipt=JSON.parse(stoppedBackup.stdout);
-  assert.equal(receipt.scope,'platform_journal_only');assert.equal(receipt.schema,7);assert.match(receipt.sha256,/^[a-f0-9]{64}$/);
+  assert.equal(receipt.scope,'platform_journal_only');assert.equal(receipt.schema,8);assert.match(receipt.sha256,/^[a-f0-9]{64}$/);
   const bundle=join(state,'state-bundle');
   const savedState=spawnSync(join(bin,'studioctl'),['--state',state,'backup-state','--to',bundle],{encoding:'utf8',timeout:5000});
   assert.equal(savedState.status,0,'Stopped journal+empty-export bundle failed');

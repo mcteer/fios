@@ -9,7 +9,7 @@
     "minimum_macos": "14.0"
   },
   "sqlite": {"provider": "macos_system", "version": "3.54.0"},
-  "journal_schema": 7,
+  "journal_schema": 8,
   "journal_application_id": "FIS9",
   "python": {
     "version": "3.11.17",

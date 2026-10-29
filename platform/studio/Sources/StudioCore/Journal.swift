@@ -68,14 +68,14 @@ public final class Journal {
                 // unknown layout. Inspect/recover only a bounded private copy
                 // before touching the original with SQLite. Older layouts need
                 // an explicit reviewed migration.
-                guard version==7,application==0x46495339 else {throw JournalError.invalid}
+                guard version==8,application==0x46495339 else {throw JournalError.invalid}
                 try validateCurrentSchema()
                 try validateOwnershipRecords()
                 guard sqlite3_close(db)==SQLITE_OK else {throw JournalError.storage}
                 db=nil;jobsCache=nil;sandboxesCache=nil
                 guard sqlite3_open_v2(file,&db,SQLITE_OPEN_READWRITE|SQLITE_OPEN_FULLMUTEX,nil)==SQLITE_OK else {throw JournalError.storage}
                 sqlite3_busy_timeout(db,1000)
-                guard try scalar("PRAGMA user_version")==7,try scalar("PRAGMA application_id")==0x46495339 else {throw JournalError.invalid}
+                guard try scalar("PRAGMA user_version")==8,try scalar("PRAGMA application_id")==0x46495339 else {throw JournalError.invalid}
                 try validateCurrentSchema()
                 try validateOwnershipRecords()
             }
@@ -85,6 +85,7 @@ public final class Journal {
             try execute("PRAGMA journal_mode=WAL")
             try execute("PRAGMA synchronous=FULL")
             try execute("CREATE TABLE IF NOT EXISTS inference(job TEXT NOT NULL, attempt INTEGER NOT NULL CHECK(attempt BETWEEN 0 AND 3), model TEXT NOT NULL, uncertain INTEGER NOT NULL CHECK(uncertain IN(0,1)), PRIMARY KEY(job,attempt))")
+            try execute("CREATE TABLE IF NOT EXISTS inference_scopes(job TEXT NOT NULL,attempt INTEGER NOT NULL CHECK(attempt BETWEEN 0 AND 3),payload TEXT NOT NULL,state TEXT NOT NULL CHECK(state IN('reserved','dispatched','uncertain','complete','not_sent')),PRIMARY KEY(job,attempt))")
             try execute("CREATE TABLE IF NOT EXISTS services(service TEXT PRIMARY KEY CHECK(service IN('mlx','orbstack')),desired TEXT NOT NULL CHECK(desired IN('running','maintenance','stopped')))")
             try execute("CREATE TABLE IF NOT EXISTS jobs(id TEXT PRIMARY KEY,idempotency TEXT NOT NULL UNIQUE,payload TEXT NOT NULL)")
             try execute("CREATE TABLE IF NOT EXISTS request_history(job TEXT NOT NULL,attempt INTEGER NOT NULL,model TEXT NOT NULL,PRIMARY KEY(job,attempt))")
@@ -99,10 +100,13 @@ public final class Journal {
             for record in try workerGrants() {
                 try execute("INSERT OR IGNORE INTO worker_launches VALUES(?,?,?,?,0)",[record.job,String(record.attempt),UUID().uuidString.lowercased(),record.grant.boot])
             }
-            try execute("PRAGMA user_version=7")
+            try execute("PRAGMA user_version=8")
             try recoverJobs()
             // Restart never proves native completion.
-            try execute("UPDATE inference SET uncertain=1")
+            try transaction {
+                try execute("UPDATE inference SET uncertain=1")
+                try execute("UPDATE inference_scopes SET state='uncertain' WHERE state IN('reserved','dispatched')")
+            }
         } catch {
             if let db { sqlite3_close(db); self.db = nil }
             close(lockFD); lockFD = -1
@@ -133,15 +137,16 @@ public final class Journal {
         // The marker is written before WAL on first creation, so legitimate
         // platform state never needs adoption of an unmarked main database.
         return Array(header.prefix(16)) == Array("SQLite format 3\0".utf8) &&
-            word(68) == 0x46495339 && word(60) <= 7
+            word(68) == 0x46495339 && word(60) <= 8
     }
 
     private func validateCurrentSchema() throws {
-        // Exact reviewed v7 SQL, normalized only for whitespace. Preserve case
+        // Exact reviewed v8 SQL, normalized only for whitespace. Preserve case
         // in quoted CHECK values; do not silently weaken constraints, rebuild
         // indexes or discard future tables/columns/ownership during startup.
         let expected:[String:String]=[
             "inference":"CREATE TABLE inference(job TEXT NOT NULL, attempt INTEGER NOT NULL CHECK(attempt BETWEEN 0 AND 3), model TEXT NOT NULL, uncertain INTEGER NOT NULL CHECK(uncertain IN(0,1)), PRIMARY KEY(job,attempt))",
+            "inference_scopes":"CREATE TABLE inference_scopes(job TEXT NOT NULL,attempt INTEGER NOT NULL CHECK(attempt BETWEEN 0 AND 3),payload TEXT NOT NULL,state TEXT NOT NULL CHECK(state IN('reserved','dispatched','uncertain','complete','not_sent')),PRIMARY KEY(job,attempt))",
             "services":"CREATE TABLE services(service TEXT PRIMARY KEY CHECK(service IN('mlx','orbstack')),desired TEXT NOT NULL CHECK(desired IN('running','maintenance','stopped')))",
             "jobs":"CREATE TABLE jobs(id TEXT PRIMARY KEY,idempotency TEXT NOT NULL UNIQUE,payload TEXT NOT NULL)",
             "request_history":"CREATE TABLE request_history(job TEXT NOT NULL,attempt INTEGER NOT NULL,model TEXT NOT NULL, request_id TEXT,PRIMARY KEY(job,attempt))",
@@ -208,7 +213,7 @@ public final class Journal {
                       sqlite3_column_type(rows,1)==SQLITE_INTEGER else {throw JournalError.invalid}
                 try validate(job:storedString(rows,0),attempt:Int(sqlite3_column_int64(rows,1)))
                 let bytes=try storedBytes(rows,2,maximum:WireLimits.modelBytes)
-                guard String(data:bytes,encoding:.utf8) != nil else {throw JournalError.invalid}
+                guard let model=String(data:bytes,encoding:.utf8),WireScalar.model(model) else {throw JournalError.invalid}
                 if table=="inference" {
                     guard sqlite3_column_type(rows,3)==SQLITE_INTEGER,(0...1).contains(sqlite3_column_int64(rows,3)) else {throw JournalError.invalid}
                 } else if sqlite3_column_type(rows,3) != SQLITE_NULL {
@@ -217,6 +222,7 @@ public final class Journal {
                 count+=1
             }
         }
+        try validateInferenceScopes()
         let launches=try statement("SELECT job,attempt,nonce,boot,reaped FROM worker_launches")
         defer {sqlite3_finalize(launches)}
         var launchesCount=0
@@ -280,9 +286,17 @@ public final class Journal {
         return try scalar("SELECT count(*) FROM request_history WHERE job=?",[job])
     }
     public func claim(job: String, attempt: Int, model: String,requestID:String?=nil) throws {
-        try validate(job: job, attempt: attempt)
+        try claim(job:job,attempt:attempt,model:model,requestID:requestID,scope:nil)
+    }
+    func claim(job:String,attempt:Int,model:String,requestID:String?=nil,scope:InferenceScope) throws {
+        try claim(job:job,attempt:attempt,model:model,requestID:requestID,scope:Optional(scope))
+    }
+    private func claim(job:String,attempt:Int,model:String,requestID:String?,scope:InferenceScope?) throws {
+        try validate(job:job,attempt:attempt)
+        let payload=try scope.map { try $0.encoded() }
+        if let scope {guard WireScalar.exactModel(scope.canonicalModel,model) else {throw JournalError.invalid}}
         if let requestID { try validate(job:requestID,attempt:0) }
-        guard !model.isEmpty, model.utf8.count <= 1024 else { throw JournalError.invalid }
+        guard WireScalar.model(model) else { throw JournalError.invalid }
         try transaction {
             guard try scalar("SELECT count(*) FROM inference") < 2,
                   try scalar("SELECT count(*) FROM request_history") < 1024 else { throw JournalError.trackingLimit }
@@ -295,6 +309,9 @@ public final class Journal {
                   try scalar("SELECT count(*) FROM inference WHERE job=?",[job]) == 0 else { throw JournalError.conflict }
             guard try scalar("SELECT count(*) FROM inference WHERE job=? AND attempt=?", [job, String(attempt)]) == 0 else { throw JournalError.conflict }
             try execute("INSERT INTO inference(job,attempt,model,uncertain) VALUES(?,?,?,0)", [job,String(attempt),model])
+            // Explicit null is a low-level unbound fixture claim, never an
+            // absent metadata row that could silently downgrade a bound one.
+            try execute("INSERT INTO inference_scopes(job,attempt,payload,state) VALUES(?,?,?,'reserved')",[job,String(attempt),payload.map {String(decoding:$0,as:UTF8.self)} ?? "null"])
             if let requestID {
                 try execute("INSERT INTO request_history(job,attempt,model,request_id) VALUES(?,?,?,?)",[job,String(attempt),model,requestID])
             } else {
@@ -304,15 +321,90 @@ public final class Journal {
     }
     public func markUncertain(job: String, attempt: Int) throws {
         try validate(job: job, attempt: attempt)
-        try execute("UPDATE inference SET uncertain=1 WHERE job=? AND attempt=?", [job,String(attempt)])
-        guard sqlite3_changes(db) == 1 else { throw JournalError.invalid }
+        try transaction {
+            try execute("UPDATE inference SET uncertain=1 WHERE job=? AND attempt=?", [job,String(attempt)])
+            guard sqlite3_changes(db) == 1 else { throw JournalError.invalid }
+            try execute("UPDATE inference_scopes SET state='uncertain' WHERE job=? AND attempt=? AND state IN('reserved','dispatched','uncertain')",[job,String(attempt)])
+            guard sqlite3_changes(db)==1 else {throw JournalError.invalid}
+        }
     }
     // Trusted correlated completion proof is required by the caller. This is
     // never a task/sandbox RPC. Cancellation is markUncertain, not complete.
     public func complete(job: String, attempt: Int) throws {
         try validate(job: job, attempt: attempt)
-        try execute("DELETE FROM inference WHERE job=? AND attempt=?", [job,String(attempt)])
-        guard sqlite3_changes(db) == 1 else { throw JournalError.invalid }
+        guard try scalar("SELECT count(*) FROM inference_scopes WHERE job=? AND attempt=? AND payload='null'",[job,String(attempt)])==1 else {throw JournalError.conflict}
+        try transaction {
+            try execute("DELETE FROM inference WHERE job=? AND attempt=?", [job,String(attempt)])
+            guard sqlite3_changes(db) == 1 else { throw JournalError.invalid }
+            try execute("UPDATE inference_scopes SET state='complete' WHERE job=? AND attempt=?",[job,String(attempt)])
+        }
+    }
+    func inferenceScope(job:String,attempt:Int) throws -> InferenceScopeRecord? {
+        try validate(job:job,attempt:attempt)
+        let row=try statement("SELECT payload,state FROM inference_scopes WHERE job=? AND attempt=?",[job,String(attempt)])
+        defer {sqlite3_finalize(row)}
+        let code=sqlite3_step(row)
+        if code==SQLITE_DONE {return nil}
+        guard code==SQLITE_ROW,let state=InferenceState(rawValue:try storedString(row,1)) else {throw JournalError.invalid}
+        let bytes=try storedBytes(row,0,maximum:InferenceScope.maximumBytes)
+        if bytes==Data("null".utf8) {return nil}
+        let scope=try InferenceScope.decode(bytes)
+        guard sqlite3_step(row)==SQLITE_DONE else {throw JournalError.invalid}
+        return InferenceScopeRecord(scope:scope,state:state)
+    }
+    private func validateInferenceScopes() throws {
+        guard try scalar("SELECT count(*) FROM request_history h WHERE NOT EXISTS(SELECT 1 FROM inference_scopes s WHERE s.job=h.job AND s.attempt=h.attempt)")==0,
+              try scalar("SELECT count(*) FROM inference i WHERE NOT EXISTS(SELECT 1 FROM inference_scopes s WHERE s.job=i.job AND s.attempt=i.attempt)")==0 else {throw JournalError.invalid}
+        let rows=try statement("SELECT job,attempt,payload,state FROM inference_scopes")
+        defer {sqlite3_finalize(rows)}
+        var count=0
+        while true {
+            let code=sqlite3_step(rows)
+            if code==SQLITE_DONE {break}
+            guard code==SQLITE_ROW,count<1024,sqlite3_column_type(rows,1)==SQLITE_INTEGER,
+                  let state=InferenceState(rawValue:try storedString(rows,3)) else {throw JournalError.invalid}
+            let job=try storedString(rows,0),attempt=Int(sqlite3_column_int64(rows,1))
+            try validate(job:job,attempt:attempt)
+            let bytes=try storedBytes(rows,2,maximum:InferenceScope.maximumBytes)
+            let scope=bytes==Data("null".utf8) ? nil : try InferenceScope.decode(bytes)
+            let arguments=[job,String(attempt)]
+            guard try scalar("SELECT count(*) FROM request_history WHERE job=? AND attempt=?",arguments)==1 else {throw JournalError.invalid}
+            if let scope {
+                guard try scalar("SELECT count(*) FROM request_history WHERE job=? AND attempt=? AND model=?",arguments+[scope.canonicalModel])==1 else {throw JournalError.invalid}
+            }
+            let unresolved = ![InferenceState.complete,.not_sent].contains(state)
+            guard try scalar("SELECT count(*) FROM inference WHERE job=? AND attempt=?",arguments)==(unresolved ? 1:0),
+                  try scalar("SELECT count(*) FROM inference i JOIN request_history h ON i.job=h.job AND i.attempt=h.attempt AND i.model=h.model WHERE i.job=? AND i.attempt=?",arguments)==(unresolved ? 1:0) else {throw JournalError.invalid}
+            if unresolved {
+                guard try scalar("SELECT count(*) FROM inference WHERE job=? AND attempt=? AND uncertain=?",[job,String(attempt),state == .uncertain ? "1":"0"])==1 else {throw JournalError.invalid}
+            }
+            count+=1
+        }
+    }
+    // Persist before any permission bytes can reach the worker. This means
+    // dispatch MAY occur, not that a POST has actually happened; failure/exit
+    // after this edge stays uncertain until correlated evidence resolves it.
+    func markDispatched(job:String,attempt:Int) throws {
+        try validate(job:job,attempt:attempt)
+        guard let record=try inferenceScope(job:job,attempt:attempt),record.state == .reserved else {throw JournalError.conflict}
+        try execute("UPDATE inference_scopes SET state='dispatched' WHERE job=? AND attempt=? AND state='reserved'",[job,String(attempt)])
+        guard sqlite3_changes(db)==1 else {throw JournalError.conflict}
+    }
+    // Trusted broker/validated private-worker evidence only; never task IPC.
+    // Scope correlation is necessary, not sufficient evidence of native
+    // terminality. No timer, restart or new health invokes this operation.
+    func resolveInference(job:String,attempt:Int,scope:InferenceScope,outcome:InferenceState) throws {
+        guard [.complete,.not_sent].contains(outcome),
+              let record=try inferenceScope(job:job,attempt:attempt),
+              ![InferenceState.complete,.not_sent].contains(record.state),
+              outcome != .complete || record.state != .reserved,
+              try record.scope.encoded()==scope.encoded() else {throw JournalError.conflict}
+        try transaction {
+            try execute("DELETE FROM inference WHERE job=? AND attempt=?",[job,String(attempt)])
+            guard sqlite3_changes(db)==1 else {throw JournalError.conflict}
+            try execute("UPDATE inference_scopes SET state=? WHERE job=? AND attempt=?",[outcome.rawValue,job,String(attempt)])
+            guard sqlite3_changes(db)==1 else {throw JournalError.conflict}
+        }
     }
     func jobs() throws -> [DurableJob] {
         if let jobsCache {return jobsCache}
@@ -467,6 +559,7 @@ public final class Journal {
                 // has independent lifetime and is never expired by a clock.
                 try execute("DELETE FROM worker_grants WHERE job=? AND reaped=1",[job.id])
                 try execute("DELETE FROM worker_launches WHERE job=? AND reaped=1",[job.id])
+                try execute("DELETE FROM inference_scopes WHERE job=? AND state IN('complete','not_sent')",[job.id])
                 try execute("DELETE FROM request_history WHERE job=?",[job.id])
                 try execute("DELETE FROM sandboxes WHERE job=?",[job.id])
                 try execute("DELETE FROM jobs WHERE id=?",[job.id])

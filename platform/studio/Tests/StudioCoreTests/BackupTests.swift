@@ -32,7 +32,7 @@ func runBackupTests() throws {
         }
     }
     let receipt=try StoppedJournalBackup.create(directory:state,destination:backup)
-    guard receipt.schema==7,receipt.sha256.count==64,receipt.bytes>100 else {fatalError("No bounded integrity receipt")}
+    guard receipt.schema==8,receipt.sha256.count==64,receipt.bytes>100 else {fatalError("No bounded integrity receipt")}
     let copy=root.appendingPathComponent("restored")
     try FileManager.default.createDirectory(at:copy,withIntermediateDirectories:false,attributes:[.posixPermissions:0o700])
     try FileManager.default.copyItem(at:backup,to:copy.appendingPathComponent("state.sqlite"))
@@ -54,7 +54,7 @@ func runBackupTests() throws {
     try FileManager.default.copyItem(at:backup,to:futureFile)
     var database:OpaquePointer?
     guard sqlite3_open_v2(futureFile.path,&database,SQLITE_OPEN_READWRITE,nil)==SQLITE_OK else {throw JournalError.storage}
-    let changed=sqlite3_exec(database,"PRAGMA user_version=8",nil,nil,nil)
+    let changed=sqlite3_exec(database,"PRAGMA user_version=9",nil,nil,nil)
     sqlite3_close(database)
     guard changed==SQLITE_OK else {throw JournalError.storage}
     let before=try Data(contentsOf:futureFile)

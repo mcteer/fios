@@ -12,7 +12,7 @@ import CryptoKit
             var database:OpaquePointer?
             guard sqlite3_open_v2(directory.appendingPathComponent("state.sqlite").path,&database,SQLITE_OPEN_READWRITE,nil)==SQLITE_OK else {throw JournalError.storage}
             defer {sqlite3_close(database)}
-            guard sqlite3_exec(database,"PRAGMA user_version=8",nil,nil,nil)==SQLITE_OK else {throw JournalError.storage}
+            guard sqlite3_exec(database,"PRAGMA user_version=9",nil,nil,nil)==SQLITE_OK else {throw JournalError.storage}
             return
         }
         let journal=try Journal(directory:directory)
@@ -37,6 +37,6 @@ import CryptoKit
             }
         }
         guard result==payload else {throw JournalError.invalid}
-        print("{\"uncertain\":1,\"exports\":1,\"schema\":7}")
+        print("{\"uncertain\":1,\"exports\":1,\"schema\":8}")
     }
 }

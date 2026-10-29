@@ -13,7 +13,7 @@ function exact(value,keys){
 }
 export function validatePlatformManifest(value,{template=false}={}){
   exact(value,['schema','approval','architecture','toolchain','sqlite','journal_schema','journal_application_id','python','native_inventory','approved_sandbox_images','activation',...(template?[]:['source_revision','source_tree_sha256','artifacts','package_complete'])]);
-  if(value.schema!==1||value.approval!=='development_observation_only'||value.architecture!=='arm64'||value.journal_schema!==7||value.journal_application_id!=='FIS9')fail();
+  if(value.schema!==1||value.approval!=='development_observation_only'||value.architecture!=='arm64'||value.journal_schema!==8||value.journal_application_id!=='FIS9')fail();
   exact(value.toolchain,['swift','swift_build','sdk','minimum_macos']);
   exact(value.sqlite,['provider','version']);
   if(value.sqlite.provider!=='macos_system'||value.sqlite.version!=='3.54.0')fail();

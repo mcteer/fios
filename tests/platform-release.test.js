@@ -18,7 +18,7 @@ test('native development manifest pins toolchain/locks and cannot authorize acti
   assert.throws(()=>validatePlatformManifest({...template,activation:{...template.activation,managed_inference:true}},{template:true}));
   assert.throws(()=>validatePlatformManifest({...template,approval:'production'},{template:true}));
   assert.throws(()=>validatePlatformManifest({...template,extra:'ignored'},{template:true}));
-  assert.throws(()=>validatePlatformManifest({...template,journal_schema:8},{template:true}));
+  assert.throws(()=>validatePlatformManifest({...template,journal_schema:9},{template:true}));
 });
 test('release receipt decoder rejects duplicate/noncanonical JSON and unreviewed fields',()=>{
   const canonical=JSON.stringify(template,null,2)+'\n';
