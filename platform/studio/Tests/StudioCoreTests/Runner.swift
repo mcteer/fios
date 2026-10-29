@@ -32,6 +32,7 @@ struct PolicyTestRunner {
             ("VM envelope",runVMEnvelopeTests),
             ("VM resources",runVMResourceTests),
             ("GPU resources",runGPUResourceTests),
+            ("resource observations",runResourceObservationTests),
             ("security",runSecurityTests),
             ("contracts",runContractTests),
             ("backup",runBackupTests),

@@ -71,7 +71,9 @@ public enum ManagerRuntime {
         var lastHeartbeat:TimeInterval = -2
         var cpuSampler=CPUSampler()
         var resourceSample=activeExecution?.sample(now:timestamp(),cpu:nil) ?? HostResources.sample(statePath:directory.path)
+        var gpuSampledAt:Int64?=timestamp()
         var gpuSample=GPUResources.sample()
+        if gpuSample == nil {gpuSampledAt=nil}
         let termination=Termination()
         var clients:[PendingControl]=[]
         while !termination.requested {
@@ -115,7 +117,9 @@ public enum ManagerRuntime {
                 }
                 let cpu=cpuSampler.observe(ticks:CPUSampler.readTicks(),now:sampledAt)
                 resourceSample=applyingVM(to:activeExecution?.sample(now:sampledAt,cpu:cpu) ?? HostResources.sample(statePath:directory.path,measuredCPU:cpu),now:sampledAt)
+                gpuSampledAt=timestamp()
                 gpuSample=GPUResources.sample()
+                if gpuSample == nil {gpuSampledAt=nil}
                 do {try artifacts.expire(request:UUID().uuidString.lowercased(),now:timestamp())}
                 catch ArtifactServiceFailure.capacity {} // Finite I/O slots, retry maintenance next cycle.
                 try journal.expireTerminalJobs(now:timestamp())
@@ -174,18 +178,10 @@ public enum ManagerRuntime {
                         response["artifact_jobs"]=artifacts.statistics.jobs
                     case .resources:
                         guard request.payload.isEmpty else { throw ControlError.invalid_request }
-                        let data=try JSONEncoder().encode(requestResources)
-                        guard var fields=try JSONSerialization.jsonObject(with:data) as? [String:Any] else { throw ControlError.internal_error }
-                        for name in ["available","vmAvailable","vmSampledAt","diskFree","cpu"] where fields[name]==nil { fields[name]=NSNull() }
-                        fields["gpu"]=gpuSample.map {$0.utilization as Any} ?? NSNull()
-                        fields["gpu_in_use_bytes"]=gpuSample?.inUseBytes.map {$0 as Any} ?? NSNull()
-                        fields["gpu_allocated_bytes"]=gpuSample?.allocatedBytes.map {$0 as Any} ?? NSNull()
-                        response["resources"]=fields
-                        response["resource_observation"]=["version":1,"epoch":epoch,"sequence":sequence,
-                            "sampled_at":requestResources.sampledAt,"gpu_coverage":gpuSample == nil ? "unavailable" : "observed_registry",
-                            "vm_coverage":requestResources.vmAvailable == nil ? "unknown" : "verified_envelope",
-                            "vm_sampled_at":requestResources.vmSampledAt.map {$0 as Any} ?? NSNull(),
-                            "vm_epoch":jobs.vmEpoch(now:requestedAt).map {$0 as Any} ?? NSNull()]
+                        let telemetry=try ResourceObservationExport.encode(sample:requestResources,gpu:gpuSample,gpuSampledAt:gpuSampledAt,
+                            now:requestedAt,epoch:epoch,sequence:Int64(sequence),vmEpoch:jobs.vmEpoch(now:requestedAt))
+                        response["resources"]=telemetry.resources
+                        response["resource_observation"]=telemetry.observation
                     case .activity:
                         guard request.payload.isEmpty else { throw ControlError.invalid_request }
                         response["coverage"]="unsupported"; response["activity"]="unknown"

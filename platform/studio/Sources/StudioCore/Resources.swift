@@ -14,14 +14,18 @@ public struct ResourceSample: Codable, Sendable {
     // Full retained export reservations plus queued declarations. Keeping
     // ready bytes reserved also covers a free-space sample predating a write.
     public var diskCommitted:UInt64 = 0
+    public var lowPowerMode:Bool? = nil
     func replacingVM(_ value:UInt64?,sampledAt vmAt:Int64? = nil)->ResourceSample {
-        ResourceSample(sampledAt:sampledAt,physical:physical,available:available,vmAvailable:value,diskFree:diskFree,cpu:cpu,pressure:pressure,thermal:thermal,vmSampledAt:value==nil ? nil : vmAt,diskCommitted:diskCommitted)
+        ResourceSample(sampledAt:sampledAt,physical:physical,available:available,vmAvailable:value,diskFree:diskFree,cpu:cpu,pressure:pressure,thermal:thermal,vmSampledAt:value==nil ? nil : vmAt,diskCommitted:diskCommitted,lowPowerMode:lowPowerMode)
     }
 }
 
 public enum HostResources {
     public static func nowMilliseconds() -> Int64 { Int64(Date().timeIntervalSince1970 * 1000) }
     public static func sample(statePath: String, verifiedVMAvailable: UInt64? = nil, verifiedVMAt:Int64? = nil, measuredCPU: Double? = nil) -> ResourceSample {
+        // Keep the oldest collection edge; a slow later sensor must not
+        // refresh earlier CPU/memory readings on return.
+        let sampledAt = nowMilliseconds()
         let physical = ProcessInfo.processInfo.physicalMemory
         var statistics = vm_statistics64_data_t()
         var count = mach_msg_type_number_t(MemoryLayout<vm_statistics64_data_t>.size / MemoryLayout<integer_t>.size)
@@ -54,9 +58,10 @@ public enum HostResources {
         }
         // Unsupported pressure observation stays unknown; never synthesize
         // normal from available bytes.
-        return ResourceSample(sampledAt: nowMilliseconds(), physical: physical,
+        return ResourceSample(sampledAt: sampledAt, physical: physical,
                               available: available, vmAvailable: verifiedVMAvailable,
                               diskFree: disk, cpu: cpu, pressure: pressure, thermal: thermal,
-                              vmSampledAt:verifiedVMAvailable==nil ? nil : verifiedVMAt ?? nowMilliseconds())
+                              vmSampledAt:verifiedVMAvailable==nil ? nil : verifiedVMAt,
+                              lowPowerMode:ProcessInfo.processInfo.isLowPowerModeEnabled)
     }
 }

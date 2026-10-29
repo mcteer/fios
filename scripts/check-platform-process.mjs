@@ -81,6 +81,14 @@ try {
   const resourceObservation=status('resources').resource_observation;
   assert.ok(['unavailable','observed_registry'].includes(resourceObservation.gpu_coverage));assert.equal(resourceObservation.vm_coverage,'unknown');
   assert.equal(resourceObservation.vm_sampled_at,null);assert.equal(resourceObservation.vm_epoch,null);
+  assert.equal(resourceObservation.version,2);
+  assert.deepEqual(Object.keys(resourceObservation.signals).sort(),['available_memory','cpu','disk_free','gpu','gpu_allocated_memory','gpu_in_use_memory','low_power_mode','physical_memory','pressure','thermal','vm_available'].sort());
+  for(const key of ['physical_memory','cpu','disk_free','low_power_mode']) {
+    const signal=resourceObservation.signals[key];assert.equal(signal.availability,'observed');
+    assert.ok(Number.isSafeInteger(signal.sampled_at));assert.ok(Number.isSafeInteger(signal.age_ms)&&signal.age_ms>=-1000&&signal.age_ms<=5000);
+  }
+  assert.equal(resourceObservation.signals.vm_available.availability,'unknown');
+  assert.equal(typeof resources.lowPowerMode,'boolean');
   assert.match(resourceObservation.epoch,/^[a-f0-9-]{36}$/);assert.ok(Number.isSafeInteger(resourceObservation.sequence));
   const liveBackup=spawnSync(join(bin,'studioctl'),['--state',state,'backup','--to',join(state,'snapshot.sqlite')],{encoding:'utf8',timeout:3000});
   assert.equal(liveBackup.status,1,'Offline backup must refuse a live manager');
