@@ -26,7 +26,7 @@ final class OwnedVMResourceReader:@unchecked Sendable {
     init(runtime:DockerRuntime,approvedImages:Set<String>,directMetadata:Bool=false) throws {
         guard !approvedImages.isEmpty,approvedImages.count<=8 else {throw RuntimeError.invalid}
         self.runtime=runtime;images=approvedImages
-        metadata=directMetadata ? DockerVMMetadata(socketPath:runtime.socket,peerUID:geteuid()):nil
+        metadata=directMetadata ? DockerVMMetadata(socketPath:runtime.socket,peerUID:geteuid(),endpointPolicy:runtime.endpointPolicy):nil
     }
     static func safeTarget(_ object:[String:Any],configuration:SandboxConfiguration,id:String)->Bool {
         func bool(_ value:Any?,_ expected:Bool)->Bool {

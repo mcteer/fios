@@ -2,13 +2,14 @@ import Foundation
 import Darwin
 
 func runDockerAttachTests() throws {
-    let directory="/tmp/fios-attach-"+UUID().uuidString.lowercased()
-    try FileManager.default.createDirectory(atPath:directory,withIntermediateDirectories:false,attributes:[.posixPermissions:0o700])
-    defer {try? FileManager.default.removeItem(atPath:directory)}
-    let listener=try UnixControlSocket(path:directory+"/mock.sock")
+    let home="/private/tmp/fios-attach-"+UUID().uuidString.lowercased()
+    let directory=home+"/.orbstack/run"
+    try FileManager.default.createDirectory(atPath:directory,withIntermediateDirectories:true,attributes:[.posixPermissions:0o700])
+    defer {try? FileManager.default.removeItem(atPath:home)}
+    let listener=try UnixControlSocket(path:directory+"/docker.sock")
     let config=try SandboxConfiguration(job:UUID().uuidString.lowercased(),nonce:String(repeating:"a",count:64),image:"sha256:"+String(repeating:"b",count:64),memory:512<<20,cpus:1)
     let id=String(repeating:"c",count:64),created=ProcessInfo.processInfo.systemUptime
-    let client=try DockerAttach(socketPath:directory+"/mock.sock",configuration:config,savedID:id,peerUID:geteuid(),now:created)
+    let client=try DockerAttach(socketPath:directory+"/docker.sock",configuration:config,savedID:id,peerUID:geteuid(),now:created,endpointPolicy:try RuntimeEndpointPolicy(home:home,uid:geteuid()))
     guard let peer=try listener.acceptPeer() else {fatalError("Local attach mock not connected")}
     defer {Darwin.close(peer)}
     _=try client.poll(now:ProcessInfo.processInfo.systemUptime)
@@ -34,6 +35,13 @@ func runDockerAttachTests() throws {
     let received=Darwin.read(peer,&bytes,bytes.count)
     guard received==application.count,Data(bytes.prefix(received))==application else {fatalError("Attach input framing changed")}
     client.close()
+    guard chmod(directory,0o755)==0 else {fatalError("Fixture endpoint mode change failed")}
+    do {
+        _=try DockerAttach(socketPath:directory+"/docker.sock",configuration:config,savedID:id,peerUID:geteuid(),now:ProcessInfo.processInfo.systemUptime,endpointPolicy:RuntimeEndpointPolicy(home:home,uid:geteuid()))
+        fatalError("Attach ignored its enrolled endpoint policy")
+    } catch RuntimeError.identity {}
+    guard chmod(directory,0o700)==0 else {fatalError("Fixture endpoint mode restore failed")}
+
     var parser=DockerMultiplex()
     do {_=try parser.append(Data([2,0,0,0,0,0,0,1,65]));fatalError("Infrastructure stderr entered control frames")} catch DockerStreamError.invalid {}
     do {_=try parser.append(wire);fatalError("Failed multiplex parser revived")} catch DockerStreamError.closed {}

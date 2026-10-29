@@ -90,8 +90,8 @@ struct RuntimeEnrolledPolicy {
         var home=stat()
         guard lstat(document.homePath,&home)==0,home.st_mode&S_IFMT==S_IFDIR,
               home.st_uid==document.uid,home.st_mode&0o022==0 else {throw ControlError.unauthorized}
-        let socket=document.homePath+"/.orbstack/run/docker.sock"
-        let runtime=try DockerRuntime(executable:docker,socket:socket)
+        let endpoint=try RuntimeEndpointPolicy(home:document.homePath,uid:document.uid)
+        let runtime=DockerRuntime(executable:docker,endpoint:endpoint)
         return RuntimeEnrolledPolicy(document:document,
             policySHA256:SHA256.hash(data:bytes).map {String(format:"%02x",$0)}.joined(),runtime:runtime,orbctl:orbctl)
     }

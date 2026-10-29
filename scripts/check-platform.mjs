@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { createServer } from 'node:net';
 import { join, resolve } from 'node:path';
@@ -9,8 +9,8 @@ import { fileURLToPath } from 'node:url';
 // No SSH, daemon socket, service lifecycle or live inference. The test binary
 // and descendants deny IP networking except one freshly allocated loopback
 // mock endpoint; configured native ports/other IPs stay denied. No fallback.
-if (![3,4].includes(process.argv.length) || process.argv[2] !== '--mock' || (process.argv.length===4 && process.argv[3]!=='--release')) {
-  throw new Error('Usage: node scripts/check-platform.mjs --mock [--release]');
+if (![3,4].includes(process.argv.length) || process.argv[2] !== '--mock' || (process.argv.length===4 && !['--release','--mutate-runtime-postcheck'].includes(process.argv[3]))) {
+  throw new Error('Usage: node scripts/check-platform.mjs --mock [--release|--mutate-runtime-postcheck]');
 }
 const root = fileURLToPath(new URL('../', import.meta.url));
 const directory = mkdtempSync(join(tmpdir(), 'fios-platform-policy-'));
@@ -41,9 +41,20 @@ try {
   const censusBuild=spawnSync('swiftc',['-parse-as-library','-swift-version','6','-warnings-as-errors','-O',censusSource,'-o',censusBinary],{cwd:root,stdio:'inherit',timeout:30000});
   if(censusBuild.error)throw censusBuild.error;
   if(censusBuild.status!==0)throw Error('Portable census fixture build failed');
+  const endpointSource=join(directory,'EndpointCommand.swift'),endpointBinary=join(directory,'runtime-endpoint-command');
+  copyFileSync(resolve(root,'platform/studio/Tests/StudioCoreTests/RuntimeEndpointCommand.swift.fixture'),endpointSource);
+  const endpointBuild=spawnSync('swiftc',['-parse-as-library','-swift-version','6','-warnings-as-errors','-O',endpointSource,'-o',endpointBinary],{cwd:root,stdio:'inherit',timeout:30000});
+  if(endpointBuild.error)throw endpointBuild.error;
+  if(endpointBuild.status!==0)throw Error('Finite endpoint fixture build failed');
   const sources = ['Sources/StudioCore', 'Tests/StudioCoreTests'].flatMap(part => {
     const path = resolve(root, 'platform/studio', part);
-    return readdirSync(path).filter(name => name.endsWith('.swift')).sort().map(name => join(path, name));
+    return readdirSync(path).filter(name => name.endsWith('.swift')).sort().map(name => {
+      const source=join(path,name);
+      if(process.argv[3]!=='--mutate-runtime-postcheck'||part!=='Sources/StudioCore'||name!=='Sandboxes.swift')return source;
+      const original=readFileSync(source,'utf8'),check='        try pinned?.verify(deadline:min(deadline,ProcessInfo.processInfo.systemUptime+2))';
+      if(original.split(check).length!==2)throw Error('Postcheck mutation boundary changed');
+      const mutated=join(directory,'MutatedSandboxes.swift');writeFileSync(mutated,original.replace(check,'        withExtendedLifetime(pinned) {}'));return mutated;
+    });
   });
   const binary = join(directory, 'policy-tests');
   for (const [command, args] of [
@@ -52,7 +63,7 @@ try {
   ]) {
     // Compilation has its own finite hosted-runner allowance. Runtime tests
     // retain120s; no model, IPC, native-command or cleanup deadline is raised.
-    const result = spawnSync(command, args, { cwd: root, stdio: 'inherit', timeout: command==='swiftc'?300_000:120_000, env: { ...process.env, FIOS_PLATFORM_MOCK_PORT: String(port), FIOS_PLATFORM_SETID_FIXTURE: setidFixture, FIOS_PLATFORM_LOCK_SETID_FIXTURE: setidLock, FIOS_PLATFORM_CENSUS_FIXTURE:censusBinary } });
+    const result = spawnSync(command, args, { cwd: root, stdio: 'inherit', timeout: command==='swiftc'?300_000:120_000, env: { ...process.env, FIOS_PLATFORM_MOCK_PORT: String(port), FIOS_PLATFORM_SETID_FIXTURE: setidFixture, FIOS_PLATFORM_LOCK_SETID_FIXTURE: setidLock, FIOS_PLATFORM_CENSUS_FIXTURE:censusBinary, FIOS_PLATFORM_ENDPOINT_FIXTURE:endpointBinary } });
     if (result.error) throw result.error;
     if (result.status !== 0) throw new Error(`Platform policy validation failed (${result.status ?? result.signal})`);
   }

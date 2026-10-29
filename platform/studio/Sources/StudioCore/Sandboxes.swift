@@ -43,13 +43,26 @@ public struct SandboxConfiguration: Codable, Sendable, Equatable {
 public struct DockerRuntime:Sendable {
     let executable: VerifiedExecutable
     let socket: String
+    let endpointPolicy:RuntimeEndpointPolicy?
     public init(executable: VerifiedExecutable, socket: String) throws {
         guard socket.hasPrefix("/"), !socket.contains("\0"), !socket.contains("..") else { throw RuntimeError.invalid }
-        self.executable=executable; self.socket=socket
+        self.executable=executable; self.socket=socket;endpointPolicy=nil
+    }
+    init(executable:VerifiedExecutable,endpoint:RuntimeEndpointPolicy) {
+        self.executable=executable;socket=endpoint.path;endpointPolicy=endpoint
     }
     func command(_ arguments: [String], timeout: TimeInterval = 10) throws -> CommandResult {
-        try executable.run(arguments:["--host","unix://" + socket] + arguments, timeout:timeout,
+        guard timeout.isFinite,timeout>0,timeout<=10 else {throw RuntimeError.invalid}
+        let deadline=ProcessInfo.processInfo.systemUptime+timeout
+        let pinned=try endpointPolicy?.capture(deadline:min(deadline,ProcessInfo.processInfo.systemUptime+2))
+        let remaining=deadline-ProcessInfo.processInfo.systemUptime
+        guard remaining>0 else {throw RuntimeError.deadline}
+        let result=try executable.run(arguments:["--host","unix://" + socket] + arguments, timeout:remaining,
                            environment:["DOCKER_CONFIG":"/var/empty", "DOCKER_CLI_HINTS":"false"])
+        // A changed endpoint after an effect is unavailable/uncertain. Never
+        // turn a locally successful CLI into permission to retry or release.
+        try pinned?.verify(deadline:min(deadline,ProcessInfo.processInfo.systemUptime+2))
+        return result
     }
     public func create(_ configuration: SandboxConfiguration) throws -> String {
         let result = try command(configuration.createArguments)

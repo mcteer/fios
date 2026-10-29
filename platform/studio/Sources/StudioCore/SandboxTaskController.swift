@@ -29,11 +29,12 @@ final class SandboxTaskController {
     private let tasks:TaskController
     private let artifacts:AsyncArtifacts
     private let socket:String
+    private let endpointPolicy:RuntimeEndpointPolicy?
     private let peerUID:uid_t
     private var sessions:[String:Session]=[:]
     private var pendingExports:[String:(job:String,id:String)]=[:]
-    init(journal:Journal,jobs:JobController,tasks:TaskController,artifacts:AsyncArtifacts,socket:String,peerUID:uid_t) {
-        self.journal=journal;self.jobs=jobs;self.tasks=tasks;self.artifacts=artifacts;self.socket=socket;self.peerUID=peerUID
+    init(journal:Journal,jobs:JobController,tasks:TaskController,artifacts:AsyncArtifacts,socket:String,peerUID:uid_t,endpointPolicy:RuntimeEndpointPolicy?=nil) {
+        self.journal=journal;self.jobs=jobs;self.tasks=tasks;self.artifacts=artifacts;self.socket=socket;self.peerUID=peerUID;self.endpointPolicy=endpointPolicy
     }
     func register(id:String,owner:String,source:Data,inputSHA256:String,binding:WorkerDispatchBinding?,now:Int64) throws {
         guard source.count<=4<<20,sessions.count<2,sessions[id]==nil,
@@ -87,7 +88,7 @@ final class SandboxTaskController {
             }
             do {
                 if session.attach==nil,let runtimeID=record.runtimeID {
-                    session.attach=try DockerAttach(socketPath:socket,configuration:record.configuration,savedID:runtimeID,peerUID:peerUID,now:uptime)
+                    session.attach=try DockerAttach(socketPath:socket,configuration:record.configuration,savedID:runtimeID,peerUID:peerUID,now:uptime,endpointPolicy:endpointPolicy)
                 }
                 guard let attach=session.attach else {continue}
                 if job.state == .running,!session.modelRegistered,let binding=session.binding {

@@ -51,9 +51,10 @@ private final class MetadataDaemonFixture:@unchecked Sendable {
 }
 
 func runDockerVMMetadataFlowTests()throws {
-    let directory="/tmp/fios-vm-flow-"+UUID().uuidString.lowercased()
-    try FileManager.default.createDirectory(atPath:directory,withIntermediateDirectories:false,attributes:[.posixPermissions:0o700])
-    defer {try? FileManager.default.removeItem(atPath:directory)}
+    let home="/private/tmp/fios-vm-flow-"+UUID().uuidString.lowercased()
+    let directory=home+"/.orbstack/run"
+    try FileManager.default.createDirectory(atPath:directory,withIntermediateDirectories:true,attributes:[.posixPermissions:0o700])
+    defer {try? FileManager.default.removeItem(atPath:home)}
     let id=String(repeating:"a",count:64),exec=String(repeating:"b",count:64)
     let files=["/proc/meminfo","/proc/self/mountinfo","/proc/self/status","/proc/sys/kernel/random/boot_id"]
     func json(_ object:[String:Any],status:Int=200)throws->Data {
@@ -64,10 +65,14 @@ func runDockerVMMetadataFlowTests()throws {
     let stream=Data("HTTP/1.1 101 UPGRADED\r\nConnection: Upgrade\r\nUpgrade: tcp\r\n\r\n".utf8)+Data([1,0,0,0,0,0,0,UInt8(payload.count)])+payload
     let completed=try json(["ID":exec,"ContainerID":id,"Running":false,"ExitCode":0,
         "ProcessConfig":["privileged":false,"tty":false,"user":"65533:65533","entrypoint":"/bin/cat","arguments":files]])
-    let daemon=try MetadataDaemonFixture(path:directory+"/flow.sock",responses:[created,stream,completed])
-    let client=DockerVMMetadata(socketPath:directory+"/flow.sock",peerUID:geteuid())
+    let daemon=try MetadataDaemonFixture(path:directory+"/docker.sock",responses:[created,stream,completed])
+    let client=DockerVMMetadata(socketPath:directory+"/docker.sock",peerUID:geteuid(),endpointPolicy:try RuntimeEndpointPolicy(home:home,uid:geteuid()))
     guard try client.read(id:id)==payload else {fatalError("Fixed metadata stream changed")}
     let requests=try daemon.finish()
+    guard chmod(directory,0o755)==0 else {fatalError("Fixture endpoint mode change failed")}
+    do {_=try client.inspect(id:id);fatalError("Metadata ignored its enrolled endpoint policy")}catch RuntimeError.identity {}
+    guard chmod(directory,0o700)==0 else {fatalError("Fixture endpoint mode restore failed")}
+
     guard requests.count==3 else {fatalError("Metadata exec was replayed")}
     guard String(decoding:requests[0],as:UTF8.self).hasPrefix("POST /v1.47/containers/"+id+"/exec HTTP/1.0\r\n"),
           String(decoding:requests[1],as:UTF8.self).hasPrefix("POST /v1.47/exec/"+exec+"/start HTTP/1.1\r\n"),

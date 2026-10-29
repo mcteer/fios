@@ -13,6 +13,10 @@ protocol DockerVMMetadataReading:Sendable {
 struct DockerVMMetadata:DockerVMMetadataReading {
     let socketPath:String
     let peerUID:uid_t
+    let endpointPolicy:RuntimeEndpointPolicy?
+    init(socketPath:String,peerUID:uid_t,endpointPolicy:RuntimeEndpointPolicy?=nil) {
+        self.socketPath=socketPath;self.peerUID=peerUID;self.endpointPolicy=endpointPolicy
+    }
     private static let files=["/proc/meminfo","/proc/self/mountinfo","/proc/self/status","/proc/sys/kernel/random/boot_id"]
     private func valid(_ id:String)->Bool {id.utf8.count==64 && id.utf8.allSatisfy({(48...57).contains($0)||(97...102).contains($0)})}
     func inspect(id:String)throws->[String:Any] {
@@ -46,7 +50,12 @@ struct DockerVMMetadata:DockerVMMetadataReading {
         guard let value=try JSONSerialization.jsonObject(with:data) as? [String:Any] else {throw DockerVMMetadataError.object};return value
     }
     private func exchange(method:String,path:String,body:Data?,stream:Bool)throws->Data {
-        let socketPath=URL(fileURLWithPath:socketPath).resolvingSymlinksInPath().path
+        let end=ProcessInfo.processInfo.systemUptime+1
+        if let endpointPolicy {
+            guard endpointPolicy.path==socketPath,endpointPolicy.uid==peerUID else {throw DockerVMMetadataError.socket}
+        }
+        let pinned=try endpointPolicy?.capture(deadline:end)
+        let socketPath=pinned?.path ?? URL(fileURLWithPath:socketPath).resolvingSymlinksInPath().path
         var info=stat()
         guard socketPath.hasPrefix("/"),socketPath.utf8.count<104,lstat(socketPath,&info)==0,
               info.st_mode&S_IFMT==S_IFSOCK,info.st_uid==peerUID else {throw DockerVMMetadataError.socket}
@@ -59,7 +68,6 @@ struct DockerVMMetadata:DockerVMMetadataReading {
         withUnsafeMutableBytes(of:&address.sun_path) {$0.initializeMemory(as:UInt8.self,repeating:0);$0.copyBytes(from:Array(socketPath.utf8))}
         let connected=withUnsafePointer(to:&address) {$0.withMemoryRebound(to:sockaddr.self,capacity:1) {connect(fd,$0,socklen_t(MemoryLayout<sockaddr_un>.size))}}
         guard connected==0 || errno==EINPROGRESS || errno==EAGAIN else {throw RuntimeError.launch}
-        let end=ProcessInfo.processInfo.systemUptime+1
         var ready=connected==0,verified=false
         let bytes=body ?? Data()
         let version=stream ? "HTTP/1.1":"HTTP/1.0"
@@ -77,7 +85,8 @@ struct DockerVMMetadata:DockerVMMetadataReading {
             }
             if !verified {
                 var uid:uid_t=0,gid:gid_t=0
-                guard getpeereid(fd,&uid,&gid)==0,uid==peerUID else {throw DockerVMMetadataError.socket};verified=true
+                guard getpeereid(fd,&uid,&gid)==0,uid==peerUID else {throw DockerVMMetadataError.socket}
+                try pinned?.verify(deadline:end);verified=true
             }
             if sent<request.count {
                 let count=request.withUnsafeBytes {write(fd,$0.baseAddress!.advanced(by:sent),request.count-sent)}
@@ -88,7 +97,12 @@ struct DockerVMMetadata:DockerVMMetadataReading {
             let count=Darwin.read(fd,&buffer,buffer.count)
             if count>0 {
                 guard response.count+count<=(1<<20)+8192 else {throw RuntimeError.outputLimit};response.append(contentsOf:buffer.prefix(count))
-            }else if count==0 {guard sent==request.count else {throw RuntimeError.launch};return try Self.body(response,stream:stream)}
+            }else if count==0 {
+                guard sent==request.count else {throw RuntimeError.launch}
+                let body=try Self.body(response,stream:stream)
+                try pinned?.verify(deadline:end)
+                return body
+            }
             else if ![EAGAIN,EWOULDBLOCK,EINTR].contains(errno) {throw RuntimeError.launch}
             Thread.sleep(forTimeInterval:0.001)
         }
