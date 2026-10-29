@@ -22,7 +22,8 @@ struct ServiceAffectedScope {
               ownedJobs.count<=4,unresolvedManagedRequests.count<=32,
               Set(ownedJobs).count==ownedJobs.count,Set(unresolvedManagedRequests).count==unresolvedManagedRequests.count,
               ownedJobs.allSatisfy(uuid),unresolvedManagedRequests.allSatisfy(uuid),
-              [nativeEpoch,nativeScopeDigest,runtimeScopeDigest].allSatisfy({$0.map(hash) ?? true}) else {throw ServiceError.invalid}
+              nativeEpoch.map({!$0.isEmpty && $0.utf8.count<=128 && !$0.contains("\0")}) ?? true,
+              [nativeScopeDigest,runtimeScopeDigest].allSatisfy({$0.map(hash) ?? true}) else {throw ServiceError.invalid}
         self.service=service;self.identity=identity;self.managerEpoch=managerEpoch;self.nativeEpoch=nativeEpoch
         self.ownedJobs=ownedJobs.sorted();self.unresolvedManagedRequests=unresolvedManagedRequests.sorted();self.sampledAt=sampledAt
         complete=nativeEpoch != nil && nativeScopeDigest != nil && (service == .mlx || runtimeScopeDigest != nil)
@@ -88,7 +89,7 @@ struct ServiceDrainPolicy {
         if case .refused=record.state {return ServiceDrainProgress(state:record.state,revokeOwned:[])}
         let tick=uptime()
         if now<record.previous || now>=record.expires || !tick.isFinite || tick<record.previousUptime || tick-record.beganUptime>=60 {record.state = .refused(.deadline)}
-        else if !scope.fresh(now:now) || record.identity != scope.identity || record.managerEpoch != scope.managerEpoch || record.nativeEpoch != scope.nativeEpoch || !Set(scope.ownedJobs).isSubset(of:record.ownedJobs) {record.state = .refused(.scopeChanged)}
+        else if !scope.fresh(now:now) || record.identity != scope.identity || record.managerEpoch != scope.managerEpoch || record.nativeEpoch.map({Data($0.utf8)}) != scope.nativeEpoch.map({Data($0.utf8)}) || !Set(scope.ownedJobs).isSubset(of:record.ownedJobs) {record.state = .refused(.scopeChanged)}
         else {record.state=evaluate(snapshot)}
         record.previous=max(record.previous,now);if tick.isFinite {record.previousUptime=max(record.previousUptime,tick)};pending[scope.service]=record
         return ServiceDrainProgress(state:record.state,revokeOwned:scope.ownedJobs.filter {record.ownedJobs.contains($0)})

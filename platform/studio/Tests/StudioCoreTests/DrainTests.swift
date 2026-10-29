@@ -5,10 +5,33 @@ private final class DrainTestClock:@unchecked Sendable {var time:TimeInterval=1}
 func runDrainTests()throws {
     let identity=ServiceIdentity(pid:42,start:100,sha256:String(repeating:"a",count:64))
     let manager="12345678-1234-4234-8234-123456789abc",job="12345678-1234-4234-8234-123456789abd"
-    func scope(service:ManagedService = .mlx,native:String?=String(repeating:"b",count:64),jobs:[String]=[],requests:[String]=[],stamp:Int64=1000,start:UInt64=100)throws->ServiceAffectedScope {
+    func scope(service:ManagedService = .mlx,native:String?=String(repeating:"b",count:64),jobs:[String]=[],requests:[String]=[],stamp:Int64=1000,start:UInt64=100,epoch:String=String(repeating:"c",count:64))throws->ServiceAffectedScope {
         try ServiceAffectedScope(service:service,identity:ServiceIdentity(pid:42,start:start,sha256:identity.sha256),managerEpoch:manager,
-            nativeEpoch:String(repeating:"c",count:64),nativeScopeDigest:native,runtimeScopeDigest:service == .orbstack ? String(repeating:"d",count:64):nil,
+            nativeEpoch:epoch,nativeScopeDigest:native,runtimeScopeDigest:service == .orbstack ? String(repeating:"d",count:64):nil,
             ownedJobs:jobs,unresolvedManagedRequests:requests,sampledAt:stamp)
+    }
+    // A native source epoch is an opaque bounded identity, not its SHA256.
+    // Digests remain exact lowercase64-hex values.
+    for epoch in ["native-fixture-one",UUID().uuidString.lowercased(),String(repeating:"e",count:32)] {
+        do {
+            _=try ServiceAffectedScope(service:.mlx,identity:identity,managerEpoch:manager,nativeEpoch:epoch,
+                nativeScopeDigest:String(repeating:"b",count:64),runtimeScopeDigest:nil,ownedJobs:[],unresolvedManagedRequests:[],sampledAt:1000)
+        }catch {
+            FileHandle.standardError.write(Data("OPAQUE_NATIVE_EPOCH_REFUSED\n".utf8));throw error
+        }
+    }
+    for epoch in ["",String(repeating:"e",count:129),String(repeating:"é",count:65),"native\0epoch"] {
+        do {_=try scope(epoch:epoch);fatalError("Invalid native epoch accepted")}catch ServiceError.invalid {}
+    }
+    for digest in ["short",String(repeating:"B",count:64),String(repeating:"x",count:64)] {
+        do {_=try scope(native:digest);fatalError("Invalid native scope digest accepted")}catch ServiceError.invalid {}
+    }
+    var epochDrain=ServiceDrainPolicy()
+    let composed=ServiceDrainSnapshot(scope:try scope(epoch:"native/é"),nativeIdle:true,externalNativeWork:false,unmanagedRuntimeWork:false)
+    let decomposed=ServiceDrainSnapshot(scope:try scope(stamp:1001,epoch:"native/e\u{301}"),nativeIdle:true,externalNativeWork:false,unmanagedRuntimeWork:false)
+    _=try epochDrain.begin(snapshot:composed,role:.operator,now:1000)
+    guard try epochDrain.poll(snapshot:decomposed,now:1001).state == .refused(.scopeChanged) else {
+        FileHandle.standardError.write(Data("DRAIN_NORMALIZED_NATIVE_EPOCH\n".utf8));throw ServiceError.invalid
     }
     var force=ServicePolicy()
     let initial=try scope(),changed=try scope(native:String(repeating:"e",count:64),stamp:1001)
