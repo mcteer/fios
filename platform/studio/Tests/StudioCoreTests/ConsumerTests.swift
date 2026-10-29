@@ -6,7 +6,7 @@ func runConsumerTests() throws {
     let host="fios-edge-a.lab",endpoint=String(repeating:"a",count:64),profile=String(repeating:"b",count:64)
     let manager=UUID().uuidString.lowercased(),native="separately-reviewed-fixture-native"
     func consumer()->ObservationValidator {
-        ObservationValidator(host:host,endpointHash:endpoint,profileHash:profile,managerEpoch:manager,nativeEpoch:native)
+        ObservationValidator(host:host,endpointHash:endpoint,profileHash:profile,managerEpoch:manager,nativeEpoch:native,sourceCoverage:.all_clients)
     }
     func frame(coverage:String="unsupported",sequence:Int=1,managerEpoch:String?=nil)->[String:Any] {
         ["version":1,"host":host,"endpoint_hash":endpoint,"profile_hash":profile,"manager_epoch":managerEpoch ?? manager,

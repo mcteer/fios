@@ -13,17 +13,28 @@ struct ObservationValidator {
     let profileHash:String
     let managerEpoch:String
     let nativeEpoch:String
+    let sourceCoverage:NativeCoverage
     private var fenced=false
     private var sequence:UInt64=0
     private var sampled:Int64 = -1
     private var previousNow:Int64 = -1
-    init(host:String,endpointHash:String,profileHash:String,managerEpoch:String,nativeEpoch:String) {
+    init(host:String,endpointHash:String,profileHash:String,managerEpoch:String,nativeEpoch:String,
+         sourceCoverage:NativeCoverage = .unknown) {
         self.host=host;self.endpointHash=endpointHash;self.profileHash=profileHash
         self.managerEpoch=managerEpoch;self.nativeEpoch=nativeEpoch
+        self.sourceCoverage=sourceCoverage
     }
     mutating func accept(_ data:Data,now:Int64) throws -> HostActivity {
         guard !fenced,WireScalar.host(host),WireScalar.sha256(endpointHash),WireScalar.sha256(profileHash),
               WireScalar.uuid(managerEpoch),!nativeEpoch.isEmpty,nativeEpoch.utf8.count<=128 else {throw ObservationError.identity}
+        guard (0...WireScalar.maximumTimestamp).contains(now) else {throw ObservationError.invalid}
+        guard now>=previousNow else {
+            fenced=true
+            throw ObservationError.replay
+        }
+        // Remember trusted local time even when a frame is malformed/stale.
+        // A rejected frame must not hide an observed wall-clock rollback.
+        previousNow=now
         try StrictJSON.validate(data,maximum:64<<10)
         let fields:Set<String>=["version","host","endpoint_hash","profile_hash","manager_epoch","native_epoch","sequence","sampled_at","coverage","resident_model","outstanding_owners","loading"]
         guard let value=try JSONSerialization.jsonObject(with:data) as? [String:Any],Set(value.keys)==fields else { throw ObservationError.invalid }
@@ -44,17 +55,17 @@ struct ObservationValidator {
             fenced=true
             throw ObservationError.identity
         }
-        guard epoch==nativeEpoch,manager==managerEpoch else {
+        guard Data(epoch.utf8)==Data(nativeEpoch.utf8),manager==managerEpoch else {
             fenced=true
             throw ObservationError.identity
         }
-        guard now>=previousNow,time>=sampled else { throw ObservationError.replay }
+        guard time>=sampled else { throw ObservationError.replay }
         guard UInt64(seq)>sequence else {throw ObservationError.replay}
         let snapshot=NativeSnapshot(host:host,endpointHash:endpointHash,nativeEpoch:epoch,sequence:UInt64(seq),sampledAt:time,
-            allClientLifecycleCoverage:coverage=="all_clients",residentModel:value["resident_model"] as? String,
+            allClientLifecycleCoverage:coverage=="all_clients" && sourceCoverage == .all_clients,residentModel:value["resident_model"] as? String,
             outstandingOwners:Int(owners),loading:loading.boolValue)
         let activity=try ActivityPolicy.evaluate(snapshot,now:now)
-        sequence=UInt64(seq);sampled=time;previousNow=now
+        sequence=UInt64(seq);sampled=time
         return activity
     }
 }

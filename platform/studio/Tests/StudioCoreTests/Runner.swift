@@ -99,6 +99,7 @@ struct PolicyTestRunner {
                 throw error
             }
         }
+        ActivityCoherenceTests.run()
         let tests = ActivityTests()
         try tests.testIdleRequiresAuthoritativeAllClientCoverage()
         try tests.testQueuedPreparingAndResponseOwnersAreBusy()
