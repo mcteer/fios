@@ -22,7 +22,7 @@ assert.equal(run('git', ['--no-replace-objects', '-C', source, 'rev-parse', 'HEA
 assert.equal(run(zig, ['version']).trim(), '0.17.0', 'unreviewed Zig version');
 const scratch = mkdtempSync(path.join(tmpdir(), 'fios-native-source-check-'));
 try {
-  const fixedFiles=['build.zig','lib/llama_shim/llama_shim.cpp','lib/llama_shim/llama_shim.h','src/arch/llama.zig','src/llama_ffi.zig','src/mlx.zig','src/model_registry.zig','src/scheduler.zig','src/server.zig'];
+  const fixedFiles=['build.zig','lib/llama_shim/llama_shim.cpp','lib/llama_shim/llama_shim.h','src/arch/llama.zig','src/llama_ffi.zig','src/main.zig','src/mlx.zig','src/model_registry.zig','src/scheduler.zig','src/server.zig'];
   for(const file of fixedFiles) {
     mkdirSync(path.dirname(path.join(scratch,file)),{recursive:true});
     writeFileSync(path.join(scratch,file),run('git',['--no-replace-objects','-C',source,'show',`${revision}:${file}`],{maxBuffer:16*1024*1024}),{mode:0o600});
@@ -32,7 +32,7 @@ try {
   assert.deepEqual([...patch.matchAll(/^diff --git (.+)$/gm)].map(m => m[1]),fixedFiles.map(file=>`a/${file} b/${file}`));
   run('git', ['apply', '--check', '-'], { cwd: scratch, input: patch });
   run('git', ['apply', '-'], { cwd: scratch, input: patch });
-  for (const name of ['request_ownership.zig', 'control_protocol.zig', 'control_transport.zig', 'device_owner.zig']) {
+  for (const name of ['request_ownership.zig', 'control_protocol.zig', 'control_transport.zig', 'device_owner.zig', 'startup_guard.zig']) {
     copyFileSync(path.join(root, 'platform/studio/native', name), path.join(scratch, 'src', name));
     run(zig, ['ast-check', path.join(scratch, 'src', name)]);
   }
@@ -44,6 +44,10 @@ try {
     run(zig, ['test', path.join(root, 'platform/studio/native/device_owner_test.zig'), '-O', optimize]);
     run(zig, ['test', path.join(root, 'platform/studio/native/registry_hold_test.zig'), '-O', optimize]);
   }
+  const mainSource=readFileSync(path.join(scratch,'src/main.zig'),'utf8');
+  const startupCall=mainSource.indexOf('@import("startup_guard.zig").Guard.start(VERSION)');
+  assert(startupCall>mainSource.indexOf('pub fn main('));
+  assert(startupCall<mainSource.indexOf('crt.exportHomeDefault();'),'fixture guard must precede native initialization');
   // Characterization guards supplement runtime tests; they do not establish
   // all-backend coverage. Every reviewed production atomic borrow mutation
   // must advance the independently bounded partial-probe epoch under its lock.

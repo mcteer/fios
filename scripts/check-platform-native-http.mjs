@@ -21,7 +21,7 @@ assert(lstatSync(binary).isFile());
 assert.equal(createHash('sha256').update(readFileSync(binary)).digest('hex'),args[4]);
 const scratch=mkdtempSync('/tmp/f9-native-http-'),models=join(scratch,'empty-models');
 mkdirSync(models,{mode:0o700});
-const env={PATH:'/usr/bin:/bin',HOME:scratch,LANG:'C',LC_ALL:'C',XDG_CACHE_HOME:join(scratch,'cache'),FIOS_NATIVE_CONTROL:'isolated-source-fixture'};
+const env={PATH:'/usr/bin:/bin',HOME:scratch,LANG:'C',LC_ALL:'C',XDG_CACHE_HOME:join(scratch,'cache'),FIOS_NATIVE_CONTROL:'isolated-source-fixture',FIOS_NATIVE_STARTUP:'isolated-source-fixture'};
 let child,manager,plainChild,partialHeader,partialBody;
 async function exit(milliseconds,owned=child) {
   const deadline=Date.now()+milliseconds;
@@ -101,6 +101,17 @@ try {
   }
   const initial=await until(async()=>{const value=diagnostic(await get());return value.owned_requests===1 && value;});
   assert.deepEqual((await get('/v1/models')).body.data,[],'empty source fixture discovered a model');
+  // A different port and no control flag isolate the early startup lock from
+  // ordinary HTTP-port/control-socket collision refusal later in startup.
+  const duplicateEnv={...env};delete duplicateEnv.FIOS_NATIVE_CONTROL;
+  const duplicate=spawnSync(binary,['serve','--host','127.0.0.1','--port','0','--model-dir',models,'--no-warmup-eager'],{env:duplicateEnv,encoding:'utf8',timeout:3000,maxBuffer:16384});
+  assert.equal(duplicate.signal,null,'duplicate fixture blocked instead of refusing');
+  assert.notEqual(duplicate.status,0,'duplicate fixture was allowed');
+  assert.match(duplicate.stderr,/StartupGuardUnavailable/,'duplicate refusal did not originate from the startup guard');
+  assert(!duplicate.stderr.includes('Metal GPU:'),'duplicate reached native initialization');
+  assert.equal((await get()).body.source_instance,sourceInstance,'duplicate changed the original serving instance');
+  console.log('PASS: opted-in duplicate native fixture refused before native initialization on a separate port, without control-socket conflict; original process remains responsive.');
+
   assert.equal(lstatSync(join(scratch,'.fios-native-control')).mode&0o777,0o700);
   assert.equal(lstatSync(controlPath).mode&0o777,0o600);assert.equal(lstatSync(controlPath).uid,process.getuid());
   const controlInitial=await control(0);assert.equal(controlInitial.instance,sourceInstance);assert.equal(controlInitial.closed,0);
@@ -202,7 +213,7 @@ try {
   const plainModels=join(plainHome,'empty-models');mkdirSync(plainModels,{mode:0o700});
   const plainReservation=createServer();await new Promise((resolve,reject)=>{plainReservation.once('error',reject);plainReservation.listen(0,'127.0.0.1',resolve);});
   const plainPort=plainReservation.address().port;await new Promise(resolve=>plainReservation.close(resolve));
-  const plainEnv={...env,HOME:plainHome,XDG_CACHE_HOME:join(plainHome,'cache')};delete plainEnv.FIOS_NATIVE_CONTROL;
+  const plainEnv={...env,HOME:plainHome,XDG_CACHE_HOME:join(plainHome,'cache')};delete plainEnv.FIOS_NATIVE_CONTROL;delete plainEnv.FIOS_NATIVE_STARTUP;
   plainChild=spawn(binary,['serve','--host','127.0.0.1','--port',String(plainPort),'--model-dir',plainModels,'--no-warmup-eager'],{env:plainEnv,stdio:['ignore','ignore','ignore']});
   const unconfigured=await until(()=>new Promise((resolve,reject)=>{
     const req=request({host:'127.0.0.1',port:plainPort,path:'/v1/fios/activity',agent:false,timeout:2000},res=>{
@@ -212,6 +223,7 @@ try {
   }));
   assert.equal(unconfigured.coverage,'unknown');assert.equal(unconfigured.admissions_closed,false);assert.notEqual(unconfigured.source_instance,sourceInstance);
   assert.equal(existsSync(join(plainHome,'.fios-native-control')),false,'ordinary startup created a management endpoint without explicit source opt-in');
+  assert.equal(existsSync(join(plainHome,'.fios-native-startup')),false,'ordinary startup created fixture lock state');
   plainChild.kill('SIGTERM');if(!await exit(5000,plainChild)){plainChild.kill('SIGKILL');assert(await exit(2000,plainChild));}
   console.log('PASS: no private control directory/socket without explicit fixture opt-in; independent process instance identity.');
   console.log('PASS: manager role refusal, durable maintenance before asynchronous native pause, restart reconciliation without reopening/replay, explicit resume and unchanged unsupported lifecycle/activity.');
@@ -226,7 +238,8 @@ try {
     if(owned.exitCode===null && owned.signalCode===null){owned.kill('SIGKILL');await new Promise(resolve=>owned.once('exit',resolve));}
   }
   if(plainChild && plainChild.exitCode===null && plainChild.signalCode===null) {
-    plainChild.kill('SIGTERM');if(!await exit(5000,plainChild)){plainChild.kill('SIGKILL');assert(await exit(2000,plainChild));}
+    assert.equal(existsSync(join(plainHome,'.fios-native-startup')),false,'ordinary startup created fixture lock state');
+  plainChild.kill('SIGTERM');if(!await exit(5000,plainChild)){plainChild.kill('SIGKILL');assert(await exit(2000,plainChild));}
   }
   if(child && child.exitCode===null && child.signalCode===null) {
     child.kill('SIGTERM');if(!await exit(5000)){child.kill('SIGKILL');assert(await exit(2000),'owned source fixture could not be reaped');}

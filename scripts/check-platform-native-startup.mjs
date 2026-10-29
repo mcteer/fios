@@ -8,6 +8,7 @@ import {fileURLToPath} from 'node:url';
 import {setTimeout as delay} from 'node:timers/promises';
 const args=process.argv.slice(2);assert.deepEqual([args[0],args[1]],['--isolated','--zig']);assert([3,4].includes(args.length));if(args.length===4)assert.equal(args[3],'--mutate-lock');assert(isAbsolute(args[2]));
 assert.equal(process.platform,'darwin');assert.notEqual(process.getuid(),0);
+const toolchain=spawnSync(args[2],['version'],{encoding:'utf8',timeout:3000});assert.equal(toolchain.status,0);assert.equal(toolchain.stdout.trim(),'0.17.0');
 const root=fileURLToPath(new URL('../',import.meta.url)),scratch=mkdtempSync('/tmp/fios009-native-startup-'),children=[];
 const exited=child=>child.exitCode!==null||child.signalCode!==null;
 async function until(check,timeout=5000){const end=performance.now()+timeout;while(performance.now()<end){if(check())return;await delay(20);}throw Error('Finite startup fixture deadline');}

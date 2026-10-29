@@ -145,6 +145,21 @@ index 1c9946d..43da296 100644
  pub extern fn mlx_llama_ctx_mtp_drafts(c: *Ctx) i32;
  
  pub extern fn mlx_llama_seq_prefill(c: *Ctx, seq: i32, tokens: [*]const i32, n_tokens: i32, err: ?[*]u8, errlen: usize) i32;
+diff --git a/src/main.zig b/src/main.zig
+index 2a12423..c5d6cf2 100644
+--- a/src/main.zig
++++ b/src/main.zig
+@@ -525,6 +525,10 @@ fn printUsage(io: std.Io) void {
+ }
+ 
+ pub fn main(init: std.process.Init) !void {
++    // Opted-in disposable source fixtures claim ownership before native init.
++    // No production absence, admission, or device-terminality authority.
++    var startup_guard = try @import("startup_guard.zig").Guard.start(VERSION);
++    defer if (startup_guard) |*held| held.close();
+     crt.exportHomeDefault();
+     // Referenced, or the linker strips the unreferenced section.
+     if (@import("builtin").os.tag == .macos) std.mem.doNotOptimizeAway(&info_plist);
 diff --git a/src/mlx.zig b/src/mlx.zig
 index 1f982ed..291853f 100644
 --- a/src/mlx.zig

@@ -4,6 +4,12 @@ Status: source-only integration/testing authorized by the user's explicit reaffi
 
 Current backend-specific findings and unproven terminality requirements: [native-backend-terminality.md](native-backend-terminality.md).
 
+## Source-fixture startup ownership prerequisite
+
+The current reviewed patch adds `src/main.zig` as its tenth fixed path and calls the separate `startup_guard.zig` before native initialization. It is enabled only by the exact `FIOS_NATIVE_STARTUP=isolated-source-fixture` marker plus fixture version suffix, nonroot equal real/effective UID and a preexisting private0700 HOME. The0700 subdirectory and0600 regular single-link/no-ACL lock are opened by descriptor without following their final symlinks; an exclusive nonblocking close-on-exec `flock` is retained for the process lifetime. Release closes the descriptor without unlinking the pathname. The startup refusal carries `StartupGuardUnavailable`, independent of later HTTP-port or control-socket conflicts.
+
+This is deliberately per-fixture-HOME source engineering. A caller can omit the marker or choose another HOME, so it does not establish production global singleton authority, all-client absence or backend terminality. It cannot authorize app launch, stop, uncertainty release or native acceptance. A production enrollment/namespace policy and duplicate/unmanaged-process coverage are still required for T002/T027. Ordinary unconfigured native startup creates no guard state.
+
 ## Existing safety mechanism located in version-aligned source
 
 In `server.zig::handleConnection`, after local/peer resolution and non-loading metadata routes, `scheduler.ensureLoaded(requested_model_id)` returns a referenced model. A `defer` releases that model only after the selected handler returns (status reads use releaseStatus). Text chat, completions, messages, responses/WebSocket and other local handlers dispatch under this outer ownership. `model_registry.zig::pickLruEvictable` skips nonzero refcounts; scheduler load planning refuses admission if no safe victim exists and drains selected victim readers before unloading.
