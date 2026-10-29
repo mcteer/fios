@@ -103,6 +103,16 @@ try {
   const actorGuard=actorLoad.indexOf('try FiosActorLoadPreparation.begin(sch, params.entry.id, params.fios_parent)');
   assert(actorGuard>=0&&actorGuard<actorLoad.indexOf('params.entry.load_progress.start('), 'actor guard must precede every backend load branch');
   assert(schedulerSource.includes('.fios_parent = fios_preparation,'), 'queued load must carry its original preparation owner');
+  for(const [producer,queue,handler,backend] of [
+    ['pub fn computeEmbeddings(', 'self.embed_queue.append(', 'fn runEmbedRequest(', 'req.model.transformer.?'],
+    ['pub fn encodeVision(', 'self.vision_queue.append(', 'fn runVisionEncode(', 'req.model.vision_encoder'],
+  ]){
+    const posting=schedulerSource.slice(schedulerSource.indexOf(producer));
+    assert(posting.indexOf('req.fios_parent = fios_ownership.current;')>=0&&posting.indexOf('req.fios_parent = fios_ownership.current;')<posting.indexOf(queue),'encoder queue lost caller ownership');
+    const handling=schedulerSource.slice(schedulerSource.indexOf(handler));
+    assert(handling.indexOf('FiosActorLoadPreparation.beginActive(')>=0&&handling.indexOf('FiosActorLoadPreparation.beginActive(')<handling.indexOf(backend),'encoder actor guard must precede backend access');
+  }
+
   assert(patched.indexOf('fios_requests.enter(io)') < patched.indexOf('std.Thread.spawn(.{}, handleConnectionThread'));
   const thread = patched.slice(patched.indexOf('fn handleConnectionThread('), patched.indexOf('const MAX_JSON_DEPTH'));
   assert(thread.indexOf('defer fios_requests.leave(ownership_io, ownership)') >= 0);
