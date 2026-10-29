@@ -27,6 +27,8 @@ docker compose config --quiet
 swift build --package-path platform/studio
 node scripts/check-platform.mjs --mock
 node scripts/check-platform.mjs --mock --release
+# Explicit local disposable runtime measurements; uses existing fios:current, no pulls/models.
+node scripts/check-platform.mjs --isolated-metrics
 node scripts/check-platform-process.mjs --isolated
 node scripts/check-platform-boot.mjs --isolated
 node scripts/check-platform-boot-state.mjs --isolated

@@ -5,12 +5,28 @@ import { createServer } from 'node:net';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+// Explicit isolated acceptance measurements. The runtime exerciser creates
+// only finite owned test containers on the existing local runtime; no native
+// service lifecycle, production state, model request or installation occurs.
+if(process.argv.length===3&&process.argv[2]==='--isolated-metrics'){
+  const measurementRoot=fileURLToPath(new URL('../',import.meta.url));
+  for(const [script,...args] of [
+    ['scripts/check-platform-idle.mjs','--isolated','300'],
+    ['scripts/check-platform-sandbox.mjs','--isolated','--resource-limits'],
+    ['scripts/check-platform-watchdog.mjs','--isolated'],
+  ]){
+    const result=spawnSync(process.execPath,[resolve(measurementRoot,script),...args],{cwd:measurementRoot,stdio:'inherit',timeout:900000});
+    if(result.error||result.status!==0)throw Error('Isolated measurement failed; retain uncertain fixture state and inspect its diagnostics');
+  }
+  process.exit(0);
+}
+
 // Local policy + private installed Pydantic child checks (MockTransport only).
 // No SSH, daemon socket, service lifecycle or live inference. The test binary
 // and descendants deny IP networking except one freshly allocated loopback
 // mock endpoint; configured native ports/other IPs stay denied. No fallback.
 if (![3,4].includes(process.argv.length) || process.argv[2] !== '--mock' || (process.argv.length===4 && !['--release','--mutate-runtime-postcheck','--mutate-manager-epoch','--mutate-activity-coverage','--mutate-inference-scope','--mutate-observation-native-sequence','--mutate-resource-freshness','--mutate-vm-profile-rebind','--mutate-vm-running-gate','--mutate-service-census'].includes(process.argv[3]))) {
-  throw new Error('Usage: node scripts/check-platform.mjs --mock [--release|--mutate-runtime-postcheck|--mutate-manager-epoch|--mutate-activity-coverage|--mutate-inference-scope|--mutate-observation-native-sequence|--mutate-resource-freshness|--mutate-vm-profile-rebind|--mutate-vm-running-gate|--mutate-service-census]');
+  throw new Error('Usage: node scripts/check-platform.mjs --isolated-metrics | --mock [--release|--mutate-runtime-postcheck|--mutate-manager-epoch|--mutate-activity-coverage|--mutate-inference-scope|--mutate-observation-native-sequence|--mutate-resource-freshness|--mutate-vm-profile-rebind|--mutate-vm-running-gate|--mutate-service-census]');
 }
 const root = fileURLToPath(new URL('../', import.meta.url));
 const directory = mkdtempSync(join(tmpdir(), 'fios-platform-policy-'));

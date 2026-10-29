@@ -52,7 +52,7 @@ import Darwin
         // saved ID. Do not target the unrelated sentinel by label or prefix.
         do { try runtime.removeOwned(configuration,savedID:args[5]);throw RuntimeError.invalid }
         catch RuntimeError.identity {}
-        if limits {
+        do {
             let began=ProcessInfo.processInfo.systemUptime
             try runtime.removeOwned(configuration,savedID:id)
             let remaining=try runtime.command(["ps","--all","--no-trunc","--filter","id="+id,"--format","{{.ID}}"],timeout:2)

@@ -10,6 +10,7 @@ const limits=process.argv[3]==='--resource-limits';
 const root=resolve(import.meta.dirname,'..');
 const directory=mkdtempSync(join(tmpdir(),'fios-platform-sandbox-'));
 let image,sentinel;
+let resourcesPossible=false,verified=false;
 function run(command,args,timeout=120000){
   const result=spawnSync(command,args,{cwd:root,encoding:'utf8',timeout,maxBuffer:1<<20,env:{...process.env,DOCKER_BUILDKIT:'0'}});
   if(result.status!==0&&command===join(directory,'sandbox-live'))for(const line of (result.stdout??'').split('\n').filter(line=>line.startsWith('METRIC: ')))console.error(line);
@@ -54,21 +55,33 @@ if(${limits}) {
  assert.match(result.stdout,/actual memory ceiling=536870912 child_sigkill=true oom_kill_delta=[1-9][0-9]*/);
 }
 `);
+  // A timed-out build/create is not proof that no resource was created.
+  resourcesPossible=true;
   image=runtime(['build','--quiet','--pull=false','--network=none',directory]);
   if(!/^sha256:[a-f0-9]{64}$/.test(image))throw Error('Invalid fixture image identity');
   if(limits)console.log(`METRIC: source_base=${base} fixture_image=${image} limits_source_sha256=${createHash('sha256').update(readFileSync(join(directory,'limits.py'))).digest('hex')}`);
   sentinel=runtime(['create','--pull=never','--network=none','--name','fios-platform-sentinel-'+randomUUID(),image]);
+  if(!/^[a-f0-9]{64}$/.test(sentinel))throw Error('Uncertain sentinel create result');
   const source=join(directory,'SandboxLive.swift');
   writeFileSync(source,readFileSync(join(root,'platform/studio/Tests/StudioCoreTests/SandboxLive.swift.fixture')));
   const binary=join(directory,'sandbox-live');
   run('/usr/bin/env',['swiftc','-swift-version','6','-warnings-as-errors','-I',join(root,'platform/studio/Sources/CSQLite'),
     ...run('/usr/bin/find',[join(root,'platform/studio/Sources/StudioCore'),'-name','*.swift']).split('\n').sort(),source,'-o',binary]);
   const hash=createHash('sha256').update(readFileSync(docker)).digest('hex');
-  console.log(run(binary,[docker,hash,socketURL.slice(7),image,sentinel,...(limits?['limits']:[])]));
+  const result=run(binary,[docker,hash,socketURL.slice(7),image,sentinel,...(limits?['limits']:[])]);
+  console.log(result);
+  if(!result.includes('one known full-ID owned sandbox acknowledged removal and successful empty exact-ID query'))throw Error('Missing owned sandbox removal receipt');
   if(runtime(['inspect','--format','{{.Id}}',sentinel])!==sentinel)throw Error('Unrelated sentinel was removed');
+  verified=true;
 }finally{
-  try{
-    try{if(sentinel)runtime(['rm','--force',sentinel]);}
-    finally{if(image)runtime(['image','rm',image]);}
-  }finally{rmSync(directory,{recursive:true,force:true});}
+  if(verified){
+    try{
+      runtime(['rm','--force',sentinel]); // Only this driver's exact created sentinel.
+      if(runtime(['ps','--all','--no-trunc','--filter','id='+sentinel,'--format','{{.ID}}'])!=='')throw Error('Sentinel absence not verified');
+      runtime(['image','rm',image]); // No force: never remove referencing objects.
+      rmSync(directory,{recursive:true,force:true});
+    }catch(error){console.error('RETAINED: fixture directory after incomplete cleanup: '+directory);throw error;}
+  }else if(resourcesPossible){
+    console.error('RETAINED: uncertain isolated runtime fixture; no parent cleanup attempted: '+directory);
+  }else rmSync(directory,{recursive:true,force:true});
 }

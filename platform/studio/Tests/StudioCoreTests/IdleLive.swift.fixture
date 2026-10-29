@@ -80,6 +80,37 @@ import Darwin
         print("METRIC: observation-only manager+supervisor, mixed terminal tombstones256 including128 never-created sandbox records, seconds=\(Int(elapsed)), initial_rss_mib=\(initial/(1<<20)), combined_peak_rss_mib=\(peak/(1<<20)), growth_rss_mib=\((peak-initial)/(1<<20)), manager_peak_rss_mib=\(managerPeak/(1<<20)), supervisor_peak_rss_mib=\(supervisorPeak/(1<<20)), combined_cpu_percent_one_core=\(String(format:"%.2f",cpu))")
         fflush(nil) // Preserve numeric evidence even when a bound fails.
         guard peak<=256<<20,cpu<=5,peak-initial<=32<<20 else {throw RuntimeError.outputLimit}
+        // Poll only AFTER the idle CPU interval. Verify the actual manager
+        // cache/publication path, not an encoder supplied with synthetic time.
+        var epoch:String?,sequence:Int64 = -1,sampleTime:Int64 = -1,maxAge:Int64=0
+        for index in 0..<6 {
+            if index>0 {Thread.sleep(forTimeInterval:2.1)}
+            let response=try ControlClient.request(path:directory.appendingPathComponent("observe.sock").path,operation:.resources)
+            guard response["ok"] as? Bool == true,
+                  let resources=response["resources"] as? [String:Any],
+                  let observation=response["resource_observation"] as? [String:Any],
+                  WireScalar.integer(observation["version"],maximum:2)==2,
+                  let currentEpoch=observation["epoch"] as? String,WireScalar.uuid(currentEpoch),
+                  epoch==nil || epoch==currentEpoch,
+                  let currentSequence=WireScalar.integer(observation["sequence"]),currentSequence>sequence,
+                  let sampled=WireScalar.integer(observation["sampled_at"]),sampled>sampleTime,
+                  let published=WireScalar.integer(observation["observed_at"]),
+                  (-1000...5000).contains(published-sampled),
+                  (-1000...5000).contains(HostResources.nowMilliseconds()-published),
+                  let signals=observation["signals"] as? [String:[String:Any]],signals.count==11,
+                  let physical=signals["physical_memory"],physical["availability"] as? String=="observed",
+                  WireScalar.integer(physical["sampled_at"])==sampled,
+                  WireScalar.integer(physical["age_ms"])==published-sampled,
+                  observation["vm_coverage"] as? String=="unknown",resources["vmAvailable"] is NSNull else {throw RuntimeError.invalid}
+            for signal in signals.values where signal["availability"] as? String=="observed" {
+                guard let at=WireScalar.integer(signal["sampled_at"]),
+                      let age=(signal["age_ms"] as? NSNumber)?.int64Value,
+                      age==published-at,(-1000...5000).contains(age) else {throw RuntimeError.invalid}
+                maxAge=max(maxAge,age)
+            }
+            epoch=currentEpoch;sequence=currentSequence;sampleTime=sampled
+        }
+        print("METRIC: actual observation-only manager resource samples=6 interval_ms=2100 max_observed_signal_age_ms=\(maxAge), strict epoch/sequence/original-time progression, unenrolled VM remains unknown; no VM/native/model probe")
         print("PASS: isolated manager+supervisor combined idle CPU/RSS/heartbeat bounds; not native service/model acceptance")
     }
 }
