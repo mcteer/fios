@@ -18,7 +18,7 @@ Read-only, single-host review:
 node scripts/install-platform.mjs plan --release /ABSOLUTE/RELEASE_DIRECTORY --sha256 REVIEWED_MANIFEST_SHA256 --host fios-edge-a.lab
 ```
 
-The expected digest must come from the reviewed build receipt, not an untrusted package's own claim. The reviewer verifies the finite tree, receipt and every byte/mode, rejects links/extra files, and emits explicit blockers. Current packages cannot produce privileged commands. No SSH, launchctl, app/runtime lifecycle, inference, RDMA/network change or deletion is performed. Unknown/apply/rollback/uninstall commands fail closed. This is a review scaffold, **not completion of T049**.
+The expected digest must come from the reviewed build receipt, not an untrusted package's own claim. File review rejects special/set-ID files before reading, opens nonblocking/no-follow to cover a raced FIFO, and checks exact descriptor/named inode metadata and byte count after reading. These are per-file observations, not an atomic whole-tree reservation; future installation must stage and independently reverify protected destination bytes before activation. The reviewer verifies the finite tree, receipt and every byte/mode, rejects links/extra files, and emits explicit blockers. Current packages cannot produce privileged commands. No SSH, launchctl, app/runtime lifecycle, inference, RDMA/network change or deletion is performed. Unknown/apply/rollback/uninstall commands fail closed. This is a review scaffold, **not completion of T049**.
 
 ## Offline journal/export snapshot and fresh-directory restore
 

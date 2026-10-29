@@ -99,5 +99,38 @@ test('reviewed release tree refuses changed bytes, extra files, symlinks and har
     unlinkSync(target);writeFileSync(target,backup,{mode:0o644});
     linkSync(target,join(outside,'link'));assert.throws(()=>validatePlatformRelease(directory,hash));unlinkSync(join(outside,'link'));
     chmodSync(target,0o666);assert.throws(()=>validatePlatformRelease(directory,hash));
+    chmodSync(target,0o4644);assert.throws(()=>validatePlatformRelease(directory,hash));
+    chmodSync(target,0o644);
+    for(const path of [join(directory,'release.json'),target]){
+      const saved=readFileSync(path),mode=path===target?0o644:0o600;
+      unlinkSync(path);
+      assert.equal(spawnSync('/usr/bin/mkfifo',[path],{timeout:1000}).status,0);
+      const refused=invoke(['plan',...common]);
+      assert.equal(refused.error,undefined,'Release review blocked on a FIFO');
+      assert.equal(refused.status,1);assert.equal(refused.stdout,'');
+      unlinkSync(path);writeFileSync(path,saved,{mode});
+      const race=spawnSync(process.execPath,['--input-type=module','-e',`
+        import fs from 'node:fs';
+        import {syncBuiltinESMExports} from 'node:module';
+        import {spawnSync} from 'node:child_process';
+        const [directory,hash,target]=process.argv.slice(1),open=fs.openSync;
+        let replaced=false;
+        fs.openSync=(path,...args)=>{
+          if(path===target&&!replaced){
+            replaced=true;fs.unlinkSync(target);
+            if(spawnSync('/usr/bin/mkfifo',[target],{timeout:1000}).status!==0)throw Error('fixture');
+          }
+          return open(path,...args);
+        };
+        syncBuiltinESMExports();
+        const {validatePlatformRelease}=await import(${JSON.stringify(new URL('../scripts/lib/platform-release.mjs',import.meta.url).href)});
+        try{validatePlatformRelease(directory,hash);process.exitCode=2;}
+        catch{process.exitCode=replaced?1:3;}
+      `,directory,hash,path],{encoding:'utf8',timeout:3000});
+      assert.equal(race.error,undefined,'Release review blocked on a raced FIFO');
+      assert.equal(race.status,1,'Special-file race did not reach and fail the reader');
+      assert.equal(race.stdout,'');
+      unlinkSync(path);writeFileSync(path,saved,{mode});
+    }
   }finally{rmSync(directory,{recursive:true,force:true});rmSync(outside,{recursive:true,force:true});}
 });

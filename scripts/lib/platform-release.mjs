@@ -49,11 +49,18 @@ export function decodePlatformManifest(bytes,options){
 export function validatePlatformRelease(directory,expectedManifestSHA256,{journalSchema=8}={}){
   if(!digest(expectedManifestSHA256)||!directory.startsWith('/'))fail();
   const root=resolve(directory),uid=process.getuid();
+  const same=(a,b)=>['dev','ino','mode','uid','nlink','size','mtimeNs','ctimeNs'].every(key=>a[key]===b[key]);
   function regular(path,maximum){
-    const fd=openSync(path,constants.O_RDONLY|constants.O_NOFOLLOW);
+    const named=lstatSync(path,{bigint:true});
+    const safe=info=>info.isFile()&&info.nlink===1n&&[0n,BigInt(uid)].includes(info.uid)&&
+      (info.mode&0o6022n)===0n&&info.size>0n&&info.size<=BigInt(maximum);
+    if(!safe(named))fail();
+    // NONBLOCK also covers replacement with a FIFO between lstat and open.
+    // Never read a special file or silently accept a replaced/mutating inode.
+    const fd=openSync(path,constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_NONBLOCK);
     try{
-      const info=fstatSync(fd);
-      if(!info.isFile()||info.nlink!==1||![0,uid].includes(info.uid)||(info.mode&0o022)!==0||info.size>maximum)fail();
+      const info=fstatSync(fd,{bigint:true});
+      if(!safe(info)||!same(named,info))fail();
       const chunks=[],buffer=Buffer.alloc(32768);let total=0;
       while(true){
         const count=readSync(fd,buffer,0,Math.min(buffer.length,maximum-total+1),null);
@@ -61,7 +68,8 @@ export function validatePlatformRelease(directory,expectedManifestSHA256,{journa
         if(total+count>maximum)fail();
         chunks.push(Buffer.from(buffer.subarray(0,count)));total+=count;
       }
-      return {bytes:Buffer.concat(chunks,total),mode:info.mode&0o777};
+      if(BigInt(total)!==info.size||!same(info,fstatSync(fd,{bigint:true}))||!same(info,lstatSync(path,{bigint:true})))fail();
+      return {bytes:Buffer.concat(chunks,total),mode:Number(info.mode&0o777n)};
     }finally{closeSync(fd);}
   }
   const info=lstatSync(root);
