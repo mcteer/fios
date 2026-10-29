@@ -151,5 +151,19 @@ work are lookups, including after helper generation loss.
 The driver fixture exercises these components with actual separate manager
 processes, a private FIS9 journal and cold/warm helper generations. It proves
 lookup-only recovery and retained independent uncertainty with a counter-only
-fake app. Production manager wiring, trusted observation/absence issuance and
-native duplicate-server/admission compatibility remain unfinished T027/G2 work.
+fake app. The internal manager-loop hook is now wired for trusted code-only
+injection, including round-robin scheduling, receipt consumption and pending
+status. Its public startup path still supplies no issuer. Full manager-process
+fixtures prove one effect across restart and refuse missing observations.
+Production observation/absence issuance, enrollment and native duplicate-server/
+admission compatibility remain unfinished T027/G2 work.
+
+`SessionControlClient.discover` reads only the private fixed session descriptor:
+regular single-link0600 file in the approved user's0700 directory, at most2KiB,
+descriptor/name stability and strict schema. Boot, UID, profile, PID, opaque
+canonical start string and helper nonce must match the known context. It accepts
+no endpoint/path/role fields. No observation timestamp is treated as authority:
+this bootstrap only prepares a client which authenticates the actual socket
+peer and complete response tuple independently on every exchange. Discovery
+alone cannot grant model readiness, prove absence or substitute for native
+activity/freshness validation.

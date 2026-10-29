@@ -75,6 +75,40 @@ try {
  }
  console.log('PASS: actual async session driver, authenticated RPC, one validator/no queue, delayed/duplicate completion, validation/session/presence/expiry refusal, post-dispatch error/wrong-process uncertainty, shutdown/clock fencing and no replay; counter-only fake app API.');
  console.log('PASS: actual journal/controller/bounded sender across manager restart and cold helper generation; lookup-only intent reconciliation, no duplicate fake effect and independent native uncertainty retained.');
+ const shown=spawnSync('swift',['build','--package-path',join(root,'platform/studio'),'--show-bin-path'],{encoding:'utf8',timeout:30000});assert.equal(shown.status,0);
+ const cli=join(shown.stdout.trim(),'studioctl');
+ for(const known of [false,true]) {
+  const state=join(temporary,known?'manager-known':'manager-unknown');mkdirSync(state,{mode:0o700});
+  const helper=spawn('/usr/bin/sandbox-exec',['-p',policy,binary,'server',state,'success'],{stdio:'ignore'});children.push(helper);
+  await until(()=>existsSync(join(state,'session-control.json')));
+  const startManager=()=>{
+   const child=spawn('/usr/bin/sandbox-exec',['-p',policy,binary,'manager',state,known?'known':'unknown'],{stdio:'ignore'});children.push(child);return child;
+  };
+  let manager=startManager();
+  const status=()=>{
+   const result=spawnSync(cli,['--state',state,'status'],{encoding:'utf8',timeout:1500,maxBuffer:65536});
+   return result.status===0 ? JSON.parse(result.stdout):null;
+  };
+  await until(()=>status()?.state==='ready');
+  if(known){
+   await until(()=>existsSync(join(state,'validation-entered')));
+   const live=status();assert.equal(live.services.mlx.observed,'starting');assert.equal(live.native_activity,'unsupported');
+   assert.equal(live.sandbox_admission,'disabled');
+   writeFileSync(join(state,'release-validation'),'release');
+   await until(()=>status()?.services.mlx.observed==='ready');
+   assert.equal(Number(readFileSync(join(state,'calls'),'utf8')),1);
+   manager.kill('SIGTERM');await until(()=>exited(manager));manager=startManager();
+   await until(()=>{const value=status();return value?.state==='ready'&&value.services.mlx.observed==='ready';});
+   await delay(2300); // Cross another recovery cadence, not just startup.
+   assert.equal(Number(readFileSync(join(state,'calls'),'utf8')),1,'Full manager restart replayed native startup');
+  }else{
+   await delay(2300);assert.equal(status().services.mlx.observed,'unknown');
+   assert.equal(existsSync(join(state,'validation-entered')),false,'Missing observation authorized a native effect');
+   assert.equal(Number(readFileSync(join(state,'calls'),'utf8')),0);
+  }
+  manager.kill('SIGTERM');await until(()=>exited(manager));helper.kill('SIGTERM');await until(()=>exited(helper));
+ }
+ console.log('PASS: real manager loop drives bounded recovery from trusted synthetic absence, preserves heartbeat/status, reports starting→ready and refuses unknown sources; counter-only app adapter, production issuer absent.');
 }finally {
  for(const child of children)if(!exited(child))child.kill('SIGTERM');
  await until(()=>children.every(exited),10000);

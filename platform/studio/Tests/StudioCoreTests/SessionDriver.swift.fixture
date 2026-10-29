@@ -53,9 +53,29 @@ import CryptoKit
             }
             driver.shutdown();return
         }
-        let metadata=try JSONSerialization.jsonObject(with:Data(contentsOf:directory.appendingPathComponent("session-control.json"))) as! [String:Any]
-        let peer=NativeControlPeer(pid:(metadata["pid"] as! NSNumber).int32Value,start:UInt64(metadata["process_start"] as! String)!,executable:image)
-        let client=try SessionControlClient(directory:directory,peer:peer,instance:metadata["instance"] as! String,profile:metadata["profile"] as! String,approvedHashes:[.mlx:hash,.orbstack:hash])
+        let pins:[ManagedService:String]=[.mlx:hash,.orbstack:hash]
+        let metadata=try SessionEndpointDescriptor(Data(contentsOf:directory.appendingPathComponent("session-control.json")),
+            expectedBoot:HostBoot.identity(),expectedProfile:ServiceLaunchProfile.digest(pins),expectedUID:geteuid())
+        let peer=NativeControlPeer(pid:metadata.pid,start:metadata.start,executable:image)
+        guard let client=try SessionControlClient.discover(directory:directory,helper:image,approvedHashes:pins) else {throw ControlError.unauthorized}
+        if args[1]=="manager" {
+            guard args.count==4,["known","unknown"].contains(args[3]) else {throw ControlError.invalid_request}
+            // Trusted synthetic observations only. The real manager loop and
+            // journal execute, but no native observation source is enrolled.
+            let cache=ServiceObservationCache(),known=args[3]=="known"
+            let helperPID=peer.pid,helperStart=peer.start
+            let source:@Sendable()->Void={
+                let count=(try? String(contentsOf:directory.appendingPathComponent("calls"),encoding:.utf8)).flatMap(Int.init) ?? 0
+                let identity=ServiceIdentity(pid:helperPID,start:helperStart,sha256:hash)
+                let now=HostResources.nowMilliseconds()
+                cache.publish(known ? ServiceObservation(identity:count==0 ? nil:identity,responding:count>0,sessionReady:true,credentialsReady:true,nativeIdle:nil,runtimeUnmanaged:nil,sampledAt:now):nil,for:.mlx)
+                cache.publish(ServiceObservation(identity:identity,responding:true,sessionReady:true,credentialsReady:true,nativeIdle:nil,runtimeUnmanaged:nil,sampledAt:now),for:.orbstack)
+            }
+            source()
+            Thread.detachNewThread {while true {source();Thread.sleep(forTimeInterval:0.1)}}
+            try ManagerRuntime.run(directory:directory,nativeControl:nil,serviceObservations:cache,serviceControl:client)
+            return
+        }
         if args[1]=="recover" {
             guard args.count==4,["dispatch","lookup"].contains(args[3]) else {throw ControlError.invalid_request}
             let journal=try Journal(directory:directory)

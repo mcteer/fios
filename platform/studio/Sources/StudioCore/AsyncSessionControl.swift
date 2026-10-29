@@ -14,6 +14,9 @@ final class AsyncSessionControl:@unchecked Sendable {
     private var busy=false
     private var result:SessionRecoveryResult?
     init(client:SessionControlClient) {self.client=client}
+    var available:Bool {
+        lock.lock();defer {lock.unlock()};return !busy && result==nil
+    }
     func submit(_ request:ServiceRecoveryRequest)throws {
         lock.lock()
         guard !busy,result==nil else {lock.unlock();throw RuntimeError.capacity}

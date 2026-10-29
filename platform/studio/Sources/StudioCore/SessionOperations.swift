@@ -61,8 +61,7 @@ final class SessionLaunchGate {
         guard geteuid()>0,getuid()==geteuid(),Set(approvedHashes.keys)==Set(ManagedService.allCases),
               approvedHashes.values.allSatisfy(WireScalar.sha256) else {throw ControlError.unauthorized}
         self.manager=manager;applications=approvedApplications
-        let canonical=ManagedService.allCases.map {$0.rawValue+":"+approvedHashes[$0]!}.sorted().joined(separator:"\n")
-        profile=SHA256.hash(data:Data(("fios-service-recovery-v1\n"+canonical).utf8)).map {String(format:"%02x",$0)}.joined()
+        profile=try ServiceLaunchProfile.digest(approvedHashes)
     }
 
     func handle(_ data:Data,peer:NativeControlPeer,uid:uid_t,consoleReady:Bool,now:Int64,

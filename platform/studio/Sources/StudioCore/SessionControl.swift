@@ -116,6 +116,7 @@ struct SessionControlClient:Sendable {
     private let instance:String
     private let profile:String
     private let pins:[ManagedService:String]
+    var applicationHashes:[ManagedService:String] {pins}
     init(directory:URL,peer:NativeControlPeer,instance:String,profile:String,approvedHashes:[ManagedService:String])throws {
         guard WireScalar.uuid(instance),WireScalar.sha256(profile),Set(approvedHashes.keys)==Set(ManagedService.allCases),approvedHashes.values.allSatisfy(WireScalar.sha256) else {throw ControlError.invalid_request}
         path=directory.appendingPathComponent("session-control.sock").path

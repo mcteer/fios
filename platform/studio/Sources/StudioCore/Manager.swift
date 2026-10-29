@@ -10,11 +10,16 @@ public enum ManagerRuntime {
     }
     // No production issuer yet: only reviewed native enrollment may supply
     // this internal client. Never construct it from operator/model payloads.
-    static func run(directory:URL,nativeControl:NativeControlClient?,serviceObservations:ServiceObservationCache?=nil) throws {
+    static func run(directory:URL,nativeControl:NativeControlClient?,serviceObservations:ServiceObservationCache?=nil,serviceControl:SessionControlClient?=nil) throws {
         guard geteuid() != 0 else { throw ControlError.unauthorized }
         umask(0o077)
         let journal=try Journal(directory:directory)
         try journal.recoverWorkerMetadata()
+        // Trusted code-only injection. The public entry point has no issuer;
+        // missing observations never become absence or a launch permission.
+        let serviceRecovery=try serviceControl.map {try ServiceRecoveryController(journal:journal,approvedHashes:$0.applicationHashes)}
+        let serviceQueue=serviceControl.map {AsyncSessionControl(client:$0)}
+        var serviceCursor=0,serviceTransportUnavailable=false
         var nativeMaintenance=NativeMaintenanceCoordinator(journal:journal)
         let nativeQueue=nativeControl.map {AsyncNativeControl(client:$0)}
         func enqueueNative(_ command:NativeMaintenanceCommand) {
@@ -59,6 +64,14 @@ public enum ManagerRuntime {
             // CLI run loops have no AppKit autorelease-pool turn.
             try autoreleasepool {
             let now=ProcessInfo.processInfo.systemUptime
+            if let result=serviceQueue?.poll(),let serviceRecovery {
+                switch result.value {
+                case .success(let value):
+                    try serviceRecovery.receive(result.request,result:value)
+                    serviceTransportUnavailable=false
+                case .failure:serviceTransportUnavailable=true // Preserve pending intent.
+                }
+            }
             if let result=nativeQueue?.poll() {
                 switch result.value {
                 case .success(let value):
@@ -74,6 +87,18 @@ public enum ManagerRuntime {
             try taskCommands.tick(now:timestamp(),uptime:Int64(now*1000),artifactResults:updates.artifactResults,output:updates.output,model:updates.model,finished:updates.finished)
             if now - lastHeartbeat >= 2 {
                 sequence+=1;sampledAt=timestamp()
+                if let serviceRecovery,let serviceQueue,serviceQueue.available {
+                    let services=ManagedService.allCases
+                    for offset in 0..<services.count {
+                        let index=(serviceCursor+offset)%services.count,service=services[index]
+                        guard let desired=ServiceDesired(rawValue:try journal.desired(service:service.rawValue)) else {throw ServiceError.invalid}
+                        if let request=try serviceRecovery.next(service:service,desired:desired,observation:serviceObservations?.snapshot(for:service),now:sampledAt,tick:Int64(now*1000)) {
+                            try serviceQueue.submit(request)
+                            serviceCursor=(index+1)%services.count
+                            break // One exchange, no hidden queue or replay.
+                        }
+                    }
+                }
                 let cpu=cpuSampler.observe(ticks:CPUSampler.readTicks(),now:sampledAt)
                 resourceSample=jobs.applyingVM(to:HostResources.sample(statePath:directory.path,measuredCPU:cpu),now:sampledAt)
                 gpuSample=GPUResources.sample()
@@ -116,13 +141,14 @@ public enum ManagerRuntime {
                         response["worker_reservations"]=try journal.activeLaunchCount()
                         response["worker_recovery"]=workerRecovery.degraded ? "degraded" : (workerRecovery.pending>0 ? "recovering" : "ready")
                         response["capabilities"]=["local_status","resources","desired_state","owner_task_status","owner_artifact_streams"]
+                        response["service_recovery"]=serviceQueue == nil ? "disabled":(serviceTransportUnavailable ? "degraded":"configured")
                         var serviceStates:[String:Any]=[:]
                         for service in ManagedService.allCases {
                             let desired=try journal.desired(service:service.rawValue)
                             guard let typed=ServiceDesired(rawValue:desired) else {throw ControlError.invalid_request}
                             // No production observation issuer is enrolled. A
                             // failed/missing adapter remains unknown, not absent.
-                            let observed=ServiceStatusPolicy.observed(desired:typed,observation:serviceObservations?.snapshot(for:service),launchPending:false,now:requestedAt)
+                            let observed=ServiceStatusPolicy.observed(desired:typed,observation:serviceObservations?.snapshot(for:service),launchPending:serviceRecovery?.isPending(service) ?? false,now:requestedAt)
                             serviceStates[service.rawValue]=["desired":desired,"observed":observed.rawValue]
                         }
                         response["services"]=serviceStates

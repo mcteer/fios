@@ -12,7 +12,7 @@ struct ServiceIdentity:Equatable,Sendable {
         sha256.utf8.allSatisfy { (48...57).contains($0) || (97...102).contains($0) }
     }
 }
-struct ServiceObservation {
+struct ServiceObservation:Sendable {
     // nil identity means proven absent, not an unsuccessful/partial probe.
     let identity:ServiceIdentity?
     let responding:Bool

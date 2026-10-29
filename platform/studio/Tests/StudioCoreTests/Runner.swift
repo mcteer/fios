@@ -10,6 +10,7 @@ struct PolicyTestRunner {
             ("service recovery",runServiceRecoveryTests),
             ("service reconciliation",runServiceReconciliationTests),
             ("async session control",runAsyncSessionControlTests),
+            ("session endpoint",runSessionEndpointTests),
             ("service recovery backup",runServiceRecoveryBackupTests),
             ("service identity",runServiceIdentityTests),
             ("service health",runServiceHealthTests),

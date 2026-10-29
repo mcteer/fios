@@ -5,7 +5,7 @@ import Foundation
 // from trusted identity-bound adapters; nil explicitly means no such source.
 // Bounded precollected metadata only: the manager never invokes adapter I/O
 // on its control loop. This cache is per-manager, not restored across epochs.
-final class ServiceObservationCache {
+final class ServiceObservationCache:@unchecked Sendable {
     private let lock=NSLock()
     private var values:[ManagedService:ServiceObservation]=[:]
     func publish(_ value:ServiceObservation?,for service:ManagedService) {

@@ -3,6 +3,13 @@ import CoreFoundation
 import Darwin
 import CryptoKit
 
+enum ServiceLaunchProfile {
+    static func digest(_ hashes:[ManagedService:String])throws->String {
+        guard Set(hashes.keys)==Set(ManagedService.allCases),hashes.values.allSatisfy(WireScalar.sha256) else {throw ServiceError.invalid}
+        let canonical=ManagedService.allCases.map {$0.rawValue+":"+hashes[$0]!}.sorted().joined(separator:"\n")
+        return SHA256.hash(data:Data(("fios-service-recovery-v1\n"+canonical).utf8)).map {String(format:"%02x",$0)}.joined()
+    }
+}
 // A fixed command for a separately identity-checked session transport. No
 // executable, environment, endpoint, arbitrary argv or operator force field.
 struct ServiceLaunchCommand:Sendable {
@@ -57,8 +64,7 @@ final class ServiceRecoveryController {
               approvedHashes.values.allSatisfy(WireScalar.sha256) else {throw ServiceError.invalid}
         owner=journal;pins=approvedHashes
         file=journal.directory.appendingPathComponent("service-recovery.json")
-        let canonical=ManagedService.allCases.map {$0.rawValue+":"+approvedHashes[$0]!}.sorted().joined(separator:"\n")
-        let profile=SHA256.hash(data:Data(("fios-service-recovery-v1\n"+canonical).utf8)).map {String(format:"%02x",$0)}.joined()
+        let profile=try ServiceLaunchProfile.digest(approvedHashes)
         let boot=try HostBoot.identity()
         if var loaded=try Self.read(file) {
             guard loaded.profile==profile else {throw ServiceError.invalid}
@@ -125,6 +131,9 @@ final class ServiceRecoveryController {
         let bytes=try encoder.encode(state)
         guard bytes.count<=4096 else {throw ServiceError.invalid}
         try AtomicState.write(bytes,to:file)
+    }
+    func isPending(_ service:ManagedService)->Bool {
+        state.entries.first(where:{$0.service==service})?.pending != nil
     }
 
     private func observeClock(now:Int64,tick:Int64)throws->Bool {
