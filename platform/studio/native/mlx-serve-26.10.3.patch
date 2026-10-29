@@ -116,23 +116,144 @@ index 12bd0f7..21ca26c 100644
  int32_t mlx_llama_ctx_mtp_drafts(mlx_llama_ctx *c);
  
 diff --git a/src/arch/llama.zig b/src/arch/llama.zig
-index 806d641..1c0b82d 100644
+index 806d641..170a46b 100644
 --- a/src/arch/llama.zig
 +++ b/src/arch/llama.zig
-@@ -317,6 +317,13 @@ pub const LlamaContext = struct {
-         self.allocator.destroy(self);
+@@ -1,4 +1,6 @@
+ // Zig-side wrapper around llama.cpp's libllama, via the C shim in
++const lifetime = @import("../backend_lifetime.zig");
++pub const CloseTicket = lifetime.Close;
+ // `lib/llama_shim/`. The C ABI lives in `src/llama_ffi.zig`; this module owns
+ // lifetimes and error mapping. A `LlamaContext` is ONE llama_context holding
+ // `n_seq` sequences (`LlamaSeq`), each with its own KV, decoded together by
+@@ -57,8 +59,11 @@ pub const LlamaEngine = struct {
+     allocator: std.mem.Allocator,
+     handle: *ffi.Engine,
+     model_path_owned: [:0]u8,
++    fios_lifetime: lifetime.Lifetime = .{},
++
+ 
+     pub fn open(allocator: std.mem.Allocator, model_path: []const u8, opts: OpenOptions) Error!*LlamaEngine {
++        const fios_lifetime = lifetime.Lifetime.init() catch return Error.EngineOpenFailed;
+         const path_z = allocator.dupeSentinel(u8, model_path, 0) catch return Error.OutOfMemory;
+         errdefer allocator.free(path_z);
+         const mtp_z: ?[:0]u8 = if (opts.mtp_path) |p| (allocator.dupeSentinel(u8, p, 0) catch return Error.OutOfMemory) else null;
+@@ -82,15 +87,31 @@ pub const LlamaEngine = struct {
+             .allocator = allocator,
+             .handle = raw.?,
+             .model_path_owned = path_z,
++            .fios_lifetime = fios_lifetime,
+         };
+         return wrapper;
      }
  
+-    pub fn close(self: *LlamaEngine) void {
++    pub fn fiosCanCloseContext(self: *LlamaEngine, context: ?*LlamaContext) bool {
++        if (context) |ctx| if (ctx.engine != self) return false;
++        return self.fios_lifetime.canClose(if (context) |ctx| ctx.fios_parent else null);
++    }
++    pub fn fiosBeginCloseWithContext(self: *LlamaEngine, context: ?*LlamaContext) ?CloseTicket {
++        if (context) |ctx| if (ctx.engine != self) return null;
++        return self.fios_lifetime.beginClose(if (context) |ctx| ctx.fios_parent else null) catch null;
++    }
++    pub fn tryClose(self: *LlamaEngine) bool {
++        const closing = self.fios_lifetime.beginClose(null) catch return false;
++        return self.tryCloseReserved(closing);
++    }
++    pub fn tryCloseReserved(self: *LlamaEngine, closing: CloseTicket) bool {
++        if (!self.fios_lifetime.commitClose(closing)) return false;
+         ffi.mlx_llama_close(self.handle);
+         self.allocator.free(self.model_path_owned);
+         self.allocator.destroy(self);
++        return true;
+     }
++    pub fn close(self: *LlamaEngine) void { _ = self.tryClose(); }
+ 
+     pub fn eosToken(self: *LlamaEngine) i32 {
+         return ffi.mlx_llama_eos_token(self.handle);
+@@ -226,6 +247,9 @@ pub const LlamaEngine = struct {
+     }
+ 
+     pub fn createContext(self: *LlamaEngine, opts: ContextOptions) Error!*LlamaContext {
++        const fios_parent = self.fios_lifetime.borrow() catch return Error.SessionCreateFailed;
++        errdefer _ = self.fios_lifetime.release(fios_parent);
++        const fios_lifetime = lifetime.Lifetime.init() catch return Error.SessionCreateFailed;
+         const n_seq: u32 = std.math.clamp(opts.n_seq, 1, MAX_SEQS);
+         const params: ffi.CtxParams = .{
+             .n_ctx = opts.ctx_size,
+@@ -256,7 +280,7 @@ pub const LlamaEngine = struct {
+             return Error.OutOfMemory;
+         };
+         for (seqs, 0..) |*s, i| s.* = .{ .ctx = ctx, .id = @intCast(i) };
+-        ctx.* = .{ .allocator = self.allocator, .engine = self, .handle = raw, .seqs = seqs };
++        ctx.* = .{ .allocator = self.allocator, .engine = self, .handle = raw, .seqs = seqs, .fios_parent = fios_parent, .fios_lifetime = fios_lifetime };
+         return ctx;
+     }
+ };
+@@ -309,12 +333,30 @@ pub const LlamaContext = struct {
+     engine: *LlamaEngine,
+     handle: *ffi.Ctx,
+     seqs: []LlamaSeq,
++    fios_lifetime: lifetime.Lifetime = .{},
++    fios_parent: lifetime.Ticket,
+ 
+-    pub fn free(self: *LlamaContext) void {
++    pub fn fiosCanFree(self: *LlamaContext) bool { return self.fios_lifetime.canClose(null); }
++    pub fn tryFree(self: *LlamaContext) bool {
++        const closing = self.fios_lifetime.beginClose(null) catch return false;
++        if (!self.fios_lifetime.commitClose(closing)) return false;
+         for (self.seqs) |*s| s.resident.deinit(self.allocator);
+         self.allocator.free(self.seqs);
++        self.seqs = &.{};
+         ffi.mlx_llama_ctx_free(self.handle);
++        if (!self.engine.fios_lifetime.release(self.fios_parent)) return false;
+         self.allocator.destroy(self);
++        return true;
++    }
++    pub fn free(self: *LlamaContext) void { _ = self.tryFree(); }
++
 +    /// Native-internal partial terminal primitive. Caller retains this exact
 +    /// context/model and runs on its creator; target+MTP are both synchronized.
 +    /// Not enrolled all-client/registry authority and never model-granted.
 +    pub fn terminal(self: *LlamaContext) Error!void {
++        const lease = self.fios_lifetime.borrow() catch return Error.SessionSyncFailed;
++        defer _ = self.fios_lifetime.release(lease);
 +        if (ffi.mlx_llama_ctx_terminal(self.handle) != 1) return Error.SessionSyncFailed;
-+    }
-+
+     }
+ 
      /// Draft tokens per MTP round, 0 without an MTP context.
-     pub fn mtpDrafts(self: *const LlamaContext) u32 {
-         return @intCast(ffi.mlx_llama_ctx_mtp_drafts(self.handle));
+diff --git a/src/arch/llama_stub.zig b/src/arch/llama_stub.zig
+index eb0c42a..2055691 100644
+--- a/src/arch/llama_stub.zig
++++ b/src/arch/llama_stub.zig
+@@ -7,6 +7,7 @@
+ //! `build_options.ios`.
+ 
+ const std = @import("std");
++pub const CloseTicket = @import("../backend_lifetime.zig").Close;
+ 
+ const unavailable = "llama.cpp engine is unavailable on this build (macOS-only embedded engine)";
+ 
+@@ -82,6 +83,10 @@ pub const LlamaEngine = struct {
+         _ = opts;
+         return Error.EngineOpenFailed;
+     }
++    pub fn fiosCanCloseContext(_: *LlamaEngine, _: ?*LlamaContext) bool { return false; }
++    pub fn fiosBeginCloseWithContext(_: *LlamaEngine, _: ?*LlamaContext) ?CloseTicket { return null; }
++    pub fn tryClose(_: *LlamaEngine) bool { return false; }
++    pub fn tryCloseReserved(_: *LlamaEngine, _: CloseTicket) bool { return false; }
+     pub fn close(self: *LlamaEngine) void {
+         _ = self;
+         @panic(unavailable);
+@@ -147,6 +152,8 @@ pub const LlamaEngine = struct {
+ pub const LlamaContext = struct {
+     seqs: []LlamaSeq,
+ 
++    pub fn fiosCanFree(_: *LlamaContext) bool { return false; }
++    pub fn tryFree(_: *LlamaContext) bool { return false; }
+     pub fn free(self: *LlamaContext) void {
+         _ = self;
+         @panic(unavailable);
 diff --git a/src/arch/mlx_stream.zig b/src/arch/mlx_stream.zig
 index bb45d0a..4b51f32 100644
 --- a/src/arch/mlx_stream.zig
@@ -291,7 +412,7 @@ index 1f982ed..291853f 100644
  /// `metal_kernel` helper gates on this, so on CUDA they all take the MLX-op path.
  pub fn streamIsGpu(s: mlx_stream) bool {
 diff --git a/src/model_registry.zig b/src/model_registry.zig
-index da1f791..5256ed0 100644
+index da1f791..ef5690d 100644
 --- a/src/model_registry.zig
 +++ b/src/model_registry.zig
 @@ -18,6 +18,7 @@
@@ -311,7 +432,7 @@ index da1f791..5256ed0 100644
      allocator: std.mem.Allocator,
  
      /// Identifier exposed via `/v1/models` and the request `model` field.
-@@ -394,14 +397,43 @@ pub const LoadedModel = struct {
+@@ -394,14 +397,62 @@ pub const LoadedModel = struct {
          self.ane = null;
      }
  
@@ -334,6 +455,14 @@ index da1f791..5256ed0 100644
 +            self.fios_cleanup_uncertain.store(true, .release);
 +            return false;
 +        }
++        if (self.llama_ctx) |ctx| {
++            const engine = self.llama_engine orelse { self.fios_cleanup_uncertain.store(true, .release); return false; };
++            if (!ctx.fiosCanFree() or !engine.fiosCanCloseContext(ctx)) {
++                self.fios_cleanup_uncertain.store(true, .release); return false;
++            }
++        } else if (self.llama_engine) |engine| {
++            if (!engine.fiosCanCloseContext(null)) { self.fios_cleanup_uncertain.store(true, .release); return false; }
++        }
 +        if (self.transformer) |xfm| {
 +            if (!xfm.fiosCanDeinit()) {
 +                self.fios_cleanup_uncertain.store(true, .release);
@@ -344,6 +473,17 @@ index da1f791..5256ed0 100644
 +    }
 +    fn fiosPrepareDestruction(self: *LoadedModel) bool {
 +        if (!self.fiosMayDeinit()) return false;
++        const llama_close: ?arch_llama.CloseTicket = if (self.llama_engine) |engine|
++            engine.fiosBeginCloseWithContext(self.llama_ctx) orelse { self.fios_cleanup_uncertain.store(true, .release); return false; }
++            else null;
++        if (self.llama_ctx) |ctx| {
++            if (!ctx.tryFree()) { self.fios_cleanup_uncertain.store(true, .release); return false; }
++            self.llama_ctx = null;
++        }
++        if (self.llama_engine) |engine| {
++            if (!engine.tryCloseReserved(llama_close.?)) { self.fios_cleanup_uncertain.store(true, .release); return false; }
++            self.llama_engine = null;
++        }
 +        if (self.transformer) |xfm| {
 +            if (!xfm.fiosRetireWarm()) {
 +                self.fios_cleanup_uncertain.store(true, .release);
@@ -358,7 +498,7 @@ index da1f791..5256ed0 100644
          if (self.llama_ctx) |ctx| {
              ctx.free();
              self.llama_ctx = null;
-@@ -530,6 +562,7 @@ pub const LoadedModel = struct {
+@@ -530,6 +581,7 @@ pub const LoadedModel = struct {
          if (self.arch_hint.len > 0) self.allocator.free(self.arch_hint);
          self.allocator.free(self.id);
          self.allocator.free(self.path);
@@ -366,7 +506,7 @@ index da1f791..5256ed0 100644
      }
  
      /// Free the CPU-only state `unloadResident` deliberately RETAINS —
-@@ -547,13 +580,24 @@ pub const LoadedModel = struct {
+@@ -547,13 +599,24 @@ pub const LoadedModel = struct {
      /// serialises this against `grammarTokenBytes` and the tokenize cache is
      /// the REFCOUNT, not their own mutexes — a reload cannot begin until every
      /// borrower has released.
@@ -393,7 +533,7 @@ index da1f791..5256ed0 100644
          std.debug.assert(self.state == .loading or self.config == null);
          if (self.token_bytes) |*tb| {
              tb.deinit();
-@@ -578,6 +622,7 @@ pub const LoadedModel = struct {
+@@ -578,6 +641,7 @@ pub const LoadedModel = struct {
              tc.deinit();
              self.tokenize_cache = null;
          }
@@ -401,7 +541,7 @@ index da1f791..5256ed0 100644
      }
  
      /// Free only the mlx-allocating state (weights/transformer/vision/
-@@ -586,7 +631,12 @@ pub const LoadedModel = struct {
+@@ -586,7 +650,12 @@ pub const LoadedModel = struct {
      /// Used by eviction so the registry keeps the entry around as
      /// `.unloaded` for later listing/reload, AND by `Scheduler.deinit` so
      /// mlx frees happen on the inference thread.
@@ -415,7 +555,7 @@ index da1f791..5256ed0 100644
          // A Thunderbolt pair's model unloads on both Macs; its next load plans again.
          if (distributed.serves(self.path)) distributed.release();
          if (self.llama_ctx) |ctx| {
-@@ -698,6 +748,7 @@ pub const LoadedModel = struct {
+@@ -698,6 +767,7 @@ pub const LoadedModel = struct {
          // budget against it for the whole session.
          if (self.config) |c| c.pinned_prefill_chunk = 0;
          self.state = .unloaded;
@@ -423,7 +563,7 @@ index da1f791..5256ed0 100644
      }
  };
  
-@@ -739,7 +790,22 @@ pub const ModelStatus = struct {
+@@ -739,7 +809,22 @@ pub const ModelStatus = struct {
  ///   3. Per-request handlers (Phase C) call `ensureLoaded(scheduler, id)`
  ///      and `release`. The borrowed `*LoadedModel` is valid until `release`.
  ///   4. `deinit` tears down every entry; the discovery result is freed.
@@ -446,7 +586,7 @@ index da1f791..5256ed0 100644
      allocator: std.mem.Allocator,
      io: std.Io,
  
-@@ -780,6 +846,21 @@ pub const ModelRegistry = struct {
+@@ -780,6 +865,21 @@ pub const ModelRegistry = struct {
      /// Bumped by every entry added and every state change (`/props`
      /// `registry_generation`): a client re-reads `/v1/models` only when it moved.
      generation: std.atomic.Value(u64) = .init(0),
@@ -468,7 +608,7 @@ index da1f791..5256ed0 100644
  
      /// Running sum of `bytes_resident` across `.ready` entries. Updated
      /// under `mutex` on every state transition.
-@@ -795,6 +876,18 @@ pub const ModelRegistry = struct {
+@@ -795,6 +895,18 @@ pub const ModelRegistry = struct {
      /// pick needs.
      lru_clock: i64,
  
@@ -487,7 +627,7 @@ index da1f791..5256ed0 100644
      /// Create the registry. Takes ownership of `discovery` (if non-null)
      /// and pre-populates entries from it.
      ///
-@@ -835,7 +928,7 @@ pub const ModelRegistry = struct {
+@@ -835,7 +947,7 @@ pub const ModelRegistry = struct {
          // on-demand. Allocation failures here roll back any partial
          // entries via errdefer so we don't leak strings on OOM.
          if (discovery) |d| {
@@ -496,7 +636,7 @@ index da1f791..5256ed0 100644
              for (d.models) |m| {
                  _ = try self.registerStubWithArch(m.id, m.path, m.bytes_on_disk, m.model_type);
              }
-@@ -848,19 +941,56 @@ pub const ModelRegistry = struct {
+@@ -848,19 +960,56 @@ pub const ModelRegistry = struct {
      /// each entry. Called once at server shutdown after the scheduler has
      /// joined (so the inference thread isn't mid-load).
      pub fn deinit(self: *ModelRegistry) void {
@@ -560,7 +700,7 @@ index da1f791..5256ed0 100644
      }
  
      /// Insert an `.unloaded` stub for a model. Returns the heap-allocated
-@@ -876,6 +1006,8 @@ pub const ModelRegistry = struct {
+@@ -876,6 +1025,8 @@ pub const ModelRegistry = struct {
      /// `registerStub` variant carrying the discovery-peeked `model_type` so
      /// the stub can advertise arch-derived capabilities before loading.
      pub fn registerStubWithArch(self: *ModelRegistry, id: []const u8, path: []const u8, bytes_on_disk: ?u64, arch_hint: []const u8) !*LoadedModel {
@@ -569,7 +709,7 @@ index da1f791..5256ed0 100644
          if (self.entries.get(id) != null) return error.DuplicateId;
  
          const stub = try self.allocator.create(LoadedModel);
-@@ -915,6 +1047,7 @@ pub const ModelRegistry = struct {
+@@ -915,6 +1066,7 @@ pub const ModelRegistry = struct {
          // putNoClobber so we surface a stronger error than overwrite — the
          // earlier `entries.get` guard makes this defensive.
          try self.entries.putNoClobber(stub.id, stub);
@@ -577,7 +717,7 @@ index da1f791..5256ed0 100644
          _ = self.generation.fetchAdd(1, .monotonic);
          return stub;
      }
-@@ -933,6 +1066,11 @@ pub const ModelRegistry = struct {
+@@ -933,6 +1085,11 @@ pub const ModelRegistry = struct {
      /// the entry after the basename (a `.gguf` file without its extension, as
      /// `--model` names it).
      pub fn registerByPath(self: *ModelRegistry, io: std.Io, abs_path: []const u8, id: ?[]const u8) ![]const u8 {
@@ -589,7 +729,7 @@ index da1f791..5256ed0 100644
          var trimmed = abs_path;
          while (trimmed.len > 0 and trimmed[trimmed.len - 1] == '/') trimmed = trimmed[0 .. trimmed.len - 1];
          const base = std.fs.path.basename(trimmed);
-@@ -972,9 +1110,11 @@ pub const ModelRegistry = struct {
+@@ -972,9 +1129,11 @@ pub const ModelRegistry = struct {
      pub fn setDefault(self: *ModelRegistry, id: []const u8) !void {
          self.mutex.lockUncancelable(self.io);
          defer self.mutex.unlock(self.io);
@@ -601,7 +741,7 @@ index da1f791..5256ed0 100644
      }
  
      /// Look up an entry by its on-disk path (trailing slashes ignored).
-@@ -1010,6 +1150,11 @@ pub const ModelRegistry = struct {
+@@ -1010,6 +1169,11 @@ pub const ModelRegistry = struct {
      /// re-reads its dir. Returns the number of stubs added. No roots (a
      /// `--model`-only server) rescans nothing.
      pub fn rescan(self: *ModelRegistry) !u32 {
@@ -613,7 +753,7 @@ index da1f791..5256ed0 100644
          const roots = if (self.discovery) |d| d.roots else &.{};
          if (roots.len == 0) return 0;
          var found = try model_discovery.discoverModelsMany(self.io, self.allocator, roots);
-@@ -1098,9 +1243,11 @@ pub const ModelRegistry = struct {
+@@ -1098,9 +1262,11 @@ pub const ModelRegistry = struct {
          const entry = self.entries.get(id) orelse return error.UnknownModelId;
  
          while (true) {
@@ -625,7 +765,7 @@ index da1f791..5256ed0 100644
                      return entry;
                  },
                  .loading, .evicting => {
-@@ -1113,8 +1260,138 @@ pub const ModelRegistry = struct {
+@@ -1113,8 +1279,138 @@ pub const ModelRegistry = struct {
          }
      }
  
@@ -764,7 +904,7 @@ index da1f791..5256ed0 100644
          _ = self.generation.fetchAdd(1, .monotonic);
          self.state_cond.broadcast(self.io);
      }
-@@ -1149,10 +1426,22 @@ pub const ModelRegistry = struct {
+@@ -1149,10 +1445,22 @@ pub const ModelRegistry = struct {
      /// ensureLoaded callers wait on `.evicting`. Returns immediately;
      /// caller MUST call `waitForRefcountZeroLocked` to drain readers
      /// before freeing GPU memory.
@@ -788,7 +928,7 @@ index da1f791..5256ed0 100644
      }
  
      /// Phase D: block until `entry.refcount == 0`. Caller holds `mutex`.
-@@ -1176,6 +1465,7 @@ pub const ModelRegistry = struct {
+@@ -1176,6 +1484,7 @@ pub const ModelRegistry = struct {
          entry.state = .unloaded;
          entry.error_name = null;
          self.stateChanged();
@@ -796,7 +936,7 @@ index da1f791..5256ed0 100644
      }
  
      /// Phase D: count of currently-loaded (`.ready` or `.evicting`) entries.
-@@ -1294,6 +1584,7 @@ pub const ModelRegistry = struct {
+@@ -1294,6 +1603,7 @@ pub const ModelRegistry = struct {
      /// Shared tail of `release` and `releaseStatus`. Caller holds `mutex`.
      fn releaseRefLocked(self: *ModelRegistry, lm: *LoadedModel) void {
          const prev = lm.refcount.fetchSub(1, .acq_rel);
@@ -804,7 +944,7 @@ index da1f791..5256ed0 100644
          std.debug.assert(prev > 0);
          // Broadcast so an evictor waiting for refcount == 0 wakes.
          if (prev == 1) self.state_cond.broadcast(self.io);
-@@ -1431,6 +1722,7 @@ pub const ModelRegistry = struct {
+@@ -1431,6 +1741,7 @@ pub const ModelRegistry = struct {
          std.debug.assert(entry.state == .evicting);
          entry.state = .ready;
          self.stateChanged();
@@ -812,7 +952,7 @@ index da1f791..5256ed0 100644
      }
  
      /// `live_bytes` is what the allocator holds right now (weights + KV + caches + wired
-@@ -1450,7 +1742,7 @@ pub const ModelRegistry = struct {
+@@ -1450,7 +1761,7 @@ pub const ModelRegistry = struct {
          var freed_live: u64 = 0;
          var freed_slots: u32 = 0;
          if (forced) |v| {
@@ -821,7 +961,7 @@ index da1f791..5256ed0 100644
              out[0] = v;
              n = 1;
              freed = v.bytes_resident;
-@@ -1479,7 +1771,10 @@ pub const ModelRegistry = struct {
+@@ -1479,7 +1790,10 @@ pub const ModelRegistry = struct {
                  for (out[0..n]) |v| self.unmarkEvictingLocked(v);
                  return null;
              }
@@ -833,7 +973,7 @@ index da1f791..5256ed0 100644
              freed += victim.bytes_resident;
              freed_live += liveBytesFreed(victim);
              freed_slots += @intFromBool(takesSlot(victim));
-@@ -1520,7 +1815,7 @@ pub const ModelRegistry = struct {
+@@ -1520,7 +1834,7 @@ pub const ModelRegistry = struct {
          var free = room;
          var n: usize = 0;
          while (free < need and n < out.len) : (n += 1) {
@@ -842,7 +982,7 @@ index da1f791..5256ed0 100644
              out[n] = idle[n];
              free +|= idle[n].bytes_resident;
          }
-@@ -1810,7 +2105,7 @@ test "LoadedModel: a reload frees the CPU state the previous load left behind" {
+@@ -1810,7 +2124,7 @@ test "LoadedModel: a reload frees the CPU state the previous load left behind" {
      entry.config.?.ngram_table_path = try testing.allocator.dupe(u8, "/m/ngram_table.bin");
  
      // Unload retains it by contract.
@@ -851,7 +991,7 @@ index da1f791..5256ed0 100644
      try testing.expect(entry.tokenizer != null);
      try testing.expect(entry.config != null);
  
-@@ -1822,7 +2117,7 @@ test "LoadedModel: a reload frees the CPU state the previous load left behind" {
+@@ -1822,7 +2136,7 @@ test "LoadedModel: a reload frees the CPU state the previous load left behind" {
      // Reload: `.loading` is the precondition the reader contract rests on, so
      // the test claims it the way `tryBeginLoadLocked` does.
      entry.state = .loading;
@@ -860,7 +1000,7 @@ index da1f791..5256ed0 100644
      try testing.expect(entry.tokenizer == null);
      try testing.expect(entry.config == null);
      try testing.expect(entry.token_bytes == null);
-@@ -1838,8 +2133,8 @@ test "LoadedModel: releaseRetainedCpuState is safe on an entry that never loaded
+@@ -1838,8 +2152,8 @@ test "LoadedModel: releaseRetainedCpuState is safe on an entry that never loaded
      defer reg.deinit();
      const entry = try reg.registerStub("m", "/path/to/m", 1024);
      // Bar: the first load calls this too, so a never-loaded entry is a no-op.
@@ -871,7 +1011,7 @@ index da1f791..5256ed0 100644
      try testing.expect(entry.tokenizer == null);
  }
  
-@@ -2041,7 +2336,7 @@ test "unloadResident resets the prefill-chunk pin but never the context pin" {
+@@ -2041,7 +2355,7 @@ test "unloadResident resets the prefill-chunk pin but never the context pin" {
      cfg.pinned_context = 8192;
      lm.config = cfg;
  
@@ -880,7 +1020,7 @@ index da1f791..5256ed0 100644
      try testing.expectEqual(@as(u32, 0), cfg.pinned_prefill_chunk);
      try testing.expectEqual(@as(u32, 8192), cfg.pinned_context);
  }
-@@ -2687,3 +2982,33 @@ test "UnloadMark: models unloaded together count as one pending release" {
+@@ -2687,3 +3001,33 @@ test "UnloadMark: models unloaded together count as one pending release" {
      m.record(1_200 + UNLOAD_SETTLE_MS + 1, 5);
      try testing.expectEqual(@as(u64, 5), m.bytes);
  }

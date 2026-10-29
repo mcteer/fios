@@ -104,6 +104,8 @@ For durable service-scope regressions, `node scripts/check-platform.mjs --mock -
 
 Normalized activity policy cases live in `tests/fixtures/platform/activity.json`; Debug/optimized mock runs must execute all31 named vectors. `node scripts/check-platform.mjs --mock --mutate-activity-coverage` must exit nonzero at `ACTIVITY_FIXTURE_MISMATCH: source-ceiling-unknown`. This is an independent source-ceiling witness, not native/backend coverage or an admission grant.
 
+Native object-lifetime metadata checks: `node scripts/check-platform-backend-lifetime.mjs --zig /ABS/PINNED_ZIG`, then append `--release` for ReleaseSafe or `--mutation-close-edge` for the precise held-child close bypass. The mutation wrapper requires its exact runtime marker and one failing selected case. These finite CPU-only checks run no backend/model and issue no native terminal/admission capability.
+
 ## 2a. Implemented local CLI and explicit limits
 
 Commands below require existing private development state and the built `studioctl`; they do not install/start native applications or mint model permission. Replace placeholders locally; never paste credentials into argv, environment, logs or this document.

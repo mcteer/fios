@@ -13,7 +13,7 @@ export const custodyEdges = [
  ['plugin:src/arch/mimo_v2/source.zig', /pub fn deinit\(self: \*Source\) void \{\s*if \(!self\.fiosRetireWarm\(\)\) return;/],
  ['native:src/model_registry.zig', /pub fn deinit\(self: \*LoadedModel\) bool \{\s*if \(!self\.fiosPrepareDestruction\(\)\) return false;/],
  ['native:src/model_registry.zig', /pub fn unloadResident\(self: \*LoadedModel\) bool \{\s*if \(!self\.fiosPrepareDestruction\(\)\) return false;/],
- ['native:src/model_registry.zig', /fn fiosPrepareDestruction\(self: \*LoadedModel\) bool \{\s*if \(!self\.fiosMayDeinit\(\)\) return false;\s*if \(self\.transformer\) \|xfm\| \{\s*if \(!xfm\.fiosRetireWarm\(\)\)/],
+ ['native:src/model_registry.zig', /fn fiosPrepareDestruction\(self: \*LoadedModel\) bool \{\s*if \(!self\.fiosMayDeinit\(\)\) return false;[\s\S]*?if \(self\.transformer\) \|xfm\| \{\s*if \(!xfm\.fiosRetireWarm\(\)\)/],
  ['native:src/transformer.zig', /pub fn fiosRetireWarm\(self: \*Transformer\) bool \{\s*return if \(self\.mlx_stream_ext\) \|m\| mlx_stream_mod\.fiosRetireWarm\(m\) else true;/],
  ['native:src/arch/mlx_stream.zig', /@hasDecl\(Side\(k\)\.arch, "fiosRetireWarm"\)\) Side\(k\)\.arch\.fiosRetireWarm\(b\.module\)/],
  ['plugin:src/arch/mimo_v2/root.zig', /pub fn fiosRetireWarm\(m: \*Module\) bool \{\s*return m\.fiosRetireWarm\(\);/],
