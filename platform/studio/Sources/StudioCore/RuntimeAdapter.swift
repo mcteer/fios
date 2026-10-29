@@ -71,7 +71,8 @@ public struct VerifiedExecutable:Sendable {
         let childEnvironment=try CommandEnvironment.sanitized(environment)
         try CommandSlots.shared.acquire()
         var commandProcess:Process?
-        defer {CommandSlots.shared.release(commandProcess)}
+        var processStart:UInt64?
+        defer {CommandSlots.shared.release(commandProcess,start:processStart)}
         let deadline = ProcessInfo.processInfo.systemUptime + timeout
         try verify(deadline:deadline)
         guard ProcessInfo.processInfo.systemUptime<deadline else {throw RuntimeError.deadline}
@@ -82,7 +83,7 @@ public struct VerifiedExecutable:Sendable {
         process.standardInput = FileHandle.nullDevice
         process.standardOutput = pipe; process.standardError = pipe
         try process.run()
-        let processStart=try? WorkerResources.startIdentifier(pid:process.processIdentifier)
+        processStart=try? WorkerResources.startIdentifier(pid:process.processIdentifier)
         func signalOwned(_ signal:Int32) {
             guard process.isRunning,let processStart,
                   (try? WorkerResources.startIdentifier(pid:process.processIdentifier))==processStart else {return}
@@ -120,7 +121,8 @@ public struct VerifiedExecutable:Sendable {
             }
             if !eof || process.isRunning { Thread.sleep(forTimeInterval:0.005) }
         }
-        process.waitUntilExit()
+        // EOF plus Foundation exit observation makes terminationStatus available;
+        // slot release independently requires kernel absence. No blocking join.
         if let failure { throw failure }
         return CommandResult(status:process.terminationStatus,output:output)
     }
