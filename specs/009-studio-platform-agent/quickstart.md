@@ -84,6 +84,14 @@ node scripts/check-platform-native-fixture.mjs --source /ABS/DISPOSABLE_NATIVE -
 
 Both source checkouts must resolve beneath `/private/tmp`, belong to the development user and retain their reviewed commits. The optional candidate must match exactly the repository's `mlx-stream-fcb4011-retirement.patch` at its pinned plugin revision; altered tracked inputs are refused before compilation. The native build's existing dependency option selects it without modifying the canonical submodule. The fixture brackets its declared commit/patch/modified-source inputs and all installed runtime hashes, runs eight actual native root cases plus private HTTP/control/manager checks, and emits the temporary binary digest separately from candidate inputs. No real model runs. Default invocation retains the clean upstream dependency. Successful compilation/runtime fixtures do not establish all-client/Metal/model retirement, complete context lifetime or production enrollment; candidate pause control stays default-disabled.
 
+The separate candidate’s CPU lifetime witness is finite and never runs a model or Metal kernel:
+
+```sh
+node scripts/check-platform-mimo.mjs --source /ABS/DISPOSABLE_NATIVE --zig /ABS/PINNED_ZIG --mimo-source /ABS/DISPOSABLE_MIMO_CANDIDATE --mutation-lifetime
+```
+
+This wrapper must exit0 only after its private optimized bypass actually fails `FIO_MIMO_DESTROY_DROPPED_HELD_ENGINE` with9pass/1fail of10, then restores source. Ordinary invocation and `--debug` require10 focused cases plus13 upstream passes/1 explicitly skipped GPU-window case. Lifetime release drops custody only; it never proves native terminality. Engine-owner integration, outer-context retention and deferred cleanup remain unfinished.
+
 ## 2a. Implemented local CLI and explicit limits
 
 Commands below require existing private development state and the built `studioctl`; they do not install/start native applications or mint model permission. Replace placeholders locally; never paste credentials into argv, environment, logs or this document.

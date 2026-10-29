@@ -8,6 +8,7 @@ extern fn fios_test_mimo_event_set(u64, u64) void;
 extern fn fios_test_mimo_event_release(u64) void;
 extern fn fios_test_mimo_configure(?*anyopaque, u64, u64) c_int;
 extern fn fios_test_mimo_retires() u64;
+extern fn fios_test_mimo_destroys() u64;
 extern fn fios_test_mimo_second_pending(?*anyopaque) c_int;
 extern fn fios_test_mimo_timer_start(u64, u64) ?*anyopaque;
 extern fn fios_test_mimo_timer_stop(?*anyopaque) c_int;
@@ -34,7 +35,11 @@ test "fios real metal: actual warm chunk retirement precedes exact pause acknowl
             .target_chunk_ns = 1, .stuck_ns = 5 * std.time.ns_per_s,
         });
     };
-    defer engine.destroy();
+    const lifetime = try engine.fixtureRetainLifetime();
+    defer if (fios_test_mimo_destroys() == 0) {
+        _ = engine.fixtureReleaseLifetime(lifetime);
+        engine.destroy();
+    };
     engine.arm(1);
     var attempts: usize = 0;
     while (engine.n_chunks.load(.seq_cst) < 2 and attempts < 1000) : (attempts += 1) tick();
@@ -77,10 +82,22 @@ test "fios real metal: actual warm chunk retirement precedes exact pause acknowl
         try std.testing.expect(!engine.fixtureResume(ticket));
         try std.testing.expect(engine.fixtureResume(replacement));
     }
+    // GPU work has actually retired before this destructor attempt. Observe
+    // external native destruction count before any possibly-freed pointer.
+    engine.destroy();
+    if (fios_test_mimo_destroys() != 0) {
+        std.debug.print("FIO_MIMO_METAL_DESTROY_DROPPED_HELD_ENGINE\n", .{});
+        return error.FiosHeldMetalEngineDestroyed;
+    }
+    try std.testing.expect(!engine.quit.load(.seq_cst));
+    try std.testing.expect(engine.fixtureReleaseLifetime(lifetime));
+    try std.testing.expect(!engine.fixtureReleaseLifetime(lifetime));
     const deadline = fios_test_mimo_timer_stop(timer);
     timer = null;
     try std.testing.expectEqual(@as(c_int, 0), deadline);
     std.debug.print("GENUINE_MIMO_METAL chunks={d} successful_retires={d} gpu_ns={d} injected_api_error={any}; no model/all-context/lifecycle grant\n", .{
         engine.n_chunks.load(.seq_cst), engine.n_retired.load(.seq_cst), engine.gpu_ns.load(.seq_cst), injected_retire_failure,
     });
+    engine.destroy();
+    try std.testing.expectEqual(@as(u64, 1), fios_test_mimo_destroys());
 }

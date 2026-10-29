@@ -23,6 +23,7 @@ int fios_test_mimo_configure(void* handle,uint64_t first,uint64_t second) {
   return 0;
 }
 uint64_t fios_test_mimo_retires() {return mimo_warm::fixture_retire_calls.load();}
+uint64_t fios_test_mimo_destroys() {return mimo_warm::fixture_destroy_calls.load();}
 int fios_test_mimo_second_pending(void* handle) {
   auto* buffer=static_cast<mimo_warm::Warm*>(handle)->fixture_last.load();
   return buffer&&(buffer->status()==MTL::CommandBufferStatusCommitted||buffer->status()==MTL::CommandBufferStatusScheduled);
