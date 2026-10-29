@@ -25,8 +25,8 @@ if(process.argv.length===3&&process.argv[2]==='--isolated-metrics'){
 // No SSH, daemon socket, service lifecycle or live inference. The test binary
 // and descendants deny IP networking except one freshly allocated loopback
 // mock endpoint; configured native ports/other IPs stay denied. No fallback.
-if (![3,4].includes(process.argv.length) || process.argv[2] !== '--mock' || (process.argv.length===4 && !['--release','--mutate-runtime-postcheck','--mutate-manager-epoch','--mutate-activity-coverage','--mutate-inference-scope','--mutate-observation-native-sequence','--mutate-resource-freshness','--mutate-vm-profile-rebind','--mutate-vm-running-gate','--mutate-service-census','--mutate-lineage-unknown','--mutate-lineage-root','--mutate-launch-hold','--mutate-worker-start-inline'].includes(process.argv[3]))) {
-  throw new Error('Usage: node scripts/check-platform.mjs --isolated-metrics | --mock [--release|--mutate-runtime-postcheck|--mutate-manager-epoch|--mutate-activity-coverage|--mutate-inference-scope|--mutate-observation-native-sequence|--mutate-resource-freshness|--mutate-vm-profile-rebind|--mutate-vm-running-gate|--mutate-service-census|--mutate-lineage-unknown|--mutate-lineage-root|--mutate-launch-hold|--mutate-worker-start-inline]');
+if (![3,4].includes(process.argv.length) || process.argv[2] !== '--mock' || (process.argv.length===4 && !['--release','--mutate-runtime-postcheck','--mutate-manager-epoch','--mutate-activity-coverage','--mutate-inference-scope','--mutate-observation-native-sequence','--mutate-resource-freshness','--mutate-vm-profile-rebind','--mutate-vm-running-gate','--mutate-service-census','--mutate-lineage-unknown','--mutate-lineage-root','--mutate-launch-hold','--mutate-worker-start-inline','--mutate-worker-rss-read'].includes(process.argv[3]))) {
+  throw new Error('Usage: node scripts/check-platform.mjs --isolated-metrics | --mock [--release|--mutate-runtime-postcheck|--mutate-manager-epoch|--mutate-activity-coverage|--mutate-inference-scope|--mutate-observation-native-sequence|--mutate-resource-freshness|--mutate-vm-profile-rebind|--mutate-vm-running-gate|--mutate-service-census|--mutate-lineage-unknown|--mutate-lineage-root|--mutate-launch-hold|--mutate-worker-start-inline|--mutate-worker-rss-read]');
 }
 const root = fileURLToPath(new URL('../', import.meta.url));
 const directory = mkdtempSync(join(tmpdir(), 'fios-platform-policy-'));
@@ -67,11 +67,17 @@ try {
   const vmStatusBuild=spawnSync('swiftc',['-parse-as-library','-swift-version','6','-warnings-as-errors','-O',vmStatusSource,'-o',vmStatusBinary],{cwd:root,stdio:'inherit',timeout:30000});
   if(vmStatusBuild.error)throw vmStatusBuild.error;
   if(vmStatusBuild.status!==0)throw Error('Finite VM status fixture build failed');
+  const rssSource=join(directory,'WorkerRSSSentinel.swift'),rssBinary=join(directory,'worker-rss-sentinel');
+  copyFileSync(resolve(root,'platform/studio/Tests/StudioCoreTests/WorkerRSSSentinel.swift.fixture'),rssSource);
+  const rssBuild=spawnSync('swiftc',['-parse-as-library','-swift-version','6','-warnings-as-errors','-O',rssSource,'-o',rssBinary],{cwd:root,stdio:'inherit',timeout:30000});
+  if(rssBuild.error)throw rssBuild.error;
+  if(rssBuild.status!==0)throw Error('Finite RSS fixture build failed');
   const sources = ['Sources/StudioCore', 'Tests/StudioCoreTests'].flatMap(part => {
     const path = resolve(root, 'platform/studio', part);
     return readdirSync(path).filter(name => name.endsWith('.swift')).sort().map(name => {
       const source=join(path,name);
       const variant=process.argv[3]==='--mutate-runtime-postcheck'?{file:'Sandboxes.swift',check:'        try pinned?.verify(deadline:min(deadline,ProcessInfo.processInfo.systemUptime+2))',replacement:'        withExtendedLifetime(pinned) {}'}:
+        process.argv[3]==='--mutate-worker-rss-read'?{file:'PrivateWorker.swift',check:'let resident=try? WorkerResources.residentBytes(pid:process.processIdentifier)',replacement:'let resident:UInt64?=1'}:
         process.argv[3]==='--mutate-worker-start-inline'?{file:'AsyncWorkerStart.swift',check:'Thread.detachNewThread { [self] in\n            let value=work { [self] in lock.lock();defer {lock.unlock()};return cancelled }\n            lock.lock();result=value;lock.unlock()\n        }',replacement:'let value=work { [self] in lock.lock();defer {lock.unlock()};return cancelled };result=value'}:
         process.argv[3]==='--mutate-launch-hold'?{file:'ModelBroker.swift',check:'for key in held where try journal.workerLaunchReaped(job:key.job,attempt:key.attempt)',replacement:'for key in held'}:
         process.argv[3]==='--mutate-manager-epoch'?{file:'ManagerExecution.swift',check:'value.managerEpoch==managerEpoch,',replacement:''}:
@@ -97,7 +103,7 @@ try {
   ]) {
     // Compilation has its own finite hosted-runner allowance. Runtime tests
     // retain120s; no model, IPC, native-command or cleanup deadline is raised.
-    const result = spawnSync(command, args, { cwd: root, stdio: 'inherit', timeout: command==='swiftc'?300_000:120_000, env: { ...process.env, FIOS_PLATFORM_MOCK_PORT: String(port), FIOS_PLATFORM_SETID_FIXTURE: setidFixture, FIOS_PLATFORM_LOCK_SETID_FIXTURE: setidLock, FIOS_PLATFORM_CENSUS_FIXTURE:censusBinary, FIOS_PLATFORM_ENDPOINT_FIXTURE:endpointBinary, FIOS_PLATFORM_VM_STATUS_FIXTURE:vmStatusBinary } });
+    const result = spawnSync(command, args, { cwd: root, stdio: 'inherit', timeout: command==='swiftc'?300_000:120_000, env: { ...process.env, FIOS_PLATFORM_MOCK_PORT: String(port), FIOS_PLATFORM_SETID_FIXTURE: setidFixture, FIOS_PLATFORM_LOCK_SETID_FIXTURE: setidLock, FIOS_PLATFORM_CENSUS_FIXTURE:censusBinary, FIOS_PLATFORM_ENDPOINT_FIXTURE:endpointBinary, FIOS_PLATFORM_VM_STATUS_FIXTURE:vmStatusBinary, FIOS_PLATFORM_RSS_FIXTURE:rssBinary } });
     if (result.error) throw result.error;
     if (result.status !== 0) throw new Error(`Platform policy validation failed (${result.status ?? result.signal})`);
   }

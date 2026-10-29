@@ -109,6 +109,7 @@ struct PolicyTestRunner {
         ActivityCoherenceTests.run()
         try DetailedObservationTests.run()
         try InferenceScopeTests.run()
+        try runWorkerRSSBreachTests()
         try runAsyncWorkerStartTests()
         try runLateWorkerRecoveryTests()
         try MigrationTests.run()

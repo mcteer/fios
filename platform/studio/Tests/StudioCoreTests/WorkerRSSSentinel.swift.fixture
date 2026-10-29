@@ -1,0 +1,15 @@
+import Foundation
+import Darwin
+
+// Finite owned fixture: no listener, model, file or network operation. Touch
+// every page and ignore TERM so the real worker supervisor must escalate.
+@main struct WorkerRSSSentinel {
+    static func main() {
+        signal(SIGTERM,SIG_IGN)
+        let size=576<<20
+        let bytes=UnsafeMutableRawPointer.allocate(byteCount:size,alignment:4096)
+        defer {bytes.deallocate()}
+        memset(bytes,0x5a,size)
+        withExtendedLifetime(bytes) {Thread.sleep(forTimeInterval:30)}
+    }
+}
