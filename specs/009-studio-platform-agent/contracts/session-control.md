@@ -101,6 +101,14 @@ error stays uncertain. A successful callback must pass actual PID/start/UID/path
 hash checks; duplicate callbacks are inert. No deadline or shutdown quits a
 native app or clears native inference uncertainty.
 
+On preparation expiry, the main actor first revokes the pending future-effect
+edge and only then records local non-dispatch. The read-only validator retains
+its one resource slot until its completion is observed; timeout cannot start a
+second validator or turn an already-dispatched app operation into `not_sent`.
+The fixture withholds validation completion past10s, verifies this receipt and
+retained slot, and only then releases the worker. Optional `--mutate-expiry`
+changes a private temporary source copy and must fail that exact assertion.
+
 The AppKit adapter lives only in `StudioSession`, using fixed bundle descriptors,
 no caller arguments/environment, no new app instance, no activation and no
 credential/login prompts. Core's public factory always performs enrollment and
@@ -118,3 +126,7 @@ fencing and replay. It neither calls the enrolled factory nor opens a GUI app.
 The separate signature fixture reads the genuine protected system Calculator
 bundle without launching it. Neither fixture is installed/native lifecycle or
 all-client/model acceptance.
+
+The driver fixture uses the same synchronous `RunLoop` pumping style as the
+session entry point, including asynchronous main-actor fake launch callbacks;
+it does not depend on an async-main executor unavailable to that entry point.

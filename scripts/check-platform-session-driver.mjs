@@ -8,7 +8,9 @@ import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {randomUUID} from 'node:crypto';
 import {setTimeout as delay} from 'node:timers/promises';
-assert.equal(process.platform,'darwin');assert.notEqual(process.getuid(),0);assert.deepEqual(process.argv.slice(2),['--isolated']);
+assert.equal(process.platform,'darwin');assert.notEqual(process.getuid(),0);
+const mutation=process.argv[3]==='--mutate-expiry';
+assert.deepEqual(process.argv.slice(2),mutation?['--isolated','--mutate-expiry']:['--isolated']);
 const root=fileURLToPath(new URL('../',import.meta.url)),temporary=mkdtempSync('/tmp/fios009-session-driver-'),children=[];
 const exited=child=>child.exitCode!==null||child.signalCode!==null;
 async function until(check,timeout=5000){const end=performance.now()+timeout;while(performance.now()<end){const value=check();if(value)return value;await delay(20);}throw Error('Finite session driver fixture deadline');}
@@ -16,7 +18,11 @@ const policy='(version 1)(allow default)(deny network*)(allow network* (local un
 try {
  const fixture=join(temporary,'DriverFixture.swift'),binary=join(temporary,'driver-fixture'),core=join(root,'platform/studio/Sources/StudioCore');
  copyFileSync(join(root,'platform/studio/Tests/StudioCoreTests/SessionDriver.swift.fixture'),fixture);
- const sources=readdirSync(core).filter(n=>n.endsWith('.swift')).sort().map(n=>join(core,n));
+ const sources=readdirSync(core).filter(n=>n.endsWith('.swift')).sort().map(n=>{
+  const original=join(core,n);if(!mutation||n!=='EnrolledSessionDriver.swift')return original;
+  const source=readFileSync(original,'utf8'),edge='systemUptime>=check.deadline';assert.equal(source.split(edge).length,2);
+  const copy=join(temporary,n);writeFileSync(copy,source.replace(edge,edge+'+60'));return copy;
+ });
  const built=spawnSync('swiftc',['-swift-version','6','-warnings-as-errors','-I',join(root,'platform/studio/Sources/CSQLite'),...sources,fixture,'-o',binary],{cwd:root,encoding:'utf8',timeout:180000,maxBuffer:65536});
  assert.equal(built.status,0,built.stderr);
  for(const [scenario,expected,calls] of [['success','started',1],['validation','not_sent',0],['console','not_sent',0],['running','not_sent',0],['error','uncertain',1],['wrong-process','uncertain',1],['clock','uncertain',0],['expired','not_sent',0],['shutdown',null,0]]) {
@@ -31,9 +37,15 @@ try {
   await until(()=>existsSync(join(state,'validation-entered')));
   assert.equal(invoke('lookup',id),'uncertain','Read-only validation blocked or prematurely acknowledged');
   if(scenario==='success')assert.equal(invoke('launch',randomUUID(),'orbstack'),'not_sent','Second validation queued instead of finite non-dispatch');
-  if(scenario==='shutdown'){writeFileSync(join(state,'shutdown'),'stop');await delay(50);}
-  if(scenario==='expired')await delay(10_100);
+  if(scenario==='shutdown'){writeFileSync(join(state,'shutdown'),'stop');await until(()=>existsSync(join(state,'shutdown-observed')));}
+  if(scenario==='expired'){
+   await delay(10_100);
+   assert.equal(invoke('lookup',id),'not_sent','Preparation timeout failed to revoke its future effect before worker completion');
+   assert.equal(invoke('launch',randomUUID(),'orbstack'),'not_sent','Timed-out validator resource slot was released while still running');
+  }
   writeFileSync(join(state,'release-validation'),'release');
+  if(['success','console','running','error','wrong-process','clock'].includes(scenario))await until(()=>existsSync(join(state,'validation-observed')));
+  if(calls===1)await until(()=>Number(readFileSync(join(state,'calls'),'utf8'))===1);
   if(expected==='uncertain'||expected===null)await delay(300);
   else await until(()=>invoke('lookup',id)===expected);
   if(expected!==null){assert.equal(invoke('lookup',id),expected);assert.equal(invoke('launch',id),expected,'Same-ID launch replayed after callback');}

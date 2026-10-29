@@ -48,7 +48,7 @@ struct SessionDriverPorts:Sendable {
 }
 
 @MainActor public final class EnrolledSessionDriver {
-    private struct Check {let id:String;let service:ManagedService;let deadline:TimeInterval}
+    private struct Check {let id:String;let service:ManagedService;let deadline:TimeInterval;var cancelled=false}
     private let server:SessionControlServer
     private let applications:[ManagedService:VerifiedExecutable]
     private let ports:SessionDriverPorts
@@ -66,6 +66,13 @@ struct SessionDriverPorts:Sendable {
     }
     public func poll(consoleReady:Bool,now:Int64)throws {
         guard !stopped else {return}
+        if var check=checking,!check.cancelled,ProcessInfo.processInfo.systemUptime>=check.deadline {
+            // Revoke the local future-effect edge BEFORE acknowledging. The
+            // read-only validator may still be running: retain its one slot,
+            // and its completion can no longer call the application adapter.
+            check.cancelled=true;checking=check
+            server.acknowledgeNotSent(id:check.id,service:check.service)
+        }
         try server.poll(consoleReady:consoleReady,now:now) {service,id in self.begin(service:service,id:id)}
     }
     public func shutdown() {stopped=true;checking=nil} // Never quits native apps.
@@ -91,6 +98,7 @@ struct SessionDriverPorts:Sendable {
     private func validated(service:ManagedService,id:String,valid:Bool) {
         guard !stopped,let check=checking,check.id==id,check.service==service else {return}
         checking=nil // This validation completion cannot dispatch again.
+        guard !check.cancelled else {return}
         guard valid,ProcessInfo.processInfo.systemUptime<check.deadline,ports.consoleReady(),!ports.alreadyRunning(service) else {
             server.acknowledgeNotSent(id:id,service:service);return
         }

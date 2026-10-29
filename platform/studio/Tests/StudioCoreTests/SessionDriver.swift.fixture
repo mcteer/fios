@@ -3,7 +3,7 @@ import Darwin
 import CryptoKit
 
 @MainActor @main struct SessionDriverFixture {
-    static func main()async throws {
+    static func main() throws {
         let args=CommandLine.arguments
         guard args.count>=4,args[2].hasPrefix("/tmp/fios009-session-driver-"),geteuid()>0 else {throw ControlError.invalid_request}
         alarm(45)
@@ -24,21 +24,30 @@ import CryptoKit
                     Thread.sleep(forTimeInterval:0.005)
                 }
                 if scenario=="validation" {throw ControlError.unauthorized}
-            },consoleReady:{scenario != "console"},alreadyRunning:{_ in scenario=="running"},open:{_,completion in
+            },consoleReady:{
+                try! AtomicState.write(Data("observed".utf8),to:directory.appendingPathComponent("validation-observed"))
+                return scenario != "console"
+            },alreadyRunning:{_ in scenario=="running"},open:{_,completion in
                 // Counter-only fake application API. No NSWorkspace/native
                 // lifecycle, root policy, runtime, model or keychain operation.
                 let count=Int(String(decoding:try! Data(contentsOf:directory.appendingPathComponent("calls")),as:UTF8.self))!
                 try! AtomicState.write(Data(String(count+1).utf8),to:directory.appendingPathComponent("calls"))
-                if scenario=="error" {completion(nil,false)}
-                else if scenario=="wrong-process" {completion(getppid(),true)}
-                else {completion(getpid(),true);completion(nil,false)} // Duplicate completion must be inert.
+                Task { @MainActor in
+                    try? await Task.sleep(nanoseconds:10_000_000)
+                    if scenario=="error" {completion(nil,false)}
+                    else if scenario=="wrong-process" {completion(getppid(),true)}
+                    else {completion(getpid(),true);completion(nil,false)} // Duplicate completion must be inert.
+                }
             })
             let driver=try EnrolledSessionDriver(directory:directory,manager:image,applications:applications,ports:ports)
             let stop=Termination()
             while !stop.requested {
-                if FileManager.default.fileExists(atPath:directory.appendingPathComponent("shutdown").path) {driver.shutdown()}
+                if FileManager.default.fileExists(atPath:directory.appendingPathComponent("shutdown").path) {
+                    driver.shutdown()
+                    try AtomicState.write(Data("stopped".utf8),to:directory.appendingPathComponent("shutdown-observed"))
+                }
                 try driver.poll(consoleReady:true,now:HostResources.nowMilliseconds()+(scenario=="clock" ? 1000:0))
-                try await Task.sleep(nanoseconds:5_000_000)
+                RunLoop.current.run(until:Date(timeIntervalSinceNow:0.005))
             }
             driver.shutdown();return
         }
