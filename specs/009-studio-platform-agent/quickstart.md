@@ -106,6 +106,8 @@ Normalized activity policy cases live in `tests/fixtures/platform/activity.json`
 
 Native object-lifetime metadata checks: `node scripts/check-platform-backend-lifetime.mjs --zig /ABS/PINNED_ZIG`, then append `--release` for ReleaseSafe or `--mutation-close-edge` for the precise held-child close bypass. The mutation wrapper requires its exact runtime marker and one failing selected case. These finite CPU-only checks run no backend/model and issue no native terminal/admission capability.
 
+Private worker fixture timing: `node scripts/check-platform-worker-permission-fixture.mjs --isolated` requires one mocked POST followed by completion after the dispatch permission expires; append `--expect-expired` to require zero POSTs when readiness consumes that permission. Imports complete before the shorter test permission is issued. All real model/network transports remain blocked; production permission/deadline rules are unchanged.
+
 ## 2a. Implemented local CLI and explicit limits
 
 Commands below require existing private development state and the built `studioctl`; they do not install/start native applications or mint model permission. Replace placeholders locally; never paste credentials into argv, environment, logs or this document.

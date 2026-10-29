@@ -36,7 +36,7 @@ def denied(*_args, **_kwargs):
 async def handler(request):
     global posts
     if request.method == 'GET' and request.url.path == '/health':
-        if os.environ.get('FIOS_PLATFORM_FIXTURE_DELAY') == '1.25':
+        if os.environ.get('FIOS_PLATFORM_FIXTURE_HEALTH_DELAY') == '1.25':
             await asyncio.sleep(1.25)
         return httpx2.Response(200, json={'status': 'ok'})
     if request.method == 'GET' and request.url.path == '/v1/models':
@@ -47,6 +47,10 @@ async def handler(request):
     if body.get('model') != 'fixture/model' or body.get('tools') or posts:
         raise RuntimeError('invalid_mock_dispatch')
     posts += 1
+    # Keep the child alive for RSS sampling AFTER the one-use dispatch gate.
+    # Readiness delay is a separate explicit negative-fixture mode.
+    if os.environ.get('FIOS_PLATFORM_FIXTURE_POST_DELAY') == '1.25':
+        await asyncio.sleep(1.25)
     chunk = {'id': 'fixture', 'object': 'chat.completion.chunk', 'created': 1, 'model': 'fixture/model',
              'choices': [{'index': 0, 'delta': {'content': 'MOCK_ONLY'}, 'finish_reason': None}]}
     return httpx2.Response(200, headers={'content-type': 'text/event-stream'},
@@ -61,6 +65,10 @@ httpx2.AsyncHTTPTransport = lambda **_kwargs: httpx2.MockTransport(handler)
 socket.socket.connect = denied
 socket.socket.connect_ex = denied
 socket.create_connection = denied
+if os.environ.get('FIOS_PLATFORM_FIXTURE_READY') == '1':
+    sys.stderr.write('FIXTURE_IMPORTS_READY\n')
+    sys.stderr.flush()
+
 try:
     asyncio.run(main())
 except Exception:
