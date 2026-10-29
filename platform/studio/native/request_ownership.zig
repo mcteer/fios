@@ -58,7 +58,7 @@ pub fn renderSnapshot(snapshot: Snapshot, buffer: []u8) ![]const u8 {
 
 // One process-local source, shared by connection and inference threads. TLS
 // propagates only a native-created token, never client-provided authority.
-pub var shared: Tracker = .{};
+pub var shared: Tracker = .{ .primary_guard = true };
 pub threadlocal var current: ?Token = null;
 pub const Retained = struct {
     token: Token,
@@ -94,6 +94,10 @@ pub fn retainReference(reference: *std.atomic.Value(u32)) !void {
 
 pub const Tracker = struct {
     mutex: std.Io.Mutex = .init,
+    // Trusted native construction only, never a wire option. The serving
+    // singleton protects primary binding; local audit fixtures may track
+    // multiple primaries to characterize incomplete/contradictory sources.
+    primary_guard: bool = false,
     slots: [capacity]Slot = @splat(.{}),
     models: [model_capacity]Model = @splat(.{}),
     sequence: u64 = 0,
@@ -219,6 +223,18 @@ pub const Tracker = struct {
         if (slot.phase != .ingress) {
             self.uncertain = true;
             return error.InvalidPhase;
+        }
+        if (self.primary_guard) {
+            if (!self.initialized or self.uncertain) return error.CoverageUncertain;
+            // Check and commit under the same mutex, BEFORE any caller can
+            // prepare/load/evict. Keep preparing/active/responding and retained
+            // owners; a completed newer request never releases an older one.
+            for (self.slots) |other| {
+                const primary = other.primary orelse continue;
+                if (other.phase == .vacant) continue;
+                const identity = &self.models[primary];
+                if (!std.mem.eql(u8, identity.id[0..identity.len], model)) return error.ModelConflict;
+            }
         }
         slot.primary = try self.addModelLocked(slot, model);
         slot.phase = .preparing;

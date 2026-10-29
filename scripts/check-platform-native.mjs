@@ -10,9 +10,10 @@ import assert from 'node:assert/strict';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const args = process.argv.slice(2);
 const mutateCapture=args.length===5&&args[4]==='--mutate-capture-sequence';
-if ((args.length !== 4 && !mutateCapture) || args[0] !== '--source' || args[2] !== '--zig' ||
+const mutatePrimary=args.length===5&&args[4]==='--mutate-primary-conflict';
+if ((args.length !== 4 && !mutateCapture && !mutatePrimary) || args[0] !== '--source' || args[2] !== '--zig' ||
     !path.isAbsolute(args[1]) || !path.isAbsolute(args[3])) {
-  throw new Error('usage: check-platform-native.mjs --source ABS_CHECKOUT --zig ABS_ZIG [--mutate-capture-sequence]');
+  throw new Error('usage: check-platform-native.mjs --source ABS_CHECKOUT --zig ABS_ZIG [--mutate-capture-sequence|--mutate-primary-conflict]');
 }
 const source = args[1], zig = args[3];
 const run = (exe, argv, options = {}) => execFileSync(exe, argv, {
@@ -40,11 +41,11 @@ try {
   for (const name of ['device_owner_barrier.cpp', 'device_owner_barrier.h']) copyFileSync(path.join(root, 'platform/studio/native', name), path.join(scratch, 'lib', name));
   for(const file of fixedFiles.filter(file=>file.endsWith('.zig'))) run(zig,['ast-check',path.join(scratch,file)]);
   let ownershipTests=path.join(root,'platform/studio/native/request_ownership_test.zig');
-  if(mutateCapture){
+  if(mutateCapture||mutatePrimary){
     const directory=path.join(scratch,'capture-mutation');mkdirSync(directory,{mode:0o700});
     const original=readFileSync(path.join(root,'platform/studio/native/request_ownership.zig'),'utf8');
-    const check='} else self.sample_sequence += 1;';assert.equal(original.split(check).length,2,'capture boundary changed');
-    writeFileSync(path.join(directory,'request_ownership.zig'),original.replace(check,'} else {}'));
+    const check=mutateCapture?'} else self.sample_sequence += 1;':'if (!std.mem.eql(u8, identity.id[0..identity.len], model)) return error.ModelConflict;';assert.equal(original.split(check).length,2,'native guard boundary changed');
+    writeFileSync(path.join(directory,'request_ownership.zig'),original.replace(check,mutateCapture?'} else {}':'_ = std.mem.eql(u8, identity.id[0..identity.len], model);'));
     ownershipTests=path.join(directory,'request_ownership_test.zig');copyFileSync(path.join(root,'platform/studio/native/request_ownership_test.zig'),ownershipTests);
   }
   for (const optimize of ['Debug', 'ReleaseSafe']) {
@@ -53,6 +54,7 @@ try {
     run(zig, ['test', path.join(root, 'platform/studio/native/device_owner_test.zig'), '-O', optimize]);
     run(zig, ['test', path.join(root, 'platform/studio/native/registry_hold_test.zig'), '-O', optimize]);
   }
+  assert(readFileSync(path.join(root,'platform/studio/native/request_ownership.zig'),'utf8').includes('pub var shared: Tracker = .{ .primary_guard = true };'),'serving singleton must protect primary binding');
   const mainSource=readFileSync(path.join(scratch,'src/main.zig'),'utf8');
   const startupCall=mainSource.indexOf('@import("startup_guard.zig").Guard.start(VERSION)');
   assert(startupCall>mainSource.indexOf('pub fn main('));

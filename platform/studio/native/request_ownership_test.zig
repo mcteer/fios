@@ -2,6 +2,79 @@ const std = @import("std");
 const ownership = @import("request_ownership.zig");
 const io = std.testing.io;
 
+test "guarded primary binding rejects conflicts without releasing or fencing the existing owner" {
+    var tracker: ownership.Tracker = .{ .primary_guard = true };
+    try tracker.initialize(io, @splat(14));
+    const first = try tracker.enter(io);
+    try tracker.bind(io, first, "primary-a");
+    const peer = try tracker.enter(io);
+    try tracker.bind(io, peer, "primary-a");
+    const conflicting = try tracker.enter(io);
+    try std.testing.expectError(error.ModelConflict, tracker.bind(io, conflicting, "primary-b"));
+    try tracker.active(io, first);
+    try std.testing.expectError(error.ModelConflict, tracker.bind(io, conflicting, "primary-b"));
+    try tracker.responding(io, first);
+    try tracker.retain(io, first);
+    try tracker.leave(io, first);
+    try tracker.leave(io, peer);
+    try std.testing.expectError(error.ModelConflict, tracker.bind(io, conflicting, "primary-b"));
+    try std.testing.expect(!tracker.snapshot(io).uncertain);
+    try tracker.leave(io, first);
+    try tracker.bind(io, conflicting, "primary-b");
+    try tracker.leave(io, conflicting);
+    try std.testing.expectEqual(@as(usize, 0), tracker.snapshot(io).owned);
+}
+
+test "guarded primary ignores its own auxiliary identities but not a foreign primary" {
+    var tracker: ownership.Tracker = .{ .primary_guard = true };
+    try tracker.initialize(io, @splat(15));
+    const first = try tracker.enter(io);
+    try tracker.bind(io, first, "primary-a");
+    try tracker.bindAuxiliary(io, first, "component-b");
+    const same = try tracker.enter(io);
+    try tracker.bind(io, same, "primary-a");
+    const foreign = try tracker.enter(io);
+    try std.testing.expectError(error.ModelConflict, tracker.bind(io, foreign, "component-b"));
+    try std.testing.expect(!tracker.snapshot(io).uncertain);
+    try tracker.leave(io, first);
+    try tracker.leave(io, same);
+    try tracker.bind(io, foreign, "component-b");
+    try tracker.leave(io, foreign);
+    const old = try tracker.enter(io);
+    try std.testing.expectError(error.InvalidToken, tracker.bind(io, first, "primary-a"));
+    try std.testing.expectError(error.CoverageUncertain, tracker.bind(io, old, "primary-a"));
+    try tracker.leave(io, old);
+}
+
+test "concurrent different-primary binding selects exactly one owner before loading" {
+    const Work = struct {
+        const Result = enum { success, conflict, unexpected };
+        fn run(tracker: *ownership.Tracker, token: ownership.Token, model: []const u8, result: *Result) void {
+            tracker.bind(io, token, model) catch |err| {
+                result.* = if (err == error.ModelConflict) .conflict else .unexpected;
+                return;
+            };
+            result.* = .success;
+        }
+    };
+    var tracker: ownership.Tracker = .{ .primary_guard = true };
+    try tracker.initialize(io, @splat(16));
+    const first = try tracker.enter(io);
+    const second = try tracker.enter(io);
+    var a: Work.Result = .unexpected;
+    var b: Work.Result = .unexpected;
+    const thread = try std.Thread.spawn(.{}, Work.run, .{ &tracker, first, "primary-a", &a });
+    Work.run(&tracker, second, "primary-b", &b);
+    thread.join();
+    try std.testing.expect((a == .success and b == .conflict) or (b == .success and a == .conflict));
+    const snapshot = tracker.snapshot(io);
+    try std.testing.expectEqual(@as(usize, 1), snapshot.preparing);
+    try std.testing.expectEqual(@as(usize, 1), snapshot.ingress);
+    try std.testing.expect(!snapshot.uncertain);
+    try tracker.leave(io, first);
+    try tracker.leave(io, second);
+}
+
 test "capture sequence advances independently of request allocation and fences exhaustion" {
     var tracker: ownership.Tracker = .{};
     try tracker.initialize(io, @splat(11));
