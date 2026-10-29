@@ -161,6 +161,7 @@ try {
   const swiftLineageResult=swiftLineage();assert.equal(swiftLineageResult.status,0,'Swift readonly lineage authentication/decoding failed');
   const swiftLineageValue=JSON.parse(swiftLineageResult.stdout);
   assert.equal(swiftLineageValue.found,false);assert.equal(swiftLineageValue.uncertain,true);
+  assert.equal(swiftLineageValue.consumer,'unknown','Consumer turned missing lineage into a known result');
   assert.equal(swiftLineageValue.instance,sourceInstance);assert.equal(swiftLineageValue.correlation_id,correlationID);
   assert.equal(swiftLineageValue.root_sequence,'0');assert.equal(swiftLineageValue.references,'0');assert.equal(swiftLineageValue.owners,0);
   assert(Date.now()-swiftLineageValue.sampled_at<=5000);

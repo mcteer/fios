@@ -20,11 +20,17 @@ struct NativeControlLive {
             guard args[1].hasPrefix("/tmp/") || args[1].hasPrefix("/private/tmp/"),let pid=Int32(args[4]),pid>1 else {throw NativeControlError.invalid}
             let peer=NativeControlPeer(pid:pid,start:try WorkerResources.startIdentifier(pid:pid),executable:try VerifiedExecutable(path:args[2],sha256:args[3]))
             let sample=try NativeControlClient(path:args[1],peer:peer).lineage(instance:args[5],correlationID:args[6])
+            let scope=InferenceScope(host:"fixture-host",endpointHash:PythonWorkerFactory.digest("http://127.0.0.1:1/v1"),
+                profileHash:String(repeating:"d",count:64),managerEpoch:"00000000-0000-4000-8000-000000000002",
+                nativeEpoch:args[5],canonicalModel:"test/model",nativeModel:"test/model",sequence:1,sampledAt:sample.sampledAt)
+            var consumer=try NativeRequestLineageConsumer(scope:scope,job:"00000000-0000-4000-8000-000000000001",attempt:0,peer:peer)
+            guard consumer.correlationID==args[6],case .unknown=consumer.accept(sample,now:HostResources.nowMilliseconds()),
+                  !consumer.fenced,consumer.rootSequence==nil else {throw NativeControlError.invalid}
             let value=sample.lineage
             let fields:[String:Any]=["instance":value.instance,"correlation_id":value.correlationID,
                 "sample_sequence":String(value.sampleSequence),"root_sequence":String(value.rootSequence),
                 "references":String(value.references),"found":value.found,"uncertain":value.uncertain,
-                "owners":value.owners,"sampled_at":sample.sampledAt]
+                "owners":value.owners,"sampled_at":sample.sampledAt,"consumer":"unknown"]
             print(String(decoding:try JSONSerialization.data(withJSONObject:fields,options:[.sortedKeys]),as:UTF8.self))
             return
         }
