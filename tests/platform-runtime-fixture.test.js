@@ -46,3 +46,44 @@ else {process.exitCode=1;}
     rmSync(directory,{recursive:true,force:true});
   }
 });
+
+test('container recovery driver retains the known created ID and never cleans uncertain resources',()=>{
+  const directory=mkdtempSync(join(tmpdir(),'fios-recovery-driver-test-'));let retained;
+  try{
+    for(const relative of ['scripts','platform/studio/Sources/StudioCore','platform/studio/Tests/StudioCoreTests'])mkdirSync(join(directory,relative),{recursive:true,mode:0o700});
+    const script=join(directory,'scripts/check-platform-container.mjs'),log=join(directory,'commands.jsonl');
+    copyFileSync(new URL('../scripts/check-platform-container.mjs',import.meta.url),script);
+    writeFileSync(join(directory,'scripts/check-platform-sandbox.mjs'),"console.log('FINITE_FAKE_ISOLATION_CHILD');\n");
+    writeFileSync(join(directory,'platform/studio/Tests/StudioCoreTests/ContainerRecoveryLive.swift.fixture'),'// Finite fake compiler input only.\n');
+    writeFileSync(join(directory,'docker'),`#!/usr/bin/env node
+const fs=require('node:fs'),a=process.argv.slice(2);fs.appendFileSync(${JSON.stringify(log)},JSON.stringify(a)+'\\n');
+if(a[0]==='context')console.log('unix:///var/empty/fios-fake-never-opened.sock');
+else if(a.includes('volume')){
+ const path=${JSON.stringify(join(directory,'fake-volume.json'))};
+ if(a.includes('create')){const label=a[a.indexOf('--label')+1].split('=');fs.writeFileSync(path,JSON.stringify({Name:a.at(-1),Driver:'local',Labels:{[label[0]]:label[1]}}));console.log(a.at(-1));}
+ else if(a.includes('inspect'))console.log(fs.readFileSync(path,'utf8'));else process.exitCode=1;
+}
+else if(a.includes('image'))console.log('sha256:'+'a'.repeat(64));
+else if(a.includes('create'))console.log('c'.repeat(64));
+else if(a.includes('inspect'))console.log(JSON.stringify({Id:'c'.repeat(64)}));
+else process.exitCode=1;
+`,{mode:0o700});
+    writeFileSync(join(directory,'swiftc'),`#!/usr/bin/env node
+const fs=require('node:fs'),a=process.argv.slice(2),out=a[a.indexOf('-o')+1];
+fs.writeFileSync(out,"#!/usr/bin/env node\\nif(process.argv[2]==='create-lost')console.log(JSON.stringify({created_id:'b'.repeat(64),create_result_delivered:false}));else process.exitCode=1;\\n",{mode:0o700});
+`,{mode:0o700});
+    const result=spawnSync(process.execPath,[script,'--isolated'],{encoding:'utf8',timeout:10000,env:{PATH:[directory,dirname(process.execPath),'/usr/bin','/bin'].join(':'),HOME:directory,TMPDIR:directory,LANG:'C',LC_ALL:'C'}});
+    assert.equal(result.error,undefined);assert.equal(result.status,1);
+    const match=result.stderr.match(/^RETAINED: uncertain container rehearsal; no parent cleanup attempted: (.+)$/m);assert.ok(match);
+    retained=realpathSync.native(match[1]);assert.equal(dirname(retained),realpathSync.native(directory));
+    const receipt=JSON.parse(readFileSync(join(retained,'fixture-receipt.json'),'utf8'));
+    assert.equal(receipt.phase,'recover-create');
+    assert.equal(receipt.created_id,'b'.repeat(64),'Later failure discarded an already-known owned runtime ID');
+    const commands=readFileSync(log,'utf8').trim().split('\n').map(JSON.parse);
+    assert.equal(commands.some(a=>a.includes('rm')||a.includes('prune')||a.includes('remove')),false);
+  }finally{
+    // These fakes cannot create a child daemon, socket, container or journal.
+    if(retained)rmSync(retained,{recursive:true,force:true});
+    rmSync(directory,{recursive:true,force:true});
+  }
+});

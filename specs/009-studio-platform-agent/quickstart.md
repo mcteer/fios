@@ -41,6 +41,8 @@ node scripts/check-platform-supervisor-budget.mjs --isolated
 node scripts/check-platform-watchdog.mjs --isolated
 # Disposable local runtime fixture; existing immutable fios:current base only.
 node scripts/check-platform-sandbox.mjs --isolated
+# Full finite isolation/cgroup + lost-result/restart/owned-cleanup rehearsal.
+node scripts/check-platform-container.mjs --isolated
 node scripts/check-platform-runner.mjs --isolated
 node scripts/check-platform-attach.mjs --isolated
 # Whole manager IPC/runner path; synthetic resource sources, no model calls.
@@ -50,6 +52,8 @@ node scripts/check-platform-manager-execution.mjs --isolated --models
 ```
 
 Expected: failing-first evidence for new policy/contracts, then passing Swift, installed-Python and isolated runtime tests. Unit networking is guarded; service lifecycle operations use fake adapters. Container rehearsal uses its own labeled temporary test namespace with no production mounts/socket passed to untrusted images; trusted host test driver owns runtime control. Confirm unrelated sentinel container/volume survives. Record actual counts and commands in validation; do not reuse008 counts as009 evidence.
+
+`check-platform-container.mjs --isolated` builds only disposable images from the already-cached immutable `fios:current` ID, with build networking/pulls disabled. A finite hardened sibling listener has only an existing Docker-private bridge address and no published ports; the tested sandbox remains network-none. A private host file, container and empty uniquely named volume act as unchanged sentinels. Three separately reaped journal helpers exercise actual create/inspect/remove and result loss across restart; an absent private Unix endpoint injects transport loss without stopping OrbStack. Exact-ID absence releases only owned sandbox state, while a never-dispatched synthetic native claim remains uncertain. This does not establish daemon-reboot recovery, genuine native terminality, reviewed image/profile enrollment or either Studio's installed acceptance. On uncertainty, the driver retains its receipt/state/resources and performs no parent cleanup; inspect the reported private directory rather than pruning or replaying creation.
 
 For the runtime endpoint postcheck's causal test, `node scripts/check-platform.mjs --mock --mutate-runtime-postcheck` must fail at `Successful local command hid a changed runtime endpoint`. It mutates only a private Core source copy and a generated fake endpoint; it does not contact the installed daemon. Ordinary `--mock`/`--mock --release` must pass the genuine command, metadata and attach checks.
 

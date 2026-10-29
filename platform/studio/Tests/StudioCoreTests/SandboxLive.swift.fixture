@@ -12,8 +12,8 @@ import Darwin
     }
     static func run() throws {
         let args=CommandLine.arguments
-        guard args.count==6 || (args.count==7 && args[6]=="limits") else {throw RuntimeError.invalid}
-        let limits=args.count==7
+        guard args.count==6 || (args.count==7 && ["limits","matrix"].contains(args[6])) else {throw RuntimeError.invalid}
+        let limits=args.count==7,matrix=args.count==7 && args[6]=="matrix"
         func phase(_ text:String) {if limits {print("METRIC: trusted sandbox phase=\(text)");fflush(nil)}}
         phase("verify-executable")
         let executable=try VerifiedExecutable(path:args[1],sha256:args[2])
@@ -47,7 +47,7 @@ import Darwin
         let output=String(decoding:result.output,as:UTF8.self)
         for line in output.split(separator:"\n") where line.hasPrefix("METRIC: ") {print(line)}
         fflush(nil)
-        guard result.status==0,output.contains("ISOLATION_PASS"),!limits || output.contains("LIMITS_PASS") else {throw RuntimeError.identity}
+        guard result.status==0,output.contains("ISOLATION_PASS"),(!limits || output.contains("LIMITS_PASS")),(!matrix || output.contains("METRIC: MATRIX_PASS:")) else {throw RuntimeError.identity}
         // The same labels/name/image are still insufficient with a different
         // saved ID. Do not target the unrelated sentinel by label or prefix.
         do { try runtime.removeOwned(configuration,savedID:args[5]);throw RuntimeError.invalid }
