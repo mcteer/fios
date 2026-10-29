@@ -76,6 +76,14 @@ Each command must exit nonzero at its exact runtime witness: `COMMAND_SLOT_RELEA
 
 Optional macOS source prerequisite, with the reviewed Zig0.17.0 executable: `node scripts/check-platform-native-startup.mjs --isolated --zig /ABS/zig`. It compiles libc-only disposable Debug/ReleaseSafe children, runs finite ownership/file-safety checks and removes only its private scratch. It does not start MLX/OrbStack or establish production singleton/native terminality. Adding `--mutate-lock` deliberately removes locking in a private copy and must fail the duplicate assertion.
 
+To check source dependency composition after reviewing the exact MIMO candidate:
+
+```sh
+node scripts/check-platform-native-fixture.mjs --source /ABS/DISPOSABLE_NATIVE --zig /ABS/PINNED_ZIG --webp-source /ABS/PINNED_WEBP --metal-cpp-zip /ABS/PINNED_METAL_ZIP --mimo-source /ABS/DISPOSABLE_MIMO_CANDIDATE
+```
+
+Both source checkouts must resolve beneath `/private/tmp`, belong to the development user and retain their reviewed commits. The optional candidate must match exactly the repository's `mlx-stream-fcb4011-retirement.patch` at its pinned plugin revision; altered tracked inputs are refused before compilation. The native build's existing dependency option selects it without modifying the canonical submodule. The fixture brackets its declared commit/patch/modified-source inputs and all installed runtime hashes, runs eight actual native root cases plus private HTTP/control/manager checks, and emits the temporary binary digest separately from candidate inputs. No real model runs. Default invocation retains the clean upstream dependency. Successful compilation/runtime fixtures do not establish all-client/Metal/model retirement, complete context lifetime or production enrollment; candidate pause control stays default-disabled.
+
 ## 2a. Implemented local CLI and explicit limits
 
 Commands below require existing private development state and the built `studioctl`; they do not install/start native applications or mint model permission. Replace placeholders locally; never paste credentials into argv, environment, logs or this document.

@@ -12,9 +12,17 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const args=process.argv.slice(2);
+// Optional explicit dependency composition; canonical submodules stay clean.
+let mimoSource;
+const mimoIndex=args.indexOf('--mimo-source');
+if(mimoIndex!==-1){
+ assert.equal(mimoIndex,8,'MIMO candidate follows the four fixed input pairs');
+ assert(path.isAbsolute(args[9]??''),'absolute candidate source required');
+ mimoSource=realpathSync(args[9]);args.splice(8,2);
+}
 assert(process.platform==='darwin' && process.getuid()!==0);
 assert((args.length===8 || (args.length===9 && ['--empty-gpu','--root-tests-only','--mutation-request-eviction-guard','--mutation-load-preparation-guard','--mutation-actor-load-preparation','--mutation-encoder-active-owner','--mutation-generation-origin','--mutation-text-origin','--mutation-native-refusal-response','--mutation-drop-model-pins','--mutation-drop-parked-pins','--mutation-access-foreign-release','--mutation-drop-registry-preparation','--mutation-clear-registry-preparation','--mutation-registry-stub-frontdoor','--mutation-registry-path-frontdoor','--mutation-registry-scan-frontdoor','--mutation-registry-teardown'].includes(args[8]))) && args[0]==='--source' && args[2]==='--zig' && args[4]==='--webp-source' && args[6]==='--metal-cpp-zip' && [args[1],args[3],args[5],args[7]].every(path.isAbsolute),
- 'usage: check-platform-native-fixture.mjs --source ABS_CHECKOUT --zig ABS_ZIG --webp-source ABS_WEBP_1_6_0 --metal-cpp-zip ABS_APPLE_METAL_CPP_26_ZIP [--mutation-native-refusal-response|--mutation-load-preparation-guard|--mutation-actor-load-preparation|--mutation-encoder-active-owner|--mutation-generation-origin|--mutation-text-origin|--mutation-request-eviction-guard|--empty-gpu|--root-tests-only|--mutation-drop-model-pins|--mutation-drop-parked-pins|--mutation-access-foreign-release|--mutation-drop-registry-preparation|--mutation-clear-registry-preparation|--mutation-registry-stub-frontdoor|--mutation-registry-path-frontdoor|--mutation-registry-scan-frontdoor|--mutation-registry-teardown]');
+ 'usage: check-platform-native-fixture.mjs --source ABS_CHECKOUT --zig ABS_ZIG --webp-source ABS_WEBP_1_6_0 --metal-cpp-zip ABS_APPLE_METAL_CPP_26_ZIP [--mimo-source ABS_REVIEWED_CANDIDATE] [--mutation-native-refusal-response|--mutation-load-preparation-guard|--mutation-actor-load-preparation|--mutation-encoder-active-owner|--mutation-generation-origin|--mutation-text-origin|--mutation-request-eviction-guard|--empty-gpu|--root-tests-only|--mutation-drop-model-pins|--mutation-drop-parked-pins|--mutation-access-foreign-release|--mutation-drop-registry-preparation|--mutation-clear-registry-preparation|--mutation-registry-stub-frontdoor|--mutation-registry-path-frontdoor|--mutation-registry-scan-frontdoor|--mutation-registry-teardown]');
 const teardownMutation=args[8]==='--mutation-registry-teardown';
 const parkedMutation=args[8]==='--mutation-drop-parked-pins',accessMutation=args[8]==='--mutation-access-foreign-release';
 const preparationMutation=args[8]==='--mutation-drop-registry-preparation',clearPreparationMutation=args[8]==='--mutation-clear-registry-preparation';
@@ -55,6 +63,21 @@ const filename=`fios-linked-${randomUUID()}.zig`,generated=path.join(source,file
 const schedulerFile=path.join(source,'src/scheduler.zig'),registryFile=path.join(source,'src/model_registry.zig'),serverFile=path.join(source,'src/server.zig');
 const mutationFile=nativeRefusalMutation?serverFile:registryMutation?registryFile:schedulerFile;
 let written=false,mutated=false,schedulerOriginal,registryOriginal,serverOriginal,mutationOriginal;
+let mimoReceipt=null;
+function verifyMimo(){
+ if(!mimoSource)return null;
+ const info=lstatSync(mimoSource);
+ assert(mimoSource.startsWith('/private/tmp/')&&info.isDirectory()&&info.uid===process.getuid()&&(info.mode&0o022)===0,'private disposable MIMO checkout required');
+ const git=(...argv)=>run('/usr/bin/git',['--no-replace-objects','-C',mimoSource,...argv]);
+ const revision='fcb4011347ff80eeeb19e2a1f0180e13199c7c8b',file='src/arch/mimo_v2/gpu_warm.zig';
+ assert.equal(git('rev-parse','HEAD').trim(),revision);
+ assert.equal(git('diff','--cached','--name-only').trim(),'','no staged candidate changes');
+ assert.equal(git('diff','--name-only').trim(),file,'only the reviewed candidate path may differ');
+ const patchFile=path.join(root,'platform/studio/native/mlx-stream-fcb4011-retirement.patch');
+ assert.equal(git('diff','--no-ext-diff','--no-textconv','--',file),readFileSync(patchFile,'utf8'),'candidate must exactly match reviewed retirement patch');
+ return {revision,patch_sha256:sha(patchFile),source_sha256:sha(path.join(mimoSource,file)),source_fixture_only:true};
+}
+
 // Refuse to replace an existing differing input, or follow a link. Development
 // staging is intentionally unstamped and cannot satisfy upstream release gates.
 function stage(from,to){
@@ -69,6 +92,7 @@ function stage(from,to){
  }
 }
 try{
+ mimoReceipt=verifyMimo();
  // Fail cheap on integration-script syntax before expensive native codegen.
  run(process.execPath,['--check',path.join(root,'scripts/check-platform-native-http.mjs')]);
  // Before staging: verifies commits/submodules, exact reviewed fixed-file
@@ -175,7 +199,7 @@ try{
   assert.equal(variant.split(pin).length,2);mutated=true;
   writeFileSync(mutationFile,variant.replace(pin,replacement));
  }
- const options=['--build-file',filename,'--prefix',path.join(scratch,'output'),'-Dmas=true','-Dversion=26.10.3-fios-source-fixture',`-Dwebp-prefix=${prefix}`,'--summary','all'];
+ const options=['--build-file',filename,'--prefix',path.join(scratch,'output'),'-Dmas=true','-Dversion=26.10.3-fios-source-fixture',`-Dwebp-prefix=${prefix}`,...(mimoSource?[`-Dmlx-stream-dir=${mimoSource}`]:[]),'--summary','all'];
  // No C/object/library inputs removed. Root-only deliberately omits the
  // executable/HTTP/manager claim; its genuine test root still executes.
  const buildLog=rootOnly?'':run('/usr/bin/nice',['-n','10',zig,'build','fios-linked-build','-Doptimize=ReleaseFast',...options],{cwd:source});
@@ -206,8 +230,9 @@ try{
  assert.equal(readFileSync(schedulerFile,'utf8'),schedulerOriginal,'fixture changed reviewed scheduler source');
  assert.equal(readFileSync(registryFile,'utf8'),registryOriginal,'fixture changed reviewed registry source');
  assert.equal(readFileSync(serverFile,'utf8'),serverOriginal,'fixture changed reviewed server source');
+ assert.deepEqual(verifyMimo(),mimoReceipt,'candidate input changed during combined fixture');
  console.log(ownerLog+buildLog+testLog+httpLog);
- console.log(JSON.stringify({source_fixture_only:true,root_tests_only:rootOnly,expected_runtime_mutation:mutation,request_eviction_mutation:evictionMutation,load_preparation_mutation:loadPreparationMutation,actor_load_preparation_mutation:actorLoadMutation,encoder_active_mutation:encoderActiveMutation,generation_origin_mutation:generationOriginMutation,text_origin_mutation:textOriginMutation,native_refusal_mutation:nativeRefusalMutation,parked_reference_mutation:parkedMutation,foreign_access_release_mutation:accessMutation,preparation_visibility_mutation:preparationMutation,preparation_clear_mutation:clearPreparationMutation,registry_frontdoor_mutation:frontdoorKind??null,registry_teardown_mutation:teardownMutation,upstream_release_attestation:false,native_inference:false,coverage:'unknown',fixture_sha256:digest,runtime_inputs:runtime}));
+ console.log(JSON.stringify({source_fixture_only:true,root_tests_only:rootOnly,expected_runtime_mutation:mutation,request_eviction_mutation:evictionMutation,load_preparation_mutation:loadPreparationMutation,actor_load_preparation_mutation:actorLoadMutation,encoder_active_mutation:encoderActiveMutation,generation_origin_mutation:generationOriginMutation,text_origin_mutation:textOriginMutation,native_refusal_mutation:nativeRefusalMutation,parked_reference_mutation:parkedMutation,foreign_access_release_mutation:accessMutation,preparation_visibility_mutation:preparationMutation,preparation_clear_mutation:clearPreparationMutation,registry_frontdoor_mutation:frontdoorKind??null,registry_teardown_mutation:teardownMutation,upstream_release_attestation:false,native_inference:false,coverage:'unknown',fixture_sha256:digest,mimo_candidate:mimoReceipt,runtime_inputs:runtime}));
 }finally{
  if(mutated)writeFileSync(mutationFile,mutationOriginal);
  if(written)rmSync(generated);
