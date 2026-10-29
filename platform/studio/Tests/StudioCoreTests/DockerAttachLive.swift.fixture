@@ -40,7 +40,7 @@ private struct MeasuredVMInventory:NativeVMInventoryReading {
             let nativePath=URL(fileURLWithPath:"/usr/local/bin/orbctl").resolvingSymlinksInPath().path
             let nativeSHA=SHA256.hash(data:try Data(contentsOf:URL(fileURLWithPath:nativePath))).map {String(format:"%02x",$0)}.joined()
             let profile=SHA256.hash(data:Data(("isolated-finite-vm-bootstrap:"+nativeSHA+args[2]+config.image).utf8)).map {String(format:"%02x",$0)}.joined()
-            let inventory=VerifiedVMInventory(executable:try VerifiedExecutable(path:nativePath,sha256:nativeSHA))
+            let inventory=VerifiedVMInventory(executable:try VerifiedExecutable(path:nativePath,sha256:nativeSHA),home:NSHomeDirectory())
             let kernel=try OwnedVMResourceReader(runtime:runtime,approvedImages:[config.image],directMetadata:true)
             let collector=VMEnvelopeReader(kernel:kernel,inventory:inventory,nativeProfileHash:profile,physical:ProcessInfo.processInfo.physicalMemory)
             let jobs=JobController(journal:journal,executor:try SandboxExecutor(runtime:runtime,allowedImages:[config.image],resourceReader:collector),collectVM:true)
@@ -181,7 +181,7 @@ private struct MeasuredVMInventory:NativeVMInventoryReading {
         if ["runner","runner-shared","runner-shared-300"].contains(args[7]) {
             let nativePath=URL(fileURLWithPath:"/usr/local/bin/orbctl").resolvingSymlinksInPath().path
             let nativeSHA=SHA256.hash(data:try Data(contentsOf:URL(fileURLWithPath:nativePath))).map {String(format:"%02x",$0)}.joined()
-            let inventory=MeasuredVMInventory(source:VerifiedVMInventory(executable:try VerifiedExecutable(path:nativePath,sha256:nativeSHA)))
+            let inventory=MeasuredVMInventory(source:VerifiedVMInventory(executable:try VerifiedExecutable(path:nativePath,sha256:nativeSHA),home:NSHomeDirectory()))
             // Actual local read-only source experiment, not release enrollment.
             let profile=SHA256.hash(data:Data(("isolated-vm-envelope-fixture:"+nativeSHA+args[2]+config.image).utf8)).map {String(format:"%02x",$0)}.joined()
             let kernel=try OwnedVMResourceReader(runtime:runtime,approvedImages:[config.image],directMetadata:true)
@@ -193,7 +193,7 @@ private struct MeasuredVMInventory:NativeVMInventoryReading {
                 // Synthetic fixture review only. No production authority issuer.
                 let review=SHA256.hash(data:Data("TEST_ONLY_SHARED_KERNEL_COVERAGE".utf8)).map {String(format:"%02x",$0)}.joined()
                 let permission=try SharedVMKernelPermission(nativeProfileHash:profile,bootHash:seed.bootHash,reviewDigest:review)
-                collector=SharedKernelVMReader(kernel:kernel,cap:VerifiedVMCap(executable:try VerifiedExecutable(path:nativePath,sha256:nativeSHA)),permission:permission,physical:ProcessInfo.processInfo.physicalMemory)
+                collector=SharedKernelVMReader(kernel:kernel,cap:VerifiedVMCap(executable:try VerifiedExecutable(path:nativePath,sha256:nativeSHA),home:NSHomeDirectory()),permission:permission,physical:ProcessInfo.processInfo.physicalMemory)
             }else {collector=VMEnvelopeReader(kernel:kernel,inventory:inventory,nativeProfileHash:profile,physical:ProcessInfo.processInfo.physicalMemory)}
             let resources=try SandboxExecutor(runtime:runtime,allowedImages:[config.image],resourceReader:collector)
             var earlySession:SandboxTaskSession?

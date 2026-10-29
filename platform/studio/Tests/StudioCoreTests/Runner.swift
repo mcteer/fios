@@ -75,6 +75,7 @@ struct PolicyTestRunner {
             ("transfers",runTransferTests),
             ("framing",runFramingTests),
             ("runtime",runRuntimeTests),
+            ("runtime enrollment",runRuntimeEnrollmentTests),
             ("admission",runAdmissionTests),
             ("admission boundaries",runAdmissionBoundaryTests),
             ("protocol",runProtocolTests),

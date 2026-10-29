@@ -16,12 +16,13 @@ struct NativeVMLivenessProof:Sendable {
 protocol NativeVMCapReading:Sendable {func capture(liveness:NativeVMLivenessProof)throws->NativeVMCap}
 struct VerifiedVMCap:NativeVMCapReading {
     let executable:VerifiedExecutable
+    let home:String
     func capture(liveness:NativeVMLivenessProof)throws->NativeVMCap {
         let began=ProcessInfo.processInfo.systemUptime,sampledAt=HostResources.nowMilliseconds()
         // Fresh verified global-kernel observation proves this exact VM is
         // already running; do not spawn a redundant status CLI or start it.
         guard sampledAt>=liveness.sampledAt,sampledAt-liveness.sampledAt<=1000 else {throw RuntimeError.identity}
-        let environment=["HOME":NSHomeDirectory()]
+        let environment=["HOME":home]
         let result=try executable.run(arguments:["config","get","memory_mib"],timeout:1,maximumOutput:64,environment:environment)
         guard result.status==0,let text=String(data:result.output,encoding:.utf8)?.trimmingCharacters(in:.whitespacesAndNewlines),
               !text.isEmpty,text.utf8.count<=8,text.first != "0",text.utf8.allSatisfy({(48...57).contains($0)}),

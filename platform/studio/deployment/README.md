@@ -63,6 +63,10 @@ Requires two distinct independently reviewed development receipts and strict fin
 
 Actual rehearsal passes against the historical `f59bc3a…` and current `59b7d8de…` development packages; both use schema7. The current CLI's raw observation export also works against both manager versions. This is **same-schema cross-artifact recovery**, not a schema migration, installed rollback, interpreter/configuration recovery or T050 completion. No native installation/rollback/uninstall is performed or authorized by this command.
 
+## Source-only runtime enrollment construction
+
+The fixed installed-manager runtime factory and strict policy schema are described in [runtime-enrollment.md](../../../specs/009-studio-platform-agent/contracts/runtime-enrollment.md). It binds root-reviewed manager/Docker/native CLI bytes and the account home, refuses development images and caller socket/path/environment overrides, and performs no CLI or daemon operation during construction. It is not wired into the public execution path. The Docker multicall alias cannot be followed as an immutable executable: a separately reviewed installer must stage the fixed root-owned `bin/docker` artifact with its full provenance/dependencies. The current development package does not contain that installation artifact or mint runtime policy. No root policy/app ownership/CLI copy/daemon/native admission or installation was changed by its tests.
+
 ## Operational gate
 
 A runnable supervisor is not native acceptance. Privileged operations require user execution and distinct scoped approval, one host at a time. Keep services/data intact until identity, backup, rollback and uncertainty preservation have been reviewed. Never remove unrelated containers or the detached legacy volume. Do not infer idle/completion from reboot, age, local child absence or cancellation.
