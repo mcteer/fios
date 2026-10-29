@@ -19,3 +19,10 @@ struct WorkerGrant:Codable,Equatable {
         return kill(pid,0)<0 && errno==ESRCH
     }
 }
+
+// Trusted coordinator identity, never decoded from task/control frames.
+struct WorkerLaunchKey:Hashable {
+    let job:String
+    let attempt:Int
+    var reservationKey:String {"model:\(job):\(attempt)"}
+}

@@ -10,6 +10,8 @@ final class TaskController {
     private var sandboxScopes:[String:SandboxScope]=[:]
     init(journal:Journal,broker:ModelBroker) { self.journal=journal;self.broker=broker }
 
+    var failedLaunches:Set<WorkerLaunchKey> {broker.failedLaunches}
+
     func createModelJob(owner:String,idempotency:String,context:[ModelText],binding:WorkerDispatchBinding,
                         nativeCapacityProven:Bool,lifetime:Int64=900_000,sample:ResourceSample,
                         admission:inout AdmissionPolicy,now:Int64) throws -> DurableJob {

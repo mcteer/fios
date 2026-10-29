@@ -16,6 +16,7 @@ final class WorkerReconciler {
     private let journal:Journal
     private var entries:[Entry]
     private let unknownLaunches:Int
+    private var lateUnbound:Set<WorkerLaunchKey>=[]
     private(set) var overdue=false
     init(journal:Journal,admission:inout AdmissionPolicy,census:WorkerCensusPolicy? = nil) throws {
         self.journal=journal
@@ -35,8 +36,22 @@ final class WorkerReconciler {
         unknownLaunches=retained
         try ModelBroker.restoreReservations(journal:journal,admission:&admission)
     }
-    func poll(now:Int64,admission:inout AdmissionPolicy) throws {
+    func poll(now:Int64,admission:inout AdmissionPolicy,failedLaunches:Set<WorkerLaunchKey>=[]) throws {
         guard (0...ActivityPolicy.maximumTimestamp-2000).contains(now) else { throw WorkerResourceError.invalid }
+        guard failedLaunches.count<=2 else {throw JournalError.trackingLimit}
+        // Only the broker's explicit failed-start set may be adopted here.
+        // Healthy current workers remain under their original PrivateWorker.
+        let grants=try journal.workerGrants()
+        var unbound=Set<WorkerLaunchKey>()
+        for key in failedLaunches where try !journal.workerLaunchReaped(job:key.job,attempt:key.attempt) {
+            try admission.restoreWorker(key:key.reservationKey)
+            if let owned=grants.first(where:{$0.job==key.job && $0.attempt==key.attempt}) {
+                if !entries.contains(where:{$0.job==key.job && $0.attempt==key.attempt}) {
+                    entries.append(Entry(job:key.job,attempt:key.attempt,grant:owned.grant))
+                }
+            }else {unbound.insert(key)}
+        }
+        lateUnbound=unbound
         var pending:[Entry]=[]
         for var entry in entries {
             if try entry.grant.provenGone() {
@@ -63,6 +78,6 @@ final class WorkerReconciler {
         entries=pending
         // No journal.complete here: process death is never inference proof.
     }
-    var degraded:Bool { overdue || unknownLaunches>0 }
-    var pending:Int { entries.count+unknownLaunches }
+    var degraded:Bool { overdue || unknownLaunches>0 || !lateUnbound.isEmpty }
+    var pending:Int { entries.count+unknownLaunches+lateUnbound.count }
 }

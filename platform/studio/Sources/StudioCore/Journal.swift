@@ -607,6 +607,12 @@ public final class Journal {
             result.append((id,attempt,token,session))
         }
     }
+    // Positive durable local-reap history only. Missing/active intent is never
+    // absence, and this lookup does not resolve any inference claim.
+    func workerLaunchReaped(job:String,attempt:Int)throws->Bool {
+        try validate(job:job,attempt:attempt)
+        return try scalar("SELECT count(*) FROM worker_launches WHERE job=? AND attempt=? AND reaped=1",[job,String(attempt)])==1
+    }
     func activeLaunchCount() throws -> Int { try scalar("SELECT count(*) FROM worker_launches WHERE reaped=0") }
     // Commit before fork/spawn. A crash before PID binding still consumes a
     // local worker slot; missing PID metadata is not proof of no process.

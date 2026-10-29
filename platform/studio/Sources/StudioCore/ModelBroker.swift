@@ -15,7 +15,7 @@ final class ModelBroker {
     private let journal:Journal
     private let factory:PythonWorkerFactory?
     private var entries:[String:Entry]=[:]
-    private var launchHolds:Set<String>=[]
+    private var launchHolds:Set<WorkerLaunchKey>=[]
     private var scopes:[String:[Data]]=[:]
     private var previous:Int64=0
     static func restoreReservations(journal:Journal,admission:inout AdmissionPolicy) throws {
@@ -82,16 +82,27 @@ final class ModelBroker {
         } catch {
             try journal.markUncertain(job:id,attempt:ordinal)
             // Do not guess away a possibly spawned child or free its512MiB.
-            // Full persisted launch-intent/orphan recovery remains integration work.
-            launchHolds.insert(key)
+            // Known bound failures reach the serialized reaper; unbound
+            // failures stay held until reviewed historical absence proof.
+            launchHolds.insert(WorkerLaunchKey(job:id,attempt:ordinal))
             throw error
         }
+    }
+    var failedLaunches:Set<WorkerLaunchKey> {launchHolds}
+    static func reconcileFailedLaunches(_ held:Set<WorkerLaunchKey>,journal:Journal,admission:inout AdmissionPolicy)throws->Set<WorkerLaunchKey> {
+        var retained=held
+        for key in held where try journal.workerLaunchReaped(job:key.job,attempt:key.attempt) {
+            admission.releaseWorkerAfterReap(key:key.reservationKey)
+            retained.remove(key)
+        }
+        return retained
     }
     func cancel(job:String,uptime:Int64) throws {
         if let entry=entries[job] { try entry.worker.cancel(now:uptime) }
     }
     func poll(now:Int64,uptime:Int64,admission:inout AdmissionPolicy,
               source:(String)throws->WorkerDispatchBinding?) throws -> [String:[ModelWorkerEvent]] {
+        launchHolds=try Self.reconcileFailedLaunches(launchHolds,journal:journal,admission:&admission)
         var result:[String:[ModelWorkerEvent]]=[:]
         for (id,entry) in entries {
             let lease=(try? job(id,now:now)) != nil

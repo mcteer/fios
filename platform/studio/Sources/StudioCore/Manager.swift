@@ -96,7 +96,7 @@ public enum ManagerRuntime {
                 case .failure: nativeMaintenance.failed(id:result.id)
                 }
             }
-            try workerRecovery.poll(now:Int64(now*1000),admission:&admission)
+            try workerRecovery.poll(now:Int64(now*1000),admission:&admission,failedLaunches:tasks.failedLaunches)
             resourceSample=applyingVM(to:resourceSample,now:timestamp())
             let updates=try sandboxes.tick(now:timestamp(),uptime:now,sample:artifacts.reservingDisk(in:resourceSample),admission:&admission,source:bindingForJob,nativeCapacityProven:activeExecution?.nativeCapacityProven() ?? false)
             resourceSample=applyingVM(to:resourceSample,now:timestamp())

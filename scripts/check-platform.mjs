@@ -25,8 +25,8 @@ if(process.argv.length===3&&process.argv[2]==='--isolated-metrics'){
 // No SSH, daemon socket, service lifecycle or live inference. The test binary
 // and descendants deny IP networking except one freshly allocated loopback
 // mock endpoint; configured native ports/other IPs stay denied. No fallback.
-if (![3,4].includes(process.argv.length) || process.argv[2] !== '--mock' || (process.argv.length===4 && !['--release','--mutate-runtime-postcheck','--mutate-manager-epoch','--mutate-activity-coverage','--mutate-inference-scope','--mutate-observation-native-sequence','--mutate-resource-freshness','--mutate-vm-profile-rebind','--mutate-vm-running-gate','--mutate-service-census','--mutate-lineage-unknown','--mutate-lineage-root'].includes(process.argv[3]))) {
-  throw new Error('Usage: node scripts/check-platform.mjs --isolated-metrics | --mock [--release|--mutate-runtime-postcheck|--mutate-manager-epoch|--mutate-activity-coverage|--mutate-inference-scope|--mutate-observation-native-sequence|--mutate-resource-freshness|--mutate-vm-profile-rebind|--mutate-vm-running-gate|--mutate-service-census|--mutate-lineage-unknown|--mutate-lineage-root]');
+if (![3,4].includes(process.argv.length) || process.argv[2] !== '--mock' || (process.argv.length===4 && !['--release','--mutate-runtime-postcheck','--mutate-manager-epoch','--mutate-activity-coverage','--mutate-inference-scope','--mutate-observation-native-sequence','--mutate-resource-freshness','--mutate-vm-profile-rebind','--mutate-vm-running-gate','--mutate-service-census','--mutate-lineage-unknown','--mutate-lineage-root','--mutate-launch-hold'].includes(process.argv[3]))) {
+  throw new Error('Usage: node scripts/check-platform.mjs --isolated-metrics | --mock [--release|--mutate-runtime-postcheck|--mutate-manager-epoch|--mutate-activity-coverage|--mutate-inference-scope|--mutate-observation-native-sequence|--mutate-resource-freshness|--mutate-vm-profile-rebind|--mutate-vm-running-gate|--mutate-service-census|--mutate-lineage-unknown|--mutate-lineage-root|--mutate-launch-hold]');
 }
 const root = fileURLToPath(new URL('../', import.meta.url));
 const directory = mkdtempSync(join(tmpdir(), 'fios-platform-policy-'));
@@ -72,6 +72,7 @@ try {
     return readdirSync(path).filter(name => name.endsWith('.swift')).sort().map(name => {
       const source=join(path,name);
       const variant=process.argv[3]==='--mutate-runtime-postcheck'?{file:'Sandboxes.swift',check:'        try pinned?.verify(deadline:min(deadline,ProcessInfo.processInfo.systemUptime+2))',replacement:'        withExtendedLifetime(pinned) {}'}:
+        process.argv[3]==='--mutate-launch-hold'?{file:'ModelBroker.swift',check:'for key in held where try journal.workerLaunchReaped(job:key.job,attempt:key.attempt)',replacement:'for key in held'}:
         process.argv[3]==='--mutate-manager-epoch'?{file:'ManagerExecution.swift',check:'value.managerEpoch==managerEpoch,',replacement:''}:
         process.argv[3]==='--mutate-activity-coverage'?{file:'NativeActivityCoherence.swift',check:'sourceCoverage == .all_clients && coverage == .all_clients',replacement:'coverage == .all_clients'}:
         process.argv[3]==='--mutate-inference-scope'?{file:'Journal.swift',check:'try record.scope.encoded()==scope.encoded()',replacement:'true'}:
