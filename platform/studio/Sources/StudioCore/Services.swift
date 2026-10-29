@@ -63,6 +63,7 @@ struct ServicePolicy {
         grants[token]=Grant(service:scope.service,identity:scope.identity,scopeDigest:scope.digest,expires:now+30_000,created:now,uptime:tick)
         return token
     }
+    mutating func discardForce(token:String) {grants.removeValue(forKey:token)}
     mutating func confirmForce(scope:ServiceAffectedScope,role:ControlRole,token:String,now:Int64) throws -> ServiceAction {
         // Consume even a rejected confirmation; no guessing/replay/retargeting.
         let grant=grants.removeValue(forKey:token),tick=uptime()

@@ -78,6 +78,7 @@ struct PolicyTestRunner {
             ("worker resources",runWorkerResourceTests),
             ("drain",runDrainTests),
             ("drain controller",runServiceDrainControllerTests),
+            ("force controller",runServiceForceControllerTests),
             ("services",runServiceTests),
             ("artifact limits",runArtifactLimitTests),
             ("artifacts",runArtifactTests),

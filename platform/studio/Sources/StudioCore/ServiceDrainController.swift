@@ -4,16 +4,36 @@ import Foundation
 // startup issuer and supplies no native quiescence or action capability.
 // Compose ledger fields on the serialized manager owner; background native
 // producers must never read Journal/open another SQLite connection.
+struct ServiceDrainCacheSnapshot {let value:ServiceDrainSnapshot;let generation:UInt64}
+
 final class ServiceDrainObservationCache:@unchecked Sendable {
     private let lock=NSLock()
     private var values:[ManagedService:ServiceDrainSnapshot]=[:]
+    private var generations:[ManagedService:UInt64]=[:]
+    private var fenced:Set<ManagedService>=[]
     func publish(_ snapshot:ServiceDrainSnapshot?,for service:ManagedService) {
         lock.lock();defer {lock.unlock()}
-        values[service]=snapshot?.scope.service==service ? snapshot:nil
+        guard !fenced.contains(service) else {return}
+        let accepted=snapshot?.scope.service==service ? snapshot:nil
+        let same:Bool
+        if let old=values[service],let accepted {
+            same=old.scope.digest==accepted.scope.digest && old.nativeIdle==accepted.nativeIdle &&
+                old.externalNativeWork==accepted.externalNativeWork && old.unmanagedRuntimeWork==accepted.unmanagedRuntimeWork
+        }else {same=false}
+        if !same {
+            let next=(generations[service] ?? 0).addingReportingOverflow(1)
+            guard !next.overflow else {fenced.insert(service);values.removeValue(forKey:service);return}
+            generations[service]=next.partialValue
+        }
+        values[service]=accepted
     }
-    func snapshot(for service:ManagedService)->ServiceDrainSnapshot? {
-        lock.lock();defer {lock.unlock()};return values[service]
+    func versionedSnapshot(for service:ManagedService)->ServiceDrainCacheSnapshot? {
+        lock.lock();defer {lock.unlock()}
+        guard !fenced.contains(service),let value=values[service],let generation=generations[service] else {return nil}
+        return ServiceDrainCacheSnapshot(value:value,generation:generation)
     }
+    func snapshot(for service:ManagedService)->ServiceDrainSnapshot? {versionedSnapshot(for:service)?.value}
+
 }
 
 // Serialized manager-side drain coordination. A ready report remains a
