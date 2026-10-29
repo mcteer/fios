@@ -617,7 +617,7 @@ index da1f791..fcba539 100644
              free +|= idle[n].bytes_resident;
          }
 diff --git a/src/scheduler.zig b/src/scheduler.zig
-index 9e12566..e8d6d34 100644
+index 9e12566..26415f0 100644
 --- a/src/scheduler.zig
 +++ b/src/scheduler.zig
 @@ -32,6 +32,8 @@
@@ -638,7 +638,7 @@ index 9e12566..e8d6d34 100644
      /// Registry that owns the entry to populate + provides snapshot/eviction
      /// bookkeeping. Outlives the scheduler.
      registry: *ModelRegistry,
-@@ -432,6 +436,428 @@ pub var prefill_admission_refused_log: ?*const fn (*const model_mod.ModelConfig,
+@@ -432,6 +436,497 @@ pub var prefill_admission_refused_log: ?*const fn (*const model_mod.ModelConfig,
  /// Invalidate the published hot-cache budget on unload/switch (`server.clearResolvedPrefixCacheMem`).
  pub var hot_cache_budget_invalidate: ?*const fn () void = null;
  
@@ -917,6 +917,75 @@ index 9e12566..e8d6d34 100644
 +    try std.testing.expect(fios_ownership.current == null);
 +    try std.testing.expectEqual(@as(usize, 1), request_tracker.correlationSnapshot(io, actor_id).owners);
 +    try request_tracker.leave(io, encoder_root);
++    registry.fios_request_tracker = &fios_ownership.shared;
++    const gen_a = try fios_ownership.shared.enter(io);
++    var gen_a_held = true;
++    defer if (gen_a_held) fios_ownership.shared.leave(io, gen_a) catch {};
++    try fios_ownership.shared.bind(io, gen_a, model.id);
++    try fios_ownership.shared.active(io, gen_a);
++    const gen_b = try fios_ownership.shared.enter(io);
++    var gen_b_held = true;
++    defer if (gen_b_held) fios_ownership.shared.leave(io, gen_b) catch {};
++    try fios_ownership.shared.bind(io, gen_b, model.id);
++    try fios_ownership.shared.active(io, gen_b);
++    const GenCapture = struct {
++        io: std.Io,
++        singles: usize = 0,
++        merged: usize = 0,
++        retained: ?fios_ownership.Retained = null,
++        fn single(ctx: *anyopaque) void {
++            const self: *@This() = @ptrCast(@alignCast(ctx));
++            self.singles += 1;
++        }
++        fn many(ctxs: []const *anyopaque) void {
++            const first: *@This() = @ptrCast(@alignCast(ctxs[0]));
++            fios_ownership.bindAuxiliaryCurrent(first.io, "org/fios-merged-auxiliary") catch return;
++            first.retained = fios_ownership.retainCurrent(first.io) catch null;
++            for (ctxs) |ctx| { const self: *@This() = @ptrCast(@alignCast(ctx)); self.merged += 1; }
++        }
++    };
++    var cap_a: GenCapture = .{ .io = io };
++    var cap_b: GenCapture = .{ .io = io };
++    defer if (cap_a.retained) |held| held.release(io);
++    var gen_req_a = std.mem.zeroInit(GenRequest, .{ .ctx = &cap_a, .run = GenCapture.single, .model = model, .fios_parent = gen_a,
++        .merge = Merge{ .run_many = GenCapture.many, .weight = 1, .window_us = 0 } });
++    var gen_req_b = std.mem.zeroInit(GenRequest, .{ .ctx = &cap_b, .run = GenCapture.single, .model = model, .fios_parent = gen_b,
++        .merge = Merge{ .run_many = GenCapture.many, .weight = 1, .window_us = 0 } });
++    var gen_reqs = [_]*GenRequest{ &gen_req_a, &gen_req_b };
++    var batch_context: FiosGenActorContext = .{};
++    try batch_context.begin(&scheduler, &gen_reqs);
++    var batch_held = true;
++    defer if (batch_held) batch_context.finish(io);
++    try std.testing.expectEqual(@as(usize, 2), fios_ownership.current_group.?.len);
++    const nested = try FiosActorLoadPreparation.beginActive(&scheduler, model.id, gen_a);
++    try std.testing.expect(fios_ownership.current_group == null);
++    const nested_retained = (try fios_ownership.retainCurrent(io)).?;
++    try std.testing.expectEqual(@as(usize, 1), nested_retained.count);
++    nested_retained.release(io);
++    nested.finish(io);
++    try std.testing.expectEqual(@as(usize, 2), fios_ownership.current_group.?.len);
++    runGenJobs(&gen_reqs); // Genuine callback dispatch/merge; callbacks perform no model/backend computation.
++    const group_retained = cap_a.retained orelse return error.MissingMergedOwner;
++    if (group_retained.count != 2) {
++        std.debug.print("FIO_MERGED_GENERATION_OWNER_LOST\n", .{});
++        return error.MergedGenerationOwnerLost;
++    }
++    const merged_snapshot = fios_ownership.shared.snapshot(io);
++    var merged_auxiliary_owners: usize = 0;
++    for (merged_snapshot.models[0..merged_snapshot.model_count]) |row| {
++        if (std.mem.eql(u8, row.id[0..row.len], "org/fios-merged-auxiliary")) merged_auxiliary_owners = row.active;
++    }
++    try std.testing.expectEqual(@as(usize, 2), merged_auxiliary_owners);
++    try std.testing.expectEqual(@as(usize, 1), cap_a.merged);
++    try std.testing.expectEqual(@as(usize, 1), cap_b.merged);
++    try std.testing.expectEqual(@as(usize, 0), cap_a.singles);
++    batch_context.finish(io); batch_held = false;
++    try std.testing.expect(fios_ownership.current == null and fios_ownership.current_group == null);
++    try fios_ownership.shared.leave(io, gen_a); gen_a_held = false;
++    try fios_ownership.shared.leave(io, gen_b); gen_b_held = false;
++    try std.testing.expectEqual(@as(usize, 2), fios_ownership.shared.snapshot(io).owned);
++    group_retained.release(io); cap_a.retained = null;
++    try std.testing.expectEqual(@as(usize, 0), fios_ownership.shared.snapshot(io).owned);
 +    registry.fios_request_tracker = null;
 +    // Same-looking ready→evicting→ready is NOT the same registry generation.
 +    const registry_before = fiosRegistryQuietGeneration(&scheduler) orelse return error.UnexpectedRegistryBusy;
@@ -1067,7 +1136,7 @@ index 9e12566..e8d6d34 100644
  pub const SlotState = enum { pending_prefill, decoding, finished, errored };
  
  /// Result of `Slot.waitNext`. Driven by the inference thread; consumed by
-@@ -449,6 +875,9 @@ pub const NextResult = union(enum) {
+@@ -449,6 +944,9 @@ pub const NextResult = union(enum) {
  
  /// Per-request state. Owned by the Scheduler from `submit` until `complete`.
  pub const Slot = struct {
@@ -1077,7 +1146,7 @@ index 9e12566..e8d6d34 100644
      allocator: std.mem.Allocator,
      /// io reference for Stopwatch / async-eval (captured from Scheduler).
      io: std.Io,
-@@ -827,6 +1256,14 @@ pub const Slot = struct {
+@@ -827,6 +1325,14 @@ pub const Slot = struct {
      /// finished/errored it AND the connection thread has consumed the final
      /// `done`/`err` from `waitNext`).
      pub fn deinit(self: *Slot) void {
@@ -1092,7 +1161,7 @@ index 9e12566..e8d6d34 100644
          // ds4_session / llama_seq are borrowed from the model (persistent
          // across requests) — never freed here. The claim on them is released
          // in Scheduler.complete; they die with the model.
-@@ -1130,6 +1567,7 @@ pub const VisionItem = union(enum) {
+@@ -1130,6 +1636,7 @@ pub const VisionItem = union(enum) {
  /// to `scheduler.submit(.{ .vision_embeddings = arr, ... })` and the slot's
  /// `deinit` will free it.
  pub const VisionEncodeRequest = struct {
@@ -1100,7 +1169,7 @@ index 9e12566..e8d6d34 100644
      /// Plan 05 Phase D: target model whose `vision_encoder` services this
      /// request. The conn thread holds a refcount (via `ensureLoaded`) for
      /// the duration of the call.
-@@ -1165,6 +1603,7 @@ pub const VisionEncodeRequest = struct {
+@@ -1165,6 +1672,7 @@ pub const VisionEncodeRequest = struct {
  /// the float vectors into `results` (caller frees). Mirrors the
  /// VisionEncodeRequest pattern.
  pub const EmbedRequest = struct {
@@ -1108,7 +1177,7 @@ index 9e12566..e8d6d34 100644
      /// Plan 05 Phase D: target model whose `transformer` services this
      /// request. The conn thread holds a refcount for the duration.
      model: *model_registry_mod.LoadedModel,
-@@ -1197,6 +1636,8 @@ pub const EmbedRequest = struct {
+@@ -1197,6 +1705,8 @@ pub const EmbedRequest = struct {
  /// victim `.evicting` and waited for refcount == 0, so freeing GPU memory
  /// is safe.
  pub const LoadRequest = struct {
@@ -1117,7 +1186,16 @@ index 9e12566..e8d6d34 100644
      /// Target entry to populate. Already transitioned to `.loading` by
      /// the conn thread before posting; the inference thread completes the
      /// load and calls `registry.markReadyLocked(entry, bytes)` or
-@@ -1508,6 +1949,11 @@ pub const Scheduler = struct {
+@@ -1306,6 +1816,8 @@ pub const LoadRequest = struct {
+ /// owning thread. Decoupled via an opaque ctx + runner so this module needs
+ /// no dependency on `server.zig`/`gen.zig` — `server.zig` owns the job body.
+ pub const GenRequest = struct {
++    fios_parent: ?fios_ownership.Token = null,
++    fios_failed: bool = false,
+     /// Opaque job payload (a `*GenJob` in server.zig).
+     ctx: *anyopaque,
+     /// Runs the job body on the inference thread. Must not return an error
+@@ -1508,6 +2020,11 @@ pub const Scheduler = struct {
  
      queue_mu: std.Io.Mutex,
      queue_cond: std.Io.Condition,
@@ -1129,7 +1207,7 @@ index 9e12566..e8d6d34 100644
      pending: std.ArrayList(*Slot),
      decoding: std.ArrayList(*Slot),
      /// Slots a Neural Engine worker runs (`runAneSlot`), off the inference thread.
-@@ -1886,6 +2332,13 @@ pub const Scheduler = struct {
+@@ -1886,6 +2403,13 @@ pub const Scheduler = struct {
          const eff_kv_quant = params.kv_quant_config orelse slot_config.kv_quant_override orelse self.kv_quant_config;
          const slot = try Slot.init(self.allocator, self.io, slot_config, params, eff_kv_quant);
          errdefer slot.deinit();
@@ -1143,7 +1221,7 @@ index 9e12566..e8d6d34 100644
  
          self.queue_mu.lockUncancelable(self.io);
          defer self.queue_mu.unlock(self.io);
-@@ -2055,6 +2508,14 @@ pub const Scheduler = struct {
+@@ -2055,6 +2579,14 @@ pub const Scheduler = struct {
          return gen_mod.estimatePeakResidentBytes(self.io, entry.path, peeked);
      }
  
@@ -1158,7 +1236,7 @@ index 9e12566..e8d6d34 100644
      /// Plan 05 Phase D: resolve `id_or_empty` ("" / "mlx-serve" → default)
      /// to a refcounted, ready `*LoadedModel`. Cold-loads on demand: if the
      /// entry is `.unloaded`, parses CPU state, picks an LRU victim if
-@@ -2072,6 +2533,15 @@ pub const Scheduler = struct {
+@@ -2072,6 +2604,15 @@ pub const Scheduler = struct {
      ///   error.LoadFailed        — inference thread reported a load failure.
      ///   error.Shutdown          — scheduler is shutting down.
      pub fn ensureLoaded(self: *Scheduler, id_or_empty: []const u8) !*LoadedModel {
@@ -1174,7 +1252,7 @@ index 9e12566..e8d6d34 100644
          // A lost GPU context fails every MLX call: nothing is loaded or served until a restart.
          if (mlx.gpuContextLost()) return error.GpuContextLost;
          // Fast path: ready entries. registry.ensureLoaded handles waiting
-@@ -2085,8 +2555,6 @@ pub const Scheduler = struct {
+@@ -2085,8 +2626,6 @@ pub const Scheduler = struct {
          // Slow path: cold load. Resolve the entry. Re-acquire mutex and
          // re-check state — between the fast-path call and now another
          // caller could have completed the load.
@@ -1183,7 +1261,7 @@ index 9e12566..e8d6d34 100644
          // CPU-only pre-load: parse config / load tokenizer / load chat
          // config. Cheap (~tens of ms); kept outside the mutex so other
          // requests on other models stay unblocked. On failure, mark the
-@@ -2096,9 +2564,7 @@ pub const Scheduler = struct {
+@@ -2096,9 +2635,7 @@ pub const Scheduler = struct {
          var settings = model_settings.overrideFor(self.allocator, self.io, entry.path);
          defer settings.deinit(self.allocator);
          const cpu_state = preloadCpuState(self.allocator, self.io, entry.path, settings.ctx_size orelse self.gguf_ctx_size) catch |err| {
@@ -1194,7 +1272,7 @@ index 9e12566..e8d6d34 100644
              return error.LoadFailed;
          };
          // Ownership: on success transfers to the entry inside the
-@@ -2151,9 +2617,11 @@ pub const Scheduler = struct {
+@@ -2151,9 +2688,11 @@ pub const Scheduler = struct {
  
              // Wait out any concurrent .loading / .evicting state.
              wait_loop: while (true) {
@@ -1206,7 +1284,7 @@ index 9e12566..e8d6d34 100644
                          self.registry.mutex.unlock(self.io);
                          return entry;
                      },
-@@ -2178,6 +2646,7 @@ pub const Scheduler = struct {
+@@ -2178,6 +2717,7 @@ pub const Scheduler = struct {
              // From the claim: while victims unload or the queue waits, not the last load's numbers.
              entry.load_progress.start(io_util.nowMsMonotonic(self.io));
              _ = entry.refcount.fetchAdd(1, .acq_rel);
@@ -1214,7 +1292,7 @@ index 9e12566..e8d6d34 100644
              pinned = true;
  
              // Estimate post-load bytes (see `gateEstimateBytes` for why a media
-@@ -2230,6 +2699,7 @@ pub const Scheduler = struct {
+@@ -2230,6 +2770,7 @@ pub const Scheduler = struct {
  
          // ── Stage 2: build + post LoadRequest, wait for completion.
          var req = LoadRequest{
@@ -1222,7 +1300,7 @@ index 9e12566..e8d6d34 100644
              .entry = entry,
              .config = owned.config,
              .tok = owned.tok,
-@@ -2338,6 +2808,32 @@ pub const Scheduler = struct {
+@@ -2338,11 +2879,42 @@ pub const Scheduler = struct {
          return self.registry.loadErrorNameDupe(alloc, id_or_empty);
      }
  
@@ -1255,7 +1333,27 @@ index 9e12566..e8d6d34 100644
      /// Run a media-generation job on the inference thread. Posts `req` to the
      /// gen queue and blocks the calling (connection) thread until the
      /// inference thread has run the job body to completion. The job writes its
-@@ -2398,7 +2894,10 @@ pub const Scheduler = struct {
+     /// own HTTP/SSE response to the connection; this just synchronizes.
+     pub fn runGeneration(self: *Scheduler, req: *GenRequest) !void {
++        const fios_sender = try FiosActorLoadPreparation.beginActive(self, req.model.id, fios_ownership.current);
++        defer fios_sender.finish(self.io);
++        req.fios_parent = fios_sender.token;
++        req.fios_failed = false;
++
+         {
+             self.queue_mu.lockUncancelable(self.io);
+             defer self.queue_mu.unlock(self.io);
+@@ -2352,7 +2924,9 @@ pub const Scheduler = struct {
+         }
+         req.done_mu.lockUncancelable(self.io);
+         while (!req.done) req.done_cond.waitUncancelable(self.io, &req.done_mu);
++        const fios_failed = req.fios_failed;
+         req.done_mu.unlock(self.io);
++        if (fios_failed) return error.NativeOwnershipUnavailable;
+     }
+ 
+     /// Free a model's resident GPU state, returning its registry stub to
+@@ -2398,7 +2972,10 @@ pub const Scheduler = struct {
                      return;
                  }
              }
@@ -1267,7 +1365,7 @@ index 9e12566..e8d6d34 100644
              self.registry.waitForRefcountZeroLocked(entry);
              self.registry.mutex.unlock(self.io);
          }
-@@ -2432,6 +2931,7 @@ pub const Scheduler = struct {
+@@ -2432,6 +3009,7 @@ pub const Scheduler = struct {
      /// as `encodeVision`: post + block + return results. Caller frees the
      /// returned rows + outer slice (allocated with `req.allocator`).
      pub fn computeEmbeddings(self: *Scheduler, req: *EmbedRequest) ![][]f32 {
@@ -1275,7 +1373,7 @@ index 9e12566..e8d6d34 100644
          self.queue_mu.lockUncancelable(self.io);
          self.embed_queue.append(self.allocator, req) catch |err| {
              self.queue_mu.unlock(self.io);
-@@ -2462,6 +2962,7 @@ pub const Scheduler = struct {
+@@ -2462,6 +3040,7 @@ pub const Scheduler = struct {
      /// The request struct must outlive this call, but since the call blocks,
      /// a stack allocation in the caller works.
      pub fn encodeVision(self: *Scheduler, req: *VisionEncodeRequest) !mlx.mlx_array {
@@ -1283,7 +1381,7 @@ index 9e12566..e8d6d34 100644
          // Post + wake.
          self.queue_mu.lockUncancelable(self.io);
          self.vision_queue.append(self.allocator, req) catch |err| {
-@@ -4606,7 +5107,42 @@ fn loadGlmHead(allocator: std.mem.Allocator, config: *const model_mod.ModelConfi
+@@ -4606,7 +5185,46 @@ fn loadGlmHead(allocator: std.mem.Allocator, config: *const model_mod.ModelConfi
  /// On any error the partial state has already been freed via errdefer; the
  /// caller decides how to surface (startup → recordLoadError + signal
  /// started; on-demand → req.error_name + done broadcast).
@@ -1294,17 +1392,20 @@ index 9e12566..e8d6d34 100644
 +    tracker: ?*fios_ownership.Tracker = null,
 +    token: ?fios_ownership.Token = null,
 +    previous: ?fios_ownership.Token = null,
++    previous_group: ?[]const fios_ownership.Token = null,
 +    fn begin(sch: *Scheduler, model: []const u8, parent: ?fios_ownership.Token) !FiosActorLoadPreparation {
 +        sch.registry.mutex.lockUncancelable(sch.io);
 +        const tracker = sch.registry.fios_request_tracker;
 +        sch.registry.mutex.unlock(sch.io);
 +        const previous = fios_ownership.current;
++        const previous_group = fios_ownership.current_group;
 +        if (tracker) |source| {
 +            const token = try source.reservePreparation(sch.io, parent, model);
 +            fios_ownership.current = token;
-+            return .{ .tracker = source, .token = token, .previous = previous };
++            fios_ownership.current_group = null;
++            return .{ .tracker = source, .token = token, .previous = previous, .previous_group = previous_group };
 +        }
-+        return .{ .previous = previous };
++        return .{ .previous = previous, .previous_group = previous_group };
 +    }
 +    fn beginActive(sch: *Scheduler, model: []const u8, parent: ?fios_ownership.Token) !FiosActorLoadPreparation {
 +        const scope = try begin(sch, model, parent);
@@ -1315,6 +1416,7 @@ index 9e12566..e8d6d34 100644
 +    }
 +    fn finish(self: FiosActorLoadPreparation, io: std.Io) void {
 +        fios_ownership.current = self.previous;
++        fios_ownership.current_group = self.previous_group;
 +        if (self.token) |token| self.tracker.?.leave(io, token) catch { self.tracker.?.fence(io); };
 +    }
 +};
@@ -1326,7 +1428,7 @@ index 9e12566..e8d6d34 100644
      // ── ds4 fast path: when the caller passed `ds4_path`, the model is a
      //    GGUF served by the embedded ds4 engine. The MLX scaffolding
      //    (weights/Transformer/vision/drafter/JIT/warmup) is entirely
-@@ -5691,7 +6227,7 @@ pub fn armShutdownDeadline(slot: *std.atomic.Value(i64), now_ms: i64, secs: u32)
+@@ -5691,7 +6309,7 @@ pub fn armShutdownDeadline(slot: *std.atomic.Value(i64), now_ms: i64, secs: u32)
  }
  
  fn hasWorkPendingLocked(sch: *const Scheduler) bool {
@@ -1335,7 +1437,7 @@ index 9e12566..e8d6d34 100644
          sch.decoding.items.len > 0 or
          sch.vision_queue.items.len > 0 or
          sch.embed_queue.items.len > 0 or
-@@ -5701,6 +6237,165 @@ fn hasWorkPendingLocked(sch: *const Scheduler) bool {
+@@ -5701,6 +6319,165 @@ fn hasWorkPendingLocked(sch: *const Scheduler) bool {
          sch.unload_queue.items.len > 0;
  }
  
@@ -1501,7 +1603,7 @@ index 9e12566..e8d6d34 100644
  /// Poll interval for the idle-eviction sweep, given the configured window.
  ///
  /// A quarter of the window, so a model is evicted within ~1.25x the configured
-@@ -5713,6 +6408,15 @@ pub fn idleEvictTickMs(window_ms: i64) i64 {
+@@ -5713,6 +6490,15 @@ pub fn idleEvictTickMs(window_ms: i64) i64 {
  fn inferenceLoop(ctx: ThreadCtx) void {
      const sch = ctx.scheduler;
      const params = ctx.params;
@@ -1517,7 +1619,7 @@ index 9e12566..e8d6d34 100644
      // Covers shutdown and startup-load failure.
      defer sleep_inhibit.release();
  
-@@ -5749,6 +6453,14 @@ fn inferenceLoop(ctx: ThreadCtx) void {
+@@ -5749,6 +6535,14 @@ fn inferenceLoop(ctx: ThreadCtx) void {
      }
  
      while (!sch.shutdown.load(.acquire)) {
@@ -1532,7 +1634,7 @@ index 9e12566..e8d6d34 100644
          // Phase D: cold-load drain. Process ONE load per tick — loading a
          // model is heavy (~seconds; weight read + JIT compile + warmup)
          // and we want the rest of the inference loop to stay responsive.
-@@ -6203,6 +6915,12 @@ fn slotStateBytes(s: *const Slot) u64 {
+@@ -6203,6 +6997,12 @@ fn slotStateBytes(s: *const Slot) u64 {
  /// not the scheduler's borrowed-view singleton — each LoadedModel has its
  /// own vision encoder when applicable.
  fn runVisionEncode(sch: *Scheduler, req: *VisionEncodeRequest) void {
@@ -1545,7 +1647,7 @@ index 9e12566..e8d6d34 100644
      const vision_enc = req.model.vision_encoder orelse {
          finishVisionRequest(sch, req, "VisionEncoderNotLoaded");
          return;
-@@ -6414,6 +7132,12 @@ fn finishVisionRequest(sch: *Scheduler, req: *VisionEncodeRequest, err_name: []c
+@@ -6414,6 +7214,12 @@ fn finishVisionRequest(sch: *Scheduler, req: *VisionEncodeRequest, err_name: []c
  /// forward pass via `generate.computeEmbeddingsBatch(xfm, ...)`, which resets
  /// the global xfm.cache before every sub-batch, and wakes the conn thread.
  fn runEmbedRequest(sch: *Scheduler, req: *EmbedRequest) void {
@@ -1558,6 +1660,58 @@ index 9e12566..e8d6d34 100644
      const xfm_ptr = req.model.transformer.?;
      // Held in a local: the request lives on the waiting thread's stack and is gone once `done` is observed.
      const vision = req.vision_embeddings;
+@@ -6663,7 +7469,51 @@ pub fn genYieldEnabled(cuda: bool, env: ?[]const u8) bool {
+ /// connection. We bracket it with the model's `gen_busy` flag for visibility
+ /// and signal `done` so the conn thread in `runGeneration` wakes. Several
+ /// merged jobs (`takeMergeable`) run as one `run_many` call.
++// Stable in-place TLS storage. Batch callbacks and retained references see
++// every distinct origin; nested single-request actors restore this full set.
++const FiosGenActorContext = struct {
++    held: ?fios_ownership.Retained = null,
++    previous: ?fios_ownership.Token = null,
++    previous_group: ?[]const fios_ownership.Token = null,
++    fn begin(self: *FiosGenActorContext, sch: *Scheduler, reqs: []*GenRequest) !void {
++        if (reqs.len == 0 or reqs.len > fios_ownership.capacity) return error.InvalidGenerationOwners;
++        self.previous = fios_ownership.current;
++        self.previous_group = fios_ownership.current_group;
++        sch.registry.mutex.lockUncancelable(sch.io);
++        const tracker = sch.registry.fios_request_tracker;
++        sch.registry.mutex.unlock(sch.io);
++        if (tracker) |source| {
++            var tokens: [fios_ownership.capacity]fios_ownership.Token = undefined;
++            for (reqs, 0..) |req,index| tokens[index] = req.fios_parent orelse return error.MissingActorRequestOwner;
++            self.held = try source.retainTokens(sch.io, tokens[0..reqs.len]);
++            if (self.held) |*held| {
++                fios_ownership.current = held.tokens[0];
++                fios_ownership.current_group = held.tokens[0..held.count];
++            }
++        }
++    }
++    fn finish(self: *FiosGenActorContext, io: std.Io) void {
++        fios_ownership.current = self.previous;
++        fios_ownership.current_group = self.previous_group;
++        if (self.held) |held| held.release(io);
++        self.held = null;
++    }
++};
++fn failFiosGenRequests(sch: *Scheduler, reqs: []*GenRequest) void {
++    for (reqs) |req| {
++        req.done_mu.lockUncancelable(sch.io);
++        req.fios_failed = true;
++        req.done = true;
++        req.done_cond.broadcast(sch.io);
++        req.done_mu.unlock(sch.io);
++    }
++}
++
+ fn runGenRequests(sch: *Scheduler, reqs: []*GenRequest) void {
++    var fios_actor_context: FiosGenActorContext = .{};
++    fios_actor_context.begin(sch, reqs) catch { failFiosGenRequests(sch, reqs); return; };
++    defer fios_actor_context.finish(sch.io);
++
+     const req = reqs[0];
+     req.model.gen_busy = true;
+     var gy = GenYield{ .sch = sch, .step_sw = io_util.Stopwatch.init(sch.io) };
 diff --git a/src/server.zig b/src/server.zig
 index 720b2c6..226d80b 100644
 --- a/src/server.zig

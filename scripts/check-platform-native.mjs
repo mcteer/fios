@@ -94,6 +94,13 @@ try {
     assert.equal(mutations.length,count,'unreviewed production reference mutation set');
     for(const match of mutations) assert(text.slice(match.index+match[0].length).trimStart().startsWith(marker),'borrow mutation lacks partial epoch advancement');
   }
+  const genPosting=schedulerSource.slice(schedulerSource.indexOf('pub fn runGeneration('));
+  assert(genPosting.indexOf('FiosActorLoadPreparation.beginActive(')<genPosting.indexOf('self.gen_queue.append('));
+  assert(genPosting.includes('req.fios_parent = fios_sender.token;'));
+  const genActor=schedulerSource.slice(schedulerSource.indexOf('fn runGenRequests('));
+  assert(genActor.indexOf('fios_actor_context.begin(sch, reqs)')<genActor.indexOf('req.model.gen_busy = true;'));
+  assert(schedulerSource.includes('self.held = try source.retainTokens(sch.io, tokens[0..reqs.len]);'));
+  assert(schedulerSource.includes('req.merge.?.run_many(ctxs[0..reqs.len]);'),'native merging must remain available');
   const patched = readFileSync(path.join(scratch, 'src/server.zig'), 'utf8');
   const startupEnrollment=patched.indexOf('load_params.registry.fios_request_tracker = fios_requests;');
   assert(startupEnrollment>0&&startupEnrollment<patched.indexOf('var startup: StartupResponder'), 'tracker must precede startup responder/load');

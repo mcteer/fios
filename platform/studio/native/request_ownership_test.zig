@@ -631,3 +631,24 @@ test "opaque request correlation follows retained lineage and missing is always 
         try std.testing.expectError(error.InvalidCorrelation, ownership.parseCorrelationHex(invalid));
     }
 }
+
+test "retained groups keep every distinct origin and validate before acquiring" {
+    var tracker: ownership.Tracker = .{};
+    try tracker.initialize(io, @splat(32));
+    const first = try tracker.enter(io);
+    const second = try tracker.enter(io);
+    const retained = try tracker.retainTokens(io, &.{first,second,first});
+    try std.testing.expectEqual(@as(usize, 2), retained.count);
+    try tracker.leave(io, first);
+    try tracker.leave(io, second);
+    try std.testing.expectEqual(@as(usize, 2), tracker.snapshot(io).owned);
+    retained.release(io);
+    try std.testing.expectEqual(@as(usize, 0), tracker.snapshot(io).owned);
+    const live = try tracker.enter(io);
+    const before = tracker.slots[live.slot].references;
+    try std.testing.expectError(error.InvalidToken, tracker.retainTokens(io, &.{live,first}));
+    try std.testing.expectEqual(before, tracker.slots[live.slot].references);
+    try std.testing.expect(tracker.snapshot(io).uncertain);
+    try tracker.leave(io, live);
+    try std.testing.expectError(error.InvalidReferenceGroup, tracker.retainTokens(io, &.{}));
+}

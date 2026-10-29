@@ -100,18 +100,25 @@ pub fn renderSnapshot(snapshot: Snapshot, buffer: []u8) ![]const u8 {
 // propagates only a native-created token, never client-provided authority.
 pub var shared: Tracker = .{ .primary_guard = true };
 pub threadlocal var current: ?Token = null;
+pub threadlocal var current_group: ?[]const Token = null;
 pub const Retained = struct {
-    token: Token,
+    tracker: *Tracker,
+    tokens: [capacity]Token = undefined,
+    count: usize = 0,
     pub fn release(self: Retained, io: std.Io) void {
-        shared.leave(io, self.token) catch {};
+        for (self.tokens[0..self.count]) |token| self.tracker.leave(io, token) catch { self.tracker.fence(io); };
     }
 };
 pub fn retainCurrent(io: std.Io) !?Retained {
+    if (current_group) |tokens| return try shared.retainTokens(io, tokens);
     const token = current orelse return null;
-    try shared.retain(io, token);
-    return .{ .token = token };
+    return try shared.retainTokens(io, &.{token});
 }
 pub fn bindAuxiliaryCurrent(io: std.Io, model: []const u8) !void {
+    if (current_group) |tokens| {
+        for (tokens) |token| shared.bindAuxiliary(io, token, model) catch |err| { shared.fence(io); return err; };
+        return;
+    }
     const token = current orelse {
         shared.fence(io);
         return error.MissingOwner;
@@ -462,6 +469,25 @@ pub const Tracker = struct {
             return error.ReferenceOverflow;
         }
         slot.references += 1;
+    }
+    // Validate the whole bounded set before increasing ANY reference. Shared
+    // callbacks retain every distinct origin, never just the first batch item.
+    pub fn retainTokens(self: *Tracker, io: std.Io, tokens: []const Token) !Retained {
+        self.mutex.lockUncancelable(io);
+        defer self.mutex.unlock(io);
+        if (tokens.len == 0 or tokens.len > capacity) return error.InvalidReferenceGroup;
+        var result: Retained = .{ .tracker = self };
+        var seen: [capacity]bool = @splat(false);
+        for (tokens) |token| {
+            const slot = try self.checked(token);
+            if (seen[token.slot]) continue;
+            if (slot.references == std.math.maxInt(u32)) { self.uncertain = true; return error.ReferenceOverflow; }
+            seen[token.slot] = true;
+            result.tokens[result.count] = token;
+            result.count += 1;
+        }
+        for (result.tokens[0..result.count]) |token| self.slots[token.slot].references += 1;
+        return result;
     }
     pub fn leave(self: *Tracker, io: std.Io, token: Token) !void {
         self.mutex.lockUncancelable(io);
