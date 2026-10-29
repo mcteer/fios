@@ -1,7 +1,7 @@
 import test from 'node:test';
 import {spawnSync} from 'node:child_process';
 import assert from 'node:assert/strict';
-import {readFileSync,writeFileSync,mkdirSync,mkdtempSync,rmSync,chmodSync,symlinkSync,unlinkSync,linkSync,existsSync,realpathSync} from 'node:fs';
+import {readFileSync,writeFileSync,mkdirSync,mkdtempSync,rmSync,chmodSync,symlinkSync,unlinkSync,linkSync,existsSync,realpathSync,cpSync} from 'node:fs';
 import {join,dirname} from 'node:path';
 import {tmpdir} from 'node:os';
 import {createHash} from 'node:crypto';
@@ -78,6 +78,29 @@ test('reviewed release tree refuses changed bytes, extra files, symlinks and har
     for(const command of [...backupPlan.proposed_commands,...restorePlan.proposed_commands]){
       assert.equal(command.execution,'operator_only');assert.equal(command.artifact_sha256,artifacts.find(item=>item.path==='bin/studioctl').sha256);
     }
+    const previous=join(outside,'previous-release');cpSync(directory,previous,{recursive:true});
+    function previousReceipt(schema){
+      const old={...receipt,journal_schema:schema,source_revision:'c'.repeat(40)};
+      const data=Buffer.from(JSON.stringify(old,null,2)+'\n');writeFileSync(join(previous,'release.json'),data,{mode:0o600});
+      return createHash('sha256').update(data).digest('hex');
+    }
+    let previousHash=previousReceipt(8);
+    const rollbackArgs=()=>[...common,'--previous',previous,'--previous-sha256',previousHash,'--backup',state,'--backup-sha256','d'.repeat(64),'--to',restored];
+    const rollback=invoke(['plan-rollback',...rollbackArgs()]);assert.equal(rollback.status,0,rollback.stderr);
+    const rollbackPlan=JSON.parse(rollback.stdout);
+    assert.equal(rollbackPlan.operation,'stopped_state_rollback_review');assert.equal(rollbackPlan.previous_journal_schema,8);
+    assert.equal(rollbackPlan.current_manifest_sha256,hash);assert.equal(rollbackPlan.previous_manifest_sha256,previousHash);
+    assert.equal(rollbackPlan.changes_made,false);assert.equal(rollbackPlan.activation,false);assert.deepEqual(rollbackPlan.privileged_commands,[]);
+    assert.equal(rollbackPlan.proposed_commands[0].program,join(previous,'bin/studioctl'));
+    assert.equal(rollbackPlan.proposed_commands[1].arguments.at(-1),join(realpathSync.native(outside),'restored'));assert.equal(existsSync(restored),false);
+    previousHash=previousReceipt(7);
+    assert.equal(invoke(['plan-rollback',...rollbackArgs()]).status,1,'Legacy release silently entered the default current-schema path');
+    const seven=invoke(['plan-rollback-seven',...rollbackArgs()]);assert.equal(seven.status,0,seven.stderr);
+    assert.equal(JSON.parse(seven.stdout).previous_journal_schema,7);
+    const asCurrent=invoke(['plan','--release',previous,'--sha256',previousHash,'--host','fios-edge-a.lab']);assert.equal(asCurrent.status,1);
+    previousHash=previousReceipt(8);
+    const same=invoke(['plan-rollback',...common,'--previous',directory,'--previous-sha256',hash,'--backup',state,'--backup-sha256','d'.repeat(64),'--to',restored]);assert.equal(same.status,1);
+    assert.equal(invoke(['plan-rollback',...rollbackArgs(),'--execute']).status,1);
     const sourceLink=join(outside,'state-link');symlinkSync(state,sourceLink);
     for(const extra of [
       ['plan-backup',...common,'--state',sourceLink,'--to',destination],

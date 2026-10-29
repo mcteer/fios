@@ -43,3 +43,20 @@ export function platformStatePlan({operation,release,verified,host,source,destin
     preserves:['native_inference_uncertainty','platform_exports','unrelated_runtime_objects','fios_database','legacy_volume'],
     limitations:['no_installation_or_service_authority','no_native_inference','no_schema_downgrade_or_overwrite','execute_on_the_originating_host_only']};
 }
+
+// A rollback always uses the retained OLD artifact against its own original
+// stopped backup. Never downgrade/mutate the new journal or reuse live state.
+// Legacy schema7 is accepted only by the explicitly named review operation;
+// it cannot enter installation/current release validation or mint authority.
+export function platformRollbackStatePlan({release,current,previousRelease,previous,host,backup,destination,backupSHA256}){
+  if(resolve(release)===resolve(previousRelease)||current.manifestSHA256===previous.manifestSHA256||
+     !current.manifest.native_inventory.hosts.includes(host)||!previous.manifest.native_inventory.hosts.includes(host))fail();
+  const plan=platformStatePlan({operation:'restore',release:previousRelease,verified:previous,host,source:backup,destination,backupSHA256});
+  return {...plan,operation:'stopped_state_rollback_review',
+    current_manifest_sha256:current.manifestSHA256,previous_manifest_sha256:previous.manifestSHA256,
+    previous_journal_schema:previous.manifest.journal_schema,
+    blockers:['explicit_operator_review_and_execution_required','supervisor_and_manager_must_remain_stopped',
+      'installed_artifact_configuration_and_credential_recovery_not_verified'],
+    limitations:[...plan.limitations,'restore_original_previous_schema_backup_only','never_downgrade_the_new_journal',
+      'no_installed_release_switch_or_uninstall','retain_new_state_and_both_reviewed_artifacts_for_diagnosis']};
+}

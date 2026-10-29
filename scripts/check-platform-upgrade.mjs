@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {spawn,spawnSync} from 'node:child_process';
-import {mkdtempSync,readFileSync,rmSync,cpSync,chmodSync,writeFileSync} from 'node:fs';
+import {mkdtempSync,readFileSync,rmSync,cpSync,chmodSync,writeFileSync,existsSync} from 'node:fs';
 import {join,resolve} from 'node:path';
 import {createHash} from 'node:crypto';
 import {setTimeout as delay} from 'node:timers/promises';
@@ -26,6 +26,18 @@ function run(program,argv,timeout=5000) {
   assert.equal(result.status,0,'Isolated artifact/schema command failed');return result.stdout.trim();
 }
 const cli=(release,directory,argv)=>JSON.parse(run(join(release,'bin/studioctl'),['--state',directory,...argv]));
+function rollbackProposal(bundle,backupSHA256,destination) {
+  const value=JSON.parse(run(process.execPath,[join(root,'scripts/install-platform.mjs'),migrateSeven?'plan-rollback-seven':'plan-rollback',
+    '--release',newRelease,'--sha256',args[8],'--host','fios-edge-a.lab','--previous',oldRelease,'--previous-sha256',args[4],
+    '--backup',bundle,'--backup-sha256',backupSHA256,'--to',destination]));
+  assert.equal(value.changes_made,false);assert.equal(value.activation,false);assert.deepEqual(value.privileged_commands,[]);
+  assert.equal(value.current_manifest_sha256,args[8]);assert.equal(value.previous_manifest_sha256,args[4]);
+  assert.equal(value.previous_journal_schema,migrateSeven?7:8);assert.equal(existsSync(destination),false);
+  assert.equal(value.proposed_commands.length,2);
+  for(const command of value.proposed_commands){assert.equal(command.program,join(oldRelease,'bin/studioctl'));assert.equal(command.execution,'operator_only');}
+  return value.proposed_commands;
+}
+
 const exited=child=>child.exitCode!==null||child.signalCode!==null;
 async function stop(child) {
   if(exited(child))return;
@@ -81,7 +93,11 @@ try {
     cli(newRelease,heldBundle,['restore-state','--sha256',held.sha256,'--to',restored]);
     await cycle(newRelease,restored);
     const rollback=join(scratch,'rollback-seven');
-    cli(oldRelease,bundle,['restore-state','--sha256',backup.sha256,'--to',rollback]);
+    const proposal=rollbackProposal(bundle,backup.sha256,rollback);
+    // This disposable fixture explicitly executes only the two reviewed old
+    // CLI data operations. No installer/lifecycle/root command is emitted.
+    for(const command of proposal)JSON.parse(run(command.program,command.arguments));
+    console.log('PASS: current installer rollback proposal verified and executed with retained old7 artifact/original backup; fresh-directory restore only');
     await cycle(oldRelease,rollback,true);await cycle(oldRelease,state,true);
     assert.equal(createHash('sha256').update(readFileSync(join(bundle,'backup.json'))).digest('hex'),backup.sha256);
   }else {
