@@ -82,7 +82,7 @@ To check source dependency composition after reviewing the exact MIMO candidate:
 node scripts/check-platform-native-fixture.mjs --source /ABS/DISPOSABLE_NATIVE --zig /ABS/PINNED_ZIG --webp-source /ABS/PINNED_WEBP --metal-cpp-zip /ABS/PINNED_METAL_ZIP --mimo-source /ABS/DISPOSABLE_MIMO_CANDIDATE
 ```
 
-Both source checkouts must resolve beneath `/private/tmp`, belong to the development user and retain their reviewed commits. The optional candidate must match exactly the repository's `mlx-stream-fcb4011-retirement.patch` at its pinned plugin revision; altered tracked inputs are refused before compilation. The native build's existing dependency option selects it without modifying the canonical submodule. The fixture brackets its declared commit/patch/modified-source inputs and all installed runtime hashes, runs ten actual native root cases plus private HTTP/control/manager checks, and emits the temporary binary digest separately from candidate inputs. No real model runs. Default invocation retains the clean upstream dependency. Successful compilation/runtime fixtures do not establish all-client/Metal/model retirement, complete context lifetime or production enrollment; candidate pause control stays default-disabled.
+Both source checkouts must resolve beneath `/private/tmp`, belong to the development user and retain their reviewed commits. The optional candidate must match exactly the repository's `mlx-stream-fcb4011-retirement.patch` at its pinned plugin revision; altered tracked inputs are refused before compilation. The native build's existing dependency option selects it without modifying the canonical submodule. The fixture brackets its declared commit/patch/modified-source inputs and all installed runtime hashes, runs eleven actual native root cases plus private HTTP/control/manager checks, and emits the temporary binary digest separately from candidate inputs. No real model runs. Default invocation retains the clean upstream dependency. Successful compilation/runtime fixtures do not establish all-client/Metal/model retirement, complete context lifetime or production enrollment; candidate pause control stays default-disabled.
 
 The separate candidate’s CPU lifetime witness is finite and never runs a model or Metal kernel:
 
@@ -91,6 +91,8 @@ node scripts/check-platform-mimo.mjs --source /ABS/DISPOSABLE_NATIVE --zig /ABS/
 ```
 
 This wrapper must exit0 only after its private optimized bypass actually fails `FIO_MIMO_DESTROY_DROPPED_HELD_ENGINE` with9pass/1fail of10, then restores source. Ordinary invocation and `--debug` require10 focused cases plus13 upstream passes/1 explicitly skipped GPU-window case. Lifetime release drops custody only; it never proves native terminality. Engine-owner integration, outer-context retention and deferred cleanup remain unfinished.
+
+For the retained-CPU cleanup guard, append `--mutation-retained-cpu-cleanup` to the four-pair native fixture command (without the MIMO option). The wrapper succeeds only after actual10pass/1fail of11 at `FIO_RETAINED_CPU_STATE_DROPPED_BORROW` and exact source restoration. Positive runs require11/11. Static handoff checks additionally reject entry writes before checked transfer or fallible `try` work afterward; those text checks are supplementary, not real-model/backend acceptance.
 
 ## 2a. Implemented local CLI and explicit limits
 

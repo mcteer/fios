@@ -75,6 +75,21 @@ try {
   // must advance the independently bounded partial-probe epoch under its lock.
   const registrySource=readFileSync(path.join(scratch,'src/model_registry.zig'),'utf8');
   const schedulerSource=readFileSync(path.join(scratch,'src/scheduler.zig'),'utf8');
+  const cpuLoadStart=schedulerSource.slice(schedulerSource.indexOf('fn doLoadOnInferenceThread('));
+  const cpuGuard=cpuLoadStart.indexOf('if (!params.entry.fiosCanReplaceCpuState()) return error.RegistryHeld;');
+  assert(cpuGuard>=0&&cpuGuard<cpuLoadStart.indexOf('FiosActorLoadPreparation.begin('),'known unsafe CPU state must refuse before backend preparation');
+  // Supplemental wiring proof only; real-model backend acceptance is separate.
+  for(const name of ['doLoadDs4OnInferenceThread','doLoadLlamaOnInferenceThread','aneBuild','doLoadGenOnInferenceThread','doLoadOnInferenceThread']){
+    const start=schedulerSource.indexOf(`fn ${name}(`);assert(start>=0);
+    const remainder=schedulerSource.slice(start+3),next=remainder.search(/\n(?:pub )?fn /);
+    const body=schedulerSource.slice(start,next<0?undefined:start+3+next);
+    const handoff='try installRetainedCpuState(entry, params);';
+    assert.equal(body.split(handoff).length,2,'one checked CPU ownership handoff per loader');
+    const [before,after]=body.split(handoff);
+    assert(!/\bentry\.\w+\s*=(?!=)/.test(before),'entry ownership written before checked CPU handoff');
+    assert(!/\btry\s/.test(after),'fallible work after entry ownership transfer');
+  }
+
   // Separately reviewed aggregate drop: one mutex transaction advances epoch
   // BEFORE bounded exact-set ref drops and gate clear; no backend/destruction.
   const pinDrop='        self.fios_probe_epoch += 1; // exhaustion checked BEFORE refs/gate clear\n        for (pins) |entry| _ = entry.refcount.fetchSub(1, .acq_rel);';
