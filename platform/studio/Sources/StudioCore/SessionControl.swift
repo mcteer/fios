@@ -1,7 +1,7 @@
 import Foundation
 import Darwin
 
-enum SessionClientOperation:String {case launch,lookup}
+enum SessionClientOperation:String,Sendable {case launch,lookup}
 
 enum SessionReply {
     static func encode(id:String,service:ManagedService,instance:String,profile:String,result:SessionLaunchResult)throws->Data {
@@ -110,7 +110,7 @@ final class SessionControlServer {
     }
 }
 
-struct SessionControlClient {
+struct SessionControlClient:Sendable {
     private let path:String
     private let peer:NativeControlPeer
     private let instance:String
@@ -120,6 +120,13 @@ struct SessionControlClient {
         guard WireScalar.uuid(instance),WireScalar.sha256(profile),Set(approvedHashes.keys)==Set(ManagedService.allCases),approvedHashes.values.allSatisfy(WireScalar.sha256) else {throw ControlError.invalid_request}
         path=directory.appendingPathComponent("session-control.sock").path
         self.peer=peer;self.instance=instance;self.profile=profile;pins=approvedHashes
+    }
+    func accepts(_ command:ServiceLaunchCommand)->Bool {
+        command.profileHash==profile && command.expectedSHA256==pins[command.service]
+    }
+    func request(_ request:ServiceRecoveryRequest)throws->SessionLaunchResult {
+        guard accepts(request.command) else {throw ControlError.unauthorized}
+        return try self.request(operation:request.operation,service:request.command.service,id:request.command.id)
     }
     func request(operation:SessionClientOperation,service:ManagedService,id:String)throws->SessionLaunchResult {
         guard WireScalar.uuid(id),path.utf8.count<104 else {throw ControlError.invalid_request}

@@ -16,7 +16,7 @@ enum SessionPlan:Equatable {
     }
 }
 
-enum SessionLaunchResult:Equatable {
+enum SessionLaunchResult:Equatable,Sendable {
     case notSent,uncertain,wrongInstance,busy
     case started(ServiceIdentity)
 }

@@ -5,11 +5,27 @@ import CryptoKit
 
 // A fixed command for a separately identity-checked session transport. No
 // executable, environment, endpoint, arbitrary argv or operator force field.
-struct ServiceLaunchCommand {
+struct ServiceLaunchCommand:Sendable {
     let service:ManagedService
     let id:String
     let expectedSHA256:String
     let profileHash:String
+}
+final class ServiceRecoveryRequest:@unchecked Sendable {
+    let operation:SessionClientOperation
+    let command:ServiceLaunchCommand
+    private let lock=NSLock()
+    private var consumed=false
+    fileprivate init(operation:SessionClientOperation,command:ServiceLaunchCommand) {
+        self.operation=operation;self.command=command
+    }
+    // Only a new controller reservation can create a launch object. Retaining
+    // or copying its reference cannot turn transport failure into a retry.
+    func consumeTransport()->Bool {
+        guard operation == .launch else {return true} // Lookups have no effect.
+        lock.lock();defer {lock.unlock()}
+        guard !consumed else {return false};consumed=true;return true
+    }
 }
 
 // Serialized by the journal's one manager owner. Planning durably reserves a
@@ -111,13 +127,36 @@ final class ServiceRecoveryController {
         try AtomicState.write(bytes,to:file)
     }
 
-    func plan(service:ManagedService,desired:ServiceDesired,observation:ServiceObservation?,now:Int64,tick:Int64)throws->ServiceLaunchCommand? {
+    private func observeClock(now:Int64,tick:Int64)throws->Bool {
         guard (0...WireScalar.maximumTimestamp).contains(now),(0...WireScalar.maximumTimestamp).contains(tick) else {throw ServiceError.invalid}
         if now<state.previousWall || tick<state.previousTick {
-            state.fenced=true;try persist();return nil
+            state.fenced=true;try persist();return false
         }
         state.previousWall=now;state.previousTick=tick
-        guard !state.fenced,desired == .running,let observation else {return nil}
+        return !state.fenced
+    }
+    // Reconciliation never replays an effect. It remains useful with stopped,
+    // maintenance, missing observations or a clock fence: a lookup cannot
+    // launch, and missing helper history remains uncertain.
+    func next(service:ManagedService,desired:ServiceDesired,observation:ServiceObservation?,now:Int64,tick:Int64)throws->ServiceRecoveryRequest? {
+        if let id=state.entries.first(where:{$0.service==service})?.pending {
+            _=try observeClock(now:now,tick:tick)
+            return ServiceRecoveryRequest(operation:.lookup,command:ServiceLaunchCommand(service:service,id:id,expectedSHA256:pins[service]!,profileHash:state.profile))
+        }
+        return try plan(service:service,desired:desired,observation:observation,now:now,tick:tick).map {ServiceRecoveryRequest(operation:.launch,command:$0)}
+    }
+    func receive(_ request:ServiceRecoveryRequest,result:SessionLaunchResult)throws {
+        let command=request.command
+        guard command.profileHash==state.profile,command.expectedSHA256==pins[command.service],
+              state.entries.first(where:{$0.service==command.service})?.pending==command.id else {throw ServiceError.invalid}
+        switch result {
+        case .notSent:try notSent(service:command.service,id:command.id)
+        case .started(let identity):try started(service:command.service,id:command.id,identity:identity)
+        case .uncertain,.busy,.wrongInstance:break
+        }
+    }
+    func plan(service:ManagedService,desired:ServiceDesired,observation:ServiceObservation?,now:Int64,tick:Int64)throws->ServiceLaunchCommand? {
+        guard try observeClock(now:now,tick:tick),desired == .running,let observation else {return nil}
         if let identity=observation.identity,identity.sha256 != pins[service] {throw ServiceError.invalid}
         guard try ServicePolicy().action(service:service,desired:desired,observation:observation,now:now) == .launch,
               let index=state.entries.firstIndex(where:{$0.service==service}),state.entries[index].pending==nil else {return nil}

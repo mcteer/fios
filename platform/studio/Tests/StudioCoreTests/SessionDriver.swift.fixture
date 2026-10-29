@@ -16,7 +16,9 @@ import CryptoKit
         if args[1]=="server" {
             let scenario=args[3]
             guard ["success","validation","console","running","error","wrong-process","shutdown","clock","expired"].contains(scenario) else {throw ControlError.invalid_request}
-            try AtomicState.write(Data("0".utf8),to:directory.appendingPathComponent("calls"))
+            if !FileManager.default.fileExists(atPath:directory.appendingPathComponent("calls").path) {
+                try AtomicState.write(Data("0".utf8),to:directory.appendingPathComponent("calls"))
+            }
             let ports=SessionDriverPorts(validate:{command in
                 try AtomicState.write(Data("entered".utf8),to:directory.appendingPathComponent("validation-entered"))
                 while !FileManager.default.fileExists(atPath:directory.appendingPathComponent("release-validation").path) {
@@ -51,16 +53,49 @@ import CryptoKit
             }
             driver.shutdown();return
         }
-        guard args[1]=="client",args.count==6,let service=ManagedService(rawValue:args[3]),let operation=SessionClientOperation(rawValue:args[4]) else {throw ControlError.invalid_request}
         let metadata=try JSONSerialization.jsonObject(with:Data(contentsOf:directory.appendingPathComponent("session-control.json"))) as! [String:Any]
         let peer=NativeControlPeer(pid:(metadata["pid"] as! NSNumber).int32Value,start:UInt64(metadata["process_start"] as! String)!,executable:image)
         let client=try SessionControlClient(directory:directory,peer:peer,instance:metadata["instance"] as! String,profile:metadata["profile"] as! String,approvedHashes:[.mlx:hash,.orbstack:hash])
-        switch try client.request(operation:operation,service:service,id:args[5]) {
-        case .started:print("started")
-        case .notSent:print("not_sent")
-        case .uncertain:print("uncertain")
-        case .busy:print("busy")
-        case .wrongInstance:print("wrong_instance")
+        if args[1]=="recover" {
+            guard args.count==4,["dispatch","lookup"].contains(args[3]) else {throw ControlError.invalid_request}
+            let journal=try Journal(directory:directory)
+            if args[3]=="dispatch" {
+                let job=UUID().uuidString.lowercased()
+                try journal.claim(job:job,attempt:0,model:"fixture/independent")
+                try journal.markUncertain(job:job,attempt:0)
+            }
+            let recovery=try ServiceRecoveryController(journal:journal,approvedHashes:[.mlx:hash,.orbstack:hash])
+            let initial=args[3]=="dispatch",now:Int64=initial ? 1000:2000
+            let absent=ServiceObservation(identity:nil,responding:false,sessionReady:true,credentialsReady:true,nativeIdle:nil,runtimeUnmanaged:nil,sampledAt:now)
+            guard let request=try recovery.next(service:.mlx,desired:initial ? .running:.stopped,observation:initial ? absent:nil,now:now,tick:now) else {
+                guard try journal.uncertainCount()==1 else {throw JournalError.invalid};print("none");return
+            }
+            let queue=AsyncSessionControl(client:client);try queue.submit(request)
+            let end=ProcessInfo.processInfo.systemUptime+3
+            while ProcessInfo.processInfo.systemUptime<end {
+                if let result=queue.poll() {
+                    switch result.value {
+                    case .success(let value):
+                        try recovery.receive(result.request,result:value)
+                        guard try journal.uncertainCount()==1 else {throw JournalError.invalid}
+                        print(request.operation.rawValue+"/"+status(value));return
+                    case .failure:throw RuntimeError.invalid
+                    }
+                }
+                Thread.sleep(forTimeInterval:0.005)
+            }
+            throw RuntimeError.deadline
+        }
+        guard args[1]=="client",args.count==6,let service=ManagedService(rawValue:args[3]),let operation=SessionClientOperation(rawValue:args[4]) else {throw ControlError.invalid_request}
+        print(status(try client.request(operation:operation,service:service,id:args[5])))
+    }
+    static func status(_ result:SessionLaunchResult)->String {
+        switch result {
+        case .started:return "started"
+        case .notSent:return "not_sent"
+        case .uncertain:return "uncertain"
+        case .busy:return "busy"
+        case .wrongInstance:return "wrong_instance"
         }
     }
 }

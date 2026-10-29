@@ -130,3 +130,26 @@ all-client/model acceptance.
 The driver fixture uses the same synchronous `RunLoop` pumping style as the
 session entry point, including asynchronous main-actor fake launch callbacks;
 it does not depend on an async-main executor unavailable to that entry point.
+
+## Durable manager reconciliation source component
+
+`ServiceRecoveryController.next` distinguishes a newly reserved `launch` from a
+read-only `lookup`. Pending intent is never regenerated as launch because of
+age, a fresh absence sample, manager restart, stopped/maintenance intent or a
+clock fence. Matching authenticated `not_sent`/verified `started` receipts may
+retire that local intent; unknown/busy/foreign-instance results do not. Neither
+receipt changes independent native inference ownership.
+
+Only the controller file can construct `ServiceRecoveryRequest`. A launch
+object has a lock-protected one-use transport edge, so retaining the object
+after a failure cannot retry it. `AsyncSessionControl` has one finite off-loop
+exchange and one result slot, binds the command's profile/application hash to
+the client and flattens transport failures to unavailable, never not-sent.
+No automatic launch retry or fallback is provided. Later requests for pending
+work are lookups, including after helper generation loss.
+
+The driver fixture exercises these components with actual separate manager
+processes, a private FIS9 journal and cold/warm helper generations. It proves
+lookup-only recovery and retained independent uncertainty with a counter-only
+fake app. Production manager wiring, trusted observation/absence issuance and
+native duplicate-server/admission compatibility remain unfinished T027/G2 work.

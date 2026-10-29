@@ -52,7 +52,29 @@ try {
   assert.equal(Number(readFileSync(join(state,'calls'),'utf8')),calls,scenario+' dispatched an unexpected fake effect');
   child.kill('SIGTERM');await until(()=>exited(child));
  }
+ for(const coldHelper of [false,true]) {
+  const state=join(temporary,coldHelper?'recovery-cold':'recovery-known');mkdirSync(state,{mode:0o700});
+  const start=async()=>{
+   const child=spawn('/usr/bin/sandbox-exec',['-p',policy,binary,'server',state,'success'],{stdio:'ignore'});children.push(child);
+   await until(()=>{try{return JSON.parse(readFileSync(join(state,'session-control.json'))).pid===child.pid;}catch{return false;}});return child;
+  };
+  let child=await start();
+  const recover=phase=>{
+   const result=spawnSync('/usr/bin/sandbox-exec',['-p',policy,binary,'recover',state,phase],{encoding:'utf8',timeout:5000,maxBuffer:4096});
+   assert.equal(result.status,0,result.stderr);return result.stdout.trim();
+  };
+  assert.equal(recover('dispatch'),'launch/uncertain');
+  assert.equal(recover('lookup'),'lookup/uncertain','Manager restart resent the native launch');
+  writeFileSync(join(state,'release-validation'),'release');
+  await until(()=>Number(readFileSync(join(state,'calls'),'utf8'))===1);
+  if(coldHelper){child.kill('SIGTERM');await until(()=>exited(child));child=await start();}
+  if(coldHelper){assert.equal(recover('lookup'),'lookup/uncertain');assert.equal(recover('lookup'),'lookup/uncertain');}
+  else {await until(()=>recover('lookup')==='lookup/started');assert.equal(recover('lookup'),'none');}
+  assert.equal(Number(readFileSync(join(state,'calls'),'utf8')),1,'Durable recovery replayed an effect or lost its counter');
+  child.kill('SIGTERM');await until(()=>exited(child));
+ }
  console.log('PASS: actual async session driver, authenticated RPC, one validator/no queue, delayed/duplicate completion, validation/session/presence/expiry refusal, post-dispatch error/wrong-process uncertainty, shutdown/clock fencing and no replay; counter-only fake app API.');
+ console.log('PASS: actual journal/controller/bounded sender across manager restart and cold helper generation; lookup-only intent reconciliation, no duplicate fake effect and independent native uncertainty retained.');
 }finally {
  for(const child of children)if(!exited(child))child.kill('SIGTERM');
  await until(()=>children.every(exited),10000);

@@ -3,7 +3,7 @@ import Foundation
 // Kernel process-start token, not a UTC timestamp or JSON number. Keep this
 // internal type non-Codable; any future wire representation must use a strict
 // decimal string, as the token may exceed JavaScript's safe-integer range.
-struct ServiceIdentity:Equatable {
+struct ServiceIdentity:Equatable,Sendable {
     let pid:Int32
     let start:UInt64
     let sha256:String
