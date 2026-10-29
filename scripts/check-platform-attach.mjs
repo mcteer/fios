@@ -12,9 +12,10 @@ const optimized=options[1]==='--release',longVM=options[2]==='--vm-shared-300';
 let observerSupervisor;
 if(options.length===7){const verified=validatePlatformRelease(options[4],options[6]);if(verified.activation||verified.manifest.package_complete)throw Error('Only incomplete observation-only source payload permitted');observerSupervisor=join(resolve(options[4]),'bin/studio-supervisor');}
 const root=resolve(import.meta.dirname,'..'),directory=mkdtempSync(join(tmpdir(),'fios-platform-attach-'));
-let image,socketURL;
+let image,socketURL,possible=false,success=false;
 const job=randomUUID(),nonce=randomBytes(32).toString('hex'),name='fios-sandbox-'+job;
 const docker=join(directory,'docker');
+const state=()=>writeFileSync(join(directory,'fixture-state.json'),JSON.stringify({version:1,image,job,nonce,name,success},null,2)+'\n',{mode:0o600});
 function run(command,args,timeout=120000){
   const result=spawnSync(command,args,{cwd:root,encoding:'utf8',timeout,maxBuffer:1<<20,env:{...process.env,DOCKER_BUILDKIT:'0'}});
   if(result.status!==0){
@@ -43,6 +44,7 @@ while(total<4||(length!==undefined&&total<4+length)){
 const data=bytes.subarray(0,total);let written=0;
 while(written<data.length)written+=fs.writeSync(1,data,written,data.length-written);
 `);
+  possible=true;state();
   image=runtime(['build','--quiet','--pull=false','--network=none',directory]);
   if(!/^sha256:[a-f0-9]{64}$/.test(image))throw Error('Invalid immutable image ID');
   const source=join(directory,'DockerAttachLive.swift'),binary=join(directory,'attach-live');
@@ -54,6 +56,7 @@ while(written<data.length)written+=fs.writeSync(1,data,written,data.length-writt
   runtime(['image','rm',image]);image=undefined;
   writeFileSync(join(directory,'Dockerfile'),readFileSync(join(root,'platform/studio/sandbox/Dockerfile')));
   writeFileSync(join(directory,'runner.py'),readFileSync(join(root,'platform/studio/sandbox/runner.py')));
+  possible=true;state();
   image=runtime(['build','--quiet','--pull=false','--network=none','--build-arg',`APPROVED_BASE=${base}`,directory]);
   if(!/^sha256:[a-f0-9]{64}$/.test(image))throw Error('Invalid immutable runner image ID');
   console.log(run(binary,[docker,createHash('sha256').update(readFileSync(docker)).digest('hex'),socketURL.slice(7),image,job,nonce,'runner'],30000));
@@ -62,16 +65,12 @@ while(written<data.length)written+=fs.writeSync(1,data,written,data.length-writt
   console.log(run(binary,[docker,createHash('sha256').update(readFileSync(docker)).digest('hex'),socketURL.slice(7),image,job,nonce,'probe'],35000));
   console.log(run(binary,[docker,createHash('sha256').update(readFileSync(docker)).digest('hex'),socketURL.slice(7),image,job,nonce,'controller',join(root,'.venv/bin/python')],40000));
   console.log(run(binary,[docker,createHash('sha256').update(readFileSync(docker)).digest('hex'),socketURL.slice(7),image,job,nonce,'controller-model',join(root,'.venv/bin/python')],40000));
+  if(runtime(['container','ls','--all','--no-trunc','--filter','name=^/'+name+'$','--format','{{.ID}}'])!=='')throw Error('Successful helper left its owned resource present');
+  success=true;state();
 }finally{
-  try{
-    if(image){
-      const inspected=spawnSync(docker,['--host',socketURL,'inspect','--type=container',name],{encoding:'utf8',timeout:5000,maxBuffer:1<<20});
-      if(inspected.status===0){
-        const [object]=JSON.parse(inspected.stdout);
-        if(object?.Image!==image||object?.Name!=='/'+name||object?.Config?.Labels?.['fios.platform.job']!==job||object?.Config?.Labels?.['fios.platform.nonce']!==nonce||!/^([a-f0-9]{64})$/.test(object.Id))throw Error('Refusing foreign fixture cleanup');
-        runtime(['rm','--force',object.Id]);
-      }
-      runtime(['image','rm',image]);
-    }
-  }finally{rmSync(directory,{recursive:true,force:true});}
+  if(success){
+    try{if(image)runtime(['image','rm',image]);rmSync(directory,{recursive:true,force:true});}
+    catch(error){console.error('RETAINED: incomplete attach fixture teardown: '+directory);throw error;}
+  }else if(possible){state();console.error('RETAINED: uncertain attach fixture; no parent cleanup attempted: '+directory);}
+  else rmSync(directory,{recursive:true,force:true});
 }

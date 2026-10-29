@@ -5,9 +5,13 @@ import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {createHash,randomUUID} from 'node:crypto';
 import {fileURLToPath} from 'node:url';
-if(process.argv.length!==3||process.argv[2]!=='--isolated')throw Error('Use --isolated');
+import {validateSandboxImage} from './lib/platform-sandbox-image.mjs';
+const supplied=process.argv.length===5&&process.argv[3]==='--image'&&/^sha256:[a-f0-9]{64}$/.test(process.argv[4]);
+if((process.argv.length!==3&&!supplied)||process.argv[2]!=='--isolated')throw Error('Use --isolated [--image IMMUTABLE_ID]');
 const directory=mkdtempSync(join(tmpdir(),'fios-runner-'));
-let image,container;
+let image,container,attachedChild,possible=false,success=false;
+const owned=[],ownerNonce=randomUUID();
+const state=()=>writeFileSync(join(directory,'fixture-state.json'),JSON.stringify({version:1,image,supplied,ownerNonce,owned},null,2)+'\n',{mode:0o600});
 const workers=[],workerResults=[];
 const jobID=randomUUID(),epoch=randomUUID();
 let host=[];
@@ -18,16 +22,30 @@ try{
  const context=spawnSync('docker',['context','inspect','--format','{{.Endpoints.docker.Host}}'],{encoding:'utf8',timeout:10000,maxBuffer:8192});
  assert.equal(context.status,0,'Local runtime context unavailable');const socket=context.stdout.trim();
  assert.ok(socket.startsWith('unix:///'),'Fixture requires a local Unix runtime');host=['--host',socket];
+ if(supplied){image=process.argv[4];validateSandboxImage(JSON.parse(docker(['image','inspect',image]))[0],image);}
+ else {
  const requested=process.env.FIOS_PLATFORM_TEST_BASE_IMAGE??'fios:current';
  assert.ok(requested==='fios:current'||/^sha256:[a-f0-9]{64}$/.test(requested),'Fixture base must be an existing immutable ID');
  const base=docker(['image','inspect',requested,'--format','{{.Id}}']);assert.match(base,/^sha256:[a-f0-9]{64}$/);
  copyFileSync(new URL('../platform/studio/sandbox/runner.py',import.meta.url),join(directory,'runner.py'));
- writeFileSync(join(directory,'Dockerfile'),`FROM ${base}\nUSER 65532:65532\nWORKDIR /workspace\nCOPY runner.py /runner.py\nENTRYPOINT ["/opt/venv/bin/python","-I","-B","/runner.py"]\n`);
- image=docker(['build','--quiet','--pull=false','--network=none',directory]);assert.match(image,/^sha256:[a-f0-9]{64}$/);
- const create=()=>docker(['create','--name','fios-runner-'+randomUUID(),'--pull=never','--network=none','--read-only','--user=65532:65532','--cap-drop=ALL','--security-opt=no-new-privileges:true','--pids-limit=64','--memory=536870912','--memory-swap=536870912','--cpus=1','--tmpfs=/workspace:rw,nosuid,nodev,size=134217728,mode=0700,uid=65532,gid=65532','--tmpfs=/tmp:rw,noexec,nosuid,nodev,size=67108864,mode=1777','--log-driver=none','--interactive',image]);
+ copyFileSync(new URL('../platform/studio/sandbox/Dockerfile',import.meta.url),join(directory,'Dockerfile'));
+ possible=true;state();
+ image=docker(['build','--quiet','--pull=false','--network=none','--build-arg','APPROVED_BASE='+base,directory]);assert.match(image,/^sha256:[a-f0-9]{64}$/);
+ }
+ const create=()=>{
+  const record={name:'fios-runner-'+randomUUID(),id:null,removed:false};owned.push(record);possible=true;state();
+  const id=docker(['create','--name',record.name,'--pull=never','--network=none','--read-only','--user=65532:65532','--cap-drop=ALL','--security-opt=no-new-privileges:true','--pids-limit=64','--memory=536870912','--memory-swap=536870912','--cpus=1','--tmpfs=/workspace:rw,nosuid,nodev,size=134217728,mode=0700,uid=65532,gid=65532','--tmpfs=/tmp:rw,noexec,nosuid,nodev,size=67108864,mode=1777','--log-driver=none','--label','lab.fios.runner-fixture='+ownerNonce,'--interactive',image]);assert.match(id,/^[a-f0-9]{64}$/);record.id=id;state();return id;
+ };
+ function removeOwned(id){
+  const record=owned.find(r=>r.id===id);assert(record);
+  const value=JSON.parse(docker(['inspect','--type=container',id]))[0];
+  assert.equal(value.Id,id);assert.equal(value.Name,'/'+record.name);assert.equal(value.Image,image);assert.equal(value.Config.Labels?.['lab.fios.runner-fixture'],ownerNonce);assert.equal(value.State.Running,false);
+  docker(['rm',id]);assert.equal(docker(['container','ls','--all','--no-trunc','--filter','id='+id,'--format','{{.ID}}']),'');record.removed=true;state();
+ }
  container=create();
  const source=readFileSync(new URL('../tests/fixtures/platform/sandbox-task.py',import.meta.url));
  const child=spawn('docker',[...host,'start','--attach','--interactive',container],{stdio:['pipe','pipe','pipe'],env:environment});
+ attachedChild=child;
  let buffer=Buffer.alloc(0),events=[],errors=0,artifact;
  child.stdin.on('error',()=>child.kill('SIGKILL'));
  function model(request){
@@ -86,7 +104,7 @@ try{
  for(const result of await Promise.all(workerResults)){assert.equal(result.code,0);assert.equal(result.failure,undefined);assert.equal(result.terminal,true);}
  assert.equal(workers.length,1);
  assert.ok(/SANDBOX_TASK_PASS/.test(output),'Task fixture marker missing');assert.ok(/service.force/.test(output),'Frame-looking output missing');assert.ok(!events.some(e=>e.type==='service.force'));assert.equal(events.at(-1).type,'done');assert.equal(events.at(-1).status,'complete');assert.equal(events.at(-1).exit_code,0);
- docker(['rm','--force',container]);container=undefined;
+ removeOwned(container);container=undefined;
  const over=Buffer.alloc(4);over.writeUInt32BE(65537);
  const duplicate=Buffer.from('{"version":1,"version":1,"type":"input.begin"}');const dupeHeader=Buffer.alloc(4);dupeHeader.writeUInt32BE(duplicate.length);
  const bad=Buffer.from('print("MUST_NOT_RUN")\n');
@@ -98,10 +116,16 @@ try{
   const output=failed.stdout??Buffer.alloc(0);assert.ok(output.length>=4);const size=output.readUInt32BE();
   const event=JSON.parse(output.subarray(4,4+size));assert.equal(event.type,'error');assert.equal(event.code,expected);assert.equal(output.length,size+4);
   assert.ok(!output.includes(Buffer.from('MUST_NOT_RUN')));
-  docker(['rm','--force',container]);container=undefined;
+  removeOwned(container);container=undefined;
  }
+ success=true;state();
  console.log('PASS: isolated task → installed private Pydantic worker → mocked model → task; explicit artifacts and hostile frames; no live inference');
 }finally{
- for(const worker of workers)if(worker.exitCode===null)worker.kill('SIGKILL');
- try{if(container)docker(['rm','--force',container]);}finally{try{if(image)docker(['image','rm',image]);}finally{rmSync(directory,{recursive:true,force:true});}}
+ for(const worker of workers)if(worker.exitCode===null&&worker.signalCode===null)worker.kill('SIGKILL');
+ if(attachedChild&&attachedChild.exitCode===null&&attachedChild.signalCode===null)attachedChild.kill('SIGKILL');
+ if(success&&owned.every(r=>r.removed)&&workers.every(w=>w.exitCode!==null||w.signalCode!==null)){
+  try{if(image&&!supplied)docker(['image','rm',image]);rmSync(directory,{recursive:true,force:true});}
+  catch(error){console.error('RETAINED: incomplete runner fixture teardown: '+directory);throw error;}
+ }else if(possible){state();console.error('RETAINED: uncertain runner fixture; no parent cleanup attempted: '+directory);}
+ else rmSync(directory,{recursive:true,force:true});
 }

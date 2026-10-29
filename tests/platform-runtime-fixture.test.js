@@ -87,3 +87,46 @@ fs.writeFileSync(out,"#!/usr/bin/env node\\nif(process.argv[2]==='create-lost')c
     rmSync(directory,{recursive:true,force:true});
   }
 });
+
+test('runner fixture retains its created ID after failure and preserves a supplied image',()=>{
+ const directory=mkdtempSync(join(tmpdir(),'fios-runner-retention-test-'));let retained;
+ try{
+  mkdirSync(join(directory,'scripts/lib'),{recursive:true,mode:0o700});
+  copyFileSync(new URL('../scripts/check-platform-runner.mjs',import.meta.url),join(directory,'scripts/check-platform-runner.mjs'));
+  copyFileSync(new URL('../scripts/lib/platform-sandbox-image.mjs',import.meta.url),join(directory,'scripts/lib/platform-sandbox-image.mjs'));
+  const log=join(directory,'commands.jsonl'),image='sha256:'+'a'.repeat(64);
+  const info={Id:image,Os:'linux',Architecture:'arm64',Config:{User:'65532:65532',WorkingDir:'/workspace',Entrypoint:['/opt/venv/bin/python','-I','-B','/runner.py'],Cmd:null,Env:['PATH=/opt/venv/bin:/usr/bin:/bin','LANG=C','LC_ALL=C','PYTHONDONTWRITEBYTECODE=1']}};
+  writeFileSync(join(directory,'docker'),`#!/usr/bin/env node
+const fs=require('node:fs'),a=process.argv.slice(2);fs.appendFileSync(${JSON.stringify(log)},JSON.stringify(a)+'\\n');
+if(a[0]==='context')console.log('unix:///var/empty/never-opened-runner.sock');else if(a.includes('create'))console.log('b'.repeat(64));else if(a.includes('image')&&a.includes('inspect'))console.log(JSON.stringify([${JSON.stringify(info)}]));else if(a.includes('rm'))console.log('b'.repeat(64));else process.exitCode=1;
+`,{mode:0o700});
+  const result=spawnSync(process.execPath,[join(directory,'scripts/check-platform-runner.mjs'),'--isolated','--image',image],{encoding:'utf8',timeout:10000,env:{PATH:[directory,dirname(process.execPath),'/usr/bin','/bin'].join(':'),HOME:directory,TMPDIR:directory,LANG:'C',LC_ALL:'C'}});
+  assert.equal(result.error,undefined);assert.equal(result.status,1);
+  const match=result.stderr.match(/^RETAINED: uncertain runner fixture; no parent cleanup attempted: (.+)$/m);assert.ok(match);
+  retained=realpathSync.native(match[1]);assert.equal(dirname(retained),realpathSync.native(directory));
+  const state=JSON.parse(readFileSync(join(retained,'fixture-state.json'),'utf8'));
+  assert.equal(state.image,image);assert.equal(state.owned[0].id,'b'.repeat(64));
+  const commands=readFileSync(log,'utf8').trim().split('\n').map(JSON.parse);
+  assert.equal(commands.some(a=>a.includes('rm')||a.includes('prune')),false);
+ }finally{if(retained)rmSync(retained,{recursive:true,force:true});rmSync(directory,{recursive:true,force:true});}
+});
+
+test('attach fixture retains uncertain image build evidence instead of parent cleanup',()=>{
+ const directory=mkdtempSync(join(tmpdir(),'fios-attach-retention-test-'));let retained;
+ try{
+  mkdirSync(join(directory,'scripts/lib'),{recursive:true,mode:0o700});
+  copyFileSync(new URL('../scripts/check-platform-attach.mjs',import.meta.url),join(directory,'scripts/check-platform-attach.mjs'));
+  copyFileSync(new URL('../scripts/lib/platform-release.mjs',import.meta.url),join(directory,'scripts/lib/platform-release.mjs'));
+  const log=join(directory,'commands.jsonl');
+  writeFileSync(join(directory,'docker'),`#!/usr/bin/env node
+const fs=require('node:fs'),a=process.argv.slice(2);fs.appendFileSync(${JSON.stringify(log)},JSON.stringify(a)+'\\n');
+if(a[0]==='context')console.log('unix:///var/empty/never-opened-attach.sock');else if(a.includes('inspect')||a.includes('build'))console.log('sha256:'+'a'.repeat(64));else process.exitCode=1;
+`,{mode:0o700});
+  const result=spawnSync(process.execPath,[join(directory,'scripts/check-platform-attach.mjs'),'--isolated'],{encoding:'utf8',timeout:10000,env:{PATH:[directory,dirname(process.execPath),'/usr/bin','/bin'].join(':'),HOME:directory,TMPDIR:directory,LANG:'C',LC_ALL:'C'}});
+  assert.equal(result.error,undefined);assert.equal(result.status,1);
+  const match=result.stderr.match(/^RETAINED: uncertain attach fixture; no parent cleanup attempted: (.+)$/m);assert.ok(match);
+  retained=realpathSync.native(match[1]);assert.equal(dirname(retained),realpathSync.native(directory));
+  assert.equal(JSON.parse(readFileSync(join(retained,'fixture-state.json'),'utf8')).image,'sha256:'+'a'.repeat(64));
+  const commands=readFileSync(log,'utf8').trim().split('\n').map(JSON.parse);assert.equal(commands.some(a=>a.includes('rm')||a.includes('prune')),false);
+ }finally{if(retained)rmSync(retained,{recursive:true,force:true});rmSync(directory,{recursive:true,force:true});}
+});

@@ -46,6 +46,9 @@ node scripts/check-platform-sandbox.mjs --isolated
 # Full finite isolation/cgroup + lost-result/restart/owned-cleanup rehearsal.
 node scripts/check-platform-container.mjs --isolated
 node scripts/check-platform-runner.mjs --isolated
+# Explicit image candidate producer; review metadata is not enrollment/approval.
+node scripts/package-platform-sandbox.mjs --review /ABSOLUTE/REVIEW.json --sha256 INDEPENDENT_REVIEW_SHA256 --output /ABSOLUTE/PRIVATE_PARENT/NEW_CANDIDATE
+node scripts/check-platform-runner.mjs --isolated --image sha256:ACTUAL_CANDIDATE_IMAGE_ID
 node scripts/check-platform-attach.mjs --isolated
 # Whole manager IPC/runner path; synthetic resource sources, no model calls.
 node scripts/check-platform-manager-execution.mjs --isolated
