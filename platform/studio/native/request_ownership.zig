@@ -8,6 +8,37 @@ pub const model_capacity = 64;
 // Exact JSON-safe capture counter; exhaustion stays fenced, never wraps.
 pub const maximum_sample_sequence: u64 = 9_007_199_254_740_991;
 pub const Token = struct { slot: usize, sequence: u64, instance: [16]u8 };
+pub const CorrelationID = [32]u8;
+pub fn parseCorrelationHex(value: []const u8) !CorrelationID {
+    if (value.len != 64) return error.InvalidCorrelation;
+    var result: CorrelationID = undefined;
+    for (&result, 0..) |*byte, index| {
+        var pair: u8 = 0;
+        for (value[index * 2 ..][0..2]) |character| {
+            const digit: u8 = if (character >= '0' and character <= '9') character - '0'
+                else if (character >= 'a' and character <= 'f') character - 'a' + 10
+                else return error.InvalidCorrelation;
+            pair = (pair << 4) | digit;
+        }
+        byte.* = pair;
+    }
+    return result;
+}
+// Live request lineage only. Missing entries NEVER mean not-sent, completed
+// or device-terminal. Root sequence remains attached to retained descendants.
+pub const CorrelationSnapshot = struct {
+    instance: [16]u8,
+    sample_sequence: u64,
+    root_sequence: u64 = 0,
+    found: bool = false,
+    uncertain: bool = true,
+    owners: usize = 0,
+    references: u64 = 0,
+    ingress: usize = 0,
+    preparing: usize = 0,
+    active: usize = 0,
+    responding: usize = 0,
+};
 pub const Phase = enum { vacant, ingress, preparing, active, responding };
 // Native-internal lease, NOT authentication or a wire management capability.
 // A future enrolled manager bridge must authenticate before calling these APIs.
@@ -24,6 +55,8 @@ const Slot = struct {
     primary: ?u6 = null,
     models: u64 = 0,
     references: u32 = 0,
+    correlation: ?CorrelationID = null,
+    correlation_root: u64 = 0,
 };
 const Model = struct {
     id: [model_limit]u8 = @splat(0),
@@ -195,6 +228,54 @@ pub const Tracker = struct {
         }
         return &self.slots[token.slot];
     }
+    pub fn associate(self: *Tracker, io: std.Io, token: Token, id: CorrelationID) !void {
+        self.mutex.lockUncancelable(io);
+        defer self.mutex.unlock(io);
+        if (!self.initialized or self.uncertain) return error.CoverageUncertain;
+        const slot = try self.checked(token);
+        if (slot.phase != .ingress or slot.correlation != null) return error.InvalidCorrelationState;
+        for (self.slots) |other| {
+            if (other.correlation) |existing| {
+                if (std.mem.eql(u8, &existing, &id)) return error.DuplicateCorrelation;
+            }
+        }
+        slot.correlation = id;
+        slot.correlation_root = token.sequence;
+    }
+    fn advanceCaptureLocked(self: *Tracker) void {
+        if (self.sample_sequence == maximum_sample_sequence) {
+            self.uncertain = true;
+        } else self.sample_sequence += 1;
+    }
+    pub fn correlationSnapshot(self: *Tracker, io: std.Io, id: CorrelationID) CorrelationSnapshot {
+        self.mutex.lockUncancelable(io);
+        defer self.mutex.unlock(io);
+        self.advanceCaptureLocked();
+        var result: CorrelationSnapshot = .{ .instance = self.instance, .sample_sequence = self.sample_sequence,
+            .uncertain = self.uncertain or !self.initialized };
+        for (self.slots) |slot| {
+            const existing = slot.correlation orelse continue;
+            if (!std.mem.eql(u8, &existing, &id)) continue;
+            if (slot.phase == .vacant or slot.references == 0 or slot.correlation_root == 0 or
+                (result.found and result.root_sequence != slot.correlation_root)) {
+                self.uncertain = true;
+                continue;
+            }
+            result.found = true;
+            result.root_sequence = slot.correlation_root;
+            result.owners += 1;
+            result.references += slot.references;
+            switch (slot.phase) {
+                .ingress => result.ingress += 1,
+                .preparing => result.preparing += 1,
+                .active => result.active += 1,
+                .responding => result.responding += 1,
+                .vacant => unreachable,
+            }
+        }
+        result.uncertain = result.uncertain or self.uncertain or !result.found;
+        return result;
+    }
     fn addModelLocked(self: *Tracker, slot: *Slot, id: []const u8) !u6 {
         if (id.len == 0 or id.len > model_limit or !std.unicode.utf8ValidateSlice(id) or
             std.mem.indexOfScalar(u8, id, 0) != null)
@@ -258,6 +339,12 @@ pub const Tracker = struct {
         if (self.transitioningLocked(model)) return error.ModelTransition;
         const child = try self.enterLocked(parent != null);
         errdefer self.leaveLocked(child) catch { self.uncertain = true; };
+        if (parent) |token| {
+            const original = try self.checked(token);
+            const descendant = try self.checked(child);
+            descendant.correlation = original.correlation;
+            descendant.correlation_root = original.correlation_root;
+        }
         try self.bindLocked(child, root);
         if (!std.mem.eql(u8, root, model)) _ = try self.addModelLocked(try self.checked(child), model);
         return child;
@@ -405,9 +492,7 @@ pub const Tracker = struct {
     pub fn snapshot(self: *Tracker, io: std.Io) Snapshot {
         self.mutex.lockUncancelable(io);
         defer self.mutex.unlock(io);
-        if (self.sample_sequence == maximum_sample_sequence) {
-            self.uncertain = true;
-        } else self.sample_sequence += 1;
+        self.advanceCaptureLocked();
         var result: Snapshot = .{ .sequence = self.sequence, .sample_sequence = self.sample_sequence, .uncertain = self.uncertain,
             .instance = self.instance, .initialized = self.initialized,
             .admissions_closed = self.pause_id != null,

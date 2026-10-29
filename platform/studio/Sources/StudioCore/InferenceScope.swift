@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 
 // Durable dispatch identity, never prompts, credentials, URLs or proof of
 // native terminality. Constructed by the trusted broker before issuing a pipe
@@ -30,6 +31,20 @@ struct InferenceScope: Codable, Sendable {
         let data=try encoder.encode(self)
         guard data.count<=Self.maximumBytes else {throw JournalError.invalid}
         return data
+    }
+    // Opaque request correlation only, not a capability or terminal proof.
+    // Uses fields already durably recorded before dispatch; native epoch and
+    // full profile/scope must still be independently matched on reconciliation.
+    func nativeRequestCorrelationID(job:String,attempt:Int)throws->String {
+        try validate()
+        guard WireScalar.uuid(job),(0...3).contains(attempt) else {throw JournalError.invalid}
+        var input=Data("fios-native-request-v1\0".utf8)
+        for field in [job,String(attempt),managerEpoch,nativeModel,endpointHash] {
+            let bytes=Data(field.utf8),length=UInt32(bytes.count)
+            for shift in [24,16,8,0] {input.append(UInt8(truncatingIfNeeded:length >> shift))}
+            input.append(bytes)
+        }
+        return SHA256.hash(data:input).map {String(format:"%02x",$0)}.joined()
     }
     static func decode(_ data:Data) throws -> Self {
         do {

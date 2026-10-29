@@ -10,7 +10,7 @@ from uuid import uuid4
 from unittest.mock import patch
 
 import httpx2
-from fios_agent.platform_protocol import parse_platform_command, decode_platform_frame, PlatformProtocolError
+from fios_agent.platform_protocol import parse_platform_command, decode_platform_frame, PlatformProtocolError, request_correlation_id
 from fios_agent.platform_worker import run_platform, output_chunks, PlatformTransport
 from fios_agent.worker import Settings
 from test_platform_guard import guard_environment, observation
@@ -23,12 +23,37 @@ def command():
 
 
 class PlatformWorkerTests(unittest.IsolatedAsyncioTestCase):
+    def test_correlation_binds_exact_permission_metadata_without_prompt_content(self):
+        data=command();original=request_correlation_id(parse_platform_command(data))
+        for changed in ({'attempt':1},{'job_id':str(uuid4())},{'epoch':str(uuid4())},
+                        {'model':'different/model'},{'endpoint_hash':'0'*64}):
+            self.assertNotEqual(request_correlation_id(parse_platform_command({**data,**changed})),original)
+        self.assertEqual(request_correlation_id(parse_platform_command({**data,'context':[{'role':'user','content':'different private content'}]})),original)
+        self.assertNotEqual(request_correlation_id(parse_platform_command({**data,'model':'test/caf\u00e9'})),
+                            request_correlation_id(parse_platform_command({**data,'model':'test/cafe\u0301'})))
+
+    async def test_preset_correlation_header_cannot_retarget_a_permission(self):
+        from pydantic_ai import CancellationToken
+        from fios_agent.transport import StreamFailure
+        calls=[]
+        async def handler(request):calls.append(request);return httpx2.Response(200)
+        async def emit(event):pass
+        transport=PlatformTransport(parse_platform_command(command()),httpx2.MockTransport(handler),emit,CancellationToken(),base_url='http://127.0.0.1:1/v1')
+        with patch('fios_agent.platform_worker.check_native_guard',return_value=None):
+            with self.assertRaises(StreamFailure):
+                await transport.handle_async_request(httpx2.Request('POST','http://127.0.0.1:1/v1/chat/completions',
+                    headers={'X-Fios-Request-ID':'a'*64},json={'model':'test/model'}))
+        self.assertEqual(calls,[]);self.assertEqual(transport.actual_posts,0)
+        await transport.aclose()
+
     async def test_exact_local_target_single_post_and_no_tools(self):
-        sent=[]; events=[]
+        sent=[]; events=[];headers=[]
         async def handler(request):
             if request.method=='GET':
+                self.assertNotIn('x-fios-request-id',request.headers)
                 return httpx2.Response(200,json={'status':'ok'} if request.url.path=='/health' else {'data':[{'id':'test/model'}]})
             sent.append(json.loads(request.content))
+            headers.append(request.headers)
             chunk={'id':'x','object':'chat.completion.chunk','created':1,'model':'test/model',
                    'choices':[{'index':0,'delta':{'content':'answer'},'finish_reason':None}]}
             return httpx2.Response(200,headers={'content-type':'text/event-stream'},content=('data: '+json.dumps(chunk)+'\n\ndata: [DONE]\n\n').encode())
@@ -37,9 +62,11 @@ class PlatformWorkerTests(unittest.IsolatedAsyncioTestCase):
         with patch('httpx2.AsyncHTTPTransport.handle_async_request',side_effect=AssertionError('Live inference forbidden')), \
              patch.dict(os.environ,guard_environment()), \
              patch('fios_agent.platform_guard.query_observation',new=guard_query):
-            await run_platform(parse_platform_command(command()),Settings('http://127.0.0.1:1/v1','test'),emit,transport=httpx2.MockTransport(handler))
+            data=command();data.update(job_id='00000000-0000-4000-8000-000000000001',epoch='00000000-0000-4000-8000-000000000002')
+            await run_platform(parse_platform_command(data),Settings('http://127.0.0.1:1/v1','test'),emit,transport=httpx2.MockTransport(handler))
         self.assertEqual(len(sent),1)
         self.assertEqual(sent[0]['model'],'test/model')
+        self.assertEqual(headers[0]['x-fios-request-id'],'29fc52e328d588a1afee500c96d67ccc1045a873a328efccec3dc9ddfaef2cf5')
         self.assertNotIn('tools',sent[0])
         self.assertEqual(events[-1]['status'],'complete')
         self.assertEqual(sum(e['type']=='dispatched' for e in events),1)

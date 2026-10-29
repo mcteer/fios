@@ -3,6 +3,20 @@ import CSQLite
 
 enum InferenceScopeTests {
     static func run() throws {
+        let correlated=InferenceScope(host:"fios-edge-a.lab",endpointHash:PythonWorkerFactory.digest("http://127.0.0.1:1/v1"),
+            profileHash:String(repeating:"b",count:64),managerEpoch:"00000000-0000-4000-8000-000000000002",
+            nativeEpoch:"native-one",canonicalModel:"test/model",nativeModel:"test/model",sequence:1,sampledAt:1000)
+        let fixedJob="00000000-0000-4000-8000-000000000001"
+        let correlation=try correlated.nativeRequestCorrelationID(job:fixedJob,attempt:0)
+        guard correlation=="29fc52e328d588a1afee500c96d67ccc1045a873a328efccec3dc9ddfaef2cf5",
+              try correlated.nativeRequestCorrelationID(job:fixedJob,attempt:1) != correlation,
+              try correlated.nativeRequestCorrelationID(job:"00000000-0000-4000-8000-000000000003",attempt:0) != correlation else {fatalError("Native request correlation lost dispatch identity")}
+        func exactID(_ model:String)throws->String {
+            try InferenceScope(host:correlated.host,endpointHash:correlated.endpointHash,profileHash:correlated.profileHash,
+                managerEpoch:correlated.managerEpoch,nativeEpoch:correlated.nativeEpoch,canonicalModel:correlated.canonicalModel,
+                nativeModel:model,sequence:correlated.sequence,sampledAt:correlated.sampledAt).nativeRequestCorrelationID(job:fixedJob,attempt:0)
+        }
+        guard try exactID("test/caf\u{e9}") != exactID("test/cafe\u{301}") else {fatalError("Native correlation normalized model bytes")}
         let root=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer {try? FileManager.default.removeItem(at:root)}
         let job=UUID().uuidString.lowercased(),newJob=UUID().uuidString.lowercased()

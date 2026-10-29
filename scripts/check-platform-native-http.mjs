@@ -41,16 +41,16 @@ try {
   child=spawn(binary,['serve','--host','127.0.0.1','--port',String(port),'--model-dir',models,'--no-warmup-eager'],{env,stdio:['ignore','ignore','pipe']});
   let diagnosticBytes=0;
   child.stderr.on('data',chunk=>{diagnosticBytes+=chunk.length;if(diagnosticBytes>128*1024)child.kill('SIGTERM');});
-  async function get(path='/v1/fios/activity',headers={}) {
+  async function get(path='/v1/fios/activity',headers={},method='GET',body=undefined) {
     return new Promise((resolve,reject)=>{
-      const req=request({host:'127.0.0.1',port,path,method:'GET',headers,agent:false,timeout:2000},res=>{
+      const req=request({host:'127.0.0.1',port,path,method,headers,agent:false,timeout:2000},res=>{
         let bytes=Buffer.alloc(0);
         res.on('data',chunk=>{bytes=Buffer.concat([bytes,chunk]);if(bytes.length>65536){res.destroy();reject(new Error('oversize native diagnostic'));}});
         res.once('error',reject);
         res.once('end',()=>resolve({status:res.statusCode,body:JSON.parse(bytes.toString('utf8'))}));
       });
       req.once('timeout',()=>req.destroy(new Error('native fixture HTTP deadline')));
-      req.once('error',reject);req.end();
+      req.once('error',reject);req.end(body);
     });
   }
   async function until(test,milliseconds=5000) {
@@ -104,6 +104,14 @@ try {
   }
   const initial=await until(async()=>{const value=diagnostic(await get());return value.owned_requests===1 && value;});
   assert.deepEqual((await get('/v1/models')).body.data,[],'empty source fixture discovered a model');
+  const refusedBody=JSON.stringify({model:'never-loaded-fixture',messages:[]});
+  for(const identity of ['INVALID',['a'.repeat(64),'a'.repeat(64)]]){
+    const refused=await get('/v1/chat/completions',{'X-Fios-Request-ID':identity,'Content-Type':'application/json','Content-Length':Buffer.byteLength(refusedBody)},'POST',refusedBody);
+    assert.equal(refused.status,400,'Malformed/duplicate request identity reached model handling');
+    assert.equal(refused.body.error.type,'invalid_request_identity');
+  }
+  assert.deepEqual((await get('/v1/models')).body.data,[],'identity refusal loaded a model');
+  console.log('PASS: actual empty-model HTTP rejects malformed/duplicate opaque request identities before model handling; no terminal authority.');
   // A different port and no control flag isolate the early startup lock from
   // ordinary HTTP-port/control-socket collision refusal later in startup.
   const duplicateEnv={...env};delete duplicateEnv.FIOS_NATIVE_CONTROL;

@@ -71,3 +71,13 @@ def parse_platform_command(data):
 
 def endpoint_hash(base_url):
     return hashlib.sha256(base_url.encode()).hexdigest()
+
+
+def request_correlation_id(command):
+    """Opaque identity for one parsed permission; never terminal authority."""
+    parts=(command.job_id,str(command.attempt),command.epoch,command.model,command.endpoint_hash)
+    payload=b'fios-native-request-v1\0'
+    for field in parts:
+        encoded=field.encode('utf-8')
+        payload+=len(encoded).to_bytes(4,'big')+encoded
+    return hashlib.sha256(payload).hexdigest()

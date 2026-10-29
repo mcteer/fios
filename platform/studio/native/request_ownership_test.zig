@@ -580,3 +580,54 @@ test "empty or oversized models and sequence exhaustion fence rather than trunca
     try std.testing.expectError(error.SequenceExhausted, tracker.enter(io));
     try tracker.leave(io, token);
 }
+
+test "opaque request correlation follows retained lineage and missing is always unknown" {
+    var tracker: ownership.Tracker = .{ .primary_guard = true };
+    try tracker.initialize(io, @splat(28));
+    const id = try ownership.parseCorrelationHex("29fc52e328d588a1afee500c96d67ccc1045a873a328efccec3dc9ddfaef2cf5");
+    try std.testing.expectEqualStrings("29fc52e328d588a1afee500c96d67ccc1045a873a328efccec3dc9ddfaef2cf5", &std.fmt.bytesToHex(id, .lower));
+    const missing = tracker.correlationSnapshot(io, id);
+    try std.testing.expect(!missing.found and missing.uncertain);
+    const root = try tracker.enter(io);
+    try tracker.associate(io, root, id);
+    try tracker.bind(io, root, "test/model");
+    const child = try tracker.reservePreparation(io, root, "test/model");
+    try tracker.retain(io, root);
+    var observed = tracker.correlationSnapshot(io, id);
+    try std.testing.expect(observed.found and !observed.uncertain);
+    try std.testing.expectEqual(root.sequence, observed.root_sequence);
+    try std.testing.expectEqual(@as(usize, 2), observed.owners);
+    try std.testing.expectEqual(@as(u64, 3), observed.references);
+    try std.testing.expectEqual(@as(usize, 2), observed.preparing);
+    try std.testing.expect(observed.sample_sequence > missing.sample_sequence);
+    const duplicate = try tracker.enter(io);
+    try std.testing.expectError(error.DuplicateCorrelation, tracker.associate(io, duplicate, id));
+    try std.testing.expectError(error.InvalidCorrelationState, tracker.associate(io, root, id));
+    try tracker.leave(io, duplicate);
+    try tracker.leave(io, root);
+    try tracker.active(io, root);
+    try tracker.responding(io, root);
+    observed = tracker.correlationSnapshot(io, id);
+    try std.testing.expectEqual(@as(usize, 1), observed.responding);
+    try tracker.leave(io, root);
+    observed = tracker.correlationSnapshot(io, id);
+    try std.testing.expect(observed.found and !observed.uncertain);
+    try std.testing.expectEqual(root.sequence, observed.root_sequence);
+    try std.testing.expectEqual(@as(usize, 1), observed.preparing);
+    const later = try tracker.enter(io);
+    try std.testing.expectError(error.DuplicateCorrelation, tracker.associate(io, later, id));
+    try tracker.leave(io, later);
+    try tracker.leave(io, child);
+    observed = tracker.correlationSnapshot(io, id);
+    try std.testing.expect(!observed.found and observed.uncertain);
+    const reused = try tracker.enter(io);
+    try tracker.associate(io, reused, id);
+    observed = tracker.correlationSnapshot(io, id);
+    try std.testing.expect(observed.root_sequence != root.sequence); // Never adopt a later ingress as the old request.
+    tracker.fence(io);
+    try std.testing.expect(tracker.correlationSnapshot(io, id).uncertain);
+    try tracker.leave(io, reused);
+    for ([_][]const u8{ "", "a", "29FC52e328d588a1afee500c96d67ccc1045a873a328efccec3dc9ddfaef2cf5", "gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg" }) |invalid| {
+        try std.testing.expectError(error.InvalidCorrelation, ownership.parseCorrelationHex(invalid));
+    }
+}

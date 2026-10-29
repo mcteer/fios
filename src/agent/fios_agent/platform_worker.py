@@ -13,7 +13,7 @@ import httpx2
 from pydantic_ai import CancellationToken
 
 from .harness import run_agent, INSTRUCTIONS
-from .platform_protocol import decode_platform_frame, parse_platform_command, endpoint_hash
+from .platform_protocol import decode_platform_frame, parse_platform_command, endpoint_hash, request_correlation_id
 from .platform_guard import check_native_guard, NativeGuardError
 from .protocol import utf16_length
 from .transport import StreamFailure
@@ -70,6 +70,9 @@ class PlatformTransport(httpx2.AsyncBaseTransport):
             # revoked/expired permission cannot dispatch after it returns.
             if self.token.cancelled or int(time.time()*1000)>=self.command.expires_at:
                 raise StreamFailure('invalid_request')
+            if 'x-fios-request-id' in request.headers:
+                raise StreamFailure('invalid_request')
+            request.headers['x-fios-request-id']=request_correlation_id(self.command)
             self.actual_posts+=1
         return await self.inner.handle_async_request(request)
 

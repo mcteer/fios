@@ -10,10 +10,11 @@ import assert from 'node:assert/strict';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const args = process.argv.slice(2);
 const mutateCapture=args.length===5&&args[4]==='--mutate-capture-sequence';
+const mutateCorrelation=args.length===5&&args[4]==='--mutate-request-correlation';
 const mutatePrimary=args.length===5&&args[4]==='--mutate-primary-conflict';
-if ((args.length !== 4 && !mutateCapture && !mutatePrimary) || args[0] !== '--source' || args[2] !== '--zig' ||
+if ((args.length !== 4 && !mutateCapture && !mutatePrimary && !mutateCorrelation) || args[0] !== '--source' || args[2] !== '--zig' ||
     !path.isAbsolute(args[1]) || !path.isAbsolute(args[3])) {
-  throw new Error('usage: check-platform-native.mjs --source ABS_CHECKOUT --zig ABS_ZIG [--mutate-capture-sequence|--mutate-primary-conflict]');
+  throw new Error('usage: check-platform-native.mjs --source ABS_CHECKOUT --zig ABS_ZIG [--mutate-capture-sequence|--mutate-primary-conflict|--mutate-request-correlation]');
 }
 const source = args[1], zig = args[3];
 const run = (exe, argv, options = {}) => execFileSync(exe, argv, {
@@ -41,11 +42,11 @@ try {
   for (const name of ['device_owner_barrier.cpp', 'device_owner_barrier.h']) copyFileSync(path.join(root, 'platform/studio/native', name), path.join(scratch, 'lib', name));
   for(const file of fixedFiles.filter(file=>file.endsWith('.zig'))) run(zig,['ast-check',path.join(scratch,file)]);
   let ownershipTests=path.join(root,'platform/studio/native/request_ownership_test.zig');
-  if(mutateCapture||mutatePrimary){
+  if(mutateCapture||mutatePrimary||mutateCorrelation){
     const directory=path.join(scratch,'capture-mutation');mkdirSync(directory,{mode:0o700});
     const original=readFileSync(path.join(root,'platform/studio/native/request_ownership.zig'),'utf8');
-    const check=mutateCapture?'} else self.sample_sequence += 1;':'if (!std.mem.eql(u8, identity.id[0..identity.len], model)) return error.ModelConflict;';assert.equal(original.split(check).length,2,'native guard boundary changed');
-    writeFileSync(path.join(directory,'request_ownership.zig'),original.replace(check,mutateCapture?'} else {}':'_ = std.mem.eql(u8, identity.id[0..identity.len], model);'));
+    const check=mutateCapture?'} else self.sample_sequence += 1;':mutateCorrelation?'descendant.correlation = original.correlation;':'if (!std.mem.eql(u8, identity.id[0..identity.len], model)) return error.ModelConflict;';assert.equal(original.split(check).length,2,'native guard boundary changed');
+    writeFileSync(path.join(directory,'request_ownership.zig'),original.replace(check,mutateCapture?'} else {}':mutateCorrelation?'descendant.correlation = null;':'_ = std.mem.eql(u8, identity.id[0..identity.len], model);'));
     ownershipTests=path.join(directory,'request_ownership_test.zig');copyFileSync(path.join(root,'platform/studio/native/request_ownership_test.zig'),ownershipTests);
   }
   for (const optimize of ['Debug', 'ReleaseSafe']) {
