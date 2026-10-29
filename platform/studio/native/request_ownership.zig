@@ -5,6 +5,8 @@ const std = @import("std");
 pub const capacity = 256;
 pub const model_limit = 1024;
 pub const model_capacity = 64;
+// Exact JSON-safe capture counter; exhaustion stays fenced, never wraps.
+pub const maximum_sample_sequence: u64 = 9_007_199_254_740_991;
 pub const Token = struct { slot: usize, sequence: u64, instance: [16]u8 };
 pub const Phase = enum { vacant, ingress, preparing, active, responding };
 // Native-internal lease, NOT authentication or a wire management capability.
@@ -34,6 +36,7 @@ pub const ModelSnapshot = struct {
 };
 pub const Snapshot = struct {
     sequence: u64,
+    sample_sequence: u64 = 0,
     instance: [16]u8 = @splat(0),
     initialized: bool = false,
     admissions_closed: bool = false,
@@ -50,7 +53,7 @@ pub const Snapshot = struct {
 pub fn renderSnapshot(snapshot: Snapshot, buffer: []u8) ![]const u8 {
     const instance = std.fmt.bytesToHex(snapshot.instance, .lower);
     const label: []const u8 = if (snapshot.initialized) &instance else "uninitialized";
-    return std.fmt.bufPrint(buffer, "{{\"schema_version\":1,\"coverage\":\"unknown\",\"reason\":\"native_ownership_audit_incomplete\",\"observer_included\":true,\"source_instance\":\"{s}\",\"admissions_closed\":{s},\"sequence\":{d},\"uncertain\":{s},\"owned_requests\":{d},\"ingress\":{d},\"preparing\":{d},\"active\":{d},\"responding\":{d}}}", .{ label, if (snapshot.admissions_closed) "true" else "false", snapshot.sequence, if (snapshot.uncertain) "true" else "false", snapshot.owned, snapshot.ingress, snapshot.preparing, snapshot.active, snapshot.responding });
+    return std.fmt.bufPrint(buffer, "{{\"schema_version\":1,\"coverage\":\"unknown\",\"reason\":\"native_ownership_audit_incomplete\",\"observer_included\":true,\"source_instance\":\"{s}\",\"admissions_closed\":{s},\"sequence\":{d},\"sample_sequence\":{d},\"uncertain\":{s},\"owned_requests\":{d},\"ingress\":{d},\"preparing\":{d},\"active\":{d},\"responding\":{d}}}", .{ label, if (snapshot.admissions_closed) "true" else "false", snapshot.sequence, snapshot.sample_sequence, if (snapshot.uncertain) "true" else "false", snapshot.owned, snapshot.ingress, snapshot.preparing, snapshot.active, snapshot.responding });
 }
 
 // One process-local source, shared by connection and inference threads. TLS
@@ -94,6 +97,7 @@ pub const Tracker = struct {
     slots: [capacity]Slot = @splat(.{}),
     models: [model_capacity]Model = @splat(.{}),
     sequence: u64 = 0,
+    sample_sequence: u64 = 0,
     instance: [16]u8 = @splat(0),
     initialized: bool = false,
     pause_sequence: u64 = 0,
@@ -105,7 +109,7 @@ pub const Tracker = struct {
     pub fn initialize(self: *Tracker, io: std.Io, instance: [16]u8) !void {
         self.mutex.lockUncancelable(io);
         defer self.mutex.unlock(io);
-        if (self.initialized or self.sequence != 0 or std.mem.allEqual(u8, &instance, 0)) {
+        if (self.initialized or self.sequence != 0 or self.sample_sequence != 0 or std.mem.allEqual(u8, &instance, 0)) {
             self.uncertain = true;
             return error.InvalidInstance;
         }
@@ -281,7 +285,10 @@ pub const Tracker = struct {
     pub fn snapshot(self: *Tracker, io: std.Io) Snapshot {
         self.mutex.lockUncancelable(io);
         defer self.mutex.unlock(io);
-        var result: Snapshot = .{ .sequence = self.sequence, .uncertain = self.uncertain,
+        if (self.sample_sequence == maximum_sample_sequence) {
+            self.uncertain = true;
+        } else self.sample_sequence += 1;
+        var result: Snapshot = .{ .sequence = self.sequence, .sample_sequence = self.sample_sequence, .uncertain = self.uncertain,
             .instance = self.instance, .initialized = self.initialized,
             .admissions_closed = self.pause_id != null,
             .admission_pause = self.pause_id orelse 0 };

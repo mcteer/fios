@@ -2,6 +2,57 @@ const std = @import("std");
 const ownership = @import("request_ownership.zig");
 const io = std.testing.io;
 
+test "capture sequence advances independently of request allocation and fences exhaustion" {
+    var tracker: ownership.Tracker = .{};
+    try tracker.initialize(io, @splat(11));
+    const first = tracker.snapshot(io);
+    const second = tracker.snapshot(io);
+    try std.testing.expectEqual(@as(u64, 1), first.sample_sequence);
+    try std.testing.expectEqual(@as(u64, 2), second.sample_sequence);
+    try std.testing.expectEqual(@as(u64, 0), second.sequence);
+    const request = try tracker.enter(io);
+    try tracker.leave(io, request);
+    const third = tracker.snapshot(io);
+    try std.testing.expectEqual(@as(u64, 3), third.sample_sequence);
+    try std.testing.expectEqual(@as(u64, 1), third.sequence);
+    tracker.sample_sequence = ownership.maximum_sample_sequence - 1;
+    try std.testing.expectEqual(ownership.maximum_sample_sequence, tracker.snapshot(io).sample_sequence);
+    try std.testing.expect(!tracker.uncertain);
+    const exhausted = tracker.snapshot(io);
+    try std.testing.expectEqual(ownership.maximum_sample_sequence, exhausted.sample_sequence);
+    try std.testing.expect(exhausted.uncertain);
+    try std.testing.expect(tracker.snapshot(io).uncertain);
+    var late: ownership.Tracker = .{};
+    _ = late.snapshot(io);
+    try std.testing.expectError(error.InvalidInstance, late.initialize(io, @splat(12)));
+}
+
+test "concurrent captures have unique ordered sequence without allocating requests" {
+    var tracker: ownership.Tracker = .{};
+    try tracker.initialize(io, @splat(13));
+    const Sampler = struct {
+        fn run(source: *ownership.Tracker, result: *[32]u64) void {
+            for (result) |*value| value.* = source.snapshot(io).sample_sequence;
+        }
+    };
+    var first: [32]u64 = undefined;
+    var second: [32]u64 = undefined;
+    const thread = try std.Thread.spawn(.{}, Sampler.run, .{ &tracker, &first });
+    Sampler.run(&tracker, &second);
+    thread.join();
+    var seen: [64]bool = @splat(false);
+    for ([_][32]u64{ first, second }) |series| {
+        var previous: u64 = 0;
+        for (series) |value| {
+            try std.testing.expect(value > previous and value <= seen.len);
+            try std.testing.expect(!seen[@intCast(value - 1)]);
+            seen[@intCast(value - 1)] = true;
+            previous = value;
+        }
+    }
+    try std.testing.expectEqual(@as(u64, 0), tracker.sequence);
+}
+
 test "even empty tracker renders unknown coverage with bounded valid JSON" {
     var tracker: ownership.Tracker = .{};
     var buffer: [1024]u8 = undefined;

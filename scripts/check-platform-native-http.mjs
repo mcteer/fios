@@ -85,6 +85,7 @@ try {
     assert.equal(value.owned,value.ingress+value.preparing+value.active+value.responding);return value;
   }
   let sourceInstance;
+  let captureSequence=0;
   function diagnostic(value) {
     assert.equal(value.status,200);assert.equal(value.body.coverage,'unknown');
     assert.equal(value.body.reason,'native_ownership_audit_incomplete');assert.equal(value.body.observer_included,true);
@@ -94,6 +95,8 @@ try {
     assert.notEqual(value.body.source_instance,'0'.repeat(32));
     sourceInstance??=value.body.source_instance;
     assert.equal(value.body.source_instance,sourceInstance,'native source instance changed within one process');
+    assert(Number.isSafeInteger(value.body.sample_sequence)&&value.body.sample_sequence>captureSequence,'native capture sequence did not advance');
+    captureSequence=value.body.sample_sequence;
     assert.equal(value.body.owned_requests,value.body.ingress+value.body.preparing+value.body.active+value.body.responding);
     assert.equal(value.body.preparing,0);assert.equal(value.body.active,0);
     assert(value.body.owned_requests>=1 && value.body.owned_requests<=256);
