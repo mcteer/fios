@@ -1,0 +1,28 @@
+import Foundation
+import Darwin
+
+// Dedicated finite fixture entry; never installed or selected by app IPC.
+// Host/VM values are SYNTHETIC, not enrolled physical/native provenance.
+@main struct ManagerExecutionLive {
+    static func main() {
+        _=alarm(120)
+        do {
+            let args=CommandLine.arguments
+            guard args.count==7,args[1].hasPrefix("/private/tmp/f9-manager-"),
+                  ["configured","missing","closed","disabled"].contains(args[6]) else {throw RuntimeError.invalid}
+            let directory=URL(fileURLWithPath:args[1])
+            if args[6]=="disabled" {try ManagerRuntime.run(directory:directory);return}
+            let runtime=try DockerRuntime(executable:VerifiedExecutable(path:args[2],sha256:args[3]),socket:args[4])
+            let mode=args[6]
+            let ports=try ManagerExecutionPorts(runtime:runtime,approvedImages:[args[5]],vmSource:.cached,
+                resources:{now,_ in
+                    if mode=="missing" {return nil}
+                    return ResourceSample(sampledAt:now,physical:128<<30,available:64<<30,vmAvailable:8<<30,
+                        diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal,vmSampledAt:now)
+                },admissionOpen:{mode != "closed"})
+            try ManagerRuntime.run(directory:directory,nativeControl:nil,execution:ports)
+        } catch {
+            FileHandle.standardError.write(Data("Finite manager execution fixture failed\n".utf8));exit(1)
+        }
+    }
+}

@@ -108,5 +108,19 @@ func runTaskCommandTests() throws {
           try call("artifact.read",["phase":"next","stream":stream],now:1009)["data"] as? String==source.base64EncodedString(),
           try call("artifact.read",["phase":"next","stream":stream],now:1010)["type"] as? String=="end" else {fatalError("Owner artifact stream invalid")}
     do {_=try call("artifact.read",["phase":"next","stream":stream],now:1011);fatalError("Consumed artifact stream revived")} catch TaskCommandError.unauthorized {}
+    var interrupted=begin;interrupted["idempotency"]=UUID().uuidString.lowercased()
+    let pending=try call("job.create",interrupted,now:1012)
+    guard let pendingID=pending["job"] as? String else {fatalError("Missing interrupted upload")}
+    _=try call("job.create",["phase":"chunk","job":pendingID,"index":0,"data":source.base64EncodedString()],now:1013)
+    open=false
+    do {
+        _=try call("job.create",["phase":"end","job":pendingID],now:1014)
+        fatalError("Upload dispatched after admission closed")
+    } catch TaskCommandError.native_unsupported {}
+    open=true
+    _=try call("job.create",["phase":"end","job":pendingID],now:1015)
+    guard try journal.jobs().first(where:{$0.id==pendingID})?.state == .revoking,
+          try journal.sandboxRecords().first(where:{$0.configuration.job==pendingID})?.createIssued == false,
+          try journal.requestCount(job:pendingID)==0 else {fatalError("Interrupted upload replayed or discarded ownership")}
     print("PASS: task-role/opaque-owner API, closed/source-loss admission, reserve-before-input, once-only validation, proof-gated cancel and asynchronous owner-only finite artifact routing")
 }

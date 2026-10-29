@@ -10,7 +10,7 @@ public enum ManagerRuntime {
     }
     // No production issuer yet: only reviewed native enrollment may supply
     // this internal client. Never construct it from operator/model payloads.
-    static func run(directory:URL,nativeControl:NativeControlClient?,serviceObservations:ServiceObservationCache?=nil,serviceControl:SessionControlClient?=nil) throws {
+    static func run(directory:URL,nativeControl:NativeControlClient?,serviceObservations:ServiceObservationCache?=nil,serviceControl:SessionControlClient?=nil,execution:ManagerExecutionPorts?=nil) throws {
         guard geteuid() != 0 else { throw ControlError.unauthorized }
         umask(0o077)
         let journal=try Journal(directory:directory)
@@ -31,12 +31,17 @@ public enum ManagerRuntime {
         let workerRecovery=try WorkerReconciler(journal:journal,admission:&admission)
         let audit=try AuditLog(directory:directory.appendingPathComponent("audit"))
         let artifacts=AsyncArtifacts(store:try ArtifactStore(directory:directory.appendingPathComponent("artifacts")))
-        let tasks=TaskController(journal:journal,broker:ModelBroker(journal:journal))
-        let jobs=JobController(journal:journal,executor:UnavailableSandboxRuntime())
+        let tasks=TaskController(journal:journal,broker:ModelBroker(journal:journal,factory:execution?.workerFactory))
+        let executor:any SandboxExecuting = try execution?.makeExecutor() ?? UnavailableSandboxRuntime()
+        let jobs=JobController(journal:journal,executor:executor,collectVM:execution?.vmSource == .ownedContainer)
         let sandboxes=SandboxTaskController(journal:journal,jobs:jobs,tasks:tasks,artifacts:artifacts,
-            socket:"/var/empty/fios-runtime-unenrolled.sock",peerUID:geteuid())
+            socket:execution?.runtime?.socket ?? "/var/empty/fios-runtime-unenrolled.sock",peerUID:geteuid(),endpointPolicy:execution?.runtime?.endpointPolicy)
         let taskCommands=TaskCommands(journal:journal,tasks:tasks,sandbox:sandboxes,artifacts:artifacts,
-            approvedImages:[],peerUID:geteuid())
+            approvedImages:execution?.approvedImages ?? [],enrolled:execution != nil,peerUID:geteuid(),admissionOpen:execution?.admissionOpen ?? {false})
+        func applyingVM(to sample:ResourceSample,now:Int64)->ResourceSample {
+            if execution?.vmSource == .cached {return sample}
+            return jobs.applyingVM(to:sample,now:now)
+        }
         func timestamp()->Int64 { Int64(Date().timeIntervalSince1970*1000) }
         try audit.record(.started,now:timestamp())
         defer { try? audit.record(.stopped,now:timestamp()) }
@@ -46,6 +51,7 @@ public enum ManagerRuntime {
         let listeners=[observation,control,taskSocket]
         let roles:[ControlRole]=[.observer,.operator,.task]
         let epoch=UUID().uuidString.lowercased()
+        func binding(_ model:String)->WorkerDispatchBinding? {execution?.binding(model,managerEpoch:epoch)}
         func digest(_ value:String)->String { SHA256.hash(data:Data(value.utf8)).map { String(format:"%02x",$0) }.joined() }
         let endpointHash=digest("http://127.0.0.1:11234/v1")
         let profileHash=digest("fios009-development-native-unsupported")
@@ -56,7 +62,7 @@ public enum ManagerRuntime {
         let boot=try HostBoot.identity()
         var lastHeartbeat:TimeInterval = -2
         var cpuSampler=CPUSampler()
-        var resourceSample=HostResources.sample(statePath:directory.path)
+        var resourceSample=execution?.sample(now:timestamp(),cpu:nil) ?? HostResources.sample(statePath:directory.path)
         var gpuSample=GPUResources.sample()
         let termination=Termination()
         var clients:[PendingControl]=[]
@@ -81,9 +87,9 @@ public enum ManagerRuntime {
                 }
             }
             try workerRecovery.poll(now:Int64(now*1000),admission:&admission)
-            resourceSample=jobs.applyingVM(to:resourceSample,now:timestamp())
-            let updates=try sandboxes.tick(now:timestamp(),uptime:now,sample:artifacts.reservingDisk(in:resourceSample),admission:&admission,source:{_ in nil},nativeCapacityProven:false)
-            resourceSample=jobs.applyingVM(to:resourceSample,now:timestamp())
+            resourceSample=applyingVM(to:resourceSample,now:timestamp())
+            let updates=try sandboxes.tick(now:timestamp(),uptime:now,sample:artifacts.reservingDisk(in:resourceSample),admission:&admission,source:binding,nativeCapacityProven:execution?.nativeCapacityProven() ?? false)
+            resourceSample=applyingVM(to:resourceSample,now:timestamp())
             try taskCommands.tick(now:timestamp(),uptime:Int64(now*1000),artifactResults:updates.artifactResults,output:updates.output,model:updates.model,finished:updates.finished)
             if now - lastHeartbeat >= 2 {
                 sequence+=1;sampledAt=timestamp()
@@ -100,7 +106,7 @@ public enum ManagerRuntime {
                     }
                 }
                 let cpu=cpuSampler.observe(ticks:CPUSampler.readTicks(),now:sampledAt)
-                resourceSample=jobs.applyingVM(to:HostResources.sample(statePath:directory.path,measuredCPU:cpu),now:sampledAt)
+                resourceSample=applyingVM(to:execution?.sample(now:sampledAt,cpu:cpu) ?? HostResources.sample(statePath:directory.path,measuredCPU:cpu),now:sampledAt)
                 gpuSample=GPUResources.sample()
                 do {try artifacts.expire(request:UUID().uuidString.lowercased(),now:timestamp())}
                 catch ArtifactServiceFailure.capacity {} // Finite I/O slots, retry maintenance next cycle.
@@ -127,7 +133,7 @@ public enum ManagerRuntime {
                     }
                     let request=try ControlRequest.decode(bytes)
                     guard client.role.allows(request.operation) else { throw ControlError.unauthorized }
-                    let requestedAt=timestamp(),requestResources=artifacts.reservingDisk(in:jobs.applyingVM(to:resourceSample,now:requestedAt))
+                    let requestedAt=timestamp(),requestResources=artifacts.reservingDisk(in:applyingVM(to:resourceSample,now:requestedAt))
                     var response:[String:Any] = ["version":1,"id":request.id,"ok":true,"epoch":epoch]
                     switch request.operation {
                     case .status:
@@ -154,7 +160,7 @@ public enum ManagerRuntime {
                         response["services"]=serviceStates
                         response["native_admissions"]=nativeQueue == nil ? "unsupported":nativeMaintenance.phase.rawValue
                         response["native_activity"]="unsupported"
-                        response["sandbox_admission"]="disabled"
+                        response["sandbox_admission"]=execution == nil ? "disabled":"configured"
                         response["artifact_bytes"]=artifacts.statistics.bytes
                         response["artifact_jobs"]=artifacts.statistics.jobs
                     case .resources:
@@ -181,7 +187,7 @@ public enum ManagerRuntime {
                             "coverage":"unsupported","resident_model":NSNull(),"outstanding_owners":NSNull(),"loading":NSNull()]
                     case .jobCreate,.jobStatus,.jobRenew,.jobCancel,.modelRequest,.artifactRead:
                         response["result"]=try taskCommands.handle(request,role:client.role,sample:requestResources,admission:&admission,
-                            binding:{_ in nil},nativeCapacityProven:false,now:requestedAt,uptime:Int64(now*1000))
+                            binding:binding,nativeCapacityProven:execution?.nativeCapacityProven() ?? false,now:requestedAt,uptime:Int64(now*1000))
                     case .serviceDrain,.serviceForce:
                         guard OperatorServiceCommand.valid(operation:request.operation,payload:request.payload) else {throw ControlError.invalid_request}
                         // No trusted all-backend scope issuer/actuator is enrolled.

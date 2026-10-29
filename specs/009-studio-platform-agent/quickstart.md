@@ -30,6 +30,7 @@ node scripts/check-platform.mjs --mock --release
 node scripts/check-platform-process.mjs --isolated
 node scripts/check-platform-boot.mjs --isolated
 node scripts/check-platform-boot-state.mjs --isolated
+node scripts/check-platform-manager-execution.mjs --mock
 node scripts/check-platform-session.mjs --isolated
 node scripts/check-platform-session-control.mjs --isolated
 node scripts/check-platform-session-driver.mjs --isolated
@@ -40,6 +41,8 @@ node scripts/check-platform-watchdog.mjs --isolated
 node scripts/check-platform-sandbox.mjs --isolated
 node scripts/check-platform-runner.mjs --isolated
 node scripts/check-platform-attach.mjs --isolated
+# Whole manager IPC/runner path; synthetic resource sources, no model calls.
+node scripts/check-platform-manager-execution.mjs --isolated
 ```
 
 Expected: failing-first evidence for new policy/contracts, then passing Swift, installed-Python and isolated runtime tests. Unit networking is guarded; service lifecycle operations use fake adapters. Container rehearsal uses its own labeled temporary test namespace with no production mounts/socket passed to untrusted images; trusted host test driver owns runtime control. Confirm unrelated sentinel container/volume survives. Record actual counts and commands in validation; do not reuse008 counts as009 evidence.
@@ -112,3 +115,5 @@ Reviewed PR with six exact-head checks plus native mock/macOS package checks fee
 Disable admission; revoke leases; reconcile owned containers/native requests; stop the manager only after safe state/explicit unresolved-work handling. Back up its separate DB/export manifest and previous executable/config with the manager stopped. Upgrade one host, verify signature/hash/schema/service identity and non-inference health. On failure restore compatible prior artifacts/state, preserving unresolved ownership rather than clearing it. If old version cannot preserve safety, remain in observation/maintenance mode and report blocked rollback.
 
 Uninstall removes only009's verified jobs/binaries/owned ephemeral resources and dedicated keys after drain. Preserve exports/backups per retention/operator choice. Never remove MLX-Serve, OrbStack, existing Fios services, user login configuration or unrelated volumes. Do not re-enable005's installer. Capture exact artifact/revision, backup, rollback and verification in validation; do not call green CI a native deployment.
+
+Manager execution source composition and fixture limits: [manager-execution.md](contracts/manager-execution.md). Public task execution remains disabled; these source fixtures do not enroll native activity/admission.

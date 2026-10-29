@@ -133,6 +133,10 @@ final class TaskCommands {
                     try upload.transfer.append(index:Int(index),base64:data,now:now);uploads[id]=upload
                 } else {
                     try exact(["phase","job"])
+                    // Admission can close while an input stream is in flight.
+                    // Recheck before consuming input/registering any execution;
+                    // the catch path revokes without proving native absence.
+                    guard enrolled,admissionOpen() else {throw TaskCommandError.native_unsupported}
                     let data=try upload.transfer.finish(now:now);uploads.removeValue(forKey:id)
                     if upload.kind=="sandbox" {
                         let digest=SHA256.hash(data:data).map {String(format:"%02x",$0)}.joined()

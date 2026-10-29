@@ -199,6 +199,7 @@ jobs:
           node scripts/check-platform-process.mjs --isolated
           node scripts/check-platform-boot.mjs --isolated
           node scripts/check-platform-boot-state.mjs --isolated
+          node scripts/check-platform-manager-execution.mjs --mock
           node scripts/check-platform-session.mjs --isolated
           node scripts/check-platform-session-control.mjs --isolated
           node scripts/check-platform-session-driver.mjs --isolated

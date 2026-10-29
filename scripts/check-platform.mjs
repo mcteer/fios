@@ -9,8 +9,8 @@ import { fileURLToPath } from 'node:url';
 // No SSH, daemon socket, service lifecycle or live inference. The test binary
 // and descendants deny IP networking except one freshly allocated loopback
 // mock endpoint; configured native ports/other IPs stay denied. No fallback.
-if (![3,4].includes(process.argv.length) || process.argv[2] !== '--mock' || (process.argv.length===4 && !['--release','--mutate-runtime-postcheck'].includes(process.argv[3]))) {
-  throw new Error('Usage: node scripts/check-platform.mjs --mock [--release|--mutate-runtime-postcheck]');
+if (![3,4].includes(process.argv.length) || process.argv[2] !== '--mock' || (process.argv.length===4 && !['--release','--mutate-runtime-postcheck','--mutate-manager-epoch'].includes(process.argv[3]))) {
+  throw new Error('Usage: node scripts/check-platform.mjs --mock [--release|--mutate-runtime-postcheck|--mutate-manager-epoch]');
 }
 const root = fileURLToPath(new URL('../', import.meta.url));
 const directory = mkdtempSync(join(tmpdir(), 'fios-platform-policy-'));
@@ -50,10 +50,12 @@ try {
     const path = resolve(root, 'platform/studio', part);
     return readdirSync(path).filter(name => name.endsWith('.swift')).sort().map(name => {
       const source=join(path,name);
-      if(process.argv[3]!=='--mutate-runtime-postcheck'||part!=='Sources/StudioCore'||name!=='Sandboxes.swift')return source;
-      const original=readFileSync(source,'utf8'),check='        try pinned?.verify(deadline:min(deadline,ProcessInfo.processInfo.systemUptime+2))';
-      if(original.split(check).length!==2)throw Error('Postcheck mutation boundary changed');
-      const mutated=join(directory,'MutatedSandboxes.swift');writeFileSync(mutated,original.replace(check,'        withExtendedLifetime(pinned) {}'));return mutated;
+      const variant=process.argv[3]==='--mutate-runtime-postcheck'?{file:'Sandboxes.swift',check:'        try pinned?.verify(deadline:min(deadline,ProcessInfo.processInfo.systemUptime+2))',replacement:'        withExtendedLifetime(pinned) {}'}:
+        process.argv[3]==='--mutate-manager-epoch'?{file:'ManagerExecution.swift',check:'value.managerEpoch==managerEpoch,',replacement:''}:undefined;
+      if(!variant||part!=='Sources/StudioCore'||name!==variant.file)return source;
+      const original=readFileSync(source,'utf8');
+      if(original.split(variant.check).length!==2)throw Error('Private mutation boundary changed');
+      const mutated=join(directory,'Mutated'+name);writeFileSync(mutated,original.replace(variant.check,variant.replacement));return mutated;
     });
   });
   const binary = join(directory, 'policy-tests');
