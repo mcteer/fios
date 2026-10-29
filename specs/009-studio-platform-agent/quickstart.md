@@ -35,6 +35,8 @@ node scripts/check-platform-process.mjs --isolated
 node scripts/check-platform-boot.mjs --isolated
 node scripts/check-platform-boot-state.mjs --isolated
 node scripts/check-platform-manager-execution.mjs --mock --models
+# Private IPC/source/never-dispatched-intent rehearsal only; no native/runtime/model action.
+node scripts/check-platform-drain.mjs --isolated
 node scripts/check-platform-session.mjs --isolated
 node scripts/check-platform-session-control.mjs --isolated
 node scripts/check-platform-session-driver.mjs --isolated

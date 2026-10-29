@@ -83,6 +83,14 @@ struct ServiceDrainPolicy {
             beganUptime:tick,ownedJobs:Set(scope.ownedJobs),previous:now,previousUptime:tick,state:state)
         return ServiceDrainProgress(state:state,revokeOwned:scope.ownedJobs)
     }
+    // Source/ledger loss is sticky for this attempt. Only a new explicit
+    // operator begin can replace it; absence is never native quiescence.
+    mutating func invalidate(service:ManagedService)throws->ServiceDrainProgress {
+        guard var record=pending[service] else {throw ServiceError.invalid}
+        if case .refused=record.state {}else {record.state = .refused(.activityUnknown)}
+        pending[service]=record
+        return ServiceDrainProgress(state:record.state,revokeOwned:[])
+    }
     mutating func poll(snapshot:ServiceDrainSnapshot,now:Int64)throws->ServiceDrainProgress {
         let scope=snapshot.scope
         guard var record=pending[scope.service] else {throw ServiceError.invalid}

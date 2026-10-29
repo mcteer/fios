@@ -167,8 +167,12 @@ final class PrivateWorker {
         // child. Bound its cleanup independently of native ownership proof.
         if terminal && !revoked { try cancel(now:now) }
         if eof && !process.isRunning {
-            process.waitUntilExit();reaped=true
+            // Never block the serialized manager on Foundation exit delivery.
+            // Missing kernel proof retains the slot; publish local reap only
+            // after the exact absence check and durable marker both succeed.
+            guard (try? grant.provenGone())==true else {return events}
             try journal.recordWorkerGone(job:job,attempt:attempt,grant:grant)
+            reaped=true
             // A trustworthy once-only zero-POST summary plus correlated
             // terminal and fully reaped child proves non-dispatch. Neither
             // cancellation nor child exit alone supplies this evidence.

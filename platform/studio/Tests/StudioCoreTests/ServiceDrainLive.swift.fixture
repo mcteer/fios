@@ -1,0 +1,53 @@
+import Foundation
+import Darwin
+
+private func prepare(_ directory:URL)throws->(String,String) {
+    // Return no journal reference: the single manager opens it only after this
+    // bootstrap writer has closed. Claims below never dispatch native work.
+    let journal=try Journal(directory:directory),now=HostResources.nowMilliseconds()
+    let ids=[UUID().uuidString.lowercased(),UUID().uuidString.lowercased()]
+    for id in ids {
+        _=try journal.reserveJob(DurableJob(id:id,idempotency:UUID().uuidString.lowercased(),ownerHash:String(repeating:"a",count:64),requestHash:String(repeating:"b",count:64),created:now))
+        try journal.transitionJob(id:id,to:.running,now:now)
+    }
+    for id in ids {
+        try journal.claim(job:id,attempt:0,model:"fixture/model")
+        _=try journal.planWorkerLaunch(job:id,attempt:0)
+        try journal.markUncertain(job:id,attempt:0)
+    }
+    return(ids[0],ids[1])
+}
+
+@main struct ServiceDrainLive {
+    static func main()throws {
+        let args=CommandLine.arguments
+        guard args.count==3,["closed","configured","held"].contains(args[2]),geteuid()>0 else {throw RuntimeError.invalid}
+        let directory=URL(fileURLWithPath:args[1]),ids=try prepare(directory),mode=args[2]
+        let parent=directory.deletingLastPathComponent(),name=directory.lastPathComponent
+        try AtomicState.write(JSONSerialization.data(withJSONObject:["owned":ids.0,"other":ids.1]),to:parent.appendingPathComponent(name+"-jobs.json"))
+        if mode=="held" {try AtomicState.write(Data("{}".utf8),to:directory.appendingPathComponent("migration-hold.json"))}
+        let cache=ServiceDrainObservationCache()
+        if mode != "closed" {
+            // Trusted fixture-only pipe, not an installed CLI/env/config path.
+            // The compiled public manager has no such observation publisher.
+            Thread.detachNewThread {
+                do {
+                    var bytes=Data()
+                    while let line=readLine() {
+                        bytes=Data(line.utf8)
+                        try StrictJSON.validate(bytes,maximum:1024)
+                        guard let value=try JSONSerialization.jsonObject(with:bytes) as? [String:String],
+                              Set(value.keys)==Set(["epoch","mode"]),let epoch=value["epoch"],WireScalar.uuid(epoch),
+                              let command=value["mode"],["original","omit","missing"].contains(command) else {throw RuntimeError.invalid}
+                        if command=="missing" {cache.publish(nil,for:.mlx)}else {
+                            let scope=try ServiceAffectedScope(service:.mlx,identity:ServiceIdentity(pid:42,start:100,sha256:String(repeating:"c",count:64)),managerEpoch:epoch,nativeEpoch:"fixture-native",nativeScopeDigest:String(repeating:"d",count:64),runtimeScopeDigest:nil,ownedJobs:command=="original" ? [ids.0]:[],unresolvedManagedRequests:command=="original" ? [ids.0,ids.1]:[],sampledAt:HostResources.nowMilliseconds())
+                            cache.publish(ServiceDrainSnapshot(scope:scope,nativeIdle:command=="omit",externalNativeWork:false,unmanagedRuntimeWork:nil),for:.mlx)
+                        }
+                        try AtomicState.write(Data(command.utf8),to:parent.appendingPathComponent(name+"-cache-ready"))
+                    }
+                }catch {FileHandle.standardError.write(Data("DRAIN_FIXTURE_SOURCE_REFUSED\n".utf8))}
+            }
+        }
+        try ManagerRuntime.run(directory:directory,nativeControl:nil,drainObservations:mode=="closed" ? nil:cache)
+    }
+}

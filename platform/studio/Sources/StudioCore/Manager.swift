@@ -10,7 +10,7 @@ public enum ManagerRuntime {
     }
     // No production issuer yet: only reviewed native enrollment may supply
     // this internal client. Never construct it from operator/model payloads.
-    static func run(directory:URL,nativeControl:NativeControlClient?,serviceObservations:ServiceObservationCache?=nil,serviceControl:SessionControlClient?=nil,execution:ManagerExecutionPorts?=nil) throws {
+    static func run(directory:URL,nativeControl:NativeControlClient?,serviceObservations:ServiceObservationCache?=nil,serviceControl:SessionControlClient?=nil,drainObservations:ServiceDrainObservationCache?=nil,execution:ManagerExecutionPorts?=nil) throws {
         guard geteuid() != 0 else { throw ControlError.unauthorized }
         umask(0o077)
         let journal=try Journal(directory:directory)
@@ -55,6 +55,7 @@ public enum ManagerRuntime {
         let listeners=[observation,control,taskSocket]
         let roles:[ControlRole]=[.observer,.operator,.task]
         let epoch=UUID().uuidString.lowercased()
+        let drainer=try (migrationHeld ? nil:drainObservations).map {try ServiceDrainController(journal:journal,tasks:tasks,managerEpoch:epoch,observations:$0)}
         func binding(_ model:String)->WorkerDispatchBinding? {activeExecution?.binding(model,managerEpoch:epoch)}
         func bindingForJob(_ id:String)->WorkerDispatchBinding? {
             guard let model=tasks.canonicalModel(forJob:id) else {return nil}
@@ -97,6 +98,7 @@ public enum ManagerRuntime {
                 }
             }
             try workerRecovery.poll(now:Int64(now*1000),admission:&admission,failedLaunches:tasks.failedLaunches)
+            try drainer?.pollAll(now:timestamp(),uptime:Int64(now*1000))
             resourceSample=applyingVM(to:resourceSample,now:timestamp())
             let updates=try sandboxes.tick(now:timestamp(),uptime:now,sample:artifacts.reservingDisk(in:resourceSample),admission:&admission,source:bindingForJob,nativeCapacityProven:activeExecution?.nativeCapacityProven() ?? false)
             resourceSample=applyingVM(to:resourceSample,now:timestamp())
@@ -167,7 +169,9 @@ public enum ManagerRuntime {
                             // No production observation issuer is enrolled. A
                             // failed/missing adapter remains unknown, not absent.
                             let observed=ServiceStatusPolicy.observed(desired:typed,observation:serviceObservations?.snapshot(for:service),launchPending:serviceRecovery?.isPending(service) ?? false,now:requestedAt)
-                            serviceStates[service.rawValue]=["desired":desired,"observed":observed.rawValue]
+                            var details:[String:Any]=["desired":desired,"observed":observed.rawValue]
+                            if let progress=drainer?.status(service:service) {details["drain"]=ServiceDrainController.summary(progress)}
+                            serviceStates[service.rawValue]=details
                         }
                         response["services"]=serviceStates
                         response["native_admissions"]=nativeQueue == nil ? "unsupported":nativeMaintenance.phase.rawValue
@@ -200,7 +204,23 @@ public enum ManagerRuntime {
                     case .jobCreate,.jobStatus,.jobRenew,.jobCancel,.modelRequest,.artifactRead:
                         response["result"]=try taskCommands.handle(request,role:client.role,sample:requestResources,admission:&admission,
                             binding:binding,nativeCapacityProven:activeExecution?.nativeCapacityProven() ?? false,now:requestedAt,uptime:Int64(now*1000))
-                    case .serviceDrain,.serviceForce:
+                    case .serviceDrain:
+                        guard OperatorServiceCommand.valid(operation:request.operation,payload:request.payload),
+                              let raw=request.payload["service"] as? String,let service=ManagedService(rawValue:raw) else {throw ControlError.invalid_request}
+                        guard let drainer else {
+                            response["ok"]=false;response["error"]="native_unsupported";response["applied"]=false;break
+                        }
+                        do {
+                            let progress=try drainer.begin(service:service,role:client.role,now:requestedAt,uptime:Int64(now*1000))
+                            if service == .mlx,nativeQueue != nil,let command=try nativeMaintenance.beginReconciliation() {enqueueNative(command)}
+                            response["drain"]=ServiceDrainController.summary(progress)
+                            response["maintenance_applied"]=true;response["native_action_applied"]=false
+                        }catch ServiceError.stale {
+                            response["ok"]=false;response["error"]="native_unsupported";response["applied"]=false
+                        }catch ServiceError.invalid {
+                            response["ok"]=false;response["error"]="native_unsupported";response["applied"]=false
+                        }
+                    case .serviceForce:
                         guard OperatorServiceCommand.valid(operation:request.operation,payload:request.payload) else {throw ControlError.invalid_request}
                         // No trusted all-backend scope issuer/actuator is enrolled.
                         // Never mint confirmations from caller-supplied hashes or
@@ -215,6 +235,7 @@ public enum ManagerRuntime {
                             try nativeMaintenance.setDesired(typed,role:client.role)
                             if nativeQueue != nil,let command=try nativeMaintenance.beginReconciliation() {enqueueNative(command)}
                         } else {try journal.setDesired(service:service,desired:desired)}
+                        if desired == ServiceDesired.running.rawValue,let typed=ManagedService(rawValue:service) {drainer?.supersede(service:typed)}
                         try audit.record(.desiredChanged,now:timestamp())
                         response["desired"]=desired
                         // Persisting intent is not a claim that a native action occurred.

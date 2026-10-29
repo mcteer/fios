@@ -76,7 +76,8 @@ final class PythonWorkerFactory:Sendable {
             guard ProcessInfo.processInfo.systemUptime<deadline else { throw RuntimeError.deadline }
             if !eof || process.isRunning { Thread.sleep(forTimeInterval:0.005) }
         }
-        process.waitUntilExit()
+        // EOF plus !isRunning already establish terminated metadata output.
+        // Do not add an unbounded Foundation notification wait after deadline.
         guard process.terminationStatus==0 else { throw RuntimeError.identity }
         return data
     }
