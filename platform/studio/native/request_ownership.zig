@@ -167,7 +167,10 @@ pub const Tracker = struct {
     pub fn enter(self: *Tracker, io: std.Io) !Token {
         self.mutex.lockUncancelable(io);
         defer self.mutex.unlock(io);
-        if (self.pause_id != null) return error.Maintenance;
+        return self.enterLocked(false);
+    }
+    fn enterLocked(self: *Tracker, continuation: bool) !Token {
+        if (self.pause_id != null and !continuation) return error.Maintenance;
         if (self.sequence == std.math.maxInt(u64)) {
             self.uncertain = true;
             return error.SequenceExhausted;
@@ -225,6 +228,40 @@ pub const Tracker = struct {
         slot.models |= mask;
         return key;
     }
+    // A distinct bounded internal owner spans scheduler preparation/loading.
+    // Parent identity is read and copied into the child under this same lock;
+    // no TLS/client identity can bypass exact token/model membership checks.
+    // This is CPU/load-path ownership, NOT backend/device-terminal proof.
+    pub fn reservePreparation(self: *Tracker, io: std.Io, parent: ?Token, model: []const u8) !Token {
+        self.mutex.lockUncancelable(io);
+        defer self.mutex.unlock(io);
+        if (!self.initialized or self.uncertain) return error.CoverageUncertain;
+        var root = model;
+        if (parent) |token| {
+            const original = try self.checked(token);
+            if (original.primary) |primary| {
+                if (original.phase != .preparing and original.phase != .active) return error.InvalidPhase;
+                var member = false;
+                for (self.models, 0..) |identity, index| {
+                    if (original.models & (@as(u64, 1) << @as(u6, @intCast(index))) != 0 and
+                        std.mem.eql(u8, identity.id[0..identity.len], model)) { member = true; break; }
+                }
+                if (!member) return error.ModelConflict;
+                const identity = &self.models[primary];
+                root = identity.id[0..identity.len];
+            } else {
+                // Admin/load requests that already own ingress retain their
+                // resolved model through response/connection release too.
+                try self.bindLocked(token, model);
+            }
+        }
+        if (self.transitioningLocked(model)) return error.ModelTransition;
+        const child = try self.enterLocked(parent != null);
+        errdefer self.leaveLocked(child) catch { self.uncertain = true; };
+        try self.bindLocked(child, root);
+        if (!std.mem.eql(u8, root, model)) _ = try self.addModelLocked(try self.checked(child), model);
+        return child;
+    }
     fn transitioningLocked(self: *Tracker, id: []const u8) bool {
         for (&self.mutations) |*mutation| {
             if (mutation.len != 0 and std.mem.eql(u8, mutation.id[0..mutation.len], id)) return true;
@@ -278,6 +315,9 @@ pub const Tracker = struct {
     pub fn bind(self: *Tracker, io: std.Io, token: Token, model: []const u8) !void {
         self.mutex.lockUncancelable(io);
         defer self.mutex.unlock(io);
+        return self.bindLocked(token, model);
+    }
+    fn bindLocked(self: *Tracker, token: Token, model: []const u8) !void {
         const slot = try self.checked(token);
         if (slot.phase != .ingress) {
             self.uncertain = true;
@@ -339,6 +379,9 @@ pub const Tracker = struct {
     pub fn leave(self: *Tracker, io: std.Io, token: Token) !void {
         self.mutex.lockUncancelable(io);
         defer self.mutex.unlock(io);
+        return self.leaveLocked(token);
+    }
+    fn leaveLocked(self: *Tracker, token: Token) !void {
         const slot = try self.checked(token);
         if (slot.references > 1) {
             slot.references -= 1;

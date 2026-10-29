@@ -2,6 +2,75 @@ const std = @import("std");
 const ownership = @import("request_ownership.zig");
 const io = std.testing.io;
 
+test "preparation refuses stale parents and sequence exhaustion without clearing existing owners" {
+    var tracker: ownership.Tracker = .{ .primary_guard = true };
+    try tracker.initialize(io, @splat(26));
+    const old = try tracker.enter(io);
+    try tracker.bind(io, old, "model-a");
+    try tracker.active(io, old);
+    try tracker.responding(io, old);
+    try std.testing.expectError(error.InvalidPhase, tracker.reservePreparation(io, old, "model-a"));
+    try tracker.leave(io, old);
+    const newer = try tracker.enter(io);
+    try tracker.bind(io, newer, "model-a");
+    try std.testing.expectError(error.InvalidToken, tracker.reservePreparation(io, old, "model-a"));
+    try std.testing.expectEqual(@as(usize, 1), tracker.snapshot(io).owned);
+    try std.testing.expectError(error.CoverageUncertain, tracker.reservePreparation(io, newer, "model-a"));
+    try tracker.leave(io, newer);
+    var exhausted: ownership.Tracker = .{ .primary_guard = true };
+    try exhausted.initialize(io, @splat(27));
+    const retained = try exhausted.enter(io);
+    try exhausted.bind(io, retained, "model-a");
+    exhausted.sequence = std.math.maxInt(u64);
+    try std.testing.expectError(error.SequenceExhausted, exhausted.reservePreparation(io, retained, "model-a"));
+    try std.testing.expectEqual(@as(usize, 1), exhausted.snapshot(io).owned);
+    try exhausted.leave(io, retained);
+    try std.testing.expect(exhausted.snapshot(io).uncertain);
+}
+
+test "load preparation guards direct callers and preserves exact parent identity" {
+    var tracker: ownership.Tracker = .{ .primary_guard = true };
+    try tracker.initialize(io, @splat(24));
+    const direct = try tracker.reservePreparation(io, null, "model-a");
+    const incoming = try tracker.enter(io);
+    try std.testing.expectError(error.ModelConflict, tracker.bind(io, incoming, "model-b"));
+    try tracker.bind(io, incoming, "model-a");
+    try tracker.bindAuxiliary(io, incoming, "aux-a");
+    const auxiliary = try tracker.reservePreparation(io, incoming, "aux-a");
+    try std.testing.expectError(error.ModelConflict, tracker.reservePreparation(io, incoming, "unbound-aux"));
+    try tracker.leave(io, direct);
+    try tracker.leave(io, incoming);
+    try std.testing.expectError(error.ModelOwned, tracker.beginModelMutation(io, "model-a"));
+    try std.testing.expectError(error.ModelOwned, tracker.beginModelMutation(io, "aux-a"));
+    try tracker.leave(io, auxiliary);
+    try std.testing.expectEqual(@as(usize, 0), tracker.snapshot(io).owned);
+    try std.testing.expect(!tracker.snapshot(io).uncertain);
+}
+
+test "pre-fence preparation continues but new direct preparation stays closed" {
+    var tracker: ownership.Tracker = .{ .primary_guard = true };
+    try tracker.initialize(io, @splat(25));
+    const ingress = try tracker.enter(io);
+    const pause = try tracker.pauseAdmissions(io);
+    try std.testing.expectError(error.Maintenance, tracker.reservePreparation(io, null, "model-a"));
+    const continuing = try tracker.reservePreparation(io, ingress, "model-a");
+    try tracker.leave(io, continuing);
+    // The original admin/load connection retains identity after preparation,
+    // including a slow response; child completion cannot release it.
+    try std.testing.expectEqual(@as(usize, 1), tracker.snapshot(io).owned);
+    try std.testing.expectError(error.ModelOwned, tracker.beginModelMutation(io, "model-a"));
+    try tracker.leave(io, ingress);
+    try std.testing.expect(tracker.snapshot(io).admissions_closed);
+    try tracker.resumeAdmissions(io, pause);
+    const mutation = try tracker.beginModelMutation(io, "model-a");
+    try std.testing.expectError(error.ModelTransition, tracker.reservePreparation(io, null, "model-a"));
+    try std.testing.expectEqual(@as(usize, 0), tracker.snapshot(io).owned);
+    try tracker.endModelMutation(io, mutation);
+    const final = try tracker.reservePreparation(io, null, "model-b");
+    try tracker.leave(io, final);
+    try std.testing.expect(!tracker.snapshot(io).uncertain);
+}
+
 test "model transition and request binding cannot both reserve the same identity" {
     const Work = struct {
         fn run(tracker: *ownership.Tracker, token: ownership.Token, bound: *bool) void {

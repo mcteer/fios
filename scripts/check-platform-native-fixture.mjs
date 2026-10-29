@@ -13,14 +13,14 @@ import { fileURLToPath } from 'node:url';
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const args=process.argv.slice(2);
 assert(process.platform==='darwin' && process.getuid()!==0);
-assert((args.length===8 || (args.length===9 && ['--empty-gpu','--root-tests-only','--mutation-request-eviction-guard','--mutation-drop-model-pins','--mutation-drop-parked-pins','--mutation-access-foreign-release','--mutation-drop-registry-preparation','--mutation-clear-registry-preparation','--mutation-registry-stub-frontdoor','--mutation-registry-path-frontdoor','--mutation-registry-scan-frontdoor'].includes(args[8]))) && args[0]==='--source' && args[2]==='--zig' && args[4]==='--webp-source' && args[6]==='--metal-cpp-zip' && [args[1],args[3],args[5],args[7]].every(path.isAbsolute),
- 'usage: check-platform-native-fixture.mjs --source ABS_CHECKOUT --zig ABS_ZIG --webp-source ABS_WEBP_1_6_0 --metal-cpp-zip ABS_APPLE_METAL_CPP_26_ZIP [--mutation-request-eviction-guard|--empty-gpu|--root-tests-only|--mutation-drop-model-pins|--mutation-drop-parked-pins|--mutation-access-foreign-release|--mutation-drop-registry-preparation|--mutation-clear-registry-preparation|--mutation-registry-stub-frontdoor|--mutation-registry-path-frontdoor|--mutation-registry-scan-frontdoor]');
+assert((args.length===8 || (args.length===9 && ['--empty-gpu','--root-tests-only','--mutation-request-eviction-guard','--mutation-load-preparation-guard','--mutation-drop-model-pins','--mutation-drop-parked-pins','--mutation-access-foreign-release','--mutation-drop-registry-preparation','--mutation-clear-registry-preparation','--mutation-registry-stub-frontdoor','--mutation-registry-path-frontdoor','--mutation-registry-scan-frontdoor'].includes(args[8]))) && args[0]==='--source' && args[2]==='--zig' && args[4]==='--webp-source' && args[6]==='--metal-cpp-zip' && [args[1],args[3],args[5],args[7]].every(path.isAbsolute),
+ 'usage: check-platform-native-fixture.mjs --source ABS_CHECKOUT --zig ABS_ZIG --webp-source ABS_WEBP_1_6_0 --metal-cpp-zip ABS_APPLE_METAL_CPP_26_ZIP [--mutation-load-preparation-guard|--mutation-request-eviction-guard|--empty-gpu|--root-tests-only|--mutation-drop-model-pins|--mutation-drop-parked-pins|--mutation-access-foreign-release|--mutation-drop-registry-preparation|--mutation-clear-registry-preparation|--mutation-registry-stub-frontdoor|--mutation-registry-path-frontdoor|--mutation-registry-scan-frontdoor]');
 const parkedMutation=args[8]==='--mutation-drop-parked-pins',accessMutation=args[8]==='--mutation-access-foreign-release';
 const preparationMutation=args[8]==='--mutation-drop-registry-preparation',clearPreparationMutation=args[8]==='--mutation-clear-registry-preparation';
 const frontdoorKind=['stub','path','scan'].find(kind=>args[8]===`--mutation-registry-${kind}-frontdoor`);
-const evictionMutation=args[8]==='--mutation-request-eviction-guard';
+const evictionMutation=args[8]==='--mutation-request-eviction-guard',loadPreparationMutation=args[8]==='--mutation-load-preparation-guard';
 const registryMutation=evictionMutation||accessMutation||clearPreparationMutation||!!frontdoorKind;
-const mutation=evictionMutation||parkedMutation||accessMutation||preparationMutation||clearPreparationMutation||!!frontdoorKind||args[8]==='--mutation-drop-model-pins',rootOnly=mutation||args[8]==='--root-tests-only';
+const mutation=loadPreparationMutation||evictionMutation||parkedMutation||accessMutation||preparationMutation||clearPreparationMutation||!!frontdoorKind||args[8]==='--mutation-drop-model-pins',rootOnly=mutation||args[8]==='--root-tests-only';
 const [source,zig,webp,metalZip]=[args[1],args[3],args[5],args[7]].map(filename=>realpathSync(filename));
 assert(source.startsWith('/private/tmp/'),'only a disposable source checkout is permitted');
 assert.equal(lstatSync(source).uid,process.getuid());assert.equal(lstatSync(source).mode&0o022,0);
@@ -127,7 +127,10 @@ try{
  if(mutation){
   assert.equal(readdirSync(source).filter(name=>/^fios-linked-[0-9a-f-]+\.zig$/.test(name)).length,1,'Mutation requires exclusive disposable source use');
   let variant=mutationOriginal,pin,replacement;
-  if(evictionMutation){
+  if(loadPreparationMutation){
+   pin='        const fios_preparation = if (fios_tracker) |tracker| try tracker.reservePreparation(self.io, fios_ownership.current, entry.id) else null;';
+   replacement='        const fios_preparation: ?fios_ownership.Token = null; // Deliberate real load/preparation bypass.';
+  }else if(evictionMutation){
    pin='            entry.fios_request_eviction = tracker.beginModelMutation(self.io, entry.id) catch return false;';
    replacement='            _ = tracker; // Deliberate request-owner eviction bypass.';
   }else if(frontdoorKind==='stub'){
@@ -160,10 +163,10 @@ try{
   assert.equal(result.status,1,'Deliberate boundary mutation must fail actual optimized runtime tests');
   assert.match(testLog,/5 pass, 1 fail \(6 total\)/,'Compilation/linkage failures are not mutation evidence');
   assert.match(testLog,/scheduler\.test\.fios native cleanup retains request and model after connection release/);
-  const failureMarker=evictionMutation?/FIO_REQUEST_OWNER_EVICTED/:frontdoorKind?new RegExp(`FIO_REGISTRY_${frontdoorKind.toUpperCase()}_FRONTDOOR_BYPASS`):preparationMutation?/FIO_REGISTRY_ACTIVE_PREPARATION_ACCEPTED/:clearPreparationMutation?/FIO_REGISTRY_PREPARATION_RECORD_CLEARED_ON_EXHAUSTION/:accessMutation?/expected false, found true/:/expected 1, found 0/;
+  const failureMarker=loadPreparationMutation?/FIO_CONFLICTING_LOAD_PREPARATION_ACCEPTED/:evictionMutation?/FIO_REQUEST_OWNER_EVICTED/:frontdoorKind?new RegExp(`FIO_REGISTRY_${frontdoorKind.toUpperCase()}_FRONTDOOR_BYPASS`):preparationMutation?/FIO_REGISTRY_ACTIVE_PREPARATION_ACCEPTED/:clearPreparationMutation?/FIO_REGISTRY_PREPARATION_RECORD_CLEARED_ON_EXHAUSTION/:accessMutation?/expected false, found true/:/expected 1, found 0/;
   assert.match(testLog,failureMarker,'Mutation must fail its exact actual runtime boundary assertion');
   writeFileSync(mutationFile,mutationOriginal);mutated=false;
-  testLog+=evictionMutation?'\nPASS: optimized actual registry eviction bypass fails its exact request-owner runtime assertion; exact source bytes restored; no terminal authority.\n':(frontdoorKind||preparationMutation||clearPreparationMutation)?`\nPASS: optimized actual registry ${frontdoorKind??(preparationMutation?'active preparation visibility':'exhaustion-before-record-clear')} boundary fails its precise runtime marker; exact scheduler/registry bytes restored; no terminal authority.\n`:accessMutation?'\nPASS: optimized copied-ticket foreign-owner guard removal fails the actual registry-release assertion; exact source bytes restored; no terminal authority.\n':parkedMutation?'\nPASS: optimized premature parked-reference release fails the actual parked-model refcount assertion; source bytes restored; no terminal authority.\n':'\nPASS: optimized dropped-model-ref mutation fails the actual registry-borrow fixture; source bytes restored; no terminal authority.\n';
+  testLog+=loadPreparationMutation?'\nPASS: optimized actual scheduler load/preparation bypass fails its exact runtime assertion; exact source bytes restored; no terminal authority.\n':evictionMutation?'\nPASS: optimized actual registry eviction bypass fails its exact request-owner runtime assertion; exact source bytes restored; no terminal authority.\n':(frontdoorKind||preparationMutation||clearPreparationMutation)?`\nPASS: optimized actual registry ${frontdoorKind??(preparationMutation?'active preparation visibility':'exhaustion-before-record-clear')} boundary fails its precise runtime marker; exact scheduler/registry bytes restored; no terminal authority.\n`:accessMutation?'\nPASS: optimized copied-ticket foreign-owner guard removal fails the actual registry-release assertion; exact source bytes restored; no terminal authority.\n':parkedMutation?'\nPASS: optimized premature parked-reference release fails the actual parked-model refcount assertion; source bytes restored; no terminal authority.\n':'\nPASS: optimized dropped-model-ref mutation fails the actual registry-borrow fixture; source bytes restored; no terminal authority.\n';
  }else testLog=run('/usr/bin/nice',testArgs,{cwd:source});
  const binary=path.join(scratch,'output/bin/mlx-serve'),digest=rootOnly?null:sha(binary);
  const httpLog=rootOnly?'':run(process.execPath,[path.join(root,'scripts/check-platform-native-http.mjs'),'--isolated','--binary',binary,'--sha256',digest]);
@@ -172,7 +175,7 @@ try{
  assert.equal(readFileSync(schedulerFile,'utf8'),schedulerOriginal,'fixture changed reviewed scheduler source');
  assert.equal(readFileSync(registryFile,'utf8'),registryOriginal,'fixture changed reviewed registry source');
  console.log(ownerLog+buildLog+testLog+httpLog);
- console.log(JSON.stringify({source_fixture_only:true,root_tests_only:rootOnly,expected_runtime_mutation:mutation,request_eviction_mutation:evictionMutation,parked_reference_mutation:parkedMutation,foreign_access_release_mutation:accessMutation,preparation_visibility_mutation:preparationMutation,preparation_clear_mutation:clearPreparationMutation,registry_frontdoor_mutation:frontdoorKind??null,upstream_release_attestation:false,native_inference:false,coverage:'unknown',fixture_sha256:digest,runtime_inputs:runtime}));
+ console.log(JSON.stringify({source_fixture_only:true,root_tests_only:rootOnly,expected_runtime_mutation:mutation,request_eviction_mutation:evictionMutation,load_preparation_mutation:loadPreparationMutation,parked_reference_mutation:parkedMutation,foreign_access_release_mutation:accessMutation,preparation_visibility_mutation:preparationMutation,preparation_clear_mutation:clearPreparationMutation,registry_frontdoor_mutation:frontdoorKind??null,upstream_release_attestation:false,native_inference:false,coverage:'unknown',fixture_sha256:digest,runtime_inputs:runtime}));
 }finally{
  if(mutated)writeFileSync(mutationFile,mutationOriginal);
  if(written)rmSync(generated);
