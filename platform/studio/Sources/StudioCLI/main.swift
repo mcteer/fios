@@ -68,8 +68,9 @@ do {
         result=try ControlClient.request(path:directory.appendingPathComponent("control.sock").path,operation:serviceCommand.operation,payload:serviceCommand.payload)
     } else if exporting {
         let response=try ControlClient.request(path:directory.appendingPathComponent("observe.sock").path,operation:.activity)
-        let fields:Set<String>=["version","host","endpoint_hash","profile_hash","manager_epoch","native_epoch","sequence","sampled_at","coverage","resident_model","outstanding_owners","loading"]
-        guard response["ok"] as? Bool==true,let observation=response["observation"] as? [String:Any],Set(observation.keys)==fields else {throw ControlError.invalid_request}
+        guard response["ok"] as? Bool==true,let observation=response["observation"] as? [String:Any] else {throw ControlError.invalid_request}
+        let bytes=try JSONSerialization.data(withJSONObject:observation,options:[.sortedKeys])
+        try ReadonlyObservationFrame.validateStructure(bytes)
         result=observation
     } else if arguments[3]=="task" {
         result=try TaskControlClient.request(directory:directory)

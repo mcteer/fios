@@ -17,6 +17,8 @@ struct ObservationValidator {
     private var fenced=false
     private var sequence:UInt64=0
     private var sampled:Int64 = -1
+    private var nativeSequence:Int64=0
+    private var nativeSampled:Int64 = -1
     private var previousNow:Int64 = -1
     init(host:String,endpointHash:String,profileHash:String,managerEpoch:String,nativeEpoch:String,
          sourceCoverage:NativeCoverage = .unknown) {
@@ -35,37 +37,31 @@ struct ObservationValidator {
         // Remember trusted local time even when a frame is malformed/stale.
         // A rejected frame must not hide an observed wall-clock rollback.
         previousNow=now
-        try StrictJSON.validate(data,maximum:64<<10)
-        let fields:Set<String>=["version","host","endpoint_hash","profile_hash","manager_epoch","native_epoch","sequence","sampled_at","coverage","resident_model","outstanding_owners","loading"]
-        guard let value=try JSONSerialization.jsonObject(with:data) as? [String:Any],Set(value.keys)==fields else { throw ObservationError.invalid }
-        func integer(_ field:String)->Int64? {WireScalar.integer(value[field])}
-        guard let coverage=value["coverage"] as? String,["all_clients","unsupported","unknown"].contains(coverage) else { throw ObservationError.invalid }
-        let ownerCount=integer("outstanding_owners") ?? (coverage != "all_clients" && value["outstanding_owners"] is NSNull ? 0 : nil)
-        let loadingValue=(value["loading"] as? NSNumber) ?? (coverage != "all_clients" && value["loading"] is NSNull ? NSNumber(value:false) : nil)
-        guard integer("version")==1,let seq=integer("sequence"),seq>0,let time=integer("sampled_at"),
-              let owners=ownerCount,owners<=Int32.max,
-              let manager=value["manager_epoch"] as? String,WireScalar.uuid(manager),
-              let epoch=value["native_epoch"] as? String,!epoch.isEmpty,epoch.utf8.count<=128,
-              let loading=loadingValue,CFGetTypeID(loading)==CFBooleanGetTypeID(),
-              value["resident_model"] is NSNull || value["resident_model"] is String else { throw ObservationError.invalid }
-        guard value["host"] as? String==host,value["endpoint_hash"] as? String==endpointHash,
-              value["profile_hash"] as? String==profileHash else {
-            // An authenticated source changing its enrolled identity is not a
-            // transient stale sample. Returning the old tuple cannot re-enroll it.
-            fenced=true
-            throw ObservationError.identity
+        let decoded=try ActivityObservationExport.decode(data,allowLegacyUnsupported:true)
+        let frame=decoded.metadata
+        guard frame.host==host,frame.endpointHash==endpointHash,frame.profileHash==profileHash,
+              Data(frame.nativeEpoch.utf8)==Data(nativeEpoch.utf8),frame.managerEpoch==managerEpoch else {
+            fenced=true;throw ObservationError.identity
         }
-        guard Data(epoch.utf8)==Data(nativeEpoch.utf8),manager==managerEpoch else {
-            fenced=true
-            throw ObservationError.identity
+        guard frame.sampledAt>=sampled,UInt64(frame.sequence)>sequence else {throw ObservationError.replay}
+        func fresh(_ time:Int64)throws {
+            guard (-1000...5000).contains(now-time) else {throw PolicyError.staleObservation}
         }
-        guard time>=sampled else { throw ObservationError.replay }
-        guard UInt64(seq)>sequence else {throw ObservationError.replay}
-        let snapshot=NativeSnapshot(host:host,endpointHash:endpointHash,nativeEpoch:epoch,sequence:UInt64(seq),sampledAt:time,
-            allClientLifecycleCoverage:coverage=="all_clients" && sourceCoverage == .all_clients,residentModel:value["resident_model"] as? String,
-            outstandingOwners:Int(owners),loading:loading.boolValue)
-        let activity=try ActivityPolicy.evaluate(snapshot,now:now)
-        sequence=UInt64(seq);sampled=time
-        return activity
+        try fresh(frame.sampledAt)
+        if let time=frame.nativeSampledAt,let counter=frame.nativeSequence {
+            try fresh(time)
+            guard time>=nativeSampled,counter>nativeSequence else {throw ObservationError.replay}
+        }
+        if let time=decoded.resourceSampledAt {try fresh(time)}
+        sequence=UInt64(frame.sequence);sampled=frame.sampledAt
+        if let time=frame.nativeSampledAt,let counter=frame.nativeSequence {nativeSampled=time;nativeSequence=counter}
+        guard sourceCoverage == .all_clients,decoded.view.coverage == .all_clients else {return .unknown}
+        switch decoded.view.state {
+        case .idle:return .idle
+        case .preparing:return .preparing
+        case .queued,.active:
+            guard let model=decoded.view.model else {return .unknown};return .busy(model:model)
+        case .unknown:return .unknown
+        }
     }
 }

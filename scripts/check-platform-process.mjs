@@ -61,7 +61,7 @@ try {
   assert.equal(activity.observation.loading,null);
   assert.match(activity.observation.profile_hash,/^[a-f0-9]{64}$/);
   const exported=status('export');
-  assert.equal(exported?.version,1,'Fixed read-only export command is missing');
+  assert.equal(exported?.version,2,'Detailed read-only export command is missing');
   assert.equal(exported.manager_epoch,activity.observation.manager_epoch);
   assert.equal(exported.native_epoch,activity.observation.native_epoch);
   assert.equal(exported.coverage,'unsupported');assert.equal(exported.outstanding_owners,null);

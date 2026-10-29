@@ -688,6 +688,20 @@ public final class Journal {
         try validate(job:job,attempt:0)
         return try scalar("SELECT count(*) FROM inference WHERE job=?",[job])
     }
+    func activityOwnership()throws->(models:[String],uncertain:Bool) {
+        let row=try statement("SELECT model,uncertain FROM inference")
+        defer {sqlite3_finalize(row)}
+        var models:[String]=[],uncertain=false
+        while true {
+            let code=sqlite3_step(row)
+            if code==SQLITE_DONE {return (models,uncertain)}
+            guard code==SQLITE_ROW,models.count<32,sqlite3_column_type(row,1)==SQLITE_INTEGER,
+                  (0...1).contains(sqlite3_column_int64(row,1)) else {throw JournalError.invalid}
+            let bytes=try storedBytes(row,0,maximum:WireLimits.modelBytes)
+            guard let model=String(data:bytes,encoding:.utf8),WireScalar.model(model) else {throw JournalError.invalid}
+            models.append(model);uncertain = uncertain || sqlite3_column_int64(row,1)==1
+        }
+    }
     public func unresolvedCount() throws -> Int { try scalar("SELECT count(*) FROM inference") }
     public func uncertainCount() throws -> Int { try scalar("SELECT count(*) FROM inference WHERE uncertain=1") }
     public func setDesired(service: String, desired: String) throws {

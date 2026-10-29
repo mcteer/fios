@@ -189,11 +189,18 @@ public enum ManagerRuntime {
                     case .activity:
                         guard request.payload.isEmpty else { throw ControlError.invalid_request }
                         response["coverage"]="unsupported"; response["activity"]="unknown"
-                        response["observation"]=["version":1,"host":ProcessInfo.processInfo.hostName,
-                            "endpoint_hash":endpointHash,"profile_hash":profileHash,"manager_epoch":epoch,
-                            // Explicit synthetic unknown marker, NOT a native restart/completion proof.
-                            "native_epoch":"unknown:"+epoch,"sequence":sequence,"sampled_at":sampledAt,
-                            "coverage":"unsupported","resident_model":NSNull(),"outstanding_owners":NSNull(),"loading":NSNull()]
+                        let ownership=try journal.activityOwnership()
+                        var context=ActivityObservationContext(sampledAt:requestResources.sampledAt,pressure:requestResources.pressure,thermal:requestResources.thermal)
+                        for service in ManagedService.allCases {
+                            guard let desired=ServiceDesired(rawValue:try journal.desired(service:service.rawValue)) else {throw ControlError.internal_error}
+                            let observed=ServiceStatusPolicy.observed(desired:desired,observation:serviceObservations?.snapshot(for:service),launchPending:serviceRecovery?.isPending(service) ?? false,now:requestedAt)
+                            if service == .mlx {context.mlx=observed}else {context.orbstack=observed}
+                        }
+                        let metadata=ActivityObservationMetadata(host:ProcessInfo.processInfo.hostName,endpointHash:endpointHash,profileHash:profileHash,managerEpoch:epoch,
+                            nativeEpoch:"unknown:"+epoch,sequence:Int64(sequence),sampledAt:sampledAt,nativeSequence:nil,nativeSampledAt:nil)
+                        let frame=try ActivityObservationExport.encode(metadata:metadata,coverage:.unsupported,sourceCoverage:.unsupported,
+                            localModels:ownership.models,localUncertain:ownership.uncertain,context:context)
+                        response["observation"]=try JSONSerialization.jsonObject(with:frame)
                     case .jobCreate,.jobStatus,.jobRenew,.jobCancel,.modelRequest,.artifactRead:
                         response["result"]=try taskCommands.handle(request,role:client.role,sample:requestResources,admission:&admission,
                             binding:binding,nativeCapacityProven:activeExecution?.nativeCapacityProven() ?? false,now:requestedAt,uptime:Int64(now*1000))

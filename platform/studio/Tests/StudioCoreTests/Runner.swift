@@ -100,6 +100,7 @@ struct PolicyTestRunner {
             }
         }
         ActivityCoherenceTests.run()
+        try DetailedObservationTests.run()
         try InferenceScopeTests.run()
         try MigrationTests.run()
         let tests = ActivityTests()

@@ -10,9 +10,8 @@ func runObservationTests() throws {
     }
     var validator=enrolled("native-one")
     func data(epoch:String,sequence:Int,sampled:Int=1000,host:String="fios-edge-a.lab",coverage:String="all_clients",frameManager:String?=nil) throws -> Data {
-        try JSONSerialization.data(withJSONObject:["version":1,"host":host,"endpoint_hash":endpoint,"profile_hash":profile,
-            "manager_epoch":frameManager ?? manager,"native_epoch":epoch,"sequence":sequence,"sampled_at":sampled,
-            "coverage":coverage,"resident_model":NSNull(),"outstanding_owners":0,"loading":false])
+        let value=try observationFixture(host:host,endpoint:endpoint,profile:profile,manager:frameManager ?? manager,native:epoch,sequence:sequence,sampled:sampled,coverage:coverage)
+        return try JSONSerialization.data(withJSONObject:value)
     }
     var unreviewed=ObservationValidator(host:"fios-edge-a.lab",endpointHash:endpoint,profileHash:profile,managerEpoch:manager,nativeEpoch:"native-one")
     guard try unreviewed.accept(data(epoch:"native-one",sequence:1),now:1000) == .unknown else {fatalError("Wire coverage claim escalated unreviewed source")}

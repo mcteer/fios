@@ -4,7 +4,7 @@ Required data model; implementation remains partial. The separate development jo
 
 ## Shared validation rules
 
-- Protocol/schema version `1`; unknown fields/versions and duplicate JSON keys reject. Identifiers are canonical UUID strings, except enrolled `host` (ASCII1..128), `model` (exact UTF-8 1..1024 bytes), SHA256 (64 lowercase hex), and safe fixed enum values.
+- Control/private-task protocol versions remain `1`; readonly activity observations use version `2`, with exact legacy version1 accepted only as unknown/unsupported diagnostics. Unknown fields/versions and duplicate JSON keys reject. Identifiers are canonical UUID strings, except enrolled `host` (ASCII1..128), `model` (exact UTF-8 1..1024 bytes), SHA256 (64 lowercase hex), and safe fixed enum values.
 - UTC timestamps are integer milliseconds0..9007199254740991; monotonic durations govern live deadlines. On restart/sleep/clock discontinuity, leases and observations become invalid/uncertain until revalidated; elapsed wall time never proves native completion.
 - Control JSON≤64KiB/frame, native raw observation≤1MiB, no prompts/results in state or audit. Identity/model metadata is bounded; no arbitrary executable paths, endpoint URLs or shell strings in job commands.
 - State cardinalities:2 enrolled hosts initially,2 managed services/host,2 active sandbox slots/host plus2 model-only job slots/host (4 jobs total),2 live model workers/host with512MiB reserved each,32 unresolved manager-owned inference records/host,256 terminal job tombstones/host retained24h. Tombstone limit blocks new jobs until expiry/reconciliation, not premature duplicate-key reuse. Event journal≤10MiB/7days, whichever first; a bounded oldest-first rotation excludes unresolved ownership records.

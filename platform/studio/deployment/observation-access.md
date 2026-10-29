@@ -1,6 +1,6 @@
 # Read-only observation handoff (development, not enrolled)
 
-`studioctl --state FIXED_ABSOLUTE_PRIVATE_STATE export` emits only the version1
+`studioctl --state FIXED_ABSOLUTE_PRIVATE_STATE export` emits only the version2
 observation object, at most64KiB, through the observation socket. It does not
 accept stdin, roles, endpoints, original remote commands, task requests or
 management operations. The original manager/native epochs and source timestamp
@@ -57,3 +57,5 @@ This real unprivileged OpenSSH fixture builds a disposable local manager/CLI, ge
 Passed: actual authenticated bounded raw export with unchanged manager/native epochs and unsupported coverage; alternate-command/SFTP/PTY rejection; wrong host-key/client-key refusal; direct TCP, reverse TCP and reverse Unix forwarding refusal with zero connections to a private witness target; stdin management-shaped JSON remains inert and manager desired state stays running. Forwarding/negative checks require an actual positive nonzero exit: timeout/killed transport is explicitly **not** refusal evidence. Effective policy separately proves no accepted caller environment, user RC, agent/X11/tunnel/PTY or forwarding, and public-key-only authentication. All fixture children are stopped/reaped and generated keys/configuration/databases removed. Logs `/tmp/fios-009-ssh-fixture-strict.log`, failing-first `/tmp/fios-009-ssh-fixture-red.log`.
 
 The existing `check-platform-process.mjs --isolated` additionally exercises CLI command/PTY environment guards and manager responsiveness, while role security tests deny management on observation IPC. This completes the isolated future-consumer/forced-command fixture requirement (T024), **not** effective configuration review, host-key/account/generation enrollment or export from either actual Studio SSH server. No native installation, native inference or deployed transport is implied.
+
+Version2 carries separate manager/native sequence/time, bounded per-model phases and local ownership blocking. `ObservationValidator` independently checks both sample ages/sequences plus resource summary age; unknown gaps retain native replay tracking. The CLI can relay exact legacy version1 unknown/unsupported diagnostics for older development artifacts, but rejects legacy all-client claims. See the [activity contract](../../../specs/009-studio-platform-agent/contracts/activity.md) for the exact fields and fixed reasons. No production all-client source or008 routing is activated by this wire change.

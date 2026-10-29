@@ -8,11 +8,8 @@ func runConsumerTests() throws {
     func consumer()->ObservationValidator {
         ObservationValidator(host:host,endpointHash:endpoint,profileHash:profile,managerEpoch:manager,nativeEpoch:native,sourceCoverage:.all_clients)
     }
-    func frame(coverage:String="unsupported",sequence:Int=1,managerEpoch:String?=nil)->[String:Any] {
-        ["version":1,"host":host,"endpoint_hash":endpoint,"profile_hash":profile,"manager_epoch":managerEpoch ?? manager,
-         "native_epoch":native,"sequence":sequence,"sampled_at":1000,"coverage":coverage,
-         "resident_model":NSNull(),"outstanding_owners":coverage=="all_clients" ? 0 : NSNull(),
-         "loading":coverage=="all_clients" ? false : NSNull()]
+    func frame(coverage:String="unsupported",sequence:Int=1,managerEpoch:String?=nil)throws->[String:Any] {
+        try observationFixture(host:host,endpoint:endpoint,profile:profile,manager:managerEpoch ?? manager,native:native,sequence:sequence,sampled:1000,coverage:coverage)
     }
     func encode(_ value:[String:Any]) throws -> Data {try JSONSerialization.data(withJSONObject:value,options:[.sortedKeys])}
     func refuses(_ bytes:Data) throws {
@@ -37,7 +34,7 @@ func runConsumerTests() throws {
     do {_=try rebound.accept(bytes,now:1000);fatalError("Reconnect cleared generation fence")}
     catch ObservationError.identity {}
     for field in ["host","endpoint_hash","profile_hash"] {
-        var altered=frame()
+        var altered=try frame()
         altered[field] = field == "host" ? "fios-edge-b.lab" : String(repeating:"c",count:64)
         var drifted=consumer()
         do {_=try drifted.accept(encode(altered),now:1000);fatalError("Consumer accepted identity drift")}
