@@ -101,6 +101,14 @@ try {
   assert(genActor.indexOf('fios_actor_context.begin(sch, reqs)')<genActor.indexOf('req.model.gen_busy = true;'));
   assert(schedulerSource.includes('self.held = try source.retainTokens(sch.io, tokens[0..reqs.len]);'));
   assert(schedulerSource.includes('req.merge.?.run_many(ctxs[0..reqs.len]);'),'native merging must remain available');
+  for (const [signature, call, work] of [
+    ['fn runPrefill(sch:', 'beginSlots(sch, &.{slot})', 'const observe ='],
+    ['fn runDecodeTick(sch:', 'beginSlots(sch, active)', 'defer sch.inflight_generated_tokens'],
+  ]) {
+    const actor = schedulerSource.slice(schedulerSource.indexOf(signature));
+    assert(actor.indexOf(call) >= 0 && actor.indexOf(call) < actor.indexOf(work), 'text actor context must precede backend work');
+    assert(actor.indexOf('defer fios_actor_context.finish(sch.io);') < actor.indexOf(work), 'text actor must restore context on every exit');
+  }
   const patched = readFileSync(path.join(scratch, 'src/server.zig'), 'utf8');
   const startupEnrollment=patched.indexOf('load_params.registry.fios_request_tracker = fios_requests;');
   assert(startupEnrollment>0&&startupEnrollment<patched.indexOf('var startup: StartupResponder'), 'tracker must precede startup responder/load');
