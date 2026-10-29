@@ -13,7 +13,7 @@ final class ServiceForceController {
     private let managerEpoch:String
     private let observations:ServiceDrainObservationCache
     private var policy:ServicePolicy
-    private var challenges:[ManagedService:(token:String,generation:UInt64)]=[:]
+    private var challenges:[ManagedService:(token:String,generation:UInt64,intentGeneration:UInt64)]=[:]
     init(journal:Journal,managerEpoch:String,observations:ServiceDrainObservationCache,
          uptime:@escaping @Sendable()->TimeInterval={ProcessInfo.processInfo.systemUptime})throws {
         guard WireScalar.uuid(managerEpoch) else {throw ServiceError.invalid}
@@ -38,8 +38,9 @@ final class ServiceForceController {
         // Durable admission closure precedes even issuing consent. A failure
         // leaves no new token and never restores a previous running intent.
         try journal.setDesired(service:service.rawValue,desired:ServiceDesired.maintenance.rawValue)
+        guard let intentGeneration=journal.serviceIntentGeneration(service:service) else {throw ServiceError.invalid}
         let token=try policy.prepareForce(scope:scope,role:role,now:now)
-        challenges[service]=(token,current.generation)
+        challenges[service]=(token,current.generation,intentGeneration)
         return ServiceForceChallenge(token:token,scopeDigest:scope.digest)
     }
     private func consume(token:String) {
@@ -54,6 +55,7 @@ final class ServiceForceController {
               try journal.recordedDesired(service:service) == .maintenance else {throw ServiceError.invalid}
         let current=try current(service,now:now),scope=current.value.scope
         guard let challenge=challenges[service],challenge.token==token,challenge.generation==current.generation,
+              challenge.intentGeneration==journal.serviceIntentGeneration(service:service),
               scope.digest==scopeDigest else {throw ServiceError.invalid}
         // Returned action is an intent only. A separately enrolled actuator
         // must revalidate immutable image, exact process and affected scope.

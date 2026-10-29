@@ -14,6 +14,10 @@ public final class Journal {
     // records between SQL mutations; every execute/transaction edge invalidates.
     private var jobsCache:[DurableJob]?
     private var sandboxesCache:[SandboxRecord]?
+    // Consent is manager-local and never survives restart. Preserve every
+    // service-intent edge, including failed/identical writes, for that lifetime.
+    // Saturation permanently disables new consent; it never wraps to old state.
+    private var serviceIntentGenerations:[ManagedService:UInt64]=[:]
     private let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
 
     public convenience init(directory:URL) throws {
@@ -728,7 +732,14 @@ public final class Journal {
     public func uncertainCount() throws -> Int { try scalar("SELECT count(*) FROM inference WHERE uncertain=1") }
     public func setDesired(service: String, desired: String) throws {
         guard ["mlx","orbstack"].contains(service), ["running","maintenance","stopped"].contains(desired) else { throw JournalError.invalid }
+        guard let typed=ManagedService(rawValue:service) else {throw JournalError.invalid}
+        let previous=serviceIntentGenerations[typed] ?? 0
+        if previous<UInt64.max {serviceIntentGenerations[typed]=previous+1}
         try execute("INSERT INTO services VALUES(?,?) ON CONFLICT(service) DO UPDATE SET desired=excluded.desired", [service,desired])
+    }
+    func serviceIntentGeneration(service:ManagedService)->UInt64? {
+        let value=serviceIntentGenerations[service] ?? 0
+        return value==UInt64.max ? nil:value
     }
     // An absent row is not explicit authority to reopen a native admission
     // fence after restart. Keep the existing display default separate.

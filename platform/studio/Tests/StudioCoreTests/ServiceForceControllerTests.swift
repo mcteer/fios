@@ -49,7 +49,17 @@ func runServiceForceControllerTests()throws {
     do {_=try controller.confirm(service:.mlx,role:.operator,token:resumed.token,scopeDigest:resumed.scopeDigest,now:1002);throw RuntimeError.identity}catch ServiceError.invalid {}
     try journal.setDesired(service:"mlx",desired:"maintenance")
     do {_=try controller.confirm(service:.mlx,role:.operator,token:resumed.token,scopeDigest:resumed.scopeDigest,now:1002);throw RuntimeError.identity}catch ServiceError.invalid {}
+    let superseded=try controller.prepare(service:.mlx,role:.operator,now:1002)
+    // A later operator intent supersedes consent even if the final durable
+    // value returns to maintenance before another confirmation is attempted.
+    try journal.setDesired(service:"mlx",desired:"running")
+    try journal.setDesired(service:"mlx",desired:"maintenance")
+    do {
+        _=try controller.confirm(service:.mlx,role:.operator,token:superseded.token,scopeDigest:superseded.scopeDigest,now:1002)
+        FileHandle.standardError.write(Data("FORCE_REUSED_SUPERSEDED_INTENT\n".utf8));throw RuntimeError.identity
+    }catch ServiceError.invalid {}
     let good=try controller.prepare(service:.mlx,role:.operator,now:1002)
+    try journal.setDesired(service:"orbstack",desired:"maintenance")
     guard try controller.confirm(service:.mlx,role:.operator,token:good.token,scopeDigest:good.scopeDigest,now:1002) == .forceQuit(identity) else {throw RuntimeError.identity}
     do {_=try controller.confirm(service:.mlx,role:.operator,token:good.token,scopeDigest:good.scopeDigest,now:1002);throw RuntimeError.identity}catch ServiceError.invalid {}
     cache.publish(try snapshot(stamp:1002,external:nil),for:.mlx)
