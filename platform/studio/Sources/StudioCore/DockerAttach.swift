@@ -8,6 +8,7 @@ final class DockerAttach {
     private var fd:Int32 = -1
     private var connecting=false,upgraded=false,closed=false
     private let created:TimeInterval
+    private let handshakeDeadline:TimeInterval
     private let request:Data
     private var requestOffset=0
     private var headers=Data(),outgoing=Data(),application=Data()
@@ -19,6 +20,7 @@ final class DockerAttach {
     init(socketPath:String,configuration:SandboxConfiguration,savedID:String,peerUID:uid_t,now:TimeInterval,endpointPolicy:RuntimeEndpointPolicy?=nil) throws {
         guard now.isFinite,now>=0,savedID.count==64,savedID.utf8.allSatisfy({(48...57).contains($0)||(97...102).contains($0)}) else { throw RuntimeError.invalid }
         created=now
+        handshakeDeadline=min(now+2,ProcessInfo.processInfo.systemUptime+2)
         request=Data(("POST /v1.47/containers/"+savedID+"/attach?stdin=1&stdout=1&stderr=1&stream=1 HTTP/1.1\r\nHost: localhost\r\nConnection: Upgrade\r\nUpgrade: tcp\r\nContent-Length: 0\r\n\r\n").utf8)
         // Full container identity is verified by the executor/controller before
         // construction; configuration is a trusted recorded identity, not IPC.
@@ -26,7 +28,8 @@ final class DockerAttach {
         if let endpointPolicy {
             guard endpointPolicy.path==socketPath,endpointPolicy.uid==peerUID else {throw RuntimeError.identity}
         }
-        endpointPin=try endpointPolicy?.capture(deadline:ProcessInfo.processInfo.systemUptime+2)
+        guard ProcessInfo.processInfo.systemUptime<handshakeDeadline else {throw RuntimeError.deadline}
+        endpointPin=try endpointPolicy?.capture(deadline:handshakeDeadline)
         let path=endpointPin?.path ?? URL(fileURLWithPath:socketPath).resolvingSymlinksInPath().path
         var info=stat()
         guard path.hasPrefix("/"),path.utf8.count<104,lstat(path,&info)==0,
@@ -53,7 +56,7 @@ final class DockerAttach {
     private func verifyPeer(_ expected:uid_t) throws {
         var uid:uid_t=0,gid:gid_t=0
         guard getpeereid(fd,&uid,&gid)==0,uid==expected else { throw RuntimeError.identity }
-        try endpointPin?.verify(deadline:ProcessInfo.processInfo.systemUptime+2)
+        try endpointPin?.verify(deadline:handshakeDeadline)
         // The connected kernel socket now binds this peer. A later pathname
         // replacement cannot redirect the established data connection.
         endpointPin=nil
@@ -70,7 +73,8 @@ final class DockerAttach {
     }
     func poll(now:TimeInterval) throws -> [Data] {
         guard !closed,now.isFinite,now>=created,now-created<1800,
-              upgraded || now-created<2 else { close();throw RuntimeError.deadline }
+              upgraded || now-created<2,
+              upgraded || ProcessInfo.processInfo.systemUptime<handshakeDeadline else { close();throw RuntimeError.deadline }
         do {
             if connecting {
                 var item=pollfd(fd:fd,events:Int16(POLLOUT),revents:0)

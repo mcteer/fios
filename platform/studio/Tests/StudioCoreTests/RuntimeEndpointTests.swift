@@ -45,12 +45,20 @@ func runRuntimeEndpointTests()throws {
     let fakeSHA=SHA256.hash(data:try Data(contentsOf:URL(fileURLWithPath:executable))).map {String(format:"%02x",$0)}.joined()
     let fake=DockerRuntime(executable:try VerifiedExecutable(path:executable,sha256:fakeSHA),endpoint:policy)
     guard try fake.command(["fixture-safe"],timeout:2).status==0 else {fatalError("Unchanged guarded fixture command refused")}
+    var beforeMutation=stat()
+    guard lstat(path,&beforeMutation)==0 else {fatalError("Missing original fixture socket")}
     do {
-        _=try fake.command(["fixture-mutate"],timeout:2)
+        let completed=try fake.command(["fixture-mutate"],timeout:2)
+        var changed=stat(),heldSocket=stat()
+        guard completed.status==0,lstat(path,&changed)==0,changed.st_mode&S_IFMT==S_IFLNK,
+              lstat(path+".fixture-held",&heldSocket)==0,heldSocket.st_ino==beforeMutation.st_ino,heldSocket.st_dev==beforeMutation.st_dev else {
+            fatalError("Finite fake command did not perform its successful exact socket mutation")
+        }
         fatalError("Successful local command hid a changed runtime endpoint")
     } catch RuntimeError.identity {}
-    var mutated=stat()
+    var mutated=stat(),heldSocket=stat()
     guard lstat(path,&mutated)==0,mutated.st_mode&S_IFMT==S_IFLNK,
+          lstat(path+".fixture-held",&heldSocket)==0,heldSocket.st_ino==beforeMutation.st_ino,heldSocket.st_dev==beforeMutation.st_dev,
           unlink(path)==0,rename(path+".fixture-held",path)==0 else {fatalError("Finite fake command did not execute/restore its exact fixture mutation")}
     let moved=hidden+"/previous-run"
     guard rename(run,moved)==0 else {fatalError("Fixture directory rename failed")}

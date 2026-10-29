@@ -35,6 +35,11 @@ func runDockerAttachTests() throws {
     let received=Darwin.read(peer,&bytes,bytes.count)
     guard received==application.count,Data(bytes.prefix(received))==application else {fatalError("Attach input framing changed")}
     client.close()
+    do {
+        _=try DockerAttach(socketPath:directory+"/docker.sock",configuration:config,savedID:id,peerUID:geteuid(),now:created-3,endpointPolicy:RuntimeEndpointPolicy(home:home,uid:geteuid()))
+        fatalError("Attach restarted an expired original handshake deadline")
+    } catch RuntimeError.deadline {}
+
     guard chmod(directory,0o755)==0 else {fatalError("Fixture endpoint mode change failed")}
     do {
         _=try DockerAttach(socketPath:directory+"/docker.sock",configuration:config,savedID:id,peerUID:geteuid(),now:ProcessInfo.processInfo.systemUptime,endpointPolicy:RuntimeEndpointPolicy(home:home,uid:geteuid()))
