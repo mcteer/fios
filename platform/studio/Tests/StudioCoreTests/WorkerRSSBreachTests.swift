@@ -46,6 +46,9 @@ func runWorkerRSSBreachTests()throws {
           try journal.workerLaunchReaped(job:id,attempt:0),try journal.uncertainCount()==1 else {
         FileHandle.standardError.write(Data("WORKER_RSS_BREACH_NOT_REAPED\n".utf8));throw WorkerResourceError.invalid
     }
+    guard elapsed<1750 else {
+        FileHandle.standardError.write(Data("WORKER_RSS_CLEANUP_MARGIN_MISSED\n".utf8));throw WorkerResourceError.invalid
+    }
     admission.releaseWorkerAfterReap(key:key)
     try admission.reserveWorker(key:"after-reap",sample:sample,now:now)
     print("PASS: actual owned worker RSS\(resident) bytes exceeds512MiB, TERM-ignoring child reaped in\(elapsed)ms, reservations retained until reap and native uncertainty preserved; no command/model/network")

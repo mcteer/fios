@@ -110,7 +110,10 @@ final class PrivateWorker {
             if action != .continueRunning { try cancel(now:now) }
             if action == .kill || action == .cleanupOverdue { kill(process.processIdentifier,SIGKILL) }
         }
-        if let cancelAt,now-cancelAt>=1000,process.isRunning { kill(process.processIdentifier,SIGKILL) }
+        // RSS detection may already consume a full1s sample interval. Keep
+        // the owned child's TERM grace at0.5s so kill/reap has scheduling
+        // margin inside the2s breach budget. Native uncertainty is retained.
+        if let cancelAt,now-cancelAt>=500,process.isRunning { kill(process.processIdentifier,SIGKILL) }
         if !revoked && sent<outgoing.count {
             if now-started>=10000 { try cancel(now:now) }
             else {
