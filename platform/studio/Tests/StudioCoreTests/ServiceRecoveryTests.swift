@@ -22,6 +22,24 @@ func runServiceRecoveryTests() throws {
     recovery=try ServiceRecoveryController(journal:journal,approvedHashes:pins)
     guard try recovery.plan(service:.mlx,desired:.running,observation:absent(700000),now:700000,tick:700000)==nil else {fatalError("Restart/age cleared uncertain launch")}
     do {try recovery.notSent(service:.mlx,id:UUID().uuidString.lowercased());fatalError("Foreign acknowledgement cleared intent")}catch ServiceError.invalid {}
+    // Fail the real atomic rename against a private directory while retaining
+    // the exact old state file. A failed durable acknowledgement cannot make
+    // the live controller forget its outstanding launch intent.
+    do {
+        let target=directory.appendingPathComponent("service-recovery.json")
+        let saved=directory.appendingPathComponent("retained-recovery.json")
+        try FileManager.default.moveItem(at:target,to:saved)
+        try FileManager.default.createDirectory(at:target,withIntermediateDirectories:false,attributes:[.posixPermissions:0o700])
+        defer {
+            try? FileManager.default.removeItem(at:target)
+            try? FileManager.default.moveItem(at:saved,to:target)
+        }
+        do {try recovery.notSent(service:.mlx,id:first.id);throw RuntimeError.identity}
+        catch JournalError.storage {}
+        guard recovery.isPending(.mlx) else {
+            FileHandle.standardError.write(Data("SERVICE_RECOVERY_ACK_PUBLISHED_BEFORE_DURABILITY\n".utf8));throw RuntimeError.identity
+        }
+    }
     try recovery.notSent(service:.mlx,id:first.id)
     guard let second=try recovery.plan(service:.mlx,desired:.running,observation:absent(700000),now:700000,tick:700000) else {fatalError("Correlated non-dispatch proof did not permit later launch")}
     do {try recovery.notSent(service:.mlx,id:first.id);fatalError("Old proof retired a newer intent")}catch ServiceError.invalid {}

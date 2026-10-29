@@ -126,12 +126,13 @@ final class ServiceRecoveryController {
             return value
         } catch {throw ServiceError.invalid}
     }
-    private func persist()throws {
+    private func persist(_ value:State)throws {
         let encoder=JSONEncoder();encoder.outputFormatting=[.sortedKeys]
-        let bytes=try encoder.encode(state)
+        let bytes=try encoder.encode(value)
         guard bytes.count<=4096 else {throw ServiceError.invalid}
         try AtomicState.write(bytes,to:file)
     }
+    private func persist()throws {try persist(state)}
     func isPending(_ service:ManagedService)->Bool {
         state.entries.first(where:{$0.service==service})?.pending != nil
     }
@@ -181,7 +182,12 @@ final class ServiceRecoveryController {
     // Non-dispatch means no asynchronous launch may still materialize later.
     func notSent(service:ManagedService,id:String)throws {
         guard let index=state.entries.firstIndex(where:{$0.service==service}),state.entries[index].pending==id else {throw ServiceError.invalid}
-        state.entries[index].pending=nil;try persist()
+        var candidate=state
+        candidate.entries[index].pending=nil
+        // Keep the original live intent held if writing or parent fsync fails.
+        // An uncertain write is never permission to issue another launch.
+        try persist(candidate)
+        state=candidate
     }
     // A mere presence sample is insufficient. The authenticated transport must
     // correlate its acknowledgement with this exact verified launched process.
