@@ -55,6 +55,7 @@ public struct DockerRuntime:Sendable {
         guard timeout.isFinite,timeout>0,timeout<=10 else {throw RuntimeError.invalid}
         let deadline=ProcessInfo.processInfo.systemUptime+timeout
         let pinned=try endpointPolicy?.capture(deadline:min(deadline,ProcessInfo.processInfo.systemUptime+2))
+        let peer=try endpointPolicy?.peer?.connect(path:socket,deadline:min(deadline,ProcessInfo.processInfo.systemUptime+2))
         let remaining=deadline-ProcessInfo.processInfo.systemUptime
         guard remaining>0 else {throw RuntimeError.deadline}
         let result=try executable.run(arguments:["--host","unix://" + socket] + arguments, timeout:remaining,
@@ -62,6 +63,7 @@ public struct DockerRuntime:Sendable {
         // A changed endpoint after an effect is unavailable/uncertain. Never
         // turn a locally successful CLI into permission to retry or release.
         try pinned?.verify(deadline:min(deadline,ProcessInfo.processInfo.systemUptime+2))
+        _=try peer?.verify(deadline:min(deadline,ProcessInfo.processInfo.systemUptime+2))
         return result
     }
     public func create(_ configuration: SandboxConfiguration) throws -> String {

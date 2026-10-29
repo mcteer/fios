@@ -68,6 +68,7 @@ struct DockerVMMetadata:DockerVMMetadataReading {
         withUnsafeMutableBytes(of:&address.sun_path) {$0.initializeMemory(as:UInt8.self,repeating:0);$0.copyBytes(from:Array(socketPath.utf8))}
         let connected=withUnsafePointer(to:&address) {$0.withMemoryRebound(to:sockaddr.self,capacity:1) {connect(fd,$0,socklen_t(MemoryLayout<sockaddr_un>.size))}}
         guard connected==0 || errno==EINPROGRESS || errno==EAGAIN else {throw RuntimeError.launch}
+        var peerIdentity:ServiceIdentity?
         var ready=connected==0,verified=false
         let bytes=body ?? Data()
         let version=stream ? "HTTP/1.1":"HTTP/1.0"
@@ -86,6 +87,7 @@ struct DockerVMMetadata:DockerVMMetadataReading {
             if !verified {
                 var uid:uid_t=0,gid:gid_t=0
                 guard getpeereid(fd,&uid,&gid)==0,uid==peerUID else {throw DockerVMMetadataError.socket}
+                peerIdentity=try endpointPolicy?.peer?.authenticate(fd:fd,deadline:end)
                 try pinned?.verify(deadline:end);verified=true
             }
             if sent<request.count {
@@ -101,6 +103,9 @@ struct DockerVMMetadata:DockerVMMetadataReading {
                 guard sent==request.count else {throw RuntimeError.launch}
                 let body=try Self.body(response,stream:stream)
                 try pinned?.verify(deadline:end)
+                if let expected=peerIdentity {
+                    guard try endpointPolicy?.peer?.verifyIdentity(expected,deadline:end)==expected else {throw RuntimeError.identity}
+                }
                 return body
             }
             else if ![EAGAIN,EWOULDBLOCK,EINTR].contains(errno) {throw RuntimeError.launch}

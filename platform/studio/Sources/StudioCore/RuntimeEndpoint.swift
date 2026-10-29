@@ -7,13 +7,15 @@ import Darwin
 struct RuntimeEndpointPolicy:Sendable {
     let home:String
     let uid:uid_t
+    let peer:RuntimePeerPolicy?
     var path:String {home+"/.orbstack/run/docker.sock"}
-    init(home:String,uid:uid_t)throws {
+    init(home:String,uid:uid_t,peer:RuntimePeerPolicy?=nil)throws {
         guard uid>0,uid==geteuid(),getuid()==geteuid(),home.hasPrefix("/"),
               !home.hasSuffix("/"),!home.contains("//"),!home.contains("\0"),
               !home.split(separator:"/").contains(where:{$0=="." || $0==".."}),
               (home+"/.orbstack/run/docker.sock").utf8.count<104 else {throw RuntimeError.identity}
-        self.home=home;self.uid=uid
+        guard peer == nil || peer?.uid==uid else {throw RuntimeError.identity}
+        self.home=home;self.uid=uid;self.peer=peer
     }
     func capture(deadline:TimeInterval)throws->PinnedRuntimeEndpoint {
         try EndpointMetadata.deadline(deadline)

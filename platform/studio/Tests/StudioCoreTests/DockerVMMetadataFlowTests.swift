@@ -66,9 +66,15 @@ func runDockerVMMetadataFlowTests()throws {
     let completed=try json(["ID":exec,"ContainerID":id,"Running":false,"ExitCode":0,
         "ProcessConfig":["privileged":false,"tty":false,"user":"65533:65533","entrypoint":"/bin/cat","arguments":files]])
     let daemon=try MetadataDaemonFixture(path:directory+"/docker.sock",responses:[created,stream,completed])
-    let client=DockerVMMetadata(socketPath:directory+"/docker.sock",peerUID:geteuid(),endpointPolicy:try RuntimeEndpointPolicy(home:home,uid:geteuid()))
+    defer {withExtendedLifetime(daemon){}}
+    let client=DockerVMMetadata(socketPath:directory+"/docker.sock",peerUID:geteuid(),endpointPolicy:try RuntimeEndpointPolicy(home:home,uid:geteuid(),peer:RuntimePeerPolicy(uid:geteuid(),executable:runtimePeerTestExecutable())))
     guard try client.read(id:id)==payload else {fatalError("Fixed metadata stream changed")}
     let requests=try daemon.finish()
+    let own=try runtimePeerTestExecutable()
+    let foreignPeer=try RuntimePeerPolicy(uid:geteuid(),executable:VerifiedExecutable(path:own.path,sha256:String(repeating:"0",count:64)))
+    let foreign=DockerVMMetadata(socketPath:directory+"/docker.sock",peerUID:geteuid(),endpointPolicy:try RuntimeEndpointPolicy(home:home,uid:geteuid(),peer:foreignPeer))
+    do {_=try foreign.inspect(id:id);fatalError("Metadata accepted an unapproved same-UID daemon image")}catch RuntimeError.identity {}
+
     guard chmod(directory,0o755)==0 else {fatalError("Fixture endpoint mode change failed")}
     do {_=try client.inspect(id:id);fatalError("Metadata ignored its enrolled endpoint policy")}catch RuntimeError.identity {}
     guard chmod(directory,0o700)==0 else {fatalError("Fixture endpoint mode restore failed")}

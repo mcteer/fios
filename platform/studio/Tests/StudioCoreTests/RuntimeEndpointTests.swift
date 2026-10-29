@@ -10,7 +10,7 @@ func runRuntimeEndpointTests()throws {
     try FileManager.default.createDirectory(atPath:run,withIntermediateDirectories:true,attributes:[.posixPermissions:0o700])
     let listener=try UnixControlSocket(path:path)
     defer {withExtendedLifetime(listener) {}}
-    let policy=try RuntimeEndpointPolicy(home:home,uid:geteuid())
+    let policy=try RuntimeEndpointPolicy(home:home,uid:geteuid(),peer:RuntimePeerPolicy(uid:geteuid(),executable:runtimePeerTestExecutable()))
     let original=try policy.capture(deadline:ProcessInfo.processInfo.systemUptime+2)
     try original.verify(deadline:ProcessInfo.processInfo.systemUptime+2)
     func refused(_ operation:()throws->Void)throws {
@@ -19,6 +19,10 @@ func runRuntimeEndpointTests()throws {
     let harmless="/usr/bin/true"
     let digest=SHA256.hash(data:try Data(contentsOf:URL(fileURLWithPath:harmless))).map {String(format:"%02x",$0)}.joined()
     let runtime=DockerRuntime(executable:try VerifiedExecutable(path:harmless,sha256:digest),endpoint:policy)
+    let own=try runtimePeerTestExecutable()
+    let wrongPeer=try RuntimePeerPolicy(uid:geteuid(),executable:VerifiedExecutable(path:own.path,sha256:String(repeating:"0",count:64)))
+    let wrongRuntime=DockerRuntime(executable:try VerifiedExecutable(path:harmless,sha256:digest),endpoint:try RuntimeEndpointPolicy(home:home,uid:geteuid(),peer:wrongPeer))
+    try refused {_=try wrongRuntime.command(["version"],timeout:2)}
     guard chmod(run,0o755)==0 else {fatalError("Fixture chmod failed")}
     try refused {_=try policy.capture(deadline:ProcessInfo.processInfo.systemUptime+2)}
     try refused {try original.verify(deadline:ProcessInfo.processInfo.systemUptime+2)}

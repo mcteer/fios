@@ -4,6 +4,10 @@ import Darwin
 // Fixed owned-container attach only, over the enrolled local Unix daemon
 // socket. No TCP, listener, subprocess, arbitrary HTTP path or sandbox socket.
 final class DockerAttach {
+    private let peerPolicy:RuntimePeerPolicy?
+    private var authentication:RuntimePeerAuthentication?
+    private var authenticated=false
+    private var peerIdentity:ServiceIdentity?
     private var endpointPin:PinnedRuntimeEndpoint?
     private var fd:Int32 = -1
     private var connecting=false,upgraded=false,closed=false
@@ -19,6 +23,7 @@ final class DockerAttach {
     var writableBytes:Int { max(0,(256<<10)-outgoing.count) }
     init(socketPath:String,configuration:SandboxConfiguration,savedID:String,peerUID:uid_t,now:TimeInterval,endpointPolicy:RuntimeEndpointPolicy?=nil) throws {
         guard now.isFinite,now>=0,savedID.count==64,savedID.utf8.allSatisfy({(48...57).contains($0)||(97...102).contains($0)}) else { throw RuntimeError.invalid }
+        peerPolicy=endpointPolicy?.peer
         created=now
         handshakeDeadline=min(now+2,ProcessInfo.processInfo.systemUptime+2)
         request=Data(("POST /v1.47/containers/"+savedID+"/attach?stdin=1&stdout=1&stderr=1&stream=1 HTTP/1.1\r\nHost: localhost\r\nConnection: Upgrade\r\nUpgrade: tcp\r\nContent-Length: 0\r\n\r\n").utf8)
@@ -57,13 +62,13 @@ final class DockerAttach {
         var uid:uid_t=0,gid:gid_t=0
         guard getpeereid(fd,&uid,&gid)==0,uid==expected else { throw RuntimeError.identity }
         try endpointPin?.verify(deadline:handshakeDeadline)
-        // The connected kernel socket now binds this peer. A later pathname
-        // replacement cannot redirect the established data connection.
-        endpointPin=nil
+        if let peerPolicy {
+            authentication=try RuntimePeerAuthentication(policy:peerPolicy,fd:fd,deadline:handshakeDeadline)
+        } else {authenticated=true;endpointPin=nil}
     }
     deinit { close() }
     func close() {
-        if fd>=0 { Darwin.close(fd);fd = -1 };endpointPin=nil;closed=true
+        if fd>=0 { Darwin.close(fd);fd = -1 };endpointPin=nil;authentication=nil;closed=true
         headers.removeAll();outgoing.removeAll();application.removeAll()
     }
     func enqueue(_ frame:Data) throws {
@@ -83,6 +88,16 @@ final class DockerAttach {
                 var error:Int32=0,size=socklen_t(MemoryLayout<Int32>.size)
                 guard getsockopt(fd,SOL_SOCKET,SO_ERROR,&error,&size)==0,error==0 else { throw RuntimeError.launch }
                 try verifyPeer(peerUID);connecting=false
+            }
+            if !authenticated {
+                guard let result=authentication?.take() else {return []}
+                let identity=try result.get()
+                try peerPolicy?.verifyProcessKernel(identity:identity,deadline:handshakeDeadline)
+                try endpointPin?.verify(deadline:handshakeDeadline)
+                peerIdentity=identity;authentication=nil;endpointPin=nil;authenticated=true
+            }
+            if let peerIdentity {
+                try peerPolicy?.verifyProcessKernel(identity:peerIdentity,deadline:ProcessInfo.processInfo.systemUptime+0.1)
             }
             if requestOffset<request.count {
                 let count=request.withUnsafeBytes {Darwin.write(fd,$0.baseAddress!.advanced(by:requestOffset),request.count-requestOffset)}
