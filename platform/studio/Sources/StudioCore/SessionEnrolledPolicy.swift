@@ -22,6 +22,12 @@ struct SessionEnrolledPolicy {
         self.document=document;self.manager=manager;self.session=session;self.applications=applications
     }
     static func load(directory:URL,role:SessionEntryRole)throws->SessionEnrolledPolicy? {
+        var image=[CChar](repeating:0,count:4*Int(MAXPATHLEN))
+        guard proc_pidpath(getpid(),&image,UInt32(image.count))>0,
+              let path=String(bytes:image.prefix(while:{$0 != 0}).map {UInt8(bitPattern:$0)},encoding:.utf8) else {throw ControlError.unauthorized}
+        // Development/PR binaries remain observation-only even on a Studio
+        // which already has an installed policy. No CLI/environment override.
+        guard path==(role == .manager ? managerPath:sessionPath) else {return nil}
         var entry=stat()
         if lstat(policyPath,&entry) != 0 {
             guard errno==ENOENT else {throw ControlError.unauthorized}

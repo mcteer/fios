@@ -43,8 +43,9 @@ enum SessionReply {
     }
 }
 
-// Trusted constructor only. The deployed entry point is not enrolled/wired
-// yet. Incoming PID/UID come exclusively from the accepted Unix connection.
+// Trusted constructor only. The public helper factory supplies root-enrolled
+// inputs; isolated fixtures supply explicit fake adapters. Incoming PID/UID
+// come exclusively from the accepted Unix connection.
 final class SessionControlServer {
     private struct Connection {let pending:PendingControl;let peer:NativeControlPeer;let uid:uid_t}
     private let owner:SessionInstanceLock
@@ -70,6 +71,14 @@ final class SessionControlServer {
     @discardableResult
     func acknowledgeStarted(id:String,service:ManagedService,identity:ServiceIdentity)throws->Bool {
         try gate.acknowledgeStarted(id:id,service:service,identity:identity)
+    }
+    @discardableResult
+    func acknowledgeNotSent(id:String,service:ManagedService)->Bool {
+        gate.acknowledgeNotSent(id:id,service:service)
+    }
+    @discardableResult
+    func claimDispatch(id:String,service:ManagedService)->Bool {
+        gate.claimDispatch(id:id,service:service,now:HostResources.nowMilliseconds())
     }
     func poll(consoleReady:Bool,now:Int64,launch:(ManagedService,String)throws->SessionLaunchResult)throws {
         guard let listener else {throw ControlError.internal_error}

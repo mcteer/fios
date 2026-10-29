@@ -59,6 +59,8 @@ func runSessionOperationTests() throws {
     let delayedID=UUID().uuidString.lowercased()
     let delayedPacket=try packet(delayedID,instance:delayed.instance,profile:delayed.profile)
     guard try delayed.handle(delayedPacket,peer:peer,uid:geteuid(),consoleReady:true,now:1000,launch:{_,_ in .uncertain}) == .uncertain else {fatalError("Delayed launch was acknowledged early")}
+    guard delayed.claimDispatch(id:delayedID,service:.mlx,now:1000),!delayed.claimDispatch(id:delayedID,service:.mlx,now:1000),
+          !delayed.acknowledgeNotSent(id:delayedID,service:.mlx) else {fatalError("Native dispatch permit replayed or became non-dispatch")}
     guard try !delayed.acknowledgeStarted(id:UUID().uuidString.lowercased(),service:.mlx,identity:identity),
           try !delayed.acknowledgeStarted(id:delayedID,service:.orbstack,identity:identity),
           try !delayed.acknowledgeStarted(id:delayedID,service:.mlx,identity:ServiceIdentity(pid:peer.pid,start:peer.start+1,sha256:hash)),
@@ -75,5 +77,21 @@ func runSessionOperationTests() throws {
     guard try delayed.handle(fencedPacket,peer:peer,uid:geteuid(),consoleReady:true,now:1003,launch:{_,_ in .uncertain}) == .uncertain,
           try delayed.handle(fencedPacket,peer:peer,uid:geteuid(),consoleReady:true,now:1000,launch:{_,_ in fatalError("Rollback replayed launch")}) == .uncertain,
           try !delayed.acknowledgeStarted(id:fencedID,service:.mlx,identity:identity) else {fatalError("Late callback bypassed permanent clock fence")}
+    let validationGate=try SessionLaunchGate(manager:manager,approvedApplications:[.mlx:manager,.orbstack:manager])
+    let validationID=UUID().uuidString.lowercased(),validationPacket=try packet(validationID,instance:validationGate.instance,profile:validationGate.profile)
+    guard try validationGate.handle(validationPacket,peer:peer,uid:geteuid(),consoleReady:true,now:1000,launch:{_,_ in .uncertain}) == .uncertain,
+          !validationGate.acknowledgeNotSent(id:UUID().uuidString.lowercased(),service:.mlx),
+          !validationGate.acknowledgeNotSent(id:validationID,service:.orbstack),
+          validationGate.acknowledgeNotSent(id:validationID,service:.mlx),
+          !validationGate.acknowledgeNotSent(id:validationID,service:.mlx),
+          !delayed.acknowledgeNotSent(id:fencedID,service:.mlx) else {fatalError("Local pre-effect non-dispatch acknowledgement escaped correlation/fencing")}
+    let validationLookup=try packet(validationID,instance:validationGate.instance,profile:validationGate.profile,extra:["operation":"lookup"])
+    guard try validationGate.handle(validationLookup,peer:peer,uid:geteuid(),consoleReady:true,now:1001,launch:{_,_ in fatalError("Validation failure replayed application operation")}) == .notSent else {fatalError("Completed validation refusal did not remain not-sent")}
+    guard !validationGate.claimDispatch(id:validationID,service:.mlx,now:1001),!delayed.claimDispatch(id:fencedID,service:.mlx,now:2000) else {fatalError("Final result or clock fence permitted delayed native dispatch")}
+    let dispatchClock=try SessionLaunchGate(manager:manager,approvedApplications:[.mlx:manager,.orbstack:manager])
+    let clockID=UUID().uuidString.lowercased(),clockPacket=try packet(clockID,instance:dispatchClock.instance,profile:dispatchClock.profile)
+    guard try dispatchClock.handle(clockPacket,peer:peer,uid:geteuid(),consoleReady:true,now:1000,launch:{_,_ in .uncertain}) == .uncertain,
+          !dispatchClock.claimDispatch(id:clockID,service:.mlx,now:999),
+          !dispatchClock.claimDispatch(id:clockID,service:.mlx,now:2000) else {fatalError("Dispatch did not independently check current wall clock or retain rollback fence")}
     print("PASS: fixed session launch wire, exact manager kernel identity/user, no caller argv/path/role, GUI gate, generation binding, correlated delayed completion and once-only uncertain/not-sent replay fencing; fake transport only")
 }

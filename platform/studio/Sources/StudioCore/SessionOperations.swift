@@ -41,13 +41,13 @@ struct SessionLaunchRequest {
     }
 }
 
-// Source-only dispatcher for the enrolled session transport. The real
-// helper does not instantiate this yet. Its manager/executable inputs must
+// Dispatcher for the enrolled session transport. Its manager/executable inputs
+// in the installed helper come only from root-protected enrollment and must
 // come from reviewed immutable installation policy, never a request/session
 // observation file. Approved applications bind exact kernel paths and hashes.
 // No operation can select an executable, argv, URL or role.
 final class SessionLaunchGate {
-    private struct Entry {let service:ManagedService;var result:SessionLaunchResult}
+    private struct Entry {let service:ManagedService;var result:SessionLaunchResult;var dispatched=false}
     let instance=UUID().uuidString.lowercased()
     let profile:String
     private let manager:VerifiedExecutable
@@ -79,9 +79,7 @@ final class SessionLaunchGate {
         guard request.profile==profile else {throw ControlError.unauthorized}
         guard request.instance==instance else {return .wrongInstance}
         guard (0...WireScalar.maximumTimestamp).contains(now) else {throw ControlError.invalid_request}
-        if now<previous {fenced=true}
-        previous=max(previous,now)
-        guard !fenced else {return .uncertain}
+        guard observeClock(now) else {return .uncertain}
         if let existing=entries[request.id] {
             guard existing.service==request.service else {throw ControlError.invalid_request}
             return existing.result
@@ -100,8 +98,10 @@ final class SessionLaunchGate {
         let outcome:SessionLaunchResult
         do {outcome=try launch(request.service,request.id)} catch {return .uncertain}
         switch outcome {
-        case .notSent:entries[request.id]?.result = .notSent
+        case .notSent:
+            if entries[request.id]?.dispatched == false {entries[request.id]?.result = .notSent}
         case .started(let identity):
+            entries[request.id]?.dispatched=true
             if try verifiedStarted(identity,service:request.service,uid:uid) {entries[request.id]?.result = outcome}
         case .uncertain,.wrongInstance,.busy:break
         }
@@ -114,10 +114,36 @@ final class SessionLaunchGate {
     @discardableResult
     func acknowledgeStarted(id:String,service:ManagedService,identity:ServiceIdentity)throws->Bool {
         guard !fenced,getuid()>0,getuid()==geteuid(),
-              let entry=entries[id],entry.service==service,entry.result == .uncertain,
+              let entry=entries[id],entry.service==service,entry.dispatched,entry.result == .uncertain,
               try verifiedStarted(identity,service:service,uid:geteuid()) else {return false}
         entries[id]?.result = .started(identity)
         return true
+    }
+    // Local pre-effect completion only. The actuator must prove it never
+    // called the application API and no continuation can still do so. Neither
+    // elapsed time nor an AppKit error after dispatch supplies that proof.
+    @discardableResult
+    func acknowledgeNotSent(id:String,service:ManagedService)->Bool {
+        guard !fenced,getuid()>0,getuid()==geteuid(),let entry=entries[id],
+              entry.service==service,!entry.dispatched,entry.result == .uncertain else {return false}
+        entries[id]?.result = .notSent
+        return true
+    }
+    // Local one-use edge immediately before the application API, after
+    // read-only validation. In particular, a clock-fenced helper cannot let a
+    // delayed validation continuation begin native work.
+    @discardableResult
+    func claimDispatch(id:String,service:ManagedService,now:Int64)->Bool {
+        guard !fenced,getuid()>0,getuid()==geteuid(),let entry=entries[id],
+              entry.service==service,!entry.dispatched,entry.result == .uncertain,observeClock(now) else {return false}
+        entries[id]?.dispatched=true
+        return true
+    }
+    private func observeClock(_ now:Int64)->Bool {
+        guard (0...WireScalar.maximumTimestamp).contains(now) else {return false}
+        if now<previous {fenced=true}
+        previous=max(previous,now)
+        return !fenced
     }
 
     private func verifiedStarted(_ identity:ServiceIdentity,service:ManagedService,uid:uid_t)throws->Bool {
