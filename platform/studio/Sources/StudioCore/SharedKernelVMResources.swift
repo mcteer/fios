@@ -35,7 +35,9 @@ struct VerifiedVMCap:NativeVMCapReading {
 // A separately reviewed architecture/profile authority, NEVER task JSON or
 // an inference permission. Reviewer must establish that ALL VM consumers,
 // including machines/system services, share this exact global procfs kernel.
-// No production issuer exists. No empty-machine inventory is fabricated.
+// The installed-only resource factory binds this review to a root policy and
+// authenticated kernel sample; public startup is not wired. No empty-machine
+// inventory is fabricated.
 struct SharedVMKernelPermission:Sendable {
     let nativeProfileHash:String
     let bootHash:String

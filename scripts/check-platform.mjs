@@ -9,8 +9,8 @@ import { fileURLToPath } from 'node:url';
 // No SSH, daemon socket, service lifecycle or live inference. The test binary
 // and descendants deny IP networking except one freshly allocated loopback
 // mock endpoint; configured native ports/other IPs stay denied. No fallback.
-if (![3,4].includes(process.argv.length) || process.argv[2] !== '--mock' || (process.argv.length===4 && !['--release','--mutate-runtime-postcheck','--mutate-manager-epoch','--mutate-activity-coverage','--mutate-inference-scope','--mutate-observation-native-sequence','--mutate-resource-freshness'].includes(process.argv[3]))) {
-  throw new Error('Usage: node scripts/check-platform.mjs --mock [--release|--mutate-runtime-postcheck|--mutate-manager-epoch|--mutate-activity-coverage|--mutate-inference-scope|--mutate-observation-native-sequence|--mutate-resource-freshness]');
+if (![3,4].includes(process.argv.length) || process.argv[2] !== '--mock' || (process.argv.length===4 && !['--release','--mutate-runtime-postcheck','--mutate-manager-epoch','--mutate-activity-coverage','--mutate-inference-scope','--mutate-observation-native-sequence','--mutate-resource-freshness','--mutate-vm-profile-rebind'].includes(process.argv[3]))) {
+  throw new Error('Usage: node scripts/check-platform.mjs --mock [--release|--mutate-runtime-postcheck|--mutate-manager-epoch|--mutate-activity-coverage|--mutate-inference-scope|--mutate-observation-native-sequence|--mutate-resource-freshness|--mutate-vm-profile-rebind]');
 }
 const root = fileURLToPath(new URL('../', import.meta.url));
 const directory = mkdtempSync(join(tmpdir(), 'fios-platform-policy-'));
@@ -54,6 +54,7 @@ try {
         process.argv[3]==='--mutate-manager-epoch'?{file:'ManagerExecution.swift',check:'value.managerEpoch==managerEpoch,',replacement:''}:
         process.argv[3]==='--mutate-activity-coverage'?{file:'NativeActivityCoherence.swift',check:'sourceCoverage == .all_clients && coverage == .all_clients',replacement:'coverage == .all_clients'}:
         process.argv[3]==='--mutate-inference-scope'?{file:'Journal.swift',check:'try record.scope.encoded()==scope.encoded()',replacement:'true'}:
+        process.argv[3]==='--mutate-vm-profile-rebind'?{file:'VMResourceProfileReader.swift',check:'        let result=try bound!.read(configuration:configuration,id:id,leaseUntil:leaseUntil)',replacement:'        let result:VMKernelSample\n        do {result=try bound!.read(configuration:configuration,id:id,leaseUntil:leaseUntil)}\n        catch RuntimeError.launch {bound=nil;throw RuntimeError.launch}'}:
         process.argv[3]==='--mutate-resource-freshness'?{file:'ResourceObservation.swift',check:'fresh ? "observed":"stale"',replacement:'(fresh || !fresh) ? "observed":"stale"'}:
         process.argv[3]==='--mutate-observation-native-sequence'?{file:'ObservationExport.swift',check:'counter>nativeSequence',replacement:'counter>=nativeSequence'}:undefined;
       if(!variant||part!=='Sources/StudioCore'||name!==variant.file)return source;

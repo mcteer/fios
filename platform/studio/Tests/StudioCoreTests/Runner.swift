@@ -33,6 +33,8 @@ struct PolicyTestRunner {
             ("VM resources",runVMResourceTests),
             ("GPU resources",runGPUResourceTests),
             ("resource observations",runResourceObservationTests),
+            ("VM resource enrollment",runVMResourceEnrollmentTests),
+            ("VM resource profile reader",runVMResourceProfileReaderTests),
             ("security",runSecurityTests),
             ("contracts",runContractTests),
             ("backup",runBackupTests),
