@@ -16,6 +16,18 @@ struct NativeControlLive {
             try ManagerRuntime.run(directory:URL(fileURLWithPath:args[1]),nativeControl:NativeControlClient(path:args[2],peer:peer))
             return
         }
+        if args.count==7,args[0]=="--isolated-lineage" {
+            guard args[1].hasPrefix("/tmp/") || args[1].hasPrefix("/private/tmp/"),let pid=Int32(args[4]),pid>1 else {throw NativeControlError.invalid}
+            let peer=NativeControlPeer(pid:pid,start:try WorkerResources.startIdentifier(pid:pid),executable:try VerifiedExecutable(path:args[2],sha256:args[3]))
+            let sample=try NativeControlClient(path:args[1],peer:peer).lineage(instance:args[5],correlationID:args[6])
+            let value=sample.lineage
+            let fields:[String:Any]=["instance":value.instance,"correlation_id":value.correlationID,
+                "sample_sequence":String(value.sampleSequence),"root_sequence":String(value.rootSequence),
+                "references":String(value.references),"found":value.found,"uncertain":value.uncertain,
+                "owners":value.owners,"sampled_at":sample.sampledAt]
+            print(String(decoding:try JSONSerialization.data(withJSONObject:fields,options:[.sortedKeys]),as:UTF8.self))
+            return
+        }
         guard args.count==8,args[0]=="--isolated",args[1].hasPrefix("/tmp/") || args[1].hasPrefix("/private/tmp/"),
               let pid=Int32(args[4]),pid>1,let operation=NativeControlOperation(rawValue:UInt8(args[5]) ?? 255),
               let sequence=UInt64(args[7]) else {throw NativeControlError.invalid}

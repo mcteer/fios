@@ -68,11 +68,11 @@ try {
     const value=Buffer.alloc(32);value.write('FIC9');value[4]=2;value[5]=op;
     value.writeBigUInt64BE(sequence,8);Buffer.from(instance,'hex').copy(value,16);return value;
   }
-  async function controlRaw(bytes) {
+  async function controlRaw(bytes,maximum=64) {
     return new Promise((resolve,reject)=>{
       const socket=createConnection({path:controlPath});let output=Buffer.alloc(0);
       socket.setTimeout(3500,()=>socket.destroy(new Error('private control deadline')));
-      socket.once('error',reject);socket.on('data',chunk=>{output=Buffer.concat([output,chunk]);if(output.length>64)socket.destroy(new Error('private control oversize'));});
+      socket.once('error',reject);socket.on('data',chunk=>{output=Buffer.concat([output,chunk]);if(output.length>maximum)socket.destroy(new Error('private control oversize'));});
       socket.once('end',()=>resolve(output));socket.once('connect',()=>socket.end(bytes));
     });
   }
@@ -103,6 +103,23 @@ try {
     return value.body;
   }
   const initial=await until(async()=>{const value=diagnostic(await get());return value.owned_requests===1 && value;});
+  const correlationID='29fc52e328d588a1afee500c96d67ccc1045a873a328efccec3dc9ddfaef2cf5';
+  const query=Buffer.alloc(64);query.write('FIQ9');query[4]=1;
+  Buffer.from(sourceInstance,'hex').copy(query,8);Buffer.from(correlationID,'hex').copy(query,24);
+  const lineage=await controlRaw(query,112);
+  assert.equal(lineage.length,112);assert.equal(lineage.subarray(0,4).toString(),'FIP9');
+  assert.equal(lineage[4],1);assert.equal(lineage[5],0);assert.equal(lineage[6],0);assert.equal(lineage[7],1);
+  assert.equal(lineage.subarray(8,24).toString('hex'),sourceInstance);
+  assert.equal(lineage.subarray(24,56).toString('hex'),correlationID);
+  assert(lineage.readBigUInt64BE(56)>BigInt(initial.sample_sequence));
+  assert(lineage.subarray(64).every(byte=>byte===0),'Missing lineage returned owners/root/terminal metadata');
+  const wrongQuery=Buffer.from(query);wrongQuery[8]^=1;
+  assert.equal((await controlRaw(wrongQuery,112))[5],3,'Foreign source accepted readonly lineage');
+  const malformedQuery=Buffer.from(query);malformedQuery[56]=1;
+  assert.equal((await controlRaw(malformedQuery,112))[5],1,'Reserved lineage bytes accepted');
+  assert.equal((await controlRaw(query.subarray(0,63),112)).length,0);
+  assert.equal((await controlRaw(Buffer.concat([query,Buffer.from([0])]),112)).length,0);
+  assert(diagnostic(await get()).sample_sequence>Number(lineage.readBigUInt64BE(56)));
   assert.deepEqual((await get('/v1/models')).body.data,[],'empty source fixture discovered a model');
   const refusedBody=JSON.stringify({model:'never-loaded-fixture',messages:[]});
   for(const identity of ['INVALID',['a'.repeat(64),'a'.repeat(64)]]){
@@ -138,6 +155,18 @@ try {
   }
   const swiftObserved=swiftControl(0);assert.equal(swiftObserved.status,0,'Swift native peer authentication failed');
   assert.equal(JSON.parse(swiftObserved.stdout).instance,sourceInstance);
+  function swiftLineage(instance=sourceInstance,hash=args[4]){
+    return spawnSync(swiftClient,['--isolated-lineage',controlPath,binary,hash,String(child.pid),instance,correlationID],{env,encoding:'utf8',timeout:5000,maxBuffer:8192});
+  }
+  const swiftLineageResult=swiftLineage();assert.equal(swiftLineageResult.status,0,'Swift readonly lineage authentication/decoding failed');
+  const swiftLineageValue=JSON.parse(swiftLineageResult.stdout);
+  assert.equal(swiftLineageValue.found,false);assert.equal(swiftLineageValue.uncertain,true);
+  assert.equal(swiftLineageValue.instance,sourceInstance);assert.equal(swiftLineageValue.correlation_id,correlationID);
+  assert.equal(swiftLineageValue.root_sequence,'0');assert.equal(swiftLineageValue.references,'0');assert.equal(swiftLineageValue.owners,0);
+  assert(Date.now()-swiftLineageValue.sampled_at<=5000);
+  assert.notEqual(swiftLineage('f'.repeat(32)).status,0,'Swift adopted foreign lineage source');
+  assert.notEqual(swiftLineage(sourceInstance,'0'.repeat(64)).status,0,'Wrong native image authorized lineage query');
+  console.log('PASS: actual native/Swift readonly lineage framing, source/image authentication, shared counter and missing-is-unknown; no terminal reconciliation.');
   assert.notEqual(swiftControl(1,sourceInstance,'0','0'.repeat(64)).status,0,'wrong native artifact hash authorized pause');
   assert.equal((await control(0)).closed,0,'failed native authentication changed admission');
   assert.equal((await control(3,sourceInstance,1n)).status,1,'owner-stream probe ran with admissions open');

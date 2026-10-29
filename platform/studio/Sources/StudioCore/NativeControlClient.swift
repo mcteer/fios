@@ -109,6 +109,20 @@ struct NativeControlClient:Sendable {
     let peer:NativeControlPeer
     func request(operation:NativeControlOperation,instance:String?=nil,sequence:UInt64=0) throws -> NativeIngressStatus {
         let data=try NativeControlWire.request(operation:operation,instance:instance,sequence:sequence)
+        let value=try NativeControlWire.reply(exchange(data,maximum:64))
+        guard value.operation==operation,instance==nil || value.instance==instance else {throw NativeControlError.unauthorized}
+        return value
+    }
+    func lineage(instance:String,correlationID:String)throws->NativeRequestLineageSample {
+        let stamp=HostResources.nowMilliseconds()
+        let data=try NativeRequestLineageWire.request(instance:instance,correlationID:correlationID)
+        let value=try NativeRequestLineageWire.reply(exchange(data,maximum:112),instance:instance,correlationID:correlationID)
+        let completed=HostResources.nowMilliseconds()
+        guard stamp>=0,completed<=ActivityPolicy.maximumTimestamp,completed>=stamp,completed-stamp<=5000 else {throw NativeControlError.invalid}
+        return NativeRequestLineageSample(peer:peer,sampledAt:stamp,lineage:value)
+    }
+    private func exchange(_ data:Data,maximum:Int)throws->Data {
+        guard [32,64].contains(data.count),[64,112].contains(maximum) else {throw NativeControlError.invalid}
         guard path.hasPrefix("/"),path.utf8.count<104,!path.contains("\0") else {throw NativeControlError.invalid}
         var parent=stat(),socketInfo=stat()
         let directory=URL(fileURLWithPath:path).deletingLastPathComponent().path
@@ -149,15 +163,13 @@ struct NativeControlClient:Sendable {
         guard shutdown(fd,SHUT_WR)==0 else {throw NativeControlError.unavailable}
         var output=Data()
         while true {
-            try ready(Int16(POLLIN));var buffer=[UInt8](repeating:0,count:65-output.count)
+            try ready(Int16(POLLIN));var buffer=[UInt8](repeating:0,count:maximum+1-output.count)
             let count=Darwin.read(fd,&buffer,buffer.count)
             if count<0 && (errno==EINTR || errno==EAGAIN) {continue}
             guard count>=0 else {throw NativeControlError.unavailable};if count==0 {break}
-            output.append(contentsOf:buffer.prefix(count));guard output.count<=64 else {throw NativeControlError.invalid}
+            output.append(contentsOf:buffer.prefix(count));guard output.count<=maximum else {throw NativeControlError.invalid}
         }
-        guard try WorkerResources.startIdentifier(pid:peer.pid)==peer.start else {throw NativeControlError.unauthorized}
-        let value=try NativeControlWire.reply(output)
-        guard value.operation==operation,instance==nil || value.instance==instance else {throw NativeControlError.unauthorized}
-        return value
+        try peer.verify(deadline:deadline) // Bind the reply to the same image/start too.
+        return output
     }
 }

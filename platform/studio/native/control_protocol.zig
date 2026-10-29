@@ -6,7 +6,37 @@ const device = @import("device_owner.zig");
 pub const OwnerBarrier = struct { context: *anyopaque, probe: *const fn (*anyopaque) device.Reading };
 pub const request_size = 32;
 pub const response_size = 64;
+pub const lineage_request_size = 64;
+pub const lineage_response_size = 112;
 pub const Status = enum(u8) { ok, invalid, maintenance, wrong_instance };
+
+// Separate readonly frame namespace: never reinterpret lineage bytes as an
+// ingress action. A missing live lineage is unknown, not terminal/not-sent.
+pub fn dispatchLineage(tracker: *ownership.Tracker, io: std.Io, request: *const [lineage_request_size]u8) [lineage_response_size]u8 {
+    var response: [lineage_response_size]u8 = @splat(0);
+    @memcpy(response[0..4], "FIP9"); response[4] = 1; response[7] = 1;
+    @memcpy(response[24..56], request[24..56]);
+    if (!std.mem.eql(u8, request[0..4], "FIQ9") or request[4] != 1 or request[5] != 0 or
+        request[6] != 0 or request[7] != 0 or !std.mem.allEqual(u8, request[56..64], 0)) {
+        response[5] = @intFromEnum(Status.invalid);
+        return response;
+    }
+    const snapshot = tracker.correlationSnapshot(io, request[24..56].*);
+    @memcpy(response[8..24], &snapshot.instance);
+    std.mem.writeInt(u64, response[56..64], snapshot.sample_sequence, .big);
+    if (!std.mem.eql(u8, request[8..24], &snapshot.instance)) {
+        response[5] = @intFromEnum(Status.wrong_instance);
+        return response;
+    }
+    response[6] = @intFromBool(snapshot.found);
+    response[7] = @intFromBool(snapshot.uncertain);
+    std.mem.writeInt(u64, response[64..72], snapshot.root_sequence, .big);
+    std.mem.writeInt(u64, response[72..80], snapshot.references, .big);
+    inline for (.{snapshot.owners,snapshot.ingress,snapshot.preparing,snapshot.active,snapshot.responding}, 0..) |value,index| {
+        std.mem.writeInt(u32, response[80 + index * 4 ..][0..4], @intCast(value), .big);
+    }
+    return response;
+}
 
 pub fn dispatch(tracker: *ownership.Tracker, io: std.Io, request: *const [request_size]u8) [response_size]u8 {
     return dispatchWithBarrier(tracker, io, request, null);
@@ -112,4 +142,48 @@ test "finite private control rejects malformed and cross-instance authority" {
     response = dispatch(&tracker, io, &request);
     try std.testing.expectEqual(@intFromEnum(Status.invalid), response[6]);
     try std.testing.expectEqual(@as(u8, 1), response[57]);
+}
+
+test "readonly lineage frames preserve retained ownership and missing stays unknown" {
+    const io = std.testing.io;
+    var tracker: ownership.Tracker = .{ .primary_guard = true };
+    try tracker.initialize(io, @splat(31));
+    var request: [lineage_request_size]u8 = @splat(0);
+    @memcpy(request[0..4], "FIQ9"); request[4] = 1;
+    @memcpy(request[8..24], &(@as([16]u8, @splat(31))));
+    const id = try ownership.parseCorrelationHex("29fc52e328d588a1afee500c96d67ccc1045a873a328efccec3dc9ddfaef2cf5");
+    @memcpy(request[24..56], &id);
+    var response = dispatchLineage(&tracker, io, &request);
+    try std.testing.expectEqual(@as(u8, 0), response[5]);
+    try std.testing.expectEqual(@as(u8, 0), response[6]);
+    try std.testing.expectEqual(@as(u8, 1), response[7]);
+    const first = std.mem.readInt(u64, response[56..64], .big);
+    const root = try tracker.enter(io);
+    try tracker.associate(io, root, id);
+    try tracker.bind(io, root, "test/model");
+    const child = try tracker.reservePreparation(io, root, "test/model");
+    try tracker.leave(io, root);
+    response = dispatchLineage(&tracker, io, &request);
+    try std.testing.expectEqual(@as(u8, 1), response[6]);
+    try std.testing.expectEqual(@as(u8, 0), response[7]);
+    try std.testing.expectEqualSlices(u8, &id, response[24..56]);
+    try std.testing.expectEqual(root.sequence, std.mem.readInt(u64, response[64..72], .big));
+    try std.testing.expectEqual(@as(u64, 1), std.mem.readInt(u64, response[72..80], .big));
+    try std.testing.expectEqual(@as(u32, 1), std.mem.readInt(u32, response[80..84], .big));
+    try std.testing.expectEqual(@as(u32, 1), std.mem.readInt(u32, response[88..92], .big));
+    try std.testing.expect(std.mem.readInt(u64, response[56..64], .big) > first);
+    request[8] ^= 1;
+    response = dispatchLineage(&tracker, io, &request);
+    try std.testing.expectEqual(@intFromEnum(Status.wrong_instance), response[5]);
+    try std.testing.expectEqual(@as(u8, 0), response[6]);
+    try std.testing.expectEqual(@as(u8, 1), response[7]);
+    request[8] ^= 1; request[56] = 1;
+    try std.testing.expectEqual(@intFromEnum(Status.invalid), dispatchLineage(&tracker, io, &request)[5]);
+    request[56] = 0;
+    try std.testing.expectEqual(@as(usize, 1), tracker.snapshot(io).owned);
+    try tracker.leave(io, child);
+    response = dispatchLineage(&tracker, io, &request);
+    try std.testing.expectEqual(@as(u8, 0), response[6]);
+    try std.testing.expectEqual(@as(u8, 1), response[7]);
+    try std.testing.expectEqual(@as(u64, 0), std.mem.readInt(u64, response[64..72], .big));
 }

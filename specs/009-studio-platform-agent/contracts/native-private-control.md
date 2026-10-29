@@ -8,11 +8,11 @@ The pinned source candidate enables the transport only when its build version en
 
 The fixed endpoint is `$HOME/.fios-native-control/control.sock`, never a model/request-selected path. The containing leaf must be an actual directory owned by the native service UID with mode0700; socket mode is0600. Existing socket/files are never unlinked or adopted. The transport checks kernel `getpeereid` against the native service UID; this is the local trusted-operator boundary, not a defense against compromised arbitrary host execution as that UID. Generated sandbox code has neither this UID nor host mounts; installed private model workers have no host tools or caller-selected connection API. No role string in an HTTP body/stdout/control frame grants permission.
 
-The manager client additionally authenticates the native socket's UID and kernel peer PID, expected process-start identity, kernel-reported byte-exact executable path and SHA256 of its bounded no-follow opened executable. Start/file identities bracket hashing; a failed check sends no action. Production enrollment must select this peer from reviewed native identity, never operator/model payloads. The ordinary manager entry point supplies no client; the source integration fixture is the only issuer so far.
+The manager client additionally authenticates the native socket's UID and kernel peer PID, expected process-start identity, kernel-reported byte-exact executable path and SHA256 of its bounded no-follow opened executable. Start/file identities bracket hashing and the reply; a failed pre-send check sends no action. A failed post-reply check leaves any action outcome unknown and does not authorize replay. Production enrollment must select this peer from reviewed native identity, never operator/model payloads. The ordinary manager entry point supplies no client; the source integration fixture is the only issuer so far.
 
 ## Finite binary framing
 
-One request per connection. Client must half-close its write direction. Native waits for EOF before dispatch; truncated, overlong or concatenated frames do not act. Request32 bytes; response64 bytes; deadline2s per native connection; one serialized peer, backlog2. Descriptors are nonblocking/CLOEXEC and writes suppress SIGPIPE. There are no subprocesses, paths, argv, credentials, model IDs, force, signal, launch or stop fields.
+One request per connection. Client must half-close its write direction. Native waits for EOF before dispatch; truncated, overlong or concatenated frames do not act. Version2 action request32 bytes; response64 bytes (the separate readonly lineage extension below uses64/112 bytes); deadline2s per native connection; one serialized peer, backlog2. Descriptors are nonblocking/CLOEXEC and writes suppress SIGPIPE. There are no subprocesses, paths, argv, credentials, model IDs, force, signal, launch or stop fields.
 
 Request (big endian integers):
 
@@ -82,3 +82,41 @@ The genuine MLX C++ helper verifies the actual owner thread and, before synchron
 - Earlier checkpoint `/tmp/fios-009-device-owner-linked-green.log`: actual root5/5, including retained one-slot probe on timeout/late completion; genuine C++/MLX CPU/empty-stream and wrong-thread test; live native-owner probe, ingress refusal, Swift unknown-only decoding and HTTP/control/manager integration. CPU/empty-stream is not GPU/model acceptance. Earlier standalone C++ `assert` checks were disabled by Zig's optimized `NDEBUG` default and are not accepted CPU-sync/wrong-thread evidence. New always-enabled owned/unregistered/global-stream checks and deliberate exit77 witness pass in `/tmp/fios-009-owned-stream-{green,negative}.log`; the linked fixture now enforces `-UNDEBUG`/a compile-time guard and verifies the negative witness. The reviewed patch now also adds the genuine C++ source to executable/test macOS build roots without removing upstream staging guards. Artifact is deleted with disposable output; no installed application or production database is changed.
 
 Outstanding: production release/profile/issuer enrollment, broader peer/recovery/drain scenarios, all enabled backend/device terminal ownership, atomic native registry/quiescence reservation, protected service execution and operational acceptance.
+
+## Readonly per-request lineage frame
+
+A separate `FIQ9`/`FIP9` version1 namespace reads an opaque request ID's live ownership lineage. It cannot pause/resume admissions, invoke the partial owner-stream barrier, manage a service or resolve a journal record. The32-byte version2 action protocol above remains unchanged. The common transport accepts exactly one32-byte action or64-byte query followed by write-half-close, with the same UID, deadline and serialization bounds. A64-byte concatenation of old action frames is rejected, never treated as a query; overlong/truncated inputs do not act.
+
+Query64 bytes:
+
+| Offset | Bytes | Meaning |
+|---|---:|---|
+|0|4|ASCII `FIQ9`|
+|4|1|version1|
+|5–7|3|zero; no selectable operation|
+|8|16|expected native source instance|
+|24|32|opaque request correlation digest|
+|56|8|reserved zero|
+
+Reply112 bytes:
+
+| Offset | Bytes | Meaning |
+|---|---:|---|
+|0|4|ASCII `FIP9`|
+|4|1|version1|
+|5|1|status:0 ok,1 invalid,3 wrong instance|
+|6|1|found live lineage,0 or1|
+|7|1|uncertain,0 or1|
+|8|16|native source instance|
+|24|32|exact correlation digest echo|
+|56|8|shared native capture sequence|
+|64|8|original ingress root sequence|
+|72|8|sum of retained references|
+|80|20|five u32 counts: owners, ingress, preparing, active, responding|
+|100|12|reserved zero|
+
+All integers are big endian. Root sequence is a full-width native token; do not serialize it as a JSON number. Capture sequence is bounded by the existing exact JSON-safe counter, but remains binary here. Root identity follows retained preparation descendants even after their original connection owner leaves. A sole live ingress may associate an ID; later reuse has a different root sequence. The header/hash derivation is defined in [model-access.md](model-access.md).
+
+The Swift client verifies the same kernel PID/start/path/FD hash before sending and after receiving, within the original2s exchange deadline. It validates exact source/digest echo, reserved bytes, counter range, phase totals, references and root width. A found lineage has1..256 owners, a nonzero root and references between owners and owners×UInt32.max. Missing lineage requires uncertain=true, zero root/references/counts. Invalid/wrong-source replies throw; they never become absence. The sample retains the authenticated peer and the original pre-query wall timestamp; a clock rollback or age beyond5s refuses publication. Source collectors must call off-loop; kernel/filesystem calls themselves are not preempted by the elapsed checks.
+
+This is request-lineage observation, not a terminal receipt, non-dispatch proof, all-client coverage, global idle, device completion or an admission lease. Missing/reused IDs, a reaped client, cancellation and a newer success do not clear old uncertainty. The public manager has no native enrollment issuer or journal-reconciliation hook for this result. Consumer replay/root-generation validation and authoritative terminal/quiescence reconciliation remain unfinished; T021 and G2 stay open.

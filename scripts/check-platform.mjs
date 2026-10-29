@@ -25,8 +25,8 @@ if(process.argv.length===3&&process.argv[2]==='--isolated-metrics'){
 // No SSH, daemon socket, service lifecycle or live inference. The test binary
 // and descendants deny IP networking except one freshly allocated loopback
 // mock endpoint; configured native ports/other IPs stay denied. No fallback.
-if (![3,4].includes(process.argv.length) || process.argv[2] !== '--mock' || (process.argv.length===4 && !['--release','--mutate-runtime-postcheck','--mutate-manager-epoch','--mutate-activity-coverage','--mutate-inference-scope','--mutate-observation-native-sequence','--mutate-resource-freshness','--mutate-vm-profile-rebind','--mutate-vm-running-gate','--mutate-service-census'].includes(process.argv[3]))) {
-  throw new Error('Usage: node scripts/check-platform.mjs --isolated-metrics | --mock [--release|--mutate-runtime-postcheck|--mutate-manager-epoch|--mutate-activity-coverage|--mutate-inference-scope|--mutate-observation-native-sequence|--mutate-resource-freshness|--mutate-vm-profile-rebind|--mutate-vm-running-gate|--mutate-service-census]');
+if (![3,4].includes(process.argv.length) || process.argv[2] !== '--mock' || (process.argv.length===4 && !['--release','--mutate-runtime-postcheck','--mutate-manager-epoch','--mutate-activity-coverage','--mutate-inference-scope','--mutate-observation-native-sequence','--mutate-resource-freshness','--mutate-vm-profile-rebind','--mutate-vm-running-gate','--mutate-service-census','--mutate-lineage-unknown'].includes(process.argv[3]))) {
+  throw new Error('Usage: node scripts/check-platform.mjs --isolated-metrics | --mock [--release|--mutate-runtime-postcheck|--mutate-manager-epoch|--mutate-activity-coverage|--mutate-inference-scope|--mutate-observation-native-sequence|--mutate-resource-freshness|--mutate-vm-profile-rebind|--mutate-vm-running-gate|--mutate-service-census|--mutate-lineage-unknown]');
 }
 const root = fileURLToPath(new URL('../', import.meta.url));
 const directory = mkdtempSync(join(tmpdir(), 'fios-platform-policy-'));
@@ -75,6 +75,7 @@ try {
         process.argv[3]==='--mutate-manager-epoch'?{file:'ManagerExecution.swift',check:'value.managerEpoch==managerEpoch,',replacement:''}:
         process.argv[3]==='--mutate-activity-coverage'?{file:'NativeActivityCoherence.swift',check:'sourceCoverage == .all_clients && coverage == .all_clients',replacement:'coverage == .all_clients'}:
         process.argv[3]==='--mutate-inference-scope'?{file:'Journal.swift',check:'try record.scope.encoded()==scope.encoded()',replacement:'true'}:
+        process.argv[3]==='--mutate-lineage-unknown'?{file:'NativeRequestLineage.swift',check:'uncertain && root==0 && references==0 && counts[0]==0',replacement:'root==0 && references==0 && counts[0]==0'}:
         process.argv[3]==='--mutate-service-census'?{file:'ServiceProcessCensus.swift',check:'Set(second)==Set(first),',replacement:''}:
         process.argv[3]==='--mutate-vm-running-gate'?{file:'VMRunning.swift',check:'            let proof=try running.capture(),before=now()',replacement:'            let proof=VMRunningProof(sourceSHA256:expectedCLIHash,sampledAt:stamp),before=now()'}:
         process.argv[3]==='--mutate-vm-profile-rebind'?{file:'VMResourceProfileReader.swift',check:'        let result=try bound!.read(configuration:configuration,id:id,leaseUntil:leaseUntil)',replacement:'        let result:VMKernelSample\n        do {result=try bound!.read(configuration:configuration,id:id,leaseUntil:leaseUntil)}\n        catch RuntimeError.launch {bound=nil;throw RuntimeError.launch}'}:

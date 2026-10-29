@@ -10,11 +10,12 @@ import assert from 'node:assert/strict';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const args = process.argv.slice(2);
 const mutateCapture=args.length===5&&args[4]==='--mutate-capture-sequence';
+const mutateLineageMissing=args.length===5&&args[4]==='--mutate-lineage-missing';
 const mutateCorrelation=args.length===5&&args[4]==='--mutate-request-correlation';
 const mutatePrimary=args.length===5&&args[4]==='--mutate-primary-conflict';
-if ((args.length !== 4 && !mutateCapture && !mutatePrimary && !mutateCorrelation) || args[0] !== '--source' || args[2] !== '--zig' ||
+if ((args.length !== 4 && !mutateCapture && !mutatePrimary && !mutateCorrelation && !mutateLineageMissing) || args[0] !== '--source' || args[2] !== '--zig' ||
     !path.isAbsolute(args[1]) || !path.isAbsolute(args[3])) {
-  throw new Error('usage: check-platform-native.mjs --source ABS_CHECKOUT --zig ABS_ZIG [--mutate-capture-sequence|--mutate-primary-conflict|--mutate-request-correlation]');
+  throw new Error('usage: check-platform-native.mjs --source ABS_CHECKOUT --zig ABS_ZIG [--mutate-capture-sequence|--mutate-primary-conflict|--mutate-request-correlation|--mutate-lineage-missing]');
 }
 const source = args[1], zig = args[3];
 const run = (exe, argv, options = {}) => execFileSync(exe, argv, {
@@ -49,9 +50,18 @@ try {
     writeFileSync(path.join(directory,'request_ownership.zig'),original.replace(check,mutateCapture?'} else {}':mutateCorrelation?'descendant.correlation = null;':'_ = std.mem.eql(u8, identity.id[0..identity.len], model);'));
     ownershipTests=path.join(directory,'request_ownership_test.zig');copyFileSync(path.join(root,'platform/studio/native/request_ownership_test.zig'),ownershipTests);
   }
+  let protocolTests=path.join(root,'platform/studio/native/control_protocol.zig');
+  if(mutateLineageMissing){
+    const directory=path.join(scratch,'lineage-mutation');mkdirSync(directory,{mode:0o700});
+    for(const name of ['request_ownership.zig','device_owner.zig'])copyFileSync(path.join(root,'platform/studio/native',name),path.join(directory,name));
+    const original=readFileSync(protocolTests,'utf8'),check='response[7] = @intFromBool(snapshot.uncertain);';
+    assert.equal(original.split(check).length,2,'native lineage unknown boundary changed');
+    protocolTests=path.join(directory,'control_protocol.zig');
+    writeFileSync(protocolTests,original.replace(check,'response[7] = @intFromBool(snapshot.uncertain and snapshot.found);'));
+  }
   for (const optimize of ['Debug', 'ReleaseSafe']) {
     run(zig, ['test', ownershipTests, '-O', optimize]);
-    run(zig, ['test', path.join(root, 'platform/studio/native/control_protocol.zig'), '-O', optimize]);
+    run(zig, ['test', protocolTests, '-O', optimize]);
     run(zig, ['test', path.join(root, 'platform/studio/native/device_owner_test.zig'), '-O', optimize]);
     run(zig, ['test', path.join(root, 'platform/studio/native/registry_hold_test.zig'), '-O', optimize]);
   }

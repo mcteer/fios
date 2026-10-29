@@ -106,17 +106,24 @@ pub const Bridge = struct {
             c.setsockopt(peer, c.SOL.SOCKET, c.SO.NOSIGPIPE, &no_sigpipe, @sizeOf(c_int)) != 0) return;
         const deadline = std.math.add(u64, nowMs() orelse return, 2000) catch return;
         // Require a write-half-close: extra/trailing/replayed frames never act.
-        var input: [protocol.request_size + 1]u8 = undefined;
+        var input: [protocol.lineage_request_size + 1]u8 = undefined;
         var count: usize = 0;
         while (self.ready(peer, c.POLL.IN, deadline)) {
             const n = c.read(peer, input[count..].ptr, input.len - count);
             if (n < 0) return;
             if (n == 0) break;
             count += @intCast(n);
-            if (count > protocol.request_size) return;
+            if (count > protocol.lineage_request_size) return;
         } else return;
-        if (count != protocol.request_size) return;
-        const response = protocol.dispatchWithBarrier(&ownership.shared, self.io, input[0..protocol.request_size], self.barrier);
+        var storage: [protocol.lineage_response_size]u8 = undefined;
+        const response: []const u8 = if (count == protocol.request_size) legacy: {
+            const value = protocol.dispatchWithBarrier(&ownership.shared, self.io, input[0..protocol.request_size], self.barrier);
+            @memcpy(storage[0..protocol.response_size], &value);
+            break :legacy storage[0..protocol.response_size];
+        } else if (count == protocol.lineage_request_size and std.mem.eql(u8, input[0..4], "FIQ9")) lineage: {
+            storage = protocol.dispatchLineage(&ownership.shared, self.io, input[0..protocol.lineage_request_size]);
+            break :lineage &storage;
+        } else return;
         var sent: usize = 0;
         while (sent < response.len and self.ready(peer, c.POLL.OUT, deadline)) {
             const n = c.write(peer, response[sent..].ptr, response.len - sent);
