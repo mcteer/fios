@@ -94,6 +94,8 @@ This wrapper must exit0 only after its private optimized bypass actually fails `
 
 Appending `--mutation-enclosing-custody` to the six-argument MIMO CPU command must reproduce9pass/1fail of10 at `FIO_MIMO_ENCLOSING_CUSTODY_ACCEPTED_HELD_ENGINE` and restore source. It checks the actual engine custody predicate; supplementary source checks cover the enclosing delegation chain. Neither result proves an atomic backend reservation.
 
+Appending `--mutation-destruction-result` to the MIMO CPU command must reproduce9pass/1fail of10 at `FIO_MIMO_DESTRUCTION_REFUSAL_REPORTED_SUCCESS`, then restore source. The actual Engine test checks false while held and true after release/destruction. Current cleanup uses this checked result before clearing the warm pointer or freeing enclosing fields; it does not make status probes destructive or resolve independent native uncertainty.
+
 For the retained-CPU cleanup guard, append `--mutation-retained-cpu-cleanup` to the four-pair native fixture command (without the MIMO option). The wrapper succeeds only after actual11pass/1fail of12 at `FIO_RETAINED_CPU_STATE_DROPPED_BORROW` and exact source restoration. Positive runs require12/12. Static handoff checks additionally reject entry writes before checked transfer or fallible `try` work afterward; those text checks are supplementary, not real-model/backend acceptance.
 
 For resident-unload custody, append `--mutation-resident-unload` to the same four-pair command. It requires actual11pass/1fail of12 at `FIO_RESIDENT_REFUSAL_REPORTED_MEMORY_FREE` and source restoration. The positive metadata case verifies explicit request errors, eviction refusal and retained bytes after borrower release; it does not run a model or establish backend terminality.

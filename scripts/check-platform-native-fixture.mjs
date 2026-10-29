@@ -168,8 +168,8 @@ try{
    pin='    pub fn releaseRetainedCpuState(self: *LoadedModel) bool {\n        if (!self.fiosCanReplaceCpuState()) return false;';
    replacement='    pub fn releaseRetainedCpuState(self: *LoadedModel) bool {\n        _ = self.fiosCanReplaceCpuState(); // Deliberate borrowed CPU-state cleanup bypass.';
   }else if(loadedTeardownMutation){
-   pin='    pub fn deinit(self: *LoadedModel) bool {\n        if (!self.fiosMayDeinit()) return false;';
-   replacement='    pub fn deinit(self: *LoadedModel) bool {\n        _ = self.fiosMayDeinit(); // Deliberate borrowed-model destruction bypass.';
+   pin='    pub fn deinit(self: *LoadedModel) bool {\n        if (!self.fiosPrepareDestruction()) return false;';
+   replacement='    pub fn deinit(self: *LoadedModel) bool {\n        _ = self.fiosPrepareDestruction(); // Deliberate borrowed-model destruction bypass.';
   }else if(teardownMutation){
    pin='        if (!self.fiosBeginTeardown()) return;';
    replacement='        _ = self.fiosBeginTeardown(); // Deliberate held-registry destruction bypass.';
@@ -208,6 +208,11 @@ try{
   }else{
    pin=preparationMutation?'sch.registry.fios_mutation_count != 0 or ':accessMutation?'        if (owner == 0 or owner != fios_pin_owner or ticket == 0 or self.fios_access_ticket != ticket or\n':parkedMutation?'    sch.fios_model_pins.adopt(&model_pins) catch { finishFiosOwnerProbe(sch, .{}); return; };':'        _ = entry.refcount.fetchAdd(1, .acq_rel);\n        sch.registry.fiosProbeChangedLocked();';
    replacement=preparationMutation?'':accessMutation?pin.replace('owner != fios_pin_owner or ',''):parkedMutation?pin+'\n    defer sch.fios_model_pins.release(sch); // Deliberate premature parked-reference release.':'        // Negative fixture: deliberately omit the model reference.\n        _ = entry;\n        sch.registry.fiosProbeChangedLocked();';
+  }
+  if(residentUnloadMutation){
+   const actual='    pub fn unloadResident(self: *LoadedModel) bool {\n        if (!self.fiosPrepareDestruction()) return false;';
+   assert.equal(variant.split(actual).length,2);
+   variant=variant.replace(actual,'    pub fn unloadResident(self: *LoadedModel) bool {\n        _ = self.fiosPrepareDestruction(); // Deliberate actual-unload refusal bypass.');
   }
   assert.equal(variant.split(pin).length,2);mutated=true;
   writeFileSync(mutationFile,variant.replace(pin,replacement));
