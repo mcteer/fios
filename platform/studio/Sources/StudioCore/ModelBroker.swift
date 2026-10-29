@@ -12,6 +12,17 @@ final class ModelBroker {
         let key:String
         let binding:WorkerDispatchBinding
     }
+    private struct Starting {
+        let operation:PendingPythonWorker
+        let attempt:Int
+        let key:String
+        let nonce:String
+        let started:Int64
+        let packet:Data
+        let binding:WorkerDispatchBinding
+        var revoked=false
+    }
+    private var starting:[String:Starting]=[:]
     private let journal:Journal
     private let factory:PythonWorkerFactory?
     private var entries:[String:Entry]=[:]
@@ -57,13 +68,13 @@ final class ModelBroker {
         guard let factory else {throw PolicyError.invalidObservation}
         try validate(context:context)
         let owned=try job(id,owner:owner,now:now)
-        guard nativeCapacityProven,binding.nativeCompatibilityAccepted,entries[id]==nil,launchHolds.isEmpty,
+        guard nativeCapacityProven,binding.nativeCompatibilityAccepted,entries[id]==nil,starting[id]==nil,launchHolds.isEmpty,
               try ActivityPolicy.permits(target:binding.canonicalModel,snapshot:binding.nativeSnapshot,now:now)
         else { throw AdmissionError.capacity }
         let scope=Self.scopeIdentity(binding)
         guard scopes[id]==nil || scopes[id]==scope else { throw JournalError.conflict }
         let ownedGrants=Set(entries.map { "\($0.key):\($0.value.attempt)" })
-        guard try journal.activeLaunchCount()==entries.count,
+        guard try journal.activeLaunchCount()==entries.count+starting.count,
               try journal.workerGrants().allSatisfy({ownedGrants.contains("\($0.job):\($0.attempt)")}) else { throw AdmissionError.capacity }
         let ordinal=try journal.requestCount(job:id)
         guard ordinal<4 else { throw JournalError.trackingLimit }
@@ -77,8 +88,10 @@ final class ModelBroker {
             "model":binding.nativeModel,"epoch":binding.managerEpoch,"endpoint_hash":binding.nativeSnapshot.endpointHash,
             "expires_at":min(now+5000,owned.lease.expires),"context":context.map {["role":$0.role,"content":$0.content]}])
         do {
-            let worker=try factory.start(journal:journal,job:id,attempt:ordinal,binding:binding,command:packet,now:now)
-            entries[id]=Entry(worker:worker,attempt:ordinal,key:key,binding:binding)
+            let nonce=try journal.planWorkerLaunch(job:id,attempt:ordinal)
+            let started=Int64(ProcessInfo.processInfo.systemUptime*1000)
+            let operation=try factory.beginStart(binding:binding,launchID:nonce,started:started,now:now)
+            starting[id]=Starting(operation:operation,attempt:ordinal,key:key,nonce:nonce,started:started,packet:packet,binding:binding)
         } catch {
             try journal.markUncertain(job:id,attempt:ordinal)
             // Do not guess away a possibly spawned child or free its512MiB.
@@ -99,11 +112,54 @@ final class ModelBroker {
     }
     func cancel(job:String,uptime:Int64) throws {
         if let entry=entries[job] { try entry.worker.cancel(now:uptime) }
+        if var pending=starting[job],!pending.revoked {
+            pending.revoked=true;pending.operation.cancel();starting[job]=pending
+            try journal.markUncertain(job:job,attempt:pending.attempt)
+            launchHolds.insert(WorkerLaunchKey(job:job,attempt:pending.attempt))
+        }
     }
     func poll(now:Int64,uptime:Int64,admission:inout AdmissionPolicy,
               source:(String)throws->WorkerDispatchBinding?) throws -> [String:[ModelWorkerEvent]] {
         launchHolds=try Self.reconcileFailedLaunches(launchHolds,journal:journal,admission:&admission)
         var result:[String:[ModelWorkerEvent]]=[:]
+        for (id,var pending) in starting {
+            let lease=(try? job(id,now:now)) != nil
+            let current=try? source(id)
+            let eligible=current.map { binding in
+                Self.scopeIdentity(binding)==Self.scopeIdentity(pending.binding) && binding.nativeCompatibilityAccepted
+                    && binding.nativeSnapshot.sequence>=pending.binding.nativeSnapshot.sequence
+                    && ((try? ActivityPolicy.permits(target:binding.canonicalModel,snapshot:binding.nativeSnapshot,now:now)) ?? false)
+            } ?? false
+            if !pending.revoked && (!lease || !eligible || uptime<pending.started || uptime-pending.started>=10000) {
+                pending.revoked=true;pending.operation.cancel()
+                if lease {try journal.transitionJob(id:id,to:.revoking,now:now)}
+                try journal.markUncertain(job:id,attempt:pending.attempt)
+                launchHolds.insert(WorkerLaunchKey(job:id,attempt:pending.attempt))
+            }
+            starting[id]=pending
+            guard let finished=pending.operation.take() else {continue}
+            starting.removeValue(forKey:id)
+            do {
+                switch finished {
+                case .success(let transport):
+                    let worker=try transport.bind(journal:journal,key:WorkerLaunchKey(job:id,attempt:pending.attempt),nonce:pending.nonce,started:pending.started,readyAt:uptime)
+                    if pending.revoked {try worker.cancel(now:uptime);result[id]=[.interrupted]}
+                    else {try worker.enqueue(pending.packet,expectedModel:pending.binding.nativeModel,endpointHash:pending.binding.nativeSnapshot.endpointHash,epoch:pending.binding.managerEpoch,now:now)}
+                    entries[id]=Entry(worker:worker,attempt:pending.attempt,key:pending.key,binding:pending.binding)
+                    launchHolds.remove(WorkerLaunchKey(job:id,attempt:pending.attempt))
+                case .failure(.cancelled):
+                    try journal.recordWorkerNotStarted(job:id,attempt:pending.attempt,nonce:pending.nonce)
+                    admission.releaseWorkerAfterReap(key:pending.key)
+                    launchHolds.remove(WorkerLaunchKey(job:id,attempt:pending.attempt))
+                    result[id]=[.interrupted]
+                case .failure(.unavailable):throw RuntimeError.launch
+                }
+            }catch {
+                try journal.markUncertain(job:id,attempt:pending.attempt)
+                launchHolds.insert(WorkerLaunchKey(job:id,attempt:pending.attempt))
+                result[id]=pending.revoked ? [.interrupted]:[.failed(code:"internal_error")]
+            }
+        }
         for (id,entry) in entries {
             let lease=(try? job(id,now:now)) != nil
             let current=try? source(id)
@@ -117,7 +173,7 @@ final class ModelBroker {
             // Own load/compute is not mistaken for source loss. Admission
             // checks loading/conflicts; an in-flight call only checks coverage,
             // exact epoch/profile/scope and freshness, plus its owner lease.
-            result[id]=try entry.worker.poll(now:uptime,authorized:lease && coherent)
+            result[id,default:[]]+=try entry.worker.poll(now:uptime,authorized:lease && coherent)
             if entry.worker.reaped {
                 admission.releaseWorkerAfterReap(key:entry.key)
                 entries.removeValue(forKey:id)
@@ -129,8 +185,8 @@ final class ModelBroker {
         // <=256000/job even across crashes. Terminal history is never refunded.
         return result
     }
-    func canonicalModel(forJob id:String)->String? {entries[id]?.binding.canonicalModel}
-    func active(job:String)->Bool { entries[job] != nil }
-    var activeWorkers:Int { entries.count }
+    func canonicalModel(forJob id:String)->String? {entries[id]?.binding.canonicalModel ?? starting[id]?.binding.canonicalModel}
+    func active(job:String)->Bool { entries[job] != nil || starting[job] != nil }
+    var activeWorkers:Int { entries.count+starting.count }
     var hasUnresolvedLaunch:Bool { !launchHolds.isEmpty }
 }

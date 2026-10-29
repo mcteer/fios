@@ -30,17 +30,20 @@ final class PrivateWorker {
     private(set) var reaped=false
     private(set) var memorySamples=0
 
-    init(process:Process,input:FileHandle,output:FileHandle,journal:Journal,job:String,attempt:Int,started:Int64) throws {
+    init(process:Process,input:FileHandle,output:FileHandle,journal:Journal,job:String,attempt:Int,started:Int64,readyAt:Int64?=nil,capturedGrant:WorkerGrant?=nil,launchNonce:String?=nil) throws {
         guard process.processIdentifier>1,try journal.hasClaim(job:job,attempt:attempt) else { throw JournalError.invalid }
-        grant=try WorkerGrant.capture(pid:process.processIdentifier)
+        grant=try capturedGrant ?? WorkerGrant.capture(pid:process.processIdentifier)
+        guard grant.pid==process.processIdentifier else {throw RuntimeError.identity}
         self.process=process;self.input=input;self.output=output;self.journal=journal;self.job=job;self.attempt=attempt
         inferenceScope=try journal.inferenceScope(job:job,attempt:attempt)?.scope
-        parser=ModelWorkerProtocol(job:job,attempt:attempt);memory=try WorkerMemoryGuard(started:started)
-        self.started=started;lastSample=started;lastPoll=started
+        let observed=readyAt ?? started
+        guard observed>=started else {throw RuntimeError.invalid}
+        parser=ModelWorkerProtocol(job:job,attempt:attempt);memory=try WorkerMemoryGuard(started:observed)
+        self.started=started;lastSample=observed;lastPoll=observed
         guard fcntl(input.fileDescriptor,F_SETFL,O_NONBLOCK)>=0,
               fcntl(input.fileDescriptor,F_SETNOSIGPIPE,1)>=0,
               fcntl(output.fileDescriptor,F_SETFL,O_NONBLOCK)>=0 else { throw RuntimeError.launch }
-        try journal.bindWorker(job:job,attempt:attempt,grant:grant)
+        try journal.bindWorker(job:job,attempt:attempt,grant:grant,nonce:launchNonce)
     }
     deinit {
         try? input.close();try? output.close()
@@ -64,6 +67,7 @@ final class PrivateWorker {
               value["epoch"] as? String==epoch,let expiry=integer("expires_at"),
               expiry>now,expiry-now<=5000 else { throw ControlError.invalid_request }
         if let inferenceScope {
+            guard try journal.inferenceScope(job:job,attempt:attempt)?.state == .reserved else {throw ControlError.invalid_request}
             guard WireScalar.exactModel(inferenceScope.nativeModel,expectedModel),
                   inferenceScope.endpointHash==endpointHash,inferenceScope.managerEpoch==epoch else {throw ControlError.invalid_request}
         }

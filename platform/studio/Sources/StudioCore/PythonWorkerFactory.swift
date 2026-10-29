@@ -2,7 +2,7 @@ import Foundation
 import Darwin
 import CryptoKit
 
-struct WorkerMetadata:Decodable {
+struct WorkerMetadata:Decodable,Sendable {
     let version:Int
     let pipe_version:Int
     let package_version:String
@@ -13,7 +13,7 @@ struct WorkerMetadata:Decodable {
 
 // Constructed only by trusted, reviewed enrollment, never by task IPC. Profile
 // acceptance includes cached model/capacity/native non-preemption evidence.
-struct WorkerDispatchBinding {
+struct WorkerDispatchBinding:Sendable {
     let baseURL:String
     let guardPath:String
     let host:String
@@ -26,7 +26,7 @@ struct WorkerDispatchBinding {
     let apiKey:String?
 }
 
-final class PythonWorkerFactory {
+final class PythonWorkerFactory:Sendable {
     private let invocation:String
     private let executable:VerifiedExecutable
     let metadata:WorkerMetadata
@@ -80,22 +80,33 @@ final class PythonWorkerFactory {
         guard process.terminationStatus==0 else { throw RuntimeError.identity }
         return data
     }
-    // Caller first reserves512MiB plus native capacity and claims durable
-    // (job,attempt) budget. This method never accepts argv/environment overrides.
-    func start(journal:Journal,job:String,attempt:Int,binding:WorkerDispatchBinding,command:Data,now:Int64) throws -> PrivateWorker {
+    // Pure binding validation. Binary verification/spawn occur off-loop for
+    // broker starts; no journal, caller argv or permission bytes enter work.
+    private func validate(_ binding:WorkerDispatchBinding,now:Int64)throws {
         guard binding.nativeCompatibilityAccepted,binding.nativeSnapshot.host==binding.host,
               binding.nativeSnapshot.endpointHash==Self.digest(binding.baseURL),
               binding.profileHash.utf8.count==64,binding.profileHash.utf8.allSatisfy({ (48...57).contains($0)||(97...102).contains($0) }),
               UUID(uuidString:binding.managerEpoch)?.uuidString.lowercased()==binding.managerEpoch,
               binding.guardPath.hasPrefix("/"),binding.guardPath.hasSuffix("/observe.sock"),
-              try ActivityPolicy.permits(target:binding.canonicalModel,snapshot:binding.nativeSnapshot,now:now),
-              try journal.activeLaunchCount()<2 else { throw PolicyError.invalidObservation }
+              try ActivityPolicy.permits(target:binding.canonicalModel,snapshot:binding.nativeSnapshot,now:now) else { throw PolicyError.invalidObservation }
         let components=URLComponents(string:binding.baseURL)
         guard components?.scheme=="http",["127.0.0.1","::1","[::1]"].contains(components?.host ?? ""),
               components?.path=="/v1",components?.user==nil,components?.password==nil,
               components?.query==nil,components?.fragment==nil else { throw RuntimeError.identity }
+    }
+    func beginStart(binding:WorkerDispatchBinding,launchID:String,started:Int64,now:Int64)throws->PendingPythonWorker {
+        try validate(binding,now:now)
+        guard WireScalar.uuid(launchID),started>=0,started<=ActivityPolicy.maximumTimestamp-2000 else {throw RuntimeError.invalid}
+        return PendingPythonWorker { [self] cancelled in
+            do {return .success(try spawnTransport(binding:binding,launchID:launchID,cancelled:cancelled))}
+            catch WorkerStartFailure.cancelled {return .failure(.cancelled)}
+            catch {return .failure(.unavailable)}
+        }
+    }
+    private func spawnTransport(binding:WorkerDispatchBinding,launchID:String,cancelled:@Sendable ()->Bool)throws->StartedPythonWorker {
+        guard !cancelled() else {throw WorkerStartFailure.cancelled}
         try Self.verifyInvocation(invocation,executable:executable)
-        let launchID=try journal.planWorkerLaunch(job:job,attempt:attempt)
+        guard !cancelled() else {throw WorkerStartFailure.cancelled}
         let process=Process(),input=Pipe(),output=Pipe()
         var env=Self.environment
         env["FIOS_PLATFORM_LAUNCH_ID"]=launchID
@@ -114,16 +125,26 @@ final class PythonWorkerFactory {
         process.standardInput=input;process.standardOutput=output;process.standardError=FileHandle.nullDevice
         do {
             try process.run()
-            let worker=try PrivateWorker(process:process,input:input.fileHandleForWriting,output:output.fileHandleForReading,
-                journal:journal,job:job,attempt:attempt,started:Int64(ProcessInfo.processInfo.systemUptime*1000))
-            try worker.enqueue(command,expectedModel:binding.nativeModel,endpointHash:binding.nativeSnapshot.endpointHash,epoch:binding.managerEpoch,now:now)
-            return worker
-        } catch {
+            let grant=try? WorkerGrant.capture(pid:process.processIdentifier)
+            return StartedPythonWorker(process:process,input:input.fileHandleForWriting,output:output.fileHandleForReading,grant:grant)
+        }catch {
             try? input.fileHandleForWriting.close();try? output.fileHandleForReading.close()
-            if process.isRunning { kill(process.processIdentifier,SIGKILL) }
-            // No retry, guessed native completion or reservation release.
+            if process.isRunning {kill(process.processIdentifier,SIGKILL)}
             throw error
         }
+    }
+    // Synchronous compatibility for isolated direct factory fixtures only.
+    // The manager broker exclusively uses beginStart/once-only result transfer.
+    func start(journal:Journal,job:String,attempt:Int,binding:WorkerDispatchBinding,command:Data,now:Int64)throws->PrivateWorker {
+        let started=Int64(ProcessInfo.processInfo.systemUptime*1000)
+        try validate(binding,now:now)
+        guard try journal.activeLaunchCount()<2 else {throw PolicyError.invalidObservation}
+        try Self.verifyInvocation(invocation,executable:executable)
+        let nonce=try journal.planWorkerLaunch(job:job,attempt:attempt)
+        let transport=try spawnTransport(binding:binding,launchID:nonce,cancelled:{false})
+        let worker=try transport.bind(journal:journal,key:WorkerLaunchKey(job:job,attempt:attempt),nonce:nonce,started:started,readyAt:Int64(ProcessInfo.processInfo.systemUptime*1000))
+        try worker.enqueue(command,expectedModel:binding.nativeModel,endpointHash:binding.nativeSnapshot.endpointHash,epoch:binding.managerEpoch,now:now)
+        return worker
     }
     static func digest(_ value:String)->String { SHA256.hash(data:Data(value.utf8)).map {String(format:"%02x",$0)}.joined() }
 }

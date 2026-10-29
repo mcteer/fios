@@ -1,7 +1,7 @@
 import Foundation
 import Darwin
 
-struct WorkerGrant:Codable,Equatable {
+struct WorkerGrant:Codable,Equatable,Sendable {
     let pid:Int32
     let start:UInt64
     let boot:String
@@ -21,7 +21,7 @@ struct WorkerGrant:Codable,Equatable {
 }
 
 // Trusted coordinator identity, never decoded from task/control frames.
-struct WorkerLaunchKey:Hashable {
+struct WorkerLaunchKey:Hashable,Sendable {
     let job:String
     let attempt:Int
     var reservationKey:String {"model:\(job):\(attempt)"}

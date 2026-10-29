@@ -628,16 +628,32 @@ public final class Journal {
         }
         return nonce
     }
+    // Only the live producer's completed pre-spawn cancellation can use this
+    // transition. Restart/census failures cannot infer that spawn never ran.
+    // Local reservation only: the inference claim remains untouched.
+    func recordWorkerNotStarted(job:String,attempt:Int,nonce:String)throws {
+        try validate(job:job,attempt:attempt)
+        guard WireScalar.uuid(nonce) else {throw JournalError.invalid}
+        let boot=try HostBoot.identity()
+        try transaction {
+            guard try scalar("SELECT count(*) FROM worker_grants WHERE job=? AND attempt=?",[job,String(attempt)])==0 else {throw JournalError.conflict}
+            try execute("UPDATE worker_launches SET reaped=1 WHERE job=? AND attempt=? AND nonce=? AND boot=? AND reaped=0",[job,String(attempt),nonce,boot])
+            guard sqlite3_changes(db)==1 else {throw JournalError.conflict}
+        }
+    }
     private func grantPayload(_ grant:WorkerGrant) throws -> String {
         try grant.validate()
         let encoder=JSONEncoder();encoder.outputFormatting=[.sortedKeys]
         return String(decoding:try encoder.encode(grant),as:UTF8.self)
     }
-    func bindWorker(job:String,attempt:Int,grant:WorkerGrant) throws {
+    func bindWorker(job:String,attempt:Int,grant:WorkerGrant,nonce:String?=nil) throws {
         try validate(job:job,attempt:attempt)
         let payload=try grantPayload(grant)
+        if let nonce {guard WireScalar.uuid(nonce),try scalar("SELECT count(*) FROM worker_launches WHERE job=? AND attempt=? AND nonce=? AND reaped=0",[job,String(attempt),nonce])==1 else {throw JournalError.conflict}}
         try transaction {
-            guard try scalar("SELECT count(*) FROM inference WHERE job=? AND attempt=? AND uncertain=0",[job,String(attempt)])==1,
+            // Binding a late known child is local cleanup authority only;
+            // an uncertain inference may not receive a fresh permission.
+            guard try scalar("SELECT count(*) FROM inference WHERE job=? AND attempt=?",[job,String(attempt)])==1,
                   try scalar("SELECT count(*) FROM worker_grants WHERE job=? AND attempt=?",[job,String(attempt)])==0,
                   try scalar("SELECT count(*) FROM worker_launches WHERE job=? AND attempt=? AND boot=? AND reaped=0",[job,String(attempt),grant.boot])==1 else { throw JournalError.conflict }
             guard try scalar("SELECT count(*) FROM worker_grants WHERE reaped=0")<2 else { throw JournalError.trackingLimit }
