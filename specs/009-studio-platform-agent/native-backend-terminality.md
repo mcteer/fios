@@ -2,6 +2,12 @@
 
 Status: **incomplete; no complete-coverage/quiescence/lifecycle authority**. This records pinned-source findings, not native model inference acceptance. Source is MLX-Serve `046b647686419df06c6c7132fb1d15d76185c3e5`; genuine dependency identities/evidence are in [native-integration.md](native-integration.md). Installed services, RDMA and production data remain unchanged.
 
+## Registry teardown retention — 2026-10-29
+
+The canonical source now refuses registry destruction before effects when known access/preparation holds, model borrows, loading/eviction, an eviction claim or sticky metadata uncertainty remain. Refusal retains the exact records and poisons uncertainty. Quiet teardown reserves metadata frontdoors with a non-owner sentinel, drops the mutex, then invokes destructors; constructor-only unpublished error cleanup is separate. This is metadata lifetime protection, not context/device terminality or a service-action receipt.
+
+Actual allocator-observed metadata root regression executes7pass/1fail of8 on the old path (five frees while access held), then8/8 positive and a precise optimized public-guard bypass7/1 witness with exact restoration. Full linked/HTTP/control/Swift-manager and genuine SDK checks pass in `/tmp/fios-009-native-registry-teardown-linked.log`. The test arenas contain no model/backend and their scoped disposal is not credited as retirement. Artifact `af94a11dc30219248054f1d9c1b7828bc71aa69887681e3611f4b6ada511e35e`, six installed inputs unchanged; no inference/activation/installed change. G2 and complete participant/context/transition ownership remain open.
+
 ## Required composition
 
 A terminal grant must bind the authenticated process/source instance, closed admission sequence, exact native model/registry generation, every live device-owner participant and its actual terminal receipt. It must reserve those transitions atomically until the finite lifecycle action commits. Counting owners, sampling a registry twice, GPU telemetry, child exit, cancellation, timeouts or a stream-creation epoch alone cannot establish this.

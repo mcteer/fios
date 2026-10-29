@@ -1,6 +1,6 @@
 # T044 broker audit
 
-Whole-task status: **open again**. Local source/isolated worker acceptance passes, but hosted CI run40918785180 stalls in the Python factory/broker fixture. Fixed phase diagnostics localize the failure to the factory fixture without a causal root. Following diagnostic408eaca passes all7 CI checks; new kernel-proof/durable-publication hardening awaits fresh exact-head validation before whole-task completion. This audit separates the broker's own implementation/evidence gaps from native admission/profile/installed acceptance in T002/T022/T045/T051. No real inference or installed service action is authorized by these tests.
+Whole-task status: **complete** (T044 source, isolated worker and hosted compatibility checks). It was reopened for hosted factory stalls; durable publication/kernel-absence hardening and removal of post-exit Foundation waits now pass actual contention/guard mutations and all7 exact-head checks on d302931/run40928509744. The precise prior timeout cause remains unproven. Native admission/profile/installed acceptance in T002/T022/T045/T051 remain separate; these checks authorize no real inference or installed service action.
 
 | Requirement | Current source/evidence | Remaining work |
 | --- | --- | --- |
