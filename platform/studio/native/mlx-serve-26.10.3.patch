@@ -617,7 +617,7 @@ index da1f791..fcba539 100644
              free +|= idle[n].bytes_resident;
          }
 diff --git a/src/scheduler.zig b/src/scheduler.zig
-index 9e12566..4b38a3e 100644
+index 9e12566..2745e56 100644
 --- a/src/scheduler.zig
 +++ b/src/scheduler.zig
 @@ -32,6 +32,8 @@
@@ -629,7 +629,16 @@ index 9e12566..4b38a3e 100644
  const depth_bounds = @import("mtp_depth_bounds.zig");
  const mlx = @import("mlx.zig");
  const ple_gpu = @import("ple_gpu.zig");
-@@ -432,6 +434,366 @@ pub var prefill_admission_refused_log: ?*const fn (*const model_mod.ModelConfig,
+@@ -120,6 +122,8 @@ pub const LlamaSettings = struct {
+ /// Transformer, vision encoder, drafter, JIT compile, warmup) all run on the
+ /// inference thread before `init()` returns.
+ pub const LoadParams = struct {
++    // Trusted queued/startup preparation lineage, never a wire-selected token.
++    fios_parent: ?fios_ownership.Token = null,
+     /// Registry that owns the entry to populate + provides snapshot/eviction
+     /// bookkeeping. Outlives the scheduler.
+     registry: *ModelRegistry,
+@@ -432,6 +436,399 @@ pub var prefill_admission_refused_log: ?*const fn (*const model_mod.ModelConfig,
  /// Invalidate the published hot-cache budget on unload/switch (`server.clearResolvedPrefixCacheMem`).
  pub var hot_cache_budget_invalidate: ?*const fn () void = null;
  
@@ -840,12 +849,45 @@ index 9e12566..4b38a3e 100644
 +            }
 +        }
 +    }
++    // The real inference-thread preparation helper has its own guard too;
++    // boot/direct actor calls cannot rely on a connection-thread wrapper.
++    if (FiosActorLoadPreparation.begin(&scheduler, model.id, null)) |unexpected| {
++        unexpected.finish(io);
++        std.debug.print("FIO_ACTOR_LOAD_PREPARATION_BYPASS\n", .{});
++        return error.ActorPreparationBypass;
++    } else |err| {
++        if (err != error.ModelConflict) return err;
++    }
 +    try std.testing.expectEqual(model_registry_mod.LoadState.unloaded, cold_guard.state);
 +    try request_tracker.leave(io, foreign_load_preparation);
 +    const prepared_ready = try scheduler.ensureLoaded(model.id);
 +    registry.releaseStatus(prepared_ready);
 +    try std.testing.expectEqual(@as(usize, 0), request_tracker.snapshot(io).owned);
 +    try std.testing.expect(!request_tracker.snapshot(io).uncertain);
++    const actor_root = try request_tracker.enter(io);
++    const actor_id = try fios_ownership.parseCorrelationHex("29fc52e328d588a1afee500c96d67ccc1045a873a328efccec3dc9ddfaef2cf5");
++    try request_tracker.associate(io, actor_root, actor_id);
++    try request_tracker.bind(io, actor_root, model.id);
++    const posted_preparation = try request_tracker.reservePreparation(io, actor_root, model.id);
++    const actor_pause = try request_tracker.pauseAdmissions(io);
++    try std.testing.expectError(error.Maintenance, FiosActorLoadPreparation.begin(&scheduler, model.id, null));
++    const prior_context = fios_ownership.current;
++    const actor_preparation = try FiosActorLoadPreparation.begin(&scheduler, model.id, posted_preparation);
++    const actor_token = actor_preparation.token orelse return error.MissingActorOwner;
++    try std.testing.expectEqual(actor_token.sequence, fios_ownership.current.?.sequence);
++    try std.testing.expectEqual(@as(usize, 3), request_tracker.correlationSnapshot(io, actor_id).owners);
++    try request_tracker.retain(io, actor_token); // Stand-in retained reference; no backend/model call.
++    actor_preparation.finish(io);
++    try std.testing.expect(std.meta.eql(prior_context, fios_ownership.current));
++    try request_tracker.leave(io, posted_preparation);
++    try request_tracker.leave(io, actor_root);
++    const actor_retained = request_tracker.correlationSnapshot(io, actor_id);
++    try std.testing.expect(actor_retained.found and !actor_retained.uncertain);
++    try std.testing.expectEqual(actor_root.sequence, actor_retained.root_sequence);
++    try std.testing.expectEqual(@as(usize, 1), actor_retained.owners);
++    try request_tracker.leave(io, actor_token);
++    try std.testing.expect(!request_tracker.correlationSnapshot(io, actor_id).found);
++    try request_tracker.resumeAdmissions(io, actor_pause);
 +    registry.fios_request_tracker = null;
 +    // Same-looking ready→evicting→ready is NOT the same registry generation.
 +    const registry_before = fiosRegistryQuietGeneration(&scheduler) orelse return error.UnexpectedRegistryBusy;
@@ -996,7 +1038,7 @@ index 9e12566..4b38a3e 100644
  pub const SlotState = enum { pending_prefill, decoding, finished, errored };
  
  /// Result of `Slot.waitNext`. Driven by the inference thread; consumed by
-@@ -449,6 +811,9 @@ pub const NextResult = union(enum) {
+@@ -449,6 +846,9 @@ pub const NextResult = union(enum) {
  
  /// Per-request state. Owned by the Scheduler from `submit` until `complete`.
  pub const Slot = struct {
@@ -1006,7 +1048,7 @@ index 9e12566..4b38a3e 100644
      allocator: std.mem.Allocator,
      /// io reference for Stopwatch / async-eval (captured from Scheduler).
      io: std.Io,
-@@ -827,6 +1192,14 @@ pub const Slot = struct {
+@@ -827,6 +1227,14 @@ pub const Slot = struct {
      /// finished/errored it AND the connection thread has consumed the final
      /// `done`/`err` from `waitNext`).
      pub fn deinit(self: *Slot) void {
@@ -1021,7 +1063,16 @@ index 9e12566..4b38a3e 100644
          // ds4_session / llama_seq are borrowed from the model (persistent
          // across requests) — never freed here. The claim on them is released
          // in Scheduler.complete; they die with the model.
-@@ -1508,6 +1881,11 @@ pub const Scheduler = struct {
+@@ -1197,6 +1605,8 @@ pub const EmbedRequest = struct {
+ /// victim `.evicting` and waited for refcount == 0, so freeing GPU memory
+ /// is safe.
+ pub const LoadRequest = struct {
++    // Trusted queued/startup preparation lineage, never a wire-selected token.
++    fios_parent: ?fios_ownership.Token = null,
+     /// Target entry to populate. Already transitioned to `.loading` by
+     /// the conn thread before posting; the inference thread completes the
+     /// load and calls `registry.markReadyLocked(entry, bytes)` or
+@@ -1508,6 +1918,11 @@ pub const Scheduler = struct {
  
      queue_mu: std.Io.Mutex,
      queue_cond: std.Io.Condition,
@@ -1033,7 +1084,7 @@ index 9e12566..4b38a3e 100644
      pending: std.ArrayList(*Slot),
      decoding: std.ArrayList(*Slot),
      /// Slots a Neural Engine worker runs (`runAneSlot`), off the inference thread.
-@@ -1886,6 +2264,13 @@ pub const Scheduler = struct {
+@@ -1886,6 +2301,13 @@ pub const Scheduler = struct {
          const eff_kv_quant = params.kv_quant_config orelse slot_config.kv_quant_override orelse self.kv_quant_config;
          const slot = try Slot.init(self.allocator, self.io, slot_config, params, eff_kv_quant);
          errdefer slot.deinit();
@@ -1047,7 +1098,7 @@ index 9e12566..4b38a3e 100644
  
          self.queue_mu.lockUncancelable(self.io);
          defer self.queue_mu.unlock(self.io);
-@@ -2055,6 +2440,14 @@ pub const Scheduler = struct {
+@@ -2055,6 +2477,14 @@ pub const Scheduler = struct {
          return gen_mod.estimatePeakResidentBytes(self.io, entry.path, peeked);
      }
  
@@ -1062,7 +1113,7 @@ index 9e12566..4b38a3e 100644
      /// Plan 05 Phase D: resolve `id_or_empty` ("" / "mlx-serve" → default)
      /// to a refcounted, ready `*LoadedModel`. Cold-loads on demand: if the
      /// entry is `.unloaded`, parses CPU state, picks an LRU victim if
-@@ -2072,6 +2465,15 @@ pub const Scheduler = struct {
+@@ -2072,6 +2502,15 @@ pub const Scheduler = struct {
      ///   error.LoadFailed        — inference thread reported a load failure.
      ///   error.Shutdown          — scheduler is shutting down.
      pub fn ensureLoaded(self: *Scheduler, id_or_empty: []const u8) !*LoadedModel {
@@ -1078,7 +1129,7 @@ index 9e12566..4b38a3e 100644
          // A lost GPU context fails every MLX call: nothing is loaded or served until a restart.
          if (mlx.gpuContextLost()) return error.GpuContextLost;
          // Fast path: ready entries. registry.ensureLoaded handles waiting
-@@ -2085,8 +2487,6 @@ pub const Scheduler = struct {
+@@ -2085,8 +2524,6 @@ pub const Scheduler = struct {
          // Slow path: cold load. Resolve the entry. Re-acquire mutex and
          // re-check state — between the fast-path call and now another
          // caller could have completed the load.
@@ -1087,7 +1138,7 @@ index 9e12566..4b38a3e 100644
          // CPU-only pre-load: parse config / load tokenizer / load chat
          // config. Cheap (~tens of ms); kept outside the mutex so other
          // requests on other models stay unblocked. On failure, mark the
-@@ -2096,9 +2496,7 @@ pub const Scheduler = struct {
+@@ -2096,9 +2533,7 @@ pub const Scheduler = struct {
          var settings = model_settings.overrideFor(self.allocator, self.io, entry.path);
          defer settings.deinit(self.allocator);
          const cpu_state = preloadCpuState(self.allocator, self.io, entry.path, settings.ctx_size orelse self.gguf_ctx_size) catch |err| {
@@ -1098,7 +1149,7 @@ index 9e12566..4b38a3e 100644
              return error.LoadFailed;
          };
          // Ownership: on success transfers to the entry inside the
-@@ -2151,9 +2549,11 @@ pub const Scheduler = struct {
+@@ -2151,9 +2586,11 @@ pub const Scheduler = struct {
  
              // Wait out any concurrent .loading / .evicting state.
              wait_loop: while (true) {
@@ -1110,7 +1161,7 @@ index 9e12566..4b38a3e 100644
                          self.registry.mutex.unlock(self.io);
                          return entry;
                      },
-@@ -2178,6 +2578,7 @@ pub const Scheduler = struct {
+@@ -2178,6 +2615,7 @@ pub const Scheduler = struct {
              // From the claim: while victims unload or the queue waits, not the last load's numbers.
              entry.load_progress.start(io_util.nowMsMonotonic(self.io));
              _ = entry.refcount.fetchAdd(1, .acq_rel);
@@ -1118,7 +1169,15 @@ index 9e12566..4b38a3e 100644
              pinned = true;
  
              // Estimate post-load bytes (see `gateEstimateBytes` for why a media
-@@ -2338,6 +2739,32 @@ pub const Scheduler = struct {
+@@ -2230,6 +2668,7 @@ pub const Scheduler = struct {
+ 
+         // ── Stage 2: build + post LoadRequest, wait for completion.
+         var req = LoadRequest{
++            .fios_parent = fios_preparation,
+             .entry = entry,
+             .config = owned.config,
+             .tok = owned.tok,
+@@ -2338,6 +2777,32 @@ pub const Scheduler = struct {
          return self.registry.loadErrorNameDupe(alloc, id_or_empty);
      }
  
@@ -1151,7 +1210,7 @@ index 9e12566..4b38a3e 100644
      /// Run a media-generation job on the inference thread. Posts `req` to the
      /// gen queue and blocks the calling (connection) thread until the
      /// inference thread has run the job body to completion. The job writes its
-@@ -2398,7 +2825,10 @@ pub const Scheduler = struct {
+@@ -2398,7 +2863,10 @@ pub const Scheduler = struct {
                      return;
                  }
              }
@@ -1163,7 +1222,43 @@ index 9e12566..4b38a3e 100644
              self.registry.waitForRefcountZeroLocked(entry);
              self.registry.mutex.unlock(self.io);
          }
-@@ -5691,7 +6121,7 @@ pub fn armShutdownDeadline(slot: *std.atomic.Value(i64), now_ms: i64, secs: u32)
+@@ -4606,7 +5074,35 @@ fn loadGlmHead(allocator: std.mem.Allocator, config: *const model_mod.ModelConfi
+ /// On any error the partial state has already been freed via errdefer; the
+ /// caller decides how to surface (startup → recordLoadError + signal
+ /// started; on-demand → req.error_name + done broadcast).
++// CPU/load-call lifetime, not a backend/device-terminal reservation. The
++// actual actor installs its child owner as thread-local context so retained
++// backend references can keep this exact lineage beyond the call's return.
++const FiosActorLoadPreparation = struct {
++    tracker: ?*fios_ownership.Tracker = null,
++    token: ?fios_ownership.Token = null,
++    previous: ?fios_ownership.Token = null,
++    fn begin(sch: *Scheduler, model: []const u8, parent: ?fios_ownership.Token) !FiosActorLoadPreparation {
++        sch.registry.mutex.lockUncancelable(sch.io);
++        const tracker = sch.registry.fios_request_tracker;
++        sch.registry.mutex.unlock(sch.io);
++        const previous = fios_ownership.current;
++        if (tracker) |source| {
++            const token = try source.reservePreparation(sch.io, parent, model);
++            fios_ownership.current = token;
++            return .{ .tracker = source, .token = token, .previous = previous };
++        }
++        return .{ .previous = previous };
++    }
++    fn finish(self: FiosActorLoadPreparation, io: std.Io) void {
++        fios_ownership.current = self.previous;
++        if (self.token) |token| self.tracker.?.leave(io, token) catch { self.tracker.?.fence(io); };
++    }
++};
++
+ fn doLoadOnInferenceThread(sch: *Scheduler, params: anytype) !void {
++    const fios_actor_preparation = try FiosActorLoadPreparation.begin(sch, params.entry.id, params.fios_parent);
++    defer fios_actor_preparation.finish(sch.io);
++
+     // ── ds4 fast path: when the caller passed `ds4_path`, the model is a
+     //    GGUF served by the embedded ds4 engine. The MLX scaffolding
+     //    (weights/Transformer/vision/drafter/JIT/warmup) is entirely
+@@ -5691,7 +6187,7 @@ pub fn armShutdownDeadline(slot: *std.atomic.Value(i64), now_ms: i64, secs: u32)
  }
  
  fn hasWorkPendingLocked(sch: *const Scheduler) bool {
@@ -1172,7 +1267,7 @@ index 9e12566..4b38a3e 100644
          sch.decoding.items.len > 0 or
          sch.vision_queue.items.len > 0 or
          sch.embed_queue.items.len > 0 or
-@@ -5701,6 +6131,165 @@ fn hasWorkPendingLocked(sch: *const Scheduler) bool {
+@@ -5701,6 +6197,165 @@ fn hasWorkPendingLocked(sch: *const Scheduler) bool {
          sch.unload_queue.items.len > 0;
  }
  
@@ -1338,7 +1433,7 @@ index 9e12566..4b38a3e 100644
  /// Poll interval for the idle-eviction sweep, given the configured window.
  ///
  /// A quarter of the window, so a model is evicted within ~1.25x the configured
-@@ -5713,6 +6302,15 @@ pub fn idleEvictTickMs(window_ms: i64) i64 {
+@@ -5713,6 +6368,15 @@ pub fn idleEvictTickMs(window_ms: i64) i64 {
  fn inferenceLoop(ctx: ThreadCtx) void {
      const sch = ctx.scheduler;
      const params = ctx.params;
@@ -1354,7 +1449,7 @@ index 9e12566..4b38a3e 100644
      // Covers shutdown and startup-load failure.
      defer sleep_inhibit.release();
  
-@@ -5749,6 +6347,14 @@ fn inferenceLoop(ctx: ThreadCtx) void {
+@@ -5749,6 +6413,14 @@ fn inferenceLoop(ctx: ThreadCtx) void {
      }
  
      while (!sch.shutdown.load(.acquire)) {
@@ -1370,7 +1465,7 @@ index 9e12566..4b38a3e 100644
          // model is heavy (~seconds; weight read + JIT compile + warmup)
          // and we want the rest of the inference loop to stay responsive.
 diff --git a/src/server.zig b/src/server.zig
-index 720b2c6..b58dfd2 100644
+index 720b2c6..226d80b 100644
 --- a/src/server.zig
 +++ b/src/server.zig
 @@ -1,4 +1,8 @@
@@ -1404,20 +1499,33 @@ index 720b2c6..b58dfd2 100644
      server_config = cfg;
      // Before `Scheduler.init`: that call is the model load and every load-time bill inside it
      // asks for the KV width.
-@@ -2013,7 +2025,12 @@ pub fn serve(
-         max_concurrent,
+@@ -2002,6 +2014,16 @@ pub fn serve(
+         return err;
+     };
+     defer server.deinit(io);
++    // Enroll before startup loading; the registry outlives the scheduler.
++    // Preserve tracking on initialization failure/teardown, never refund an
++    // uncertain backend owner by silently detaching its guard.
++    load_params.registry.mutex.lockUncancelable(io);
++    if (load_params.registry.fios_request_tracker != null) {
++        load_params.registry.mutex.unlock(io);
++        return error.NativeTrackingAlreadyEnrolled;
++    }
++    load_params.registry.fios_request_tracker = fios_requests;
++    load_params.registry.mutex.unlock(io);
+     var startup: StartupResponder = .{ .server = &server, .registry = load_params.registry, .allocator = allocator, .io = io };
+     if (!load_params.no_initial_load) startup.start();
+     defer startup.stop();
+@@ -2014,6 +2036,8 @@ pub fn serve(
      );
      defer scheduler.deinit();
-+    scheduler.registry.mutex.lockUncancelable(io);
-+    scheduler.registry.fios_request_tracker = fios_requests;
-+    scheduler.registry.mutex.unlock(io);
      startup.stop();
 +    const native_control = try fios_control.Bridge.start(io, allocator, build_options.version, .{ .context = scheduler, .probe = &fiosOwnerProbe });
 +    defer if (native_control) |control| control.stop();
      global_scheduler = scheduler;
      defer global_scheduler = null;
      // The inference thread's evict-or-refuse hook (#353); the scheduler has no server import.
-@@ -2301,7 +2318,13 @@ pub fn serve(
+@@ -2301,7 +2325,13 @@ pub fn serve(
              accepted_stream.close(io);
              continue;
          };
@@ -1431,7 +1539,7 @@ index 720b2c6..b58dfd2 100644
              .allocator = allocator,
              .accepted_stream = accepted_stream,
              .io = io,
-@@ -2313,6 +2336,7 @@ pub fn serve(
+@@ -2313,6 +2343,7 @@ pub fn serve(
              log.err("spawn conn thread failed: {}\n", .{err});
              _ = active_conn_threads.fetchSub(1, .acq_rel);
              accepted_stream.close(io);
@@ -1439,7 +1547,7 @@ index 720b2c6..b58dfd2 100644
              allocator.destroy(args);
              continue;
          };
-@@ -2355,6 +2379,7 @@ pub fn serve(
+@@ -2355,6 +2386,7 @@ pub fn serve(
  /// returns. The accepted stream is moved into a stack-allocated `Conn`
  /// inside the thread.
  const ConnThreadArgs = struct {
@@ -1447,7 +1555,7 @@ index 720b2c6..b58dfd2 100644
      allocator: std.mem.Allocator,
      accepted_stream: std.Io.net.Stream,
      io: std.Io,
-@@ -2365,10 +2390,17 @@ fn handleConnectionThread(args: *ConnThreadArgs) void {
+@@ -2365,10 +2397,17 @@ fn handleConnectionThread(args: *ConnThreadArgs) void {
      // shutdown drain in `serve` only sees this thread leave once it has fully
      // returned from `complete()` and closed its socket.
      defer _ = active_conn_threads.fetchSub(1, .acq_rel);
@@ -1466,7 +1574,7 @@ index 720b2c6..b58dfd2 100644
          switch (err) {
              error.WriteFailed, error.ReadFailed => {
                  // error.WriteFailed/ReadFailed collapses BrokenPipe + ConnectionResetByPeer
-@@ -2521,6 +2553,7 @@ fn readRequestWithin(allocator: std.mem.Allocator, stream: *Conn, limit_ms: i64)
+@@ -2521,6 +2560,7 @@ fn readRequestWithin(allocator: std.mem.Allocator, stream: *Conn, limit_ms: i64)
  fn handleConnection(
      allocator: std.mem.Allocator,
      stream: *Conn,
@@ -1474,7 +1582,7 @@ index 720b2c6..b58dfd2 100644
  ) !void {
      // Plan 05: resolve which model this request targets. The registry was
      // set up in `serve()`; per-POST routing happens after we read the body
-@@ -2603,6 +2636,37 @@ fn handleConnection(
+@@ -2603,6 +2643,37 @@ fn handleConnection(
          }
      }
  
@@ -1512,7 +1620,7 @@ index 720b2c6..b58dfd2 100644
      // ── Plan 05: routes that don't depend on a loaded model (connectivity
      //    probes + CORS preflight + listing endpoints). Handle these BEFORE
      //    `scheduler.ensureLoaded` so they don't trigger a cold load of the
-@@ -2705,7 +2769,7 @@ fn handleConnection(
+@@ -2705,7 +2776,7 @@ fn handleConnection(
          // get a 404 here even though the main dispatch path below falls
          // back to default for SDK compatibility.
          log.debug("POST /v1/load-model -> 200\n", .{});
@@ -1521,7 +1629,7 @@ index 720b2c6..b58dfd2 100644
          return;
      }
      // Any method: a status route never reaches `ensureLoaded`, whatever its body names.
-@@ -2873,7 +2937,14 @@ fn handleConnection(
+@@ -2873,7 +2944,14 @@ fn handleConnection(
              return;
          }
      }
@@ -1537,7 +1645,7 @@ index 720b2c6..b58dfd2 100644
          // Headless gen-only boot (media models resident, no default chat
          // model): /props keeps answering with the live memory counters —
          // the app's tray polls it, and a 503 here read as "0 MB".
-@@ -2887,6 +2958,10 @@ fn handleConnection(
+@@ -2887,6 +2965,10 @@ fn handleConnection(
      // A status read must not look like use — see `isStatusRoute`.
      const status_read = isStatusRoute(method, path);
      defer if (status_read) scheduler.releaseStatus(lm) else scheduler.release(lm);
@@ -1548,7 +1656,7 @@ index 720b2c6..b58dfd2 100644
  
      // A model loaded on demand freezes its own auto-context here, for the same
      // reason the `--model` primary does at startup: the number we advertise is
-@@ -7800,7 +7875,7 @@ fn handleModelsRescan(allocator: std.mem.Allocator, stream: *Conn) !void {
+@@ -7800,7 +7882,7 @@ fn handleModelsRescan(allocator: std.mem.Allocator, stream: *Conn) !void {
  /// Plan 05 Phase E: explicit cold-load. Strict on unknown ids (404 — the
  /// caller asked for a specific id, not "anything"). Routes through
  /// scheduler.ensureLoaded so eviction/back-pressure kicks in.
@@ -1557,7 +1665,7 @@ index 720b2c6..b58dfd2 100644
      const scheduler = global_scheduler orelse {
          try sendErrorResponse(allocator, stream, "503 Service Unavailable", "internal_error", "Scheduler not ready", 503);
          return;
-@@ -7885,11 +7960,20 @@ fn handleLoadModelStrict(allocator: std.mem.Allocator, stream: *Conn, request_bo
+@@ -7885,11 +7967,20 @@ fn handleLoadModelStrict(allocator: std.mem.Allocator, stream: *Conn, request_bo
          .id => |id| requested_id = id,
          else => {},
      };
@@ -1579,7 +1687,7 @@ index 720b2c6..b58dfd2 100644
      // Promotion happens only past ensureLoaded's error switch: a load that
      // FAILED must never steal the default from a model that answers.
      if (make_default) {
-@@ -8030,6 +8114,7 @@ fn handleTranscriptions(allocator: std.mem.Allocator, stream: *Conn, body: []con
+@@ -8030,6 +8121,7 @@ fn handleTranscriptions(allocator: std.mem.Allocator, stream: *Conn, body: []con
              try sendErrorResponse(allocator, stream, "400 Bad Request", "invalid_request_error", "diarized_json needs Nemotron 3 Diarization, which is not on disk or did not load: download " ++ DIARIZER_REPO ++ " beside the ASR model", 400);
              return;
          }).id;
@@ -1587,7 +1695,7 @@ index 720b2c6..b58dfd2 100644
          diarizer = global_scheduler.?.ensureLoaded(id) catch |err| blk: {
              log.warn("  diarizer {s} did not load ({s}): one speaker\n", .{ id, @errorName(err) });
              break :blk null;
-@@ -8054,16 +8139,19 @@ fn handleTranscriptions(allocator: std.mem.Allocator, stream: *Conn, body: []con
+@@ -8054,16 +8146,19 @@ fn handleTranscriptions(allocator: std.mem.Allocator, stream: *Conn, body: []con
          defer if (timed) |*x| x.deinit(allocator);
          if (aligner) |*al| {
              if (t.text.len > 0 and al.languages & transcription_mod.languageBit(t.language orelse "") != 0) {
@@ -1617,7 +1725,7 @@ index 720b2c6..b58dfd2 100644
                  if (al.lm) |alm| timed = (try alignPiece(allocator, stream, alm, pcm[start..end], t.text, t.language.?, who, start * 1000 / transcription_mod.SAMPLE_RATE)) orelse return;
              }
          }
-@@ -8179,6 +8267,7 @@ fn findCompanion(arch_hint: []const u8) ?*LoadedModel {
+@@ -8179,6 +8274,7 @@ fn findCompanion(arch_hint: []const u8) ?*LoadedModel {
  
  fn findAligner(allocator: std.mem.Allocator) !?Aligner {
      const entry = findCompanion("qwen3_forced_aligner") orelse return null;
@@ -1625,7 +1733,7 @@ index 720b2c6..b58dfd2 100644
      var config = model_mod.parseConfig(global_registry.?.io, allocator, entry.path) catch return null;
      defer config.deinit(allocator);
      const fa = config.forced_aligner orelse return null;
-@@ -13838,6 +13927,21 @@ fn findContentLength(headers: []const u8) ?usize {
+@@ -13838,6 +13934,21 @@ fn findContentLength(headers: []const u8) ?usize {
  /// Case-insensitive header lookup returning the trimmed VALUE (`Content-Type`
  /// carries the multipart boundary, so `/v1/images/edits` can't be parsed from
  /// the body alone like every other endpoint).
@@ -1647,7 +1755,7 @@ index 720b2c6..b58dfd2 100644
  fn findHeaderValue(headers: []const u8, comptime name_lower: []const u8) ?[]const u8 {
      var lines = std.mem.splitSequence(u8, headers, "\r\n");
      while (lines.next()) |line| {
-@@ -14405,6 +14509,52 @@ test "resolveRequestModelId: a path names its own entry, never the default model
+@@ -14405,6 +14516,52 @@ test "resolveRequestModelId: a path names its own entry, never the default model
      try std.testing.expectEqualStrings("", resolveRequestModelId(reg, &aliases, "", "/v1/chat/completions").id);
  }
  
@@ -1700,7 +1808,7 @@ index 720b2c6..b58dfd2 100644
  test "the route-existence 404 is answered BEFORE the model is resolved" {
      // A path we do not serve must cost nothing. Resolution ran first, so
      // `POST /v1/load` (the real route is /v1/load-model) with a `model` field
-@@ -14413,7 +14563,7 @@ test "the route-existence 404 is answered BEFORE the model is resolved" {
+@@ -14413,7 +14570,7 @@ test "the route-existence 404 is answered BEFORE the model is resolved" {
      // answer has to precede `ensureLoaded`, not sit in one of its error arms.
      const src = @embedFile("server.zig");
      const gate = "if (!routeExists(" ++ "path)) {";
@@ -1709,7 +1817,7 @@ index 720b2c6..b58dfd2 100644
      const gate_at = std.mem.indexOf(u8, src, gate) orelse return error.GateMissing;
      const resolve_at = std.mem.indexOf(u8, src, resolve) orelse return error.ResolveMissing;
      try std.testing.expect(gate_at < resolve_at);
-@@ -14871,8 +15021,24 @@ pub const insufficient_free_memory_message =
+@@ -14871,8 +15028,24 @@ pub const insufficient_free_memory_message =
      "Not enough free memory to load model: weights + warmup headroom exceed what is currently available. " ++
      "Close other apps or models and retry (the server log names the peak estimate and available memory), or pass --skip-mem-preflight to override.";
  

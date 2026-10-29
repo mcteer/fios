@@ -95,6 +95,14 @@ try {
     for(const match of mutations) assert(text.slice(match.index+match[0].length).trimStart().startsWith(marker),'borrow mutation lacks partial epoch advancement');
   }
   const patched = readFileSync(path.join(scratch, 'src/server.zig'), 'utf8');
+  const startupEnrollment=patched.indexOf('load_params.registry.fios_request_tracker = fios_requests;');
+  assert(startupEnrollment>0&&startupEnrollment<patched.indexOf('var startup: StartupResponder'), 'tracker must precede startup responder/load');
+  assert(startupEnrollment<patched.indexOf('var scheduler = try scheduler_mod.Scheduler.init('), 'startup load cannot precede tracker enrollment');
+  const actorStart=schedulerSource.indexOf('fn doLoadOnInferenceThread(');
+  const actorEnd=schedulerSource.indexOf('\nfn ',actorStart+1),actorLoad=schedulerSource.slice(actorStart,actorEnd);
+  const actorGuard=actorLoad.indexOf('try FiosActorLoadPreparation.begin(sch, params.entry.id, params.fios_parent)');
+  assert(actorGuard>=0&&actorGuard<actorLoad.indexOf('params.entry.load_progress.start('), 'actor guard must precede every backend load branch');
+  assert(schedulerSource.includes('.fios_parent = fios_preparation,'), 'queued load must carry its original preparation owner');
   assert(patched.indexOf('fios_requests.enter(io)') < patched.indexOf('std.Thread.spawn(.{}, handleConnectionThread'));
   const thread = patched.slice(patched.indexOf('fn handleConnectionThread('), patched.indexOf('const MAX_JSON_DEPTH'));
   assert(thread.indexOf('defer fios_requests.leave(ownership_io, ownership)') >= 0);
