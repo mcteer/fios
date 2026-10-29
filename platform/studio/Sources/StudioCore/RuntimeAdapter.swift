@@ -5,6 +5,23 @@ import CryptoKit
 public enum RuntimeError: Error { case invalid, identity, launch, deadline, outputLimit, capacity }
 public struct CommandResult:Sendable { public let status: Int32; public let output: Data }
 
+// Native CLIs receive no inherited credentials, dynamic-library configuration,
+// Docker context/endpoint, or caller replacement of the fixed PATH/locale.
+// These are reviewed code-only inputs; no task/operator JSON reaches this API.
+enum CommandEnvironment {
+    static func sanitized(_ requested:[String:String]) throws -> [String:String] {
+        guard Set(requested.keys).isSubset(of:["HOME","DOCKER_CONFIG","DOCKER_CLI_HINTS"]) else {throw RuntimeError.invalid}
+        if let home=requested["HOME"] {
+            guard home.hasPrefix("/"),home.utf8.count<Int(MAXPATHLEN),!home.contains("\0"),
+                  !home.contains("//"),!home.hasSuffix("/"),
+                  !home.split(separator:"/").contains(where:{$0=="." || $0==".."}) else {throw RuntimeError.invalid}
+        }
+        if let config=requested["DOCKER_CONFIG"],config != "/var/empty" {throw RuntimeError.invalid}
+        if let hints=requested["DOCKER_CLI_HINTS"],hints != "false" {throw RuntimeError.invalid}
+        return ["PATH":"/usr/bin:/bin","LANG":"C","LC_ALL":"C"].merging(requested) {_,new in new}
+    }
+}
+
 // Only trusted enrolled policy constructs these objects. No untrusted IPC
 // accepts executable paths, argv or environment dictionaries.
 public struct VerifiedExecutable:Sendable {
@@ -51,6 +68,7 @@ public struct VerifiedExecutable:Sendable {
                     environment: [String:String] = [:]) throws -> CommandResult {
         guard timeout > 0, timeout <= 10, maximumOutput >= 0, maximumOutput <= 1 << 20,
               arguments.count <= 128, arguments.allSatisfy({ !$0.contains("\0") && $0.utf8.count <= 4096 }) else { throw RuntimeError.invalid }
+        let childEnvironment=try CommandEnvironment.sanitized(environment)
         try CommandSlots.shared.acquire()
         var commandProcess:Process?
         defer {CommandSlots.shared.release(commandProcess)}
@@ -60,7 +78,7 @@ public struct VerifiedExecutable:Sendable {
         let process = Process(), pipe = Pipe()
         commandProcess=process
         process.executableURL = URL(fileURLWithPath:path); process.arguments = arguments
-        process.environment = ["PATH":"/usr/bin:/bin", "LANG":"C", "LC_ALL":"C"].merging(environment) { _,new in new }
+        process.environment = childEnvironment
         process.standardInput = FileHandle.nullDevice
         process.standardOutput = pipe; process.standardError = pipe
         try process.run()

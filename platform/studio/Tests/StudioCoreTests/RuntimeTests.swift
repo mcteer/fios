@@ -56,6 +56,18 @@ func runRuntimeTests() throws {
         catch RuntimeError.deadline {}
     }
     guard identityFailures.isEmpty else {fatalError(identityFailures.joined(separator:"; "))}
+    let sanitized=try CommandEnvironment.sanitized(["HOME":"/fixture/home","DOCKER_CONFIG":"/var/empty","DOCKER_CLI_HINTS":"false"])
+    guard sanitized == ["PATH":"/usr/bin:/bin","LANG":"C","LC_ALL":"C","HOME":"/fixture/home","DOCKER_CONFIG":"/var/empty","DOCKER_CLI_HINTS":"false"],
+          try CommandEnvironment.sanitized([:]) == ["PATH":"/usr/bin:/bin","LANG":"C","LC_ALL":"C"] else {fatalError("Runtime environment inherited or changed configuration")}
+    for unsafeEnvironment in [["PATH":"/tmp"],["DYLD_INSERT_LIBRARIES":"/fixture/never-load"],
+                              ["DOCKER_HOST":"tcp://127.0.0.1:1"],["DOCKER_CONTEXT":"foreign"],
+                              ["DOCKER_CONFIG":"/tmp"],["DOCKER_CLI_HINTS":"true"],
+                              ["HOME":"relative"],["HOME":"/tmp/../private"],["HOME":"/tmp\0suffix"]] {
+        do {
+            _ = try runtime.run(arguments:[],timeout:2,environment:unsafeEnvironment)
+            fatalError("Runtime accepted an environment override outside fixed policy")
+        } catch RuntimeError.invalid {}
+    }
     let config = try SandboxConfiguration(job: UUID().uuidString.lowercased(), nonce: String(repeating:"b",count:64), image: "sha256:" + String(repeating:"a",count:64), memory: 512 << 20, cpus: 1)
     let argv = config.createArguments
     precondition(argv.contains("--network=none") && argv.contains("--read-only") && argv.contains("--cap-drop=ALL"))
