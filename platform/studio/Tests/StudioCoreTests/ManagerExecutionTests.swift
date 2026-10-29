@@ -24,15 +24,19 @@ func runManagerExecutionTests()throws {
           cached.sample(now:1000,cpu:10).vmAvailable==8<<30,
           !cached.admissionOpen(),!cached.nativeCapacityProven() else {fatalError("VM numbers implicitly selected a source or granted native admission")}
     let current=UUID().uuidString.lowercased(),old=UUID().uuidString.lowercased(),base="http://127.0.0.1:1/v1"
-    func bound(_ epoch:String)->WorkerDispatchBinding {
+    func bound(_ epoch:String,canonical:String="fixture/model",native:String?=nil)->WorkerDispatchBinding {
         let snapshot=NativeSnapshot(host:"fixture-host",endpointHash:PythonWorkerFactory.digest(base),nativeEpoch:"fixture-native",sequence:1,sampledAt:1000,allClientLifecycleCoverage:true,residentModel:nil,outstandingOwners:0,loading:false)
-        return WorkerDispatchBinding(baseURL:base,guardPath:"/fixture/never.sock",host:"fixture-host",profileHash:String(repeating:"a",count:64),managerEpoch:epoch,canonicalModel:"fixture/model",nativeModel:"fixture/model",nativeSnapshot:snapshot,nativeCompatibilityAccepted:true,apiKey:nil)
+        return WorkerDispatchBinding(baseURL:base,guardPath:"/fixture/never.sock",host:"fixture-host",profileHash:String(repeating:"a",count:64),managerEpoch:epoch,canonicalModel:canonical,nativeModel:native ?? canonical,nativeSnapshot:snapshot,nativeCompatibilityAccepted:true,apiKey:nil)
     }
     let stale=try ManagerExecutionPorts(runtime:runtime,approvedImages:[image],resources:{_,_ in nil},binding:{_,_ in bound(old)})
     let fresh=try ManagerExecutionPorts(runtime:runtime,approvedImages:[image],resources:{_,_ in nil},binding:{_,epoch in bound(epoch)})
     guard stale.binding("fixture/model",managerEpoch:current)==nil else {fatalError("Stale manager generation binding accepted")}
     guard fresh.binding("foreign/model",managerEpoch:current)==nil else {fatalError("Mismatched canonical model binding accepted")}
     guard fresh.binding("fixture/model",managerEpoch:current)?.managerEpoch==current else {fatalError("Current manager generation binding rejected")}
+    let composed="fixture/caf\u{00e9}",decomposed="fixture/cafe\u{0301}"
+    guard composed==decomposed else {fatalError("Fixture must reproduce Swift canonical equivalence")}
+    guard ModelBroker.scopeIdentity(bound(current,canonical:composed)) != ModelBroker.scopeIdentity(bound(current,canonical:decomposed)),
+          ModelBroker.scopeIdentity(bound(current,native:composed)) != ModelBroker.scopeIdentity(bound(current,native:decomposed)) else {fatalError("Canonical Unicode equivalence bypassed broker scope identity")}
     let executor=try ports.makeExecutor()
     guard executor.active==0 else {fatalError("Manager construction dispatched runtime work")}
     print("PASS: bounded code-only manager composition, immutable image declarations, unavailable cached sources stay unknown and all execution/admission defaults closed; no daemon call")

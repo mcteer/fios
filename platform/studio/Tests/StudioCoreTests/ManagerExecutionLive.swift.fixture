@@ -1,5 +1,47 @@
 import Foundation
 import Darwin
+import CryptoKit
+
+// One bounded parent-only bootstrap packet, read off-loop. It is confined to
+// this temporary fixture; production manager stdin never selects model policy.
+private final class FixtureModelCache:@unchecked Sendable {
+    private struct Value {let base:String;let path:String;let epoch:String}
+    private let lock=NSLock()
+    private var value:Value?
+    var ready:Bool {lock.lock();defer{lock.unlock()};return value != nil}
+    func receive(parent:String) {
+        DispatchQueue.global().async { [self] in
+            let fd=STDIN_FILENO,deadline=ProcessInfo.processInfo.systemUptime+10
+            guard fcntl(fd,F_SETFL,O_NONBLOCK)>=0 else {return}
+            var data=Data(),complete=false
+            while ProcessInfo.processInfo.systemUptime<deadline {
+                var bytes=[UInt8](repeating:0,count:4097)
+                let n=Darwin.read(fd,&bytes,bytes.count)
+                if n>0 {data.append(contentsOf:bytes.prefix(n));if data.count>4096{return}}
+                else if n==0 {complete=true;break}
+                else if ![EAGAIN,EWOULDBLOCK,EINTR].contains(errno) {return}
+                Thread.sleep(forTimeInterval:0.005)
+            }
+            do {
+                guard complete else {return}
+                try StrictJSON.validate(data,maximum:4096)
+                guard let packet=try JSONSerialization.jsonObject(with:data) as? [String:Any],Set(packet.keys)==Set(["base","path","epoch"]),
+                      let base=packet["base"] as? String,let url=URLComponents(string:base),url.scheme=="http",url.host=="127.0.0.1",
+                      let port=url.port,(49152...65535).contains(port),url.path=="/v1",url.user==nil,url.password==nil,url.query==nil,url.fragment==nil,
+                      let path=packet["path"] as? String,path==parent+"/native/observe.sock",
+                      let epoch=packet["epoch"] as? String,WireScalar.uuid(epoch) else {return}
+                lock.lock();value=Value(base:base,path:path,epoch:epoch);lock.unlock()
+                try Data("ready".utf8).write(to:URL(fileURLWithPath:parent+"/model-cache-ready"),options:.atomic)
+            }catch{return}
+        }
+    }
+    func binding(_ model:String)->WorkerDispatchBinding? {
+        lock.lock();let stored=value;lock.unlock()
+        guard WireScalar.exactModel(model,"fixture/model"),let stored else {return nil}
+        let snapshot=NativeSnapshot(host:"fixture-host",endpointHash:PythonWorkerFactory.digest(stored.base),nativeEpoch:"native-fixture-one",sequence:1,sampledAt:HostResources.nowMilliseconds(),allClientLifecycleCoverage:true,residentModel:"fixture/idle-other",outstandingOwners:0,loading:false)
+        return WorkerDispatchBinding(baseURL:stored.base,guardPath:stored.path,host:"fixture-host",profileHash:String(repeating:"f",count:64),managerEpoch:stored.epoch,canonicalModel:"fixture/model",nativeModel:"fixture/model",nativeSnapshot:snapshot,nativeCompatibilityAccepted:true,apiKey:nil)
+    }
+}
 
 // Dedicated finite fixture entry; never installed or selected by app IPC.
 // Host/VM values are SYNTHETIC, not enrolled physical/native provenance.
@@ -8,18 +50,28 @@ import Darwin
         _=alarm(120)
         do {
             let args=CommandLine.arguments
-            guard args.count==7,args[1].hasPrefix("/private/tmp/f9-manager-"),
-                  ["configured","missing","closed","disabled"].contains(args[6]) else {throw RuntimeError.invalid}
+            guard (args.count==7 || args.count==8),args[1].hasPrefix("/private/tmp/f9-manager-"),
+                  ["configured","missing","closed","disabled","models"].contains(args[6]) else {throw RuntimeError.invalid}
             let directory=URL(fileURLWithPath:args[1])
             if args[6]=="disabled" {try ManagerRuntime.run(directory:directory);return}
             let runtime=try DockerRuntime(executable:VerifiedExecutable(path:args[2],sha256:args[3]),socket:args[4])
             let mode=args[6]
-            let ports=try ManagerExecutionPorts(runtime:runtime,approvedImages:[args[5]],vmSource:.cached,
+            let cache=FixtureModelCache()
+            let factory:PythonWorkerFactory?
+            if mode=="models" {
+                guard args.count==8 else {throw RuntimeError.invalid}
+                let python=URL(fileURLWithPath:args[7]).resolvingSymlinksInPath()
+                let hash=SHA256.hash(data:try Data(contentsOf:python)).map {String(format:"%02x",$0)}.joined()
+                factory=try PythonWorkerFactory(invocation:args[7],executableSHA256:hash,policySHA256:"1cf3a27e1f6490b4cfce433f7770c1fcea53c581bd513ed4c368ea4df7fa993a")
+                cache.receive(parent:directory.deletingLastPathComponent().path)
+            } else {factory=nil}
+
+            let ports=try ManagerExecutionPorts(runtime:runtime,approvedImages:[args[5]],workerFactory:factory,vmSource:.cached,
                 resources:{now,_ in
                     if mode=="missing" {return nil}
                     return ResourceSample(sampledAt:now,physical:128<<30,available:64<<30,vmAvailable:8<<30,
                         diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal,vmSampledAt:now)
-                },admissionOpen:{mode != "closed"})
+                },binding:{model,_ in cache.binding(model)},nativeCapacityProven:{mode=="models" && cache.ready},admissionOpen:{mode != "closed" && (mode != "models" || cache.ready)})
             try ManagerRuntime.run(directory:directory,nativeControl:nil,execution:ports)
         } catch {
             FileHandle.standardError.write(Data("Finite manager execution fixture failed\n".utf8));exit(1)

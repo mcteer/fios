@@ -128,6 +128,12 @@ final class TaskController {
             try finishIfLocallyGone(id:id,now:now)
         }
     }
+    // Polling and sandbox frames are job-keyed. Resolve the immutable owned
+    // scope before consulting a model-keyed current source; never ask a source
+    // to interpret an opaque job UUID as a model or choose a substitute.
+    func canonicalModel(forJob id:String)->String? {
+        sandboxScopes[id]?.binding.canonicalModel ?? broker.canonicalModel(forJob:id)
+    }
     func tick(now:Int64,uptime:Int64,admission:inout AdmissionPolicy,
               source:(String)throws->WorkerDispatchBinding?) throws -> [String:[ModelWorkerEvent]] {
         let data=try broker.poll(now:now,uptime:uptime,admission:&admission,source:source)

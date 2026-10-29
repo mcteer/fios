@@ -30,7 +30,7 @@ node scripts/check-platform.mjs --mock --release
 node scripts/check-platform-process.mjs --isolated
 node scripts/check-platform-boot.mjs --isolated
 node scripts/check-platform-boot-state.mjs --isolated
-node scripts/check-platform-manager-execution.mjs --mock
+node scripts/check-platform-manager-execution.mjs --mock --models
 node scripts/check-platform-session.mjs --isolated
 node scripts/check-platform-session-control.mjs --isolated
 node scripts/check-platform-session-driver.mjs --isolated
@@ -43,6 +43,8 @@ node scripts/check-platform-runner.mjs --isolated
 node scripts/check-platform-attach.mjs --isolated
 # Whole manager IPC/runner path; synthetic resource sources, no model calls.
 node scripts/check-platform-manager-execution.mjs --isolated
+# Also exercise installed no-tools workers against a fake native endpoint.
+node scripts/check-platform-manager-execution.mjs --isolated --models
 ```
 
 Expected: failing-first evidence for new policy/contracts, then passing Swift, installed-Python and isolated runtime tests. Unit networking is guarded; service lifecycle operations use fake adapters. Container rehearsal uses its own labeled temporary test namespace with no production mounts/socket passed to untrusted images; trusted host test driver owns runtime control. Confirm unrelated sentinel container/volume survives. Record actual counts and commands in validation; do not reuse008 counts as009 evidence.

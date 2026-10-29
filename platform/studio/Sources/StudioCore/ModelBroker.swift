@@ -16,7 +16,7 @@ final class ModelBroker {
     private let factory:PythonWorkerFactory?
     private var entries:[String:Entry]=[:]
     private var launchHolds:Set<String>=[]
-    private var scopes:[String:[String]]=[:]
+    private var scopes:[String:[Data]]=[:]
     private var previous:Int64=0
     static func restoreReservations(journal:Journal,admission:inout AdmissionPolicy) throws {
         for sandbox in try journal.sandboxRecords() where !sandbox.removalProven {
@@ -40,9 +40,11 @@ final class ModelBroker {
         }
         return found
     }
-    private func identity(_ binding:WorkerDispatchBinding)->[String] {
+    // Swift String equality normalizes Unicode; enrolled identities are raw
+    // UTF-8 bytes, including both canonical and native model identifiers.
+    static func scopeIdentity(_ binding:WorkerDispatchBinding)->[Data] {
         [binding.host,binding.profileHash,binding.managerEpoch,binding.nativeSnapshot.nativeEpoch,
-         binding.nativeSnapshot.endpointHash,binding.canonicalModel,binding.nativeModel]
+         binding.nativeSnapshot.endpointHash,binding.canonicalModel,binding.nativeModel].map {Data($0.utf8)}
     }
     func validate(context:[ModelText]) throws {
         guard let factory else {throw PolicyError.invalidObservation}
@@ -58,7 +60,7 @@ final class ModelBroker {
         guard nativeCapacityProven,binding.nativeCompatibilityAccepted,entries[id]==nil,launchHolds.isEmpty,
               try ActivityPolicy.permits(target:binding.canonicalModel,snapshot:binding.nativeSnapshot,now:now)
         else { throw AdmissionError.capacity }
-        let scope=identity(binding)
+        let scope=Self.scopeIdentity(binding)
         guard scopes[id]==nil || scopes[id]==scope else { throw JournalError.conflict }
         let ownedGrants=Set(entries.map { "\($0.key):\($0.value.attempt)" })
         guard try journal.activeLaunchCount()==entries.count,
@@ -96,7 +98,7 @@ final class ModelBroker {
             let current=try? source(id)
             let coherent=current.map { binding in
                 let activity=try? ActivityPolicy.evaluate(binding.nativeSnapshot,now:now)
-                return binding.nativeCompatibilityAccepted && identity(binding)==identity(entry.binding)
+                return binding.nativeCompatibilityAccepted && Self.scopeIdentity(binding)==Self.scopeIdentity(entry.binding)
                     && binding.nativeSnapshot.sequence>=entry.binding.nativeSnapshot.sequence
                     && activity != nil && activity != .unknown
             } ?? false
@@ -116,6 +118,7 @@ final class ModelBroker {
         // <=256000/job even across crashes. Terminal history is never refunded.
         return result
     }
+    func canonicalModel(forJob id:String)->String? {entries[id]?.binding.canonicalModel}
     func active(job:String)->Bool { entries[job] != nil }
     var activeWorkers:Int { entries.count }
     var hasUnresolvedLaunch:Bool { !launchHolds.isEmpty }

@@ -52,6 +52,10 @@ public enum ManagerRuntime {
         let roles:[ControlRole]=[.observer,.operator,.task]
         let epoch=UUID().uuidString.lowercased()
         func binding(_ model:String)->WorkerDispatchBinding? {execution?.binding(model,managerEpoch:epoch)}
+        func bindingForJob(_ id:String)->WorkerDispatchBinding? {
+            guard let model=tasks.canonicalModel(forJob:id) else {return nil}
+            return binding(model)
+        }
         func digest(_ value:String)->String { SHA256.hash(data:Data(value.utf8)).map { String(format:"%02x",$0) }.joined() }
         let endpointHash=digest("http://127.0.0.1:11234/v1")
         let profileHash=digest("fios009-development-native-unsupported")
@@ -88,7 +92,7 @@ public enum ManagerRuntime {
             }
             try workerRecovery.poll(now:Int64(now*1000),admission:&admission)
             resourceSample=applyingVM(to:resourceSample,now:timestamp())
-            let updates=try sandboxes.tick(now:timestamp(),uptime:now,sample:artifacts.reservingDisk(in:resourceSample),admission:&admission,source:binding,nativeCapacityProven:execution?.nativeCapacityProven() ?? false)
+            let updates=try sandboxes.tick(now:timestamp(),uptime:now,sample:artifacts.reservingDisk(in:resourceSample),admission:&admission,source:bindingForJob,nativeCapacityProven:execution?.nativeCapacityProven() ?? false)
             resourceSample=applyingVM(to:resourceSample,now:timestamp())
             try taskCommands.tick(now:timestamp(),uptime:Int64(now*1000),artifactResults:updates.artifactResults,output:updates.output,model:updates.model,finished:updates.finished)
             if now - lastHeartbeat >= 2 {
