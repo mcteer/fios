@@ -60,6 +60,19 @@ func runServiceProcessCensusTests() throws {
     fixture.time=10001
     guard census.capture().presence == .unknown else {fatalError("Census clock fence revived")}
     let native=try ServiceProcessCensus(executable:executable,relatedRoots:[root.path],reviewDigest:review,uid:geteuid())
+    // Other same-UID CI processes may start/exit between kernel lists. Each
+    // such sample must stay unknown. Observe again within a finite fixture
+    // window; never turn churn into absence or relax the production checks.
+    func stableCapture()->ServiceProcessSample {
+        let deadline=ProcessInfo.processInfo.systemUptime+2
+        var value=native.capture()
+        while value.presence == .unknown,["inspection","second_enumeration"].contains(value.diagnostic),
+              ProcessInfo.processInfo.systemUptime<deadline {
+            Thread.sleep(forTimeInterval:0.025)
+            value=native.capture()
+        }
+        return value
+    }
     func start()->(Process,Pipe,Pipe) {
         let process=Process(),input=Pipe(),output=Pipe()
         process.executableURL=binary;process.arguments=[];process.standardInput=input;process.standardOutput=output;process.standardError=FileHandle.nullDevice
@@ -79,12 +92,12 @@ func runServiceProcessCensusTests() throws {
     do {
         _=try ServiceIdentity.verified(peer:NativeControlPeer(pid:process.processIdentifier,start:WorkerResources.startIdentifier(pid:process.processIdentifier),executable:executable),expectedUID:geteuid(),deadline:ProcessInfo.processInfo.systemUptime+1)
     } catch {fatalError("Owned sentinel direct identity check failed: \(error)")}
-    let observed=native.capture()
+    let observed=stableCapture()
     guard case .present(let identity)=observed.presence,identity.pid==process.processIdentifier,identity.start==(try WorkerResources.startIdentifier(pid:process.processIdentifier)) else {fatalError("Live service identity was not verified: \(observed.diagnostic)")}
     guard process.isRunning else {fatalError("Census signalled sentinel")}
     process.terminate();process.waitUntilExit() // Only the fixture owner signals its child.
     try? input.fileHandleForWriting.close();try? output.fileHandleForReading.close()
-    let after=native.capture()
+    let after=stableCapture()
     guard after.presence == .absent else {fatalError("Reaped service remained present or inspection incomplete")}
     try FileManager.default.removeItem(at:binary)
     try FileManager.default.copyItem(atPath:original,toPath:binary.path)
