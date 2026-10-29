@@ -2,6 +2,89 @@ const std = @import("std");
 const ownership = @import("request_ownership.zig");
 const io = std.testing.io;
 
+test "model transition and request binding cannot both reserve the same identity" {
+    const Work = struct {
+        fn run(tracker: *ownership.Tracker, token: ownership.Token, bound: *bool) void {
+            tracker.bind(io, token, "model-a") catch return;
+            bound.* = true;
+        }
+    };
+    var tracker: ownership.Tracker = .{};
+    try tracker.initialize(io, @splat(19));
+    const owner = try tracker.enter(io);
+    var bound = false;
+    const thread = try std.Thread.spawn(.{}, Work.run, .{ &tracker, owner, &bound });
+    const result = tracker.beginModelMutation(io, "model-a");
+    thread.join();
+    const mutation = result catch |err| blocked: {
+        try std.testing.expectEqual(error.ModelOwned, err);
+        break :blocked null;
+    };
+    try std.testing.expect(bound != (mutation != null));
+    if (mutation) |ticket| try tracker.endModelMutation(io, ticket);
+    try tracker.leave(io, owner);
+    try std.testing.expect(!tracker.snapshot(io).uncertain);
+}
+
+test "model transition table exhaustion and foreign release retain uncertainty and ownership" {
+    var tracker: ownership.Tracker = .{};
+    try tracker.initialize(io, @splat(20));
+    var tickets: [ownership.model_capacity]ownership.ModelMutation = undefined;
+    for (&tickets, 0..) |*ticket, index| {
+        var buffer: [32]u8 = undefined;
+        ticket.* = try tracker.beginModelMutation(io, try std.fmt.bufPrint(&buffer, "model-{d}", .{index}));
+    }
+    try std.testing.expectError(error.ModelCapacity, tracker.beginModelMutation(io, "overflow"));
+    try std.testing.expectEqual(ownership.model_capacity, tracker.snapshot(io).model_mutations);
+    var foreign = tickets[0];
+    foreign.instance = @splat(21);
+    try std.testing.expectError(error.InvalidMutation, tracker.endModelMutation(io, foreign));
+    for (tickets) |ticket| try tracker.endModelMutation(io, ticket);
+    try std.testing.expect(tracker.snapshot(io).uncertain);
+    try std.testing.expectEqual(@as(usize, 0), tracker.snapshot(io).model_mutations);
+}
+
+test "model transition reservation excludes primary and auxiliary binding until exact release" {
+    var tracker: ownership.Tracker = .{ .primary_guard = true };
+    try tracker.initialize(io, @splat(17));
+    const transition = try tracker.beginModelMutation(io, "model-b");
+    try std.testing.expectEqual(@as(usize, 1), tracker.snapshot(io).model_mutations);
+    try std.testing.expectError(error.ModelTransition, tracker.beginModelMutation(io, "model-b"));
+    const first = try tracker.enter(io);
+    try std.testing.expectError(error.ModelTransition, tracker.bind(io, first, "model-b"));
+    try tracker.bind(io, first, "model-a");
+    try std.testing.expectError(error.ModelTransition, tracker.bindAuxiliary(io, first, "model-b"));
+    try tracker.endModelMutation(io, transition);
+    try tracker.bindAuxiliary(io, first, "model-b");
+    try std.testing.expectError(error.ModelOwned, tracker.beginModelMutation(io, "model-a"));
+    try std.testing.expectError(error.ModelOwned, tracker.beginModelMutation(io, "model-b"));
+    try tracker.active(io, first);
+    try tracker.responding(io, first);
+    try tracker.leave(io, first);
+}
+
+test "retained owner prevents transition and stale transition release cannot clear a newer one" {
+    var tracker: ownership.Tracker = .{};
+    try tracker.initialize(io, @splat(18));
+    const owner = try tracker.enter(io);
+    try tracker.bind(io, owner, "model-a");
+    try tracker.active(io, owner);
+    try tracker.responding(io, owner);
+    try tracker.retain(io, owner);
+    try tracker.leave(io, owner);
+    try std.testing.expectError(error.ModelOwned, tracker.beginModelMutation(io, "model-a"));
+    try tracker.leave(io, owner);
+    const first = try tracker.beginModelMutation(io, "model-a");
+    try tracker.endModelMutation(io, first);
+    const second = try tracker.beginModelMutation(io, "model-a");
+    try std.testing.expectError(error.InvalidMutation, tracker.endModelMutation(io, first));
+    try std.testing.expectEqual(@as(usize, 1), tracker.snapshot(io).model_mutations);
+    try std.testing.expect(tracker.snapshot(io).uncertain);
+    try tracker.endModelMutation(io, second);
+    try std.testing.expect(tracker.snapshot(io).uncertain);
+    try std.testing.expectError(error.CoverageUncertain, tracker.beginModelMutation(io, "model-a"));
+}
+
 test "guarded primary binding rejects conflicts without releasing or fencing the existing owner" {
     var tracker: ownership.Tracker = .{ .primary_guard = true };
     try tracker.initialize(io, @splat(14));

@@ -12,6 +12,12 @@ pub const Phase = enum { vacant, ingress, preparing, active, responding };
 // Native-internal lease, NOT authentication or a wire management capability.
 // A future enrolled manager bridge must authenticate before calling these APIs.
 pub const AdmissionPause = struct { instance: [16]u8, sequence: u64 };
+pub const ModelMutation = struct { instance: [16]u8, slot: usize, sequence: u64 };
+const MutationSlot = struct {
+    id: [model_limit]u8 = @splat(0),
+    len: usize = 0,
+    sequence: u64 = 0,
+};
 const Slot = struct {
     sequence: u64 = 0,
     phase: Phase = .vacant,
@@ -47,6 +53,7 @@ pub const Snapshot = struct {
     active: usize = 0,
     responding: usize = 0,
     uncertain: bool,
+    model_mutations: usize = 0,
     model_count: usize = 0,
     models: [model_capacity]ModelSnapshot = @splat(.{}),
 };
@@ -98,6 +105,8 @@ pub const Tracker = struct {
     // singleton protects primary binding; local audit fixtures may track
     // multiple primaries to characterize incomplete/contradictory sources.
     primary_guard: bool = false,
+    mutations: [model_capacity]MutationSlot = @splat(.{}),
+    mutation_sequence: u64 = 0,
     slots: [capacity]Slot = @splat(.{}),
     models: [model_capacity]Model = @splat(.{}),
     sequence: u64 = 0,
@@ -216,6 +225,56 @@ pub const Tracker = struct {
         slot.models |= mask;
         return key;
     }
+    fn transitioningLocked(self: *Tracker, id: []const u8) bool {
+        for (&self.mutations) |*mutation| {
+            if (mutation.len != 0 and std.mem.eql(u8, mutation.id[0..mutation.len], id)) return true;
+        }
+        return false;
+    }
+    // Registry callers must acquire this BEFORE committing an eviction, keep
+    // it through destruction/rollback, and release only their exact ticket.
+    // This metadata edge is not proof of device completion or native quiescence.
+    pub fn beginModelMutation(self: *Tracker, io: std.Io, id: []const u8) !ModelMutation {
+        self.mutex.lockUncancelable(io);
+        defer self.mutex.unlock(io);
+        if (!self.initialized or self.uncertain) return error.CoverageUncertain;
+        if (id.len == 0 or id.len > model_limit or !std.unicode.utf8ValidateSlice(id) or std.mem.indexOfScalar(u8, id, 0) != null) {
+            self.uncertain = true;
+            return error.InvalidModel;
+        }
+        for (&self.models) |*model| {
+            if (model.owners != 0 and std.mem.eql(u8, model.id[0..model.len], id)) return error.ModelOwned;
+        }
+        if (self.transitioningLocked(id)) return error.ModelTransition;
+        if (self.mutation_sequence == std.math.maxInt(u64)) {
+            self.uncertain = true;
+            return error.SequenceExhausted;
+        }
+        for (&self.mutations, 0..) |*mutation, index| {
+            if (mutation.len != 0) continue;
+            self.mutation_sequence += 1;
+            @memcpy(mutation.id[0..id.len], id);
+            mutation.len = id.len;
+            mutation.sequence = self.mutation_sequence;
+            return .{ .instance = self.instance, .slot = index, .sequence = mutation.sequence };
+        }
+        self.uncertain = true;
+        return error.ModelCapacity;
+    }
+    pub fn endModelMutation(self: *Tracker, io: std.Io, ticket: ModelMutation) !void {
+        self.mutex.lockUncancelable(io);
+        defer self.mutex.unlock(io);
+        if (ticket.slot >= model_capacity or !std.mem.eql(u8, &ticket.instance, &self.instance)) {
+            self.uncertain = true;
+            return error.InvalidMutation;
+        }
+        const mutation = &self.mutations[ticket.slot];
+        if (mutation.len == 0 or mutation.sequence != ticket.sequence) {
+            self.uncertain = true;
+            return error.InvalidMutation;
+        }
+        mutation.* = .{}; // Never clear the independent uncertainty fence.
+    }
     pub fn bind(self: *Tracker, io: std.Io, token: Token, model: []const u8) !void {
         self.mutex.lockUncancelable(io);
         defer self.mutex.unlock(io);
@@ -224,6 +283,7 @@ pub const Tracker = struct {
             self.uncertain = true;
             return error.InvalidPhase;
         }
+        if (self.transitioningLocked(model)) return error.ModelTransition;
         if (self.primary_guard) {
             if (!self.initialized or self.uncertain) return error.CoverageUncertain;
             // Check and commit under the same mutex, BEFORE any caller can
@@ -247,6 +307,7 @@ pub const Tracker = struct {
             self.uncertain = true;
             return error.InvalidPhase;
         }
+        if (self.transitioningLocked(model)) return error.ModelTransition;
         _ = try self.addModelLocked(slot, model);
     }
     fn advance(self: *Tracker, io: std.Io, token: Token, from: Phase, to: Phase) !void {
@@ -308,6 +369,9 @@ pub const Tracker = struct {
             .instance = self.instance, .initialized = self.initialized,
             .admissions_closed = self.pause_id != null,
             .admission_pause = self.pause_id orelse 0 };
+        for (self.mutations) |mutation| {
+            if (mutation.len != 0) result.model_mutations += 1;
+        }
         var indices: [model_capacity]?usize = @splat(null);
         for (self.models, 0..) |model, index| {
             if (model.owners == 0) continue;
