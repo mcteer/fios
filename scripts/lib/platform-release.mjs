@@ -11,9 +11,10 @@ const fail=()=>{throw Error('Invalid or unsupported platform release');};
 function exact(value,keys){
   if(!value||typeof value!=='object'||Array.isArray(value)||Object.keys(value).sort().join('\0')!==[...keys].sort().join('\0'))fail();
 }
-export function validatePlatformManifest(value,{template=false}={}){
+export function validatePlatformManifest(value,{template=false,journalSchema=8}={}){
   exact(value,['schema','approval','architecture','toolchain','sqlite','journal_schema','journal_application_id','python','native_inventory','approved_sandbox_images','activation',...(template?[]:['source_revision','source_tree_sha256','artifacts','package_complete'])]);
-  if(value.schema!==1||value.approval!=='development_observation_only'||value.architecture!=='arm64'||value.journal_schema!==8||value.journal_application_id!=='FIS9')fail();
+  if(![7,8].includes(journalSchema))fail();
+  if(value.schema!==1||value.approval!=='development_observation_only'||value.architecture!=='arm64'||value.journal_schema!==journalSchema||value.journal_application_id!=='FIS9')fail();
   exact(value.toolchain,['swift','swift_build','sdk','minimum_macos']);
   exact(value.sqlite,['provider','version']);
   if(value.sqlite.provider!=='macos_system'||value.sqlite.version!=='3.54.0')fail();
@@ -45,7 +46,7 @@ export function decodePlatformManifest(bytes,options){
   if(!bytes.equals(Buffer.from(JSON.stringify(value,null,2)+'\n')))fail();
   return validatePlatformManifest(value,options);
 }
-export function validatePlatformRelease(directory,expectedManifestSHA256){
+export function validatePlatformRelease(directory,expectedManifestSHA256,{journalSchema=8}={}){
   if(!digest(expectedManifestSHA256)||!directory.startsWith('/'))fail();
   const root=resolve(directory),uid=process.getuid();
   function regular(path,maximum){
@@ -67,7 +68,7 @@ export function validatePlatformRelease(directory,expectedManifestSHA256){
   if(!info.isDirectory()||![0,uid].includes(info.uid)||(info.mode&0o022)!==0)fail();
   const receipt=regular(join(root,'release.json'),65536);
   if(createHash('sha256').update(receipt.bytes).digest('hex')!==expectedManifestSHA256)fail();
-  const manifest=decodePlatformManifest(receipt.bytes),expected=new Set(['release.json',...Object.keys(platformArtifactModes)]);
+  const manifest=decodePlatformManifest(receipt.bytes,{journalSchema}),expected=new Set(['release.json',...Object.keys(platformArtifactModes)]);
   function walk(path,prefix=''){
     const handle=opendirSync(path);let count=0;
     try{

@@ -4,10 +4,15 @@ import CryptoKit
 
 extension StoppedStateBackup {
     public static func verify(directory:URL,expectedSHA256:String)throws->StateBackupReceipt {
+        try verify(directory:directory,expectedSHA256:expectedSHA256,journalSchema:8)
+    }
+    static func verify(directory:URL,expectedSHA256:String,journalSchema:Int)throws->StateBackupReceipt {
+        guard [7,8].contains(journalSchema) else {throw JournalError.invalid}
         struct Manifest:Decodable {
             let version:Int;let scope:String;let host_hash:String;let owner_uid:UInt32;let journal_schema:Int;let journal_application_id:String
             let journal_bytes:Int64;let journal_sha256:String;let artifact_index_sha256:String;let artifact_files:[ArtifactBackupFile]
             let service_recovery_bytes:Int64?;let service_recovery_sha256:String?
+            let migration_hold_bytes:Int64?;let migration_hold_sha256:String?
         }
         func digest(_ value:String)->Bool {value.utf8.count==64 && value.utf8.allSatisfy {(48...57).contains($0)||(97...102).contains($0)}}
         func privateDirectory(_ url:URL)throws {
@@ -39,22 +44,33 @@ extension StoppedStateBackup {
         let (receiptHash,_,data)=try hash(directory.appendingPathComponent("backup.json"),maximum:65536,collect:true)
         guard receiptHash==expectedSHA256 else {throw JournalError.invalid}
         try StrictJSON.validate(data,maximum:65536)
-        guard let raw=try JSONSerialization.jsonObject(with:data) as? [String:Any],let version=WireScalar.integer(raw["version"],maximum:2),(1...2).contains(version) else {throw JournalError.invalid}
-        let extra=version==2 ? ["service_recovery_bytes","service_recovery_sha256"]:[]
+        guard let raw=try JSONSerialization.jsonObject(with:data) as? [String:Any],let version=WireScalar.integer(raw["version"],maximum:3),(1...3).contains(version) else {throw JournalError.invalid}
+        guard journalSchema != 7 || version<=2 else {throw JournalError.invalid}
+        let extra=version>=2 ? ["service_recovery_bytes","service_recovery_sha256"]+(version==3 ? ["migration_hold_bytes","migration_hold_sha256"]:[]):[]
         guard Set(raw.keys)==Set(["version","scope","host_hash","owner_uid","journal_schema","journal_application_id","journal_bytes","journal_sha256","artifact_index_sha256","artifact_files"]+extra),
               let files=raw["artifact_files"] as? [[String:Any]],files.allSatisfy({Set($0.keys)==Set(["path","bytes","sha256"])}) else {throw JournalError.invalid}
         let manifest=try JSONDecoder().decode(Manifest.self,from:data)
-        let scope=version==2 ? "platform_journal_exports_and_service_recovery":"platform_journal_and_exports"
-        guard manifest.scope==scope,manifest.owner_uid==geteuid(),manifest.host_hash == (try StoppedPlatformState.hostHash()),manifest.journal_schema==8,manifest.journal_application_id=="FIS9",(100...(64<<20)).contains(manifest.journal_bytes),digest(manifest.journal_sha256),digest(manifest.artifact_index_sha256),manifest.artifact_files.count<=256 else {throw JournalError.invalid}
-        let additional=version==2 ? ["service-recovery.json"]:[]
+        let scope=version==3 ? "platform_journal_exports_and_migration_hold":version==2 ? "platform_journal_exports_and_service_recovery":"platform_journal_and_exports"
+        guard manifest.scope==scope,manifest.owner_uid==geteuid(),manifest.host_hash == (try StoppedPlatformState.hostHash()),manifest.journal_schema==journalSchema,manifest.journal_application_id=="FIS9",(100...(64<<20)).contains(manifest.journal_bytes),digest(manifest.journal_sha256),digest(manifest.artifact_index_sha256),manifest.artifact_files.count<=256 else {throw JournalError.invalid}
+        let hasRecovery=version==2 || (version==3 && !(raw["service_recovery_bytes"] is NSNull))
+        let additional=(hasRecovery ? ["service-recovery.json"]:[])+(version==3 ? ["migration-hold.json"]:[])
         guard Set(try FileManager.default.contentsOfDirectory(atPath:directory.path))==Set(["backup.json","state.sqlite","artifacts"]+additional) else {throw JournalError.invalid}
         var recoveryBytes:Int64=0
-        if version==2 {
+        if hasRecovery {
             guard let declared=WireScalar.integer(raw["service_recovery_bytes"],maximum:4096),declared>0,
                   let expected=manifest.service_recovery_sha256,digest(expected),
                   let bytes=try serviceRecoveryPayload(directory:directory),Int64(bytes.count)==declared,
                   SHA256.hash(data:bytes).map({String(format:"%02x",$0)}).joined()==expected else {throw JournalError.invalid}
             recoveryBytes=declared
+        }
+        var holdBytes:Int64=0
+        if version==3 {
+            if !hasRecovery {guard raw["service_recovery_sha256"] is NSNull else {throw JournalError.invalid}}
+            guard let declared=WireScalar.integer(raw["migration_hold_bytes"],maximum:4096),declared>0,
+                  let expected=manifest.migration_hold_sha256,digest(expected),
+                  let bytes=try migrationHoldPayload(directory:directory),Int64(bytes.count)==declared,
+                  SHA256.hash(data:bytes).map({String(format:"%02x",$0)}).joined()==expected else {throw JournalError.invalid}
+            holdBytes=declared
         }
         let artifacts=directory.appendingPathComponent("artifacts")
         try privateDirectory(artifacts)
@@ -76,7 +92,7 @@ extension StoppedStateBackup {
         guard try JSONDecoder().decode(IndexVersion.self,from:indexData).version==1 else {throw JournalError.invalid}
         let (journal,length,header)=try hash(directory.appendingPathComponent("state.sqlite"),maximum:64<<20)
         guard journal==manifest.journal_sha256,length==manifest.journal_bytes,header.count==100,
-              Array(header.prefix(16))==Array("SQLite format 3\0".utf8),Array(header[60..<64])==[0,0,0,8],Array(header[68..<72])==[0x46,0x49,0x53,0x39] else {throw JournalError.invalid}
-        return StateBackupReceipt(scope:scope,bytes:length+total+recoveryBytes,artifacts:manifest.artifact_files.count,sha256:receiptHash)
+              Array(header.prefix(16))==Array("SQLite format 3\0".utf8),Array(header[60..<64])==[0,0,0,UInt8(journalSchema)],Array(header[68..<72])==[0x46,0x49,0x53,0x39] else {throw JournalError.invalid}
+        return StateBackupReceipt(scope:scope,bytes:length+total+recoveryBytes+holdBytes,artifacts:manifest.artifact_files.count,sha256:receiptHash)
     }
 }

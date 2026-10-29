@@ -10,6 +10,10 @@ const template=JSON.parse(readFileSync(new URL('../platform/studio/deployment/re
 test('native development manifest pins toolchain/locks and cannot authorize activation',()=>{
   const value=validatePlatformManifest(template,{template:true});
   assert.equal(value.architecture,'arm64');
+  const legacy={...template,journal_schema:7};
+  assert.throws(()=>validatePlatformManifest(legacy,{template:true}));
+  assert.equal(validatePlatformManifest(legacy,{template:true,journalSchema:7}).journal_schema,7);
+  assert.throws(()=>validatePlatformManifest(legacy,{template:true,journalSchema:9}));
   assert.equal(value.native_inventory.all_client_coverage,'unsupported');
   assert.equal(value.native_inventory.orbctl_cli_sha256,'b2793e99e3f452b86233d59cd5e503e069821224c022628f52521dc5b4bcab8a');
   const missingNativeCLI=structuredClone(template);delete missingNativeCLI.native_inventory.orbctl_cli_sha256;

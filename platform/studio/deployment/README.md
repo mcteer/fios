@@ -28,7 +28,7 @@ After separately authorized shutdown of **both supervisor and manager**, the nat
 studioctl --state /ABSOLUTE/PRIVATE_PLATFORM_STATE backup --to /ABSOLUTE/PRIVATE_PARENT/NEW_SNAPSHOT.sqlite
 ```
 
-The utility verifies the FIS9 platform marker and schema8, holds exclusive supervisor-then-manager locks to prevent watchdog respawn, opens the source read-only, uses a finite≤64MiB/10s SQLite backup, fsyncs and returns only schema/length/hash. It never overwrites a destination. Restoring the isolated test snapshot retains unresolved inference claims; startup marks them uncertain rather than replaying execution. Future ownership schemas are rejected before journal mutation.
+The utility verifies the FIS9 platform marker and schema8, holds exclusive supervisor-then-manager locks to prevent watchdog respawn, copies source bytes under the writer fence and recovers WAL only in a bounded private snapshot, uses a finite≤64MiB/10s SQLite backup, fsyncs and returns only schema/length/hash. It never overwrites a destination. Restoring the isolated test snapshot retains unresolved inference claims; startup marks them uncertain rather than replaying execution. Future ownership schemas are rejected before journal mutation.
 
 The `backup` command above includes **only metadata**. For a consistent journal plus explicit-export bundle, hold the supervisor-and-manager stopped-writer fence across both snapshots:
 
@@ -71,4 +71,18 @@ The fixed installed-manager runtime factory and strict version2 policy schema ar
 
 A runnable supervisor is not native acceptance. Privileged operations require user execution and distinct scoped approval, one host at a time. Keep services/data intact until identity, backup, rollback and uncertainty preservation have been reviewed. Never remove unrelated containers or the detached legacy volume. Do not infer idle/completion from reboot, age, local child absence or cancellation.
 
-Current source packages use schema8 and retain native dispatch scope/outcome metadata. Historical schema7 receipts above remain historical, not compatible inputs for the current development manifest verifier or evidence of migration. Current startup and backup verification refuse schema7 unchanged; use the reviewed schema7 CLI for its stopped backup. Explicit migration, native quiescence reconciliation, complete rollback/uninstall and installed acceptance remain open.
+Current source packages use schema8 and retain native dispatch scope/outcome metadata. Historical schema7 receipts above remain historical, not compatible inputs for the current development manifest verifier or evidence of migration. Ordinary startup and backup verification refuse schema7 unchanged; use the reviewed schema7 CLI for its stopped backup and the explicit copy-only migration below. Native quiescence reconciliation, complete installed rollback/uninstall and installed acceptance remain open.
+
+### Explicit schema7→8 recovery staging
+
+Use the reviewed schema7 CLI to make a stopped full `backup-state` bundle, then review its SHA256 and retain that artifact, original state and bundle. The new CLI accepts only that same-host/UID verified input:
+
+```sh
+studioctl --state /ABSOLUTE/REVIEWED_SCHEMA7_BACKUP migrate-state-seven --sha256 REVIEWED_BACKUP_SHA --to /ABSOLUTE/NEW_PRIVATE_STATE
+```
+
+This verifies the source/copy hashes and exact legacy SQL/ownership before converting only the unpublished copy, preserves unresolved ownership and request history, and publishes with an opaque `migration-hold.json`. The manager suppresses even code-supplied task, session and native-control ports while that marker exists; there is no IPC operation to clear it. Unknown old native scope stays unknown. No controller/app/runtime/model is started. The original schema7 backup remains usable by its reviewed schema7 CLI; an old controller must refuse the evolved schema8 file rather than downgrade it. Native installation/admission approval and hold release remain separate work.
+
+Backup format3 preserves the opaque hold plus optional service-recovery bytes. Restore verifies the sealed copy before publishing a working directory with fresh empty writer/store lock identities. The returned input receipt identifies the sealed backup, not a working namespace after initialization; use `backup-state` to seal and verify a fresh bundle from restored state. A cold restore can be backed up before controller/store startup. SQLite WAL recovery occurs only in a bounded private snapshot under the stopped-writer fences, never in a writable connection to the original journal. Existing backup formats1/2 remain readable for schema8; schema7 is accepted only by explicit migration.
+
+An isolated old7/new8/old7 rehearsal uses `check-platform-upgrade.mjs` with `--migrate-seven`; default release validation remains schema8-only. Legacy manifest acceptance is an explicit readonly rehearsal option, never an installation/profile authority. These development artifacts do not establish whole-repository/native provenance or installed acceptance.

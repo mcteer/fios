@@ -39,9 +39,17 @@ public enum StoppedJournalBackup {
         guard output>=0 else {throw JournalError.storage};close(output)
         var success=false
         defer {if !success {for suffix in ["","-journal","-wal","-shm"] {_=unlink(destination.path+suffix)}}}
+        // A restored WAL-mode main file may lack SHM/WAL initialization.
+        // Recover only a bounded private snapshot; never open the original
+        // with a writable SQLite connection or mutate it to enable backup.
+        let snapshot=try JournalSchemaSnapshot(source:directory)
         var source:OpaquePointer?,target:OpaquePointer?
-        defer {if let target {sqlite3_close(target)};if let source {sqlite3_close(source)}}
-        guard sqlite3_open_v2(file,&source,SQLITE_OPEN_READONLY|SQLITE_OPEN_FULLMUTEX,nil)==SQLITE_OK,
+        defer {
+            if let target {sqlite3_close(target)}
+            if let source {sqlite3_close(source)}
+            withExtendedLifetime(snapshot) {}
+        }
+        guard sqlite3_open_v2(snapshot.directory.appendingPathComponent("state.sqlite").path,&source,SQLITE_OPEN_READWRITE|SQLITE_OPEN_FULLMUTEX,nil)==SQLITE_OK,
               sqlite3_open_v2(destination.path,&target,SQLITE_OPEN_READWRITE|SQLITE_OPEN_FULLMUTEX,nil)==SQLITE_OK else {throw JournalError.storage}
         func scalar(_ sql:String)throws->Int {
             var stmt:OpaquePointer?

@@ -15,13 +15,17 @@ public enum ManagerRuntime {
         umask(0o077)
         let journal=try Journal(directory:directory)
         try journal.recoverWorkerMetadata()
+        let migrationHeld=journal.migrationHeld
+        let activeExecution=migrationHeld ? nil:execution
+        let activeServiceControl=migrationHeld ? nil:serviceControl
+        let activeNativeControl=migrationHeld ? nil:nativeControl
         // Trusted code-only injection. The public entry point has no issuer;
         // missing observations never become absence or a launch permission.
-        let serviceRecovery=try serviceControl.map {try ServiceRecoveryController(journal:journal,approvedHashes:$0.applicationHashes)}
-        let serviceQueue=serviceControl.map {AsyncSessionControl(client:$0)}
+        let serviceRecovery=try activeServiceControl.map {try ServiceRecoveryController(journal:journal,approvedHashes:$0.applicationHashes)}
+        let serviceQueue=activeServiceControl.map {AsyncSessionControl(client:$0)}
         var serviceCursor=0,serviceTransportUnavailable=false
         var nativeMaintenance=NativeMaintenanceCoordinator(journal:journal)
-        let nativeQueue=nativeControl.map {AsyncNativeControl(client:$0)}
+        let nativeQueue=activeNativeControl.map {AsyncNativeControl(client:$0)}
         func enqueueNative(_ command:NativeMaintenanceCommand) {
             guard let nativeQueue else {return}
             do {try nativeQueue.submit(command)} catch {nativeMaintenance.failed(id:command.id)}
@@ -31,15 +35,15 @@ public enum ManagerRuntime {
         let workerRecovery=try WorkerReconciler(journal:journal,admission:&admission)
         let audit=try AuditLog(directory:directory.appendingPathComponent("audit"))
         let artifacts=AsyncArtifacts(store:try ArtifactStore(directory:directory.appendingPathComponent("artifacts")))
-        let tasks=TaskController(journal:journal,broker:ModelBroker(journal:journal,factory:execution?.workerFactory))
-        let executor:any SandboxExecuting = try execution?.makeExecutor() ?? UnavailableSandboxRuntime()
-        let jobs=JobController(journal:journal,executor:executor,collectVM:execution?.vmSource == .ownedContainer)
+        let tasks=TaskController(journal:journal,broker:ModelBroker(journal:journal,factory:activeExecution?.workerFactory))
+        let executor:any SandboxExecuting = try activeExecution?.makeExecutor() ?? UnavailableSandboxRuntime()
+        let jobs=JobController(journal:journal,executor:executor,collectVM:activeExecution?.vmSource == .ownedContainer)
         let sandboxes=SandboxTaskController(journal:journal,jobs:jobs,tasks:tasks,artifacts:artifacts,
-            socket:execution?.runtime?.socket ?? "/var/empty/fios-runtime-unenrolled.sock",peerUID:geteuid(),endpointPolicy:execution?.runtime?.endpointPolicy)
+            socket:activeExecution?.runtime?.socket ?? "/var/empty/fios-runtime-unenrolled.sock",peerUID:geteuid(),endpointPolicy:activeExecution?.runtime?.endpointPolicy)
         let taskCommands=TaskCommands(journal:journal,tasks:tasks,sandbox:sandboxes,artifacts:artifacts,
-            approvedImages:execution?.approvedImages ?? [],enrolled:execution != nil,peerUID:geteuid(),admissionOpen:execution?.admissionOpen ?? {false})
+            approvedImages:activeExecution?.approvedImages ?? [],enrolled:activeExecution != nil,peerUID:geteuid(),admissionOpen:activeExecution?.admissionOpen ?? {false})
         func applyingVM(to sample:ResourceSample,now:Int64)->ResourceSample {
-            if execution?.vmSource == .cached {return sample}
+            if activeExecution?.vmSource == .cached {return sample}
             return jobs.applyingVM(to:sample,now:now)
         }
         func timestamp()->Int64 { Int64(Date().timeIntervalSince1970*1000) }
@@ -51,7 +55,7 @@ public enum ManagerRuntime {
         let listeners=[observation,control,taskSocket]
         let roles:[ControlRole]=[.observer,.operator,.task]
         let epoch=UUID().uuidString.lowercased()
-        func binding(_ model:String)->WorkerDispatchBinding? {execution?.binding(model,managerEpoch:epoch)}
+        func binding(_ model:String)->WorkerDispatchBinding? {activeExecution?.binding(model,managerEpoch:epoch)}
         func bindingForJob(_ id:String)->WorkerDispatchBinding? {
             guard let model=tasks.canonicalModel(forJob:id) else {return nil}
             return binding(model)
@@ -66,7 +70,7 @@ public enum ManagerRuntime {
         let boot=try HostBoot.identity()
         var lastHeartbeat:TimeInterval = -2
         var cpuSampler=CPUSampler()
-        var resourceSample=execution?.sample(now:timestamp(),cpu:nil) ?? HostResources.sample(statePath:directory.path)
+        var resourceSample=activeExecution?.sample(now:timestamp(),cpu:nil) ?? HostResources.sample(statePath:directory.path)
         var gpuSample=GPUResources.sample()
         let termination=Termination()
         var clients:[PendingControl]=[]
@@ -92,7 +96,7 @@ public enum ManagerRuntime {
             }
             try workerRecovery.poll(now:Int64(now*1000),admission:&admission)
             resourceSample=applyingVM(to:resourceSample,now:timestamp())
-            let updates=try sandboxes.tick(now:timestamp(),uptime:now,sample:artifacts.reservingDisk(in:resourceSample),admission:&admission,source:bindingForJob,nativeCapacityProven:execution?.nativeCapacityProven() ?? false)
+            let updates=try sandboxes.tick(now:timestamp(),uptime:now,sample:artifacts.reservingDisk(in:resourceSample),admission:&admission,source:bindingForJob,nativeCapacityProven:activeExecution?.nativeCapacityProven() ?? false)
             resourceSample=applyingVM(to:resourceSample,now:timestamp())
             try taskCommands.tick(now:timestamp(),uptime:Int64(now*1000),artifactResults:updates.artifactResults,output:updates.output,model:updates.model,finished:updates.finished)
             if now - lastHeartbeat >= 2 {
@@ -110,7 +114,7 @@ public enum ManagerRuntime {
                     }
                 }
                 let cpu=cpuSampler.observe(ticks:CPUSampler.readTicks(),now:sampledAt)
-                resourceSample=applyingVM(to:execution?.sample(now:sampledAt,cpu:cpu) ?? HostResources.sample(statePath:directory.path,measuredCPU:cpu),now:sampledAt)
+                resourceSample=applyingVM(to:activeExecution?.sample(now:sampledAt,cpu:cpu) ?? HostResources.sample(statePath:directory.path,measuredCPU:cpu),now:sampledAt)
                 gpuSample=GPUResources.sample()
                 do {try artifacts.expire(request:UUID().uuidString.lowercased(),now:timestamp())}
                 catch ArtifactServiceFailure.capacity {} // Finite I/O slots, retry maintenance next cycle.
@@ -163,8 +167,9 @@ public enum ManagerRuntime {
                         }
                         response["services"]=serviceStates
                         response["native_admissions"]=nativeQueue == nil ? "unsupported":nativeMaintenance.phase.rawValue
+                        response["migration_maintenance"]=migrationHeld
                         response["native_activity"]="unsupported"
-                        response["sandbox_admission"]=execution == nil ? "disabled":"configured"
+                        response["sandbox_admission"]=activeExecution == nil ? "disabled":"configured"
                         response["artifact_bytes"]=artifacts.statistics.bytes
                         response["artifact_jobs"]=artifacts.statistics.jobs
                     case .resources:
@@ -191,7 +196,7 @@ public enum ManagerRuntime {
                             "coverage":"unsupported","resident_model":NSNull(),"outstanding_owners":NSNull(),"loading":NSNull()]
                     case .jobCreate,.jobStatus,.jobRenew,.jobCancel,.modelRequest,.artifactRead:
                         response["result"]=try taskCommands.handle(request,role:client.role,sample:requestResources,admission:&admission,
-                            binding:binding,nativeCapacityProven:execution?.nativeCapacityProven() ?? false,now:requestedAt,uptime:Int64(now*1000))
+                            binding:binding,nativeCapacityProven:activeExecution?.nativeCapacityProven() ?? false,now:requestedAt,uptime:Int64(now*1000))
                     case .serviceDrain,.serviceForce:
                         guard OperatorServiceCommand.valid(operation:request.operation,payload:request.payload) else {throw ControlError.invalid_request}
                         // No trusted all-backend scope issuer/actuator is enrolled.

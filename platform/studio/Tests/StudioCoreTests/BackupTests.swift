@@ -118,7 +118,13 @@ func runBackupTests() throws {
     }
     let restoredState=root.appendingPathComponent("restored-state")
     _=try StoppedStateBackup.restore(directory:bundle,expectedSHA256:bundleReceipt.sha256,destination:restoredState)
-    _=try StoppedStateBackup.verify(directory:restoredState,expectedSHA256:bundleReceipt.sha256)
+    // A published working directory has fresh local lock identities. The
+    // original receipt still identifies its sealed input, not this namespace.
+    do {_=try StoppedStateBackup.verify(directory:restoredState,expectedSHA256:bundleReceipt.sha256);fatalError("Working state was accepted as a sealed backup")}
+    catch JournalError.invalid {}
+    let rebundled=root.appendingPathComponent("restored-before-start-backup")
+    let rebackup=try StoppedStateBackup.create(directory:restoredState,destination:rebundled)
+    _=try StoppedStateBackup.verify(directory:rebundled,expectedSHA256:rebackup.sha256)
     do {_=try StoppedStateBackup.restore(directory:bundle,expectedSHA256:bundleReceipt.sha256,destination:state);fatalError("In-place restoration overwrote live state") } catch JournalError.conflict {}
     do {
         let restoredJournal=try Journal(directory:restoredState)

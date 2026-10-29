@@ -13,7 +13,13 @@ public enum StoppedStateBackup {
     // Preserve opaque future ownership metadata without interpreting it as
     // permission/completion. The controller independently validates on startup.
     static func serviceRecoveryPayload(directory:URL)throws->Data? {
-        let path=directory.appendingPathComponent("service-recovery.json").path
+        try privatePayload(directory:directory,name:"service-recovery.json")
+    }
+    static func migrationHoldPayload(directory:URL)throws->Data? {
+        try privatePayload(directory:directory,name:"migration-hold.json")
+    }
+    private static func privatePayload(directory:URL,name:String)throws->Data? {
+        let path=directory.appendingPathComponent(name).path
         let fd=open(path,O_RDONLY|O_NOFOLLOW|O_CLOEXEC|O_NONBLOCK)
         if fd<0,errno==ENOENT {return nil}
         guard fd>=0 else {throw JournalError.invalid};defer {close(fd)}
@@ -51,8 +57,9 @@ public enum StoppedStateBackup {
         let artifacts=try StoppedArtifactBackup.create(directory:directory,destination:destination.appendingPathComponent("artifacts"),stopped:stopped)
         let files=try JSONSerialization.jsonObject(with:JSONEncoder().encode(artifacts.files))
         let recovery=try serviceRecoveryPayload(directory:directory)
-        let scope=recovery==nil ? "platform_journal_and_exports":"platform_journal_exports_and_service_recovery"
-        var manifest:[String:Any]=["version":recovery==nil ? 1:2,"scope":scope,"host_hash":try StoppedPlatformState.hostHash(),"owner_uid":Int(geteuid()),"journal_schema":journal.schema,"journal_application_id":"FIS9",
+        let hold=try migrationHoldPayload(directory:directory)
+        let scope=hold != nil ? "platform_journal_exports_and_migration_hold":recovery==nil ? "platform_journal_and_exports":"platform_journal_exports_and_service_recovery"
+        var manifest:[String:Any]=["version":hold != nil ? 3:recovery==nil ? 1:2,"scope":scope,"host_hash":try StoppedPlatformState.hostHash(),"owner_uid":Int(geteuid()),"journal_schema":journal.schema,"journal_application_id":"FIS9",
             "journal_bytes":journal.bytes,"journal_sha256":journal.sha256,"artifact_index_sha256":artifacts.indexSHA256,"artifact_files":files]
         if let recovery {
             let path=destination.appendingPathComponent("service-recovery.json")
@@ -63,6 +70,17 @@ public enum StoppedStateBackup {
             guard fsync(fd)==0 else {throw JournalError.storage}
             manifest["service_recovery_bytes"]=recovery.count
             manifest["service_recovery_sha256"]=SHA256.hash(data:recovery).map {String(format:"%02x",$0)}.joined()
+        }
+        if let hold {
+            let path=destination.appendingPathComponent("migration-hold.json")
+            try hold.write(to:path,options:.withoutOverwriting)
+            try FileManager.default.setAttributes([.posixPermissions:0o600],ofItemAtPath:path.path)
+            let fd=open(path.path,O_RDONLY|O_NOFOLLOW|O_CLOEXEC)
+            guard fd>=0 else {throw JournalError.storage};defer {close(fd)}
+            guard fsync(fd)==0 else {throw JournalError.storage}
+            manifest["migration_hold_bytes"]=hold.count
+            manifest["migration_hold_sha256"]=SHA256.hash(data:hold).map {String(format:"%02x",$0)}.joined()
+            if recovery==nil {manifest["service_recovery_bytes"]=NSNull();manifest["service_recovery_sha256"]=NSNull()}
         }
         let data=try JSONSerialization.data(withJSONObject:manifest,options:[.sortedKeys])
         guard data.count<=65536 else {throw JournalError.invalid}
@@ -77,6 +95,6 @@ public enum StoppedStateBackup {
         guard outer>=0 else {throw JournalError.storage};defer {close(outer)}
         guard fsync(fd)==0,fsync(folder)==0,fsync(outer)==0 else {throw JournalError.storage}
         success=true
-        return StateBackupReceipt(scope:scope,bytes:journal.bytes+artifacts.bytes+Int64(recovery?.count ?? 0),artifacts:artifacts.artifacts,sha256:SHA256.hash(data:data).map {String(format:"%02x",$0)}.joined())
+        return StateBackupReceipt(scope:scope,bytes:journal.bytes+artifacts.bytes+Int64(recovery?.count ?? 0)+Int64(hold?.count ?? 0),artifacts:artifacts.artifacts,sha256:SHA256.hash(data:data).map {String(format:"%02x",$0)}.joined())
     }
 }

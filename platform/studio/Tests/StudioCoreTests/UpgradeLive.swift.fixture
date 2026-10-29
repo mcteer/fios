@@ -5,7 +5,7 @@ import CryptoKit
 @main struct UpgradeFixture {
     static func main()throws {
         let args=CommandLine.arguments
-        guard args.count==3,["seed","check","future"].contains(args[1]),args[2].hasPrefix("/tmp/fios009-upgrade-") else {throw JournalError.invalid}
+        guard args.count==3,["seed","seed-seven","check","check-seven","future"].contains(args[1]),args[2].hasPrefix("/tmp/fios009-upgrade-") else {throw JournalError.invalid}
         let directory=URL(fileURLWithPath:args[2]),owner=String(repeating:"a",count:64)
         let payload=Data("UPGRADE_EXPLICIT_EXPORT_FIXTURE".utf8)
         if args[1]=="future" {
@@ -15,15 +15,32 @@ import CryptoKit
             guard sqlite3_exec(database,"PRAGMA user_version=9",nil,nil,nil)==SQLITE_OK else {throw JournalError.storage}
             return
         }
-        let journal=try Journal(directory:directory)
-        if args[1]=="seed" {
-            let job=UUID().uuidString.lowercased()
-            try journal.claim(job:job,attempt:0,model:"fixture/model")
-            let store=try ArtifactStore(directory:directory.appendingPathComponent("artifacts"),availableBytes:{100<<30})
-            _=try store.publish(job:job,ownerHash:owner,data:payload,now:HostResources.nowMilliseconds())
+        if ["seed","seed-seven"].contains(args[1]) {
+            do {
+                let journal=try Journal(directory:directory)
+                let job=UUID().uuidString.lowercased()
+                try journal.claim(job:job,attempt:0,model:"fixture/model")
+                let store=try ArtifactStore(directory:directory.appendingPathComponent("artifacts"),availableBytes:{100<<30})
+                _=try store.publish(job:job,ownerHash:owner,data:payload,now:HostResources.nowMilliseconds())
+            }
+            if args[1]=="seed-seven" {
+                var database:OpaquePointer?
+                guard sqlite3_open_v2(directory.appendingPathComponent("state.sqlite").path,&database,SQLITE_OPEN_READWRITE,nil)==SQLITE_OK else {throw JournalError.storage}
+                defer {sqlite3_close(database)}
+                guard sqlite3_exec(database,"DROP TABLE inference_scopes; PRAGMA user_version=7",nil,nil,nil)==SQLITE_OK else {throw JournalError.storage}
+            }
             return
         }
-        guard try journal.unresolvedCount()==1,try journal.uncertainCount()==1 else {throw JournalError.invalid}
+        if args[1]=="check-seven" {
+            var database:OpaquePointer?,row:OpaquePointer?
+            guard sqlite3_open_v2(directory.appendingPathComponent("state.sqlite").path,&database,SQLITE_OPEN_READONLY,nil)==SQLITE_OK else {throw JournalError.storage}
+            defer {sqlite3_finalize(row);sqlite3_close(database)}
+            guard sqlite3_prepare_v2(database,"SELECT count(*),sum(uncertain) FROM inference",-1,&row,nil)==SQLITE_OK,
+                  sqlite3_step(row)==SQLITE_ROW,sqlite3_column_int64(row,0)==1,sqlite3_column_int64(row,1)==1 else {throw JournalError.invalid}
+        }else {
+            let journal=try Journal(directory:directory)
+            guard try journal.unresolvedCount()==1,try journal.uncertainCount()==1 else {throw JournalError.invalid}
+        }
         let index=try JSONSerialization.jsonObject(with:Data(contentsOf:directory.appendingPathComponent("artifacts/index.json"))) as! [String:Any]
         guard let records=index["records"] as? [[String:Any]],records.count==1,let id=records[0]["id"] as? String else {throw JournalError.invalid}
         let store=try ArtifactStore(directory:directory.appendingPathComponent("artifacts"),availableBytes:{100<<30})
@@ -37,6 +54,6 @@ import CryptoKit
             }
         }
         guard result==payload else {throw JournalError.invalid}
-        print("{\"uncertain\":1,\"exports\":1,\"schema\":8}")
+        print("{\"uncertain\":1,\"exports\":1}")
     }
 }

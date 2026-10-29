@@ -11,7 +11,7 @@ import {homedir} from 'node:os';
 import {randomUUID,randomBytes,createHash} from 'node:crypto';
 import {createConnection} from 'node:net';
 import {setTimeout as delay} from 'node:timers/promises';
-const mock=process.argv[2]==='--mock',models=process.argv[3]==='--models';assert.deepEqual(process.argv.slice(2),[mock?'--mock':'--isolated',...(models?['--models']:[])]);assert.equal(process.platform,'darwin');assert.notEqual(process.getuid(),0);
+const mock=process.argv[2]==='--mock',models=process.argv[3]==='--models',mutateHold=process.argv[3]==='--mutate-hold';assert.deepEqual(process.argv.slice(2),[mock?'--mock':'--isolated',...(models?['--models']:mutateHold?['--mutate-hold']:[])]);assert(!mutateHold||mock,'Hold mutation is Docker-free only');assert.equal(process.platform,'darwin');assert.notEqual(process.getuid(),0);
 const root=resolve(import.meta.dirname,'..'),directory=mkdtempSync('/private/tmp/f9-manager-'),children=[];
 const docker=join(directory,'docker'),binary=join(directory,'manager-fixture'),owner=randomUUID();
 let socketURL,image,sentinel,sentinelName,passed=false;
@@ -102,11 +102,17 @@ try {
  }
  const main=join(directory,'ManagerExecutionLive.swift'),core=join(root,'platform/studio/Sources/StudioCore');
  copyFileSync(join(root,'platform/studio/Tests/StudioCoreTests/ManagerExecutionLive.swift.fixture'),main);
- command('/usr/bin/env',['swiftc','-swift-version','6','-warnings-as-errors','-I',join(root,'platform/studio/Sources/CSQLite'),...readdirSync(core).filter(name=>name.endsWith('.swift')).sort().map(name=>join(core,name)),main,'-o',binary],180000,{...process.env});
+ command('/usr/bin/env',['swiftc','-swift-version','6','-warnings-as-errors','-I',join(root,'platform/studio/Sources/CSQLite'),...readdirSync(core).filter(name=>name.endsWith('.swift')).sort().map(name=>{
+  if(!mutateHold||name!=='Manager.swift')return join(core,name);
+  const value=readFileSync(join(core,name),'utf8'),check='let activeExecution=migrationHeld ? nil:execution';
+  assert.equal(value.split(check).length,2,'Migration hold boundary changed');
+  const path=join(directory,'MutatedManager.swift');writeFileSync(path,value.replace(check,'let activeExecution=execution'));return path;
+ }),main,'-o',binary],180000,{...process.env});
  const source=Buffer.from("print('MANAGER_LOOP_FIXTURE')\n"),token=randomBytes(32).toString('base64');
  function begin(){return {owner:token,phase:'begin',idempotency:randomUUID(),kind:'sandbox',length:source.length,sha256:createHash('sha256').update(source).digest('hex'),lifetime:30000,model:null,image,memory:536870912,cpus:1};}
- for(const [mode,error]of [['disabled','native_unsupported'],['closed','native_unsupported'],['missing','resource_limit']]) {
+ for(const [mode,error]of [['disabled','native_unsupported'],['held','native_unsupported'],['closed','native_unsupported'],['missing','resource_limit']]) {
   const state=join(directory,mode),child=await start(state,mode);
+  if(mode==='held'){const status=await rpc(state,'status',{},'observe');assert.equal(status.migration_maintenance,true);assert.equal(status.sandbox_admission,'disabled','Migration maintenance hold accepted execution ports');}
   const response=await rpc(state,'job.create',begin());assert.equal(response.ok,false);assert.equal(response.error,error);
   const status=await rpc(state,'status',{},'observe');assert.equal(status.native_activity,'unsupported');assert.equal(status.worker_reservations,0);assert.equal(status.unresolved_requests,0);
   await stop(child);
