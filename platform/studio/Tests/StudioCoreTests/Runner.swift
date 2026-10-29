@@ -117,7 +117,7 @@ struct PolicyTestRunner {
             }
         }
         progress("activity coherence")
-        ActivityCoherenceTests.run()
+        try ActivityCoherenceTests.run()
         progress("detailed observations")
         try DetailedObservationTests.run()
         progress("inference scopes")

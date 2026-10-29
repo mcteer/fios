@@ -1,63 +1,56 @@
 import Foundation
 
 enum ActivityCoherenceTests {
-    static func run() {
-        func counts(_ ingress:Int=0,_ preparing:Int=0,_ queued:Int=0,_ active:Int=0,_ responding:Int=0) -> NativePhaseCounts {
-            NativePhaseCounts(ingress:ingress,preparing:preparing,queued:queued,active:active,responding:responding)
+    private struct Counts:Decodable {
+        let ingress:Int;let preparing:Int;let queued:Int;let active:Int;let responding:Int
+        var value:NativePhaseCounts {NativePhaseCounts(ingress:ingress,preparing:preparing,queued:queued,active:active,responding:responding)}
+    }
+    private struct Model:Decodable {let model:String;let resident:Bool;let phases:Counts}
+    private struct Expected:Decodable {let coverage:NativeCoverage;let state:NativeActivityState;let model:String?;let owners:Int?}
+    private struct Permit:Decodable {let target:String;let allowed:Bool}
+    private struct Case:Decodable {
+        let id:String;let coverage:NativeCoverage;let source_coverage:NativeCoverage
+        let totals:Counts;let unattributed:Counts;let models:[Model];let transitioning:Bool
+        let expected:Expected;let permits:[Permit]
+    }
+    private struct Fixture:Decodable {let version:Int;let scope:String;let native_authority:Bool;let cases:[Case]}
+    static func run()throws {
+        let path=URL(fileURLWithPath:FileManager.default.currentDirectoryPath).appendingPathComponent("tests/fixtures/platform/activity.json")
+        let data=try Data(contentsOf:path)
+        try StrictJSON.validate(data,maximum:1<<20)
+        func exact(_ value:Any?,_ fields:[String])->[String:Any] {
+            guard let object=value as? [String:Any],Set(object.keys)==Set(fields) else {preconditionFailure("Activity fixture schema diverged")}
+            return object
         }
-        func model(_ name:String="model-a",_ value:NativePhaseCounts = .zero,_ resident:Bool=true) -> NativeModelActivity {
-            NativeModelActivity(model:name,resident:resident,counts:value)
+        let raw=exact(try JSONSerialization.jsonObject(with:data),["version","scope","native_authority","cases"])
+        guard let cases=raw["cases"] as? [[String:Any]] else {preconditionFailure("Missing activity fixture cases")}
+        let phaseFields=["ingress","preparing","queued","active","responding"]
+        for row in cases {
+            _=exact(row,["id","coverage","source_coverage","totals","unattributed","models","transitioning","expected","permits"])
+            _=exact(row["totals"],phaseFields);_=exact(row["unattributed"],phaseFields)
+            _=exact(row["expected"],["coverage","state","model","owners"])
+            guard let models=row["models"] as? [[String:Any]],let permits=row["permits"] as? [[String:Any]],!permits.isEmpty else {preconditionFailure("Incomplete activity fixture")}
+            for model in models {_=exact(model,["model","resident","phases"]);_=exact(model["phases"],phaseFields)}
+            for permit in permits {_=exact(permit,["target","allowed"])}
         }
-        func evaluate(_ totals:NativePhaseCounts = .zero,_ models:[NativeModelActivity] = [],
-                      unattributed:NativePhaseCounts = .zero,coverage:NativeCoverage = .all_clients,
-                      ceiling:NativeCoverage = .all_clients,transitioning:Bool=false) -> CoherentNativeActivity {
-            NativeActivityCoherence.evaluate(coverage:coverage,sourceCoverage:ceiling,totals:totals,
-                unattributed:unattributed,models:models,transitioning:transitioning)
+        let fixture=try JSONDecoder().decode(Fixture.self,from:data)
+        let required:Set<String>=["source-ceiling-unknown","source-ceiling-unsupported","claimed-coverage-unknown","claimed-coverage-unsupported",
+            "idle-resident","idle-empty","phase-ingress","phase-preparing","phase-queued","phase-active","phase-responding","slow-response",
+            "aggregate-mismatch","multiple-residents","duplicate-model","unattributed-active","transitioning","negative-counter","oversize-counter",
+            "owner-sum-overflow","model-sum-overflow","model-capacity","model-capacity-overflow","empty-model","model-byte-boundary","model-byte-overflow",
+            "busy-nonresident-conflict","multiple-busy-models","unicode-target-byte-identity","unicode-distinct-models","unicode-resident-conflict"]
+        precondition(fixture.version==1 && fixture.scope=="normalized_activity_policy_only" && !fixture.native_authority)
+        precondition(fixture.cases.count==required.count && Set(fixture.cases.map(\.id))==required,"Required activity cases disappeared or duplicated")
+        for row in fixture.cases {
+            let result=NativeActivityCoherence.evaluate(coverage:row.coverage,sourceCoverage:row.source_coverage,
+                totals:row.totals.value,unattributed:row.unattributed.value,
+                models:row.models.map {NativeModelActivity(model:$0.model,resident:$0.resident,counts:$0.phases.value)},transitioning:row.transitioning)
+            let sameModel=result.model.map {Data($0.utf8)}==row.expected.model.map {Data($0.utf8)}
+            guard result.coverage==row.expected.coverage,result.state==row.expected.state,sameModel,result.owners==row.expected.owners,
+                  row.permits.allSatisfy({result.permits(target:$0.target)==$0.allowed}) else {
+                FileHandle.standardError.write(Data("ACTIVITY_FIXTURE_MISMATCH: \(row.id)\n".utf8));throw PolicyError.invalidObservation
+            }
         }
-        func unknown(_ result:CoherentNativeActivity) {
-            precondition(result.state == .unknown && result.model == nil && result.owners == nil,
-                         "Uncertain activity became attributed or eligible")
-            precondition(!result.permits(target:"model-a"))
-        }
-        let idle = evaluate(.zero,[model()])
-        precondition(idle.state == .idle && idle.owners == 0 && idle.permits(target:"model-b"))
-        precondition(evaluate().state == .idle)
-        for (value,state) in [(counts(1),NativeActivityState.preparing),(counts(0,1),.preparing),
-                              (counts(0,0,1),.queued),(counts(0,0,0,1),.active),(counts(0,0,0,0,1),.active)] {
-            let view = evaluate(value,[model("model-a",value)])
-            precondition(view.state == state && view.owners == 1 && view.model == "model-a")
-            precondition(!view.permits(target:"model-b"))
-            precondition(view.permits(target:"model-a") == (state != .preparing))
-        }
-        // A slow response remains owned even with no compute or queued work.
-        let response = counts(0,0,0,0,2)
-        precondition(evaluate(response,[model("model-a",response)]).owners == 2)
-        unknown(evaluate(response,[model()])) // Contradictory aggregate.
-        unknown(evaluate(.zero,[model("a"),model("b")])) // Multiple residents.
-        unknown(evaluate(.zero,[model(),model()])) // Duplicate byte identity.
-        unknown(evaluate(counts(0,0,0,1),[],unattributed:counts(0,0,0,1)))
-        unknown(evaluate(.zero,[],transitioning:true))
-        unknown(evaluate(.zero,[],ceiling:.unknown))
-        unknown(evaluate(.zero,[],coverage:.unknown))
-        precondition(evaluate(.zero,[],ceiling:.unsupported).coverage == .unsupported)
-        unknown(evaluate(counts(-1),[model("a",counts(-1))]))
-        unknown(evaluate(counts(Int(Int32.max)+1),[model("a",counts(Int(Int32.max)+1))]))
-        // Individual counters fit but aggregate owners do not.
-        let overflow = counts(Int(Int32.max),1)
-        unknown(evaluate(overflow,[model("a",overflow)]))
-        unknown(evaluate(counts(Int(Int32.max)),[model("a",counts(Int(Int32.max)),false),model("b",counts(1),false)]))
-        let sixtyFour = (0..<64).map { model("m\($0)",.zero,false) }
-        precondition(evaluate(.zero,sixtyFour).state == .idle)
-        unknown(evaluate(.zero,sixtyFour + [model("overflow",.zero,false)]))
-        unknown(evaluate(.zero,[model("")]))
-        unknown(evaluate(counts(0,0,1),[model("active",counts(0,0,1),false),model("other")]))
-        unknown(evaluate(counts(0,0,2),[model("a",counts(0,0,1),false),model("b",counts(0,0,1),false)]))
-        // Swift String equality folds canonical Unicode; exact model IDs must not.
-        let composed = "caf\u{00e9}", decomposed = "cafe\u{0301}"
-        precondition(composed == decomposed)
-        let unicode = evaluate(counts(0,0,1),[model(composed,counts(0,0,1))])
-        precondition(unicode.permits(target:composed) && !unicode.permits(target:decomposed))
-        precondition(evaluate(.zero,[model(composed,.zero,false),model(decomposed,.zero,false)]).state == .idle)
-        unknown(evaluate(counts(0,0,1),[model(composed,counts(0,0,1),false),model(decomposed)]))
+        print("PASS: 31 strict normalized activity vectors; no native/backend coverage or admission authority")
     }
 }
