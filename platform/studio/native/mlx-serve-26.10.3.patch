@@ -133,6 +133,38 @@ index 806d641..1c0b82d 100644
      /// Draft tokens per MTP round, 0 without an MTP context.
      pub fn mtpDrafts(self: *const LlamaContext) u32 {
          return @intCast(ffi.mlx_llama_ctx_mtp_drafts(self.handle));
+diff --git a/src/arch/mlx_stream.zig b/src/arch/mlx_stream.zig
+index bb45d0a..52c8ccb 100644
+--- a/src/arch/mlx_stream.zig
++++ b/src/arch/mlx_stream.zig
+@@ -264,7 +264,15 @@ fn openArch(comptime k: Kind, gpa: std.mem.Allocator, io: std.Io, s: mlx.mlx_str
+     return m;
+ }
+ 
++// Known custody preflight only, not an atomic terminal reservation.
++pub fn fiosCanClose(m: *Model) bool {
++    return switch (m.arch) {
++        inline else => |b, k| if (comptime @hasDecl(Side(k).arch, "fiosCanDeinit")) Side(k).arch.fiosCanDeinit(b.module) else true,
++    };
++}
++
+ pub fn close(m: *Model) void {
++    if (!fiosCanClose(m)) return;
+     switch (m.arch) {
+         inline else => |b, k| {
+             const A = Side(k).arch;
+diff --git a/src/arch/mlx_stream_stub.zig b/src/arch/mlx_stream_stub.zig
+index fbc9b34..3f28127 100644
+--- a/src/arch/mlx_stream_stub.zig
++++ b/src/arch/mlx_stream_stub.zig
+@@ -35,6 +35,7 @@ pub fn open(_: std.mem.Allocator, _: std.Io, _: mlx.mlx_stream, config: *const M
+     return refuse(config);
+ }
+ 
++pub fn fiosCanClose(_: *Model) bool { return true; }
+ pub fn close(_: *Model) void {}
+ pub fn begin(_: *Model, _: []const u32, _: u32, _: u64) !u64 {
+     return 0;
 diff --git a/src/llama_ffi.zig b/src/llama_ffi.zig
 index 1c9946d..43da296 100644
 --- a/src/llama_ffi.zig
@@ -251,7 +283,7 @@ index 1f982ed..291853f 100644
  /// `metal_kernel` helper gates on this, so on CUDA they all take the MLX-op path.
  pub fn streamIsGpu(s: mlx_stream) bool {
 diff --git a/src/model_registry.zig b/src/model_registry.zig
-index da1f791..7adb8fa 100644
+index da1f791..9b7115b 100644
 --- a/src/model_registry.zig
 +++ b/src/model_registry.zig
 @@ -18,6 +18,7 @@
@@ -271,7 +303,7 @@ index da1f791..7adb8fa 100644
      allocator: std.mem.Allocator,
  
      /// Identifier exposed via `/v1/models` and the request `model` field.
-@@ -394,14 +397,26 @@ pub const LoadedModel = struct {
+@@ -394,14 +397,32 @@ pub const LoadedModel = struct {
          self.ane = null;
      }
  
@@ -294,6 +326,12 @@ index da1f791..7adb8fa 100644
 +            self.fios_cleanup_uncertain.store(true, .release);
 +            return false;
 +        }
++        if (self.transformer) |xfm| {
++            if (!xfm.fiosCanDeinit()) {
++                self.fios_cleanup_uncertain.store(true, .release);
++                return false;
++            }
++        }
 +        return true;
 +    }
 +    pub fn deinit(self: *LoadedModel) bool {
@@ -301,7 +339,7 @@ index da1f791..7adb8fa 100644
          if (self.llama_ctx) |ctx| {
              ctx.free();
              self.llama_ctx = null;
-@@ -530,6 +545,7 @@ pub const LoadedModel = struct {
+@@ -530,6 +551,7 @@ pub const LoadedModel = struct {
          if (self.arch_hint.len > 0) self.allocator.free(self.arch_hint);
          self.allocator.free(self.id);
          self.allocator.free(self.path);
@@ -309,7 +347,7 @@ index da1f791..7adb8fa 100644
      }
  
      /// Free the CPU-only state `unloadResident` deliberately RETAINS —
-@@ -547,13 +563,24 @@ pub const LoadedModel = struct {
+@@ -547,13 +569,24 @@ pub const LoadedModel = struct {
      /// serialises this against `grammarTokenBytes` and the tokenize cache is
      /// the REFCOUNT, not their own mutexes — a reload cannot begin until every
      /// borrower has released.
@@ -336,7 +374,7 @@ index da1f791..7adb8fa 100644
          std.debug.assert(self.state == .loading or self.config == null);
          if (self.token_bytes) |*tb| {
              tb.deinit();
-@@ -578,6 +605,7 @@ pub const LoadedModel = struct {
+@@ -578,6 +611,7 @@ pub const LoadedModel = struct {
              tc.deinit();
              self.tokenize_cache = null;
          }
@@ -344,7 +382,7 @@ index da1f791..7adb8fa 100644
      }
  
      /// Free only the mlx-allocating state (weights/transformer/vision/
-@@ -586,7 +614,12 @@ pub const LoadedModel = struct {
+@@ -586,7 +620,12 @@ pub const LoadedModel = struct {
      /// Used by eviction so the registry keeps the entry around as
      /// `.unloaded` for later listing/reload, AND by `Scheduler.deinit` so
      /// mlx frees happen on the inference thread.
@@ -358,7 +396,7 @@ index da1f791..7adb8fa 100644
          // A Thunderbolt pair's model unloads on both Macs; its next load plans again.
          if (distributed.serves(self.path)) distributed.release();
          if (self.llama_ctx) |ctx| {
-@@ -698,6 +731,7 @@ pub const LoadedModel = struct {
+@@ -698,6 +737,7 @@ pub const LoadedModel = struct {
          // budget against it for the whole session.
          if (self.config) |c| c.pinned_prefill_chunk = 0;
          self.state = .unloaded;
@@ -366,7 +404,7 @@ index da1f791..7adb8fa 100644
      }
  };
  
-@@ -739,7 +773,22 @@ pub const ModelStatus = struct {
+@@ -739,7 +779,22 @@ pub const ModelStatus = struct {
  ///   3. Per-request handlers (Phase C) call `ensureLoaded(scheduler, id)`
  ///      and `release`. The borrowed `*LoadedModel` is valid until `release`.
  ///   4. `deinit` tears down every entry; the discovery result is freed.
@@ -389,7 +427,7 @@ index da1f791..7adb8fa 100644
      allocator: std.mem.Allocator,
      io: std.Io,
  
-@@ -780,6 +829,21 @@ pub const ModelRegistry = struct {
+@@ -780,6 +835,21 @@ pub const ModelRegistry = struct {
      /// Bumped by every entry added and every state change (`/props`
      /// `registry_generation`): a client re-reads `/v1/models` only when it moved.
      generation: std.atomic.Value(u64) = .init(0),
@@ -411,7 +449,7 @@ index da1f791..7adb8fa 100644
  
      /// Running sum of `bytes_resident` across `.ready` entries. Updated
      /// under `mutex` on every state transition.
-@@ -795,6 +859,18 @@ pub const ModelRegistry = struct {
+@@ -795,6 +865,18 @@ pub const ModelRegistry = struct {
      /// pick needs.
      lru_clock: i64,
  
@@ -430,7 +468,7 @@ index da1f791..7adb8fa 100644
      /// Create the registry. Takes ownership of `discovery` (if non-null)
      /// and pre-populates entries from it.
      ///
-@@ -835,7 +911,7 @@ pub const ModelRegistry = struct {
+@@ -835,7 +917,7 @@ pub const ModelRegistry = struct {
          // on-demand. Allocation failures here roll back any partial
          // entries via errdefer so we don't leak strings on OOM.
          if (discovery) |d| {
@@ -439,7 +477,7 @@ index da1f791..7adb8fa 100644
              for (d.models) |m| {
                  _ = try self.registerStubWithArch(m.id, m.path, m.bytes_on_disk, m.model_type);
              }
-@@ -848,19 +924,56 @@ pub const ModelRegistry = struct {
+@@ -848,19 +930,56 @@ pub const ModelRegistry = struct {
      /// each entry. Called once at server shutdown after the scheduler has
      /// joined (so the inference thread isn't mid-load).
      pub fn deinit(self: *ModelRegistry) void {
@@ -503,7 +541,7 @@ index da1f791..7adb8fa 100644
      }
  
      /// Insert an `.unloaded` stub for a model. Returns the heap-allocated
-@@ -876,6 +989,8 @@ pub const ModelRegistry = struct {
+@@ -876,6 +995,8 @@ pub const ModelRegistry = struct {
      /// `registerStub` variant carrying the discovery-peeked `model_type` so
      /// the stub can advertise arch-derived capabilities before loading.
      pub fn registerStubWithArch(self: *ModelRegistry, id: []const u8, path: []const u8, bytes_on_disk: ?u64, arch_hint: []const u8) !*LoadedModel {
@@ -512,7 +550,7 @@ index da1f791..7adb8fa 100644
          if (self.entries.get(id) != null) return error.DuplicateId;
  
          const stub = try self.allocator.create(LoadedModel);
-@@ -915,6 +1030,7 @@ pub const ModelRegistry = struct {
+@@ -915,6 +1036,7 @@ pub const ModelRegistry = struct {
          // putNoClobber so we surface a stronger error than overwrite — the
          // earlier `entries.get` guard makes this defensive.
          try self.entries.putNoClobber(stub.id, stub);
@@ -520,7 +558,7 @@ index da1f791..7adb8fa 100644
          _ = self.generation.fetchAdd(1, .monotonic);
          return stub;
      }
-@@ -933,6 +1049,11 @@ pub const ModelRegistry = struct {
+@@ -933,6 +1055,11 @@ pub const ModelRegistry = struct {
      /// the entry after the basename (a `.gguf` file without its extension, as
      /// `--model` names it).
      pub fn registerByPath(self: *ModelRegistry, io: std.Io, abs_path: []const u8, id: ?[]const u8) ![]const u8 {
@@ -532,7 +570,7 @@ index da1f791..7adb8fa 100644
          var trimmed = abs_path;
          while (trimmed.len > 0 and trimmed[trimmed.len - 1] == '/') trimmed = trimmed[0 .. trimmed.len - 1];
          const base = std.fs.path.basename(trimmed);
-@@ -972,9 +1093,11 @@ pub const ModelRegistry = struct {
+@@ -972,9 +1099,11 @@ pub const ModelRegistry = struct {
      pub fn setDefault(self: *ModelRegistry, id: []const u8) !void {
          self.mutex.lockUncancelable(self.io);
          defer self.mutex.unlock(self.io);
@@ -544,7 +582,7 @@ index da1f791..7adb8fa 100644
      }
  
      /// Look up an entry by its on-disk path (trailing slashes ignored).
-@@ -1010,6 +1133,11 @@ pub const ModelRegistry = struct {
+@@ -1010,6 +1139,11 @@ pub const ModelRegistry = struct {
      /// re-reads its dir. Returns the number of stubs added. No roots (a
      /// `--model`-only server) rescans nothing.
      pub fn rescan(self: *ModelRegistry) !u32 {
@@ -556,7 +594,7 @@ index da1f791..7adb8fa 100644
          const roots = if (self.discovery) |d| d.roots else &.{};
          if (roots.len == 0) return 0;
          var found = try model_discovery.discoverModelsMany(self.io, self.allocator, roots);
-@@ -1098,9 +1226,11 @@ pub const ModelRegistry = struct {
+@@ -1098,9 +1232,11 @@ pub const ModelRegistry = struct {
          const entry = self.entries.get(id) orelse return error.UnknownModelId;
  
          while (true) {
@@ -568,7 +606,7 @@ index da1f791..7adb8fa 100644
                      return entry;
                  },
                  .loading, .evicting => {
-@@ -1113,8 +1243,138 @@ pub const ModelRegistry = struct {
+@@ -1113,8 +1249,138 @@ pub const ModelRegistry = struct {
          }
      }
  
@@ -707,7 +745,7 @@ index da1f791..7adb8fa 100644
          _ = self.generation.fetchAdd(1, .monotonic);
          self.state_cond.broadcast(self.io);
      }
-@@ -1149,10 +1409,22 @@ pub const ModelRegistry = struct {
+@@ -1149,10 +1415,22 @@ pub const ModelRegistry = struct {
      /// ensureLoaded callers wait on `.evicting`. Returns immediately;
      /// caller MUST call `waitForRefcountZeroLocked` to drain readers
      /// before freeing GPU memory.
@@ -731,7 +769,7 @@ index da1f791..7adb8fa 100644
      }
  
      /// Phase D: block until `entry.refcount == 0`. Caller holds `mutex`.
-@@ -1176,6 +1448,7 @@ pub const ModelRegistry = struct {
+@@ -1176,6 +1454,7 @@ pub const ModelRegistry = struct {
          entry.state = .unloaded;
          entry.error_name = null;
          self.stateChanged();
@@ -739,7 +777,7 @@ index da1f791..7adb8fa 100644
      }
  
      /// Phase D: count of currently-loaded (`.ready` or `.evicting`) entries.
-@@ -1294,6 +1567,7 @@ pub const ModelRegistry = struct {
+@@ -1294,6 +1573,7 @@ pub const ModelRegistry = struct {
      /// Shared tail of `release` and `releaseStatus`. Caller holds `mutex`.
      fn releaseRefLocked(self: *ModelRegistry, lm: *LoadedModel) void {
          const prev = lm.refcount.fetchSub(1, .acq_rel);
@@ -747,7 +785,7 @@ index da1f791..7adb8fa 100644
          std.debug.assert(prev > 0);
          // Broadcast so an evictor waiting for refcount == 0 wakes.
          if (prev == 1) self.state_cond.broadcast(self.io);
-@@ -1431,6 +1705,7 @@ pub const ModelRegistry = struct {
+@@ -1431,6 +1711,7 @@ pub const ModelRegistry = struct {
          std.debug.assert(entry.state == .evicting);
          entry.state = .ready;
          self.stateChanged();
@@ -755,7 +793,7 @@ index da1f791..7adb8fa 100644
      }
  
      /// `live_bytes` is what the allocator holds right now (weights + KV + caches + wired
-@@ -1450,7 +1725,7 @@ pub const ModelRegistry = struct {
+@@ -1450,7 +1731,7 @@ pub const ModelRegistry = struct {
          var freed_live: u64 = 0;
          var freed_slots: u32 = 0;
          if (forced) |v| {
@@ -764,7 +802,7 @@ index da1f791..7adb8fa 100644
              out[0] = v;
              n = 1;
              freed = v.bytes_resident;
-@@ -1479,7 +1754,10 @@ pub const ModelRegistry = struct {
+@@ -1479,7 +1760,10 @@ pub const ModelRegistry = struct {
                  for (out[0..n]) |v| self.unmarkEvictingLocked(v);
                  return null;
              }
@@ -776,7 +814,7 @@ index da1f791..7adb8fa 100644
              freed += victim.bytes_resident;
              freed_live += liveBytesFreed(victim);
              freed_slots += @intFromBool(takesSlot(victim));
-@@ -1520,7 +1798,7 @@ pub const ModelRegistry = struct {
+@@ -1520,7 +1804,7 @@ pub const ModelRegistry = struct {
          var free = room;
          var n: usize = 0;
          while (free < need and n < out.len) : (n += 1) {
@@ -785,7 +823,7 @@ index da1f791..7adb8fa 100644
              out[n] = idle[n];
              free +|= idle[n].bytes_resident;
          }
-@@ -1810,7 +2088,7 @@ test "LoadedModel: a reload frees the CPU state the previous load left behind" {
+@@ -1810,7 +2094,7 @@ test "LoadedModel: a reload frees the CPU state the previous load left behind" {
      entry.config.?.ngram_table_path = try testing.allocator.dupe(u8, "/m/ngram_table.bin");
  
      // Unload retains it by contract.
@@ -794,7 +832,7 @@ index da1f791..7adb8fa 100644
      try testing.expect(entry.tokenizer != null);
      try testing.expect(entry.config != null);
  
-@@ -1822,7 +2100,7 @@ test "LoadedModel: a reload frees the CPU state the previous load left behind" {
+@@ -1822,7 +2106,7 @@ test "LoadedModel: a reload frees the CPU state the previous load left behind" {
      // Reload: `.loading` is the precondition the reader contract rests on, so
      // the test claims it the way `tryBeginLoadLocked` does.
      entry.state = .loading;
@@ -803,7 +841,7 @@ index da1f791..7adb8fa 100644
      try testing.expect(entry.tokenizer == null);
      try testing.expect(entry.config == null);
      try testing.expect(entry.token_bytes == null);
-@@ -1838,8 +2116,8 @@ test "LoadedModel: releaseRetainedCpuState is safe on an entry that never loaded
+@@ -1838,8 +2122,8 @@ test "LoadedModel: releaseRetainedCpuState is safe on an entry that never loaded
      defer reg.deinit();
      const entry = try reg.registerStub("m", "/path/to/m", 1024);
      // Bar: the first load calls this too, so a never-loaded entry is a no-op.
@@ -814,7 +852,7 @@ index da1f791..7adb8fa 100644
      try testing.expect(entry.tokenizer == null);
  }
  
-@@ -2041,7 +2319,7 @@ test "unloadResident resets the prefill-chunk pin but never the context pin" {
+@@ -2041,7 +2325,7 @@ test "unloadResident resets the prefill-chunk pin but never the context pin" {
      cfg.pinned_context = 8192;
      lm.config = cfg;
  
@@ -823,7 +861,7 @@ index da1f791..7adb8fa 100644
      try testing.expectEqual(@as(u32, 0), cfg.pinned_prefill_chunk);
      try testing.expectEqual(@as(u32, 8192), cfg.pinned_context);
  }
-@@ -2687,3 +2965,33 @@ test "UnloadMark: models unloaded together count as one pending release" {
+@@ -2687,3 +2971,33 @@ test "UnloadMark: models unloaded together count as one pending release" {
      m.record(1_200 + UNLOAD_SETTLE_MS + 1, 5);
      try testing.expectEqual(@as(u64, 5), m.bytes);
  }
@@ -2984,3 +3022,20 @@ index 720b2c6..226d80b 100644
      switch (err) {
          error.UnknownModelId => try sendErrorResponse(allocator, stream, "404 Not Found", "model_not_found", "Unknown model id", 404),
          error.NotLoaded => try sendErrorResponse(allocator, stream, "503 Service Unavailable", "model_not_loaded", "Requested model is not currently loaded", 503),
+diff --git a/src/transformer.zig b/src/transformer.zig
+index 8004113..3569945 100644
+--- a/src/transformer.zig
++++ b/src/transformer.zig
+@@ -19150,7 +19150,12 @@ pub const Transformer = struct {
+         return self.forward(token_ids);
+     }
+ 
++    pub fn fiosCanDeinit(self: *Transformer) bool {
++        return if (self.mlx_stream_ext) |m| mlx_stream_mod.fiosCanClose(m) else true;
++    }
++
+     pub fn deinit(self: *Transformer) void {
++        if (!self.fiosCanDeinit()) return;
+         self.releaseJoinedVerifyLogits();
+         lane_qmm.release(@intFromPtr(self));
+         if (self.ane_prefill) |eng| {

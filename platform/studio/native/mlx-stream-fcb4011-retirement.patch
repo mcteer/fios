@@ -1,5 +1,5 @@
 diff --git a/src/arch/mimo_v2/gpu_warm.zig b/src/arch/mimo_v2/gpu_warm.zig
-index fa7f751..869bbb7 100644
+index fa7f751..0f030a7 100644
 --- a/src/arch/mimo_v2/gpu_warm.zig
 +++ b/src/arch/mimo_v2/gpu_warm.zig
 @@ -168,7 +168,13 @@ pub const Stats = struct {
@@ -32,7 +32,7 @@ index fa7f751..869bbb7 100644
          a: std.mem.Allocator,
          backend: B,
          params: Params,
-@@ -216,7 +231,8 @@ pub fn Engine(comptime B: type) type {
+@@ -216,15 +231,33 @@ pub fn Engine(comptime B: type) type {
          pub fn create(a: std.mem.Allocator, backend: B, params: Params) !*Self {
              const self = try a.create(Self);
              errdefer a.destroy(self);
@@ -42,8 +42,16 @@ index fa7f751..869bbb7 100644
              if (comptime counting) self.cur_iters.store(params.first_iters, .monotonic);
              self.thread = try std.Thread.spawn(.{ .stack_size = 256 * 1024 }, main, .{self});
              return self;
-@@ -224,7 +240,16 @@ pub fn Engine(comptime B: type) type {
+         }
  
++        // Enclosing owners must check custody before releasing their fields.
++        pub fn fiosCanDestroy(self: *Self) bool {
++            if (!self.params.fios_fixture_control) return true;
++            _ = std.c.pthread_mutex_lock(&self.mu);
++            defer _ = std.c.pthread_mutex_unlock(&self.mu);
++            return self.fios_lifetime_ticket == 0;
++        }
++
          /// Stops the thread (it retires its chunks in flight), joins it, releases the backend.
          pub fn destroy(self: *Self) void {
 -            self.quit.store(true, .seq_cst);
@@ -60,7 +68,7 @@ index fa7f751..869bbb7 100644
              self.signal();
              self.thread.join();
              if (comptime @hasDecl(B, "deinit")) self.backend.deinit();
-@@ -233,9 +258,107 @@ pub fn Engine(comptime B: type) type {
+@@ -233,9 +266,107 @@ pub fn Engine(comptime B: type) type {
              self.a.destroy(self);
          }
  
@@ -168,7 +176,7 @@ index fa7f751..869bbb7 100644
              var cur = self.target.load(.seq_cst);
              while (value > cur) cur = self.target.cmpxchgWeak(cur, value, .seq_cst, .seq_cst) orelse break;
              if (self.parked.load(.seq_cst) != 0 and !self.failed.load(.monotonic)) self.signal();
-@@ -244,6 +367,17 @@ pub fn Engine(comptime B: type) type {
+@@ -244,6 +375,17 @@ pub fn Engine(comptime B: type) type {
          /// A host wait on bytes begins (`on`) or ends: warm while any is in progress (the read-ahead's, whose GPU work
          /// is not gated on a value). Never blocks on the warm thread.
          pub fn hold(self: *Self, on: bool) void {
@@ -186,7 +194,7 @@ index fa7f751..869bbb7 100644
              if (on) {
                  _ = self.holds.fetchAdd(1, .seq_cst);
                  if (self.parked.load(.seq_cst) != 0 and !self.failed.load(.monotonic)) self.signal();
-@@ -268,6 +402,7 @@ pub fn Engine(comptime B: type) type {
+@@ -268,6 +410,7 @@ pub fn Engine(comptime B: type) type {
  
          /// A target past the event's value and past a target given up as stuck, and no failure.
          fn wants(self: *Self, t: u64) bool {
@@ -194,7 +202,7 @@ index fa7f751..869bbb7 100644
              if (self.failed.load(.monotonic)) return false;
              if (self.holds.load(.seq_cst) > 0) return true;
              return t > self.stuck_at and self.backend.eventValue() < t;
-@@ -275,6 +410,7 @@ pub fn Engine(comptime B: type) type {
+@@ -275,6 +418,7 @@ pub fn Engine(comptime B: type) type {
  
          fn main(self: *Self) void {
              while (!self.quit.load(.seq_cst)) {
@@ -202,7 +210,7 @@ index fa7f751..869bbb7 100644
                  if (self.wants(self.target.load(.seq_cst))) {
                      self.warm();
                      continue;
-@@ -303,6 +439,7 @@ pub fn Engine(comptime B: type) type {
+@@ -303,6 +447,7 @@ pub fn Engine(comptime B: type) type {
              var seen = self.backend.eventValue();
              var moved = nowNs();
              while (true) {
@@ -210,7 +218,7 @@ index fa7f751..869bbb7 100644
                  const t = self.target.load(.seq_cst);
                  const v = self.backend.eventValue();
                  const held = self.holds.load(.seq_cst) > 0;
-@@ -359,12 +496,16 @@ pub fn Engine(comptime B: type) type {
+@@ -359,12 +504,16 @@ pub fn Engine(comptime B: type) type {
          }
  
          fn drain(self: *Self) void {
@@ -229,7 +237,7 @@ index fa7f751..869bbb7 100644
              self.drain();
          }
      };
-@@ -491,6 +632,224 @@ pub const Trace = struct {
+@@ -491,6 +640,228 @@ pub const Trace = struct {
  
  pub const TraceEngine = Engine(Trace);
  
@@ -256,6 +264,10 @@ index fa7f751..869bbb7 100644
 +        if (paused) |ticket| _ = engine.fixtureResume(ticket);
 +        engine.destroy();
 +    };
++    if (engine.fiosCanDestroy()) {
++        std.debug.print("FIO_MIMO_ENCLOSING_CUSTODY_ACCEPTED_HELD_ENGINE\n", .{});
++        return error.FiosEnclosingCustodyLost;
++    }
 +    try testing.expectError(error.FiosWarmControlBusy, engine.fixtureRetainLifetime());
 +    const ticket = try engine.fixturePause();
 +    paused = ticket;
@@ -454,3 +466,52 @@ index fa7f751..869bbb7 100644
  // ── CPU proofs (no device, no lock) ──
  
  const testing = std.testing;
+diff --git a/src/arch/mimo_v2/module.zig b/src/arch/mimo_v2/module.zig
+index 25070ac..d7f3781 100644
+--- a/src/arch/mimo_v2/module.zig
++++ b/src/arch/mimo_v2/module.zig
+@@ -442,7 +442,12 @@ pub const Module = struct {
+         log.info("{s}", .{expert_usage.seedLine(&lb, "mimo_v2", &d, r, source.sdk_stream.stats().expert_bytes_read -| b0, ms)});
+     }
+ 
++    pub fn fiosCanDeinit(self: *Module) bool {
++        return self.source.fiosCanDeinit();
++    }
++
+     pub fn deinit(self: *Module) void {
++        if (!self.fiosCanDeinit()) return;
+         self.reset();
+         if (comptime profile.enabled) if (self.trace) |t| {
+             self.source.stream_source.trace = null;
+diff --git a/src/arch/mimo_v2/root.zig b/src/arch/mimo_v2/root.zig
+index 8dfb183..de59223 100644
+--- a/src/arch/mimo_v2/root.zig
++++ b/src/arch/mimo_v2/root.zig
+@@ -119,6 +119,10 @@ fn admitted(io: std.Io, c: *const Config, facts: *const sdk.LoadFacts) !Config {
+     return built;
+ }
+ 
++pub fn fiosCanDeinit(m: *Module) bool {
++    return m.fiosCanDeinit();
++}
++
+ pub fn deinit(m: *Module) void {
+     m.deinit();
+ }
+diff --git a/src/arch/mimo_v2/source.zig b/src/arch/mimo_v2/source.zig
+index 9845b66..fba48ee 100644
+--- a/src/arch/mimo_v2/source.zig
++++ b/src/arch/mimo_v2/source.zig
+@@ -566,7 +566,12 @@ pub const Source = struct {
+         return initBank(a, owned_bank, rows, gates, stream, .{});
+     }
+ 
++    pub fn fiosCanDeinit(self: *Source) bool {
++        return if (self.warm) |w| w.fiosCanDestroy() else true;
++    }
++
+     pub fn deinit(self: *Source) void {
++        if (!self.fiosCanDeinit()) return;
+         _ = mlx.mlx_synchronize(self.g.s);
+         // X12: the warm thread joined (its chunks in flight retired) before anything else goes.
+         if (self.warm) |w| w.destroy();

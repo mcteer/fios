@@ -2,6 +2,7 @@
 // CPU state-machine proof over the genuine pinned plugin/SDK. No model,
 // Metal execution, production patch enrollment, release staging or activation.
 import assert from 'node:assert/strict';
+import {custodyEdges,verifyCustodyWiring} from './lib/platform-native-custody.mjs';
 import {execFileSync,spawnSync} from 'node:child_process';
 import {createHash,randomUUID} from 'node:crypto';
 import {lstatSync,readFileSync,realpathSync,rmSync,writeFileSync} from 'node:fs';
@@ -9,9 +10,9 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 const root=fileURLToPath(new URL('../',import.meta.url)),args=process.argv.slice(2);
 assert(process.platform==='darwin'&&process.getuid()!==0);
-assert((args.length===6||(args.length===7&&['--debug','--mutation-early-ack','--mutation-lifetime'].includes(args[6])))&&args[0]==='--source'&&args[2]==='--zig'&&args[4]==='--mimo-source'&&[args[1],args[3],args[5]].every(path.isAbsolute),
- 'Usage: check-platform-mimo.mjs --source ABS_NATIVE --zig ABS_ZIG --mimo-source ABS_DISPOSABLE_PINNED_PLUGIN [--debug|--mutation-early-ack|--mutation-lifetime]');
-const optimize=args[6]==='--debug'?'Debug':'ReleaseSafe',lifetimeMutation=args[6]==='--mutation-lifetime',mutation=lifetimeMutation||args[6]==='--mutation-early-ack';
+assert((args.length===6||(args.length===7&&['--debug','--mutation-early-ack','--mutation-lifetime','--mutation-enclosing-custody'].includes(args[6])))&&args[0]==='--source'&&args[2]==='--zig'&&args[4]==='--mimo-source'&&[args[1],args[3],args[5]].every(path.isAbsolute),
+ 'Usage: check-platform-mimo.mjs --source ABS_NATIVE --zig ABS_ZIG --mimo-source ABS_DISPOSABLE_PINNED_PLUGIN [--debug|--mutation-early-ack|--mutation-lifetime|--mutation-enclosing-custody]');
+const optimize=args[6]==='--debug'?'Debug':'ReleaseSafe',lifetimeMutation=args[6]==='--mutation-lifetime',enclosingMutation=args[6]==='--mutation-enclosing-custody',mutation=enclosingMutation||lifetimeMutation||args[6]==='--mutation-early-ack';
 const [source,zig,mimo]=[args[1],args[3],args[5]].map(value=>realpathSync(value));
 for(const directory of [source,mimo]) {const info=lstatSync(directory);assert(directory.startsWith('/private/tmp/')&&info.isDirectory()&&info.uid===process.getuid()&&(info.mode&0o022)===0);}
 const run=(file,argv,options={})=>execFileSync(file,argv,{encoding:'utf8',timeout:600000,maxBuffer:16*1024*1024,...options});
@@ -20,11 +21,23 @@ const sha=file=>{const info=lstatSync(file);assert(info.isFile()&&!info.isSymbol
 assert.equal(sha(zig),'1c5f706db0ed6d55451940f31dc05a6177d05696bc1fa5d853696d04c718b523');
 assert.equal(git(mimo,'rev-parse','HEAD').trim(),'fcb4011347ff80eeeb19e2a1f0180e13199c7c8b');
 assert.equal(git(mimo,'diff','--cached','--name-only').trim(),'','staged plugin changes are not allowed');
-assert.equal(git(mimo,'diff','--name-only').trim(),'src/arch/mimo_v2/gpu_warm.zig');
+const candidateFiles=['gpu_warm','module','root','source'].map(name=>`src/arch/mimo_v2/${name}.zig`);
+assert.deepEqual(git(mimo,'diff','--name-only').trim().split('\n'),candidateFiles);
 const pluginPatch=readFileSync(path.join(root,'platform/studio/native/mlx-stream-fcb4011-retirement.patch'),'utf8');
 const pluginSource=path.join(mimo,'src/arch/mimo_v2/gpu_warm.zig'),pluginOriginal=readFileSync(pluginSource,'utf8');
-assert.equal(git(mimo,'diff','--','src/arch/mimo_v2/gpu_warm.zig'),pluginPatch);
+assert.equal(git(mimo,'diff','--',...candidateFiles),pluginPatch);
 run(process.execPath,[path.join(root,'scripts/check-platform-native.mjs'),'--source',source,'--zig',zig]);
+// Read the exact source inputs, and prove every individual edge omission is rejected.
+// This text check supplements genuine engine tests; no runtime model claim follows.
+const custodySources=Object.fromEntries([...new Set(custodyEdges.map(([file])=>file))].map(key=>{
+ const [kind,file]=key.split(':');return [key,readFileSync(path.join(kind==='native'?source:mimo,file),'utf8')];
+}));
+verifyCustodyWiring(custodySources);
+for(const [file,edge]of custodyEdges){
+ const broken={...custodySources,[file]:custodySources[file].replace(edge,'// Deliberately omitted custody edge.')};
+ assert.throws(()=>verifyCustodyWiring(broken),/Missing known-custody preflight/);
+}
+
 // The earlier linked fixture stages these REAL header/library inputs in this
 // disposable checkout. Never substitute a fake SDK or touch installed inputs.
 const libraries={'libmlx.dylib':'6a5ee820afed9ce9421297260b4a9fd593749052d582c65deeca428fce61c76e','libmlxc.dylib':'6b4c9224691c2857cf7d386e75c1247cc6b0a4ae17d6ec6d1b455ec177e9929f','libjaccl.dylib':'5c6f3819b3555902ba1ab3a49550643994b49860f09e323fe42dfd6121103282','mlx.metallib':'95974b7de464ec2be7833a914ca5a53d283a70789470fd84218738fc8fcea3e1'};
@@ -42,7 +55,11 @@ graph=graph.replace(runner,'        const run = b.addRunArtifact(t);\n        ru
 const filename=`fios-mimo-${randomUUID()}.zig`,generated=path.join(source,filename);
 try {
  writeFileSync(generated,graph,{flag:'wx',mode:0o600});
- if(lifetimeMutation){
+ if(enclosingMutation){
+  const pin='return self.fios_lifetime_ticket == 0;';
+  assert.equal(pluginOriginal.split(pin).length,2);
+  writeFileSync(pluginSource,pluginOriginal.replace(pin,'return true; // Deliberate enclosing-custody bypass.'));
+ }else if(lifetimeMutation){
   const pin='if (self.fios_lifetime_ticket != 0)';
   assert.equal(pluginOriginal.split(pin).length,2);
   writeFileSync(pluginSource,pluginOriginal.replace(pin,'if (self.fios_lifetime_ticket == std.math.maxInt(u64))'));
@@ -57,13 +74,14 @@ try {
   const result=spawnSync('/usr/bin/nice',['-n','10',zig,'build','mlx-stream-test','--build-file',filename,`-Doptimize=${optimize}`,'-Dmas=true',`-Dmlx-stream-dir=${mimo}`,`-Dtest-filter=${filter}`,'--summary','all'],{cwd:source,env:{PATH:'/usr/bin:/bin:/usr/sbin:/sbin',HOME:process.env.HOME,TMPDIR:process.env.TMPDIR??'/tmp'},encoding:'utf8',timeout:600000,maxBuffer:16*1024*1024});
   const output=(result.stdout??'')+(result.stderr??'');console.log(output);
   assert.equal(result.status,mutation?1:0,'MIMO CPU retirement/default-policy fixture or expected mutation witness failed');
-  if(mutation)assert.match(output,lifetimeMutation?/FIO_MIMO_DESTROY_DROPPED_HELD_ENGINE/:/expected \.pending, found \.retired/,'early acknowledgement must fail the actual blocked-retire assertion, not merely compilation/linkage');
+  if(mutation)assert.match(output,enclosingMutation?/FIO_MIMO_ENCLOSING_CUSTODY_ACCEPTED_HELD_ENGINE/:lifetimeMutation?/FIO_MIMO_DESTROY_DROPPED_HELD_ENGINE/:/expected \.pending, found \.retired/,'early acknowledgement must fail the actual blocked-retire assertion, not merely compilation/linkage');
   assert.match(output,summary,'expected every selected CPU test and import discovery; GPU-window test remains skipped, not forged enabled');
  }
  if(mutation)writeFileSync(pluginSource,pluginOriginal);
  assert.equal(readFileSync(path.join(source,'build.zig'),'utf8'),original);
- assert.equal(git(mimo,'diff','--','src/arch/mimo_v2/gpu_warm.zig'),pluginPatch,'plugin input changed during proof');
+ assert.equal(git(mimo,'diff','--',...candidateFiles),pluginPatch,'plugin input changed during proof');
  assert.equal(git(mimo,'diff','--cached','--name-only').trim(),'');
+ assert.deepEqual(git(mimo,'diff','--name-only').trim().split('\n'),candidateFiles);
  for(const [name,digest]of Object.entries(libraries))assert.equal(sha(path.join('/Applications/MLX-Serve.app/Contents/Frameworks',name)),digest);
- console.log(lifetimeMutation?'PASS: optimized held-engine destruction bypass fails its allocator-safe deinit witness; exact source restored; no model/context/terminal authority.':mutation?'PASS: optimized early-ack mutation fails the actual blocked-retire assertion; exact source restored; no Metal/model/terminal authority.':'PASS: pinned MIMO CPU drain failure and explicit fixture pause/rearm proof over genuine SDK; NOT Metal/model/all-backend terminal or production enrollment acceptance.');
+ console.log(enclosingMutation?'PASS: enclosing-custody preflight bypass fails its exact held-engine assertion; source restored; no model or terminal authority.':lifetimeMutation?'PASS: optimized held-engine destruction bypass fails its allocator-safe deinit witness; exact source restored; no model/context/terminal authority.':mutation?'PASS: optimized early-ack mutation fails the actual blocked-retire assertion; exact source restored; no Metal/model/terminal authority.':'PASS: pinned MIMO CPU drain failure and explicit fixture pause/rearm proof over genuine SDK; NOT Metal/model/all-backend terminal or production enrollment acceptance.');
 }finally {if(mutation)writeFileSync(pluginSource,pluginOriginal);rmSync(generated,{force:true});}

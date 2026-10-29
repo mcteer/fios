@@ -75,10 +75,11 @@ function verifyMimo(){
  const revision='fcb4011347ff80eeeb19e2a1f0180e13199c7c8b',file='src/arch/mimo_v2/gpu_warm.zig';
  assert.equal(git('rev-parse','HEAD').trim(),revision);
  assert.equal(git('diff','--cached','--name-only').trim(),'','no staged candidate changes');
- assert.equal(git('diff','--name-only').trim(),file,'only the reviewed candidate path may differ');
+ const candidateFiles=['gpu_warm','module','root','source'].map(name=>`src/arch/mimo_v2/${name}.zig`);
+ assert.deepEqual(git('diff','--name-only').trim().split('\n'),candidateFiles,'only reviewed candidate paths may differ');
  const patchFile=path.join(root,'platform/studio/native/mlx-stream-fcb4011-retirement.patch');
- assert.equal(git('diff','--no-ext-diff','--no-textconv','--',file),readFileSync(patchFile,'utf8'),'candidate must exactly match reviewed retirement patch');
- return {revision,patch_sha256:sha(patchFile),source_sha256:sha(path.join(mimoSource,file)),source_fixture_only:true};
+ assert.equal(git('diff','--no-ext-diff','--no-textconv','--',...candidateFiles),readFileSync(patchFile,'utf8'),'candidate must exactly match reviewed retirement patch');
+ return {revision,patch_sha256:sha(patchFile),source_sha256:sha(path.join(mimoSource,file)),files:candidateFiles.map(file=>({path:file,sha256:sha(path.join(mimoSource,file))})),source_fixture_only:true};
 }
 
 // Refuse to replace an existing differing input, or follow a link. Development

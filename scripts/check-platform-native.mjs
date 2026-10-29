@@ -26,7 +26,7 @@ assert.equal(run('git', ['--no-replace-objects', '-C', source, 'rev-parse', 'HEA
 assert.equal(run(zig, ['version']).trim(), '0.17.0', 'unreviewed Zig version');
 const scratch = mkdtempSync(path.join(tmpdir(), 'fios-native-source-check-'));
 try {
-  const fixedFiles=['build.zig','lib/llama_shim/llama_shim.cpp','lib/llama_shim/llama_shim.h','src/arch/llama.zig','src/llama_ffi.zig','src/main.zig','src/mlx.zig','src/model_registry.zig','src/scheduler.zig','src/server.zig'];
+  const fixedFiles=['build.zig','lib/llama_shim/llama_shim.cpp','lib/llama_shim/llama_shim.h','src/arch/llama.zig','src/arch/mlx_stream.zig','src/arch/mlx_stream_stub.zig','src/llama_ffi.zig','src/main.zig','src/mlx.zig','src/model_registry.zig','src/scheduler.zig','src/server.zig','src/transformer.zig'];
   for(const file of fixedFiles) {
     mkdirSync(path.dirname(path.join(scratch,file)),{recursive:true});
     writeFileSync(path.join(scratch,file),run('git',['--no-replace-objects','-C',source,'show',`${revision}:${file}`],{maxBuffer:16*1024*1024}),{mode:0o600});

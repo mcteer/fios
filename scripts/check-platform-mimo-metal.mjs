@@ -21,7 +21,8 @@ const sha=file=>{const info=lstatSync(file);assert(info.isFile()&&!info.isSymbol
 assert.equal(sha(zig),'1c5f706db0ed6d55451940f31dc05a6177d05696bc1fa5d853696d04c718b523');
 assert.equal(git(mimo,'rev-parse','HEAD').trim(),'fcb4011347ff80eeeb19e2a1f0180e13199c7c8b');
 const patchFile=path.join(root,'platform/studio/native/mlx-stream-fcb4011-retirement.patch'),patch=readFileSync(patchFile,'utf8'),patchSHA=sha(patchFile);
-assert.equal(git(mimo,'diff','--','src/arch/mimo_v2/gpu_warm.zig'),patch);assert.equal(git(mimo,'diff','--name-only').trim(),'src/arch/mimo_v2/gpu_warm.zig');
+const candidateFiles=['gpu_warm','module','root','source'].map(name=>`src/arch/mimo_v2/${name}.zig`);
+assert.equal(git(mimo,'diff','--',...candidateFiles),patch);assert.deepEqual(git(mimo,'diff','--name-only').trim().split('\n'),candidateFiles);
 const metal=realpathSync(run('/usr/bin/xcrun',['--sdk','macosx','--find','metal']).trim());run('/usr/bin/codesign',['--verify','--strict','--test-requirement','=anchor apple',metal]);
 assert(run('/usr/bin/xcrun',['--sdk','macosx','metal','--version']).startsWith('Apple metal version 32023.921 '));assert.equal(run('/usr/bin/xcrun',['--sdk','macosx','--show-sdk-version']).trim(),'27.0');
 run(process.execPath,[path.join(root,'scripts/check-platform-native.mjs'),'--source',source,'--zig',zig]);
@@ -63,7 +64,7 @@ try{
  writeFileSync(cppFile,replace(cpp,'  if (st != MTL::CommandBufferStatusCompleted) return fail("a warm chunk completed with an error");','  if (st != MTL::CommandBufferStatusCompleted) return fail("a warm chunk completed with an error");\n  return fail("FIOS injected retirement API error AFTER genuine successful GPU completion/release");'));
  writeFileSync(testFile,replace(fixture,'const injected_retire_failure = false;','const injected_retire_failure = true;'));execute('ReleaseSafe');
  writeFileSync(cppFile,cpp);writeFileSync(testFile,fixture);execute('ReleaseSafe');
- assert.equal(readFileSync(path.join(source,'build.zig'),'utf8'),originalGraph);assert.equal(git(mimo,'diff','--','src/arch/mimo_v2/gpu_warm.zig'),patch);assert.equal(git(mimo,'diff','--name-only').trim(),'src/arch/mimo_v2/gpu_warm.zig');assert.equal(sha(patchFile),patchSHA);assert.equal(sha(fixtureFile),fixtureSHA);assert.equal(sha(helperFile),helperSHA);verifyLibraries();
+ assert.equal(readFileSync(path.join(source,'build.zig'),'utf8'),originalGraph);assert.equal(git(mimo,'diff','--',...candidateFiles),patch);assert.deepEqual(git(mimo,'diff','--name-only').trim().split('\n'),candidateFiles);assert.equal(sha(patchFile),patchSHA);assert.equal(sha(fixtureFile),fixtureSHA);assert.equal(sha(helperFile),helperSHA);verifyLibraries();
  console.log(JSON.stringify({scope:'actual_event_gated_Engine_Metal_pause_retire_and_engine_custody_only',all_backend_terminality:false,activation:false,mimo_commit:'fcb4011347ff80eeeb19e2a1f0180e13199c7c8b',patch_sha256:patchSHA,fixture_sha256:fixtureSHA,helper_sha256:helperSHA,original_warm_cpp_sha256:createHash('sha256').update(cppOriginal).digest('hex'),metal_executable_sha256:sha(metal),libraries}));
  console.log('PASS: genuine MIMO Engine(Metal) pause/drain in ReleaseSafe/Debug, actual optimized premature-ack/held-engine-destruction failures and injected API-error-after-real-completion remains unknown; original source restored, no model/inference/all-context/lifecycle authority. Test gates/counters/timer are explicit instrumentation, never enrollment.');
 }finally{rmSync(generated,{force:true});rmSync(temporary,{recursive:true,force:true});}
