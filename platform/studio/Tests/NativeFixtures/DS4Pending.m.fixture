@@ -123,6 +123,30 @@ int main(int argc,char** argv){@autoreleasepool{
   REQUIRE(g_tp_thread_running&&g_tp_exchange_ud==&identity&&!ds4_gpu_tp_init(0,NULL,0,0,0,NULL,&identity),"FIO_DS4_TP_JOIN_UNCERTAINTY_REARMED");
   puts("PASS: actual idle local service joins before injected acknowledgement failure; exact state remains retained, no distributed proof.");return 0;
  }
+ if(argc==2&&(strcmp(argv[1],"--tp-gpu-failure")==0||strcmp(argv[1],"--tp-gpu-success")==0)){
+  const int success=strcmp(argv[1],"--tp-gpu-success")==0;
+  // One threadgroup/one ALU iteration/1KiB; no model/exchange/network work.
+  unsetenv("DS4_TP_NO_KEEPALIVE");setenv("DS4_TP_KEEPALIVE_TGS","1",1);setenv("DS4_TP_KEEPALIVE_ITERS","1",1);
+  fios_private_tp_gpu_failure=success?0:1;unsigned identity=9;
+  REQUIRE(ds4_gpu_tp_init(0,NULL,0,0,0,NULL,&identity)&&g_tp_keepalive_running,"TP_TINY_PRODUCER_INIT_FAILED");
+  id<MTLCommandQueue> queue=g_tp_keepalive_queue;id<MTLBuffer> buffer=g_tp_keepalive_buffer;
+  for(unsigned n=0;n<2000&&!atomic_load(&fios_private_tp_completed);++n)usleep(1000);
+  const int completed=atomic_load(&fios_private_tp_completed)>0&&!atomic_load(&fios_private_tp_real_error);
+  atomic_store(&fios_private_tp_release,1);ds4_gpu_tp_shutdown();
+  REQUIRE(completed,"TP_TINY_ACTUAL_COMPLETION_MISSING");
+  if(success){REQUIRE(!g_tp_thread_running&&!g_tp_keepalive_running&&!g_tp_keepalive_queue&&!g_tp_keepalive_buffer&&!g_fios_pending_uncertain,"TP_TINY_SUCCESS_NOT_RETIRED");
+#ifdef FIOS_DS4_TP_GPU_CUSTODY
+   REQUIRE(!g_fios_tp_keepalive_pending&&!g_fios_tp_keepalive_pipeline&&!g_fios_tp_gpu_uncertain,"TP_TINY_SUCCESS_RETAINED_CUSTODY");
+#endif
+   puts("PASS: actual tiny TP producer completes and joins; no exchange/model/distributed proof.");return 0;}
+  REQUIRE(g_fios_pending_uncertain&&g_tp_keepalive_queue==queue&&g_tp_keepalive_buffer==buffer&&g_tp_exchange_ud==&identity,"FIO_DS4_TP_GPU_ERROR_RELEASED_PRODUCER_RESOURCES");
+#ifdef FIOS_DS4_TP_GPU_CUSTODY
+  REQUIRE(g_fios_tp_keepalive_pending&&g_fios_tp_keepalive_pending.status==MTLCommandBufferStatusCompleted&&g_fios_tp_keepalive_pipeline&&g_fios_tp_gpu_uncertain,"TP_TINY_FAILURE_LOST_EXACT_BUFFER");
+#endif
+  ds4_gpu_tp_shutdown();ds4_gpu_cleanup();
+  REQUIRE(g_initialized&&g_fios_pending_uncertain&&g_tp_keepalive_queue==queue,"FIO_DS4_TP_GPU_ERROR_UNCERTAINTY_REFUNDED");
+  puts("PASS: actual tiny TP producer completion precedes injected failure; exact resources/uncertainty retained, no hardware-error proof.");return 0;
+ }
  REQUIRE(argc==1,"PENDING_BAD_ARGS");
  REQUIRE(ds4_gpu_init(),"PENDING_FULL_INIT_FAILED");
  id<MTLCommandBuffer> a=[g_queue commandBuffer],b=[g_queue commandBuffer];

@@ -58,7 +58,17 @@ try{
  assert.equal(original.split(edge).length,2);
  assert.equal(original.split('if (pthread_join(g_queue_keepalive_thread, NULL) != 0) {').length,2);
  const faultUnit=path.join(directory,'pending.m'),faultBinary=path.join(directory,'pending');
- writeFileSync(faultUnit,'#include <pthread.h>\n#include <errno.h>\nstatic int fios_private_tp_join_failure;\nstatic int fios_private_tp_join(pthread_t t,void** v){int rc=pthread_join(t,v);return rc==0&&fios_private_tp_join_failure?EIO:rc;}\nstatic unsigned fios_private_transient_creates;\nstatic int fios_private_counted_create(pthread_t* t,const pthread_attr_t* a,void* (*f)(void*),void* v){++fios_private_transient_creates;return pthread_create(t,a,f,v); }\nstatic int fios_private_wait_failure, fios_private_join_failure, fios_private_pread_join_failure;\n'+original.replace(edge,edge.replace('cb.status != MTLCommandBufferStatusCompleted','cb.status != MTLCommandBufferStatusCompleted || fios_private_wait_failure')).replace('if (pthread_join(g_queue_keepalive_thread, NULL) != 0) {','if (pthread_join(g_queue_keepalive_thread, NULL) != 0 || fios_private_join_failure) {').replace('const int rc = pthread_join(g_stream_expert_pread_pool_threads[i], NULL);','const int actual_rc = pthread_join(g_stream_expert_pread_pool_threads[i], NULL); const int rc = actual_rc == 0 && fios_private_pread_join_failure ? EIO : actual_rc;').replace('const int rc = pthread_create(&threads[i],','const int rc = fios_private_counted_create(&threads[i],').replace('pthread_join(g_tp_thread, NULL)','fios_private_tp_join(g_tp_thread, NULL)')+'\n'+pending);
+ const faultHeaderFile=path.join(root,'platform/studio/Tests/NativeFixtures/DS4Faults.h.fixture'),faultHeader=readFileSync(faultHeaderFile,'utf8');
+ let faultSource=original.replace(edge,edge.replace('cb.status != MTLCommandBufferStatusCompleted','cb.status != MTLCommandBufferStatusCompleted || fios_private_wait_failure')).replace('if (pthread_join(g_queue_keepalive_thread, NULL) != 0) {','if (pthread_join(g_queue_keepalive_thread, NULL) != 0 || fios_private_join_failure) {').replace('const int rc = pthread_join(g_stream_expert_pread_pool_threads[i], NULL);','const int actual_rc = pthread_join(g_stream_expert_pread_pool_threads[i], NULL); const int rc = actual_rc == 0 && fios_private_pread_join_failure ? EIO : actual_rc;').replace('const int rc = pthread_create(&threads[i],','const int rc = fios_private_counted_create(&threads[i],').replace('pthread_join(g_tp_thread, NULL)','fios_private_tp_join(g_tp_thread, NULL)');
+ const tpStart=faultSource.indexOf('static void *ds4_gpu_tp_keepalive_thread('),tpEnd=faultSource.indexOf('static void *ds4_gpu_tp_service_thread(',tpStart);
+ assert(tpStart>0&&tpEnd>tpStart);
+ let tp=faultSource.slice(tpStart,tpEnd);assert.equal(tp.split('[cb waitUntilCompleted];').length,2);
+ tp=tp.replaceAll('cb.status','fios_private_tp_status(cb)').replace('[cb waitUntilCompleted];',`[cb waitUntilCompleted];
+            if (cb.status != MTLCommandBufferStatusCompleted) atomic_store(&fios_private_tp_real_error,1);
+            atomic_fetch_add(&fios_private_tp_completed,1);
+            if(fios_private_tp_gpu_failure)while(!atomic_load(&fios_private_tp_release))usleep(100);`);
+ faultSource=faultSource.slice(0,tpStart)+tp+faultSource.slice(tpEnd);
+ writeFileSync(faultUnit,faultHeader+'\n'+faultSource+'\n'+pending);
  run(compiler,['-isysroot',sdk,'-I',source,'-std=gnu11','-fobjc-arc','-O3','-ffast-math','-g','-mcpu=native','-UNDEBUG',faultUnit,...objects.map(name=>path.join(source,name)),'-lm','-pthread','-framework','Foundation','-framework','Metal','-o',faultBinary]);
  const fault=spawnSync(faultBinary,[],{env,cwd:source,encoding:'utf8',timeout:120000,maxBuffer:4<<20});
  writeFileSync(path.join(directory,'pending-stdout.log'),fault.stdout??'',{mode:0o600});writeFileSync(path.join(directory,'pending-stderr.log'),fault.stderr??'',{mode:0o600});
@@ -81,6 +91,8 @@ try{
  assert(!foreign.error&&!foreign.signal,'Foreign cleanup crash/deadline is not acceptance');assert.equal(foreign.status,0,foreign.stderr);
  assert(foreign.stdout.includes('PASS: actual foreign-thread cleanup retains live producer'));
  const participantCases=[
+  ['--tp-gpu-failure','PASS: actual tiny TP producer completion precedes injected failure'],
+  ['--tp-gpu-success','PASS: actual tiny TP producer completes and joins'],
   ['--tp-live-cleanup','PASS: global cleanup retains an actual idle local service'],
   ['--tp-service-join','PASS: actual idle local service joins before injected acknowledgement failure'],
   ['--tp-service-success','PASS: actual idle local service joins normally'],
@@ -108,7 +120,7 @@ try{
  assert(!counter.error&&!counter.signal,'Sequence fixture deadline/crash is not acceptance');assert.equal(counter.status,0,counter.stderr);
  assert(counter.stdout.includes('PASS: exhausted actual cache sequence refuses without initialization'));
  }
- verify();assert.equal(readFileSync(sequenceFile,'utf8'),sequence);assert.equal(readFileSync(pendingFile,'utf8'),pending);assert.equal(readFileSync(fixtureFile,'utf8'),fixture);assert.equal(sha(readFileSync(document)),args[4]);assert.equal(git('diff','--no-ext-diff','HEAD','--','ds4_metal.m'),patch);
- const outcome={scope:'full_ds4_initializer_reviewed_local_participants_only',build_receipt_sha256:args[4],fixture_sha256:sha(fixture),binary_sha256:sha(readFileSync(binary)),original_full_shader_library:true,sequence_fixture_sha256:sha(sequence),sequence_binary_sha256:sha(readFileSync(sequenceBinary)),pending_fixture_sha256:sha(pending),pending_binary_sha256:sha(readFileSync(faultBinary)),injected_wait_failure_after_real_completion:true,batch_cleanup_failure_retained:true,keepalive_cleanup_failure_retained:true,foreign_cleanup_failure_retained:true,local_idle_tp_service_join_only:true,model_opened:false,native_inference:false,installed:false,native_authority:false,all_backend_terminality:false,directory};
+ verify();assert.equal(readFileSync(faultHeaderFile,'utf8'),faultHeader);assert.equal(readFileSync(sequenceFile,'utf8'),sequence);assert.equal(readFileSync(pendingFile,'utf8'),pending);assert.equal(readFileSync(fixtureFile,'utf8'),fixture);assert.equal(sha(readFileSync(document)),args[4]);assert.equal(git('diff','--no-ext-diff','HEAD','--','ds4_metal.m'),patch);
+ const outcome={scope:'full_ds4_initializer_reviewed_local_participants_only',build_receipt_sha256:args[4],fixture_sha256:sha(fixture),binary_sha256:sha(readFileSync(binary)),original_full_shader_library:true,sequence_fixture_sha256:sha(sequence),sequence_binary_sha256:sha(readFileSync(sequenceBinary)),fault_shim_sha256:sha(faultHeader),pending_fixture_sha256:sha(pending),pending_binary_sha256:sha(readFileSync(faultBinary)),injected_wait_failure_after_real_completion:true,batch_cleanup_failure_retained:true,keepalive_cleanup_failure_retained:true,foreign_cleanup_failure_retained:true,local_idle_tp_service_join_only:true,model_opened:false,native_inference:false,installed:false,native_authority:false,all_backend_terminality:false,directory};
  writeFileSync(path.join(directory,'result.json'),JSON.stringify(outcome)+'\n',{mode:0o400});console.log(JSON.stringify(outcome));
 }catch(error){console.error('Full-module fixture state retained:',directory);throw error;}

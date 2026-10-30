@@ -1,0 +1,17 @@
+// Explicit private fault shims around real pthread/Metal objects. A failed
+// acknowledgement is injected only after the genuine join/completion succeeds.
+#include <pthread.h>
+#include <errno.h>
+#include <stdatomic.h>
+#import <Metal/Metal.h>
+static int fios_private_tp_join_failure;
+static int fios_private_tp_join(pthread_t t,void** v){int rc=pthread_join(t,v);return rc==0&&fios_private_tp_join_failure?EIO:rc;}
+static unsigned fios_private_transient_creates;
+static int fios_private_counted_create(pthread_t* t,const pthread_attr_t* a,void* (*f)(void*),void* v){++fios_private_transient_creates;return pthread_create(t,a,f,v);}
+static int fios_private_wait_failure, fios_private_join_failure, fios_private_pread_join_failure;
+static int fios_private_tp_gpu_failure;
+static atomic_uint fios_private_tp_completed, fios_private_tp_real_error, fios_private_tp_release;
+static MTLCommandBufferStatus fios_private_tp_status(id<MTLCommandBuffer> cb){
+    MTLCommandBufferStatus status=cb.status;
+    return status==MTLCommandBufferStatusCompleted&&fios_private_tp_gpu_failure?MTLCommandBufferStatusError:status;
+}
