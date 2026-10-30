@@ -50,6 +50,12 @@ pub const Lifetime = struct {
         self.slots[ticket.slot] = 0;
         return true; // Never clears independent uncertainty/closing state.
     }
+    // Independent backend uncertainty is one-way. Returning a valid local
+    // ticket remains possible, but cannot make this object usable/closable.
+    pub fn fence(self: *Lifetime) void {
+        self.acquire(); defer self.unlock();
+        self.uncertain = true;
+    }
     pub fn canClose(self: *Lifetime, except: ?Ticket) bool {
         self.acquire(); defer self.unlock(); return self.eligible(except);
     }

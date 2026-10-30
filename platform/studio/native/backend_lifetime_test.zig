@@ -42,6 +42,19 @@ test "native lifetime foreign replay overflow and full slots fail closed" {
     full.sequence = std.math.maxInt(u64);
     try std.testing.expectError(error.LifetimeExhausted, full.borrow());
     try std.testing.expectError(error.LifetimeBusy, full.beginClose(null));
+    var fenced = try custody.Lifetime.init();
+    const outstanding = try fenced.borrow();
+    fenced.fence();
+    if (fenced.borrow()) |unexpected| {
+        _ = fenced.release(unexpected);
+        std.debug.print("FIO_BACKEND_LIFETIME_FENCE_REOPENED\n", .{});
+        return error.BackendUncertaintyLost;
+    } else |err| try std.testing.expectEqual(error.LifetimeUnavailable, err);
+    try std.testing.expect(!fenced.canClose(outstanding));
+    try std.testing.expect(fenced.release(outstanding));
+    fenced.fence();
+    try std.testing.expect(!fenced.canClose(null));
+    try std.testing.expectError(error.LifetimeBusy, fenced.beginClose(null));
     var invalid: custody.Lifetime = .{};
     try std.testing.expectError(error.LifetimeUnavailable, invalid.borrow());
 }

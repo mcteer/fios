@@ -261,3 +261,7 @@ The embedded template is copied under an engine ticket and returned as allocator
 ### Fallible engine metadata reads
 
 EOS/EOG/vocabulary/MTP queries hold engine tickets and propagate lifetime refusal through their callers. HTTP vocabulary validation and scheduler token emission fail rather than substituting metadata. Context creation obtains optional MTP metadata before native publication, including nested-capacity refusal with exact parent-ticket restoration. Model-free unavailable-lifetime and full15-root linked checks pass; loaded-model metadata and enclosing all-client/backend ownership remain acceptance work.
+
+### Terminal failure and trim refusal
+
+C terminal exceptions now retain atomic sticky uncertainty. Zig terminal failure fences its lifetime and shared native tracking; releasing a local ticket cannot reopen them. Only native trim0/1 may change the CPU mirror; other statuses propagate lifetime refusal and skip cold retry. CPU-fence and optimized actual-root trim omissions reproduce exact witnesses; final full15-root integration passes. No loaded-context exception or device/all-client terminal proof is supplied.
