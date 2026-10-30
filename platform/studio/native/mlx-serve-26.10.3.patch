@@ -594,7 +594,7 @@ index 82e806a..a4b476d 100644
          _ = snap;
          @panic(unavailable);
 diff --git a/src/arch/llama.zig b/src/arch/llama.zig
-index 806d641..9052c06 100644
+index 806d641..de09ae6 100644
 --- a/src/arch/llama.zig
 +++ b/src/arch/llama.zig
 @@ -1,4 +1,7 @@
@@ -736,7 +736,7 @@ index 806d641..9052c06 100644
          return ctx;
      }
  };
-@@ -309,12 +340,39 @@ pub const LlamaContext = struct {
+@@ -309,22 +340,53 @@ pub const LlamaContext = struct {
      engine: *LlamaEngine,
      handle: *ffi.Ctx,
      seqs: []LlamaSeq,
@@ -779,7 +779,13 @@ index 806d641..9052c06 100644
      }
  
      /// Draft tokens per MTP round, 0 without an MTP context.
-@@ -325,6 +383,8 @@ pub const LlamaContext = struct {
+-    pub fn mtpDrafts(self: *const LlamaContext) u32 {
++    pub fn mtpDrafts(self: *LlamaContext) u32 {
++        const lease = self.fios_lifetime.borrow() catch return 0;
++        defer _ = self.fios_lifetime.release(lease);
+         return @intCast(ffi.mlx_llama_ctx_mtp_drafts(self.handle));
+     }
+ 
      /// One decode step for several sequences in ONE batch: `tokens[i]` goes to
      /// `seqs[i]` (distinct sequences). Each then samples from its own row.
      pub fn step(self: *LlamaContext, seqs: []const *LlamaSeq, tokens: []const i32) Error!void {
@@ -788,7 +794,16 @@ index 806d641..9052c06 100644
          std.debug.assert(seqs.len == tokens.len);
          var ids_buf: [MAX_SEQS]i32 = undefined;
          const ids = ids_buf[0..seqs.len];
-@@ -373,6 +433,8 @@ pub const LlamaSeq = struct {
+@@ -362,6 +424,8 @@ pub const LlamaSeq = struct {
+     busy: bool = false,
+ 
+     pub fn pos(self: *LlamaSeq) i32 {
++        const lease = self.ctx.fios_lifetime.borrow() catch return -1;
++        defer _ = self.ctx.fios_lifetime.release(lease);
+         return ffi.mlx_llama_seq_pos(self.ctx.handle, self.id);
+     }
+ 
+@@ -373,6 +437,8 @@ pub const LlamaSeq = struct {
      /// exist for sampling — even when the whole prompt is already resident we
      /// back off one position.
      pub fn sync(self: *LlamaSeq, prompt_ids: []const i32) Error!i32 {
@@ -797,7 +812,16 @@ index 806d641..9052c06 100644
          var common = commonPrefixLen(self.resident.items, prompt_ids);
          if (common == prompt_ids.len and common > 0) common -= 1;
  
-@@ -410,7 +472,10 @@ pub const LlamaSeq = struct {
+@@ -401,6 +467,8 @@ pub const LlamaSeq = struct {
+ 
+     /// Drop all resident KV (and the mirror).
+     pub fn reset(self: *LlamaSeq) void {
++        const lease = self.ctx.fios_lifetime.borrow() catch return;
++        defer _ = self.ctx.fios_lifetime.release(lease);
+         ffi.mlx_llama_seq_reset(self.ctx.handle, self.id);
+         self.resident.clearRetainingCapacity();
+     }
+@@ -410,7 +478,10 @@ pub const LlamaSeq = struct {
      /// drop the resident state and retry once cold. If the retry also fails the
      /// sequence is left clean for the next request.
      pub fn syncWithFallback(self: *LlamaSeq, prompt_ids: []const i32) Error!i32 {
@@ -808,7 +832,7 @@ index 806d641..9052c06 100644
              log.warn(
                  "[llama] sync failed ({s}); resetting the sequence and retrying cold\n",
                  .{@errorName(err)},
-@@ -425,6 +490,8 @@ pub const LlamaSeq = struct {
+@@ -425,12 +496,16 @@ pub const LlamaSeq = struct {
  
      /// Advance this sequence alone by one already-sampled token.
      pub fn eval(self: *LlamaSeq, token: i32) Error!void {
@@ -817,7 +841,15 @@ index 806d641..9052c06 100644
          var one = [_]*LlamaSeq{self};
          return self.ctx.step(&one, &.{token});
      }
-@@ -444,6 +511,8 @@ pub const LlamaSeq = struct {
+ 
+     /// Sample the next token from the logits this sequence's last decode left.
+     pub fn sample(self: *LlamaSeq, s: Sampling, rng: *u64) i32 {
++        const lease = self.ctx.fios_lifetime.borrow() catch return -1;
++        defer _ = self.ctx.fios_lifetime.release(lease);
+         const temp: f32 = if (s.temperature < 0.01) 0 else s.temperature;
+         return ffi.mlx_llama_seq_sample(self.ctx.handle, self.id, temp, s.top_k, s.top_p, s.min_p, rng);
+     }
+@@ -444,6 +519,8 @@ pub const LlamaSeq = struct {
      /// those the target agrees with. Returns the accepted drafts followed by the
      /// next token (sampled, not yet fed), a slice of `out`.
      pub fn specStep(self: *LlamaSeq, id_last: i32, max_drafts: u32, s: Sampling, rng: *u64, out: []i32) Error![]i32 {
@@ -826,7 +858,7 @@ index 806d641..9052c06 100644
          std.debug.assert(out.len > max_drafts);
          const temp: f32 = if (s.temperature < 0.01) 0 else s.temperature;
          var err_buf: [256]u8 = undefined;
-@@ -489,7 +558,7 @@ test "llama: re-sync after a long generated tail is a cold decode, never a poiso
+@@ -489,7 +566,7 @@ test "llama: re-sync after a long generated tail is a cold decode, never a poiso
      const allocator = std.testing.allocator;
      const path = testModelPath() orelse return error.SkipZigTest;
  
@@ -835,7 +867,7 @@ index 806d641..9052c06 100644
      defer engine.close();
  
      const prompt = try engine.tokenizeText(allocator, "Read the file store/pricing.py and", true);
-@@ -525,7 +594,7 @@ test "llama: tokenize round-trip and short greedy decode" {
+@@ -525,7 +602,7 @@ test "llama: tokenize round-trip and short greedy decode" {
      const allocator = std.testing.allocator;
      const path = testModelPath() orelse return error.SkipZigTest;
  
@@ -844,7 +876,7 @@ index 806d641..9052c06 100644
      defer engine.close();
  
      try std.testing.expect(engine.nVocab() > 0);
-@@ -565,7 +634,7 @@ test "llama: syncWithFallback matches sync on the happy path" {
+@@ -565,7 +642,7 @@ test "llama: syncWithFallback matches sync on the happy path" {
      const allocator = std.testing.allocator;
      const path = testModelPath() orelse return error.SkipZigTest;
  
@@ -853,7 +885,7 @@ index 806d641..9052c06 100644
      defer engine.close();
  
      const a = try engine.tokenizeText(allocator, "Once upon a time, in a", true);
-@@ -615,7 +684,7 @@ test "llama: prefix reuse is byte-identical to cold decode" {
+@@ -615,7 +692,7 @@ test "llama: prefix reuse is byte-identical to cold decode" {
      const allocator = std.testing.allocator;
      const path = testModelPath() orelse return error.SkipZigTest;
  
@@ -862,7 +894,7 @@ index 806d641..9052c06 100644
      defer engine.close();
  
      const shared = try engine.tokenizeText(allocator, "The history of the Roman Empire is long and", true);
-@@ -669,7 +738,7 @@ test "llama: sequences batched in one step never read each other's KV (#547)" {
+@@ -669,7 +746,7 @@ test "llama: sequences batched in one step never read each other's KV (#547)" {
      const allocator = std.testing.allocator;
      const path = testModelPath() orelse return error.SkipZigTest;
  
@@ -871,7 +903,7 @@ index 806d641..9052c06 100644
      defer engine.close();
  
      const p = try engine.tokenizeText(allocator, "List three primary colors:", true);
-@@ -756,7 +825,7 @@ fn expectMtpMatchesPlain(engine: *LlamaEngine) !void {
+@@ -756,7 +833,7 @@ fn expectMtpMatchesPlain(engine: *LlamaEngine) !void {
  
  test "llama: greedy MTP rounds emit the plain greedy tokens and accept drafts (#548)" {
      const path = testModelPath() orelse return error.SkipZigTest;
@@ -880,7 +912,7 @@ index 806d641..9052c06 100644
      defer engine.close();
      if (!engine.hasMtp()) return error.SkipZigTest;
      try expectMtpMatchesPlain(engine);
-@@ -765,8 +834,59 @@ test "llama: greedy MTP rounds emit the plain greedy tokens and accept drafts (#
+@@ -765,8 +842,70 @@ test "llama: greedy MTP rounds emit the plain greedy tokens and accept drafts (#
  test "llama: an MTP head loaded from a separate GGUF drafts like the trunk's own (#548)" {
      const path = testModelPath() orelse return error.SkipZigTest;
      // The fixture's own file stands in for an `mtp-*.gguf` sidecar: it carries the head.
@@ -911,6 +943,17 @@ index 806d641..9052c06 100644
 +        try std.testing.expectError(Error.LifetimeUnavailable, engine.tokenizeText(std.testing.allocator, "", false));
 +        try std.testing.expectError(Error.LifetimeUnavailable, engine.detokenizeOne(std.testing.allocator, 0));
 +        try std.testing.expectError(Error.LifetimeUnavailable, engine.applyChatTemplate(std.testing.allocator, &.{}, false));
++        var retained = [_]i32{42};
++        seq.resident = .initBuffer(&retained);
++        seq.resident.items.len = retained.len;
++        var refused_rng: u64 = 7;
++        try std.testing.expectEqual(@as(i32, -1), seq.pos());
++        try std.testing.expectEqual(@as(i32, -1), seq.sample(.{ .temperature = 0 }, &refused_rng));
++        try std.testing.expectEqual(@as(i32, -1), seq.argmax());
++        try std.testing.expectEqual(@as(u64, 7), refused_rng);
++        try std.testing.expectEqual(@as(u32, 0), context.mtpDrafts());
++        seq.reset();
++        try std.testing.expectEqualSlices(i32, &.{42}, seq.resident.items);
 +        try std.testing.expectError(Error.LifetimeUnavailable, context.terminal());
 +        try std.testing.expectError(Error.LifetimeUnavailable, context.step(&.{}, &.{}));
 +        try std.testing.expectError(Error.LifetimeUnavailable, seq.sync(&.{}));

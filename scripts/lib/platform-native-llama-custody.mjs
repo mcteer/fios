@@ -18,6 +18,11 @@ export function verifyLlamaCustody(arch,registry,shim) {
  assert(affinity>=0&&affinity<close.indexOf('beginClose(null)'),'FIO_LLAMA_RETIREMENT_WIRING_MISSING');
  const ctor=shim.indexOf('extern "C" mlx_llama_ctx *mlx_llama_ctx_create('),owner=shim.indexOf('const uint64_t fios_owner = fios_llama_owner();',ctor),backend=shim.indexOf('llama_init_from_model(e->model, cp)',ctor);
  assert(owner>ctor&&backend>owner&&shim.slice(owner,backend).includes('if (!fios_owner)'),'FIO_LLAMA_RETIREMENT_WIRING_MISSING');
+ for(const [scope,name,owner,refusal] of [['LlamaContext','mtpDrafts','self','0'],['LlamaSeq','pos','self.ctx','-1'],['LlamaSeq','sample','self.ctx','-1'],['LlamaSeq','reset','self.ctx','']]) {
+  const start=arch.indexOf(`    pub fn ${name}(`,arch.indexOf(`pub const ${scope} = struct`)),next=arch.indexOf('    pub fn ',start+1),body=arch.slice(start,next<0?undefined:next);
+  const borrow=body.indexOf(`const lease = ${owner}.fios_lifetime.borrow() catch return${refusal?' '+refusal:''};`),foreign=body.indexOf('ffi.');
+  assert(start>=0&&borrow>=0&&foreign>borrow&&body.includes(`defer _ = ${owner}.fios_lifetime.release(lease);`),'FIO_LLAMA_SEQUENCE_CUSTODY_MISSING');
+ }
  const checks=[
   /fios_lifetime: lifetime\.Lifetime/,
   /const fios_parent = self\.fios_lifetime\.borrow\(\) catch return Error\.SessionCreateFailed;/,

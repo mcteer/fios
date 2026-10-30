@@ -249,3 +249,7 @@ follows from this audit. T002/T020/T021/T022 remain open.
 ### Checked llama retirement continuation
 
 Context metadata allocation now finishes before native creation. The C bridge exposes creator-thread preflight and checked terminal retirement; Zig releases sequence metadata and parent custody only after checked success, retaining the closed lifetime and shared uncertainty on refusal. Null-pointer refusal and allocation failures are model-free fixture cases. Full linked15-root/HTTP/control validation passes; seven negative source omissions supplement it. This does not validate loaded contexts, legacy raw C callers, other backends or all-client native terminality. See validation.md for exact receipts.
+
+### Non-fallible llama sequence operations
+
+MTP-width, position, sample/argmax and reset now borrow context custody through their calls. Known unavailable custody returns existing failure/no-draft sentinels; reset retains its CPU mirror, and sampling retains RNG. Metadata-only closing/uncertain/uninitialized cases pass alongside the complete15-root linked fixture. These tickets require a valid outer reference before entry and do not enroll raw C callers or establish device/all-client terminality.
