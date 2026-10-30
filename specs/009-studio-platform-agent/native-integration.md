@@ -215,3 +215,33 @@ shared leases prevent cleanup during the call; they do not serialize concurrent
 backend operations or replace existing actor/thread ownership. Nonfallible raw
 getters and stable enclosing-reference obligations remain separate. No global
 DS4 synchronization, status-induced initialization or native authority is added.
+
+
+### DS4 completion audit checkpoint (not an issuer)
+
+The root native checkout pins DS4 submodule `9139e2ae58a41503968a500f36f75895c1ba63fc`.
+Its tracked tree was unchanged during this read-only audit. That source identity
+is separate from the installed native artifact and the six declared runtime
+inputs in linked fixture receipts. Any DS4 changes need a separately reviewed
+candidate/patch and input verification, preserving the canonical submodule.
+
+The existing `ds4_gpu_synchronize` in `ds4_metal.m` calls `ds4_gpu_init` when cold,
+can finish an open command batch and resets parallel-FFN state. It is unsuitable
+for a readonly activity probe. The following independent work/resources were
+found; this is an audit inventory, not an exhaustive coverage claim:
+
+| Participant | Source anchor | Remaining completion obligation |
+| --- | --- | --- |
+| Main queue, open batch and pending buffers | `ds4_gpu_synchronize`, `ds4_gpu_end_commands` | Owner-thread exclusion, no cold initialization, checked native errors |
+| Parallel FFN staging | `g_parallel_ffn_mode`, `g_parallel_ffn_stage` | Preserve live encoder/staging ownership; no status-induced reset |
+| Tensor-parallel service and separate keepalive queue | `ds4_gpu_tp_shutdown` | Exact service ownership and checked joins; no RDMA/installed action authorized |
+| Main-queue keepalive thread | `ds4_gpu_queue_keepalive_thread` | It submits buffers outside the ordinary pending-buffer list; a pending-list zero is insufficient |
+| Expert pread pool | `g_stream_expert_pread_pool_active_workers` | Track queued/active work and exact lifetime before releasing buffers |
+| Distributed session destruction | `ds4_session_free` | Failed remote acknowledgements currently print an error through a void destructor; not a terminal receipt |
+
+`ds4_engine_close` frees weights before its later GPU cleanup; existing void
+cleanup and unchecked join paths cannot be promoted to correlated terminal
+proof. The current Zig custody wrappers protect known local lifetime edges but
+do not certify these participants. No new global synchronize/status shortcut,
+terminal issuer, all-client coverage, uncertainty release or native activation
+follows from this audit. T002/T020/T021/T022 remain open.
