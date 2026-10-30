@@ -41,6 +41,10 @@ int main(int argc, char **argv) {
                 g_fios_pread_pool_joined == 2, "FIO_DS4_PREAD_JOIN_REFUSAL_CLEARED");
         REQUIRE(!ds4_gpu_fios_pread_pool_try_retire() && g_fios_pread_pool_uncertain,
                 "FIO_DS4_PREAD_UNCERTAINTY_REOPENED");
+        ds4_gpu_stream_expert_pread_pool_shutdown();
+        REQUIRE(g_fios_pread_pool_uncertain && g_stream_expert_pread_pool_initialized &&
+                g_stream_expert_pread_pool_thread_count == 2 && g_fios_pread_pool_joined == 2,
+                "FIO_DS4_PREAD_LEGACY_CLEARED_REFUSAL");
         puts("PASS: genuine self-join error retains pool vector/count, one-way gate and independent uncertainty.");
         return 0;
     }
@@ -67,7 +71,16 @@ int main(int argc, char **argv) {
             !g_stream_expert_pread_pool_initialized && !g_stream_expert_pread_pool_thread_count,
             "EXACT_POOL_JOIN_FAILED");
     int rearmed = ds4_gpu_stream_expert_pread_pool_init(2);
-    if (rearmed) ds4_gpu_stream_expert_pread_pool_shutdown(); // Owned mutant-only CPU threads.
+    if (rearmed) {
+        // Observe the faulty rearm first, then join only the two actual CPU
+        // threads this private mutant just created. Do not refund source seals.
+        pthread_mutex_lock(&g_stream_expert_pread_pool_mutex);
+        g_stream_expert_pread_pool_stopping=1;
+        pthread_cond_broadcast(&g_stream_expert_pread_pool_start_cond);
+        pthread_mutex_unlock(&g_stream_expert_pread_pool_mutex);
+        for (uint32_t i=0; i<2; ++i)
+            REQUIRE(pthread_join(g_stream_expert_pread_pool_threads[i],NULL)==0, "OWNED_MUTANT_THREAD_NOT_JOINED");
+    }
     REQUIRE(!rearmed, "FIO_DS4_PREAD_REARMED_SEALED_POOL");
     REQUIRE(close(g_model_fd) == 0, "FIXTURE_FILE_CLOSE_FAILED");
     puts("PASS: actual source pread workers refuse busy retirement, join exactly and preserve the sealed gate.");

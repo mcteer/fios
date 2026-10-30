@@ -1,5 +1,5 @@
 diff --git a/ds4_metal.m b/ds4_metal.m
-index 0d75369..cd489c2 100644
+index 0d75369..a2fc7ee 100644
 --- a/ds4_metal.m
 +++ b/ds4_metal.m
 @@ -15,6 +15,7 @@
@@ -31,7 +31,7 @@ index 0d75369..cd489c2 100644
      if (g_stream_expert_pread_pool_initialized) return 1;
      if (!ds4_gpu_stream_expert_pread_pool_enabled() || n_threads <= 1) return 0;
      if (n_threads > 18) n_threads = 18;
-@@ -13592,6 +13600,50 @@ static int ds4_gpu_stream_expert_pread_pool_dispatch(
+@@ -13592,7 +13600,53 @@ static int ds4_gpu_stream_expert_pread_pool_dispatch(
      return ds4_gpu_stream_expert_pread_pool_wait();
  }
  
@@ -80,5 +80,8 @@ index 0d75369..cd489c2 100644
 +}
 +
  static void ds4_gpu_stream_expert_pread_pool_shutdown(void) {
++    // Legacy cleanup cannot refund a sealed checked retirement/refusal.
++    if (atomic_load_explicit(&g_fios_pread_pool_sealed, memory_order_acquire)) return;
      if (!g_stream_expert_pread_pool_initialized) return;
  
+     pthread_mutex_lock(&g_stream_expert_pread_pool_mutex);

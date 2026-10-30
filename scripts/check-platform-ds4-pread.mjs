@@ -23,6 +23,7 @@ const type=/typedef struct \{\s*uint64_t offset;[^{}]*\} ds4_gpu_stream_expert_p
 const start=original.indexOf('static pthread_mutex_t g_stream_expert_pread_pool_mutex'),end=original.indexOf('static int ds4_gpu_stream_expert_pread_tasks(',start);
 assert(start>0&&end>start);
 let pool=original.slice(start,end);
+assert(pool.includes('static void ds4_gpu_stream_expert_pread_pool_shutdown(void) {\n    // Legacy cleanup cannot refund a sealed checked retirement/refusal.\n    if (atomic_load_explicit(&g_fios_pread_pool_sealed, memory_order_acquire)) return;'),'Legacy cleanup must preserve sealed uncertainty before joins/record changes');
 const checkpoint='            task->ok = ds4_gpu_stream_expert_pread_into(';
 assert.equal(pool.split(checkpoint).length,2);
 // Explicit private scheduling checkpoint; original pread/worker ABI is intact.
