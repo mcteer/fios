@@ -91,6 +91,9 @@ try{
  assert(!foreign.error&&!foreign.signal,'Foreign cleanup crash/deadline is not acceptance');assert.equal(foreign.status,0,foreign.stderr);
  assert(foreign.stdout.includes('PASS: actual foreign-thread cleanup retains live producer'));
  const participantCases=[
+  ['--tp-invalid-cold','PASS: invalid local service initialization is refused'],
+  ['--tp-owner-exhausted','PASS: explicit exhausted owner-token boundary refuses'],
+  ['--tp-foreign-owner','PASS: actual foreign-thread TP teardown is refused'],
   ['--tp-gpu-failure','PASS: actual tiny TP producer completion precedes injected failure'],
   ['--tp-gpu-success','PASS: actual tiny TP producer completes and joins'],
   ['--tp-live-cleanup','PASS: global cleanup retains an actual idle local service'],

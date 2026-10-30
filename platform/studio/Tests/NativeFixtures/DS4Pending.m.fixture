@@ -1,5 +1,6 @@
 // Private fault only after genuine command buffers have physically completed.
 #define REQUIRE(v,m) do{if(!(v)){fprintf(stderr,"%s\n",m);return 77;}}while(0)
+static void* fios_foreign_tp_shutdown(void* ignored){(void)ignored;ds4_gpu_tp_shutdown();return NULL;}
 static void* fios_foreign_cleanup(void* ignored){(void)ignored;ds4_gpu_cleanup();return NULL;}
 int main(int argc,char** argv){@autoreleasepool{
  if(argc==2&&(strcmp(argv[1],"--batch-cleanup")==0||strcmp(argv[1],"--batch-success")==0)){
@@ -146,6 +147,28 @@ int main(int argc,char** argv){@autoreleasepool{
   ds4_gpu_tp_shutdown();ds4_gpu_cleanup();
   REQUIRE(g_initialized&&g_fios_pending_uncertain&&g_tp_keepalive_queue==queue,"FIO_DS4_TP_GPU_ERROR_UNCERTAINTY_REFUNDED");
   puts("PASS: actual tiny TP producer completion precedes injected failure; exact resources/uncertainty retained, no hardware-error proof.");return 0;
+ }
+ if(argc==2&&strcmp(argv[1],"--tp-foreign-owner")==0){
+  setenv("DS4_TP_NO_KEEPALIVE","1",1);unsigned identity=11;
+  REQUIRE(ds4_gpu_tp_init(0,NULL,0,0,0,NULL,&identity),"TP_FOREIGN_REAL_INIT_FAILED");
+  pthread_t foreign;REQUIRE(pthread_create(&foreign,NULL,fios_foreign_tp_shutdown,NULL)==0&&pthread_join(foreign,NULL)==0,"TP_FOREIGN_FIXTURE_JOIN_FAILED");
+  const int preserved=g_tp_thread_running&&g_tp_exchange_ud==&identity&&g_fios_pending_uncertain;
+  ds4_gpu_tp_shutdown(); // Creator joins the exact original service if retained.
+  REQUIRE(!g_tp_thread_running,"TP_FOREIGN_CREATOR_JOIN_FAILED");
+  REQUIRE(preserved,"FIO_DS4_TP_FOREIGN_THREAD_RETIRED_SERVICE");
+  REQUIRE(g_fios_pending_uncertain&&!ds4_gpu_tp_init(0,NULL,0,0,0,NULL,&identity),"FIO_DS4_TP_FOREIGN_REFUSAL_REFUNDED");
+  puts("PASS: actual foreign-thread TP teardown is refused; creator join does not clear independent uncertainty.");return 0;
+ }
+ if(argc==2&&strcmp(argv[1],"--tp-invalid-cold")==0){
+  REQUIRE(!g_initialized&&!g_device&&!g_queue,"TP_INVALID_ALREADY_WARM");
+  REQUIRE(!ds4_gpu_tp_init(2,NULL,0,0,0,NULL,NULL)&&!g_initialized&&!g_device&&!g_queue&&atomic_load(&g_fios_keepalive_next_owner)==1,"FIO_DS4_INVALID_TP_INIT_WARMED_BACKEND");
+  puts("PASS: invalid local service initialization is refused before backend creation or owner-token consumption.");return 0;
+ }
+ if(argc==2&&strcmp(argv[1],"--tp-owner-exhausted")==0){
+  atomic_store(&g_fios_keepalive_next_owner,UINT64_MAX);
+  REQUIRE(!ds4_gpu_tp_init(0,NULL,0,0,0,NULL,NULL)&&!g_initialized&&!g_device&&!g_queue&&g_fios_pending_uncertain&&atomic_load(&g_fios_keepalive_next_owner)==UINT64_MAX,"FIO_DS4_TP_OWNER_EXHAUSTION_WARMED_OR_WRAPPED");
+  REQUIRE(!ds4_gpu_tp_init(0,NULL,0,0,0,NULL,NULL),"FIO_DS4_TP_OWNER_EXHAUSTION_REARMED");
+  puts("PASS: explicit exhausted owner-token boundary refuses before cold backend creation; uncertainty stays retained.");return 0;
  }
  REQUIRE(argc==1,"PENDING_BAD_ARGS");
  REQUIRE(ds4_gpu_init(),"PENDING_FULL_INIT_FAILED");
