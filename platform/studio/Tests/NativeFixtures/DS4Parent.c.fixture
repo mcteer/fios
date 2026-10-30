@@ -17,21 +17,24 @@ typedef struct {
  void *directional_steering_dirs,*directional_steering_file,*model_path;
 } ds4_engine;
 static void *g_tp_block_ctx;
-static unsigned destructive,checked,legacy;
-static int ds4_gpu_tp_shutdown_checked(void){++checked;return 0;}
+static unsigned destructive,checked,legacy,prepared,unordered;
+static int destroy(void){if(!prepared)++unordered;return ++destructive;}
+static int checked_result,prepare_result=1;
+static int ds4_gpu_tp_shutdown_checked(void){++checked;return checked_result;}
+static int ds4_gpu_prepare_release(void){++prepared;return prepare_result;}
 static void ds4_gpu_tp_shutdown(void){++legacy;}
-#define free(...) (++destructive)
-#define ds4_tp_detach_slab(...) (++destructive)
-#define ds4_gpu_tensor_free(...) (++destructive)
-#define ds4_expert_profile_close(...) (++destructive)
-#define weights_free(...) (++destructive)
-#define vocab_free(...) (++destructive)
-#define ds4_threads_shutdown(...) (++destructive)
-#define model_close(...) (++destructive)
-#define metal_graph_free_prefill_workspace(...) (++destructive)
-#define ds4_gpu_cleanup(...) (++destructive)
-#define ds4_ssd_memory_lock_release(...) (++destructive)
-#define ds4_release_instance_lock(...) (++destructive)
+#define free(...) destroy()
+#define ds4_tp_detach_slab(...) destroy()
+#define ds4_gpu_tensor_free(...) destroy()
+#define ds4_expert_profile_close(...) destroy()
+#define weights_free(...) destroy()
+#define vocab_free(...) destroy()
+#define ds4_threads_shutdown(...) destroy()
+#define model_close(...) destroy()
+#define metal_graph_free_prefill_workspace(...) destroy()
+#define ds4_gpu_cleanup(...) destroy()
+#define ds4_ssd_memory_lock_release(...) destroy()
+#define ds4_release_instance_lock(...) destroy()
 /* SOURCE_FUNCTIONS */
 int main(int argc,char **argv){
  ds4_engine e={0}; int context=7,slab=11;
@@ -40,8 +43,27 @@ int main(int argc,char **argv){
   ds4_engine_tp_unbind(&e);
   if(destructive||checked||legacy){fputs("PARENT_EMPTY_UNBIND_CHANGED\n",stderr);return 77;}
   ds4_engine_close(&e);
-  if(!destructive||checked||legacy){fputs("PARENT_EMPTY_CLOSE_REFUSED\n",stderr);return 77;}
+  if(!destructive||checked||legacy||unordered){fputs("PARENT_EMPTY_CLOSE_REFUSED\n",stderr);return 77;}
   puts("PASS: empty and null parent mock controls retain legacy behavior.");return 0;
+ }
+ if(argc==2&&strcmp(argv[1],"--prepared-success")==0){
+  checked_result=1;e.tp.ctx=&context;e.tp.slab=&slab;g_tp_block_ctx=&context;
+  ds4_engine_tp_unbind(&e);
+  if(prepared!=1||checked!=1||!destructive||unordered||e.tp.ctx||g_tp_block_ctx){fputs("PARENT_PREPARED_UNBIND_ORDER\n",stderr);return 77;}
+  ds4_engine_close(&e);
+  if(prepared!=2||unordered){fputs("PARENT_PREPARED_CLOSE_ORDER\n",stderr);return 77;}
+  return 0;
+ }
+ if(argc==2&&strncmp(argv[1],"--gpu-",6)==0){
+  const int empty=strcmp(argv[1],"--gpu-empty")==0;
+  checked_result=1;prepare_result=0;
+  if(!empty){e.tp.ctx=&context;e.tp.slab=&slab;g_tp_block_ctx=&context;}
+  const ds4_engine before=e;
+  if(strcmp(argv[1],"--gpu-unbind")==0)ds4_engine_tp_unbind(&e);else ds4_engine_close(&e);
+  if(destructive||legacy||prepared!=1||checked!=(empty?0:1)||memcmp(&e,&before,sizeof(e))||(!empty&&g_tp_block_ctx!=&context)){
+   fputs("FIO_DS4_PARENT_IGNORED_RELEASE_PREPARATION_REFUSAL\n",stderr);return 77;
+  }
+  puts("PASS: parent function source preserves mock resources after local release preparation refusal.");return 0;
  }
  e.tp.ctx=&context;e.tp.slab=&slab;g_tp_block_ctx=&context;
  ds4_engine before=e;

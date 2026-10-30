@@ -3,6 +3,32 @@
 static void* fios_foreign_tp_shutdown(void* ignored){(void)ignored;ds4_gpu_tp_shutdown();return NULL;}
 static void* fios_foreign_cleanup(void* ignored){(void)ignored;ds4_gpu_cleanup();return NULL;}
 int main(int argc,char** argv){@autoreleasepool{
+ if(argc==2&&(strcmp(argv[1],"--prepare-success")==0||strcmp(argv[1],"--prepare-failure")==0)){
+  const int success=strcmp(argv[1],"--prepare-success")==0;
+  REQUIRE(ds4_gpu_init(),"PREPARE_REAL_INIT_FAILED");
+  ds4_gpu_tensor *tensor=ds4_gpu_tensor_alloc(1024);
+  REQUIRE(tensor&&g_tensor_live_count,"PREPARE_REAL_TENSOR_MISSING");
+  const size_t count=g_tensor_live_count;const uint64_t live=g_tensor_alloc_live_bytes;
+  id<MTLCommandQueue> queue=g_queue;
+  REQUIRE(ds4_gpu_begin_commands(),"PREPARE_REAL_BATCH_FAILED");
+  id<MTLCommandBuffer> batch=g_batch_cb;
+  fios_private_wait_failure=success?0:1;
+  const int prepared=ds4_gpu_prepare_release();
+  REQUIRE(batch.status==MTLCommandBufferStatusCompleted,"PREPARE_REAL_BATCH_NOT_COMPLETED");
+  REQUIRE(prepared==success,"FIO_DS4_PREPARE_WAIT_REFUSAL_LOST");
+  REQUIRE(g_initialized&&g_queue==queue&&g_tensor_live_count==count&&g_tensor_alloc_live_bytes==live,
+          "FIO_DS4_PREPARE_DESTROYED_TENSOR_TRACKING");
+  if(success){
+   REQUIRE(!g_batch_cb&&!g_fios_pending_uncertain,"PREPARE_SUCCESS_NOT_DRAINED");
+   ds4_gpu_tensor_free(tensor);
+   REQUIRE(g_tensor_live_count==count-1&&g_tensor_alloc_live_bytes==live-1024,"FIO_DS4_PREPARED_TENSOR_COULD_NOT_FREE");
+   REQUIRE(ds4_gpu_prepare_release(),"PREPARE_REPEAT_REFUSED");
+   ds4_gpu_cleanup();REQUIRE(!g_initialized,"PREPARE_LATER_GLOBAL_CLEANUP_REFUSED");
+   puts("PASS: local release preparation drains actual batch and preserves real tensor tracking until tensor free.");return 0;
+  }
+  REQUIRE(g_batch_cb==batch&&g_fios_pending_uncertain&&!ds4_gpu_prepare_release(),"FIO_DS4_PREPARE_WAIT_UNCERTAINTY_REFUNDED");
+  puts("PASS: actual batch completion precedes injected preparation refusal; real tensor tracking retained.");return 0;
+ }
  if(argc==2&&(strcmp(argv[1],"--batch-cleanup")==0||strcmp(argv[1],"--batch-success")==0)){
   const int success=strcmp(argv[1],"--batch-success")==0;
   REQUIRE(ds4_gpu_init(),"BATCH_REAL_INIT_FAILED");
