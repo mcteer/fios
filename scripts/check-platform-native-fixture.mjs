@@ -153,7 +153,7 @@ try{
  graph=graph.replace(install,install+'\n    b.step("fios-linked-build", "Disposable linked native source fixture").dependOn(&b.addInstallArtifact(exe, .{}).step);');
  const tests='    const unit_tests = b.addTest(.{\n        .root_module = test_mod,\n        .filters = if (test_filter) |f| &.{f} else &.{},\n    });';
  assert.equal(graph.split(tests).length,2);
- graph=graph.replace(tests,tests.replace('.filters = if (test_filter) |f| &.{f} else &.{},','.filters = &.{"fios native cleanup", "fios native admission refusal", "the route-existence 404", "each connection thread handle", "fios registry teardown", "fios loaded model teardown", "fios retained CPU cleanup", "fios resident unload", "fios ds4 snapshot"},'));
+ graph=graph.replace(tests,tests.replace('.filters = if (test_filter) |f| &.{f} else &.{},','.filters = &.{"fios native cleanup", "fios native admission refusal", "the route-existence 404", "each connection thread handle", "fios registry teardown", "fios loaded model teardown", "fios retained CPU cleanup", "fios resident unload", "fios ds4 snapshot", "fios llama operations"},'));
  const runner='    const run_unit_tests = b.addRunArtifact(unit_tests);\n    // A filtered run is a targeted one';
  assert.equal(graph.split(runner).length,2);
  graph=graph.replace(runner,'    const run_unit_tests = b.addRunArtifact(unit_tests);\n    run_unit_tests.has_side_effects = true;\n    b.step("fios-linked-test", "Only CPU native ownership cleanup test").dependOn(&run_unit_tests.step);\n    // A filtered run is a targeted one');
@@ -233,7 +233,7 @@ try{
   const result=spawnSync('/usr/bin/nice',testArgs,{cwd:source,env,encoding:'utf8',timeout:600000,maxBuffer:16*1024*1024});
   testLog=(result.stdout??'')+(result.stderr??'');
   assert.equal(result.status,1,'Deliberate boundary mutation must fail actual optimized runtime tests');
-  assert.match(testLog,loadedTeardownMutation?/11 pass, 2 fail \(13 total\)/:/12 pass, 1 fail \(13 total\)/,'Compilation/linkage failures are not mutation evidence');
+  assert.match(testLog,loadedTeardownMutation?/12 pass, 2 fail \(14 total\)/:/13 pass, 1 fail \(14 total\)/,'Compilation/linkage failures are not mutation evidence');
   assert.match(testLog,snapshotMutation?/arch\.ds4\.test\.fios ds4 snapshot refuses destruction while its CPU buffer is borrowed/:residentUnloadMutation?/scheduler\.test\.fios resident unload refuses borrowed model without accounting success/:retainedCpuMutation?/scheduler\.test\.fios retained CPU cleanup preserves borrowed configuration/:loadedTeardownMutation?/scheduler\.test\.fios loaded model teardown preserves borrowed metadata/:teardownMutation?/scheduler\.test\.fios registry teardown preserves held metadata before any destruction/:nativeRefusalMutation?/server\.test\.fios native admission refusal writes a bounded structured response/:/scheduler\.test\.fios native cleanup retains request and model after connection release/);
   const failureMarker=snapshotMutation?/FIO_DS4_SNAPSHOT_DROPPED_BORROWED_BUFFER/:residentUnloadMutation?/FIO_RESIDENT_REFUSAL_REPORTED_MEMORY_FREE/:retainedCpuMutation?/FIO_RETAINED_CPU_STATE_DROPPED_BORROW/:loadedTeardownMutation?/FIO_LOADED_MODEL_TEARDOWN_DROPPED_BORROW/:teardownMutation?/FIO_REGISTRY_TEARDOWN_DROPPED_HELD_STATE/:textOriginMutation?/FIO_TEXT_BATCH_OWNER_LOST/:generationOriginMutation?/FIO_MERGED_GENERATION_OWNER_LOST/:encoderActiveMutation?/FIO_ENCODER_ACTOR_NOT_ACTIVE/:actorLoadMutation?/FIO_ACTOR_LOAD_PREPARATION_BYPASS/:nativeRefusalMutation?/FIO_NATIVE_REFUSAL_NOT_STRUCTURED/:loadPreparationMutation?/FIO_CONFLICTING_LOAD_PREPARATION_ACCEPTED/:evictionMutation?/FIO_REQUEST_OWNER_EVICTED/:frontdoorKind?new RegExp(`FIO_REGISTRY_${frontdoorKind.toUpperCase()}_FRONTDOOR_BYPASS`):preparationMutation?/FIO_REGISTRY_ACTIVE_PREPARATION_ACCEPTED/:clearPreparationMutation?/FIO_REGISTRY_PREPARATION_RECORD_CLEARED_ON_EXHAUSTION/:accessMutation?/expected false, found true/:/expected 1, found 0/;
   assert.match(testLog,failureMarker,'Mutation must fail its exact actual runtime boundary assertion');
@@ -249,7 +249,7 @@ try{
   if(result.status!==0)process.stderr.write(testLog);
   if(result.error)throw result.error;
   assert.equal(result.status,0,'Genuine native root validation failed');
-  assert.match(testLog,/13\/13 tests passed/,'Every declared root case must execute; a compiled but filtered-out test is not evidence');
+  assert.match(testLog,/14\/14 tests passed/,'Every declared root case must execute; a compiled but filtered-out test is not evidence');
  }
  const binary=path.join(scratch,'output/bin/mlx-serve'),digest=rootOnly?null:sha(binary);
  const httpLog=rootOnly?'':run(process.execPath,[path.join(root,'scripts/check-platform-native-http.mjs'),'--isolated','--binary',binary,'--sha256',digest]);

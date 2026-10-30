@@ -192,3 +192,15 @@ The disabled-platform stub refuses these operations. Sixteen fixed native paths 
 The pinned native snapshot is an independently allocated serialized CPU blob; it does not retain a session or engine. Saving now owns a heap wrapper and frees any partially allocated native buffer on failure. Loading borrows both the snapshot and session; checked snapshot destruction refuses while a reader holds its lease. The snapshot may outlive the session and engine without blocking idle replacement. Existing native payload validation remains unchanged.
 
 The actual optimized root regression uses a valid empty CPU snapshot and an external allocator witness: destroying a borrowed wrapper fails before dereferencing freed storage. This exercises empty-buffer cleanup, not a populated model snapshot, DS4 inference, backend synchronization or terminal authority. Raw-pointer callers still require a stable enclosing reference; a freed wrapper cannot be reused as a lease issuer.
+
+
+### Llama fallible operation custody
+
+Fallible engine tokenization/rendering, batched context steps and sequence
+sync/eval/speculative operations borrow their exact engine/context lifetime for
+the complete call. An unavailable lifetime returns a distinct error; the legacy
+sync recovery path must propagate that refusal before logging/reset/retry. This
+does not add any model request or retry to the Pydantic harness. Nonfallible raw
+getters, borrowed template views and caller-owned stable outer references still
+have separate lifetime obligations; these guards do not establish all-client
+coverage, device completion or a native admission capability. These shared lifetime leases do not serialize concurrent backend operations; existing inference-owner/actor serialization remains required.

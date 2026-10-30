@@ -423,7 +423,7 @@ index 82e806a..a4b476d 100644
          _ = snap;
          @panic(unavailable);
 diff --git a/src/arch/llama.zig b/src/arch/llama.zig
-index 806d641..170a46b 100644
+index 806d641..d4c81b0 100644
 --- a/src/arch/llama.zig
 +++ b/src/arch/llama.zig
 @@ -1,4 +1,6 @@
@@ -433,7 +433,15 @@ index 806d641..170a46b 100644
  // `lib/llama_shim/`. The C ABI lives in `src/llama_ffi.zig`; this module owns
  // lifetimes and error mapping. A `LlamaContext` is ONE llama_context holding
  // `n_seq` sequences (`LlamaSeq`), each with its own KV, decoded together by
-@@ -57,8 +59,11 @@ pub const LlamaEngine = struct {
+@@ -19,6 +21,7 @@ export fn mlx_llama_log(warn: bool, text: [*:0]const u8) void {
+ }
+ 
+ pub const Error = error{
++    LifetimeUnavailable,
+     EngineOpenFailed,
+     SessionCreateFailed,
+     SessionSyncFailed,
+@@ -57,8 +60,11 @@ pub const LlamaEngine = struct {
      allocator: std.mem.Allocator,
      handle: *ffi.Engine,
      model_path_owned: [:0]u8,
@@ -445,7 +453,7 @@ index 806d641..170a46b 100644
          const path_z = allocator.dupeSentinel(u8, model_path, 0) catch return Error.OutOfMemory;
          errdefer allocator.free(path_z);
          const mtp_z: ?[:0]u8 = if (opts.mtp_path) |p| (allocator.dupeSentinel(u8, p, 0) catch return Error.OutOfMemory) else null;
-@@ -82,15 +87,31 @@ pub const LlamaEngine = struct {
+@@ -82,15 +88,31 @@ pub const LlamaEngine = struct {
              .allocator = allocator,
              .handle = raw.?,
              .model_path_owned = path_z,
@@ -478,7 +486,34 @@ index 806d641..170a46b 100644
  
      pub fn eosToken(self: *LlamaEngine) i32 {
          return ffi.mlx_llama_eos_token(self.handle);
-@@ -226,6 +247,9 @@ pub const LlamaEngine = struct {
+@@ -117,6 +139,8 @@ pub const LlamaEngine = struct {
+         text: []const u8,
+         add_special: bool,
+     ) Error![]i32 {
++        const lease = self.fios_lifetime.borrow() catch return Error.LifetimeUnavailable;
++        defer _ = self.fios_lifetime.release(lease);
+         if (text.len == 0) return allocator.alloc(i32, 0) catch Error.OutOfMemory;
+ 
+         // First attempt with a generous estimate; on -required, grow and retry.
+@@ -146,6 +170,8 @@ pub const LlamaEngine = struct {
+     /// Single token → bytes lookup. Caller owns the returned buffer.
+     /// Bytes are NOT NUL-terminated; the slice length is authoritative.
+     pub fn detokenizeOne(self: *LlamaEngine, allocator: std.mem.Allocator, token_id: i32) Error![]u8 {
++        const lease = self.fios_lifetime.borrow() catch return Error.LifetimeUnavailable;
++        defer _ = self.fios_lifetime.release(lease);
+         var cap: i32 = 64;
+         while (true) {
+             const buf = allocator.alloc(u8, @intCast(cap)) catch return Error.OutOfMemory;
+@@ -180,6 +206,8 @@ pub const LlamaEngine = struct {
+         turns: []const ChatTurn,
+         add_assistant: bool,
+     ) Error![]u8 {
++        const lease = self.fios_lifetime.borrow() catch return Error.LifetimeUnavailable;
++        defer _ = self.fios_lifetime.release(lease);
+         var roles = std.ArrayList([*:0]const u8).empty;
+         defer roles.deinit(allocator);
+         var contents = std.ArrayList([*:0]const u8).empty;
+@@ -226,6 +254,9 @@ pub const LlamaEngine = struct {
      }
  
      pub fn createContext(self: *LlamaEngine, opts: ContextOptions) Error!*LlamaContext {
@@ -488,7 +523,7 @@ index 806d641..170a46b 100644
          const n_seq: u32 = std.math.clamp(opts.n_seq, 1, MAX_SEQS);
          const params: ffi.CtxParams = .{
              .n_ctx = opts.ctx_size,
-@@ -256,7 +280,7 @@ pub const LlamaEngine = struct {
+@@ -256,7 +287,7 @@ pub const LlamaEngine = struct {
              return Error.OutOfMemory;
          };
          for (seqs, 0..) |*s, i| s.* = .{ .ctx = ctx, .id = @intCast(i) };
@@ -497,7 +532,7 @@ index 806d641..170a46b 100644
          return ctx;
      }
  };
-@@ -309,12 +333,30 @@ pub const LlamaContext = struct {
+@@ -309,12 +340,30 @@ pub const LlamaContext = struct {
      engine: *LlamaEngine,
      handle: *ffi.Ctx,
      seqs: []LlamaSeq,
@@ -523,17 +558,107 @@ index 806d641..170a46b 100644
 +    /// context/model and runs on its creator; target+MTP are both synchronized.
 +    /// Not enrolled all-client/registry authority and never model-granted.
 +    pub fn terminal(self: *LlamaContext) Error!void {
-+        const lease = self.fios_lifetime.borrow() catch return Error.SessionSyncFailed;
++        const lease = self.fios_lifetime.borrow() catch return Error.LifetimeUnavailable;
 +        defer _ = self.fios_lifetime.release(lease);
 +        if (ffi.mlx_llama_ctx_terminal(self.handle) != 1) return Error.SessionSyncFailed;
      }
  
      /// Draft tokens per MTP round, 0 without an MTP context.
+@@ -325,6 +374,8 @@ pub const LlamaContext = struct {
+     /// One decode step for several sequences in ONE batch: `tokens[i]` goes to
+     /// `seqs[i]` (distinct sequences). Each then samples from its own row.
+     pub fn step(self: *LlamaContext, seqs: []const *LlamaSeq, tokens: []const i32) Error!void {
++        const lease = self.fios_lifetime.borrow() catch return Error.LifetimeUnavailable;
++        defer _ = self.fios_lifetime.release(lease);
+         std.debug.assert(seqs.len == tokens.len);
+         var ids_buf: [MAX_SEQS]i32 = undefined;
+         const ids = ids_buf[0..seqs.len];
+@@ -373,6 +424,8 @@ pub const LlamaSeq = struct {
+     /// exist for sampling — even when the whole prompt is already resident we
+     /// back off one position.
+     pub fn sync(self: *LlamaSeq, prompt_ids: []const i32) Error!i32 {
++        const lease = self.ctx.fios_lifetime.borrow() catch return Error.LifetimeUnavailable;
++        defer _ = self.ctx.fios_lifetime.release(lease);
+         var common = commonPrefixLen(self.resident.items, prompt_ids);
+         if (common == prompt_ids.len and common > 0) common -= 1;
+ 
+@@ -410,7 +463,10 @@ pub const LlamaSeq = struct {
+     /// drop the resident state and retry once cold. If the retry also fails the
+     /// sequence is left clean for the next request.
+     pub fn syncWithFallback(self: *LlamaSeq, prompt_ids: []const i32) Error!i32 {
++        const lease = self.ctx.fios_lifetime.borrow() catch return Error.LifetimeUnavailable;
++        defer _ = self.ctx.fios_lifetime.release(lease);
+         return self.sync(prompt_ids) catch |err| blk: {
++            if (err == Error.LifetimeUnavailable) return err;
+             log.warn(
+                 "[llama] sync failed ({s}); resetting the sequence and retrying cold\n",
+                 .{@errorName(err)},
+@@ -425,6 +481,8 @@ pub const LlamaSeq = struct {
+ 
+     /// Advance this sequence alone by one already-sampled token.
+     pub fn eval(self: *LlamaSeq, token: i32) Error!void {
++        const lease = self.ctx.fios_lifetime.borrow() catch return Error.LifetimeUnavailable;
++        defer _ = self.ctx.fios_lifetime.release(lease);
+         var one = [_]*LlamaSeq{self};
+         return self.ctx.step(&one, &.{token});
+     }
+@@ -444,6 +502,8 @@ pub const LlamaSeq = struct {
+     /// those the target agrees with. Returns the accepted drafts followed by the
+     /// next token (sampled, not yet fed), a slice of `out`.
+     pub fn specStep(self: *LlamaSeq, id_last: i32, max_drafts: u32, s: Sampling, rng: *u64, out: []i32) Error![]i32 {
++        const lease = self.ctx.fios_lifetime.borrow() catch return Error.LifetimeUnavailable;
++        defer _ = self.ctx.fios_lifetime.release(lease);
+         std.debug.assert(out.len > max_drafts);
+         const temp: f32 = if (s.temperature < 0.01) 0 else s.temperature;
+         var err_buf: [256]u8 = undefined;
+@@ -770,3 +830,42 @@ test "llama: an MTP head loaded from a separate GGUF drafts like the trunk's own
+     if (!engine.hasMtp()) return error.SkipZigTest;
+     try expectMtpMatchesPlain(engine);
+ }
++
++
++test "fios llama operations refuse unavailable lifetime before any backend access" {
++    // Only metadata is initialized: no native handle/model/context is created.
++    var engine: LlamaEngine = undefined;
++    var context: LlamaContext = undefined;
++    var seq: LlamaSeq = undefined;
++    seq.ctx = &context;
++    for (0..3) |mode| {
++        engine.fios_lifetime = if (mode == 0) .{} else try lifetime.Lifetime.init();
++        context.fios_lifetime = if (mode == 0) .{} else try lifetime.Lifetime.init();
++        if (mode == 1) {
++            _ = try engine.fios_lifetime.beginClose(null);
++            _ = try context.fios_lifetime.beginClose(null);
++        } else if (mode == 2) {
++            engine.fios_lifetime.uncertain = true;
++            context.fios_lifetime.uncertain = true;
++        }
++        try std.testing.expectError(Error.LifetimeUnavailable, engine.tokenizeText(std.testing.allocator, "", false));
++        try std.testing.expectError(Error.LifetimeUnavailable, engine.detokenizeOne(std.testing.allocator, 0));
++        try std.testing.expectError(Error.LifetimeUnavailable, engine.applyChatTemplate(std.testing.allocator, &.{}, false));
++        try std.testing.expectError(Error.LifetimeUnavailable, context.terminal());
++        try std.testing.expectError(Error.LifetimeUnavailable, context.step(&.{}, &.{}));
++        try std.testing.expectError(Error.LifetimeUnavailable, seq.sync(&.{}));
++        try std.testing.expectError(Error.LifetimeUnavailable, seq.syncWithFallback(&.{}));
++        try std.testing.expectError(Error.LifetimeUnavailable, seq.eval(0));
++        var rng: u64 = 0;
++        var out: [1]i32 = undefined;
++        try std.testing.expectError(Error.LifetimeUnavailable, seq.specStep(0, 0, .{ .temperature = 0 }, &rng, &out));
++    }
++    // The outer recovery operation obtains the final slot; its inner sync
++    // must refuse without reset/retry or touching an uninitialized handle.
++    context.fios_lifetime = try lifetime.Lifetime.init();
++    var held: [63]lifetime.Ticket = undefined;
++    for (&held) |*ticket| ticket.* = try context.fios_lifetime.borrow();
++    try std.testing.expectError(Error.LifetimeUnavailable, seq.syncWithFallback(&.{}));
++    for (held) |ticket| try std.testing.expect(context.fios_lifetime.release(ticket));
++    try std.testing.expect(context.fios_lifetime.canClose(null));
++}
 diff --git a/src/arch/llama_stub.zig b/src/arch/llama_stub.zig
-index eb0c42a..2055691 100644
+index eb0c42a..2ae5c36 100644
 --- a/src/arch/llama_stub.zig
 +++ b/src/arch/llama_stub.zig
-@@ -7,6 +7,7 @@
+@@ -7,10 +7,12 @@
  //! `build_options.ios`.
  
  const std = @import("std");
@@ -541,7 +666,12 @@ index eb0c42a..2055691 100644
  
  const unavailable = "llama.cpp engine is unavailable on this build (macOS-only embedded engine)";
  
-@@ -82,6 +83,10 @@ pub const LlamaEngine = struct {
+ pub const Error = error{
++    LifetimeUnavailable,
+     EngineOpenFailed,
+     SessionCreateFailed,
+     SessionSyncFailed,
+@@ -82,6 +84,10 @@ pub const LlamaEngine = struct {
          _ = opts;
          return Error.EngineOpenFailed;
      }
@@ -552,7 +682,7 @@ index eb0c42a..2055691 100644
      pub fn close(self: *LlamaEngine) void {
          _ = self;
          @panic(unavailable);
-@@ -147,6 +152,8 @@ pub const LlamaEngine = struct {
+@@ -147,6 +153,8 @@ pub const LlamaEngine = struct {
  pub const LlamaContext = struct {
      seqs: []LlamaSeq,
  
