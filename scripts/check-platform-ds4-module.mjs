@@ -58,7 +58,7 @@ try{
  assert.equal(original.split(edge).length,2);
  assert.equal(original.split('if (pthread_join(g_queue_keepalive_thread, NULL) != 0) {').length,2);
  const faultUnit=path.join(directory,'pending.m'),faultBinary=path.join(directory,'pending');
- writeFileSync(faultUnit,'static int fios_private_wait_failure, fios_private_join_failure;\n'+original.replace(edge,edge.replace('cb.status != MTLCommandBufferStatusCompleted','cb.status != MTLCommandBufferStatusCompleted || fios_private_wait_failure')).replace('if (pthread_join(g_queue_keepalive_thread, NULL) != 0) {','if (pthread_join(g_queue_keepalive_thread, NULL) != 0 || fios_private_join_failure) {')+'\n'+pending);
+ writeFileSync(faultUnit,'static int fios_private_wait_failure, fios_private_join_failure, fios_private_pread_join_failure;\n'+original.replace(edge,edge.replace('cb.status != MTLCommandBufferStatusCompleted','cb.status != MTLCommandBufferStatusCompleted || fios_private_wait_failure')).replace('if (pthread_join(g_queue_keepalive_thread, NULL) != 0) {','if (pthread_join(g_queue_keepalive_thread, NULL) != 0 || fios_private_join_failure) {').replace('const int rc = pthread_join(g_stream_expert_pread_pool_threads[i], NULL);','const int actual_rc = pthread_join(g_stream_expert_pread_pool_threads[i], NULL); const int rc = actual_rc == 0 && fios_private_pread_join_failure ? EIO : actual_rc;')+'\n'+pending);
  run(compiler,['-isysroot',sdk,'-I',source,'-std=gnu11','-fobjc-arc','-O3','-ffast-math','-g','-mcpu=native','-UNDEBUG',faultUnit,...objects.map(name=>path.join(source,name)),'-lm','-pthread','-framework','Foundation','-framework','Metal','-o',faultBinary]);
  const fault=spawnSync(faultBinary,[],{env,cwd:source,encoding:'utf8',timeout:120000,maxBuffer:4<<20});
  writeFileSync(path.join(directory,'pending-stdout.log'),fault.stdout??'',{mode:0o600});writeFileSync(path.join(directory,'pending-stderr.log'),fault.stderr??'',{mode:0o600});
@@ -80,6 +80,13 @@ try{
  writeFileSync(path.join(directory,'foreign-cleanup-stdout.log'),foreign.stdout??'',{mode:0o600});writeFileSync(path.join(directory,'foreign-cleanup-stderr.log'),foreign.stderr??'',{mode:0o600});
  assert(!foreign.error&&!foreign.signal,'Foreign cleanup crash/deadline is not acceptance');assert.equal(foreign.status,0,foreign.stderr);
  assert(foreign.stdout.includes('PASS: actual foreign-thread cleanup retains live producer'));
+ for(const mode of ['--pread-cleanup','--pread-success']){
+ const pread=spawnSync(faultBinary,[mode],{env,cwd:source,encoding:'utf8',timeout:120000,maxBuffer:4<<20});
+ writeFileSync(path.join(directory,mode+'-stdout.log'),pread.stdout??'',{mode:0o600});writeFileSync(path.join(directory,mode+'-stderr.log'),pread.stderr??'',{mode:0o600});
+ assert(!pread.error&&!pread.signal,'Pread cleanup crash/deadline is not acceptance');assert.equal(pread.status,0,pread.stderr);
+ assert(pread.stdout.includes(mode==='--pread-success'?'PASS: actual cleanup joins both idle pread workers':'PASS: cleanup preserves exact pread vector'));
+ }
+
 
 
 

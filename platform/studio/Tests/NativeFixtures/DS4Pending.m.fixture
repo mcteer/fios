@@ -52,6 +52,22 @@ int main(int argc,char** argv){@autoreleasepool{
   REQUIRE(g_initialized&&g_queue==queue&&g_fios_pending_uncertain&&!atomic_load(&g_queue_keepalive_running),"FIO_DS4_FOREIGN_CLEANUP_UNCERTAINTY_REFUNDED");
   puts("PASS: actual foreign-thread cleanup retains live producer/global resources; later exact owner join does not refund uncertainty.");return 0;
  }
+ if(argc==2&&(strcmp(argv[1],"--pread-cleanup")==0||strcmp(argv[1],"--pread-success")==0)){
+  const int success=strcmp(argv[1],"--pread-success")==0;
+  REQUIRE(ds4_gpu_init()&&ds4_gpu_stream_expert_pread_pool_init(2),"PREAD_CLEANUP_REAL_INIT_FAILED");
+  id<MTLCommandQueue> queue=g_queue;
+  fios_private_pread_join_failure=success?0:1;
+  ds4_gpu_cleanup();
+  if(success){
+   REQUIRE(!g_initialized&&!g_stream_expert_pread_pool_initialized&&g_fios_pread_pool_joined==3&&atomic_load(&g_fios_pread_pool_sealed),"FIO_DS4_CLEANUP_SKIPPED_CHECKED_PREAD_RETIREMENT");
+   puts("PASS: actual cleanup joins both idle pread workers through checked retirement before global release.");return 0;
+  }
+  REQUIRE(g_initialized&&g_queue==queue&&g_fios_pending_uncertain&&g_fios_pread_pool_uncertain&&
+   g_stream_expert_pread_pool_initialized&&g_stream_expert_pread_pool_thread_count==2,"FIO_DS4_CLEANUP_RELEASED_UNCERTAIN_PREAD_POOL");
+  fios_private_pread_join_failure=0;ds4_gpu_cleanup();
+  REQUIRE(g_initialized&&g_queue==queue&&g_fios_pending_uncertain,"FIO_DS4_PREAD_CLEANUP_UNCERTAINTY_REFUNDED");
+  puts("PASS: cleanup preserves exact pread vector/global resources after real joins plus injected failed acknowledgement.");return 0;
+ }
  REQUIRE(argc==1,"PENDING_BAD_ARGS");
  REQUIRE(ds4_gpu_init(),"PENDING_FULL_INIT_FAILED");
  id<MTLCommandBuffer> a=[g_queue commandBuffer],b=[g_queue commandBuffer];
