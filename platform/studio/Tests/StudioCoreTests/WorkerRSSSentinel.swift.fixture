@@ -9,7 +9,11 @@ import Darwin
         let size=576<<20
         let bytes=UnsafeMutableRawPointer.allocate(byteCount:size,alignment:4096)
         defer {bytes.deallocate()}
-        memset(bytes,0x5a,size)
+        // A repeated-byte allocation is highly compressible on macOS. Use
+        // incompressible fixture data so resident-memory supervision observes
+        // the intended oversized live child even on a pressured CI host.
+        // These bytes are never emitted, persisted or used as credentials.
+        arc4random_buf(bytes,size)
         withExtendedLifetime(bytes) {Thread.sleep(forTimeInterval:30)}
     }
 }

@@ -28,13 +28,23 @@ func runWorkerRSSBreachTests()throws {
     let started=Int64(ProcessInfo.processInfo.systemUptime*1000)
     let worker=try PrivateWorker(process:process,input:input.fileHandleForWriting,output:output.fileHandleForReading,journal:journal,job:id,attempt:0,started:started,capturedGrant:captured,launchNonce:nonce)
     let readiness=ProcessInfo.processInfo.systemUptime+5
-    var resident:UInt64=0
+    var resident:UInt64=0,peakResident:UInt64=0,samples=0,unavailable=0
     while ProcessInfo.processInfo.systemUptime<readiness {
-        resident=(try? WorkerResources.residentBytes(pid:process.processIdentifier)) ?? 0
+        if let value=try? WorkerResources.residentBytes(pid:process.processIdentifier) {resident=value;samples+=1}
+        else {resident=0;unavailable+=1}
+        peakResident=max(peakResident,resident)
         if resident>512<<20 {break}
         Thread.sleep(forTimeInterval:0.005)
     }
-    guard resident>512<<20 else {throw WorkerResourceError.unavailable}
+    guard resident>512<<20 else {
+        let live=process.isRunning
+        let diagnostics:[String:Any]=["phase":"worker_rss_setup","peak_rss":peakResident,"last_rss":resident,
+            "samples":samples,"unavailable_samples":unavailable,"running":live,
+            "exit_status":live ? NSNull():process.terminationStatus as Any]
+        FileHandle.standardError.write(try JSONSerialization.data(withJSONObject:diagnostics,options:.sortedKeys))
+        FileHandle.standardError.write(Data("\nWORKER_RSS_SETUP_NOT_OVERSIZED\n".utf8))
+        throw WorkerResourceError.unavailable
+    }
     // Keep both local reservations until the real supervisor proves reap.
     try admission.reserveWorker(key:"other",sample:sample,now:now)
     do {try admission.reserveWorker(key:"third",sample:sample,now:now);throw RuntimeError.identity}
