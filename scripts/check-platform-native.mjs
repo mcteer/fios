@@ -7,7 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import assert from 'node:assert/strict';
 import {verifyLlamaCustody} from './lib/platform-native-llama-custody.mjs';
-import {verifyDs4Custody} from './lib/platform-native-ds4-custody.mjs';
+import {verifyDs4Custody,verifyDs4PrefixRefusal} from './lib/platform-native-ds4-custody.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const args = process.argv.slice(2);
@@ -83,6 +83,7 @@ try {
   // must advance the independently bounded partial-probe epoch under its lock.
   const registrySource=readFileSync(path.join(scratch,'src/model_registry.zig'),'utf8');
   const schedulerSource=readFileSync(path.join(scratch,'src/scheduler.zig'),'utf8');
+  verifyDs4PrefixRefusal(schedulerSource);
   const cpuLoadStart=schedulerSource.slice(schedulerSource.indexOf('fn doLoadOnInferenceThread('));
   const cpuGuard=cpuLoadStart.indexOf('if (!params.entry.fiosCanReplaceCpuState()) return error.RegistryHeld;');
   assert(cpuGuard>=0&&cpuGuard<cpuLoadStart.indexOf('FiosActorLoadPreparation.begin('),'known unsafe CPU state must refuse before backend preparation');

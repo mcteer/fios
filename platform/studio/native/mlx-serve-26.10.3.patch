@@ -273,7 +273,7 @@ index 12bd0f7..19dc43b 100644
  // Clear `seq` (position -> 0).
  void    mlx_llama_seq_reset(mlx_llama_ctx *c, int32_t seq);
 diff --git a/src/arch/ds4.zig b/src/arch/ds4.zig
-index 338a1b1..6ad21be 100644
+index 338a1b1..c667cd5 100644
 --- a/src/arch/ds4.zig
 +++ b/src/arch/ds4.zig
 @@ -16,6 +16,8 @@
@@ -633,7 +633,7 @@ index 338a1b1..6ad21be 100644
          var err_buf: [256]u8 = undefined;
          const rc = ffi.ds4_session_load_snapshot(self.handle, &snap.inner, &err_buf, err_buf.len);
          if (rc != 0) {
-@@ -733,3 +828,100 @@ test "kernel hash is stable across calls" {
+@@ -733,3 +828,103 @@ test "kernel hash is stable across calls" {
      const b = computeKernelHash();
      try std.testing.expectEqualSlices(u8, &a, &b);
  }
@@ -694,6 +694,9 @@ index 338a1b1..6ad21be 100644
 +        try std.testing.expectError(Error.LifetimeUnavailable, session.pos());
 +        try std.testing.expectError(Error.LifetimeUnavailable, session.rewind(-1));
 +        try std.testing.expectError(Error.LifetimeUnavailable, session.invalidate());
++        try std.testing.expectError(Error.LifetimeUnavailable, session.commonPrefix(&.{}));
++        try std.testing.expectError(Error.LifetimeUnavailable, session.sync(&.{}));
++        try std.testing.expectError(Error.LifetimeUnavailable, session.eval(-1));
 +        try std.testing.expectError(Error.LifetimeUnavailable, session.argmax());
 +        try std.testing.expectError(Error.LifetimeUnavailable, session.argmaxExcluding(-1));
 +        var rng: u64 = 12345;
@@ -2505,7 +2508,7 @@ index da1f791..8345350 100644
 +    try std.testing.expectEqual(@as(usize, 1), registry.entries.count());
 +}
 diff --git a/src/scheduler.zig b/src/scheduler.zig
-index 9e12566..4e16528 100644
+index 9e12566..b1d4afc 100644
 --- a/src/scheduler.zig
 +++ b/src/scheduler.zig
 @@ -32,6 +32,8 @@
@@ -4353,8 +4356,12 @@ index 9e12566..4e16528 100644
  }
  
  fn dflashContextCoversPrefix(context_len: usize, prefix_len: usize) bool {
-@@ -7334,7 +8532,7 @@ fn runPrefillDs4(sch: *Scheduler, slot: *Slot, engine: *arch_ds4.Ds4Engine) !voi
-     const cached = sess.commonPrefix(i32_prompt) catch 0;
+@@ -7331,10 +8529,10 @@ fn runPrefillDs4(sch: *Scheduler, slot: *Slot, engine: *arch_ds4.Ds4Engine) !voi
+         break :blk created;
+     };
+ 
+-    const cached = sess.commonPrefix(i32_prompt) catch 0;
++    const cached = try sess.commonPrefix(i32_prompt);
      sess.sync(i32_prompt) catch |err| {
          // Leave nothing half-built behind for the next request.
 -        sess.invalidate();

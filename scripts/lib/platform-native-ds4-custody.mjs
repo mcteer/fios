@@ -1,5 +1,8 @@
 // Supplementary source edges only; not a backend/runtime/terminal proof.
 import assert from 'node:assert/strict';
+export function verifyDs4PrefixRefusal(scheduler) {
+ assert(scheduler.includes('const cached = try sess.commonPrefix(i32_prompt);')&&!scheduler.includes('sess.commonPrefix(i32_prompt) catch 0'),'FIO_DS4_PREFIX_REFUSAL_SWALLOWED');
+}
 export function verifyDs4Custody(arch,registry) {
  const engineOpen=arch.slice(arch.indexOf('    pub fn open('),arch.indexOf('    pub fn fiosCanCloseSession('));
  const sessionOpen=arch.slice(arch.indexOf('    pub fn createSession('),arch.indexOf('\nfn tokensToOwnedSlice('));
