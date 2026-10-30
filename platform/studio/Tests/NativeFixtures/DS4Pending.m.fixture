@@ -7,7 +7,7 @@ int main(void){@autoreleasepool{
  [a commit];[b commit];[a waitUntilCompleted];[b waitUntilCompleted];
  REQUIRE(a.status==MTLCommandBufferStatusCompleted&&b.status==MTLCommandBufferStatusCompleted,"PENDING_REAL_COMPLETION_FAILED");
  // Real source bookkeeping creates sequence1 and commits it as pending.
- ds4_gpu_stream_expert_cache_note_batch_created();
+ REQUIRE(ds4_gpu_stream_expert_cache_note_batch_created(),"PENDING_SEQUENCE_NOT_CREATED");
  ds4_gpu_stream_expert_cache_note_batch_committed();
  uint64_t done=g_stream_expert_cache_done_seq,pending=g_stream_expert_cache_pending_max_seq;
  REQUIRE(pending>done,"PENDING_BOOKKEEPING_NOT_ARMED");

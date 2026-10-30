@@ -65,6 +65,17 @@ try{
  assert(fault.stdout.includes('PASS: actual completed buffers retained on injected wait failure'));
  verify();assert.equal(readFileSync(pendingFile,'utf8'),pending);assert.equal(readFileSync(fixtureFile,'utf8'),fixture);assert.equal(readFileSync(path.join(source,'ds4_metal.m'),'utf8'),original);
  assert.equal(sha(readFileSync(document)),args[4]);assert.equal(git('diff','--no-ext-diff','HEAD','--','ds4_metal.m'),patch);
- const outcome={scope:'full_ds4_initializer_known_keepalive_and_pending_failure_only',build_receipt_sha256:args[4],fixture_sha256:sha(fixture),binary_sha256:sha(readFileSync(binary)),original_full_shader_library:true,pending_fixture_sha256:sha(pending),pending_binary_sha256:sha(readFileSync(faultBinary)),injected_wait_failure_after_real_completion:true,model_opened:false,native_inference:false,installed:false,native_authority:false,all_backend_terminality:false,directory};
+ const sequenceFile=path.join(root,'platform/studio/Tests/NativeFixtures/DS4Sequence.m.fixture'),sequence=readFileSync(sequenceFile,'utf8');
+ const sequenceUnit=path.join(directory,'sequence.m'),sequenceBinary=path.join(directory,'sequence');
+ writeFileSync(sequenceUnit,'#include '+JSON.stringify(path.join(source,'ds4_metal.m'))+'\n'+sequence);
+ run(compiler,['-isysroot',sdk,'-std=gnu11','-fobjc-arc','-O3','-ffast-math','-g','-mcpu=native','-UNDEBUG',sequenceUnit,...objects.map(name=>path.join(source,name)),'-lm','-pthread','-framework','Foundation','-framework','Metal','-o',sequenceBinary]);
+ for(const mode of ['--counter','--begin','--last']){
+ const counter=spawnSync(sequenceBinary,[mode],{env,cwd:source,encoding:'utf8',timeout:10000,maxBuffer:1<<20});
+ writeFileSync(path.join(directory,'sequence'+mode+'-stdout.log'),counter.stdout??'',{mode:0o600});writeFileSync(path.join(directory,'sequence'+mode+'-stderr.log'),counter.stderr??'',{mode:0o600});
+ assert(!counter.error&&!counter.signal,'Sequence fixture deadline/crash is not acceptance');assert.equal(counter.status,0,counter.stderr);
+ assert(counter.stdout.includes('PASS: exhausted actual cache sequence refuses without initialization'));
+ }
+ verify();assert.equal(readFileSync(sequenceFile,'utf8'),sequence);assert.equal(readFileSync(pendingFile,'utf8'),pending);assert.equal(readFileSync(fixtureFile,'utf8'),fixture);assert.equal(sha(readFileSync(document)),args[4]);assert.equal(git('diff','--no-ext-diff','HEAD','--','ds4_metal.m'),patch);
+ const outcome={scope:'full_ds4_initializer_known_keepalive_and_pending_failure_only',build_receipt_sha256:args[4],fixture_sha256:sha(fixture),binary_sha256:sha(readFileSync(binary)),original_full_shader_library:true,sequence_fixture_sha256:sha(sequence),sequence_binary_sha256:sha(readFileSync(sequenceBinary)),pending_fixture_sha256:sha(pending),pending_binary_sha256:sha(readFileSync(faultBinary)),injected_wait_failure_after_real_completion:true,model_opened:false,native_inference:false,installed:false,native_authority:false,all_backend_terminality:false,directory};
  writeFileSync(path.join(directory,'result.json'),JSON.stringify(outcome)+'\n',{mode:0o400});console.log(JSON.stringify(outcome));
 }catch(error){console.error('Full-module fixture state retained:',directory);throw error;}
