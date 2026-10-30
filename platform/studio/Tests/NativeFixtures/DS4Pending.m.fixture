@@ -1,5 +1,6 @@
 // Private fault only after genuine command buffers have physically completed.
 #define REQUIRE(v,m) do{if(!(v)){fprintf(stderr,"%s\n",m);return 77;}}while(0)
+static void* fios_foreign_cleanup(void* ignored){(void)ignored;ds4_gpu_cleanup();return NULL;}
 int main(int argc,char** argv){@autoreleasepool{
  if(argc==2&&(strcmp(argv[1],"--batch-cleanup")==0||strcmp(argv[1],"--batch-success")==0)){
   const int success=strcmp(argv[1],"--batch-success")==0;
@@ -27,6 +28,29 @@ int main(int argc,char** argv){@autoreleasepool{
   REQUIRE(g_initialized&&g_batch_cb==batch&&!ds4_gpu_begin_commands(),"FIO_DS4_BATCH_CLEANUP_UNCERTAINTY_REFUNDED");
   puts("PASS: real cleanup batch physically completed before injected wait failure; buffer/accounting/uncertainty retained, not hardware-error proof.");
   return 0;
+ }
+ if(argc==2&&strcmp(argv[1],"--keepalive-cleanup")==0){
+  REQUIRE(ds4_gpu_init()&&ds4_gpu_warm_command_queue(),"KEEPALIVE_CLEANUP_REAL_PRODUCER_MISSING");
+  REQUIRE(atomic_load(&g_queue_keepalive_running),"KEEPALIVE_CLEANUP_NOT_RUNNING");
+  id<MTLCommandQueue> queue=g_queue;
+  fios_private_join_failure=1;
+  ds4_gpu_cleanup();
+  REQUIRE(g_initialized&&g_queue==queue&&atomic_load(&g_fios_keepalive_uncertain)&&
+    atomic_load(&g_queue_keepalive_running),"FIO_DS4_CLEANUP_IGNORED_KEEPALIVE_JOIN_FAILURE");
+  REQUIRE(g_fios_pending_uncertain,"FIO_DS4_KEEPALIVE_CLEANUP_FAILURE_NOT_STICKY");
+  fios_private_join_failure=0;ds4_gpu_cleanup();
+  REQUIRE(g_initialized&&g_queue==queue&&!ds4_gpu_begin_commands(),"FIO_DS4_KEEPALIVE_CLEANUP_UNCERTAINTY_REFUNDED");
+  puts("PASS: cleanup retains global resources after actual producer join plus injected failed acknowledgement; no hardware/terminal proof.");return 0;
+ }
+ if(argc==2&&strcmp(argv[1],"--foreign-cleanup")==0){
+  REQUIRE(ds4_gpu_init()&&ds4_gpu_warm_command_queue(),"FOREIGN_CLEANUP_REAL_PRODUCER_MISSING");
+  id<MTLCommandQueue> queue=g_queue;pthread_t foreign;
+  REQUIRE(pthread_create(&foreign,NULL,fios_foreign_cleanup,NULL)==0&&pthread_join(foreign,NULL)==0,"FOREIGN_CLEANUP_THREAD_FAILED");
+  REQUIRE(g_initialized&&g_queue==queue&&g_fios_pending_uncertain&&atomic_load(&g_queue_keepalive_running),"FIO_DS4_FOREIGN_CLEANUP_RELEASED_LIVE_PRODUCER");
+  REQUIRE(ds4_gpu_fios_keepalive_try_stop(),"FOREIGN_CLEANUP_OWNER_JOIN_FAILED");
+  ds4_gpu_cleanup();
+  REQUIRE(g_initialized&&g_queue==queue&&g_fios_pending_uncertain&&!atomic_load(&g_queue_keepalive_running),"FIO_DS4_FOREIGN_CLEANUP_UNCERTAINTY_REFUNDED");
+  puts("PASS: actual foreign-thread cleanup retains live producer/global resources; later exact owner join does not refund uncertainty.");return 0;
  }
  REQUIRE(argc==1,"PENDING_BAD_ARGS");
  REQUIRE(ds4_gpu_init(),"PENDING_FULL_INIT_FAILED");

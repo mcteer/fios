@@ -56,8 +56,9 @@ try{
  const original=readFileSync(path.join(source,'ds4_metal.m'),'utf8');
  const edge='if (cb.status != MTLCommandBufferStatusCompleted) {\n        fprintf(stderr, "ds4: Metal %s failed: %s\\n",';
  assert.equal(original.split(edge).length,2);
+ assert.equal(original.split('if (pthread_join(g_queue_keepalive_thread, NULL) != 0) {').length,2);
  const faultUnit=path.join(directory,'pending.m'),faultBinary=path.join(directory,'pending');
- writeFileSync(faultUnit,'static int fios_private_wait_failure;\n'+original.replace(edge,edge.replace('cb.status != MTLCommandBufferStatusCompleted','cb.status != MTLCommandBufferStatusCompleted || fios_private_wait_failure'))+'\n'+pending);
+ writeFileSync(faultUnit,'static int fios_private_wait_failure, fios_private_join_failure;\n'+original.replace(edge,edge.replace('cb.status != MTLCommandBufferStatusCompleted','cb.status != MTLCommandBufferStatusCompleted || fios_private_wait_failure')).replace('if (pthread_join(g_queue_keepalive_thread, NULL) != 0) {','if (pthread_join(g_queue_keepalive_thread, NULL) != 0 || fios_private_join_failure) {')+'\n'+pending);
  run(compiler,['-isysroot',sdk,'-I',source,'-std=gnu11','-fobjc-arc','-O3','-ffast-math','-g','-mcpu=native','-UNDEBUG',faultUnit,...objects.map(name=>path.join(source,name)),'-lm','-pthread','-framework','Foundation','-framework','Metal','-o',faultBinary]);
  const fault=spawnSync(faultBinary,[],{env,cwd:source,encoding:'utf8',timeout:120000,maxBuffer:4<<20});
  writeFileSync(path.join(directory,'pending-stdout.log'),fault.stdout??'',{mode:0o600});writeFileSync(path.join(directory,'pending-stderr.log'),fault.stderr??'',{mode:0o600});
@@ -71,6 +72,16 @@ try{
  writeFileSync(path.join(directory,'batch-success-stdout.log'),success.stdout??'',{mode:0o600});writeFileSync(path.join(directory,'batch-success-stderr.log'),success.stderr??'',{mode:0o600});
  assert(!success.error&&!success.signal,'Successful batch fixture crash/deadline is not acceptance');assert.equal(success.status,0,success.stderr);
  assert(success.stdout.includes('PASS: genuine successful empty batch cleanup'));
+ const joined=spawnSync(faultBinary,['--keepalive-cleanup'],{env,cwd:source,encoding:'utf8',timeout:120000,maxBuffer:4<<20});
+ writeFileSync(path.join(directory,'keepalive-cleanup-stdout.log'),joined.stdout??'',{mode:0o600});writeFileSync(path.join(directory,'keepalive-cleanup-stderr.log'),joined.stderr??'',{mode:0o600});
+ assert(!joined.error&&!joined.signal,'Keepalive cleanup crash/deadline is not acceptance');assert.equal(joined.status,0,joined.stderr);
+ assert(joined.stdout.includes('PASS: cleanup retains global resources after actual producer join'));
+ const foreign=spawnSync(faultBinary,['--foreign-cleanup'],{env,cwd:source,encoding:'utf8',timeout:120000,maxBuffer:4<<20});
+ writeFileSync(path.join(directory,'foreign-cleanup-stdout.log'),foreign.stdout??'',{mode:0o600});writeFileSync(path.join(directory,'foreign-cleanup-stderr.log'),foreign.stderr??'',{mode:0o600});
+ assert(!foreign.error&&!foreign.signal,'Foreign cleanup crash/deadline is not acceptance');assert.equal(foreign.status,0,foreign.stderr);
+ assert(foreign.stdout.includes('PASS: actual foreign-thread cleanup retains live producer'));
+
+
 
 
  verify();assert.equal(readFileSync(pendingFile,'utf8'),pending);assert.equal(readFileSync(fixtureFile,'utf8'),fixture);assert.equal(readFileSync(path.join(source,'ds4_metal.m'),'utf8'),original);
@@ -86,6 +97,6 @@ try{
  assert(counter.stdout.includes('PASS: exhausted actual cache sequence refuses without initialization'));
  }
  verify();assert.equal(readFileSync(sequenceFile,'utf8'),sequence);assert.equal(readFileSync(pendingFile,'utf8'),pending);assert.equal(readFileSync(fixtureFile,'utf8'),fixture);assert.equal(sha(readFileSync(document)),args[4]);assert.equal(git('diff','--no-ext-diff','HEAD','--','ds4_metal.m'),patch);
- const outcome={scope:'full_ds4_initializer_known_keepalive_pending_and_batch_failure_only',build_receipt_sha256:args[4],fixture_sha256:sha(fixture),binary_sha256:sha(readFileSync(binary)),original_full_shader_library:true,sequence_fixture_sha256:sha(sequence),sequence_binary_sha256:sha(readFileSync(sequenceBinary)),pending_fixture_sha256:sha(pending),pending_binary_sha256:sha(readFileSync(faultBinary)),injected_wait_failure_after_real_completion:true,batch_cleanup_failure_retained:true,model_opened:false,native_inference:false,installed:false,native_authority:false,all_backend_terminality:false,directory};
+ const outcome={scope:'full_ds4_initializer_known_keepalive_pending_and_batch_failure_only',build_receipt_sha256:args[4],fixture_sha256:sha(fixture),binary_sha256:sha(readFileSync(binary)),original_full_shader_library:true,sequence_fixture_sha256:sha(sequence),sequence_binary_sha256:sha(readFileSync(sequenceBinary)),pending_fixture_sha256:sha(pending),pending_binary_sha256:sha(readFileSync(faultBinary)),injected_wait_failure_after_real_completion:true,batch_cleanup_failure_retained:true,keepalive_cleanup_failure_retained:true,foreign_cleanup_failure_retained:true,model_opened:false,native_inference:false,installed:false,native_authority:false,all_backend_terminality:false,directory};
  writeFileSync(path.join(directory,'result.json'),JSON.stringify(outcome)+'\n',{mode:0o400});console.log(JSON.stringify(outcome));
 }catch(error){console.error('Full-module fixture state retained:',directory);throw error;}
