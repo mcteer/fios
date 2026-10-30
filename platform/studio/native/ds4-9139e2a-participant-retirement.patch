@@ -1,0 +1,224 @@
+diff --git a/ds4_metal.m b/ds4_metal.m
+index 0d75369..00623c4 100644
+--- a/ds4_metal.m
++++ b/ds4_metal.m
+@@ -15,6 +15,7 @@
+ #include <limits.h>
+ #include <time.h>
+ #include <pthread.h>
++#include <stdatomic.h>
+ #include <unistd.h>
+ #include <sys/mman.h>
+ #include <sys/sysctl.h>
+@@ -11325,48 +11326,111 @@ int ds4_gpu_warm_command_queue(void) {
+  * queue keeps the mappings alive at no measurable cost.
+  * DS4_METAL_DISABLE_QUEUE_KEEPALIVE=1 opts out. */
+ static pthread_t g_queue_keepalive_thread;
+-static volatile int g_queue_keepalive_running;
+-static volatile int g_queue_keepalive_stop;
++static atomic_int g_queue_keepalive_running;
++static atomic_int g_queue_keepalive_stop;
++static atomic_int g_fios_keepalive_sealed;
++static atomic_int g_fios_keepalive_uncertain;
++static _Atomic uint64_t g_fios_keepalive_next_owner = 1;
++static _Thread_local uint64_t g_fios_keepalive_local_owner;
++static uint64_t g_fios_keepalive_owner;
++// Strong source-owned resources survive refusal; only the joined creator may
++// consume success. This is one producer, not main/TP/all-client terminality.
++static id<MTLCommandBuffer> g_fios_keepalive_pending;
++static id<MTLComputePipelineState> g_fios_keepalive_pipeline;
++static id<MTLBuffer> g_fios_keepalive_scratch;
++
++static uint64_t ds4_gpu_fios_keepalive_owner(void) {
++    if (g_fios_keepalive_local_owner) return g_fios_keepalive_local_owner;
++    uint64_t previous = atomic_load_explicit(&g_fios_keepalive_next_owner, memory_order_acquire);
++    while (previous != UINT64_MAX) {
++        if (atomic_compare_exchange_weak_explicit(&g_fios_keepalive_next_owner,
++                &previous, previous + 1, memory_order_acq_rel, memory_order_acquire)) {
++            g_fios_keepalive_local_owner = previous;
++            return previous;
++        }
++    }
++    return 0; // Never wrap or adopt a recycled kernel thread identity.
++}
+ 
+ static void *ds4_gpu_queue_keepalive_thread(void *arg) {
+     (void)arg;
+     id<MTLComputePipelineState> pipeline = ds4_gpu_get_pipeline("kernel_dsv4_tp_keepalive");
+     id<MTLBuffer> scratch = [g_device newBufferWithLength:256u * sizeof(float)
+                                                   options:MTLResourceStorageModeShared];
+-    if (!pipeline || !scratch) return NULL;
++    g_fios_keepalive_pipeline = pipeline;
++    g_fios_keepalive_scratch = scratch;
++    if (!pipeline || !scratch) {
++        atomic_store(&g_fios_keepalive_uncertain, 1);
++        return NULL;
++    }
+     memset(scratch.contents, 0, 256u * sizeof(float));
+     const uint32_t iters = 1u;
+     uint64_t period_ms = ds4_gpu_env_u64("DS4_METAL_QUEUE_KEEPALIVE_MS", 1000u, 50u, 10000u);
+-    while (!g_queue_keepalive_stop) {
++    while (!atomic_load(&g_queue_keepalive_stop)) {
+         @autoreleasepool {
+             id<MTLCommandBuffer> cb = [g_queue commandBuffer];
++            g_fios_keepalive_pending = cb;
++            if (!cb) { atomic_store(&g_fios_keepalive_uncertain, 1); return NULL; }
+             id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
++            if (!enc) { atomic_store(&g_fios_keepalive_uncertain, 1); return NULL; }
+             [enc setComputePipelineState:pipeline];
+             [enc setBuffer:scratch offset:0 atIndex:0];
+             [enc setBytes:&iters length:sizeof(iters) atIndex:1];
+             [enc dispatchThreadgroups:MTLSizeMake(1, 1, 1) threadsPerThreadgroup:MTLSizeMake(256, 1, 1)];
+             [enc endEncoding];
+             [cb commit];
++            // Every actual producer buffer, not a sample of the main list.
++            [cb waitUntilCompleted];
++            if (cb.status != MTLCommandBufferStatusCompleted) {
++                atomic_store(&g_fios_keepalive_uncertain, 1);
++                return NULL; // Keep exact buffer/pipeline/scratch ownership.
++            }
++            g_fios_keepalive_pending = nil;
+         }
+-        for (uint64_t slept = 0; slept < period_ms && !g_queue_keepalive_stop; slept += 50)
++        for (uint64_t slept = 0; slept < period_ms && !atomic_load(&g_queue_keepalive_stop); slept += 50)
+             usleep(50000);
+     }
++    if (!atomic_load(&g_fios_keepalive_uncertain) && !g_fios_keepalive_pending) {
++        g_fios_keepalive_scratch = nil;
++        g_fios_keepalive_pipeline = nil;
++    }
+     return NULL;
+ }
+ 
+ static void ds4_gpu_queue_keepalive_start(void) {
+-    if (g_queue_keepalive_running) return;
++    // Existing lifecycle-owner serialization is required; no raw-writer or
++    // whole-backend enrollment is supplied by this participant candidate.
++    if (atomic_load(&g_fios_keepalive_sealed) || atomic_load(&g_fios_keepalive_uncertain) ||
++        atomic_load(&g_queue_keepalive_running)) return;
+     if (getenv("DS4_METAL_DISABLE_QUEUE_KEEPALIVE")) return;
+-    g_queue_keepalive_stop = 0;
++    const uint64_t owner = ds4_gpu_fios_keepalive_owner();
++    if (!owner) { atomic_store(&g_fios_keepalive_uncertain, 1); atomic_store(&g_fios_keepalive_sealed, 1); return; }
++    g_fios_keepalive_owner = owner;
++    atomic_store(&g_queue_keepalive_stop, 0);
+     if (pthread_create(&g_queue_keepalive_thread, NULL, ds4_gpu_queue_keepalive_thread, NULL) == 0)
+-        g_queue_keepalive_running = 1;
++        atomic_store(&g_queue_keepalive_running, 1);
++    else { atomic_store(&g_fios_keepalive_uncertain, 1); atomic_store(&g_fios_keepalive_sealed, 1); }
++}
++
++static int ds4_gpu_fios_keepalive_try_stop(void) {
++    // No initialization, owner adoption, timeout refund or integer-PID action.
++    const uint64_t owner = ds4_gpu_fios_keepalive_owner();
++    if (!owner || owner != g_fios_keepalive_owner || atomic_load(&g_fios_keepalive_sealed) ||
++        !atomic_load(&g_queue_keepalive_running)) return 0;
++    atomic_store(&g_fios_keepalive_sealed, 1);
++    atomic_store(&g_queue_keepalive_stop, 1);
++    if (pthread_join(g_queue_keepalive_thread, NULL) != 0) {
++        atomic_store(&g_fios_keepalive_uncertain, 1);
++        return 0;
++    }
++    if (atomic_load(&g_fios_keepalive_uncertain) || g_fios_keepalive_pending ||
++        g_fios_keepalive_scratch || g_fios_keepalive_pipeline) return 0;
++    atomic_store(&g_queue_keepalive_running, 0);
++    return 1;
+ }
+ 
+ static void ds4_gpu_queue_keepalive_stop_thread(void) {
+-    if (!g_queue_keepalive_running) return;
+-    g_queue_keepalive_stop = 1;
+-    pthread_join(g_queue_keepalive_thread, NULL);
+-    g_queue_keepalive_running = 0;
++    (void)ds4_gpu_fios_keepalive_try_stop();
+ }
+ 
+ int ds4_gpu_tp_failed(void) {
+@@ -13424,6 +13488,12 @@ static int ds4_gpu_stream_expert_pread_into(
+ static ds4_gpu_stream_expert_pread_task *g_stream_expert_pread_pool_tasks;
+ static int g_stream_expert_pread_pool_initialized;
+ static int g_stream_expert_pread_pool_stopping;
++// Source candidate only: caller already owns backend lifecycle serialization.
++// A one-way pool gate and exact joins are NOT GPU/all-client terminal proof.
++static atomic_int g_fios_pread_pool_sealed;
++static int g_fios_pread_pool_uncertain;
++static uint32_t g_fios_pread_pool_joined;
++
+ 
+ static int ds4_gpu_stream_expert_pread_pool_enabled(void) {
+     const char *env = getenv("DS4_METAL_STREAMING_EXPERT_PREAD_POOL");
+@@ -13484,6 +13554,7 @@ static int ds4_gpu_stream_expert_pread_pool_enabled(void) {
+ }
+ 
+ static int ds4_gpu_stream_expert_pread_pool_init(uint32_t n_threads) {
++    if (atomic_load_explicit(&g_fios_pread_pool_sealed, memory_order_acquire)) return 0;
+     if (g_stream_expert_pread_pool_initialized) return 1;
+     if (!ds4_gpu_stream_expert_pread_pool_enabled() || n_threads <= 1) return 0;
+     if (n_threads > 18) n_threads = 18;
+@@ -13559,6 +13630,12 @@ static int ds4_gpu_stream_expert_pread_pool_begin(
+         return 0;
+     }
+ 
++    if (g_stream_expert_pread_pool_generation == UINT64_MAX) {
++        g_fios_pread_pool_uncertain = 1;
++        atomic_store_explicit(&g_fios_pread_pool_sealed, 1, memory_order_release);
++        pthread_mutex_unlock(&g_stream_expert_pread_pool_mutex);
++        return 0;
++    }
+     g_stream_expert_pread_pool_tasks = tasks;
+     g_stream_expert_pread_pool_n_tasks = n_tasks;
+     g_stream_expert_pread_pool_next_task = 0;
+@@ -13592,7 +13669,53 @@ static int ds4_gpu_stream_expert_pread_pool_dispatch(
+     return ds4_gpu_stream_expert_pread_pool_wait();
+ }
+ 
++// Unwired checked participant primitive. No legacy cleanup caller may treat
++// this as an engine/device receipt. Existing lifecycle-owner serialization is
++// a precondition; this does not enroll unknown/raw concurrent init/shutdown.
++static int ds4_gpu_fios_pread_pool_try_retire(void) {
++    pthread_mutex_lock(&g_stream_expert_pread_pool_mutex);
++    if (atomic_load_explicit(&g_fios_pread_pool_sealed, memory_order_acquire) ||
++        g_fios_pread_pool_uncertain || !g_stream_expert_pread_pool_initialized ||
++        g_stream_expert_pread_pool_stopping ||
++        g_stream_expert_pread_pool_remaining_workers ||
++        g_stream_expert_pread_pool_active_workers ||
++        g_stream_expert_pread_pool_n_tasks || g_stream_expert_pread_pool_tasks) {
++        pthread_mutex_unlock(&g_stream_expert_pread_pool_mutex);
++        return 0;
++    }
++    const uint32_t count = g_stream_expert_pread_pool_thread_count;
++    if (count == 0 || count > 18) {
++        g_fios_pread_pool_uncertain = 1;
++        atomic_store_explicit(&g_fios_pread_pool_sealed, 1, memory_order_release);
++        pthread_mutex_unlock(&g_stream_expert_pread_pool_mutex);
++        return 0;
++    }
++    atomic_store_explicit(&g_fios_pread_pool_sealed, 1, memory_order_release);
++    g_stream_expert_pread_pool_stopping = 1;
++    pthread_cond_broadcast(&g_stream_expert_pread_pool_start_cond);
++    pthread_mutex_unlock(&g_stream_expert_pread_pool_mutex);
++
++    int ok = 1;
++    for (uint32_t i = 0; i < count; ++i) {
++        const int rc = pthread_join(g_stream_expert_pread_pool_threads[i], NULL);
++        pthread_mutex_lock(&g_stream_expert_pread_pool_mutex);
++        if (rc == 0) g_fios_pread_pool_joined |= (1u << i);
++        else { g_fios_pread_pool_uncertain = 1; ok = 0; }
++        pthread_mutex_unlock(&g_stream_expert_pread_pool_mutex);
++    }
++    pthread_mutex_lock(&g_stream_expert_pread_pool_mutex);
++    // Preserve the original vector/count and sticky uncertainty on refusal.
++    if (ok) {
++        g_stream_expert_pread_pool_thread_count = 0;
++        g_stream_expert_pread_pool_initialized = 0;
++    }
++    pthread_mutex_unlock(&g_stream_expert_pread_pool_mutex);
++    return ok;
++}
++
+ static void ds4_gpu_stream_expert_pread_pool_shutdown(void) {
++    // Legacy cleanup cannot refund a sealed checked retirement/refusal.
++    if (atomic_load_explicit(&g_fios_pread_pool_sealed, memory_order_acquire)) return;
+     if (!g_stream_expert_pread_pool_initialized) return;
+ 
+     pthread_mutex_lock(&g_stream_expert_pread_pool_mutex);

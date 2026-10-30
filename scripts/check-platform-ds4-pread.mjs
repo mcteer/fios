@@ -7,6 +7,7 @@ import {readFileSync,writeFileSync,mkdtempSync,rmSync,realpathSync,lstatSync} fr
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..'),args=process.argv.slice(2);
+const composed=args.at(-1)==='--composed';if(composed)args.pop();
 assert(process.platform==='darwin'&&process.getuid()>0&&args.length===3&&args[0]==='--isolated'&&args[1]==='--source');
 const source=realpathSync(args[2]),info=lstatSync(source);
 assert(source.startsWith('/private/tmp/')&&info.isDirectory()&&info.uid===process.getuid()&&(info.mode&0o022)===0);
@@ -14,7 +15,7 @@ const gitEnv={PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C',GIT_CONFIG_GLOBAL:'/dev/n
 const git=(...argv)=>execFileSync('/usr/bin/git',['--no-replace-objects','-c','core.fsmonitor=false','-C',source,...argv],{env:gitEnv,encoding:'utf8',timeout:5000});
 assert.equal(git('rev-parse','HEAD').trim(),'9139e2ae58a41503968a500f36f75895c1ba63fc');
 assert.equal(git('diff','HEAD','--name-only').trim(),'ds4_metal.m');
-const patch=readFileSync(path.join(root,'platform/studio/native/ds4-9139e2a-pread-retirement.patch'),'utf8');
+const patch=readFileSync(path.join(root,composed?'platform/studio/native/ds4-9139e2a-participant-retirement.patch':'platform/studio/native/ds4-9139e2a-pread-retirement.patch'),'utf8');
 assert.equal(git('diff','--no-ext-diff','HEAD','--','ds4_metal.m'),patch);
 const original=readFileSync(path.join(source,'ds4_metal.m'),'utf8'),fixture=readFileSync(path.join(root,'platform/studio/Tests/NativeFixtures/DS4PreadPool.c.fixture'),'utf8');
 const sha=v=>createHash('sha256').update(v).digest('hex');
@@ -49,7 +50,7 @@ try {
   compile(unit);execute('--positive');execute('--join-error');execute('--exhausted');
  }
  assert.equal(readFileSync(path.join(source,'ds4_metal.m'),'utf8'),original);
- console.log(JSON.stringify({source_fragment_only:true,backend:'none',model:null,native_inference:false,native_authority:false,patch_sha256:sha(patch),source_sha256:sha(original),fixture_sha256:sha(fixture)}));
+ console.log(JSON.stringify({source_fragment_only:true,composed_candidate:composed,backend:'none',model:null,native_inference:false,native_authority:false,patch_sha256:sha(patch),source_sha256:sha(original),fixture_sha256:sha(fixture)}));
  console.log('PASS: Debug/optimized actual pread/pthread fragment, busy/exhaustion refusal, exact joins, genuine self-join refusal and three precise omission witnesses. Legacy cleanup/all-writer/device integration remains open.');
  passed=true;
 } finally {if(passed)rmSync(temporary,{recursive:true,force:true});else console.error('Failure state retained:',temporary);}

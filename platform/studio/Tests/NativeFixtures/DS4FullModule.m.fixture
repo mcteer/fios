@@ -1,0 +1,21 @@
+// Appended to the complete real ds4_metal.m; links genuine built core objects.
+// No model/engine/session is opened. No opaque context or SDK is substituted.
+#define FIOS_REQUIRE(value,marker) do {if(!(value)){fprintf(stderr,"%s\n",marker);return 77;}}while(0)
+int main(void){@autoreleasepool{
+    FIOS_REQUIRE(!g_initialized&&!g_device&&g_model_fd<0,"MODULE_WAS_NOT_COLD");
+    FIOS_REQUIRE(!ds4_gpu_fios_keepalive_try_stop()&&!g_initialized&&!g_device,"STOP_INITIALIZED_A_COLD_BACKEND");
+    FIOS_REQUIRE(ds4_gpu_init(),"GENUINE_FULL_SHADER_INIT_FAILED");
+    FIOS_REQUIRE(g_initialized&&g_device&&g_queue&&g_library&&g_model_fd<0,"GENUINE_MODULE_INIT_NOT_OBSERVED");
+    FIOS_REQUIRE(ds4_gpu_warm_command_queue(),"GENUINE_MODULE_WARM_FAILED");
+    FIOS_REQUIRE(atomic_load(&g_queue_keepalive_running),"GENUINE_PRODUCER_DID_NOT_START");
+    FIOS_REQUIRE(ds4_gpu_fios_keepalive_try_stop(),"GENUINE_MODULE_PRODUCER_STOP_REFUSED");
+    FIOS_REQUIRE(!atomic_load(&g_queue_keepalive_running)&&!atomic_load(&g_fios_keepalive_uncertain)&&
+        atomic_load(&g_fios_keepalive_sealed)&&!g_fios_keepalive_pending&&!g_fios_keepalive_pipeline&&!g_fios_keepalive_scratch,
+        "GENUINE_PRODUCER_RESOURCES_NOT_RETIRED");
+    FIOS_REQUIRE(g_model_fd<0,"UNEXPECTED_MODEL_FILE");
+    // No raw whole-device cleanup is credited as completion. Initializer and
+    // checked known producer are the only tested operations; parent/device,
+    // unknown participant and model ownership contracts remain independent.
+    puts("PASS: complete genuine DS4 module/full original shader initializer, actual warm kernel and creator-bound producer retirement; no model/device/all-client authority.");
+    return 0;
+}}

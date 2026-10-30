@@ -7,6 +7,7 @@ import {createHash} from 'node:crypto';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..'),args=process.argv.slice(2);
+const composed=args.at(-1)==='--composed';if(composed)args.pop();
 assert(process.platform==='darwin'&&process.getuid()>0&&args.length===5&&args[0]==='--isolated'&&args[1]==='--source'&&args[3]==='--developer-dir');
 const source=realpathSync(args[2]),developer=realpathSync(args[4]),info=lstatSync(source);
 assert(source.startsWith('/private/tmp/')&&info.uid===process.getuid()&&info.isDirectory()&&(info.mode&0o022)===0);
@@ -19,7 +20,7 @@ let passed=false;
 try {
  assert.equal(git('rev-parse','HEAD').trim(),'9139e2ae58a41503968a500f36f75895c1ba63fc');
  assert.equal(git('diff','HEAD','--name-only').trim(),'ds4_metal.m');
- const patch=readFileSync(path.join(root,'platform/studio/native/ds4-9139e2a-keepalive-retirement.patch'),'utf8');
+ const patch=readFileSync(path.join(root,composed?'platform/studio/native/ds4-9139e2a-participant-retirement.patch':'platform/studio/native/ds4-9139e2a-keepalive-retirement.patch'),'utf8');
  assert.equal(git('diff','--no-ext-diff','HEAD','--','ds4_metal.m'),patch);
  const original=readFileSync(path.join(source,'ds4_metal.m'),'utf8');
  const shaderFile=readFileSync(path.join(source,'metal/dsv4_misc.metal'),'utf8');assert.equal(shaderFile,git('show','HEAD:metal/dsv4_misc.metal'));
@@ -60,7 +61,7 @@ try {
   compile(unit);positive();
  }
  assert.equal(readFileSync(path.join(source,'ds4_metal.m'),'utf8'),original);
- console.log(JSON.stringify({scope:'genuine_keepalive_producer_original_kernel_fragment_only',source_revision:'9139e2ae58a41503968a500f36f75895c1ba63fc',patch_sha256:sha(patch),source_sha256:sha(original),shader_sha256:sha(shader),fixture_sha256:sha(fixture),native_inference:false,all_backend_terminality:false,native_authority:false,sdk:'27.2'}));
+ console.log(JSON.stringify({scope:'genuine_keepalive_producer_original_kernel_fragment_only',composed_candidate:composed,source_revision:'9139e2ae58a41503968a500f36f75895c1ba63fc',patch_sha256:sha(patch),source_sha256:sha(original),shader_sha256:sha(shader),fixture_sha256:sha(fixture),native_inference:false,all_backend_terminality:false,native_authority:false,sdk:'27.2'}));
  console.log('PASS: genuine 1KiB kernel/event GPU gate, creator ownership, checked joins, exhaustion, three precise runtime omissions and injected error only after actual GPU completion. Parent/device/all-client/deadline integration remains open.');
  passed=true;
 }finally{if(passed)rmSync(temporary,{recursive:true,force:true});else console.error('Failure state retained:',temporary);}

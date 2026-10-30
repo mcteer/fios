@@ -220,3 +220,14 @@ node scripts/check-platform-ds4-keepalive.mjs --isolated --source /ABS/PRIVATE_R
 ```
 
 This requires the exact9139e2a keepalive patch and signed Apple clang/SDK27.2. It runs the original fixed1KiB kernel on genuine private Metal objects, a real event gate, checked CPU-thread retirement and explicit private timing/fault instrumentation. No model, installed service or cluster action occurs. Each test has a finite deadline and independent event-release guard; failures retain private diagnostic state. GPU source-fragment success does not prove all device/backend/context participants or grant native admission. The pread and keepalive candidates remain independent, not silently composed.
+
+### Explicit DS4 composition and full-module development checks
+
+```sh
+node scripts/check-platform-ds4-pread.mjs --isolated --source /ABS/PRIVATE_COMPOSED_DS4 --composed
+node scripts/check-platform-ds4-keepalive.mjs --isolated --source /ABS/PRIVATE_COMPOSED_DS4 --developer-dir /Applications/Xcode.app/Contents/Developer --composed
+node scripts/check-platform-ds4-build.mjs --isolated --source /ABS/PRIVATE_COMPOSED_DS4 --developer-dir /Applications/Xcode.app/Contents/Developer
+node scripts/check-platform-ds4-module.mjs --isolated --build /ABS/FRESH_BUILD/candidate.json --sha256 EXACT_BUILD_RECEIPT_SHA --developer-dir /Applications/Xcode.app/Contents/Developer
+```
+
+Only the reviewed cumulative participant patch is accepted. The build always uses a fresh private checkout, two compiler jobs and a180s deadline; it never executes/installs its benchmark. The separate module command is an explicit model-free development fixture: it verifies source/object/compiler bytes, compiles the whole genuine Metal module, links genuine built C objects and runs the original initializer/shader library/warm kernel/checked known producer under a120s deadline. It opens no model/session, does not certify other participants or native device completion, and retains diagnostics. Neither command grants ordinary runtime/admission/lifecycle/installation authority; receipts describe declared inputs, not whole-native provenance.
