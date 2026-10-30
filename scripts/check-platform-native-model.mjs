@@ -12,7 +12,7 @@ import {fileURLToPath} from 'node:url';
 import {setTimeout as delay} from 'node:timers/promises';
 import {createServer} from 'node:net';
 import {verifyNativeReview} from './lib/platform-native-review.mjs';
-import {nativeReviewIntent,nativeReviewHTTPFailure} from './lib/platform-native-review-intent.mjs';
+import {nativeReviewIntent,nativeReviewHTTPFailure,nativeReviewJSON,nativeReviewActivity} from './lib/platform-native-review-intent.mjs';
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..'),args=process.argv.slice(2);
 nativeReviewIntent(args);
 const ID='mlx-community/gemma-4-e4b-it-4bit',MODEL=path.join(homedir(),'.mlx-serve/models',ID);
@@ -60,25 +60,29 @@ function observe(){const r=spawnSync(plan.observer,[String(child.pid)],{encoding
 function signalOwned(signal){if(ended())return;try{const p=observe();if(original&&p.start===original.start)child.kill(signal);}catch{}}
 for(const pipe of [child.stdout,child.stderr])pipe.on('data',chunk=>{output+=chunk.length;if(output>128*1024){failed='diagnostic_output_limit';signalOwned('SIGTERM');}});
 child.once('error',()=>{failed='launch_failed';});const began=performance.now();
-async function get(route){const r=await fetch('http://127.0.0.1:'+port+route,{headers:{Authorization:'Bearer '+key},signal:AbortSignal.timeout(2000)});assert(r.ok);const bytes=await r.arrayBuffer();assert(bytes.byteLength<65536);return JSON.parse(Buffer.from(bytes).toString('utf8'));}
+async function get(route){const r=await fetch('http://127.0.0.1:'+port+route,{headers:{Authorization:'Bearer '+key},signal:AbortSignal.timeout(2000)});assert(r.ok);return nativeReviewJSON(r);}
+let activityTimer,activityPending,activityStopped=false,activityState;
+function acceptActivity(value){const next=nativeReviewActivity(value,activityState?.instance,activityState?.sequence??0);activityState=next;const r=receipt.request_phase_observations??={samples:0,preparing_max:0,active_max:0,responding_max:0,uncertainty_observed:false,observer_included:true,authority:false};r.samples++;for(const phase of ['preparing','active','responding'])r[phase+'_max']=Math.max(r[phase+'_max'],next[phase]);r.uncertainty_observed ||= next.uncertain;}
+function sampleActivity(){if(activityStopped||activityPending)return;activityPending=get('/v1/fios/activity').then(acceptActivity).catch(()=>{failed='request_phase_observation_failed';}).finally(()=>{activityPending=null;});}
 try{
  const identityDeadline=performance.now()+2000;while(!original&&performance.now()<identityDeadline&&!ended()){try{original=observe();}catch{await delay(20);}}assert(original,'Owned process identity unavailable');receipt.original_process={pid:original.pid,uid:original.uid,start:original.start};receipt.peak_resident=original.resident;receipt.peak_footprint=original.footprint;if(Math.max(original.resident,original.footprint)>LIMITS.memory_abort_bytes){failed='memory_abort_threshold';signalOwned('SIGKILL');throw Error('Resource threshold');}save();stage='resource_monitor';
  timer=setInterval(()=>{if(ended())return;try{const p=observe();assert(p.start===original.start);receipt.peak_resident=Math.max(receipt.peak_resident,p.resident);receipt.peak_footprint=Math.max(receipt.peak_footprint,p.footprint);if(Math.max(p.resident,p.footprint)>LIMITS.memory_abort_bytes){failed='memory_abort_threshold';signalOwned('SIGKILL');}}catch{failed='resource_identity_unknown';signalOwned('SIGTERM');}if(performance.now()-began>LIMITS.work_ms){failed='overall_deadline';signalOwned('SIGKILL');}},500);
  stage='readiness';let ready=false;for(let i=0;i<200&&!ready;i++){assert(!ended()&&!failed);try{ready=(await get('/health')).status==='ok';}catch{await delay(25);}}assert(ready,'Private source readiness unavailable');
  stage='catalog';const before=await get('/v1/models');assert(Array.isArray(before.data));assert(before.data.every(m=>!m.loaded&&m.state!=='ready'),'Unexpected preloaded model');
- stage='diagnostic';const diagnostic=await get('/v1/fios/activity');assert(diagnostic.coverage==='unknown');
+ stage='diagnostic';acceptActivity(await get('/v1/fios/activity'));
  if(check){assert(before.data.length===0);receipt.result='empty_model_profile_and_identity_passed';}
  else{
   assert(before.data.some(m=>m.id===ID),'Exact selected model not advertised');receipt.native_uncertainty=true;receipt.native_inference=null;receipt.inference_attempted=true;receipt.actual_model_posts=1;save();
+  activityTimer=setInterval(sampleActivity,100);
   stage='model_request';const response=await fetch('http://127.0.0.1:'+port+'/v1/chat/completions',{method:'POST',headers:{Authorization:'Bearer '+key,'Content-Type':'application/json'},body:JSON.stringify({model:ID,messages:[{role:'user',content:'Reply with one word: ready.'}],max_tokens:8,temperature:0,stream:true,stream_options:{include_usage:true}}),signal:AbortSignal.timeout(LIMITS.request_ms)});
-  if(!response.ok){let bytes=0,body='';for await(const chunk of response.body){bytes+=chunk.length;assert(bytes<=16384);body+=Buffer.from(chunk).toString('utf8');}let value;try{value=JSON.parse(body);}catch{}receipt.http_failure=nativeReviewHTTPFailure(response.status,value);throw Error('Native model request refused');}stage='model_stream';let buffer='',bytes=0,done=false,deltas=0,completionTokens=null;
+  if(!response.ok){let value;try{value=await nativeReviewJSON(response,16384);}catch{}receipt.http_failure=nativeReviewHTTPFailure(response.status,value);throw Error('Native model request refused');}stage='model_stream';let buffer='',bytes=0,done=false,deltas=0,completionTokens=null;
   for await(const chunk of response.body){bytes+=chunk.length;assert(bytes<=65536&&!failed);buffer+=Buffer.from(chunk).toString('utf8');let at;while((at=buffer.indexOf('\n'))>=0){const line=buffer.slice(0,at).trim();buffer=buffer.slice(at+1);if(!line.startsWith('data:'))continue;const data=line.slice(5).trim();if(data==='[DONE]'){done=true;continue;}const value=JSON.parse(data);assert(!value.error);if(value.choices?.some(c=>['content','reasoning_content'].some(k=>typeof c.delta?.[k]==='string'&&c.delta[k].length>0)))deltas++;if(value.usage?.completion_tokens!==undefined){assert(Number.isSafeInteger(value.usage.completion_tokens)&&value.usage.completion_tokens>=0&&value.usage.completion_tokens<=8);completionTokens=value.usage.completion_tokens;}}}
-  assert(done&&completionTokens!==null&&completionTokens>0);receipt.completion_tokens=completionTokens;receipt.delta_events=deltas;postsDone=true;receipt.native_inference=true;assert((await get('/v1/fios/activity')).coverage==='unknown');receipt.result='single_source_model_response_complete';receipt.generated_text_logged=false;
+  assert(done&&completionTokens!==null&&completionTokens>0);receipt.completion_tokens=completionTokens;receipt.delta_events=deltas;postsDone=true;receipt.native_inference=true;clearInterval(activityTimer);activityStopped=true;if(activityPending)await activityPending;acceptActivity(await get('/v1/fios/activity'));assert(receipt.request_phase_observations.preparing_max>0||receipt.request_phase_observations.active_max>0||receipt.request_phase_observations.responding_max>0,'No live model request phase observed');receipt.result='single_source_model_response_complete';receipt.generated_text_logged=false;
  }
  assert(!failed);receipt.elapsed_ms=Math.round(performance.now()-began);
 }catch{receipt.result='failed';receipt.reason=failed||'review_'+stage+'_failure';process.exitCode=1;}
 finally{
- clearInterval(timer);signalOwned('SIGTERM');let end=performance.now()+5000;while(!ended()&&performance.now()<end)await delay(25);if(!ended()){signalOwned('SIGKILL');end=performance.now()+2000;while(!ended()&&performance.now()<end)await delay(25);}
+ clearInterval(timer);clearInterval(activityTimer);activityStopped=true;const cleanupStarted=performance.now();signalOwned('SIGTERM');if(activityPending)await activityPending;let end=cleanupStarted+5000;while(!ended()&&performance.now()<end)await delay(25);if(!ended()){signalOwned('SIGKILL');end=performance.now()+2000;while(!ended()&&performance.now()<end)await delay(25);}
  receipt.process_reaped=ended();if(!receipt.process_reaped){receipt.result='failed';receipt.reason='owned_process_not_reaped';process.exitCode=1;child.unref();child.stdout.destroy();child.stderr.destroy();}
  receipt.response_complete=postsDone;save();console.log(JSON.stringify({...receipt,directory}));
 }

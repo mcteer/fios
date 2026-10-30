@@ -2,6 +2,21 @@
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import {createHash} from 'node:crypto';
+export async function nativeReviewJSON(response, maximum=65536) {
+ let size=0;const chunks=[];
+ for await(const chunk of response.body){size+=chunk.length;assert(size<=maximum,'Native review response limit');chunks.push(Buffer.from(chunk));}
+ return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+}
+// Partial request-phase metadata; observer ownership is included. No idle,
+// terminal, all-client coverage or admission decision can be derived here.
+export function nativeReviewActivity(value, instance, previousSequence=0) {
+ assert(value?.coverage==='unknown'&&value.observer_included===true&&value.schema_version===1);
+ assert(typeof value.source_instance==='string'&&/^[a-f0-9]{32}$/.test(value.source_instance)&&value.source_instance!=='0'.repeat(32)&&(!instance||value.source_instance===instance));
+ assert(Number.isSafeInteger(value.sample_sequence)&&value.sample_sequence>previousSequence);
+ const counts=Object.fromEntries(['ingress','preparing','active','responding'].map(k=>{assert(Number.isInteger(value[k])&&value[k]>=0&&value[k]<=256);return [k,value[k]];}));
+ assert(Number.isInteger(value.owned_requests)&&value.owned_requests<=256&&Object.values(counts).reduce((a,b)=>a+b,0)===value.owned_requests&&typeof value.uncertain==='boolean');
+ return {instance:value.source_instance,sequence:value.sample_sequence,...counts,uncertain:value.uncertain};
+}
 // Retain fixed diagnostic categories only, never server prose or generated data.
 export function nativeReviewHTTPFailure(status, body) {
  const result={http_status:status};

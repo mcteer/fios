@@ -1,7 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
-import {nativeReviewIntent,nativeReviewHTTPFailure} from '../scripts/lib/platform-native-review-intent.mjs';
+import {nativeReviewIntent,nativeReviewHTTPFailure,nativeReviewJSON,nativeReviewActivity} from '../scripts/lib/platform-native-review-intent.mjs';
+test('native review JSON is bounded while reading, before parsing',async()=>{
+ assert.deepEqual(await nativeReviewJSON(new Response('{"ok":true}'),11),{ok:true});
+ await assert.rejects(nativeReviewJSON(new Response('{"ok":true}'),10),/response limit/);
+ await assert.rejects(nativeReviewJSON(new Response('not JSON')));
+});
+test('partial native phase observations reject incoherence, replay and foreign instances',()=>{
+ const v={schema_version:1,coverage:'unknown',observer_included:true,source_instance:'a'.repeat(32),sample_sequence:2,owned_requests:3,ingress:1,preparing:1,active:1,responding:0,uncertain:false};
+ const r=nativeReviewActivity(v,'a'.repeat(32),1);assert.equal(r.preparing,1);assert.equal(r.active,1);assert.equal(r.uncertain,false);
+ for(const bad of [{coverage:'all_clients'},{observer_included:false},{sample_sequence:1},{owned_requests:2},{active:-1},{ingress:257},{sample_sequence:Number.MAX_SAFE_INTEGER+1},{uncertain:null},{source_instance:'b'.repeat(32)}])assert.throws(()=>nativeReviewActivity({...v,...bad},'a'.repeat(32),1));
+ for(const source_instance of [['a'.repeat(32)],'0'.repeat(32),null])assert.throws(()=>nativeReviewActivity({...v,source_instance}));
+});
 test('native review failures retain only fixed diagnostic categories',()=>{
  const hash=s=>createHash('sha256').update(s).digest('hex');
  assert.deepEqual(nativeReviewHTTPFailure(500,{error:{type:'model_load_failed',message:'Model load failed: AccessDenied'}}),{http_status:500,error_message_sha256:hash('Model load failed: AccessDenied'),error_type:'model_load_failed',load_error:'AccessDenied'});

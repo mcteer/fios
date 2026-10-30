@@ -31,6 +31,8 @@ The case uses one authenticated loopback-only private source instance, one selec
 
 A kernel profile permits only the private listener/control endpoints, denies outbound network access, fork and other execs, and permits filesystem writes only within the child's private home. Model files, capsule and parent-held records remain read-only to the child. Parent receipts and one-use intent are fsynced separately. The source server gets a fresh strict API key through its private environment, never gateway/Studio credentials. Raw diagnostics, generated text and reasoning are not logged. Failed HTTP responses retain only status, fixed diagnostic categories and a message SHA; known source error templates can be compared by hash without retaining server prose. No installed application, launchd, Docker, RDMA or legacy data operation occurs.
 
+During the request, at most one readonly activity sample is outstanding at100ms intervals. Bounded JSON parsing rejects oversized responses before buffering them in full. Same nonzero source instance, increasing safe sample sequence and coherent bounded phase counts are required. The receipt records maxima and uncertainty without subtracting the included observer. A zero sampled phase count does not prove that phase absent; missed short phases remain unobserved. These are partial request-ownership phases, not GPU execution or terminal evidence.
+
 The receipt reports source coverage `unknown` and native quiescence `unproven`. A successful response is partial source/backend acceptance, not model competence, all-client admission or T051 completion. Reaping never clears independent inference uncertainty. Runtime data remains available for diagnosis; unrelated resources are not deleted.
 
 ## Finite no-model safety checks
