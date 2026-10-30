@@ -25,6 +25,20 @@ export function nativeReviewActivity(value, instance, previousSequence=0) {
  assert(Number.isInteger(value.owned_requests)&&value.owned_requests<=256&&Object.values(counts).reduce((a,b)=>a+b,0)===value.owned_requests&&typeof value.uncertain==='boolean');
  return {instance:value.source_instance,sequence:value.sample_sequence,...counts,uncertain:value.uncertain};
 }
+// Readonly live correlation metadata, never terminal/not-sent/device proof.
+export function nativeReviewLineage(bytes,instance,correlation,previous=0){
+ assert(Buffer.isBuffer(bytes)&&bytes.length===112&&bytes.subarray(0,4).toString()==='FIP9'&&bytes[4]===1&&bytes[5]===0&&bytes[6]<=1&&bytes[7]<=1);
+ assert(/^[a-f0-9]{32}$/.test(instance)&&instance!=='0'.repeat(32)&&/^[a-f0-9]{64}$/.test(correlation));
+ assert(bytes.subarray(8,24).toString('hex')===instance&&bytes.subarray(24,56).toString('hex')===correlation&&bytes.subarray(100).every(b=>b===0));
+ const safe=at=>{const n=bytes.readBigUInt64BE(at);assert(n<=BigInt(Number.MAX_SAFE_INTEGER));return Number(n);};
+ const sequence=safe(56),root=bytes.readBigUInt64BE(64),references=safe(72);assert(Number.isSafeInteger(previous)&&previous>=0&&sequence>0&&sequence>previous);
+ const counts=Object.fromEntries(['owners','ingress','preparing','active','responding'].map((k,i)=>{const n=bytes.readUInt32BE(80+i*4);assert(n<=256);return [k,n];}));
+ assert(counts.owners===counts.ingress+counts.preparing+counts.active+counts.responding);
+ const found=bytes[6]===1,uncertain=bytes[7]===1;
+ if(found)assert(root>0n&&references>0&&counts.owners>0);
+ else assert(uncertain&&root===0n&&references===0&&counts.owners===0);
+ return {sequence,found,uncertain,root_sequence:root.toString(),references,...counts};
+}
 // Retain fixed diagnostic categories only, never server prose or generated data.
 export function nativeReviewHTTPFailure(status, body) {
  const result={http_status:status};
@@ -36,15 +50,19 @@ export function nativeReviewHTTPFailure(status, body) {
  if(match&&names.includes(match[1]))result.load_error=match[1];
  return result;
 }
-export function nativeReviewIntent(args) {
+export function nativeReviewIntent(input) {
+ const args=[...input];let scenario;
+ const at=args.indexOf('--scenario');
+ if(at!==-1){assert(at===args.length-2&&args[at+1]==='same-model-pair');scenario=args[at+1];args.splice(at,2);}
+ const result=value=>scenario?{...value,scenario}:value;
  const mode=args[0];assert(['--plan','--check','--run'].includes(mode));
  if(mode==='--plan'){
   assert(args.length===7&&args[1]==='--capsule'&&args[3]==='--sha256'&&args[5]==='--output');
   assert(path.isAbsolute(args[2])&&path.isAbsolute(args[6])&&/^[a-f0-9]{64}$/.test(args[4]));
-  return {mode:'plan',inferenceRequested:false};
+  return result({mode:'plan',inferenceRequested:false});
  }
  assert(args.length===(mode==='--run'?6:5)&&args[1]==='--plan'&&args[3]==='--sha256');
  assert(path.isAbsolute(args[2])&&/^[a-f0-9]{64}$/.test(args[4]));
  if(mode==='--run')assert(args[5]==='--allow-native-inference');
- return {mode:mode.slice(2),inferenceRequested:mode==='--run'};
+ return result({mode:mode.slice(2),inferenceRequested:mode==='--run'});
 }

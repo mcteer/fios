@@ -11,13 +11,15 @@ import {homedir} from 'node:os';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {setTimeout as delay} from 'node:timers/promises';
-import {createServer} from 'node:net';
+import {createServer,createConnection} from 'node:net';
 import {verifyNativeReview} from './lib/platform-native-review.mjs';
-import {nativeReviewIntent,nativeReviewHTTPFailure,nativeReviewJSON,nativeReviewActivity,nativeReviewModelInputs} from './lib/platform-native-review-intent.mjs';
+import {nativeReviewIntent,nativeReviewHTTPFailure,nativeReviewJSON,nativeReviewActivity,nativeReviewModelInputs,nativeReviewLineage} from './lib/platform-native-review-intent.mjs';
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..'),args=process.argv.slice(2);
-nativeReviewIntent(args);
+const intent=nativeReviewIntent(args),pair=intent.scenario==='same-model-pair';
+const scenario=pair?'same-model-pair':'single-model',scenarioArgs=pair?['--scenario',scenario]:[];
+if(pair)args.splice(-2,2);
 const ID='mlx-community/gemma-4-e4b-it-4bit',MODEL=path.join(homedir(),'.mlx-serve/models',ID);
-const LIMITS={context_tokens:512,output_tokens:8,max_concurrent:1,model_posts:1,request_ms:90000,work_ms:120000,cleanup_ms:7000,memory_abort_bytes:12*2**30};
+const LIMITS={context_tokens:512,output_tokens:8,max_concurrent:pair?2:1,model_posts:pair?2:1,request_ms:90000,work_ms:120000,cleanup_ms:7000,memory_abort_bytes:12*2**30};
 assert(process.platform==='darwin'&&process.arch==='arm64'&&process.getuid()>0);
 const sha=b=>createHash('sha256').update(b).digest('hex');
 function runnerInputs(){return Object.fromEntries(['scripts/check-platform-native-model.mjs','scripts/lib/platform-native-review.mjs','scripts/lib/platform-native-review-intent.mjs','platform/studio/Tests/NativeFixtures/ObserveProcess.c.fixture'].map(name=>[name,sha(readFileSync(path.join(root,name)))]));}
@@ -36,14 +38,14 @@ if(args[0]==='--plan'){
  const nonce=randomUUID(),observer=path.join(parent,'observe-'+nonce);
  execFileSync('/usr/bin/clang',['-x','c',path.join(root,'platform/studio/Tests/NativeFixtures/ObserveProcess.c.fixture'),'-O2','-o',observer],{timeout:30000,stdio:'pipe',env:{PATH:'/usr/bin:/bin',HOME:parent,LANG:'C',LC_ALL:'C'}});chmodSync(observer,0o500);
  const self=JSON.parse(execFileSync(observer,[String(process.pid)],{encoding:'utf8',timeout:1000}));assert(self.pid===process.pid&&self.uid===process.getuid());
- const plan={version:1,runner_inputs:runnerInputs(),purpose:'private_gemma4_source_experiment',nonce,created:Date.now(),capsule:capsule.directory,capsule_sha256:args[4],model:ID,model_directory:MODEL,model_files:files,limits:LIMITS,observer,observer_sha256:sha(readFileSync(observer)),profile_sha256:sha(readFileSync(path.join(root,'tests/fixtures/platform/native-model-review.sb'))),native_admission_authority:false,requires_explicit_inference_opt_in:true};
+ const plan={version:1,runner_inputs:runnerInputs(),purpose:'private_gemma4_source_experiment',scenario,nonce,created:Date.now(),capsule:capsule.directory,capsule_sha256:args[4],model:ID,model_directory:MODEL,model_files:files,limits:LIMITS,observer,observer_sha256:sha(readFileSync(observer)),profile_sha256:sha(readFileSync(path.join(root,'tests/fixtures/platform/native-model-review.sb'))),native_admission_authority:false,requires_explicit_inference_opt_in:true};
  const bytes=Buffer.from(JSON.stringify(plan)+'\n');writeFileSync(args[6],bytes,{flag:'wx',mode:0o400});const fd=openSync(args[6],'r');try{fsyncSync(fd);}finally{closeSync(fd);}
- console.log(JSON.stringify({planning_only:true,native_inference:false,model:ID,model_weight_bytes:Object.entries(files).filter(([n])=>n.endsWith('.safetensors')).reduce((n,[,f])=>n+f.bytes,0),plan:args[6],plan_sha256:sha(bytes),limits:LIMITS,check:[process.execPath,fileURLToPath(import.meta.url),'--check','--plan',args[6],'--sha256',sha(bytes)],run_command:[process.execPath,fileURLToPath(import.meta.url),'--run','--plan',args[6],'--sha256',sha(bytes),'--allow-native-inference']}));
+ console.log(JSON.stringify({planning_only:true,native_inference:false,model:ID,model_weight_bytes:Object.entries(files).filter(([n])=>n.endsWith('.safetensors')).reduce((n,[,f])=>n+f.bytes,0),plan:args[6],plan_sha256:sha(bytes),limits:LIMITS,check:[process.execPath,fileURLToPath(import.meta.url),'--check','--plan',args[6],'--sha256',sha(bytes),...scenarioArgs],run_command:[process.execPath,fileURLToPath(import.meta.url),'--run','--plan',args[6],'--sha256',sha(bytes),'--allow-native-inference',...scenarioArgs]}));
  process.exit(0);
 }
 const check=args[0]==='--check';assert((check&&args.length===5)||(!check&&args[0]==='--run'&&args.length===6&&args[5]==='--allow-native-inference'));
 assert(args[1]==='--plan'&&args[3]==='--sha256'&&path.isAbsolute(args[2]));const parent=privateParent(args[2]),document=json(args[2]);assert(sha(document.bytes)===args[4]);const plan=document.value;assert(!plan.synthetic_resource_fixture||check,'Synthetic observations cannot be used for inference');assert.deepEqual(plan.runner_inputs,runnerInputs());
-assert(plan.version===1&&plan.purpose==='private_gemma4_source_experiment'&&plan.model===ID&&plan.model_directory===MODEL&&plan.native_admission_authority===false&&plan.requires_explicit_inference_opt_in===true&&JSON.stringify(plan.limits)===JSON.stringify(LIMITS));
+assert(plan.version===1&&plan.purpose==='private_gemma4_source_experiment'&&plan.scenario===scenario&&plan.model===ID&&plan.model_directory===MODEL&&plan.native_admission_authority===false&&plan.requires_explicit_inference_opt_in===true&&JSON.stringify(plan.limits)===JSON.stringify(LIMITS));
 assert(Date.now()>=plan.created-1000&&Date.now()-plan.created<=24*3600000);const capsule=verifyNativeReview(plan.capsule,plan.capsule_sha256);nativeReviewModelInputs(capsule.receipt.declared_inputs);
 assert(path.dirname(plan.observer)===parent&&lstatSync(plan.observer).isFile()&&!lstatSync(plan.observer).isSymbolicLink()&&sha(readFileSync(plan.observer))===plan.observer_sha256);
 const profile=path.join(root,'tests/fixtures/platform/native-model-review.sb');assert(sha(readFileSync(profile))===plan.profile_sha256);
@@ -53,38 +55,87 @@ const home=path.join(directory,'home');mkdirSync(home,{mode:0o700});const models
 if(!check){mkdirSync(path.join(models,'mlx-community'),{mode:0o700});symlinkSync(MODEL,path.join(models,ID),'dir');}
 const reservation=createServer();await new Promise((ok,no)=>{reservation.once('error',no);reservation.listen(0,'127.0.0.1',ok);});const port=reservation.address().port;await new Promise(ok=>reservation.close(ok));
 const key=randomBytes(32).toString('hex'),env={PATH:'/usr/bin:/bin',HOME:home,TMPDIR:path.join(home,'tmp'),XDG_CACHE_HOME:path.join(home,'cache'),LANG:'C',LC_ALL:'C',FIOS_NATIVE_CONTROL:'isolated-source-fixture',FIOS_NATIVE_STARTUP:'isolated-source-fixture',FIOS_SOURCE_MODEL_KEY:key};
-const receipt={source_fixture_only:true,synthetic_resource_fixture:plan.synthetic_resource_fixture===true,model:check?null:ID,native_inference:check?false:null,inference_requested:!check,actual_model_posts:0,coverage:'unknown',native_quiescence:'unproven',process_reaped:false,peak_resident:0,peak_footprint:0};
+const receipt={source_fixture_only:true,scenario,synthetic_resource_fixture:plan.synthetic_resource_fixture===true,model:check?null:ID,native_inference:check?false:null,inference_requested:!check,model_post_attempts:0,actual_model_posts:0,coverage:'unknown',native_quiescence:'unproven',process_reaped:false,peak_resident:0,peak_footprint:0};
 function save(){const temporary=path.join(directory,'.result-'+randomUUID());durableNew(temporary,JSON.stringify(receipt)+'\n',0o600);renameSync(temporary,path.join(directory,'result.json'));const fd=openSync(directory,constants.O_RDONLY);try{fsyncSync(fd);}finally{closeSync(fd);}}save();
-const child=spawn('/usr/bin/sandbox-exec',['-D','FIOS_REVIEW_ENDPOINT=localhost:'+port,'-D','FIOS_REVIEW_STATE='+home,'-D','FIOS_REVIEW_BINARY='+capsule.binary,'-f',profile,capsule.binary,'serve','--host','127.0.0.1','--port',String(port),'--model-dir',models,'--no-warmup-eager','--no-vision','--ctx-size','512','--max-concurrent','1','--api-key-env','FIOS_SOURCE_MODEL_KEY','--api-key-strict'],{env,cwd:home,stdio:['ignore','pipe','pipe']});
+const child=spawn('/usr/bin/sandbox-exec',['-D','FIOS_REVIEW_ENDPOINT=localhost:'+port,'-D','FIOS_REVIEW_STATE='+home,'-D','FIOS_REVIEW_BINARY='+capsule.binary,'-f',profile,capsule.binary,'serve','--host','127.0.0.1','--port',String(port),'--model-dir',models,'--no-warmup-eager','--no-vision','--ctx-size','512','--max-concurrent',String(LIMITS.max_concurrent),'--api-key-env','FIOS_SOURCE_MODEL_KEY','--api-key-strict'],{env,cwd:home,stdio:['ignore','pipe','pipe']});
+const modelAbort=new AbortController();
 let original,output=0,failed,timer,postsDone=false,stage='owned_identity';
 function ended(){return child.exitCode!==null||child.signalCode!==null;}
 function observe(){const r=spawnSync(plan.observer,[String(child.pid)],{encoding:'utf8',timeout:1000,maxBuffer:1024,env:{PATH:'/usr/bin:/bin',LANG:'C'}});assert(r.status===0);const p=JSON.parse(r.stdout);assert(p.pid===child.pid&&p.uid===process.getuid()&&/^\d+:\d+$/.test(p.start)&&Number.isSafeInteger(p.resident)&&Number.isSafeInteger(p.footprint));return p;}
 function signalOwned(signal){if(ended())return;try{const p=observe();if(original&&p.start===original.start)child.kill(signal);}catch{}}
 for(const pipe of [child.stdout,child.stderr])pipe.on('data',chunk=>{output+=chunk.length;if(output>128*1024){failed='diagnostic_output_limit';signalOwned('SIGTERM');}});
 child.once('error',()=>{failed='launch_failed';});const began=performance.now();
-async function get(route){const r=await fetch('http://127.0.0.1:'+port+route,{headers:{Authorization:'Bearer '+key},signal:AbortSignal.timeout(2000)});assert(r.ok);return nativeReviewJSON(r);}
+async function get(route){const r=await fetch('http://127.0.0.1:'+port+route,{headers:{Authorization:'Bearer '+key},redirect:'error',signal:AbortSignal.timeout(2000)});assert(r.ok);return nativeReviewJSON(r);}
 let activityTimer,activityPending,activityStopped=false,activityState;
-function acceptActivity(value){const next=nativeReviewActivity(value,activityState?.instance,activityState?.sequence??0);activityState=next;const r=receipt.request_phase_observations??={samples:0,preparing_max:0,active_max:0,responding_max:0,uncertainty_observed:false,observer_included:true,authority:false};r.samples++;for(const phase of ['preparing','active','responding'])r[phase+'_max']=Math.max(r[phase+'_max'],next[phase]);r.uncertainty_observed ||= next.uncertain;}
-function sampleActivity(){if(activityStopped||activityPending)return;activityPending=get('/v1/fios/activity').then(acceptActivity).catch(()=>{failed='request_phase_observation_failed';}).finally(()=>{activityPending=null;});}
+function acceptActivity(value){const next=nativeReviewActivity(value,activityState?.instance,activityState?.sequence??0);activityState=next;receipt.source_instance=next.instance;const r=receipt.request_phase_observations??={samples:0,preparing_max:0,active_max:0,responding_max:0,uncertainty_observed:false,observer_included:true,authority:false};r.samples++;for(const phase of ['preparing','active','responding'])r[phase+'_max']=Math.max(r[phase+'_max'],next[phase]);r.uncertainty_observed ||= next.uncertain;}
+let lineageSequence=0;
+async function readLineage(correlation){
+ const controlPath=path.join(home,'.fios-native-control/control.sock'),parent=lstatSync(path.dirname(controlPath)),socketInfo=lstatSync(controlPath);
+ assert(parent.isDirectory()&&!parent.isSymbolicLink()&&parent.uid===process.getuid()&&(parent.mode&0o077)===0&&socketInfo.isSocket()&&socketInfo.uid===process.getuid()&&(socketInfo.mode&0o777)===0o600);
+ const frame=Buffer.alloc(64);frame.write('FIQ9');frame[4]=1;Buffer.from(activityState.instance,'hex').copy(frame,8);Buffer.from(correlation,'hex').copy(frame,24);
+ const bytes=await new Promise((ok,no)=>{
+  const socket=createConnection({path:controlPath});let output=Buffer.alloc(0),settled=false,timer;
+  const finish=error=>{if(settled)return;settled=true;clearTimeout(timer);socket.destroy();error?no(error):ok(output);};
+  timer=setTimeout(()=>finish(new Error('Lineage deadline')),500);socket.once('error',finish);
+  socket.on('data',chunk=>{output=Buffer.concat([output,chunk]);if(output.length>112)finish(new Error('Lineage limit'));});
+  socket.once('end',()=>finish());socket.once('connect',()=>socket.end(frame));
+ });
+ const value=nativeReviewLineage(bytes,activityState.instance,correlation,lineageSequence);lineageSequence=value.sequence;return value;
+}
+async function sampleLineages(){
+ if(!pair||receipt.requests?.length!==2)return;
+ const [a,b]=receipt.requests;
+ const first=await readLineage(a.correlation),second=await readLineage(b.correlation),again=await readLineage(a.correlation);
+ const proof=receipt.correlated_lineage_observations??={samples:0,retained_overlap_samples:0,authority:false,scope:'retained_request_lineages_not_gpu_concurrency_or_terminality'};
+ proof.samples++;
+ if([first,second,again].every(v=>v.found&&!v.uncertain)&&first.root_sequence===again.root_sequence){
+  const roots=[first.root_sequence,second.root_sequence];if(proof.roots)assert.deepEqual(proof.roots,roots,'Native roots changed for a one-shot request');else proof.roots=roots;
+  proof.retained_overlap_samples++;
+  proof.distinct_roots=first.root_sequence!==second.root_sequence;
+  assert(proof.distinct_roots,'Distinct requests aliased a native root');
+ }
+}
+function sampleActivity(){if(activityStopped||activityPending)return;activityPending=(async()=>{acceptActivity(await get('/v1/fios/activity'));await sampleLineages();})().catch(()=>{failed='request_phase_or_lineage_observation_failed';modelAbort.abort();}).finally(()=>{activityPending=null;});}
+async function requestModel(index){
+ const request={index,correlation:randomBytes(32).toString('hex'),dispatched_ms:Math.round(performance.now()-began),response_complete:false};
+ (receipt.requests??=[]).push(request);receipt.model_post_attempts++;assert(receipt.model_post_attempts<=LIMITS.model_posts);receipt.actual_model_posts=null;save();
+ const response=await fetch('http://127.0.0.1:'+port+'/v1/chat/completions',{method:'POST',redirect:'error',headers:{Authorization:'Bearer '+key,'Content-Type':'application/json','X-Fios-Request-ID':request.correlation},body:JSON.stringify({model:ID,messages:[{role:'user',content:'Reply with one word: ready.'}],max_tokens:LIMITS.output_tokens,temperature:0,stream:true,stream_options:{include_usage:true}}),signal:AbortSignal.any([AbortSignal.timeout(LIMITS.request_ms),modelAbort.signal])});
+ request.http_status=response.status;receipt.actual_model_posts=receipt.requests.every(r=>r.http_status!==undefined)?receipt.model_post_attempts:null;save();
+ if(!response.ok){let value;try{value=await nativeReviewJSON(response,16384);}catch{}request.http_failure=nativeReviewHTTPFailure(response.status,value);receipt.http_failure??=request.http_failure;throw Error('Native model request refused');}
+ let buffer='',bytes=0,done=false,deltas=0,completionTokens=null;const decoder=new TextDecoder('utf-8',{fatal:true});
+ for await(const chunk of response.body){bytes+=chunk.length;assert(bytes<=65536&&!failed);buffer+=decoder.decode(chunk,{stream:true});let at;while((at=buffer.indexOf('\n'))>=0){const line=buffer.slice(0,at).trim();buffer=buffer.slice(at+1);if(!line.startsWith('data:'))continue;const data=line.slice(5).trim();if(data==='[DONE]'){done=true;continue;}const value=JSON.parse(data);assert(!value.error);if(value.choices?.some(c=>['content','reasoning_content'].some(k=>typeof c.delta?.[k]==='string'&&c.delta[k].length>0)))deltas++;if(value.usage?.completion_tokens!==undefined){assert(Number.isSafeInteger(value.usage.completion_tokens)&&value.usage.completion_tokens>=0&&value.usage.completion_tokens<=LIMITS.output_tokens);completionTokens=value.usage.completion_tokens;}}}
+ assert(decoder.decode()===''&&done&&completionTokens!==null&&completionTokens>0);
+ Object.assign(request,{completion_tokens:completionTokens,delta_events:deltas,response_complete:true,completed_ms:Math.round(performance.now()-began)});save();return request;
+}
+
 try{
- const identityDeadline=performance.now()+2000;while(!original&&performance.now()<identityDeadline&&!ended()){try{original=observe();}catch{await delay(20);}}assert(original,'Owned process identity unavailable');receipt.original_process={pid:original.pid,uid:original.uid,start:original.start};receipt.peak_resident=original.resident;receipt.peak_footprint=original.footprint;if(Math.max(original.resident,original.footprint)>LIMITS.memory_abort_bytes){failed='memory_abort_threshold';signalOwned('SIGKILL');throw Error('Resource threshold');}save();stage='resource_monitor';
- timer=setInterval(()=>{if(ended())return;try{const p=observe();assert(p.start===original.start);receipt.peak_resident=Math.max(receipt.peak_resident,p.resident);receipt.peak_footprint=Math.max(receipt.peak_footprint,p.footprint);if(Math.max(p.resident,p.footprint)>LIMITS.memory_abort_bytes){failed='memory_abort_threshold';signalOwned('SIGKILL');}}catch{failed='resource_identity_unknown';signalOwned('SIGTERM');}if(performance.now()-began>LIMITS.work_ms){failed='overall_deadline';signalOwned('SIGKILL');}},500);
+ const identityDeadline=performance.now()+2000;while(!original&&performance.now()<identityDeadline&&!ended()){try{original=observe();}catch{await delay(20);}}assert(original,'Owned process identity unavailable');receipt.original_process={pid:original.pid,uid:original.uid,start:original.start};receipt.peak_resident=original.resident;receipt.peak_footprint=original.footprint;if(Math.max(original.resident,original.footprint)>LIMITS.memory_abort_bytes){failed='memory_abort_threshold';modelAbort.abort();signalOwned('SIGKILL');throw Error('Resource threshold');}save();stage='resource_monitor';
+ timer=setInterval(()=>{if(ended())return;try{const p=observe();assert(p.start===original.start);receipt.peak_resident=Math.max(receipt.peak_resident,p.resident);receipt.peak_footprint=Math.max(receipt.peak_footprint,p.footprint);if(Math.max(p.resident,p.footprint)>LIMITS.memory_abort_bytes){failed='memory_abort_threshold';modelAbort.abort();signalOwned('SIGKILL');}}catch{failed='resource_identity_unknown';modelAbort.abort();signalOwned('SIGTERM');}if(performance.now()-began>LIMITS.work_ms){failed='overall_deadline';modelAbort.abort();signalOwned('SIGKILL');}},500);
  stage='readiness';let ready=false;for(let i=0;i<200&&!ready;i++){assert(!ended()&&!failed);try{ready=(await get('/health')).status==='ok';}catch{await delay(25);}}assert(ready,'Private source readiness unavailable');
  stage='catalog';const before=await get('/v1/models');assert(Array.isArray(before.data));assert(before.data.every(m=>!m.loaded&&m.state!=='ready'),'Unexpected preloaded model');
  stage='diagnostic';acceptActivity(await get('/v1/fios/activity'));
  if(check){assert(before.data.length===0);receipt.result='empty_model_profile_and_identity_passed';}
  else{
-  assert(before.data.some(m=>m.id===ID),'Exact selected model not advertised');receipt.native_uncertainty=true;receipt.native_inference=null;receipt.inference_attempted=true;receipt.actual_model_posts=1;save();
-  activityTimer=setInterval(sampleActivity,100);
-  stage='model_request';const response=await fetch('http://127.0.0.1:'+port+'/v1/chat/completions',{method:'POST',headers:{Authorization:'Bearer '+key,'Content-Type':'application/json'},body:JSON.stringify({model:ID,messages:[{role:'user',content:'Reply with one word: ready.'}],max_tokens:8,temperature:0,stream:true,stream_options:{include_usage:true}}),signal:AbortSignal.timeout(LIMITS.request_ms)});
-  if(!response.ok){let value;try{value=await nativeReviewJSON(response,16384);}catch{}receipt.http_failure=nativeReviewHTTPFailure(response.status,value);throw Error('Native model request refused');}stage='model_stream';let buffer='',bytes=0,done=false,deltas=0,completionTokens=null;
-  for await(const chunk of response.body){bytes+=chunk.length;assert(bytes<=65536&&!failed);buffer+=Buffer.from(chunk).toString('utf8');let at;while((at=buffer.indexOf('\n'))>=0){const line=buffer.slice(0,at).trim();buffer=buffer.slice(at+1);if(!line.startsWith('data:'))continue;const data=line.slice(5).trim();if(data==='[DONE]'){done=true;continue;}const value=JSON.parse(data);assert(!value.error);if(value.choices?.some(c=>['content','reasoning_content'].some(k=>typeof c.delta?.[k]==='string'&&c.delta[k].length>0)))deltas++;if(value.usage?.completion_tokens!==undefined){assert(Number.isSafeInteger(value.usage.completion_tokens)&&value.usage.completion_tokens>=0&&value.usage.completion_tokens<=8);completionTokens=value.usage.completion_tokens;}}}
-  assert(done&&completionTokens!==null&&completionTokens>0);receipt.completion_tokens=completionTokens;receipt.delta_events=deltas;postsDone=true;receipt.native_inference=true;clearInterval(activityTimer);activityStopped=true;if(activityPending)await activityPending;acceptActivity(await get('/v1/fios/activity'));assert(receipt.request_phase_observations.preparing_max>0||receipt.request_phase_observations.active_max>0||receipt.request_phase_observations.responding_max>0,'No live model request phase observed');receipt.result='single_source_model_response_complete';receipt.generated_text_logged=false;
+  assert(before.data.some(m=>m.id===ID),'Exact selected model not advertised');receipt.native_uncertainty=true;receipt.native_inference=null;receipt.inference_attempted=true;save();
+  activityTimer=setInterval(sampleActivity,100);stage='model_requests';
+  const pending=Array.from({length:LIMITS.model_posts},(_,index)=>requestModel(index));let results;
+  try{results=await Promise.all(pending);}catch(error){modelAbort.abort();await Promise.allSettled(pending);throw error;}
+  assert(receipt.model_post_attempts===LIMITS.model_posts&&receipt.actual_model_posts===LIMITS.model_posts);postsDone=true;receipt.native_inference=true;
+  clearInterval(activityTimer);activityStopped=true;if(activityPending)await activityPending;acceptActivity(await get('/v1/fios/activity'));
+  assert(receipt.request_phase_observations.preparing_max>0||receipt.request_phase_observations.active_max>0||receipt.request_phase_observations.responding_max>0,'No live model request phase observed');
+  if(pair){
+   assert(Math.max(...results.map(r=>r.dispatched_ms))<Math.min(...results.map(r=>r.completed_ms)),'Client requests did not overlap');
+   assert(receipt.correlated_lineage_observations?.retained_overlap_samples>0,'No bracketed retained lineage overlap observed');
+   receipt.result='overlapping_same_model_responses_complete';
+  }else{
+   receipt.completion_tokens=results[0].completion_tokens;receipt.delta_events=results[0].delta_events;receipt.result='single_source_model_response_complete';
+  }
+  receipt.generated_text_logged=false;
  }
  assert(!failed);receipt.elapsed_ms=Math.round(performance.now()-began);
 }catch{receipt.result='failed';receipt.reason=failed||'review_'+stage+'_failure';process.exitCode=1;}
 finally{
- clearInterval(timer);clearInterval(activityTimer);activityStopped=true;const cleanupStarted=performance.now();signalOwned('SIGTERM');if(activityPending)await activityPending;let end=cleanupStarted+5000;while(!ended()&&performance.now()<end)await delay(25);if(!ended()){signalOwned('SIGKILL');end=performance.now()+2000;while(!ended()&&performance.now()<end)await delay(25);}
+ clearInterval(timer);clearInterval(activityTimer);modelAbort.abort();activityStopped=true;const cleanupStarted=performance.now();signalOwned('SIGTERM');if(activityPending)await activityPending;let end=cleanupStarted+5000;while(!ended()&&performance.now()<end)await delay(25);if(!ended()){signalOwned('SIGKILL');end=performance.now()+2000;while(!ended()&&performance.now()<end)await delay(25);}
  receipt.process_reaped=ended();if(!receipt.process_reaped){receipt.result='failed';receipt.reason='owned_process_not_reaped';process.exitCode=1;child.unref();child.stdout.destroy();child.stderr.destroy();}
  receipt.response_complete=postsDone;save();console.log(JSON.stringify({...receipt,directory}));
 }
