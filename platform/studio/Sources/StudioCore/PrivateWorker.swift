@@ -29,6 +29,7 @@ final class PrivateWorker {
     private var dispatchRecorded=false
     private(set) var reaped=false
     private(set) var memorySamples=0
+    var outputEOFObserved:Bool {eof}
 
     init(process:Process,input:FileHandle,output:FileHandle,journal:Journal,job:String,attempt:Int,started:Int64,readyAt:Int64?=nil,capturedGrant:WorkerGrant?=nil,launchNonce:String?=nil) throws {
         guard process.processIdentifier>1,try journal.hasClaim(job:job,attempt:attempt) else { throw JournalError.invalid }
@@ -46,8 +47,8 @@ final class PrivateWorker {
         try journal.bindWorker(job:job,attempt:attempt,grant:grant,nonce:launchNonce)
     }
     deinit {
+        signalOwned(SIGKILL)
         try? input.close();try? output.close()
-        if process.isRunning { kill(process.processIdentifier,SIGKILL) }
         // Durable ownership is intentionally not released by destruction.
     }
     func enqueue(_ command:Data,expectedModel:String,endpointHash:String,epoch:String,now:Int64) throws {
@@ -75,14 +76,20 @@ final class PrivateWorker {
         outgoing=Data([UInt8(size>>24),UInt8((size>>16)&255),UInt8((size>>8)&255),UInt8(size&255)])
         outgoing.append(command);commandAccepted=true
     }
-    func cancel(now:Int64) throws {
-        guard !revoked else { return }
+    private func signalOwned(_ signal:Int32) {
+        guard process.isRunning,(try? HostBoot.identity())==grant.boot,
+              (try? WorkerResources.startIdentifier(pid:grant.pid))==grant.start else {return}
+        kill(grant.pid,signal)
+    }
+    func cancel(now:Int64,immediate:Bool=false) throws {
+        if revoked {if immediate {signalOwned(SIGKILL)};return}
         guard (0...ActivityPolicy.maximumTimestamp).contains(now) else { throw WorkerResourceError.invalid }
         revoked=true;cancelAt=now;outgoing.removeAll();sent=0
-        defer {
-            try? input.close()
-            if process.isRunning { process.terminate() }
-        }
+        // Claim and launch ownership are already durable. Signal before
+        // potentially slow journal I/O; failure retains the unresolved row.
+        // Neither signal nor local reap supplies native completion proof.
+        signalOwned(immediate ? SIGKILL:SIGTERM)
+        try? input.close()
         if !nativeComplete { try journal.markUncertain(job:job,attempt:attempt) }
     }
     private func resolve(_ outcome:InferenceState) throws {
@@ -99,21 +106,22 @@ final class PrivateWorker {
         guard !reaped else { return [] }
         guard (0...ActivityPolicy.maximumTimestamp).contains(now) else { try cancel(now:started);throw WorkerResourceError.invalid }
         if now<lastPoll {
-            try cancel(now:now)
-            if process.isRunning { kill(process.processIdentifier,SIGKILL) }
+            try cancel(now:now,immediate:true)
         }
         lastPoll=max(lastPoll,now)
         if !authorized || now<started || now-started>=180000 { try cancel(now:now) }
-        if process.isRunning && now-lastSample>=1000 {
+        if process.isRunning && (memorySamples==0 || now-lastSample>=1000) {
             let resident=try? WorkerResources.residentBytes(pid:process.processIdentifier)
             let action=try memory.observe(resident:resident,now:now);lastSample=now;memorySamples+=1
-            if action != .continueRunning { try cancel(now:now) }
-            if action == .kill || action == .cleanupOverdue { kill(process.processIdentifier,SIGKILL) }
+            let oversized=resident.map {$0>512<<20} ?? false
+            if action != .continueRunning {
+                try cancel(now:now,immediate:oversized || action == .kill || action == .cleanupOverdue)
+            }
         }
-        // RSS detection may already consume a full1s sample interval. Keep
-        // the owned child's TERM grace at0.5s so kill/reap has scheduling
-        // margin inside the2s breach budget. Native uncertainty is retained.
-        if let cancelAt,now-cancelAt>=500,process.isRunning { kill(process.processIdentifier,SIGKILL) }
+        // Ordinary cancellation keeps0.5s TERM grace. A hard RSS breach
+        // kills immediately, leaving the2s budget for exact local reap and
+        // durable acknowledgement. Native uncertainty remains independent.
+        if let cancelAt,now-cancelAt>=500,process.isRunning {signalOwned(SIGKILL)}
         if !revoked && sent<outgoing.count {
             if now-started>=10000 { try cancel(now:now) }
             else {
