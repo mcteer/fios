@@ -66,6 +66,8 @@ test('source components remain partial even when epochs agree and counters are z
  const fixture=()=>({source_instance:instance,sample_sequence:1,components:{schema_version:1,scope:'partial_mlx_source_components',coverage:'unknown',authority:false,available:true,coherent:true,stream:{epoch:2,registered:0,pending:0,...flags,shared:false},host:{epoch:2,pending:0,active:0,...flags},metal:{epoch:2,pending:0,captures:0,...flags}}});
  const value=nativeReviewComponents(fixture(),instance);assert.equal(value.coverage,'unknown');assert.equal(value.authority,false);
  const absent=fixture();absent.components={schema_version:1,scope:'partial_mlx_source_components',coverage:'unknown',authority:false,available:false};assert.equal(nativeReviewComponents(absent,instance).available,false);
+ const diagnostic=fixture();diagnostic.components.schema_version=2;diagnostic.components.uncertainty_site=17;assert.equal(nativeReviewComponents(diagnostic,instance).uncertainty_site,17);
+ for(const bad of [-1,65,'17',true])assert.throws(()=>nativeReviewComponents({...diagnostic,components:{...diagnostic.components,uncertainty_site:bad}},instance));
  const changing=fixture();changing.components.host.epoch=3;changing.components.coherent=false;assert.equal(nativeReviewComponents(changing,instance).coherent,false);
  for(const change of [v=>v.components.authority=true,v=>v.components.coverage='all_clients',v=>v.components.host.active=-1,v=>v.components.metal.pending=2147483648,v=>v.components.stream.shared=0,v=>v.components.host.epoch=3,v=>v.components.extra=0]){const b=fixture();change(b);assert.throws(()=>nativeReviewComponents(b,instance));}
  assert.throws(()=>nativeReviewComponents(fixture(),'b'.repeat(32)));assert.throws(()=>nativeReviewComponents(fixture(),instance,1));

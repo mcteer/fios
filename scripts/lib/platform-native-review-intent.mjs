@@ -34,9 +34,10 @@ export function nativeReviewComponents(value,instance,previous=0){
  assert(Number.isSafeInteger(previous)&&previous>=0&&Number.isSafeInteger(value.sample_sequence)&&value.sample_sequence>0&&value.sample_sequence>previous);
  const state=value.components;
  const base=['schema_version','scope','coverage','authority','available'];
- assert(typeof state?.available==='boolean');exact(state,state.available?[...base,'coherent','stream','host','metal']:base);
- assert(state.schema_version===1&&state.scope==='partial_mlx_source_components'&&state.coverage==='unknown'&&state.authority===false);
+ assert(typeof state?.available==='boolean');exact(state,state.available?[...base,'coherent','stream','host','metal',...(state.schema_version===2?['uncertainty_site']:[])]:base);
+ assert([1,2].includes(state.schema_version)&&state.scope==='partial_mlx_source_components'&&state.coverage==='unknown'&&state.authority===false);
  if(!state.available)return {sequence:value.sample_sequence,available:false,authority:false};
+ if(state.schema_version===2)assert(state.uncertainty_site===null||(Number.isInteger(state.uncertainty_site)&&state.uncertainty_site>=0&&state.uncertainty_site<=64));
  const domains={stream:{counts:['registered','pending'],flags:['enabled','uncertain','held','shared']},host:{counts:['pending','active'],flags:['enabled','uncertain','held']},metal:{counts:['pending','captures'],flags:['enabled','uncertain','held']}};
  for(const [name,{counts,flags}]of Object.entries(domains)){
   const part=state[name];exact(part,['epoch',...counts,...flags]);

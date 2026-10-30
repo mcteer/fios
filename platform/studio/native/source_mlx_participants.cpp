@@ -22,12 +22,18 @@ extern "C" int fios_private_mlx_source_components_json(char* output,size_t capac
         const auto metal=mlx::core::fios_metal_buffer_state();
         const auto tf=[](bool value){return value?"true":"false";};
         const bool coherent=stream.epoch!=0 && stream.epoch==host.epoch && host.epoch==metal.epoch;
+        const char* site="null";
+#if defined(MLX_FIOS_UNCERTAINTY_DIAGNOSTICS)
+        char site_buffer[16];
+        std::snprintf(site_buffer,sizeof(site_buffer),"%u",mlx::core::fios_first_uncertainty_site());
+        site=site_buffer;
+#endif
         const int n=std::snprintf(output,capacity,
-            "{\"schema_version\":1,\"scope\":\"partial_mlx_source_components\",\"coverage\":\"unknown\",\"authority\":false,\"available\":true,\"coherent\":%s,"
+            "{\"schema_version\":2,\"scope\":\"partial_mlx_source_components\",\"coverage\":\"unknown\",\"authority\":false,\"available\":true,\"uncertainty_site\":%s,\"coherent\":%s,"
             "\"stream\":{\"epoch\":%llu,\"registered\":%u,\"pending\":%u,\"enabled\":%s,\"uncertain\":%s,\"held\":%s,\"shared\":%s},"
             "\"host\":{\"epoch\":%llu,\"pending\":%llu,\"active\":%llu,\"enabled\":%s,\"uncertain\":%s,\"held\":%s},"
             "\"metal\":{\"epoch\":%llu,\"pending\":%llu,\"captures\":%llu,\"enabled\":%s,\"uncertain\":%s,\"held\":%s}}",
-            tf(coherent),(unsigned long long)stream.epoch,stream.registered,stream.pending,tf(stream.enabled),tf(stream.uncertain),tf(stream.held),tf(stream.shared),
+            site,tf(coherent),(unsigned long long)stream.epoch,stream.registered,stream.pending,tf(stream.enabled),tf(stream.uncertain),tf(stream.held),tf(stream.shared),
             (unsigned long long)host.epoch,(unsigned long long)host.pending,(unsigned long long)host.active,tf(host.enabled),tf(host.uncertain),tf(host.held),
             (unsigned long long)metal.epoch,(unsigned long long)metal.pending,(unsigned long long)metal.captures,tf(metal.enabled),tf(metal.uncertain),tf(metal.held));
         return n>0 && static_cast<size_t>(n)<capacity?n:0;

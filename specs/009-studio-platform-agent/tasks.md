@@ -2,7 +2,7 @@
 
 **Input**: [spec.md](spec.md), [plan.md](plan.md), [research.md](research.md), [data-model.md](data-model.md), [contracts](contracts/control-plane.md), [quickstart.md](quickstart.md).
 **Status**: Implementation authorized. **37/55 tasks complete**; G1 resolved by constitution2.1.0/ADR0003. Authorized read-only SSH inventory completed, but T002/G2 remains unproven and blocks native activation/acceptance, not independent implementation and mock testing. See compatibility.md.008 stays parked.
-**Tests**: Required by FR-018. Write and record failing-first tests before each corresponding implementation; source-only native integration/testing is authorized (user reaffirmed2026-10-27), so do not ask again for that scope. Installation/restarts, real inference and disruptive native acceptance remain separate operational scopes. Passing mocks never complete live acceptance.
+**Tests**: Required by FR-018. Write and record failing-first tests before each corresponding implementation; source-only native integration/testing is authorized (user reaffirmed2026-10-27), so do not ask again for that scope. The user granted blanket real-inference approval on2026-10-30; discover an appropriately small exact local model and execute bounded tests without another permission/model-ID request. Installation/restarts and disruptive native acceptance remain separate operational scopes. Passing mocks never complete live acceptance.
 **Format**: `- [ ] Tnnn [P?] [USn?] description with path`. `[P]` means disjoint files with prerequisites complete, not permission to run before gates.
 
 ## Phase 1: Setup and explicit entry gates

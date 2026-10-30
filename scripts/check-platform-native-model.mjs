@@ -75,6 +75,7 @@ async function sampleComponents(){
  assert(value.available&&value.stream.enabled&&value.host.enabled&&value.metal.enabled,'Private source components unavailable');
  const record=receipt.source_component_observations??={samples:0,coherent_samples:0,uncertainty_observed:false,shared_stream_observed:false,stream_registered_max:0,creation_pending_max:0,host_pending_max:0,host_active_max:0,metal_pending_max:0,metal_captures_max:0,authority:false,coverage:'unknown'};
  record.samples++;if(value.coherent)record.coherent_samples++;
+ if(value.uncertainty_site>0){record.uncertainty_observed=true;record.first_uncertainty_site??=value.uncertainty_site;assert.equal(record.first_uncertainty_site,value.uncertainty_site);record.sdk_patch_sha256=capsule.receipt.declared_inputs.mlx_source_dependency.patch_sha256;}
  record.uncertainty_observed ||= value.stream.uncertain||value.host.uncertain||value.metal.uncertain;record.shared_stream_observed ||= value.stream.shared;
  for(const [key,n]of Object.entries({stream_registered_max:value.stream.registered,creation_pending_max:value.stream.pending,host_pending_max:value.host.pending,host_active_max:value.host.active,metal_pending_max:value.metal.pending,metal_captures_max:value.metal.captures}))record[key]=Math.max(record[key],n);
 }

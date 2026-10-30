@@ -20,9 +20,10 @@ if(reviewIndex!==-1){
  assert(/^[A-Za-z0-9_-]+$/.test(path.basename(reviewOutput))&&!existsSync(reviewOutput));
 }
 const privateGPU=args.length===14&&args[13]==='--static-backend-clear';
-const sharedEvents=args.length===14&&args[13]==='--shared-events';
+const diagnostics=args.length===14&&args[13]==='--uncertainty-diagnostics';
+const sharedEvents=args.length===14&&(args[13]==='--shared-events'||diagnostics);
 assert((args.length===13||privateGPU||sharedEvents)&&args[0]==='--isolated'&&args[1]==='--source'&&args[3]==='--cmake'&&args[5]==='--json-source'&&args[7]==='--fmt-source'&&args[9]==='--metal-cpp-zip'&&args[11]==='--developer-dir'&&[2,4,6,8,10,12].every(i=>path.isAbsolute(args[i])),
- 'Use --isolated --source ABS --cmake ABS --json-source ABS --fmt-source ABS --metal-cpp-zip ABS --developer-dir ABS [--static-backend-clear|--shared-events] [--review-output ABS_NEW_PRIVATE_DIRECTORY]');
+ 'Use --isolated --source ABS --cmake ABS --json-source ABS --fmt-source ABS --metal-cpp-zip ABS --developer-dir ABS [--static-backend-clear|--shared-events|--uncertainty-diagnostics] [--review-output ABS_NEW_PRIVATE_DIRECTORY]');
 assert(!reviewOutput||sharedEvents,'Retained source dependency requires the cumulative shared-event candidate');
 const [source,cmake,json,fmt,metalZIP,developer]=[2,4,6,8,10,12].map(i=>realpathSync(args[i]));
 const env={PATH:'/usr/bin:/bin:/usr/sbin:/sbin',HOME:os.homedir(),LC_ALL:'C',DEVELOPER_DIR:developer,GIT_CONFIG_GLOBAL:'/dev/null',GIT_CONFIG_SYSTEM:'/dev/null',GIT_CONFIG_NOSYSTEM:'1',GIT_NO_REPLACE_OBJECTS:'1',...(privateGPU?{ZERO_AR_DATE:'1'}:{})};
@@ -41,7 +42,7 @@ const metalVersion=run('/usr/bin/xcrun',['--sdk','macosx','metal','--version']);
 const sdk=run('/usr/bin/xcrun',['--sdk','macosx','--show-sdk-version']).trim();
 const metalVersions={'27.0':'32023.921','27.2':'32023.922'};assert(metalVersions[sdk]&&metalVersion.startsWith('Apple metal version '+metalVersions[sdk]+' '),'Unreviewed SDK/Metal compiler pairing');
 const paths=['mlx/backend/cpu/eval.cpp','mlx/backend/metal/device.cpp','mlx/backend/metal/device.h','mlx/backend/metal/eval.cpp','mlx/scheduler.cpp','mlx/stream.cpp','mlx/stream.h'];
-const patchFile=path.join(root,`platform/studio/native/mlx-64ea011-${sharedEvents?'shared-event':'metal-buffer'}-custody.patch`),patch=readFileSync(patchFile,'utf8'),patchSHA=sha(patchFile);
+const patchFile=path.join(root,`platform/studio/native/mlx-64ea011-${diagnostics?'uncertainty-diagnostics.patch':sharedEvents?'shared-event-custody.patch':'metal-buffer-custody.patch'}`),patch=readFileSync(patchFile,'utf8'),patchSHA=sha(patchFile);
 assert.equal(git(source,'diff','--no-ext-diff','--no-textconv','HEAD','--',...paths),patch);assert.deepEqual(git(source,'diff','HEAD','--name-only').trim().split('\n').sort(),paths);
 const fixture=path.join(root,'platform/studio/native/mlx_metal_buffer_custody_test.cpp'),fixtureSHA=sha(fixture);
 const eventFixture=path.join(root,'platform/studio/native/mlx_shared_event_custody_test.cpp'),eventSHA=sharedEvents?sha(eventFixture):null;
@@ -67,6 +68,14 @@ try{
  }
  const execute=(mode,expected=0,event=false)=>{const result=spawnSync(event?eventBinary:binary,[mode],{env,encoding:'utf8',timeout:20000,maxBuffer:1<<20});assert.equal(result.error,undefined);assert.equal(result.signal,null);const log=(result.stdout??'')+(result.stderr??'');assert.equal(result.status,expected,mode+': '+log);console.log(mode+': '+log);return log;};
  const ordinary=()=>{for(const mode of ['--callback','--payload','--capture','--uncommitted','--exact-gate','--foreign','--owner-exit','--raw-alias',...(privateGPU?['--backend-clear-held','--backend-clear-unheld']:[])])execute(mode);if(sharedEvents)for(const mode of ['--wait','--signal','--held-signal'])execute(mode,0,true);};
+ if(diagnostics){
+  const input=path.join(root,'platform/studio/native/mlx_uncertainty_source_test.cpp'),output=path.join(temporary,'uncertainty-fixture');
+  linkOne(input,output,false);
+  const log=run(output,[],{timeout:20000,maxBuffer:4096});assert(log.includes('PASS: genuine exported first-uncertainty accessor'));console.log(log);
+  const budgetInput=path.join(root,'platform/studio/native/mlx_capture_budget_source_test.cpp'),budgetOutput=path.join(temporary,'capture-budget-fixture');
+  linkOne(budgetInput,budgetOutput,false);
+  for(const mode of ['--per-buffer','--global']){const budgetLog=run(budgetOutput,[mode],{timeout:20000,maxBuffer:4096});assert(budgetLog.includes('PASS: exact finite capture budget'));console.log(mode+': '+budgetLog);}
+ }
  ordinary();const librarySHA=sha(library);
  const deviceFile=path.join(checkout,'mlx/backend/metal/device.cpp'),deviceOriginal=readFileSync(deviceFile,'utf8');
  const variant=(file,original,oldText,newText,mode,marker,event=false)=>{assert.equal(original.split(oldText).length,2);writeFileSync(file,original.replace(oldText,newText));compile();assert(execute(mode,77,event).includes(marker));writeFileSync(file,original);compile();ordinary();};

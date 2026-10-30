@@ -50,7 +50,8 @@ export function verifyMlxSourceReview(document,expected,source){
  const paths=['mlx/backend/cpu/eval.cpp','mlx/backend/metal/device.cpp','mlx/backend/metal/device.h','mlx/backend/metal/eval.cpp','mlx/scheduler.cpp','mlx/stream.cpp','mlx/stream.h'];
  assert.equal(git('rev-parse','HEAD').trim(),receipt.pins.mlx);
  assert.deepEqual(git('status','--porcelain','--untracked-files=all','--ignored=matching').trimEnd().split('\n'),paths.map(file=>' M '+file));
- const patch=readFileSync(path.join(root,'platform/studio/native/mlx-64ea011-shared-event-custody.patch'),'utf8');
+ const patches=['mlx-64ea011-shared-event-custody.patch','mlx-64ea011-uncertainty-diagnostics.patch'].map(name=>readFileSync(path.join(root,'platform/studio/native',name),'utf8'));
+ const patch=patches.find(value=>sha(value)===receipt.patch_sha256);assert(patch,'Unreviewed source dependency patch');
  assert.equal(sha(readFileSync(path.join(root,'platform/studio/native/mlx_safetensors_source_test.cpp'))),receipt.loader_fixture_sha256);
  assert.equal(sha(patch),receipt.patch_sha256);assert.equal(git('diff','--no-ext-diff','--no-textconv','HEAD','--',...paths),patch);
  assert.deepEqual(Object.keys(receipt.declared_sources).sort(),paths);
