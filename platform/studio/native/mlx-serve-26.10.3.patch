@@ -273,7 +273,7 @@ index 12bd0f7..19dc43b 100644
  // Clear `seq` (position -> 0).
  void    mlx_llama_seq_reset(mlx_llama_ctx *c, int32_t seq);
 diff --git a/src/arch/ds4.zig b/src/arch/ds4.zig
-index 338a1b1..0e7df9c 100644
+index 338a1b1..6ad21be 100644
 --- a/src/arch/ds4.zig
 +++ b/src/arch/ds4.zig
 @@ -16,6 +16,8 @@
@@ -309,7 +309,7 @@ index 338a1b1..0e7df9c 100644
          try refuseSplitGguf(allocator, model_path);
          if (builtin.os.tag == .macos) try ensureMetalKernels(allocator);
  
-@@ -331,26 +338,38 @@ pub const Ds4Engine = struct {
+@@ -331,60 +338,88 @@ pub const Ds4Engine = struct {
              return Error.EngineOpenFailed;
          }
  
@@ -351,9 +351,57 @@ index 338a1b1..0e7df9c 100644
      }
 +    pub fn close(self: *Ds4Engine) void { _ = self.tryClose(); }
  
-     pub fn hasMtp(self: *Ds4Engine) bool {
+-    pub fn hasMtp(self: *Ds4Engine) bool {
++    pub fn hasMtp(self: *Ds4Engine) Error!bool {
++        const lease = self.fios_lifetime.borrow() catch return Error.LifetimeUnavailable;
++        defer _ = self.fios_lifetime.release(lease);
          return ffi.ds4_engine_has_mtp(self.handle);
-@@ -385,6 +404,8 @@ pub const Ds4Engine = struct {
+     }
+ 
+-    pub fn mtpDraftTokens(self: *Ds4Engine) c_int {
++    pub fn mtpDraftTokens(self: *Ds4Engine) Error!c_int {
++        const lease = self.fios_lifetime.borrow() catch return Error.LifetimeUnavailable;
++        defer _ = self.fios_lifetime.release(lease);
+         return ffi.ds4_engine_mtp_draft_tokens(self.handle);
+     }
+ 
+-    pub fn eosToken(self: *Ds4Engine) i32 {
++    pub fn eosToken(self: *Ds4Engine) Error!i32 {
++        const lease = self.fios_lifetime.borrow() catch return Error.LifetimeUnavailable;
++        defer _ = self.fios_lifetime.release(lease);
+         return @intCast(ffi.ds4_token_eos(self.handle));
+     }
+ 
+     /// ds4's own end-of-generation set: EOS, end-of-text and, on GLM, the
+     /// role markers that open the next turn (`<|user|>`, `<|observation|>`).
+-    pub fn isStop(self: *Ds4Engine, token: i32) bool {
++    pub fn isStop(self: *Ds4Engine, token: i32) Error!bool {
++        const lease = self.fios_lifetime.borrow() catch return Error.LifetimeUnavailable;
++        defer _ = self.fios_lifetime.release(lease);
+         return ffi.ds4_token_is_stop(self.handle, token);
+     }
+ 
+-    pub fn vocabSize(self: *Ds4Engine) u32 {
++    pub fn vocabSize(self: *Ds4Engine) Error!u32 {
++        const lease = self.fios_lifetime.borrow() catch return Error.LifetimeUnavailable;
++        defer _ = self.fios_lifetime.release(lease);
+         return @intCast(ffi.ds4_engine_vocab_size(self.handle));
+     }
+ 
+-    pub fn assistantToken(self: *Ds4Engine) i32 {
++    pub fn assistantToken(self: *Ds4Engine) Error!i32 {
++        const lease = self.fios_lifetime.borrow() catch return Error.LifetimeUnavailable;
++        defer _ = self.fios_lifetime.release(lease);
+         return @intCast(ffi.ds4_token_assistant(self.handle));
+     }
+ 
+-    pub fn userToken(self: *Ds4Engine) i32 {
++    pub fn userToken(self: *Ds4Engine) Error!i32 {
++        const lease = self.fios_lifetime.borrow() catch return Error.LifetimeUnavailable;
++        defer _ = self.fios_lifetime.release(lease);
+         return @intCast(ffi.ds4_token_user(self.handle));
+     }
+ 
      /// Tokenize free-form text (no chat scaffolding). Caller owns the returned
      /// slice and frees with `allocator.free`.
      pub fn tokenizeText(self: *Ds4Engine, allocator: std.mem.Allocator, text: []const u8) Error![]i32 {
@@ -362,7 +410,7 @@ index 338a1b1..0e7df9c 100644
          const text_z = allocator.dupeSentinel(u8, text, 0) catch return Error.OutOfMemory;
          defer allocator.free(text_z);
  
-@@ -404,6 +425,8 @@ pub const Ds4Engine = struct {
+@@ -404,6 +439,8 @@ pub const Ds4Engine = struct {
          user: []const u8,
          think_mode: ffi.ThinkMode,
      ) Error![]i32 {
@@ -371,7 +419,7 @@ index 338a1b1..0e7df9c 100644
          const sys_z: ?[:0]u8 = if (system) |s| (allocator.dupeSentinel(u8, s, 0) catch return Error.OutOfMemory) else null;
          defer if (sys_z) |s| allocator.free(s);
          const user_z = allocator.dupeSentinel(u8, user, 0) catch return Error.OutOfMemory;
-@@ -432,6 +455,8 @@ pub const Ds4Engine = struct {
+@@ -432,6 +469,8 @@ pub const Ds4Engine = struct {
          turns: []const ChatTurn,
          think_mode: ffi.ThinkMode,
      ) Error![]i32 {
@@ -380,7 +428,7 @@ index 338a1b1..0e7df9c 100644
          var tv = ffi.Tokens{};
          defer ffi.ds4_tokens_free(&tv);
  
-@@ -459,6 +484,8 @@ pub const Ds4Engine = struct {
+@@ -459,6 +498,8 @@ pub const Ds4Engine = struct {
      /// Single token → bytes lookup. Caller owns the returned buffer.
      /// Returned bytes are NOT NUL-terminated; the slice length is authoritative.
      pub fn detokenizeOne(self: *Ds4Engine, allocator: std.mem.Allocator, token_id: i32) Error![]u8 {
@@ -389,7 +437,7 @@ index 338a1b1..0e7df9c 100644
          var len_out: usize = 0;
          const raw = ffi.ds4_token_text(self.handle, @intCast(token_id), &len_out);
          if (raw == null or len_out == 0) {
-@@ -469,21 +496,24 @@ pub const Ds4Engine = struct {
+@@ -469,21 +510,24 @@ pub const Ds4Engine = struct {
      }
  
      pub fn createSession(self: *Ds4Engine, ctx_size: i32) Error!*Ds4Session {
@@ -418,7 +466,7 @@ index 338a1b1..0e7df9c 100644
          };
          return sess;
      }
-@@ -498,13 +528,22 @@ fn tokensToOwnedSlice(allocator: std.mem.Allocator, tv: *const ffi.Tokens) Error
+@@ -498,13 +542,22 @@ fn tokensToOwnedSlice(allocator: std.mem.Allocator, tv: *const ffi.Tokens) Error
      return buf;
  }
  
@@ -442,7 +490,7 @@ index 338a1b1..0e7df9c 100644
  };
  
  pub const Ds4Session = struct {
-@@ -512,11 +551,19 @@ pub const Ds4Session = struct {
+@@ -512,27 +565,43 @@ pub const Ds4Session = struct {
      engine: *Ds4Engine,
      handle: *ffi.Session,
      ctx_size: i32,
@@ -461,9 +509,27 @@ index 338a1b1..0e7df9c 100644
      }
 +    pub fn free(self: *Ds4Session) void { _ = self.tryFree(); }
  
-     pub fn pos(self: *Ds4Session) i32 {
+-    pub fn pos(self: *Ds4Session) i32 {
++    pub fn pos(self: *Ds4Session) Error!i32 {
++        const lease = self.fios_lifetime.borrow() catch return Error.LifetimeUnavailable;
++        defer _ = self.fios_lifetime.release(lease);
          return @intCast(ffi.ds4_session_pos(self.handle));
-@@ -533,6 +580,8 @@ pub const Ds4Session = struct {
+     }
+ 
+-    pub fn rewind(self: *Ds4Session, to_pos: i32) void {
++    pub fn rewind(self: *Ds4Session, to_pos: i32) Error!void {
++        const lease = self.fios_lifetime.borrow() catch return Error.LifetimeUnavailable;
++        defer _ = self.fios_lifetime.release(lease);
+         ffi.ds4_session_rewind(self.handle, @intCast(to_pos));
+     }
+ 
+-    pub fn invalidate(self: *Ds4Session) void {
++    pub fn invalidate(self: *Ds4Session) Error!void {
++        const lease = self.fios_lifetime.borrow() catch return Error.LifetimeUnavailable;
++        defer _ = self.fios_lifetime.release(lease);
+         ffi.ds4_session_invalidate(self.handle);
+     }
+ 
      /// Sync the live session to a full prompt prefix. Reuses common prefix
      /// against the live KV cache; otherwise rebuilds from scratch.
      pub fn sync(self: *Ds4Session, prompt_ids: []const i32) Error!void {
@@ -472,7 +538,7 @@ index 338a1b1..0e7df9c 100644
          var holder = try TokenHolder.init(self.allocator, prompt_ids);
          defer holder.deinit();
          var err_buf: [256]u8 = undefined;
-@@ -544,6 +593,8 @@ pub const Ds4Session = struct {
+@@ -544,6 +613,8 @@ pub const Ds4Session = struct {
      }
  
      pub fn commonPrefix(self: *Ds4Session, prompt_ids: []const i32) Error!i32 {
@@ -481,7 +547,7 @@ index 338a1b1..0e7df9c 100644
          var holder = try TokenHolder.init(self.allocator, prompt_ids);
          defer holder.deinit();
          return @intCast(ffi.ds4_session_common_prefix(self.handle, &holder.tv));
-@@ -551,6 +602,8 @@ pub const Ds4Session = struct {
+@@ -551,6 +622,8 @@ pub const Ds4Session = struct {
  
      /// Evaluate one new token. Caller has already synced to the prefix.
      pub fn eval(self: *Ds4Session, token: i32) Error!void {
@@ -490,7 +556,32 @@ index 338a1b1..0e7df9c 100644
          var err_buf: [256]u8 = undefined;
          const rc = ffi.ds4_session_eval(self.handle, @intCast(token), &err_buf, err_buf.len);
          if (rc != 0) {
-@@ -581,6 +634,8 @@ pub const Ds4Session = struct {
+@@ -559,15 +632,21 @@ pub const Ds4Session = struct {
+         }
+     }
+ 
+-    pub fn argmax(self: *Ds4Session) i32 {
++    pub fn argmax(self: *Ds4Session) Error!i32 {
++        const lease = self.fios_lifetime.borrow() catch return Error.LifetimeUnavailable;
++        defer _ = self.fios_lifetime.release(lease);
+         return @intCast(ffi.ds4_session_argmax(self.handle));
+     }
+ 
+-    pub fn argmaxExcluding(self: *Ds4Session, excluded_id: i32) i32 {
++    pub fn argmaxExcluding(self: *Ds4Session, excluded_id: i32) Error!i32 {
++        const lease = self.fios_lifetime.borrow() catch return Error.LifetimeUnavailable;
++        defer _ = self.fios_lifetime.release(lease);
+         return @intCast(ffi.ds4_session_argmax_excluding(self.handle, @intCast(excluded_id)));
+     }
+ 
+-    pub fn sample(self: *Ds4Session, temperature: f32, top_k: i32, top_p: f32, min_p: f32, rng: *u64) i32 {
++    pub fn sample(self: *Ds4Session, temperature: f32, top_k: i32, top_p: f32, min_p: f32, rng: *u64) Error!i32 {
++        const lease = self.fios_lifetime.borrow() catch return Error.LifetimeUnavailable;
++        defer _ = self.fios_lifetime.release(lease);
+         return @intCast(ffi.ds4_session_sample(self.handle, temperature, @intCast(top_k), top_p, min_p, rng));
+     }
+ 
+@@ -581,6 +660,8 @@ pub const Ds4Session = struct {
          eos_token: i32,
          out_tokens: []i32,
      ) Error!i32 {
@@ -499,7 +590,7 @@ index 338a1b1..0e7df9c 100644
          var c_out_buf = self.allocator.alloc(c_int, out_tokens.len) catch return Error.OutOfMemory;
          defer self.allocator.free(c_out_buf);
  
-@@ -618,6 +673,8 @@ pub const Ds4Session = struct {
+@@ -618,6 +699,8 @@ pub const Ds4Session = struct {
          rng: *u64,
          out_tokens: []i32,
      ) Error!i32 {
@@ -508,7 +599,7 @@ index 338a1b1..0e7df9c 100644
          var c_out_buf = self.allocator.alloc(c_int, out_tokens.len) catch return Error.OutOfMemory;
          defer self.allocator.free(c_out_buf);
          var err_buf: [256]u8 = undefined;
-@@ -645,18 +702,30 @@ pub const Ds4Session = struct {
+@@ -645,18 +728,30 @@ pub const Ds4Session = struct {
          return @intCast(n);
      }
  
@@ -542,7 +633,7 @@ index 338a1b1..0e7df9c 100644
          var err_buf: [256]u8 = undefined;
          const rc = ffi.ds4_session_load_snapshot(self.handle, &snap.inner, &err_buf, err_buf.len);
          if (rc != 0) {
-@@ -733,3 +802,71 @@ test "kernel hash is stable across calls" {
+@@ -733,3 +828,100 @@ test "kernel hash is stable across calls" {
      const b = computeKernelHash();
      try std.testing.expectEqualSlices(u8, &a, &b);
  }
@@ -591,6 +682,28 @@ index 338a1b1..0e7df9c 100644
 +    try std.testing.expect(allocation_only.fios_lifetime.canClose(null));
 +    try std.testing.expectEqual(@as(usize, 0), failing.allocations);
 +    try std.testing.expectEqual(@as(usize, 0), failing.deallocations);
++    // Session operations must refuse before handle access, integer casts,
++    // mutation or RNG consumption. There is no native session in this test.
++    for (0..4) |mode| {
++        var session: Ds4Session = undefined;
++        session.fios_lifetime = if (mode == 0) .{} else try lifetime.Lifetime.init();
++        var held: [64]lifetime.Ticket = undefined;
++        if (mode == 1) { _ = try session.fios_lifetime.beginClose(null); }
++        else if (mode == 2) { session.fios_lifetime.fence(); }
++        else if (mode == 3) { for (&held) |*ticket| ticket.* = try session.fios_lifetime.borrow(); }
++        try std.testing.expectError(Error.LifetimeUnavailable, session.pos());
++        try std.testing.expectError(Error.LifetimeUnavailable, session.rewind(-1));
++        try std.testing.expectError(Error.LifetimeUnavailable, session.invalidate());
++        try std.testing.expectError(Error.LifetimeUnavailable, session.argmax());
++        try std.testing.expectError(Error.LifetimeUnavailable, session.argmaxExcluding(-1));
++        var rng: u64 = 12345;
++        try std.testing.expectError(Error.LifetimeUnavailable, session.sample(0, -1, 1, 0, &rng));
++        try std.testing.expectEqual(@as(u64, 12345), rng);
++        if (mode == 3) {
++            for (held) |ticket| try std.testing.expect(session.fios_lifetime.release(ticket));
++            try std.testing.expect(session.fios_lifetime.canClose(null));
++        }
++    }
 +    // Only lifetime metadata is initialized; there is no native engine handle.
 +    var engine: Ds4Engine = undefined;
 +    for (0..4) |mode| {
@@ -603,6 +716,13 @@ index 338a1b1..0e7df9c 100644
 +        } else if (mode == 3) {
 +            for (&held) |*ticket| ticket.* = try engine.fios_lifetime.borrow();
 +        }
++        try std.testing.expectError(Error.LifetimeUnavailable, engine.hasMtp());
++        try std.testing.expectError(Error.LifetimeUnavailable, engine.mtpDraftTokens());
++        try std.testing.expectError(Error.LifetimeUnavailable, engine.eosToken());
++        try std.testing.expectError(Error.LifetimeUnavailable, engine.isStop(0));
++        try std.testing.expectError(Error.LifetimeUnavailable, engine.vocabSize());
++        try std.testing.expectError(Error.LifetimeUnavailable, engine.assistantToken());
++        try std.testing.expectError(Error.LifetimeUnavailable, engine.userToken());
 +        try std.testing.expectError(Error.LifetimeUnavailable, engine.tokenizeText(std.testing.allocator, ""));
 +        try std.testing.expectError(Error.LifetimeUnavailable, engine.encodeChatPrompt(std.testing.allocator, null, "", .none));
 +        try std.testing.expectError(Error.LifetimeUnavailable, engine.encodeChatTranscript(std.testing.allocator, null, &.{}, .none));
@@ -615,7 +735,7 @@ index 338a1b1..0e7df9c 100644
 +    }
 +}
 diff --git a/src/arch/ds4_stub.zig b/src/arch/ds4_stub.zig
-index 82e806a..a4b476d 100644
+index 82e806a..2080af0 100644
 --- a/src/arch/ds4_stub.zig
 +++ b/src/arch/ds4_stub.zig
 @@ -5,11 +5,13 @@
@@ -640,7 +760,7 @@ index 82e806a..a4b476d 100644
      pub fn free(self: *Ds4Snapshot) void {
          _ = self;
          @panic(unavailable);
-@@ -79,6 +82,10 @@ pub const Ds4Engine = struct {
+@@ -79,38 +82,42 @@ pub const Ds4Engine = struct {
          _ = opts;
          return Error.EngineOpenFailed;
      }
@@ -651,7 +771,53 @@ index 82e806a..a4b476d 100644
      pub fn close(self: *Ds4Engine) void {
          _ = self;
          @panic(unavailable);
-@@ -160,6 +167,8 @@ pub const Ds4Engine = struct {
+     }
+-    pub fn hasMtp(self: *Ds4Engine) bool {
++    pub fn hasMtp(self: *Ds4Engine) Error!bool {
+         _ = self;
+-        @panic(unavailable);
++        return Error.LifetimeUnavailable;
+     }
+-    pub fn mtpDraftTokens(self: *Ds4Engine) c_int {
++    pub fn mtpDraftTokens(self: *Ds4Engine) Error!c_int {
+         _ = self;
+-        @panic(unavailable);
++        return Error.LifetimeUnavailable;
+     }
+-    pub fn eosToken(self: *Ds4Engine) i32 {
++    pub fn eosToken(self: *Ds4Engine) Error!i32 {
+         _ = self;
+-        @panic(unavailable);
++        return Error.LifetimeUnavailable;
+     }
+-    pub fn isStop(self: *Ds4Engine, token: i32) bool {
++    pub fn isStop(self: *Ds4Engine, token: i32) Error!bool {
+         _ = self;
+         _ = token;
+-        @panic(unavailable);
++        return Error.LifetimeUnavailable;
+     }
+-    pub fn vocabSize(self: *Ds4Engine) u32 {
++    pub fn vocabSize(self: *Ds4Engine) Error!u32 {
+         _ = self;
+-        @panic(unavailable);
++        return Error.LifetimeUnavailable;
+     }
+-    pub fn assistantToken(self: *Ds4Engine) i32 {
++    pub fn assistantToken(self: *Ds4Engine) Error!i32 {
+         _ = self;
+-        @panic(unavailable);
++        return Error.LifetimeUnavailable;
+     }
+-    pub fn userToken(self: *Ds4Engine) i32 {
++    pub fn userToken(self: *Ds4Engine) Error!i32 {
+         _ = self;
+-        @panic(unavailable);
++        return Error.LifetimeUnavailable;
+     }
+     pub fn tokenizeText(self: *Ds4Engine, allocator: std.mem.Allocator, text: []const u8) Error![]i32 {
+         _ = self;
+@@ -160,22 +167,24 @@ pub const Ds4Engine = struct {
  };
  
  pub const Ds4Session = struct {
@@ -660,6 +826,58 @@ index 82e806a..a4b476d 100644
      pub fn free(self: *Ds4Session) void {
          _ = self;
          @panic(unavailable);
+     }
+-    pub fn pos(self: *Ds4Session) i32 {
++    pub fn pos(self: *Ds4Session) Error!i32 {
+         _ = self;
+-        @panic(unavailable);
++        return Error.LifetimeUnavailable;
+     }
+-    pub fn rewind(self: *Ds4Session, to_pos: i32) void {
++    pub fn rewind(self: *Ds4Session, to_pos: i32) Error!void {
+         _ = self;
+         _ = to_pos;
+-        @panic(unavailable);
++        return Error.LifetimeUnavailable;
+     }
+-    pub fn invalidate(self: *Ds4Session) void {
++    pub fn invalidate(self: *Ds4Session) Error!void {
+         _ = self;
+-        @panic(unavailable);
++        return Error.LifetimeUnavailable;
+     }
+     pub fn sync(self: *Ds4Session, prompt_ids: []const i32) Error!void {
+         _ = self;
+@@ -209,23 +218,23 @@ pub const Ds4Session = struct {
+         _ = out_tokens;
+         @panic(unavailable);
+     }
+-    pub fn argmax(self: *Ds4Session) i32 {
++    pub fn argmax(self: *Ds4Session) Error!i32 {
+         _ = self;
+-        @panic(unavailable);
++        return Error.LifetimeUnavailable;
+     }
+-    pub fn argmaxExcluding(self: *Ds4Session, excluded_id: i32) i32 {
++    pub fn argmaxExcluding(self: *Ds4Session, excluded_id: i32) Error!i32 {
+         _ = self;
+         _ = excluded_id;
+-        @panic(unavailable);
++        return Error.LifetimeUnavailable;
+     }
+-    pub fn sample(self: *Ds4Session, temperature: f32, top_k: i32, top_p: f32, min_p: f32, rng: *u64) i32 {
++    pub fn sample(self: *Ds4Session, temperature: f32, top_k: i32, top_p: f32, min_p: f32, rng: *u64) Error!i32 {
+         _ = self;
+         _ = temperature;
+         _ = top_k;
+         _ = top_p;
+         _ = min_p;
+         _ = rng;
+-        @panic(unavailable);
++        return Error.LifetimeUnavailable;
+     }
+     pub fn evalSpeculative(
+         self: *Ds4Session,
 @@ -241,11 +250,11 @@ pub const Ds4Session = struct {
          _ = out_tokens;
          @panic(unavailable);
@@ -1326,7 +1544,7 @@ index 1c9946d..6ff78b4 100644
  
  pub extern fn mlx_llama_seq_prefill(c: *Ctx, seq: i32, tokens: [*]const i32, n_tokens: i32, err: ?[*]u8, errlen: usize) i32;
 diff --git a/src/main.zig b/src/main.zig
-index 2a12423..0e67e12 100644
+index 2a12423..528ce86 100644
 --- a/src/main.zig
 +++ b/src/main.zig
 @@ -524,29 +524,34 @@ fn printUsage(io: std.Io) void {
@@ -1455,6 +1673,30 @@ index 2a12423..0e67e12 100644
              return;
          } else if (std.mem.eql(u8, args[i], "--help") or std.mem.eql(u8, args[i], "-h")) {
              printUsage(io);
+@@ -1918,7 +1936,7 @@ fn runDs4Offline(
+     };
+     defer engine.close();
+ 
+-    log.info("[ds4] engine ready (EOS={d}, has_mtp={})\n", .{ engine.eosToken(), engine.hasMtp() });
++    log.info("[ds4] engine ready (EOS={d}, has_mtp={})\n", .{ try engine.eosToken(), try engine.hasMtp() });
+ 
+     // Render the prompt through ds4's built-in chat template. `prompt` is the
+     // raw user text; the engine adds BOS, system markers, and the assistant
+@@ -1950,11 +1968,11 @@ fn runDs4Offline(
+     var generated: u32 = 0;
+     while (generated < max_tokens) : (generated += 1) {
+         const next_id: i32 = if (temp <= 0.0)
+-            sess.argmax()
++            try sess.argmax()
+         else
+-            sess.sample(temp, 0, 1.0, 0.05, &rng);
++            try sess.sample(temp, 0, 1.0, 0.05, &rng);
+ 
+-        if (engine.isStop(next_id)) break;
++        if ((try engine.isStop(next_id))) break;
+ 
+         const piece = try engine.detokenizeOne(allocator, next_id);
+         defer allocator.free(piece);
 @@ -2483,13 +2501,13 @@ fn runLlamaOffline(
  
      log.info("[llama] backend: Metal, model: {s}\n", .{gguf_path});
@@ -2263,7 +2505,7 @@ index da1f791..8345350 100644
 +    try std.testing.expectEqual(@as(usize, 1), registry.entries.count());
 +}
 diff --git a/src/scheduler.zig b/src/scheduler.zig
-index 9e12566..64e8f57 100644
+index 9e12566..4e16528 100644
 --- a/src/scheduler.zig
 +++ b/src/scheduler.zig
 @@ -32,6 +32,8 @@
@@ -3420,7 +3662,20 @@ index 9e12566..64e8f57 100644
  fn doLoadDs4OnInferenceThread(sch: *Scheduler, params: anytype) !void {
      log.info("[ds4] opening engine: {s}\n", .{params.ds4_path});
      // Auto-load the MTP draft head sitting beside the model for speculative
-@@ -3258,11 +4134,8 @@ fn doLoadDs4OnInferenceThread(sch: *Scheduler, params: anytype) !void {
+@@ -3247,22 +4123,19 @@ fn doLoadDs4OnInferenceThread(sch: *Scheduler, params: anytype) !void {
+     errdefer engine.close();
+     // draft_tokens is the spec-readiness signal for BOTH support kinds
+     // (legacy MTP count, or DSpark block size when the runtime is armed).
+-    log.info("[ds4] engine ready (EOS={d}, has_mtp={}, draft_tokens={d})\n", .{ engine.eosToken(), engine.hasMtp(), engine.mtpDraftTokens() });
++    log.info("[ds4] engine ready (EOS={d}, has_mtp={}, draft_tokens={d})\n", .{ try engine.eosToken(), try engine.hasMtp(), try engine.mtpDraftTokens() });
+ 
+     // Make sure the stub config knows about the engine's EOS token so the
+     // streaming/non-streaming paths' EOS check fires correctly. addEosToken
+     // is a no-op if the slot is already present.
+-    const eos_id: u32 = @intCast(engine.eosToken());
++    const eos_id: u32 = @intCast(try engine.eosToken());
+     params.config.addEosToken(eos_id);
+ 
      // ── Install on entry. Everything below must be infallible (mirrors
      //    the MLX path's invariant about the per-ptr errdefers above).
      const entry = params.entry;
@@ -4098,6 +4353,76 @@ index 9e12566..64e8f57 100644
  }
  
  fn dflashContextCoversPrefix(context_len: usize, prefix_len: usize) bool {
+@@ -7334,7 +8532,7 @@ fn runPrefillDs4(sch: *Scheduler, slot: *Slot, engine: *arch_ds4.Ds4Engine) !voi
+     const cached = sess.commonPrefix(i32_prompt) catch 0;
+     sess.sync(i32_prompt) catch |err| {
+         // Leave nothing half-built behind for the next request.
+-        sess.invalidate();
++        try sess.invalidate();
+         return err;
+     };
+ 
+@@ -7414,9 +8612,9 @@ fn llamaSampling(slot: *const Slot) arch_llama.Sampling {
+ fn runDs4DecodeTick(sch: *Scheduler, slot: *Slot, session: *arch_ds4.Ds4Session) !void {
+     const engine = slot.model.ds4_engine.?;
+     const next_id: i32 = if (slot.sampling.temperature <= 0.0)
+-        session.argmax()
++        try session.argmax()
+     else
+-        session.sample(
++        try session.sample(
+             slot.sampling.temperature,
+             @intCast(slot.sampling.top_k),
+             slot.sampling.top_p,
+@@ -7433,7 +8631,7 @@ fn runDs4DecodeTick(sch: *Scheduler, slot: *Slot, session: *arch_ds4.Ds4Session)
+     const tok_u32: u32 = @intCast(next_id);
+ 
+     // EOS handling — match the MLX path: do NOT emit the stop token.
+-    if (engine.isStop(next_id) or generate_mod.isEosId(tok_u32, slot.eos_token_ids)) {
++    if ((try engine.isStop(next_id)) or generate_mod.isEosId(tok_u32, slot.eos_token_ids)) {
+         finishSlot(sch, slot, "stop");
+         return;
+     }
+@@ -7442,17 +8640,17 @@ fn runDs4DecodeTick(sch: *Scheduler, slot: *Slot, session: *arch_ds4.Ds4Session)
+     // verifies several more, advancing ds4's KV internally (no separate eval).
+     // It emits `[sampled, accepted…]`, so this tick may push several tokens.
+     // Mirrors ds4's own CLI loop; engages only under greedy sampling.
+-    if (ds4MtpShouldEngage(engine.mtpDraftTokens(), slot.sampling.temperature, engine.embedded_mtp)) {
++    if (ds4MtpShouldEngage(try engine.mtpDraftTokens(), slot.sampling.temperature, engine.embedded_mtp)) {
+         var spec_buf: [DS4_MTP_MAX_TOKENS]i32 = undefined;
+         const done: i64 = @intCast(slot.completion_tokens);
+         const cap: i64 = @intCast(slot.max_tokens);
+         const remaining: i32 = @intCast(@max(@as(i64, 1), cap - done));
+         const spec = if (slot.sampling.temperature <= 0.0)
+-            session.evalSpeculative(next_id, remaining, engine.eosToken(), spec_buf[0..])
++            session.evalSpeculative(next_id, remaining, try engine.eosToken(), spec_buf[0..])
+         else
+-            session.evalSpeculativeSampled(next_id, remaining, engine.eosToken(), slot.sampling.temperature, @intCast(slot.sampling.top_k), slot.sampling.top_p, slot.sampling.min_p orelse 0.05, &slot.ds4_rng, spec_buf[0..]);
++            session.evalSpeculativeSampled(next_id, remaining, try engine.eosToken(), slot.sampling.temperature, @intCast(slot.sampling.top_k), slot.sampling.top_p, slot.sampling.min_p orelse 0.05, &slot.ds4_rng, spec_buf[0..]);
+         const n = spec catch {
+-            session.invalidate();
++            try session.invalidate();
+             slot.markError("ds4_spec_failed");
+             return;
+         };
+@@ -7460,7 +8658,7 @@ fn runDs4DecodeTick(sch: *Scheduler, slot: *Slot, session: *arch_ds4.Ds4Session)
+         for (spec_buf[0..n_usize]) |t| {
+             const t_u32: u32 = @intCast(t);
+             // EOS may appear mid-batch — stop, and never emit it.
+-            if (engine.isStop(t) or generate_mod.isEosId(t_u32, slot.eos_token_ids)) {
++            if ((try engine.isStop(t)) or generate_mod.isEosId(t_u32, slot.eos_token_ids)) {
+                 finishSlot(sch, slot, "stop");
+                 return;
+             }
+@@ -7482,7 +8680,7 @@ fn runDs4DecodeTick(sch: *Scheduler, slot: *Slot, session: *arch_ds4.Ds4Session)
+     // Advance ds4's KV by feeding the freshly-sampled token. After this
+     // the session is in the state expected by the NEXT decode tick.
+     session.eval(next_id) catch |err| {
+-        session.invalidate();
++        try session.invalidate();
+         return err;
+     };
+ 
 @@ -7518,8 +8716,12 @@ test "ds4MtpShouldEngage: >1 draft tokens + greedy (legacy MTP and DSpark)" {
  /// the slot keeps decoding.
  fn emitLlamaToken(sch: *Scheduler, slot: *Slot, tok: i32) bool {
@@ -4134,8 +4459,17 @@ index 9e12566..64e8f57 100644
  
      // Publish the in-flight generated-token aggregate for the gauge sampler.
      // Runs after the whole tick (all decode work + any finishSlot calls) on
+@@ -9384,7 +10594,7 @@ fn runSingleDecodeTick(sch: *Scheduler, slot: *Slot) !void {
+ fn runSingleDecodeTickInner(sch: *Scheduler, slot: *Slot) !void {
+     // ds4-backed slot: drive the engine's session forward by one token. No
+     // PLD / drafter / batched paths apply — ds4 has its own internal MTP
+-    // (see TODO: wire `evalSpeculative` when temp=0 and engine.hasMtp()).
++    // (see TODO: wire `evalSpeculative` when temp=0 and try engine.hasMtp()).
+     if (slot.ds4_session) |session| {
+         return runDs4DecodeTick(sch, slot, session);
+     }
 diff --git a/src/server.zig b/src/server.zig
-index 720b2c6..36d7c1e 100644
+index 720b2c6..bbae7df 100644
 --- a/src/server.zig
 +++ b/src/server.zig
 @@ -1,4 +1,8 @@
@@ -4403,6 +4737,27 @@ index 720b2c6..36d7c1e 100644
      var config = model_mod.parseConfig(global_registry.?.io, allocator, entry.path) catch return null;
      defer config.deinit(allocator);
      const fa = config.forced_aligner orelse return null;
+@@ -8584,9 +8680,9 @@ fn embeddedEngineSettings(st: PropsSettings, engine: PropsEngine, engine_mtp: bo
+     return out;
+ }
+ 
+-fn propsSettingsFor(lm: *LoadedModel) PropsSettings {
++fn propsSettingsFor(lm: *LoadedModel) !PropsSettings {
+     const engine: PropsEngine = if (lm.ds4_engine != null) .ds4 else if (lm.llama_engine != null) .llama else if (lm.ane != null) .ane else .mlx;
+-    const engine_mtp = if (lm.ds4_engine) |e| e.mtpDraftTokens() > 1 else if (lm.llama_ctx) |c| c.mtpDrafts() > 0 else false;
++    const engine_mtp = if (lm.ds4_engine) |e| (try e.mtpDraftTokens()) > 1 else if (lm.llama_ctx) |c| c.mtpDrafts() > 0 else false;
+     var out = embeddedEngineSettings(mlxPropsSettings(lm), engine, engine_mtp);
+     if (lm.ane != null) out.kv_quant = "off";
+     return out;
+@@ -8754,7 +8850,7 @@ fn handleProps(allocator: std.mem.Allocator, stream: *Conn, lm: *LoadedModel) !v
+     defer allocator.free(ngram_json);
+     const batching_json = try batchingPropsJson(allocator, batchVerdictFor(lm));
+     defer allocator.free(batching_json);
+-    const settings_json = try settingsPropsJson(allocator, propsSettingsFor(lm));
++    const settings_json = try settingsPropsJson(allocator, try propsSettingsFor(lm));
+     defer allocator.free(settings_json);
+     const cluster_json = try @import("distributed.zig").propsJson(allocator);
+     defer allocator.free(cluster_json);
 @@ -9300,7 +9396,7 @@ fn handleDetokenize(
  
      const ids = try allocator.alloc(u32, tokens_val.array.items.len);

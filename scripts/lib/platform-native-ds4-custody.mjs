@@ -13,14 +13,14 @@ export function verifyDs4Custody(arch,registry) {
   /pub fn tryFree\(self: \*Ds4Session\) bool \{\s*const closing = self\.fios_lifetime\.beginClose\(null\) catch return false;/,
   /\.fios_parent = fios_parent/,
  ])assert.match(arch,edge,'FIO_DS4_CUSTODY_WIRING_MISSING');
- for(const name of ['sync','commonPrefix','eval','evalSpeculative','evalSpeculativeSampled','saveSnapshot','loadSnapshot']){
+ for(const name of ['pos','rewind','invalidate','argmax','argmaxExcluding','sample','sync','commonPrefix','eval','evalSpeculative','evalSpeculativeSampled','saveSnapshot','loadSnapshot']){
   const start=arch.indexOf(`    pub fn ${name}(`,arch.indexOf('pub const Ds4Session'));
   assert(start>=0,'FIO_DS4_CUSTODY_WIRING_MISSING');
   const next=arch.indexOf('    pub fn ',start+1),body=arch.slice(start,next<0?undefined:next);
   const borrow=body.indexOf('const lease = self.fios_lifetime.borrow()'),foreign=body.indexOf('ffi.');
   assert(borrow>=0&&foreign>borrow&&body.includes('defer _ = self.fios_lifetime.release(lease);'),'FIO_DS4_CUSTODY_WIRING_MISSING');
  }
- for(const name of ['tokenizeText','encodeChatPrompt','encodeChatTranscript','detokenizeOne']) {
+ for(const name of ['hasMtp','mtpDraftTokens','eosToken','isStop','vocabSize','assistantToken','userToken','tokenizeText','encodeChatPrompt','encodeChatTranscript','detokenizeOne']) {
   const start=arch.indexOf(`    pub fn ${name}(`,arch.indexOf('pub const Ds4Engine'));
   assert(start>=0,'FIO_DS4_ENGINE_OPERATION_CUSTODY_MISSING');
   const opening=arch.indexOf('{',arch.indexOf(') Error!',start));
