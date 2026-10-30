@@ -1,0 +1,75 @@
+// Only the genuine pinned CPU pread/pthread source fragment is inserted here.
+// No Metal SDK types, device/model handles or backend ABI are substituted.
+#include <pthread.h>
+#include <stdatomic.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <limits.h>
+#include <errno.h>
+#include <unistd.h>
+#include <time.h>
+static int g_model_fd = -1;
+static pthread_mutex_t checkpoint_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t checkpoint_cond = PTHREAD_COND_INITIALIZER;
+static int entered, released;
+static void fixture_checkpoint(void) {
+    pthread_mutex_lock(&checkpoint_mutex);
+    ++entered;
+    pthread_cond_broadcast(&checkpoint_cond);
+    while (!released) pthread_cond_wait(&checkpoint_cond, &checkpoint_mutex);
+    pthread_mutex_unlock(&checkpoint_mutex);
+}
+#define REQUIRE(test, marker) do { if (!(test)) { fprintf(stderr, "%s\n", marker); exit(77); } } while (0)
+// FIOS_GENUINE_PREAD_SOURCE
+int main(int argc, char **argv) {
+    REQUIRE(argc == 2, "BAD_ARGUMENTS");
+    REQUIRE(!ds4_gpu_fios_pread_pool_try_retire(), "COLD_POOL_CLAIMED_RETIREMENT");
+    REQUIRE(!g_stream_expert_pread_pool_initialized && !atomic_load(&g_fios_pread_pool_sealed), "COLD_POOL_MUTATED");
+    setenv("DS4_METAL_STREAMING_EXPERT_PREAD_THREADS", "2", 1);
+    REQUIRE(ds4_gpu_stream_expert_pread_pool_init(2), "POOL_INIT_FAILED");
+    if (!strcmp(argv[1], "--join-error")) {
+        // Exact genuine OS self-join refusal. Keep the original owned thread
+        // separately so test cleanup never guesses or signals a numeric ID.
+        pthread_t original = g_stream_expert_pread_pool_threads[0];
+        g_stream_expert_pread_pool_threads[0] = pthread_self();
+        int result = ds4_gpu_fios_pread_pool_try_retire();
+        REQUIRE(pthread_join(original, NULL) == 0, "OWNED_FIXTURE_THREAD_NOT_JOINED");
+        REQUIRE(!result && g_fios_pread_pool_uncertain && g_stream_expert_pread_pool_initialized &&
+                g_stream_expert_pread_pool_thread_count == 2 && g_stream_expert_pread_pool_stopping &&
+                g_fios_pread_pool_joined == 2, "FIO_DS4_PREAD_JOIN_REFUSAL_CLEARED");
+        REQUIRE(!ds4_gpu_fios_pread_pool_try_retire() && g_fios_pread_pool_uncertain,
+                "FIO_DS4_PREAD_UNCERTAINTY_REOPENED");
+        puts("PASS: genuine self-join error retains pool vector/count, one-way gate and independent uncertainty.");
+        return 0;
+    }
+    REQUIRE(!strcmp(argv[1], "--positive"), "BAD_MODE");
+    char file[] = "/private/tmp/fios-ds4-pread-XXXXXX";
+    g_model_fd = mkstemp(file); REQUIRE(g_model_fd >= 0, "FIXTURE_FILE_FAILED");
+    REQUIRE(unlink(file) == 0 && write(g_model_fd, "abcdefgh", 8) == 8, "FIXTURE_WRITE_FAILED");
+    uint8_t first[8], second[8];
+    ds4_gpu_stream_expert_pread_task tasks[2] = {
+        {.offset=0, .len=8, .dst=first}, {.offset=0, .len=8, .dst=second}
+    };
+    REQUIRE(ds4_gpu_stream_expert_pread_pool_begin(tasks, 2, 2), "POOL_DISPATCH_FAILED");
+    pthread_mutex_lock(&checkpoint_mutex);
+    while (entered != 2) pthread_cond_wait(&checkpoint_cond, &checkpoint_mutex);
+    pthread_mutex_unlock(&checkpoint_mutex);
+    REQUIRE(!ds4_gpu_fios_pread_pool_try_retire() && !g_stream_expert_pread_pool_stopping &&
+            !atomic_load(&g_fios_pread_pool_sealed), "ACTIVE_POOL_WAS_RETIRED");
+    pthread_mutex_lock(&checkpoint_mutex); released=1;
+    pthread_cond_broadcast(&checkpoint_cond); pthread_mutex_unlock(&checkpoint_mutex);
+    REQUIRE(ds4_gpu_stream_expert_pread_pool_wait(), "POOL_WAIT_FAILED");
+    REQUIRE(tasks[0].ok && tasks[1].ok && tasks[0].read_bytes == 8 && tasks[1].read_bytes == 8 &&
+            !memcmp(first,"abcdefgh",8) && !memcmp(second,"abcdefgh",8), "GENUINE_PREAD_FAILED");
+    REQUIRE(ds4_gpu_fios_pread_pool_try_retire() && g_fios_pread_pool_joined == 3 &&
+            !g_stream_expert_pread_pool_initialized && !g_stream_expert_pread_pool_thread_count,
+            "EXACT_POOL_JOIN_FAILED");
+    int rearmed = ds4_gpu_stream_expert_pread_pool_init(2);
+    if (rearmed) ds4_gpu_stream_expert_pread_pool_shutdown(); // Owned mutant-only CPU threads.
+    REQUIRE(!rearmed, "FIO_DS4_PREAD_REARMED_SEALED_POOL");
+    REQUIRE(close(g_model_fd) == 0, "FIXTURE_FILE_CLOSE_FAILED");
+    puts("PASS: actual source pread workers refuse busy retirement, join exactly and preserve the sealed gate.");
+    return 0;
+}
