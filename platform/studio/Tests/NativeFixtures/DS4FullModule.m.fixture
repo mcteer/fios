@@ -1,8 +1,13 @@
 // Appended to the complete real ds4_metal.m; links genuine built core objects.
 // No model/engine/session is opened. No opaque context or SDK is substituted.
+struct ds4_engine;
+extern int ds4_engine_close_checked(struct ds4_engine *);
+struct ds4_session;
+extern int ds4_session_free_checked(struct ds4_session *);
 #define FIOS_REQUIRE(value,marker) do {if(!(value)){fprintf(stderr,"%s\n",marker);return 77;}}while(0)
 int main(void){@autoreleasepool{
     FIOS_REQUIRE(!g_initialized&&!g_device&&g_model_fd<0,"MODULE_WAS_NOT_COLD");
+    FIOS_REQUIRE(ds4_engine_close_checked(NULL)&&ds4_session_free_checked(NULL)&&!g_initialized&&!g_device,"PUBLIC_NULL_CLOSE_INITIALIZED_BACKEND");
     FIOS_REQUIRE(!ds4_gpu_wait_command_buffer(nil,"fixture absent buffer"),"FIO_DS4_ABSENT_BUFFER_ACKNOWLEDGED");
     FIOS_REQUIRE(!ds4_gpu_fios_keepalive_try_stop()&&!g_initialized&&!g_device,"STOP_INITIALIZED_A_COLD_BACKEND");
     FIOS_REQUIRE(ds4_gpu_init(),"GENUINE_FULL_SHADER_INIT_FAILED");

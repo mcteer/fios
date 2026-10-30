@@ -1,0 +1,33 @@
+// Appended to the complete actual C engine source, with one private checkpoint
+// before its real empty-job runner. No model, tensor or fake SDK handle exists.
+// Publishes empty CPU metadata directly into the actual mailbox, not through
+// production enqueue/admission. Tests busy observation only, NOT retirement.
+#define REQUIRE(v,m) do{if(!(v)){fprintf(stderr,"%s\n",m);return 77;}}while(0)
+int main(void){
+ REQUIRE(metal_graph_selected_async_load_idle(),"SELECTED_COLD_NOT_IDLE");
+ REQUIRE(metal_graph_selected_async_load_ensure_worker(),"SELECTED_ACTUAL_WORKER_START_FAILED");
+ REQUIRE(metal_graph_selected_async_load_idle(),"SELECTED_EMPTY_WORKER_NOT_IDLE");
+ pthread_mutex_lock(&g_metal_graph_selected_async_load_mutex);
+ g_metal_graph_selected_async_load_job=(metal_graph_selected_async_load){0};
+ g_metal_graph_selected_async_load_done=false;
+ g_metal_graph_selected_async_load_has_job=true;
+ pthread_cond_signal(&g_metal_graph_selected_async_load_cond);
+ pthread_mutex_unlock(&g_metal_graph_selected_async_load_mutex);
+ for(unsigned n=0;n<2000&&!__atomic_load_n(&fios_selected_entered,__ATOMIC_ACQUIRE);++n)usleep(1000);
+ REQUIRE(__atomic_load_n(&fios_selected_entered,__ATOMIC_ACQUIRE),"SELECTED_PRIVATE_CHECKPOINT_NOT_ENTERED");
+ const int refused=!metal_graph_selected_async_load_idle();
+ __atomic_store_n(&fios_selected_release,1,__ATOMIC_RELEASE);
+ bool done=false;
+ for(unsigned n=0;n<2000&&!done;++n){
+  pthread_mutex_lock(&g_metal_graph_selected_async_load_mutex);
+  done=g_metal_graph_selected_async_load_done&&!g_metal_graph_selected_async_load_has_job;
+  pthread_mutex_unlock(&g_metal_graph_selected_async_load_mutex);if(!done)usleep(1000);
+ }
+ REQUIRE(done,"SELECTED_ACTUAL_EMPTY_JOB_DID_NOT_RETURN");
+ REQUIRE(refused,"FIO_DS4_ACTIVE_SELECTED_LOADER_REPORTED_IDLE");
+ REQUIRE(metal_graph_selected_async_load_idle(),"SELECTED_RETURNED_JOB_STILL_BUSY");
+ puts("PASS: actual selected-loader pthread/mailbox refuses busy observation through the real empty-job return; no retirement/model/SDK proof.");
+ // The one-shot fixture process exits with its idle local thread. This is not
+ // a tested participant join, backend terminality or inference uncertainty release.
+ return 0;
+}

@@ -273,7 +273,7 @@ index 12bd0f7..19dc43b 100644
  // Clear `seq` (position -> 0).
  void    mlx_llama_seq_reset(mlx_llama_ctx *c, int32_t seq);
 diff --git a/src/arch/ds4.zig b/src/arch/ds4.zig
-index 338a1b1..c667cd5 100644
+index 338a1b1..024d844 100644
 --- a/src/arch/ds4.zig
 +++ b/src/arch/ds4.zig
 @@ -16,6 +16,8 @@
@@ -309,7 +309,7 @@ index 338a1b1..c667cd5 100644
          try refuseSplitGguf(allocator, model_path);
          if (builtin.os.tag == .macos) try ensureMetalKernels(allocator);
  
-@@ -331,60 +338,88 @@ pub const Ds4Engine = struct {
+@@ -331,60 +338,94 @@ pub const Ds4Engine = struct {
              return Error.EngineOpenFailed;
          }
  
@@ -329,6 +329,7 @@ index 338a1b1..c667cd5 100644
      }
  
 -    pub fn close(self: *Ds4Engine) void {
+-        ffi.ds4_engine_close(self.handle);
 +    pub fn fiosCanCloseSession(self: *Ds4Engine, session: ?*Ds4Session) bool {
 +        if (session) |child| if (child.engine != self) return false;
 +        return self.fios_lifetime.canClose(if (session) |child| child.fios_parent else null);
@@ -343,7 +344,13 @@ index 338a1b1..c667cd5 100644
 +    }
 +    pub fn tryCloseReserved(self: *Ds4Engine, closing: CloseTicket) bool {
 +        if (!self.fios_lifetime.commitClose(closing)) return false;
-         ffi.ds4_engine_close(self.handle);
++        return self.fiosFinishClose(ffi.ds4_engine_close_checked(self.handle));
++    }
++    fn fiosFinishClose(self: *Ds4Engine, native_result: c_int) bool {
++        if (native_result != 1) {
++            self.fios_lifetime.fence();
++            return false;
++        }
          self.allocator.free(self.model_path_owned);
          if (self.mtp_path_owned) |s| self.allocator.free(s);
          self.allocator.destroy(self);
@@ -410,7 +417,7 @@ index 338a1b1..c667cd5 100644
          const text_z = allocator.dupeSentinel(u8, text, 0) catch return Error.OutOfMemory;
          defer allocator.free(text_z);
  
-@@ -404,6 +439,8 @@ pub const Ds4Engine = struct {
+@@ -404,6 +445,8 @@ pub const Ds4Engine = struct {
          user: []const u8,
          think_mode: ffi.ThinkMode,
      ) Error![]i32 {
@@ -419,7 +426,7 @@ index 338a1b1..c667cd5 100644
          const sys_z: ?[:0]u8 = if (system) |s| (allocator.dupeSentinel(u8, s, 0) catch return Error.OutOfMemory) else null;
          defer if (sys_z) |s| allocator.free(s);
          const user_z = allocator.dupeSentinel(u8, user, 0) catch return Error.OutOfMemory;
-@@ -432,6 +469,8 @@ pub const Ds4Engine = struct {
+@@ -432,6 +475,8 @@ pub const Ds4Engine = struct {
          turns: []const ChatTurn,
          think_mode: ffi.ThinkMode,
      ) Error![]i32 {
@@ -428,7 +435,7 @@ index 338a1b1..c667cd5 100644
          var tv = ffi.Tokens{};
          defer ffi.ds4_tokens_free(&tv);
  
-@@ -459,6 +498,8 @@ pub const Ds4Engine = struct {
+@@ -459,6 +504,8 @@ pub const Ds4Engine = struct {
      /// Single token → bytes lookup. Caller owns the returned buffer.
      /// Returned bytes are NOT NUL-terminated; the slice length is authoritative.
      pub fn detokenizeOne(self: *Ds4Engine, allocator: std.mem.Allocator, token_id: i32) Error![]u8 {
@@ -437,7 +444,7 @@ index 338a1b1..c667cd5 100644
          var len_out: usize = 0;
          const raw = ffi.ds4_token_text(self.handle, @intCast(token_id), &len_out);
          if (raw == null or len_out == 0) {
-@@ -469,21 +510,24 @@ pub const Ds4Engine = struct {
+@@ -469,21 +516,24 @@ pub const Ds4Engine = struct {
      }
  
      pub fn createSession(self: *Ds4Engine, ctx_size: i32) Error!*Ds4Session {
@@ -466,7 +473,7 @@ index 338a1b1..c667cd5 100644
          };
          return sess;
      }
-@@ -498,13 +542,22 @@ fn tokensToOwnedSlice(allocator: std.mem.Allocator, tv: *const ffi.Tokens) Error
+@@ -498,13 +548,22 @@ fn tokensToOwnedSlice(allocator: std.mem.Allocator, tv: *const ffi.Tokens) Error
      return buf;
  }
  
@@ -490,19 +497,28 @@ index 338a1b1..c667cd5 100644
  };
  
  pub const Ds4Session = struct {
-@@ -512,27 +565,43 @@ pub const Ds4Session = struct {
+@@ -512,27 +571,50 @@ pub const Ds4Session = struct {
      engine: *Ds4Engine,
      handle: *ffi.Session,
      ctx_size: i32,
+-
+-    pub fn free(self: *Ds4Session) void {
+-        ffi.ds4_session_free(self.handle);
 +    fios_lifetime: lifetime.Lifetime = .{},
 +    fios_parent: lifetime.Ticket,
- 
--    pub fn free(self: *Ds4Session) void {
++
 +    pub fn fiosCanFree(self: *Ds4Session) bool { return self.fios_lifetime.canClose(null); }
 +    pub fn tryFree(self: *Ds4Session) bool {
 +        const closing = self.fios_lifetime.beginClose(null) catch return false;
 +        if (!self.fios_lifetime.commitClose(closing)) return false;
-         ffi.ds4_session_free(self.handle);
++        return self.fiosFinishFree(ffi.ds4_session_free_checked(self.handle));
++    }
++    fn fiosFinishFree(self: *Ds4Session, native_result: c_int) bool {
++        if (native_result != 1) {
++            self.fios_lifetime.fence();
++            self.engine.fios_lifetime.fence();
++            return false;
++        }
 +        if (!self.engine.fios_lifetime.release(self.fios_parent)) return false;
          self.allocator.destroy(self);
 +        return true;
@@ -538,7 +554,7 @@ index 338a1b1..c667cd5 100644
          var holder = try TokenHolder.init(self.allocator, prompt_ids);
          defer holder.deinit();
          var err_buf: [256]u8 = undefined;
-@@ -544,6 +613,8 @@ pub const Ds4Session = struct {
+@@ -544,6 +626,8 @@ pub const Ds4Session = struct {
      }
  
      pub fn commonPrefix(self: *Ds4Session, prompt_ids: []const i32) Error!i32 {
@@ -547,7 +563,7 @@ index 338a1b1..c667cd5 100644
          var holder = try TokenHolder.init(self.allocator, prompt_ids);
          defer holder.deinit();
          return @intCast(ffi.ds4_session_common_prefix(self.handle, &holder.tv));
-@@ -551,6 +622,8 @@ pub const Ds4Session = struct {
+@@ -551,6 +635,8 @@ pub const Ds4Session = struct {
  
      /// Evaluate one new token. Caller has already synced to the prefix.
      pub fn eval(self: *Ds4Session, token: i32) Error!void {
@@ -556,7 +572,7 @@ index 338a1b1..c667cd5 100644
          var err_buf: [256]u8 = undefined;
          const rc = ffi.ds4_session_eval(self.handle, @intCast(token), &err_buf, err_buf.len);
          if (rc != 0) {
-@@ -559,15 +632,21 @@ pub const Ds4Session = struct {
+@@ -559,15 +645,21 @@ pub const Ds4Session = struct {
          }
      }
  
@@ -581,7 +597,7 @@ index 338a1b1..c667cd5 100644
          return @intCast(ffi.ds4_session_sample(self.handle, temperature, @intCast(top_k), top_p, min_p, rng));
      }
  
-@@ -581,6 +660,8 @@ pub const Ds4Session = struct {
+@@ -581,6 +673,8 @@ pub const Ds4Session = struct {
          eos_token: i32,
          out_tokens: []i32,
      ) Error!i32 {
@@ -590,7 +606,7 @@ index 338a1b1..c667cd5 100644
          var c_out_buf = self.allocator.alloc(c_int, out_tokens.len) catch return Error.OutOfMemory;
          defer self.allocator.free(c_out_buf);
  
-@@ -618,6 +699,8 @@ pub const Ds4Session = struct {
+@@ -618,6 +712,8 @@ pub const Ds4Session = struct {
          rng: *u64,
          out_tokens: []i32,
      ) Error!i32 {
@@ -599,7 +615,7 @@ index 338a1b1..c667cd5 100644
          var c_out_buf = self.allocator.alloc(c_int, out_tokens.len) catch return Error.OutOfMemory;
          defer self.allocator.free(c_out_buf);
          var err_buf: [256]u8 = undefined;
-@@ -645,18 +728,30 @@ pub const Ds4Session = struct {
+@@ -645,18 +741,30 @@ pub const Ds4Session = struct {
          return @intCast(n);
      }
  
@@ -633,7 +649,7 @@ index 338a1b1..c667cd5 100644
          var err_buf: [256]u8 = undefined;
          const rc = ffi.ds4_session_load_snapshot(self.handle, &snap.inner, &err_buf, err_buf.len);
          if (rc != 0) {
-@@ -733,3 +828,103 @@ test "kernel hash is stable across calls" {
+@@ -733,3 +841,182 @@ test "kernel hash is stable across calls" {
      const b = computeKernelHash();
      try std.testing.expectEqualSlices(u8, &a, &b);
  }
@@ -734,6 +750,85 @@ index 338a1b1..c667cd5 100644
 +        if (mode == 3) {
 +            for (held) |ticket| try std.testing.expect(engine.fios_lifetime.release(ticket));
 +            try std.testing.expect(engine.fios_lifetime.canClose(null));
++        }
++    }
++}
++
++
++test "fios ds4 checked close refusal retains outer CPU ownership" {
++    // Genuine linked C ABI null/no-op; does not initialize any native backend.
++    try std.testing.expectEqual(@as(c_int, 1), ffi.ds4_engine_close_checked(null));
++    // Only genuine wrapper/path CPU allocations are initialized. No native
++    // engine handle exists or is accessed by this post-FFI result test.
++    for ([_]c_int{0, -1, 2, 1}) |result| {
++        var watch = std.testing.FailingAllocator.init(std.testing.allocator, .{});
++        const allocator = watch.allocator();
++        const engine = try allocator.create(Ds4Engine);
++        engine.allocator = allocator;
++        engine.model_path_owned = try allocator.dupeSentinel(u8, "owned-model-path", 0);
++        engine.mtp_path_owned = try allocator.dupeSentinel(u8, "owned-mtp-path", 0);
++        engine.fios_lifetime = try lifetime.Lifetime.init();
++        const closing = try engine.fios_lifetime.beginClose(null);
++        try std.testing.expect(engine.fios_lifetime.commitClose(closing));
++        defer if (watch.deallocations == 0) {
++            allocator.free(engine.model_path_owned);
++            allocator.free(engine.mtp_path_owned.?);
++            allocator.destroy(engine);
++        };
++        const destroyed = engine.fiosFinishClose(result);
++        if (result != 1) {
++            if (watch.deallocations != 0) {
++                std.debug.print("FIO_DS4_CLOSE_REFUSAL_DROPPED_OUTER_OWNER\n", .{});
++                return error.FiosDs4CloseRefusalDroppedOwner;
++            }
++            try std.testing.expect(!destroyed);
++            try std.testing.expect(!engine.fios_lifetime.canClose(null));
++            try std.testing.expectError(error.LifetimeUnavailable, engine.fios_lifetime.borrow());
++        } else {
++            try std.testing.expect(destroyed);
++            try std.testing.expectEqual(@as(usize, 3), watch.deallocations);
++        }
++    }
++}
++
++
++test "fios ds4 checked session refusal retains parent ticket and CPU owner" {
++    try std.testing.expectEqual(@as(c_int, 1), ffi.ds4_session_free_checked(null));
++    // CPU wrapper allocations and real lifetime tickets only. Native engine
++    // and session handle fields remain uninitialized and are never accessed.
++    for ([_]c_int{0, -1, 2, 1}) |result| {
++        var watch = std.testing.FailingAllocator.init(std.testing.allocator, .{});
++        const allocator = watch.allocator();
++        var parent: Ds4Engine = undefined;
++        parent.fios_lifetime = try lifetime.Lifetime.init();
++        const session = try allocator.create(Ds4Session);
++        session.allocator = allocator;
++        session.engine = &parent;
++        session.fios_parent = try parent.fios_lifetime.borrow();
++        session.fios_lifetime = try lifetime.Lifetime.init();
++        const parent_close = try parent.fios_lifetime.beginClose(session.fios_parent);
++        const closing = try session.fios_lifetime.beginClose(null);
++        try std.testing.expect(session.fios_lifetime.commitClose(closing));
++        defer if (watch.deallocations == 0) {
++            _ = parent.fios_lifetime.release(session.fios_parent);
++            allocator.destroy(session);
++        };
++        const destroyed = session.fiosFinishFree(result);
++        if (result != 1) {
++            if (watch.deallocations != 0) {
++                std.debug.print("FIO_DS4_SESSION_REFUSAL_DROPPED_PARENT_OWNER\n", .{});
++                return error.FiosDs4SessionRefusalDroppedOwner;
++            }
++            try std.testing.expect(!destroyed);
++            try std.testing.expect(session.fios_lifetime.uncertain and parent.fios_lifetime.uncertain);
++            if (parent.fios_lifetime.commitClose(parent_close)) {
++                std.debug.print("FIO_DS4_SESSION_REFUSAL_RELEASED_PARENT_TICKET\n", .{});
++                return error.FiosDs4SessionRefusalReleasedParent;
++            }
++        } else {
++            try std.testing.expect(destroyed);
++            try std.testing.expectEqual(@as(usize, 1), watch.deallocations);
++            try std.testing.expect(parent.fios_lifetime.commitClose(parent_close));
 +        }
 +    }
 +}
@@ -1532,6 +1627,26 @@ index fbc9b34..a429bc1 100644
  pub fn close(_: *Model) void {}
  pub fn begin(_: *Model, _: []const u32, _: u32, _: u64) !u64 {
      return 0;
+diff --git a/src/ds4_ffi.zig b/src/ds4_ffi.zig
+index b743ad7..345125e 100644
+--- a/src/ds4_ffi.zig
++++ b/src/ds4_ffi.zig
+@@ -184,6 +184,7 @@ pub const GenerationDoneFn = ?*const fn (ud: ?*anyopaque) callconv(.C) void;
+ 
+ pub extern fn ds4_engine_open(out: *?*Engine, opt: *const EngineOptions) c_int;
+ pub extern fn ds4_engine_close(e: ?*Engine) void;
++pub extern fn ds4_engine_close_checked(e: ?*Engine) c_int;
+ pub extern fn ds4_engine_summary(e: ?*Engine) void;
+ pub extern fn ds4_backend_name(backend: Backend) [*:0]const u8;
+ pub extern fn ds4_think_mode_enabled(mode: ThinkMode) bool;
+@@ -222,6 +223,7 @@ pub extern fn ds4_token_assistant(e: *Engine) c_int;
+ 
+ pub extern fn ds4_session_create(out: *?*Session, e: *Engine, ctx_size: c_int) c_int;
+ pub extern fn ds4_session_free(s: ?*Session) void;
++pub extern fn ds4_session_free_checked(s: ?*Session) c_int;
+ pub extern fn ds4_session_set_progress(s: *Session, f: SessionProgressFn, ud: ?*anyopaque) void;
+ 
+ pub extern fn ds4_session_sync(s: *Session, prompt: *const Tokens, err: ?[*]u8, errlen: usize) c_int;
 diff --git a/src/llama_ffi.zig b/src/llama_ffi.zig
 index 1c9946d..6ff78b4 100644
 --- a/src/llama_ffi.zig

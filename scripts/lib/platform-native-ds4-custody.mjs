@@ -16,6 +16,10 @@ export function verifyDs4Custody(arch,registry) {
   /pub fn tryFree\(self: \*Ds4Session\) bool \{\s*const closing = self\.fios_lifetime\.beginClose\(null\) catch return false;/,
   /\.fios_parent = fios_parent/,
  ])assert.match(arch,edge,'FIO_DS4_CUSTODY_WIRING_MISSING');
+ assert.match(arch,/return self\.fiosFinishClose\(ffi\.ds4_engine_close_checked\(self\.handle\)\);/,'FIO_DS4_CHECKED_CLOSE_RESULT_DISCONNECTED');
+ assert.match(arch,/fn fiosFinishClose\(self: \*Ds4Engine, native_result: c_int\) bool \{\s*if \(native_result != 1\) \{\s*self\.fios_lifetime\.fence\(\);\s*return false;\s*\}\s*self\.allocator\.free/,'FIO_DS4_CHECKED_CLOSE_REFUSAL_DROPPED_OWNER');
+ assert.match(arch,/return self\.fiosFinishFree\(ffi\.ds4_session_free_checked\(self\.handle\)\);/,'FIO_DS4_CHECKED_SESSION_RESULT_DISCONNECTED');
+ assert.match(arch,/fn fiosFinishFree\(self: \*Ds4Session, native_result: c_int\) bool \{\s*if \(native_result != 1\) \{\s*self\.fios_lifetime\.fence\(\);\s*self\.engine\.fios_lifetime\.fence\(\);\s*return false;\s*\}\s*if \(!self\.engine\.fios_lifetime\.release/,'FIO_DS4_CHECKED_SESSION_DROPPED_PARENT_OWNER');
  for(const name of ['pos','rewind','invalidate','argmax','argmaxExcluding','sample','sync','commonPrefix','eval','evalSpeculative','evalSpeculativeSampled','saveSnapshot','loadSnapshot']){
   const start=arch.indexOf(`    pub fn ${name}(`,arch.indexOf('pub const Ds4Session'));
   assert(start>=0,'FIO_DS4_CUSTODY_WIRING_MISSING');

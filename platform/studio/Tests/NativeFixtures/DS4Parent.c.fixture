@@ -9,6 +9,7 @@
 #define DS4_TP_GATES_PER_LAYER 1
 typedef struct { void *map; } model;
 typedef struct {
+ bool fios_session_destroy_uncertain;
  struct { void *ctx, *slab, *zero_vec, *host_slab;
           void **out_views, **in_views, **batch_out_views, **batch_in_views; } tp;
  int weights,vocab,simulated_memory;
@@ -20,7 +21,9 @@ static void *g_tp_block_ctx;
 static unsigned destructive,checked,legacy,prepared,unordered;
 static int destroy(void){if(!prepared)++unordered;return ++destructive;}
 static int checked_result,prepare_result=1,cpu_result=1;
-static unsigned cpu_checked;
+static unsigned cpu_checked,selected_probes;
+static int selected_idle=1;
+static int metal_graph_selected_async_load_idle(void){++selected_probes;return selected_idle;}
 static int ds4_threads_shutdown_checked(void){++cpu_checked;return cpu_result;}
 static int ds4_gpu_tp_shutdown_checked(void){++checked;return checked_result;}
 static int ds4_gpu_prepare_release(void){++prepared;return prepare_result;}
@@ -42,6 +45,7 @@ int main(int argc,char **argv){
  ds4_engine e={0}; int context=7,slab=11;
  if(argc==2&&strcmp(argv[1],"--empty")==0){
   ds4_engine_tp_unbind(NULL);ds4_engine_close(NULL);
+  if(!ds4_engine_close_checked(NULL)){fputs("PUBLIC_NULL_CLOSE_REFUSED\n",stderr);return 77;}
   ds4_engine_tp_unbind(&e);
   if(destructive||checked||legacy){fputs("PARENT_EMPTY_UNBIND_CHANGED\n",stderr);return 77;}
   ds4_engine_close(&e);
@@ -75,6 +79,28 @@ int main(int argc,char **argv){
   if(destructive||checked||prepared||cpu_checked!=1||memcmp(&e,&before,sizeof(e))){
    fputs("FIO_DS4_PARENT_RELEASED_BEFORE_CPU_RETIREMENT\n",stderr);return 77;
   }
+  return 0;
+ }
+ if(argc==2&&strcmp(argv[1],"--selected-active")==0){
+  selected_idle=0;const ds4_engine before=e;
+  const int destroyed=ds4_engine_close_checked(&e);
+  if(destroyed||destructive||cpu_checked||prepared||checked||selected_probes!=1||memcmp(&e,&before,sizeof(e))){
+   fputs("FIO_DS4_ENGINE_RELEASED_WITH_ACTIVE_SELECTED_LOADER\n",stderr);return 77;
+  }
+  return 0;
+ }
+ if(argc==2&&strcmp(argv[1],"--child-uncertain")==0){
+  e.fios_session_destroy_uncertain=true;const ds4_engine before=e;
+  const int destroyed=ds4_engine_close_checked(&e);
+  if(destroyed||destructive||cpu_checked||prepared||checked||memcmp(&e,&before,sizeof(e))){
+   fputs("FIO_DS4_ENGINE_RELEASED_AFTER_UNCERTAIN_SESSION_DESTROY\n",stderr);return 77;
+  }
+  return 0;
+ }
+ if(argc==2&&strcmp(argv[1],"--checked-refusal")==0){
+  cpu_result=0;const ds4_engine before=e;
+  const int destroyed=ds4_engine_close_checked(&e);
+  if(destroyed||destructive||memcmp(&e,&before,sizeof(e))){fputs("FIO_DS4_PUBLIC_CLOSE_ACKNOWLEDGED_REFUSAL\n",stderr);return 77;}
   return 0;
  }
  e.tp.ctx=&context;e.tp.slab=&slab;g_tp_block_ctx=&context;

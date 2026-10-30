@@ -1,6 +1,6 @@
 # Native activity integration: concrete implementation seam
 
-Status: source-only integration/testing authorized by the user's explicit reaffirmation on2026-10-27; implementation/source audit in progress, not a deployed native modification. Do not ask again for this scope. Installed binaries/configuration, service restarts, real inference, network/RDMA changes and deployment remain outside this source-only authorization. No resident-only API is required. Ordinary on-demand replacement of an idle model is allowed.
+Status: source-only integration/testing authorized by the user's explicit reaffirmation on2026-10-27; implementation/source audit in progress, not a deployed native modification. Do not ask again for this scope. Installed binaries/configuration, service restarts, network/RDMA changes and deployment remain separately gated. The user granted standing real-inference approval on2026-10-30; bounded private source-model experiments may run without another inference permission/model-ID request. This does not approve installed lifecycle or disruptive/native acceptance. No resident-only API is required. Ordinary on-demand replacement of an idle model is allowed.
 
 Current backend-specific findings and unproven terminality requirements: [native-backend-terminality.md](native-backend-terminality.md).
 

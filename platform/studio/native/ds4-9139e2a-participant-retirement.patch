@@ -1,5 +1,5 @@
 diff --git a/ds4.c b/ds4.c
-index 633a3cf..79a4ce7 100644
+index 633a3cf..9c44a1f 100644
 --- a/ds4.c
 +++ b/ds4.c
 @@ -2088,12 +2088,15 @@ typedef struct {
@@ -114,12 +114,48 @@ index 633a3cf..79a4ce7 100644
      pthread_mutex_unlock(&g_pool.mutex);
  }
  
-@@ -72190,10 +72227,17 @@ fail:
+@@ -23501,6 +23538,15 @@ static bool g_metal_graph_selected_async_load_has_job = false;
+ static bool g_metal_graph_selected_async_load_done = false;
+ static metal_graph_selected_async_load g_metal_graph_selected_async_load_job;
+ 
++// Coherent local mailbox guard only. Lifecycle/init serialization remains a
++// precondition; this does not retire the worker or certify other writers/GPU.
++static bool metal_graph_selected_async_load_idle(void) {
++    if (pthread_mutex_lock(&g_metal_graph_selected_async_load_mutex) != 0) return false;
++    const bool idle = !g_metal_graph_selected_async_load_has_job;
++    if (pthread_mutex_unlock(&g_metal_graph_selected_async_load_mutex) != 0) return false;
++    return idle;
++}
++
+ static void metal_graph_selected_async_load_run(
+         metal_graph_selected_async_load *job) {
+     job->ok = false;
+@@ -42215,6 +42261,7 @@ typedef enum {
+ } ds4_vision_kind;
+ 
+ struct ds4_engine {
++    bool fios_session_destroy_uncertain;
+     char *model_path;
+     uint64_t ds41_session_bytes;
+     ds4_model model;
+@@ -59886,6 +59933,7 @@ typedef struct {
+ } ds4_vision_identity;
+ 
+ struct ds4_session {
++    bool fios_destroy_uncertain;
+     ds4_engine *engine;
+     ds4_dist_session *distributed;
+     uint64_t tp_session_id;
+@@ -72190,10 +72238,21 @@ fail:
  #endif
  }
  
 -void ds4_engine_tp_unbind(ds4_engine *e) {
 +static int ds4_engine_tp_unbind_checked(ds4_engine *e) {
++    if (e && e->fios_session_destroy_uncertain) return 0;
++#if defined(__APPLE__) && !defined(DS4_NO_GPU)
++    if (!metal_graph_selected_async_load_idle()) return 0;
++#endif
  #ifdef DS4_HAS_DEEPSEEK41_GPU
 -    if (!e || !e->tp.ctx) return;
 +    if (!e || !e->tp.ctx) return 1;
@@ -134,7 +170,7 @@ index 633a3cf..79a4ce7 100644
      ds4_tp_detach_slab(e->tp.ctx);
  #ifdef __APPLE__
      g_tp_block_ctx = NULL;
-@@ -72218,6 +72262,11 @@ void ds4_engine_tp_unbind(ds4_engine *e) {
+@@ -72218,6 +72277,11 @@ void ds4_engine_tp_unbind(ds4_engine *e) {
  #else
      (void)e;
  #endif
@@ -146,15 +182,23 @@ index 633a3cf..79a4ce7 100644
  }
  
  bool ds4_engine_is_glm_dsa(ds4_engine *e) {
-@@ -72232,11 +72281,14 @@ bool ds4_engine_is_deepseek41(ds4_engine *e) {
+@@ -72230,13 +72294,20 @@ bool ds4_engine_is_deepseek41(ds4_engine *e) {
+     return DS4_MODEL_FAMILY == DS4_MODEL_FAMILY_DEEPSEEK41;
+ }
  
- void ds4_engine_close(ds4_engine *e) {
-     if (!e) return;
+-void ds4_engine_close(ds4_engine *e) {
+-    if (!e) return;
 -    ds4_engine_tp_unbind(e);
-+    if (!ds4_threads_shutdown_checked()) return;
-+    if (!ds4_engine_tp_unbind_checked(e)) return;
++int ds4_engine_close_checked(ds4_engine *e) {
++    if (!e) return 1;
++    if (e->fios_session_destroy_uncertain) return 0;
 +#if defined(__APPLE__) && !defined(DS4_NO_GPU)
-+    if (!ds4_gpu_prepare_release()) return;
++    if (!metal_graph_selected_async_load_idle()) return 0;
++#endif
++    if (!ds4_threads_shutdown_checked()) return 0;
++    if (!ds4_engine_tp_unbind_checked(e)) return 0;
++#if defined(__APPLE__) && !defined(DS4_NO_GPU)
++    if (!ds4_gpu_prepare_release()) return 0;
 +#endif
      ds4_expert_profile_close();
      weights_free(&e->weights);
@@ -163,6 +207,97 @@ index 633a3cf..79a4ce7 100644
      if (e->mtp_model.map) model_close(&e->mtp_model);
      if (e->vision_model.map) model_close(&e->vision_model);
      model_close(&e->model);
+@@ -72253,6 +72324,11 @@ void ds4_engine_close(ds4_engine *e) {
+     free(e->directional_steering_file);
+     free(e->model_path);
+     free(e);
++    return 1;
++}
++
++void ds4_engine_close(ds4_engine *e) {
++    (void)ds4_engine_close_checked(e);
+ }
+ 
+ #ifndef DS4_NO_GPU
+@@ -72814,24 +72890,32 @@ int ds4_session_create(ds4_session **out, ds4_engine *e, int ctx_size) {
+ #endif
+ }
+ 
+-void ds4_session_free(ds4_session *s) {
+-    if (!s) return;
+-    if (s->glm_reserved_graph_bytes && s->engine) {
+-        s->engine->glm_session_graph_bytes -= s->glm_reserved_graph_bytes;
+-        s->engine->glm_session_count--;
+-    }
+-    if (ds4_session_tp_leader(s) && s->tp_session_id != 0 &&
+-        !ds4_tp_failed(s->engine->tp.ctx)) {
++int ds4_session_free_checked(ds4_session *s) {
++    if (!s) return 1;
++    if (s->fios_destroy_uncertain ||
++        (s->engine && s->engine->fios_session_destroy_uncertain)) return 0;
++#if defined(__APPLE__) && !defined(DS4_NO_GPU)
++    if (!metal_graph_selected_async_load_idle()) return 0;
++#endif
++    if (ds4_session_tp_leader(s) && s->tp_session_id != 0) {
+         char err[256] = "";
+-        if (!ds4_tp_send_session_destroy(s->engine->tp.ctx,
++        if (ds4_tp_failed(s->engine->tp.ctx) ||
++            !ds4_tp_send_session_destroy(s->engine->tp.ctx,
+                                          s->tp_session_id) ||
+             !ds4_tp_wait_command_ack(s->engine->tp.ctx, s->tp_session_id,
+                                      "session destroy", err, sizeof(err))) {
+             fprintf(stderr, "ds4: %s\n",
+-                    err[0] ? err : "tp: worker session destroy send failed");
++                    err[0] ? err : "tp: worker session destroy unresolved");
++            s->fios_destroy_uncertain = true;
++            s->engine->fios_session_destroy_uncertain = true;
++            return 0;
+         }
+         s->tp_session_id = 0;
+     }
++    if (s->glm_reserved_graph_bytes && s->engine) {
++        s->engine->glm_session_graph_bytes -= s->glm_reserved_graph_bytes;
++        s->engine->glm_session_count--;
++    }
+ #ifndef DS4_NO_GPU
+     ds4_session_print_dspark_stats(s);
+ #endif
+@@ -72882,6 +72966,11 @@ void ds4_session_free(ds4_session *s) {
+     free(s->dspark_conf_features);
+ #endif
+     free(s);
++    return 1;
++}
++
++void ds4_session_free(ds4_session *s) {
++    (void)ds4_session_free_checked(s);
+ }
+ 
+ int ds4_session_distributed_route_ready(ds4_session *s, char *err, size_t errlen) {
+diff --git a/ds4.h b/ds4.h
+index c817abc..1860f47 100644
+--- a/ds4.h
++++ b/ds4.h
+@@ -243,6 +243,9 @@ int ds4_engine_create_with_gpu_config(ds4_engine **out,
+                                        const ds4_engine_options *opt,
+                                        const struct ds4_gpu_config *gpu_cfg);
+ void ds4_engine_close(ds4_engine *e);
++/* Zero retains the engine on known local teardown refusal. Nonzero reports
++ * local destruction only, never all-client/device/RDMA terminality. */
++int ds4_engine_close_checked(ds4_engine *e);
+ void ds4_engine_summary(ds4_engine *e);
+ int ds4_engine_vocab_size(ds4_engine *e);
+ uint32_t ds4_engine_prefill_chunk(ds4_engine *e);
+@@ -405,6 +408,9 @@ void ds4_engine_tp_unbind(ds4_engine *e);
+ 
+ int ds4_session_create(ds4_session **out, ds4_engine *e, int ctx_size);
+ void ds4_session_free(ds4_session *s);
++/* Local destructor result only. A failed peer-destroy acknowledgement retains
++ * session and parent custody; success is not peer/device terminality proof. */
++int ds4_session_free_checked(ds4_session *s);
+ int ds4_session_power(ds4_session *s);
+ int ds4_session_set_power(ds4_session *s, int power_percent);
+ float ds4_session_directional_steering_ffn(ds4_session *s);
 diff --git a/ds4_gpu.h b/ds4_gpu.h
 index 599f02b..447f9c9 100644
 --- a/ds4_gpu.h
