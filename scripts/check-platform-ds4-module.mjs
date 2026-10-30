@@ -50,6 +50,21 @@ try{
  assert(result.stdout.includes('PASS: complete genuine DS4 module/full original shader initializer'));
  verify();assert.equal(readFileSync(fixtureFile,'utf8'),fixture);assert.equal(sha(readFileSync(document)),args[4]);
  assert.equal(git('diff','--no-ext-diff','HEAD','--','ds4_metal.m'),patch);
- const outcome={scope:'full_ds4_initializer_and_known_keepalive_only',build_receipt_sha256:args[4],fixture_sha256:sha(fixture),binary_sha256:sha(readFileSync(binary)),original_full_shader_library:true,model_opened:false,native_inference:false,installed:false,native_authority:false,all_backend_terminality:false,directory};
+ // A second executable injects a wait failure only AFTER actual completion.
+ // It exercises genuine pending-list/accounting code, not a fake SDK object.
+ const pendingFile=path.join(root,'platform/studio/Tests/NativeFixtures/DS4Pending.m.fixture'),pending=readFileSync(pendingFile,'utf8');
+ const original=readFileSync(path.join(source,'ds4_metal.m'),'utf8');
+ const edge='if (cb.status != MTLCommandBufferStatusCompleted) {\n        fprintf(stderr, "ds4: Metal %s failed: %s\\n",';
+ assert.equal(original.split(edge).length,2);
+ const faultUnit=path.join(directory,'pending.m'),faultBinary=path.join(directory,'pending');
+ writeFileSync(faultUnit,'static int fios_private_wait_failure;\n'+original.replace(edge,edge.replace('cb.status != MTLCommandBufferStatusCompleted','cb.status != MTLCommandBufferStatusCompleted || fios_private_wait_failure'))+'\n'+pending);
+ run(compiler,['-isysroot',sdk,'-I',source,'-std=gnu11','-fobjc-arc','-O3','-ffast-math','-g','-mcpu=native','-UNDEBUG',faultUnit,...objects.map(name=>path.join(source,name)),'-lm','-pthread','-framework','Foundation','-framework','Metal','-o',faultBinary]);
+ const fault=spawnSync(faultBinary,[],{env,cwd:source,encoding:'utf8',timeout:120000,maxBuffer:4<<20});
+ writeFileSync(path.join(directory,'pending-stdout.log'),fault.stdout??'',{mode:0o600});writeFileSync(path.join(directory,'pending-stderr.log'),fault.stderr??'',{mode:0o600});
+ assert(!fault.error&&!fault.signal,'Pending fixture deadline/crash is not acceptance');assert.equal(fault.status,0,fault.stderr);
+ assert(fault.stdout.includes('PASS: actual completed buffers retained on injected wait failure'));
+ verify();assert.equal(readFileSync(pendingFile,'utf8'),pending);assert.equal(readFileSync(fixtureFile,'utf8'),fixture);assert.equal(readFileSync(path.join(source,'ds4_metal.m'),'utf8'),original);
+ assert.equal(sha(readFileSync(document)),args[4]);assert.equal(git('diff','--no-ext-diff','HEAD','--','ds4_metal.m'),patch);
+ const outcome={scope:'full_ds4_initializer_known_keepalive_and_pending_failure_only',build_receipt_sha256:args[4],fixture_sha256:sha(fixture),binary_sha256:sha(readFileSync(binary)),original_full_shader_library:true,pending_fixture_sha256:sha(pending),pending_binary_sha256:sha(readFileSync(faultBinary)),injected_wait_failure_after_real_completion:true,model_opened:false,native_inference:false,installed:false,native_authority:false,all_backend_terminality:false,directory};
  writeFileSync(path.join(directory,'result.json'),JSON.stringify(outcome)+'\n',{mode:0o400});console.log(JSON.stringify(outcome));
 }catch(error){console.error('Full-module fixture state retained:',directory);throw error;}

@@ -1,0 +1,36 @@
+// Private fault only after genuine command buffers have physically completed.
+#define REQUIRE(v,m) do{if(!(v)){fprintf(stderr,"%s\n",m);return 77;}}while(0)
+int main(void){@autoreleasepool{
+ REQUIRE(ds4_gpu_init(),"PENDING_FULL_INIT_FAILED");
+ id<MTLCommandBuffer> a=[g_queue commandBuffer],b=[g_queue commandBuffer];
+ REQUIRE(a&&b,"PENDING_REAL_BUFFERS_MISSING");
+ [a commit];[b commit];[a waitUntilCompleted];[b waitUntilCompleted];
+ REQUIRE(a.status==MTLCommandBufferStatusCompleted&&b.status==MTLCommandBufferStatusCompleted,"PENDING_REAL_COMPLETION_FAILED");
+ // Real source bookkeeping creates sequence1 and commits it as pending.
+ ds4_gpu_stream_expert_cache_note_batch_created();
+ ds4_gpu_stream_expert_cache_note_batch_committed();
+ uint64_t done=g_stream_expert_cache_done_seq,pending=g_stream_expert_cache_pending_max_seq;
+ REQUIRE(pending>done,"PENDING_BOOKKEEPING_NOT_ARMED");
+ [g_pending_cbs addObject:a];[g_pending_cbs addObject:b];
+ fios_private_wait_failure=1;
+ REQUIRE(!ds4_gpu_wait_pending_command_buffers("private post-completion failure"),"PENDING_FAULT_IGNORED");
+ REQUIRE(g_pending_cbs.count==2&&g_pending_cbs[0]==a&&g_pending_cbs[1]==b&&
+   g_stream_expert_cache_done_seq==done&&g_stream_expert_cache_pending_max_seq==pending,
+   "FIO_DS4_FAILED_PENDING_RELEASED_OR_ACKNOWLEDGED");
+ REQUIRE(g_fios_pending_uncertain,"PENDING_FAILURE_NOT_STICKY");
+ fios_private_wait_failure=0;
+ REQUIRE(!ds4_gpu_wait_pending_command_buffers("later successful status"),"FIO_DS4_PENDING_UNCERTAINTY_REFUNDED");
+ REQUIRE(!ds4_gpu_synchronize(),"FIO_DS4_PENDING_SYNC_REFUNDED");
+ REQUIRE(!ds4_gpu_begin_commands()&&!ds4_gpu_flush_encoder()&&!ds4_gpu_flush_commands()&&!ds4_gpu_end_commands(),"FIO_DS4_PENDING_REARMED_COMMANDS");
+ REQUIRE(!ds4_gpu_new_command_buffer(),"FIO_DS4_PENDING_NEW_BUFFER_CREATED");
+ int owned=99;
+ REQUIRE(!ds4_gpu_command_buffer(&owned)&&owned==0,"FIO_DS4_PENDING_BORROWED_BUFFER_CREATED");
+ ds4_gpu_cleanup();
+ REQUIRE(g_fios_pending_uncertain&&g_initialized&&g_pending_cbs.count==2&&
+   g_stream_expert_cache_done_seq==done&&g_stream_expert_cache_pending_max_seq==pending,
+   "FIO_DS4_PENDING_CLEANUP_REFUNDED");
+ // No recovery/retry or whole-device cleanup is credited as terminality.
+ // Private extra strong refs keep both genuine objects alive even in a red.
+ puts("PASS: actual completed buffers retained on injected wait failure; no hardware-error or aggregate terminal receipt.");
+ return 0;
+}}
