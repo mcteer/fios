@@ -8,6 +8,10 @@ The canonical source now refuses registry destruction before effects when known 
 
 Actual allocator-observed metadata root regression executes7pass/1fail of8 on the old path (five frees while access held), then8/8 positive and a precise optimized public-guard bypass7/1 witness with exact restoration. Full linked/HTTP/control/Swift-manager and genuine SDK checks pass in `/tmp/fios-009-native-registry-teardown-linked.log`. The test arenas contain no model/backend and their scoped disposal is not credited as retirement. Artifact `af94a11dc30219248054f1d9c1b7828bc71aa69887681e3611f4b6ada511e35e`, six installed inputs unchanged; no inference/activation/installed change. G2 and complete participant/context/transition ownership remain open.
 
+## Optional llama draft-head failure retirement
+
+The source bridge now attempts creator-bound target/head synchronization before disabling/freeing a failed draft head. Refused synchronization sets a sticky context uncertainty flag and returns a request error while retaining head/batches/context. Sequence validity, reset/trim/position, batch step and terminal retirement refuse the poisoned context; a later reset cannot clear it. Legacy raw C free remains outside the checked Zig path. Empty metadata tests execute the genuine linked bridge and an exact sticky-assignment omission; no loaded draft-head failure was exercised. Complete asynchronous/backend ownership and all-client admission remain open.
+
 ## Required composition
 
 A terminal grant must bind the authenticated process/source instance, closed admission sequence, exact native model/registry generation, every live device-owner participant and its actual terminal receipt. It must reserve those transitions atomically until the finite lifecycle action commits. Counting owners, sampling a registry twice, GPU telemetry, child exit, cancellation, timeouts or a stream-creation epoch alone cannot establish this.

@@ -192,3 +192,11 @@ For the serialized DS4 snapshot CPU-custody regression, run the existing finite
 guard, requires the allocator-observed runtime failure and restores source.
 These runs use an empty CPU blob, no session/model, and confer no native admission
 or installation authority. Do not run source mutations concurrently.
+
+### Model-free llama draft retirement refusal
+
+```sh
+node scripts/check-platform-llama-retirement.mjs --isolated --source /ABS/DISPOSABLE_NATIVE
+```
+
+Requires the exact canonical root patch in a private disposable checkout and the pinned genuine llama library/headers already obtained by the source fixture. Compiles the actual C++ bridge in Debug/optimized mode, with empty CPU metadata and no context/model creation. The network-denied process checks sticky failure, reset/operation/retirement refusal and a private exact sticky-assignment omission. The replacement logger callback only suppresses output; no backend symbol is substituted. This is not loaded-context, native terminality, installed lifecycle or all-client acceptance. Each child has a5s alarm and10s harness timeout; uncertain process termination retains fixture state.

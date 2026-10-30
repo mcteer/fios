@@ -1,6 +1,10 @@
 // Supplementary source-edge checks, never model/runtime/native authority.
 import assert from 'node:assert/strict';
 export function verifyLlamaCustody(arch,registry,shim) {
+ const dropStart=shim.indexOf('static bool drop_mtp('),dropEnd=shim.indexOf('// Pair each target row',dropStart),drop=shim.slice(dropStart,dropEnd);
+ assert(dropStart>=0&&drop.indexOf('mlx_llama_ctx_terminal(c) != 1')>=0&&drop.indexOf('c->fios_uncertain = true;')>drop.indexOf('mlx_llama_ctx_terminal(c) != 1')&&drop.indexOf('return false;')<drop.indexOf('llama_batch_ext_free(c->dbatch)'),'FIO_LLAMA_MTP_RETIREMENT_MISSING');
+ assert(shim.includes('if (c->dft && mtp_catch_up(c, rows, n) != 0 && !drop_mtp(c)) return -1;'),'FIO_LLAMA_MTP_RETIREMENT_MISSING');
+ assert.match(shim,/static bool valid_seq\(const mlx_llama_ctx \*c, int32_t seq\) \{\s*return c && !c->fios_uncertain/,'FIO_LLAMA_MTP_RETIREMENT_MISSING');
  const create=arch.indexOf('    pub fn createContext('),native=arch.indexOf('ffi.mlx_llama_ctx_create(',create);
  const allocation=arch.indexOf('self.allocator.create(LlamaContext)',create),sequences=arch.indexOf('self.allocator.alloc(LlamaSeq, n_seq)',create);
  assert(allocation>create&&sequences>allocation&&native>sequences,'FIO_LLAMA_RETIREMENT_WIRING_MISSING');
