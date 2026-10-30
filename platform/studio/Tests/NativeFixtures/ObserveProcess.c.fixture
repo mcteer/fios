@@ -1,0 +1,22 @@
+// Readonly observations of the caller's owned fixture child; no signal API.
+#include <libproc.h>
+#include <sys/resource.h>
+#include <unistd.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include <limits.h>
+int main(int argc, char **argv) {
+    if (argc != 2 || geteuid() == 0) return 64;
+    char *end = NULL; long value = strtol(argv[1], &end, 10);
+    if (!end || *end || value <= 1 || value > INT_MAX) return 64;
+    struct proc_bsdinfo a = {0}, b = {0}; struct rusage_info_v2 usage = {0};
+    if (proc_pidinfo((int)value, PROC_PIDTBSDINFO, 0, &a, sizeof(a)) != sizeof(a) ||
+        proc_pid_rusage((int)value, RUSAGE_INFO_V2, (rusage_info_t *)&usage) != 0 ||
+        proc_pidinfo((int)value, PROC_PIDTBSDINFO, 0, &b, sizeof(b)) != sizeof(b)) return 65;
+    if (a.pbi_pid != value || b.pbi_pid != value || a.pbi_uid != geteuid() || b.pbi_uid != a.pbi_uid ||
+        a.pbi_start_tvsec != b.pbi_start_tvsec || a.pbi_start_tvusec != b.pbi_start_tvusec || !a.pbi_start_tvsec) return 66;
+    printf("{\"pid\":%ld,\"uid\":%u,\"start\":\"%llu:%llu\",\"resident\":%llu,\"footprint\":%llu}\n", value,
+        a.pbi_uid,(unsigned long long)a.pbi_start_tvsec,(unsigned long long)a.pbi_start_tvusec,
+        (unsigned long long)usage.ri_resident_size,(unsigned long long)usage.ri_phys_footprint);
+    return 0;
+}

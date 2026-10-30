@@ -19,6 +19,7 @@ assert.equal(createHash('sha256').update(readFileSync(library)).digest('hex'),'1
 const scratch=mkdtempSync('/private/tmp/f9-llama-retirement-'),env={PATH:'/usr/bin:/bin',HOME:scratch,LANG:'C',LC_ALL:'C'};
 let cleanupProven=true;
 const original=readFileSync(path.join(source,'lib/llama_shim/llama_shim.cpp'),'utf8');
+const allocatorFile=path.join(root,'platform/studio/Tests/NativeFixtures/LlamaAllocation.cpp.fixture'),allocator=readFileSync(allocatorFile,'utf8');
 const test=String.raw`
 extern "C" void mlx_llama_log(bool, const char *) {}
 int main() {
@@ -33,6 +34,7 @@ int main() {
         close(fd);
         if (status == 0 || (code != EPERM && code != EACCES)) return 16;
     } else if (errno != EPERM && errno != EACCES) return 17;
+    if (const int allocation = fios_context_metadata_failures()) return allocation;
     mlx_llama_ctx c{};
     c.n_seq = 1;
     if (drop_mtp(&c)) return 10;
@@ -48,19 +50,24 @@ int main() {
 `;
 try {
  const profile=path.join(scratch,'network.sb');writeFileSync(profile,'(version 1)(allow default)(deny network*)');
- for(const optimized of [false,true])for(const mutation of [false,true]) {
+ for(const optimized of [false,true])for(const kind of [null,'sticky','metadata_cleanup']) {
   const pin='        c->fios_uncertain = true;';assert.equal(original.split(pin).length,2);
-  const body=mutation?original.replace(pin,'        // private exact sticky-fence omission'):original;
+  const cleanupPin='    } catch (...) {\n        delete c;\n        copy_err(err, errlen, "out of memory allocating context metadata");\n        return NULL;\n    }';
+  assert.equal(original.split(cleanupPin).length,2);
+  const ctor=original.indexOf('extern "C" mlx_llama_ctx *mlx_llama_ctx_create('),native=original.indexOf('llama_init_from_model(e->model, cp)',ctor);
+  for(const edge of ['mlx_llama_ctx *c = new (std::nothrow) mlx_llama_ctx();','c->pos.assign((size_t)n_seq, 0);','c->out_idx.assign((size_t)n_seq, -1);']){const at=original.indexOf(edge,ctor);assert(at>ctor&&at<native);}
+  const body=kind==='sticky'?original.replace(pin,'        // private exact sticky-fence omission'):kind==='metadata_cleanup'?original.replace(cleanupPin,cleanupPin.replace('        delete c;\n','')):original;
   const unit=path.join(scratch,'test.cpp'),binary=path.join(scratch,'test');
-  writeFileSync(unit,'#include <unistd.h>\n#include <sys/socket.h>\n#include <netinet/in.h>\n#include <errno.h>\n'+body+test);
+  writeFileSync(unit,'#include <unistd.h>\n#include <sys/socket.h>\n#include <netinet/in.h>\n#include <errno.h>\n'+body+allocator+test);
   execFileSync('/usr/bin/clang++',['-std=c++17',optimized?'-O2':'-O0','-I'+path.join(source,'lib/llama/include'),'-I'+path.join(source,'lib/llama_shim'),unit,library,'-Wl,-rpath,'+path.dirname(library),'-o',binary],{env,timeout:60000,stdio:'pipe'});
   const result=spawnSync('/usr/bin/sandbox-exec',['-f',profile,binary],{env,timeout:10000,encoding:'utf8',maxBuffer:16384});
   if(result.error)cleanupProven=false;
   assert(!result.error&&!result.signal,'fixture process did not exit normally');
-  if(mutation){assert.equal(result.status,11);assert(result.stderr.includes('FIO_LLAMA_MTP_UNCERTAINTY_LOST'));}
+  if(kind){assert.equal(result.status,kind==='sticky'?11:18);assert(result.stderr.includes(kind==='sticky'?'FIO_LLAMA_MTP_UNCERTAINTY_LOST':'FIO_LLAMA_CONTEXT_METADATA_LEAK'));}
   else assert.equal(result.status,0,result.stderr);
  }
+ assert.equal(readFileSync(allocatorFile,'utf8'),allocator);
  assert.equal(readFileSync(path.join(source,'lib/llama_shim/llama_shim.cpp'),'utf8'),original);
  assert.equal(createHash('sha256').update(readFileSync(library)).digest('hex'),'10f39f1688515e851c79e111a18a2a852923c4edb20f950061f6d7356ef8987b');
- console.log('PASS: genuine Debug/optimized empty-metadata draft-retirement refusal, sticky uncertainty, operation/reset/cleanup refusal and exact sticky-fence runtime omission. No model/context/backend work or native terminality proof.');
+ console.log('PASS: genuine Debug/optimized empty-metadata draft-retirement refusal, three pre-native allocator failures, sticky uncertainty, operation/reset/cleanup refusal and exact fence/metadata-cleanup runtime omissions. No model/context/backend work or native terminality proof.');
 } finally {if(cleanupProven)rmSync(scratch,{recursive:true,force:true});else console.error('Fixture state retained: process termination was not established.');}

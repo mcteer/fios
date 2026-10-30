@@ -40,7 +40,7 @@ index 0100fd9..e612db7 100644
      if (frameworks) |fw| host.addFrameworkPath(.{ .cwd_relative = fw });
      for ([_][]const u8{ "IOKit", "CoreFoundation", "Foundation", "Metal", "IOSurface" }) |f| host.linkFramework(f, .{});
 diff --git a/lib/llama_shim/llama_shim.cpp b/lib/llama_shim/llama_shim.cpp
-index 392b72b..2480200 100644
+index 392b72b..55f83f6 100644
 --- a/lib/llama_shim/llama_shim.cpp
 +++ b/lib/llama_shim/llama_shim.cpp
 @@ -15,6 +15,8 @@
@@ -87,15 +87,47 @@ index 392b72b..2480200 100644
      const int32_t n_seq = p->n_seq > 0 ? p->n_seq : 1;
      const int32_t n_ctx = p->n_ctx > 0 ? p->n_ctx : llama_model_n_ctx_train(e->model);
  
-@@ -287,6 +309,7 @@ extern "C" mlx_llama_ctx *mlx_llama_ctx_create(mlx_llama_engine *e, const mlx_ll
-         copy_err(err, errlen, "out of memory allocating context");
+@@ -276,17 +298,27 @@ extern "C" mlx_llama_ctx *mlx_llama_ctx_create(mlx_llama_engine *e, const mlx_ll
+     const bool want_mtp = p->mtp_drafts > 0 && e->has_mtp;
+     if (want_mtp) cp.n_rs_seq = (uint32_t)p->mtp_drafts;
+ 
++    // Finish fallible CPU metadata before creating any native context.
++    mlx_llama_ctx *c = new (std::nothrow) mlx_llama_ctx();
++    if (!c) {
++        copy_err(err, errlen, "out of memory allocating context metadata");
++        return NULL;
++    }
++    try {
++        c->pos.assign((size_t)n_seq, 0);
++        c->out_idx.assign((size_t)n_seq, -1);
++    } catch (...) {
++        delete c;
++        copy_err(err, errlen, "out of memory allocating context metadata");
++        return NULL;
++    }
+     struct llama_context *tgt = llama_init_from_model(e->model, cp);
+     if (!tgt) {
++        delete c;
+         copy_err(err, errlen, "llama_init_from_model failed");
          return NULL;
      }
+-    mlx_llama_ctx *c = new (std::nothrow) mlx_llama_ctx();
+-    if (!c) {
+-        llama_free(tgt);
+-        copy_err(err, errlen, "out of memory allocating context");
+-        return NULL;
+-    }
 +    c->fios_owner = fios_owner;
      c->e = e;
      c->tgt = tgt;
      c->dft = NULL;
-@@ -303,6 +326,21 @@ extern "C" mlx_llama_ctx *mlx_llama_ctx_create(mlx_llama_engine *e, const mlx_ll
+@@ -297,12 +329,25 @@ extern "C" mlx_llama_ctx *mlx_llama_ctx_create(mlx_llama_engine *e, const mlx_ll
+     c->n_vocab = llama_vocab_n_tokens(e->vocab);
+     c->mtp_drafts = 0;
+     c->n_embd_h = 0;
+-    c->pos.assign((size_t)n_seq, 0);
+-    c->out_idx.assign((size_t)n_seq, -1);
+     if (want_mtp) attach_mtp(c, cp, p->mtp_drafts, err, errlen);
      return c;
  }
  
@@ -117,7 +149,7 @@ index 392b72b..2480200 100644
  extern "C" void mlx_llama_ctx_free(mlx_llama_ctx *c) {
      if (!c) return;
      if (c->dbatch) llama_batch_ext_free(c->dbatch);
-@@ -312,15 +350,24 @@ extern "C" void mlx_llama_ctx_free(mlx_llama_ctx *c) {
+@@ -312,15 +357,24 @@ extern "C" void mlx_llama_ctx_free(mlx_llama_ctx *c) {
      delete c;
  }
  
@@ -144,7 +176,7 @@ index 392b72b..2480200 100644
      llama_memory_seq_rm(llama_get_memory(c->tgt), seq, -1, -1);
      if (c->dft) {
          llama_memory_seq_rm(llama_get_memory(c->dft), seq, -1, -1);
-@@ -338,7 +385,14 @@ static void dft_trim(mlx_llama_ctx *c, int32_t seq, llama_pos p0) {
+@@ -338,7 +392,14 @@ static void dft_trim(mlx_llama_ctx *c, int32_t seq, llama_pos p0) {
  }
  
  // A head that fails costs the drafts, never the request: decode on without it.
@@ -160,7 +192,7 @@ index 392b72b..2480200 100644
      fprintf(stderr, "[llama] MTP head failed; decoding without drafts\n");
      llama_set_embeddings_nextn(c->tgt, false, false);
      llama_batch_ext_free(c->dbatch);
-@@ -346,6 +400,7 @@ static void drop_mtp(mlx_llama_ctx *c) {
+@@ -346,6 +407,7 @@ static void drop_mtp(mlx_llama_ctx *c) {
      c->dbatch = NULL;
      c->dft = NULL;
      c->mtp_drafts = 0;
@@ -168,7 +200,7 @@ index 392b72b..2480200 100644
  }
  
  // Pair each target row with the target hidden one position earlier (a
-@@ -390,7 +445,7 @@ static int32_t decode_rows(mlx_llama_ctx *c, const Row *rows, int32_t n, int32_t
+@@ -390,7 +452,7 @@ static int32_t decode_rows(mlx_llama_ctx *c, const Row *rows, int32_t n, int32_t
          c->pos[rows[i].seq] = rows[i].pos + 1;
          if (i >= out_from) c->out_idx[rows[i].seq] = i;
      }
@@ -177,7 +209,7 @@ index 392b72b..2480200 100644
      return 0;
  }
  
-@@ -417,6 +472,10 @@ extern "C" int32_t mlx_llama_seq_prefill(mlx_llama_ctx *c, int32_t seq, const in
+@@ -417,6 +479,10 @@ extern "C" int32_t mlx_llama_seq_prefill(mlx_llama_ctx *c, int32_t seq, const in
  
  extern "C" int32_t mlx_llama_step(mlx_llama_ctx *c, const int32_t *seqs, const int32_t *tokens, int32_t n,
                                    char *err, size_t errlen) {
@@ -188,7 +220,7 @@ index 392b72b..2480200 100644
      c->rows.resize((size_t)n);
      for (int32_t i = 0; i < n; i++) {
          if (!valid_seq(c, seqs[i])) {
-@@ -433,6 +492,7 @@ extern "C" int32_t mlx_llama_step(mlx_llama_ctx *c, const int32_t *seqs, const i
+@@ -433,6 +499,7 @@ extern "C" int32_t mlx_llama_step(mlx_llama_ctx *c, const int32_t *seqs, const i
  }
  
  extern "C" int32_t mlx_llama_seq_trim(mlx_llama_ctx *c, int32_t seq, int32_t n_keep) {
@@ -196,7 +228,7 @@ index 392b72b..2480200 100644
      if (n_keep < 0) n_keep = 0;
      if (n_keep >= c->pos[seq]) return 0; // nothing resident beyond n_keep
      // Recurrent / hybrid memory (Mamba, GDN: qwen35, qwen3next, nemotron_h) can
-@@ -455,7 +515,7 @@ extern "C" void mlx_llama_seq_reset(mlx_llama_ctx *c, int32_t seq) {
+@@ -455,7 +522,7 @@ extern "C" void mlx_llama_seq_reset(mlx_llama_ctx *c, int32_t seq) {
  }
  
  extern "C" int32_t mlx_llama_seq_pos(mlx_llama_ctx *c, int32_t seq) {

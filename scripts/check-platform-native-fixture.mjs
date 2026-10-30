@@ -10,8 +10,13 @@ import { copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSy
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {stageNativeReview,finishNativeReview} from './lib/platform-native-review.mjs';
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const args=process.argv.slice(2);
+// Optional data-only source-review output. No model or inference input.
+let reviewOutput;
+const reviewIndex=args.indexOf('--review-output');
+if(reviewIndex!==-1){assert([8,10].includes(reviewIndex)&&path.isAbsolute(args[reviewIndex+1]??''));reviewOutput=args[reviewIndex+1];args.splice(reviewIndex,2);}
 // Optional explicit dependency composition; canonical submodules stay clean.
 let mimoSource;
 const mimoIndex=args.indexOf('--mimo-source');
@@ -255,7 +260,14 @@ try{
   assert.equal(result.status,0,'Genuine native root validation failed');
   assert.match(testLog,/15\/15 tests passed/,'Every declared root case must execute; a compiled but filtered-out test is not evidence');
  }
- const binary=path.join(scratch,'output/bin/mlx-serve'),digest=rootOnly?null:sha(binary);
+ let binary=path.join(scratch,'output/bin/mlx-serve'),digest=rootOnly?null:sha(binary),review;
+ if(reviewOutput){
+  assert(!rootOnly,'Review output requires full positive executable/HTTP validation');
+  const libraries=Object.fromEntries(Object.keys(runtime).map(name=>[name,path.join(name==='libwebp.dylib'||name==='libsharpyuv.dylib'?lib:bundle,name)]));
+  libraries['libllama.dylib']=path.join(source,'lib/llama/lib/libllama.dylib');
+  review=stageNativeReview({directory:reviewOutput,binary,libraries,inputs:{native_base:'046b647686419df06c6c7132fb1d15d76185c3e5',root_patch_sha256:sha(path.join(root,'platform/studio/native/mlx-serve-26.10.3.patch')),runtime_inputs:runtime,mimo_candidate:mimoReceipt}});
+  binary=review.binary;digest=review.sha256;
+ }
  const httpLog=rootOnly?'':run(process.execPath,[path.join(root,'scripts/check-platform-native-http.mjs'),'--isolated','--binary',binary,'--sha256',digest]);
  for(const [name,expected]of Object.entries(runtime))assert.equal(sha(path.join(bundle,name)),expected,'installed dependency changed');
  assert.equal(readFileSync(path.join(source,'build.zig'),'utf8'),reviewedGraph,'fixture changed reviewed build graph');
@@ -264,8 +276,9 @@ try{
  assert.equal(readFileSync(serverFile,'utf8'),serverOriginal,'fixture changed reviewed server source');
  assert.equal(readFileSync(ds4File,'utf8'),ds4Original,'fixture changed reviewed DS4 source');
  assert.deepEqual(verifyMimo(),mimoReceipt,'candidate input changed during combined fixture');
+ const reviewReceipt=review?finishNativeReview(review):null;
  console.log(ownerLog+buildLog+testLog+httpLog);
- console.log(JSON.stringify({source_fixture_only:true,root_tests_only:rootOnly,expected_runtime_mutation:mutation,request_eviction_mutation:evictionMutation,load_preparation_mutation:loadPreparationMutation,actor_load_preparation_mutation:actorLoadMutation,encoder_active_mutation:encoderActiveMutation,generation_origin_mutation:generationOriginMutation,text_origin_mutation:textOriginMutation,native_refusal_mutation:nativeRefusalMutation,parked_reference_mutation:parkedMutation,foreign_access_release_mutation:accessMutation,preparation_visibility_mutation:preparationMutation,preparation_clear_mutation:clearPreparationMutation,registry_frontdoor_mutation:frontdoorKind??null,registry_teardown_mutation:teardownMutation,loaded_model_teardown_mutation:loadedTeardownMutation,retained_cpu_cleanup_mutation:retainedCpuMutation,resident_unload_mutation:residentUnloadMutation,ds4_snapshot_mutation:snapshotMutation,llama_trim_status_mutation:trimMutation,upstream_release_attestation:false,native_inference:false,coverage:'unknown',fixture_sha256:digest,mimo_candidate:mimoReceipt,runtime_inputs:runtime}));
+ console.log(JSON.stringify({source_fixture_only:true,root_tests_only:rootOnly,expected_runtime_mutation:mutation,request_eviction_mutation:evictionMutation,load_preparation_mutation:loadPreparationMutation,actor_load_preparation_mutation:actorLoadMutation,encoder_active_mutation:encoderActiveMutation,generation_origin_mutation:generationOriginMutation,text_origin_mutation:textOriginMutation,native_refusal_mutation:nativeRefusalMutation,parked_reference_mutation:parkedMutation,foreign_access_release_mutation:accessMutation,preparation_visibility_mutation:preparationMutation,preparation_clear_mutation:clearPreparationMutation,registry_frontdoor_mutation:frontdoorKind??null,registry_teardown_mutation:teardownMutation,loaded_model_teardown_mutation:loadedTeardownMutation,retained_cpu_cleanup_mutation:retainedCpuMutation,resident_unload_mutation:residentUnloadMutation,ds4_snapshot_mutation:snapshotMutation,llama_trim_status_mutation:trimMutation,upstream_release_attestation:false,native_inference:false,coverage:'unknown',fixture_sha256:digest,private_review:reviewReceipt,mimo_candidate:mimoReceipt,runtime_inputs:runtime}));
 }finally{
  if(mutated)writeFileSync(mutationFile,mutationOriginal);
  if(written)rmSync(generated);
