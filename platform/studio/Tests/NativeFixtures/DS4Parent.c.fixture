@@ -19,7 +19,9 @@ typedef struct {
 static void *g_tp_block_ctx;
 static unsigned destructive,checked,legacy,prepared,unordered;
 static int destroy(void){if(!prepared)++unordered;return ++destructive;}
-static int checked_result,prepare_result=1;
+static int checked_result,prepare_result=1,cpu_result=1;
+static unsigned cpu_checked;
+static int ds4_threads_shutdown_checked(void){++cpu_checked;return cpu_result;}
 static int ds4_gpu_tp_shutdown_checked(void){++checked;return checked_result;}
 static int ds4_gpu_prepare_release(void){++prepared;return prepare_result;}
 static void ds4_gpu_tp_shutdown(void){++legacy;}
@@ -64,6 +66,16 @@ int main(int argc,char **argv){
    fputs("FIO_DS4_PARENT_IGNORED_RELEASE_PREPARATION_REFUSAL\n",stderr);return 77;
   }
   puts("PASS: parent function source preserves mock resources after local release preparation refusal.");return 0;
+ }
+ if(argc==2&&strncmp(argv[1],"--cpu-",6)==0){
+  cpu_result=0;checked_result=1;
+  const int empty=strcmp(argv[1],"--cpu-empty")==0;
+  if(!empty){e.tp.ctx=&context;e.tp.slab=&slab;g_tp_block_ctx=&context;}
+  const ds4_engine before=e;ds4_engine_close(&e);
+  if(destructive||checked||prepared||cpu_checked!=1||memcmp(&e,&before,sizeof(e))){
+   fputs("FIO_DS4_PARENT_RELEASED_BEFORE_CPU_RETIREMENT\n",stderr);return 77;
+  }
+  return 0;
  }
  e.tp.ctx=&context;e.tp.slab=&slab;g_tp_block_ctx=&context;
  ds4_engine before=e;

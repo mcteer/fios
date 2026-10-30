@@ -27,7 +27,7 @@ const fixtureFile=path.join(root,'platform/studio/Tests/NativeFixtures/DS4Parent
 const unit=path.join(directory,'parent.c'),binary=path.join(directory,'parent');
 writeFileSync(unit,fixture.replace('/* SOURCE_FUNCTIONS */',original.slice(start,end)+'\n'+close[0]));
 execFileSync('/usr/bin/clang',['-std=c11','-O2','-UNDEBUG',unit,'-o',binary],{env,timeout:30000});
-const preparationResults=['--gpu-unbind','--gpu-close','--gpu-empty','--prepared-success'].map(mode=>{
+const preparationResults=['--gpu-unbind','--gpu-close','--gpu-empty','--prepared-success','--cpu-close','--cpu-empty'].map(mode=>{
  const r=spawnSync(binary,[mode],{env,encoding:'utf8',timeout:5000});
  writeFileSync(path.join(directory,mode+'-stderr.log'),r.stderr??'');return r;
 });

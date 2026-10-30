@@ -229,11 +229,14 @@ node scripts/check-platform-ds4-keepalive.mjs --isolated --source /ABS/PRIVATE_C
 node scripts/check-platform-ds4-build.mjs --isolated --source /ABS/PRIVATE_COMPOSED_DS4 --developer-dir /Applications/Xcode.app/Contents/Developer
 node scripts/check-platform-ds4-module.mjs --isolated --build /ABS/FRESH_BUILD/candidate.json --sha256 EXACT_BUILD_RECEIPT_SHA --developer-dir /Applications/Xcode.app/Contents/Developer
 node scripts/check-platform-ds4-parent.mjs --isolated --source /ABS/PRIVATE_COMPOSED_DS4
+node scripts/check-platform-ds4-cpu.mjs --isolated --source /ABS/PRIVATE_COMPOSED_DS4
 ```
 
 Only the reviewed cumulative participant patch is accepted. The build always uses a fresh private checkout, two compiler jobs and a180s deadline; it never executes/installs its benchmark. The separate module command is an explicit model-free development fixture: it verifies source/object/compiler bytes, compiles the whole genuine Metal module, links genuine built C objects and runs the original initializer/shader library/warm kernel/checked known producer under a120s deadline. A second complete-module executable (also120s) injects a software wait failure only after actual buffers complete, checking retained pending resources/accounting, sticky refusal and guarded command entry/cleanup; it is not a hardware-error test. A third complete-module executable runs three cold metadata-only sequence-boundary cases (10s each), including refusal before backend initialization and the last valid generation; no GPU/model is initialized by these cases. It opens no model/session, does not certify other participants or native device completion, and retains diagnostics. Neither command grants ordinary runtime/admission/lifecycle/installation authority; receipts describe declared inputs, not whole-native provenance.
 
 The cumulative patch is restricted to exactly `ds4.c`, `ds4_gpu.h`, `ds4_gpu_tp.h` and `ds4_metal.m`; standalone component candidates still modify only `ds4_metal.m`. The parent command compiles actual parent function text against explicit mock types/callees, checks refused teardown reaches no destructive calls, and includes null/empty controls. Its 30s compile/5s process bounds use no model, transport or GPU. This is source control-flow evidence, not real parent ABI, RDMA retirement, successful slab lifetime or all-writer terminality. Checked local TP success does not authorize native activation.
+
+The CPU command compiles the actual pool fragment in Debug/optimized modes with genuine pthreads, held inline/parallel callbacks, nested row coverage and an injected acknowledgement failure after actual join. Each process has a10s deadline; the unrelated model-table initialization is stubbed. It is model-free development evidence, not all CPU writers, creator identity, bounded native retirement or installation authority.
 
 ### Private source-built MLX composition
 

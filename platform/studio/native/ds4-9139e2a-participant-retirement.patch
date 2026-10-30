@@ -1,8 +1,120 @@
 diff --git a/ds4.c b/ds4.c
-index 633a3cf..41fd1ba 100644
+index 633a3cf..79a4ce7 100644
 --- a/ds4.c
 +++ b/ds4.c
-@@ -72190,10 +72190,17 @@ fail:
+@@ -2088,12 +2088,15 @@ typedef struct {
+     uint32_t done;
+     bool initialized;
+     bool shutdown;
++    bool active; // whole outer dispatch, including the inline caller kernel
+     ds4_parallel_fn fn;
+     void *ctx;
+     uint64_t n_rows;
+ } ds4_thread_pool;
+ 
+ static ds4_thread_pool g_pool;
++static int g_fios_cpu_pool_uncertain;
++static uint32_t g_fios_cpu_pool_joined;
+ static __thread int g_parallel_depth;
+ static uint32_t g_requested_threads;
+ 
+@@ -2140,7 +2143,10 @@ static void *ds4_worker_main(void *arg) {
+ /* Create the persistent CPU worker pool.  Decode reuses these threads instead
+  * of creating pthreads in the token loop. */
+ static void ds4_threads_init(void) {
++    if (__atomic_load_n(&g_fios_cpu_pool_uncertain, __ATOMIC_ACQUIRE))
++        ds4_die("CPU pool retirement is uncertain");
+     if (g_pool.initialized) return;
++    g_fios_cpu_pool_joined = 0;
+ 
+     pthread_once(&iq2xxs_signed_grid_once, iq2xxs_signed_grid_init);
+ 
+@@ -2176,23 +2182,39 @@ static void ds4_threads_init(void) {
+     }
+ }
+ 
+-static void ds4_threads_shutdown(void) {
+-    if (!g_pool.initialized) return;
++// Checked local pool teardown. Serialized lifecycle/init remains a precondition;
++// this is not a census of every CPU/model writer or an all-client receipt.
++static int ds4_threads_shutdown_checked(void) {
++    if (__atomic_load_n(&g_fios_cpu_pool_uncertain, __ATOMIC_ACQUIRE)) return 0;
++    if (!g_pool.initialized) return 1;
+ 
+     pthread_mutex_lock(&g_pool.mutex);
++    if (g_pool.active) {
++        pthread_mutex_unlock(&g_pool.mutex);
++        return 0; // known busy: do not signal/cancel/poison admitted work
++    }
+     g_pool.shutdown = true;
+-    g_pool.generation++;
+     pthread_cond_broadcast(&g_pool.work_cond);
+     pthread_mutex_unlock(&g_pool.mutex);
+ 
++    int ok = 1;
+     for (uint32_t i = 1; i < g_pool.n_threads; i++) {
+-        pthread_join(g_pool.threads[i], NULL);
++        if (pthread_join(g_pool.threads[i], NULL) == 0)
++            g_fios_cpu_pool_joined |= (1u << i);
++        else ok = 0;
++    }
++    if (!ok) {
++        __atomic_store_n(&g_fios_cpu_pool_uncertain, 1, __ATOMIC_RELEASE);
++        return 0; // retain exact vector/conditions/context; never rejoin unknowns
++    }
++    if (pthread_cond_destroy(&g_pool.done_cond) != 0 ||
++        pthread_cond_destroy(&g_pool.work_cond) != 0 ||
++        pthread_mutex_destroy(&g_pool.mutex) != 0) {
++        __atomic_store_n(&g_fios_cpu_pool_uncertain, 1, __ATOMIC_RELEASE);
++        return 0; // partially destroyed synchronization state cannot reinitialize
+     }
+-
+-    pthread_cond_destroy(&g_pool.done_cond);
+-    pthread_cond_destroy(&g_pool.work_cond);
+-    pthread_mutex_destroy(&g_pool.mutex);
+     memset(&g_pool, 0, sizeof(g_pool));
++    return 1;
+ }
+ 
+ /* Run a row-parallel CPU kernel, falling back to serial execution for small
+@@ -2200,12 +2222,26 @@ static void ds4_threads_shutdown(void) {
+ static void ds4_parallel_for_min_rows(uint64_t n_rows, ds4_parallel_fn fn, void *ctx, uint64_t min_parallel_rows) {
+     ds4_threads_init();
+ 
+-    if (g_parallel_depth > 0 || g_pool.n_threads <= 1 || n_rows < min_parallel_rows) {
++    if (g_parallel_depth > 0) {
+         fn(ctx, 0, n_rows);
+         return;
+     }
+-
+     pthread_mutex_lock(&g_pool.mutex);
++    if (g_pool.active || g_pool.shutdown || g_pool.generation == UINT32_MAX) {
++        pthread_mutex_unlock(&g_pool.mutex);
++        ds4_die("CPU pool dispatch is busy, stopped or exhausted");
++    }
++    g_pool.active = true;
++    if (g_pool.n_threads <= 1 || n_rows < min_parallel_rows) {
++        pthread_mutex_unlock(&g_pool.mutex);
++        g_parallel_depth++;
++        fn(ctx, 0, n_rows);
++        g_parallel_depth--;
++        pthread_mutex_lock(&g_pool.mutex);
++        g_pool.active = false;
++        pthread_mutex_unlock(&g_pool.mutex);
++        return;
++    }
+     g_pool.fn = fn;
+     g_pool.ctx = ctx;
+     g_pool.n_rows = n_rows;
+@@ -2228,6 +2264,7 @@ static void ds4_parallel_for_min_rows(uint64_t n_rows, ds4_parallel_fn fn, void
+     while (g_pool.done < g_pool.n_workers) {
+         pthread_cond_wait(&g_pool.done_cond, &g_pool.mutex);
+     }
++    g_pool.active = false;
+     pthread_mutex_unlock(&g_pool.mutex);
+ }
+ 
+@@ -72190,10 +72227,17 @@ fail:
  #endif
  }
  
@@ -22,7 +134,7 @@ index 633a3cf..41fd1ba 100644
      ds4_tp_detach_slab(e->tp.ctx);
  #ifdef __APPLE__
      g_tp_block_ctx = NULL;
-@@ -72218,6 +72225,11 @@ void ds4_engine_tp_unbind(ds4_engine *e) {
+@@ -72218,6 +72262,11 @@ void ds4_engine_tp_unbind(ds4_engine *e) {
  #else
      (void)e;
  #endif
@@ -34,11 +146,12 @@ index 633a3cf..41fd1ba 100644
  }
  
  bool ds4_engine_is_glm_dsa(ds4_engine *e) {
-@@ -72232,7 +72244,10 @@ bool ds4_engine_is_deepseek41(ds4_engine *e) {
+@@ -72232,11 +72281,14 @@ bool ds4_engine_is_deepseek41(ds4_engine *e) {
  
  void ds4_engine_close(ds4_engine *e) {
      if (!e) return;
 -    ds4_engine_tp_unbind(e);
++    if (!ds4_threads_shutdown_checked()) return;
 +    if (!ds4_engine_tp_unbind_checked(e)) return;
 +#if defined(__APPLE__) && !defined(DS4_NO_GPU)
 +    if (!ds4_gpu_prepare_release()) return;
@@ -46,6 +159,10 @@ index 633a3cf..41fd1ba 100644
      ds4_expert_profile_close();
      weights_free(&e->weights);
      vocab_free(&e->vocab);
+-    ds4_threads_shutdown();
+     if (e->mtp_model.map) model_close(&e->mtp_model);
+     if (e->vision_model.map) model_close(&e->vision_model);
+     model_close(&e->model);
 diff --git a/ds4_gpu.h b/ds4_gpu.h
 index 599f02b..447f9c9 100644
 --- a/ds4_gpu.h
