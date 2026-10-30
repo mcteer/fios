@@ -257,3 +257,7 @@ MTP-width, position, sample/argmax and reset now borrow context custody through 
 ### Owned llama chat-template handoff
 
 The embedded template is copied under an engine ticket and returned as allocator-owned data. Scheduler adoption no longer copies a borrowed native slice after custody has ended; copy/lifetime failure propagates. The native-disabled stub has the same API. Model-free refusal, source-edge omissions and full15-root/HTTP/control/manager integration pass; an actual loaded template/model is not acceptance-tested.
+
+### Fallible engine metadata reads
+
+EOS/EOG/vocabulary/MTP queries hold engine tickets and propagate lifetime refusal through their callers. HTTP vocabulary validation and scheduler token emission fail rather than substituting metadata. Context creation obtains optional MTP metadata before native publication, including nested-capacity refusal with exact parent-ticket restoration. Model-free unavailable-lifetime and full15-root linked checks pass; loaded-model metadata and enclosing all-client/backend ownership remain acceptance work.

@@ -8,6 +8,8 @@ export function verifyLlamaCustody(arch,registry,shim) {
  assert(!arch.includes('pub fn chatTemplate(self:'),'FIO_LLAMA_TEMPLATE_BORROW_ESCAPES');
  assert.match(arch,/return allocator\.dupe\(u8, std\.mem\.sliceTo\(raw\.\?, 0\)\) catch Error\.OutOfMemory;/,'FIO_LLAMA_TEMPLATE_BORROW_ESCAPES');
  const create=arch.indexOf('    pub fn createContext('),native=arch.indexOf('ffi.mlx_llama_ctx_create(',create);
+ const mtpMetadata=arch.indexOf('const mtp_expected = opts.mtp_drafts > 0 and try self.hasMtp();',create);
+ assert(mtpMetadata>create&&mtpMetadata<native,'FIO_LLAMA_METADATA_AFTER_NATIVE_CREATE');
  const allocation=arch.indexOf('self.allocator.create(LlamaContext)',create),sequences=arch.indexOf('self.allocator.alloc(LlamaSeq, n_seq)',create);
  assert(allocation>create&&sequences>allocation&&native>sequences,'FIO_LLAMA_RETIREMENT_WIRING_MISSING');
  assert(!arch.includes('ffi.mlx_llama_ctx_free('),'FIO_LLAMA_RETIREMENT_WIRING_MISSING');
@@ -35,7 +37,7 @@ export function verifyLlamaCustody(arch,registry,shim) {
   /\.fios_parent = fios_parent/,
  ];
  for(const check of checks)assert.match(arch,check,'FIO_LLAMA_CUSTODY_WIRING_MISSING');
- for(const [scope,names,owner] of [['LlamaEngine',['tokenizeText','detokenizeOne','applyChatTemplate','chatTemplateOwned'],'self'],['LlamaContext',['step'],'self'],['LlamaSeq',['sync','syncWithFallback','eval','specStep'],'self.ctx']]) {
+ for(const [scope,names,owner] of [['LlamaEngine',['tokenizeText','detokenizeOne','applyChatTemplate','chatTemplateOwned','eosToken','isEog','nVocab','hasMtp'],'self'],['LlamaContext',['step'],'self'],['LlamaSeq',['sync','syncWithFallback','eval','specStep'],'self.ctx']]) {
   for(const name of names){
    const start=arch.indexOf(`    pub fn ${name}(`,arch.indexOf(`pub const ${scope} = struct`));
    assert(start>=0,'FIO_LLAMA_OPERATION_CUSTODY_MISSING');

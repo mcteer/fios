@@ -594,7 +594,7 @@ index 82e806a..a4b476d 100644
          _ = snap;
          @panic(unavailable);
 diff --git a/src/arch/llama.zig b/src/arch/llama.zig
-index 806d641..23ee17e 100644
+index 806d641..52fe45b 100644
 --- a/src/arch/llama.zig
 +++ b/src/arch/llama.zig
 @@ -1,4 +1,7 @@
@@ -630,7 +630,7 @@ index 806d641..23ee17e 100644
          const path_z = allocator.dupeSentinel(u8, model_path, 0) catch return Error.OutOfMemory;
          errdefer allocator.free(path_z);
          const mtp_z: ?[:0]u8 = if (opts.mtp_path) |p| (allocator.dupeSentinel(u8, p, 0) catch return Error.OutOfMemory) else null;
-@@ -79,18 +87,35 @@ pub const LlamaEngine = struct {
+@@ -79,33 +87,58 @@ pub const LlamaEngine = struct {
              return Error.OutOfMemory;
          };
          wrapper.* = .{
@@ -665,9 +665,36 @@ index 806d641..23ee17e 100644
      }
 +    pub fn close(self: *LlamaEngine) void { _ = self.tryClose(); }
  
-     pub fn eosToken(self: *LlamaEngine) i32 {
+-    pub fn eosToken(self: *LlamaEngine) i32 {
++    pub fn eosToken(self: *LlamaEngine) Error!i32 {
++        const lease = self.fios_lifetime.borrow() catch return Error.LifetimeUnavailable;
++        defer _ = self.fios_lifetime.release(lease);
          return ffi.mlx_llama_eos_token(self.handle);
-@@ -117,6 +142,8 @@ pub const LlamaEngine = struct {
+     }
+ 
+-    pub fn isEog(self: *LlamaEngine, token: i32) bool {
++    pub fn isEog(self: *LlamaEngine, token: i32) Error!bool {
++        const lease = self.fios_lifetime.borrow() catch return Error.LifetimeUnavailable;
++        defer _ = self.fios_lifetime.release(lease);
+         return ffi.mlx_llama_is_eog(self.handle, token);
+     }
+ 
+-    pub fn nVocab(self: *LlamaEngine) i32 {
++    pub fn nVocab(self: *LlamaEngine) Error!i32 {
++        const lease = self.fios_lifetime.borrow() catch return Error.LifetimeUnavailable;
++        defer _ = self.fios_lifetime.release(lease);
+         return ffi.mlx_llama_n_vocab(self.handle);
+     }
+ 
+     /// An MTP head is loaded (the sidecar, or the trunk's own heads).
+-    pub fn hasMtp(self: *LlamaEngine) bool {
++    pub fn hasMtp(self: *LlamaEngine) Error!bool {
++        const lease = self.fios_lifetime.borrow() catch return Error.LifetimeUnavailable;
++        defer _ = self.fios_lifetime.release(lease);
+         return ffi.mlx_llama_has_mtp(self.handle);
+     }
+ 
+@@ -117,6 +150,8 @@ pub const LlamaEngine = struct {
          text: []const u8,
          add_special: bool,
      ) Error![]i32 {
@@ -676,7 +703,7 @@ index 806d641..23ee17e 100644
          if (text.len == 0) return allocator.alloc(i32, 0) catch Error.OutOfMemory;
  
          // First attempt with a generous estimate; on -required, grow and retry.
-@@ -146,6 +173,8 @@ pub const LlamaEngine = struct {
+@@ -146,6 +181,8 @@ pub const LlamaEngine = struct {
      /// Single token → bytes lookup. Caller owns the returned buffer.
      /// Bytes are NOT NUL-terminated; the slice length is authoritative.
      pub fn detokenizeOne(self: *LlamaEngine, allocator: std.mem.Allocator, token_id: i32) Error![]u8 {
@@ -685,7 +712,7 @@ index 806d641..23ee17e 100644
          var cap: i32 = 64;
          while (true) {
              const buf = allocator.alloc(u8, @intCast(cap)) catch return Error.OutOfMemory;
-@@ -161,12 +190,14 @@ pub const LlamaEngine = struct {
+@@ -161,12 +198,14 @@ pub const LlamaEngine = struct {
      }
  
      /// The model's embedded chat-template string (jinja source), or null.
@@ -704,7 +731,7 @@ index 806d641..23ee17e 100644
      }
  
      pub const ChatTurn = struct { role: []const u8, content: []const u8 };
-@@ -180,6 +211,8 @@ pub const LlamaEngine = struct {
+@@ -180,6 +219,8 @@ pub const LlamaEngine = struct {
          turns: []const ChatTurn,
          add_assistant: bool,
      ) Error![]u8 {
@@ -713,17 +740,18 @@ index 806d641..23ee17e 100644
          var roles = std.ArrayList([*:0]const u8).empty;
          defer roles.deinit(allocator);
          var contents = std.ArrayList([*:0]const u8).empty;
-@@ -226,6 +259,9 @@ pub const LlamaEngine = struct {
+@@ -226,6 +267,10 @@ pub const LlamaEngine = struct {
      }
  
      pub fn createContext(self: *LlamaEngine, opts: ContextOptions) Error!*LlamaContext {
 +        const fios_parent = self.fios_lifetime.borrow() catch return Error.SessionCreateFailed;
 +        errdefer _ = self.fios_lifetime.release(fios_parent);
 +        const fios_lifetime = lifetime.Lifetime.init() catch return Error.SessionCreateFailed;
++        const mtp_expected = opts.mtp_drafts > 0 and try self.hasMtp();
          const n_seq: u32 = std.math.clamp(opts.n_seq, 1, MAX_SEQS);
          const params: ffi.CtxParams = .{
              .n_ctx = opts.ctx_size,
-@@ -235,6 +271,12 @@ pub const LlamaEngine = struct {
+@@ -235,6 +280,12 @@ pub const LlamaEngine = struct {
              .n_ubatch = @intCast(opts.ubatch),
              .mtp_drafts = @intCast(opts.mtp_drafts),
          };
@@ -736,8 +764,12 @@ index 806d641..23ee17e 100644
          var err_buf: [256]u8 = undefined;
          err_buf[0] = 0;
          const raw = ffi.mlx_llama_ctx_create(self.handle, &params, &err_buf, err_buf.len) orelse {
-@@ -246,17 +288,8 @@ pub const LlamaEngine = struct {
-         if (opts.mtp_drafts > 0 and self.hasMtp() and ffi.mlx_llama_ctx_mtp_drafts(raw) == 0) {
+@@ -243,20 +294,11 @@ pub const LlamaEngine = struct {
+             });
+             return Error.SessionCreateFailed;
+         };
+-        if (opts.mtp_drafts > 0 and self.hasMtp() and ffi.mlx_llama_ctx_mtp_drafts(raw) == 0) {
++        if (mtp_expected and ffi.mlx_llama_ctx_mtp_drafts(raw) == 0) {
              log.warn("[llama] MTP head loaded but not used: {s}\n", .{std.mem.sliceTo(&err_buf, 0)});
          }
 -        const ctx = self.allocator.create(LlamaContext) catch {
@@ -755,7 +787,7 @@ index 806d641..23ee17e 100644
          return ctx;
      }
  };
-@@ -309,22 +342,53 @@ pub const LlamaContext = struct {
+@@ -309,22 +351,53 @@ pub const LlamaContext = struct {
      engine: *LlamaEngine,
      handle: *ffi.Ctx,
      seqs: []LlamaSeq,
@@ -813,7 +845,7 @@ index 806d641..23ee17e 100644
          std.debug.assert(seqs.len == tokens.len);
          var ids_buf: [MAX_SEQS]i32 = undefined;
          const ids = ids_buf[0..seqs.len];
-@@ -362,6 +426,8 @@ pub const LlamaSeq = struct {
+@@ -362,6 +435,8 @@ pub const LlamaSeq = struct {
      busy: bool = false,
  
      pub fn pos(self: *LlamaSeq) i32 {
@@ -822,7 +854,7 @@ index 806d641..23ee17e 100644
          return ffi.mlx_llama_seq_pos(self.ctx.handle, self.id);
      }
  
-@@ -373,6 +439,8 @@ pub const LlamaSeq = struct {
+@@ -373,6 +448,8 @@ pub const LlamaSeq = struct {
      /// exist for sampling — even when the whole prompt is already resident we
      /// back off one position.
      pub fn sync(self: *LlamaSeq, prompt_ids: []const i32) Error!i32 {
@@ -831,7 +863,7 @@ index 806d641..23ee17e 100644
          var common = commonPrefixLen(self.resident.items, prompt_ids);
          if (common == prompt_ids.len and common > 0) common -= 1;
  
-@@ -401,6 +469,8 @@ pub const LlamaSeq = struct {
+@@ -401,6 +478,8 @@ pub const LlamaSeq = struct {
  
      /// Drop all resident KV (and the mirror).
      pub fn reset(self: *LlamaSeq) void {
@@ -840,7 +872,7 @@ index 806d641..23ee17e 100644
          ffi.mlx_llama_seq_reset(self.ctx.handle, self.id);
          self.resident.clearRetainingCapacity();
      }
-@@ -410,7 +480,10 @@ pub const LlamaSeq = struct {
+@@ -410,7 +489,10 @@ pub const LlamaSeq = struct {
      /// drop the resident state and retry once cold. If the retry also fails the
      /// sequence is left clean for the next request.
      pub fn syncWithFallback(self: *LlamaSeq, prompt_ids: []const i32) Error!i32 {
@@ -851,7 +883,7 @@ index 806d641..23ee17e 100644
              log.warn(
                  "[llama] sync failed ({s}); resetting the sequence and retrying cold\n",
                  .{@errorName(err)},
-@@ -425,12 +498,16 @@ pub const LlamaSeq = struct {
+@@ -425,12 +507,16 @@ pub const LlamaSeq = struct {
  
      /// Advance this sequence alone by one already-sampled token.
      pub fn eval(self: *LlamaSeq, token: i32) Error!void {
@@ -868,7 +900,7 @@ index 806d641..23ee17e 100644
          const temp: f32 = if (s.temperature < 0.01) 0 else s.temperature;
          return ffi.mlx_llama_seq_sample(self.ctx.handle, self.id, temp, s.top_k, s.top_p, s.min_p, rng);
      }
-@@ -444,6 +521,8 @@ pub const LlamaSeq = struct {
+@@ -444,6 +530,8 @@ pub const LlamaSeq = struct {
      /// those the target agrees with. Returns the accepted drafts followed by the
      /// next token (sampled, not yet fed), a slice of `out`.
      pub fn specStep(self: *LlamaSeq, id_last: i32, max_drafts: u32, s: Sampling, rng: *u64, out: []i32) Error![]i32 {
@@ -877,7 +909,7 @@ index 806d641..23ee17e 100644
          std.debug.assert(out.len > max_drafts);
          const temp: f32 = if (s.temperature < 0.01) 0 else s.temperature;
          var err_buf: [256]u8 = undefined;
-@@ -489,7 +568,7 @@ test "llama: re-sync after a long generated tail is a cold decode, never a poiso
+@@ -489,7 +577,7 @@ test "llama: re-sync after a long generated tail is a cold decode, never a poiso
      const allocator = std.testing.allocator;
      const path = testModelPath() orelse return error.SkipZigTest;
  
@@ -886,7 +918,7 @@ index 806d641..23ee17e 100644
      defer engine.close();
  
      const prompt = try engine.tokenizeText(allocator, "Read the file store/pricing.py and", true);
-@@ -525,7 +604,7 @@ test "llama: tokenize round-trip and short greedy decode" {
+@@ -525,11 +613,11 @@ test "llama: tokenize round-trip and short greedy decode" {
      const allocator = std.testing.allocator;
      const path = testModelPath() orelse return error.SkipZigTest;
  
@@ -894,8 +926,33 @@ index 806d641..23ee17e 100644
 +    var engine = try LlamaEngine.open(std.testing.io, allocator, path, .{});
      defer engine.close();
  
-     try std.testing.expect(engine.nVocab() > 0);
-@@ -565,7 +644,7 @@ test "llama: syncWithFallback matches sync on the happy path" {
+-    try std.testing.expect(engine.nVocab() > 0);
+-    try std.testing.expect(engine.eosToken() >= 0);
++    try std.testing.expect((try engine.nVocab()) > 0);
++    try std.testing.expect((try engine.eosToken()) >= 0);
+ 
+     const ids = try engine.tokenizeText(allocator, "The capital of France is", true);
+     defer allocator.free(ids);
+@@ -546,15 +634,15 @@ test "llama: tokenize round-trip and short greedy decode" {
+     const cached0 = try sess.sync(ids);
+     try std.testing.expectEqual(@as(i32, 0), cached0); // cold sequence: nothing reused
+     const first = sess.argmax();
+-    try std.testing.expect(first >= 0 and first < engine.nVocab());
++    try std.testing.expect(first >= 0 and first < (try engine.nVocab()));
+ 
+     // Decode a few greedy tokens; the loop must advance position and stay valid.
+     var produced: usize = 0;
+     var tok = first;
+-    while (produced < 5 and !engine.isEog(tok)) : (produced += 1) {
++    while (produced < 5 and !(try engine.isEog(tok))) : (produced += 1) {
+         try sess.eval(tok);
+         tok = sess.argmax();
+-        try std.testing.expect(tok >= 0 and tok < engine.nVocab());
++        try std.testing.expect(tok >= 0 and tok < (try engine.nVocab()));
+     }
+     try std.testing.expect(sess.pos() >= @as(i32, @intCast(ids.len)));
+ }
+@@ -565,7 +653,7 @@ test "llama: syncWithFallback matches sync on the happy path" {
      const allocator = std.testing.allocator;
      const path = testModelPath() orelse return error.SkipZigTest;
  
@@ -904,7 +961,7 @@ index 806d641..23ee17e 100644
      defer engine.close();
  
      const a = try engine.tokenizeText(allocator, "Once upon a time, in a", true);
-@@ -615,7 +694,7 @@ test "llama: prefix reuse is byte-identical to cold decode" {
+@@ -615,7 +703,7 @@ test "llama: prefix reuse is byte-identical to cold decode" {
      const allocator = std.testing.allocator;
      const path = testModelPath() orelse return error.SkipZigTest;
  
@@ -913,7 +970,7 @@ index 806d641..23ee17e 100644
      defer engine.close();
  
      const shared = try engine.tokenizeText(allocator, "The history of the Roman Empire is long and", true);
-@@ -669,7 +748,7 @@ test "llama: sequences batched in one step never read each other's KV (#547)" {
+@@ -669,7 +757,7 @@ test "llama: sequences batched in one step never read each other's KV (#547)" {
      const allocator = std.testing.allocator;
      const path = testModelPath() orelse return error.SkipZigTest;
  
@@ -922,23 +979,26 @@ index 806d641..23ee17e 100644
      defer engine.close();
  
      const p = try engine.tokenizeText(allocator, "List three primary colors:", true);
-@@ -756,7 +835,7 @@ fn expectMtpMatchesPlain(engine: *LlamaEngine) !void {
+@@ -756,17 +844,92 @@ fn expectMtpMatchesPlain(engine: *LlamaEngine) !void {
  
  test "llama: greedy MTP rounds emit the plain greedy tokens and accept drafts (#548)" {
      const path = testModelPath() orelse return error.SkipZigTest;
 -    var engine = try LlamaEngine.open(std.testing.allocator, path, .{ .load_mtp = true });
 +    var engine = try LlamaEngine.open(std.testing.io, std.testing.allocator, path, .{ .load_mtp = true });
      defer engine.close();
-     if (!engine.hasMtp()) return error.SkipZigTest;
+-    if (!engine.hasMtp()) return error.SkipZigTest;
++    if (!(try engine.hasMtp())) return error.SkipZigTest;
      try expectMtpMatchesPlain(engine);
-@@ -765,8 +844,71 @@ test "llama: greedy MTP rounds emit the plain greedy tokens and accept drafts (#
+ }
+ 
  test "llama: an MTP head loaded from a separate GGUF drafts like the trunk's own (#548)" {
      const path = testModelPath() orelse return error.SkipZigTest;
      // The fixture's own file stands in for an `mtp-*.gguf` sidecar: it carries the head.
 -    var engine = try LlamaEngine.open(std.testing.allocator, path, .{ .mtp_path = path });
 +    var engine = try LlamaEngine.open(std.testing.io, std.testing.allocator, path, .{ .mtp_path = path });
      defer engine.close();
-     if (!engine.hasMtp()) return error.SkipZigTest;
+-    if (!engine.hasMtp()) return error.SkipZigTest;
++    if (!(try engine.hasMtp())) return error.SkipZigTest;
      try expectMtpMatchesPlain(engine);
  }
 +
@@ -973,6 +1033,10 @@ index 806d641..23ee17e 100644
 +        try std.testing.expectEqual(@as(u32, 0), context.mtpDrafts());
 +        seq.reset();
 +        try std.testing.expectEqualSlices(i32, &.{42}, seq.resident.items);
++        try std.testing.expectError(Error.LifetimeUnavailable, engine.eosToken());
++        try std.testing.expectError(Error.LifetimeUnavailable, engine.nVocab());
++        try std.testing.expectError(Error.LifetimeUnavailable, engine.hasMtp());
++        try std.testing.expectError(Error.LifetimeUnavailable, engine.isEog(0));
 +        try std.testing.expectError(Error.LifetimeUnavailable, engine.chatTemplateOwned(std.testing.allocator));
 +        try std.testing.expectError(Error.LifetimeUnavailable, context.terminal());
 +        try std.testing.expectError(Error.LifetimeUnavailable, context.step(&.{}, &.{}));
@@ -995,6 +1059,14 @@ index 806d641..23ee17e 100644
 +        try std.testing.expect(allocating.fios_lifetime.canClose(null));
 +        try std.testing.expectEqual(failure_index, failing.deallocations);
 +    }
++    // An optional MTP metadata failure must precede native publication and
++    // allocator access. Parent custody is returned even at nested capacity.
++    engine.fios_lifetime = try lifetime.Lifetime.init();
++    var metadata_held: [63]lifetime.Ticket = undefined;
++    for (&metadata_held) |*ticket| ticket.* = try engine.fios_lifetime.borrow();
++    try std.testing.expectError(Error.LifetimeUnavailable, engine.createContext(.{ .mtp_drafts = 1 }));
++    for (metadata_held) |ticket| try std.testing.expect(engine.fios_lifetime.release(ticket));
++    try std.testing.expect(engine.fios_lifetime.canClose(null));
 +    // The outer recovery operation obtains the final slot; its inner sync
 +    // must refuse without reset/retry or touching an uninitialized handle.
 +    context.fios_lifetime = try lifetime.Lifetime.init();
@@ -1005,7 +1077,7 @@ index 806d641..23ee17e 100644
 +    try std.testing.expect(context.fios_lifetime.canClose(null));
 +}
 diff --git a/src/arch/llama_stub.zig b/src/arch/llama_stub.zig
-index eb0c42a..5e891cc 100644
+index eb0c42a..958b1b7 100644
 --- a/src/arch/llama_stub.zig
 +++ b/src/arch/llama_stub.zig
 @@ -7,10 +7,12 @@
@@ -1021,7 +1093,7 @@ index eb0c42a..5e891cc 100644
      EngineOpenFailed,
      SessionCreateFailed,
      SessionSyncFailed,
-@@ -76,12 +78,17 @@ pub const LlamaEngine = struct {
+@@ -76,30 +78,35 @@ pub const LlamaEngine = struct {
      // offline llama path addresses it as LlamaEngine.ChatTurn.
      pub const ChatTurn = struct { role: []const u8, content: []const u8 };
  
@@ -1040,6 +1112,28 @@ index eb0c42a..5e891cc 100644
      pub fn close(self: *LlamaEngine) void {
          _ = self;
          @panic(unavailable);
+     }
+-    pub fn eosToken(self: *LlamaEngine) i32 {
++    pub fn eosToken(self: *LlamaEngine) Error!i32 {
+         _ = self;
+         @panic(unavailable);
+     }
+-    pub fn isEog(self: *LlamaEngine, token: i32) bool {
++    pub fn isEog(self: *LlamaEngine, token: i32) Error!bool {
+         _ = self;
+         _ = token;
+         @panic(unavailable);
+     }
+-    pub fn nVocab(self: *LlamaEngine) i32 {
++    pub fn nVocab(self: *LlamaEngine) Error!i32 {
+         _ = self;
+         @panic(unavailable);
+     }
+-    pub fn hasMtp(self: *LlamaEngine) bool {
++    pub fn hasMtp(self: *LlamaEngine) Error!bool {
+         _ = self;
+         @panic(unavailable);
+     }
 @@ -121,8 +128,9 @@ pub const LlamaEngine = struct {
          _ = token_id;
          @panic(unavailable);
@@ -1115,7 +1209,7 @@ index 1c9946d..6ff78b4 100644
  
  pub extern fn mlx_llama_seq_prefill(c: *Ctx, seq: i32, tokens: [*]const i32, n_tokens: i32, err: ?[*]u8, errlen: usize) i32;
 diff --git a/src/main.zig b/src/main.zig
-index 2a12423..37e45dc 100644
+index 2a12423..0e67e12 100644
 --- a/src/main.zig
 +++ b/src/main.zig
 @@ -524,29 +524,34 @@ fn printUsage(io: std.Io) void {
@@ -1244,7 +1338,7 @@ index 2a12423..37e45dc 100644
              return;
          } else if (std.mem.eql(u8, args[i], "--help") or std.mem.eql(u8, args[i], "-h")) {
              printUsage(io);
-@@ -2483,7 +2501,7 @@ fn runLlamaOffline(
+@@ -2483,13 +2501,13 @@ fn runLlamaOffline(
  
      log.info("[llama] backend: Metal, model: {s}\n", .{gguf_path});
  
@@ -1253,6 +1347,22 @@ index 2a12423..37e45dc 100644
          log.err("[llama] engine open failed: {s}\n", .{@errorName(err)});
          return err;
      };
+     defer engine.close();
+ 
+-    log.info("[llama] engine ready (EOS={d}, n_vocab={d})\n", .{ engine.eosToken(), engine.nVocab() });
++    log.info("[llama] engine ready (EOS={d}, n_vocab={d})\n", .{ try engine.eosToken(), try engine.nVocab() });
+ 
+     // Render the single user turn through the model's chat template; tokenize the
+     // result with add_special=false (the template owns BOS). Fall back to a raw
+@@ -2524,7 +2542,7 @@ fn runLlamaOffline(
+     while (generated < max_tokens) : (generated += 1) {
+         const next_id = sess.sample(.{ .temperature = temp }, &rng);
+ 
+-        if (next_id < 0 or engine.isEog(next_id)) break;
++        if (next_id < 0 or try engine.isEog(next_id)) break;
+ 
+         const piece = try engine.detokenizeOne(allocator, next_id);
+         defer allocator.free(piece);
 diff --git a/src/mlx.zig b/src/mlx.zig
 index 1f982ed..291853f 100644
 --- a/src/mlx.zig
@@ -2004,7 +2114,7 @@ index da1f791..72d2052 100644
 +    try std.testing.expectEqual(@as(usize, 1), registry.entries.count());
 +}
 diff --git a/src/scheduler.zig b/src/scheduler.zig
-index 9e12566..04f85de 100644
+index 9e12566..eff4c5b 100644
 --- a/src/scheduler.zig
 +++ b/src/scheduler.zig
 @@ -32,6 +32,8 @@
@@ -3099,7 +3209,7 @@ index 9e12566..04f85de 100644
      entry.weights = null;
      entry.transformer = null;
      entry.vision_encoder = null;
-@@ -3315,7 +4156,7 @@ fn doLoadLlamaOnInferenceThread(sch: *Scheduler, params: anytype) !void {
+@@ -3315,12 +4156,12 @@ fn doLoadLlamaOnInferenceThread(sch: *Scheduler, params: anytype) !void {
      const mtp_path: ?[]u8 = if (ls.mtp_drafts > 0) model_discovery.findLlamaMtpSidecar(sch.io, sch.allocator, params.llama_path) else null;
      defer if (mtp_path) |p| sch.allocator.free(p);
      if (mtp_path) |p| log.info("[llama] MTP draft head: {s}\n", .{p});
@@ -3108,7 +3218,21 @@ index 9e12566..04f85de 100644
          .mtp_path = mtp_path,
          .load_mtp = ls.mtp_drafts > 0,
      });
-@@ -3345,20 +4186,15 @@ fn doLoadLlamaOnInferenceThread(sch: *Scheduler, params: anytype) !void {
+     errdefer engine.close();
+-    log.info("[llama] engine ready (EOS={d}, n_vocab={d})\n", .{ engine.eosToken(), engine.nVocab() });
++    log.info("[llama] engine ready (EOS={d}, n_vocab={d})\n", .{ try engine.eosToken(), try engine.nVocab() });
+ 
+     // The stub config carries the per-sequence context (--ctx-size or 8192).
+     const llama_ctx = try engine.createContext(.{
+@@ -3338,27 +4179,22 @@ fn doLoadLlamaOnInferenceThread(sch: *Scheduler, params: anytype) !void {
+ 
+     // Make sure the stub config's EOS set includes the engine's EOS so the
+     // streaming/non-streaming stop checks fire.
+-    const eos_id: u32 = @intCast(engine.eosToken());
++    const eos_id: u32 = @intCast(try engine.eosToken());
+     params.config.addEosToken(eos_id);
+ 
+     // Adopt the GGUF's embedded chat template into the stub ChatConfig so
      // `chat.encodeChatViaLlama` can render it through mlx-serve's Jinja engine
      // (which also supplies the tool-synthesis fallback). The stub starts with an
      // empty allocator-owned template; swap it for the model's, freed by deinit.
@@ -3750,7 +3874,21 @@ index 9e12566..04f85de 100644
  }
  
  fn dflashContextCoversPrefix(context_len: usize, prefix_len: usize) bool {
-@@ -8304,6 +9470,10 @@ fn interleaveDecodeTick(sch: *Scheduler) u64 {
+@@ -7518,8 +8684,12 @@ test "ds4MtpShouldEngage: >1 draft tokens + greedy (legacy MTP and DSpark)" {
+ /// the slot keeps decoding.
+ fn emitLlamaToken(sch: *Scheduler, slot: *Slot, tok: i32) bool {
+     const engine = slot.model.llama_engine.?;
++    const eog = engine.isEog(tok) catch {
++        slot.markError("llama_lifetime_unavailable");
++        return false;
++    };
+     const tok_u32: u32 = @intCast(tok);
+-    if (engine.isEog(tok) or generate_mod.isEosId(tok_u32, slot.eos_token_ids)) {
++    if (eog or generate_mod.isEosId(tok_u32, slot.eos_token_ids)) {
+         finishSlot(sch, slot, "stop");
+         return false;
+     }
+@@ -8304,6 +9474,10 @@ fn interleaveDecodeTick(sch: *Scheduler) u64 {
  }
  
  fn runPrefill(sch: *Scheduler, slot: *Slot) !void {
@@ -3761,7 +3899,7 @@ index 9e12566..04f85de 100644
      // Mark the phase for the whole of prefill, and clear both signals on EVERY
      // exit path (success, cancel, error). `requests_prefilling` flips at entry
      // so the panel isn't blind until the first chunk lands; the chunk loop in
-@@ -8815,6 +9985,10 @@ fn sumInflightGeneratedTokens(active: anytype) u64 {
+@@ -8815,6 +9989,10 @@ fn sumInflightGeneratedTokens(active: anytype) u64 {
  
  fn runDecodeTick(sch: *Scheduler, active: []*Slot) !void {
      if (active.len == 0) return;
@@ -3773,7 +3911,7 @@ index 9e12566..04f85de 100644
      // Publish the in-flight generated-token aggregate for the gauge sampler.
      // Runs after the whole tick (all decode work + any finishSlot calls) on
 diff --git a/src/server.zig b/src/server.zig
-index 720b2c6..226d80b 100644
+index 720b2c6..36d7c1e 100644
 --- a/src/server.zig
 +++ b/src/server.zig
 @@ -1,4 +1,8 @@
@@ -4041,6 +4179,36 @@ index 720b2c6..226d80b 100644
      var config = model_mod.parseConfig(global_registry.?.io, allocator, entry.path) catch return null;
      defer config.deinit(allocator);
      const fa = config.forced_aligner orelse return null;
+@@ -9300,7 +9396,7 @@ fn handleDetokenize(
+ 
+     const ids = try allocator.alloc(u32, tokens_val.array.items.len);
+     defer allocator.free(ids);
+-    if (!parseTokenIds(tokens_val.array.items, tokenVocabSize(lm), ids)) {
++    if (!parseTokenIds(tokens_val.array.items, try tokenVocabSize(lm), ids)) {
+         try sendErrorResponse(allocator, stream, "400 Bad Request", "invalid_request_error", "'tokens' must be integers inside the model's vocabulary", 400);
+         return;
+     }
+@@ -9665,9 +9761,9 @@ fn echoModelName(root: std.json.ObjectMap, fallback: []const u8) []const u8 {
+ 
+ /// The vocabulary a request's token ids index. An embedded engine's stub config keeps the
+ /// default vocab; its ids are the engine's, and an id past its vocab aborts inside llama.cpp.
+-fn tokenVocabSize(lm: *const LoadedModel) u32 {
++fn tokenVocabSize(lm: *const LoadedModel) !u32 {
+     if (lm.ds4_engine) |e| return e.vocabSize();
+-    if (lm.llama_engine) |e| return @intCast(e.nVocab());
++    if (lm.llama_engine) |e| return @intCast(try e.nVocab());
+     return if (lm.config) |c| c.vocab_size else 0;
+ }
+ 
+@@ -10555,7 +10651,7 @@ fn handleCompletions(
+         return;
+     };
+ 
+-    const prompt = try parseCompletionPrompt(allocator, root.get("prompt"), tokenVocabSize(lm));
++    const prompt = try parseCompletionPrompt(allocator, root.get("prompt"), try tokenVocabSize(lm));
+     defer if (prompt == .ids) allocator.free(prompt.ids);
+     switch (prompt) {
+         .missing, .invalid => {
 @@ -13838,6 +13934,21 @@ fn findContentLength(headers: []const u8) ?usize {
  /// Case-insensitive header lookup returning the trimmed VALUE (`Content-Type`
  /// carries the multipart boundary, so `/v1/images/edits` can't be parsed from
