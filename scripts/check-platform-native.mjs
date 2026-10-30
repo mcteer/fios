@@ -42,7 +42,7 @@ try {
   const readOnly=entry.indexOf('if (args.len == 2 and std.mem.eql(u8, args[1], "--version"))');
   const startup=entry.indexOf('Guard.start(VERSION)'),backend=entry.indexOf('server_mod.applyMlxCacheLimit();');
   assert(readOnly>=0&&readOnly<startup&&startup<backend,'FIO_NATIVE_READONLY_STARTUP_ORDER');
-  verifyLlamaCustody(readFileSync(path.join(scratch,'src/arch/llama.zig'),'utf8'),readFileSync(path.join(scratch,'src/model_registry.zig'),'utf8'));
+  verifyLlamaCustody(readFileSync(path.join(scratch,'src/arch/llama.zig'),'utf8'),readFileSync(path.join(scratch,'src/model_registry.zig'),'utf8'),readFileSync(path.join(scratch,'lib/llama_shim/llama_shim.cpp'),'utf8'));
   verifyDs4Custody(readFileSync(path.join(scratch,'src/arch/ds4.zig'),'utf8'),readFileSync(path.join(scratch,'src/model_registry.zig'),'utf8'));
   for (const name of ['backend_lifetime.zig', 'request_ownership.zig', 'control_protocol.zig', 'control_transport.zig', 'device_owner.zig', 'startup_guard.zig']) {
     copyFileSync(path.join(root, 'platform/studio/native', name), path.join(scratch, 'src', name));

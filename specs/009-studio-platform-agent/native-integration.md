@@ -245,3 +245,7 @@ proof. The current Zig custody wrappers protect known local lifetime edges but
 do not certify these participants. No new global synchronize/status shortcut,
 terminal issuer, all-client coverage, uncertainty release or native activation
 follows from this audit. T002/T020/T021/T022 remain open.
+
+### Checked llama retirement continuation
+
+Context metadata allocation now finishes before native creation. The C bridge exposes creator-thread preflight and checked terminal retirement; Zig releases sequence metadata and parent custody only after checked success, retaining the closed lifetime and shared uncertainty on refusal. Null-pointer refusal and allocation failures are model-free fixture cases. Full linked15-root/HTTP/control validation passes; seven negative source omissions supplement it. This does not validate loaded contexts, legacy raw C callers, other backends or all-client native terminality. See validation.md for exact receipts.
