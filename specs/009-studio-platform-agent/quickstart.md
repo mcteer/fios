@@ -76,6 +76,16 @@ Each command must exit nonzero at its exact runtime witness: `COMMAND_SLOT_RELEA
 
 Optional macOS source prerequisite, with the reviewed Zig0.17.0 executable: `node scripts/check-platform-native-startup.mjs --isolated --zig /ABS/zig`. It compiles libc-only disposable Debug/ReleaseSafe children, runs finite ownership/file-safety checks and removes only its private scratch. It does not start MLX/OrbStack or establish production singleton/native terminality. Adding `--mutate-lock` deliberately removes locking in a private copy and must fail the duplicate assertion.
 
+The separate future-installed startup path has a finite private harness:
+
+    node scripts/check-platform-native-installed-startup.mjs --isolated --zig /ABS/zig
+
+It uses a substituted disposable namespace/owner, real process locking and an
+exact private flock-omission witness. It never accesses an installed lock,
+starts MLX or grants native authority. See
+[the startup reservation contract](contracts/native-startup-reservation.md).
+
+
 To check source dependency composition after reviewing the exact MIMO candidate:
 
 ```sh

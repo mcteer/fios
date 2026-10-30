@@ -132,6 +132,13 @@ try {
   // A different port and no control flag isolate the early startup lock from
   // ordinary HTTP-port/control-socket collision refusal later in startup.
   const duplicateEnv={...env};delete duplicateEnv.FIOS_NATIVE_CONTROL;
+  for(const flag of ['--version','--help']) {
+    const metadata=spawnSync(binary,[flag],{env:duplicateEnv,encoding:'utf8',timeout:3000,maxBuffer:65536});
+    assert.equal(metadata.status,0,'Exact readonly metadata must remain available while startup is reserved: '+JSON.stringify({flag,signal:metadata.signal,error:metadata.error?.code,bytes:Buffer.byteLength(metadata.stdout??'')}));
+    assert.equal(metadata.signal,null);
+    assert(metadata.stdout.length>0);
+    assert(!metadata.stderr.includes('Metal GPU:'),'Readonly metadata initialized a backend');
+  }
   const duplicate=spawnSync(binary,['serve','--host','127.0.0.1','--port','0','--model-dir',models,'--no-warmup-eager'],{env:duplicateEnv,encoding:'utf8',timeout:3000,maxBuffer:16384});
   assert.equal(duplicate.signal,null,'duplicate fixture blocked instead of refusing');
   assert.notEqual(duplicate.status,0,'duplicate fixture was allowed');

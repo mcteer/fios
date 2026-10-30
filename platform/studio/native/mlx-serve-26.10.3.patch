@@ -806,20 +806,135 @@ index 1c9946d..43da296 100644
  
  pub extern fn mlx_llama_seq_prefill(c: *Ctx, seq: i32, tokens: [*]const i32, n_tokens: i32, err: ?[*]u8, errlen: usize) i32;
 diff --git a/src/main.zig b/src/main.zig
-index 2a12423..c5d6cf2 100644
+index 2a12423..9cfcea6 100644
 --- a/src/main.zig
 +++ b/src/main.zig
-@@ -525,6 +525,10 @@ fn printUsage(io: std.Io) void {
+@@ -524,29 +524,34 @@ fn printUsage(io: std.Io) void {
+     stdout_w.interface.flush() catch {};
  }
  
++fn printVersion(io: std.Io) void {
++    // Report app + every embedded engine version WITHOUT booting the
++    // server (the macOS app spawns this and parses it — src/version.zig,
++    // Swift EngineVersions). MLX + ggml self-report at runtime; mlx-c /
++    // ds4 / the llama.cpp tag have no runtime API and ride build options.
++    var mlx_ver = mlx.mlx_string_new();
++    defer _ = mlx.mlx_string_free(mlx_ver);
++    _ = mlx.mlx_version(&mlx_ver);
++    const info = version_mod.Info{
++        .app = VERSION,
++        .mlx = std.mem.span(mlx.mlx_string_data(mlx_ver)),
++        .mlx_c = build_options.mlx_c_version,
++        .nax = transformer_mod.naxStatus(),
++        .ggml = ggmlEngineVersion(),
++        .ggml_commit = ggmlEngineCommit(),
++        .llama_tag = build_options.llama_tag,
++        .gguf_format = GGUF_FORMAT_VERSION,
++        .ds4_commit = build_options.ds4_commit,
++    };
++    var ver_buf: [512]u8 = undefined;
++    var ver_w = std.Io.File.stdout().writer(io, &ver_buf);
++    version_mod.writeReport(&ver_w.interface, info) catch {};
++    ver_w.interface.flush() catch {};
++}
++
  pub fn main(init: std.process.Init) !void {
-+    // Opted-in disposable source fixtures claim ownership before native init.
-+    // No production absence, admission, or device-terminality authority.
+-    crt.exportHomeDefault();
+-    // Referenced, or the linker strips the unreferenced section.
+-    if (@import("builtin").os.tag == .macos) std.mem.doNotOptimizeAway(&info_plist);
+     const allocator = init.gpa;
+     const io = init.io;
+-
+-    // Bound MLX's reclaimable buffer pool before anything can allocate. ONCE,
+-    // above every subcommand branch — a per-serve-path call is how
+-    // `runHeadlessServe` (the mode the app always launches) silently ate the
+-    // --pld* flags. See server.mlxCacheLimitBytes for why MLX's own default
+-    // (~121 GB on a 128 GB Mac) is no defense.
+-    server_mod.applyMlxCacheLimit();
+-    server_mod.applyGpuCeilingEnv();
+-    mlx.exportCudaHome();
+-    mlx.exportPtxCacheDir(@import("mlx_stamp").bytes);
+-    // Resolve lazily-cached env reads on the main thread before other threads exist.
+-    @import("transformer.zig").warmQsaEnvCaches();
+-    @import("prefix_cache.zig").warmEnvCaches();
+-
+-    // mlx-c's default handler exits the process; latch MLX failures instead (#353).
+-    mlx.installErrorHandler();
+-
+     // Materialize CLI args from the iterator API into a flat slice
+     var args_iter = try std.process.Args.Iterator.initAllocator(init.minimal.args, allocator);
+     defer args_iter.deinit();
+@@ -565,6 +570,40 @@ pub fn main(init: std.process.Init) !void {
+         return;
+     }
+ 
++    // Exact metadata-only invocations precede startup/backend effects. Other
++    // flag combinations retain the guarded ordinary parser below.
++    if (args.len == 2 and std.mem.eql(u8, args[1], "--version")) {
++        printVersion(io);
++        return;
++    }
++    if (args.len == 2 and (std.mem.eql(u8, args[1], "--help") or std.mem.eql(u8, args[1], "-h"))) {
++        printUsage(io);
++        return;
++    }
++    // Retain startup exclusion before every model-capable subcommand/backend
++    // effect. This is neither launch permission nor native terminal authority.
 +    var startup_guard = try @import("startup_guard.zig").Guard.start(VERSION);
 +    defer if (startup_guard) |*held| held.close();
-     crt.exportHomeDefault();
-     // Referenced, or the linker strips the unreferenced section.
-     if (@import("builtin").os.tag == .macos) std.mem.doNotOptimizeAway(&info_plist);
++    crt.exportHomeDefault();
++    // Referenced, or the linker strips the unreferenced section.
++    if (@import("builtin").os.tag == .macos) std.mem.doNotOptimizeAway(&info_plist);
++
++    // Bound MLX's reclaimable buffer pool before anything can allocate. ONCE,
++    // above every subcommand branch — a per-serve-path call is how
++    // `runHeadlessServe` (the mode the app always launches) silently ate the
++    // --pld* flags. See server.mlxCacheLimitBytes for why MLX's own default
++    // (~121 GB on a 128 GB Mac) is no defense.
++    server_mod.applyMlxCacheLimit();
++    server_mod.applyGpuCeilingEnv();
++    mlx.exportCudaHome();
++    mlx.exportPtxCacheDir(@import("mlx_stamp").bytes);
++    // Resolve lazily-cached env reads on the main thread before other threads exist.
++    @import("transformer.zig").warmQsaEnvCaches();
++    @import("prefix_cache.zig").warmEnvCaches();
++
++    // mlx-c's default handler exits the process; latch MLX failures instead (#353).
++    mlx.installErrorHandler();
++
+     // ── Subcommands (Ollama-grade CLI): `mlx-serve run|pull|list|serve` ──
+     // `pull` and `list` finish here; `run` and `serve` fall through into the
+     // normal flag parse (skipping the consumed positionals) and serve path.
+@@ -705,28 +744,7 @@ pub fn main(init: std.process.Init) !void {
+     var i: usize = arg_start;
+     while (i < args.len) : (i += 1) {
+         if (std.mem.eql(u8, args[i], "--version")) {
+-            // Report app + every embedded engine version WITHOUT booting the
+-            // server (the macOS app spawns this and parses it — src/version.zig,
+-            // Swift EngineVersions). MLX + ggml self-report at runtime; mlx-c /
+-            // ds4 / the llama.cpp tag have no runtime API and ride build options.
+-            var mlx_ver = mlx.mlx_string_new();
+-            defer _ = mlx.mlx_string_free(mlx_ver);
+-            _ = mlx.mlx_version(&mlx_ver);
+-            const info = version_mod.Info{
+-                .app = VERSION,
+-                .mlx = std.mem.span(mlx.mlx_string_data(mlx_ver)),
+-                .mlx_c = build_options.mlx_c_version,
+-                .nax = transformer_mod.naxStatus(),
+-                .ggml = ggmlEngineVersion(),
+-                .ggml_commit = ggmlEngineCommit(),
+-                .llama_tag = build_options.llama_tag,
+-                .gguf_format = GGUF_FORMAT_VERSION,
+-                .ds4_commit = build_options.ds4_commit,
+-            };
+-            var ver_buf: [512]u8 = undefined;
+-            var ver_w = std.Io.File.stdout().writer(io, &ver_buf);
+-            version_mod.writeReport(&ver_w.interface, info) catch {};
+-            ver_w.interface.flush() catch {};
++            printVersion(io);
+             return;
+         } else if (std.mem.eql(u8, args[i], "--help") or std.mem.eql(u8, args[i], "-h")) {
+             printUsage(io);
 diff --git a/src/mlx.zig b/src/mlx.zig
 index 1f982ed..291853f 100644
 --- a/src/mlx.zig
