@@ -1,5 +1,5 @@
 diff --git a/ds4_metal.m b/ds4_metal.m
-index 0d75369..00234b5 100644
+index 0d75369..338cf9f 100644
 --- a/ds4_metal.m
 +++ b/ds4_metal.m
 @@ -15,6 +15,7 @@
@@ -610,16 +610,49 @@ index 0d75369..00234b5 100644
  
      const uint32_t n_workers =
          ds4_gpu_stream_expert_pread_thread_count(n_tasks);
-@@ -13642,6 +13832,12 @@ static int ds4_gpu_stream_expert_pread_tasks(
+@@ -13642,30 +13832,21 @@ static int ds4_gpu_stream_expert_pread_tasks(
      } else if (!ds4_gpu_stream_expert_pread_pool_dispatch(tasks,
                                                            n_tasks,
                                                            n_workers)) {
+-        pthread_t threads[18];
+-        ds4_gpu_stream_expert_pread_worker_args args[18];
+-        uint32_t started = 0;
+-        for (uint32_t i = 0; i < n_workers; i++) {
+-            args[i].tasks = tasks;
+-            args[i].n_tasks = n_tasks;
+-            args[i].worker_index = i;
+-            args[i].n_workers = n_workers;
+-            const int rc = pthread_create(&threads[i],
+-                                          NULL,
+-                                          ds4_gpu_stream_expert_pread_worker,
+-                                          &args[i]);
+-            if (rc != 0) {
+-                fprintf(stderr,
+-                        "ds4: Metal streaming expert pread thread creation failed: %s\n",
+-                        strerror(rc));
+-                ok = 0;
+-                break;
+-            }
+-            started++;
+-        }
+-        for (uint32_t i = 0; i < started; i++) {
+-            if (pthread_join(threads[i], NULL) != 0) ok = 0;
+-        }
 +        pthread_mutex_lock(&g_stream_expert_pread_pool_mutex);
 +        const int refused = g_fios_pread_pool_uncertain ||
 +            atomic_load_explicit(&g_fios_pread_pool_sealed, memory_order_acquire) ||
 +            g_stream_expert_pread_pool_initialized;
 +        pthread_mutex_unlock(&g_stream_expert_pread_pool_mutex);
 +        if (refused) return 0; // No alternate read path after custody refusal.
-         pthread_t threads[18];
-         ds4_gpu_stream_expert_pread_worker_args args[18];
-         uint32_t started = 0;
++        // Without a tracked pool, keep argument/destination lifetime on the
++        // calling thread. Never return past an uncertain transient join.
++        ds4_gpu_stream_expert_pread_worker_args wa = {
++            .tasks = tasks,
++            .n_tasks = n_tasks,
++            .worker_index = 0,
++            .n_workers = 1,
++        };
++        (void)ds4_gpu_stream_expert_pread_worker(&wa);
+     }
+     const double dt = ds4_gpu_now_ms() - t0;
+ 
