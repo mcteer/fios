@@ -177,8 +177,8 @@ try{
    pin='    pub fn tryFree(self: *Ds4Snapshot) bool {\n        const closing = self.fios_lifetime.beginClose(null) catch return false;\n        if (!self.fios_lifetime.commitClose(closing)) return false;';
    replacement='    pub fn tryFree(self: *Ds4Snapshot) bool { // Deliberate live-buffer custody bypass.';
   }else if(residentUnloadMutation){
-   pin='    pub fn fiosCanUnloadResident(self: *LoadedModel) bool {\n        return self.fiosMayDeinit();';
-   replacement='    pub fn fiosCanUnloadResident(self: *LoadedModel) bool {\n        _ = self.fiosMayDeinit(); return true; // Deliberate resident-custody bypass.';
+   pin='    pub fn fiosCanUnloadResident(self: *LoadedModel) bool {\n        return !self.fios_pending_load_reader.load(.acquire) and self.fiosMayDeinit();';
+   replacement='    pub fn fiosCanUnloadResident(self: *LoadedModel) bool {\n        if (self.fios_pending_load_reader.load(.acquire)) return false;\n        _ = self.fiosMayDeinit(); return true; // Deliberate resident-custody bypass.';
   }else if(retainedCpuMutation){
    pin='    pub fn releaseRetainedCpuState(self: *LoadedModel) bool {\n        if (!self.fiosCanReplaceCpuState()) return false;';
    replacement='    pub fn releaseRetainedCpuState(self: *LoadedModel) bool {\n        _ = self.fiosCanReplaceCpuState(); // Deliberate borrowed CPU-state cleanup bypass.';

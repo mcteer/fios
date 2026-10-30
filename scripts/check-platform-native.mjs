@@ -111,12 +111,20 @@ try {
   const registryOrdinary=registrySource.split('\ntest ')[0].replace(pinDrop,'        // Reviewed aggregate pin-drop transaction characterized above.');
   const slotStart=schedulerSource.indexOf('pub const SlotState');
   const schedulerProduction=schedulerSource.slice(0,schedulerSource.indexOf('\ntest "fios native cleanup'))+schedulerSource.slice(slotStart,schedulerSource.indexOf('\ntest ',slotStart));
-  for(const [text,marker,count] of [[registryOrdinary,'self.fiosProbeChangedLocked();',2],[schedulerProduction,'self.registry.fiosProbeChangedLocked();',2]]) {
+  for(const [text,marker,count] of [[registryOrdinary,'self.fiosProbeChangedLocked();',3],[schedulerProduction,'self.registry.fiosProbeChangedLocked();',1]]) {
     assert.equal([...text.matchAll(/\.refcount\.(?:fetchAdd|fetchSub|store|swap|cmpxchgWeak|cmpxchgStrong)\(/g)].length,count,'unreviewed production atomic reference mutation');
     const mutations=[...text.matchAll(/\b\w+\.refcount\.fetch(?:Add|Sub)\(1, \.acq_rel\);/g)];
     assert.equal(mutations.length,count,'unreviewed production reference mutation set');
     for(const match of mutations) assert(text.slice(match.index+match[0].length).trimStart().startsWith(marker),'borrow mutation lacks partial epoch advancement');
   }
+  const readyPublication=registrySource.slice(registrySource.indexOf('pub fn markReadyLocked('),registrySource.indexOf('pub fn markReadyLocked(')+1800);
+  const conversion=readyPublication.indexOf('entry.fios_pending_load_reader.swap(false, .acq_rel)'),publication=readyPublication.indexOf('entry.state = .ready;');
+  assert(conversion>=0&&publication>=0&&conversion<publication);
+  assert(schedulerProduction.includes('errdefer if (pinned) self.registry.releaseLoadRequester(entry);'));
+  assert(schedulerProduction.includes('entry.fios_pending_load_reader.store(true, .release);'));
+  assert(schedulerProduction.includes('.warmup_eager = self.cold_warmup_eager,'));
+  assert(schedulerProduction.includes('.load_vision = self.cold_load_vision and coldLoadVision(owned.config.has_vision),'));
+  assert(schedulerProduction.includes('owned.config.ctx_override = self.gguf_ctx_size;'));
   const genPosting=schedulerSource.slice(schedulerSource.indexOf('pub fn runGeneration('));
   assert(genPosting.indexOf('FiosActorLoadPreparation.beginActive(')<genPosting.indexOf('self.gen_queue.append('));
   assert(genPosting.includes('req.fios_parent = fios_sender.token;'));

@@ -1,6 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {nativeReviewIntent} from '../scripts/lib/platform-native-review-intent.mjs';
+import {createHash} from 'node:crypto';
+import {nativeReviewIntent,nativeReviewHTTPFailure} from '../scripts/lib/platform-native-review-intent.mjs';
+test('native review failures retain only fixed diagnostic categories',()=>{
+ const hash=s=>createHash('sha256').update(s).digest('hex');
+ assert.deepEqual(nativeReviewHTTPFailure(500,{error:{type:'model_load_failed',message:'Model load failed: AccessDenied'}}),{http_status:500,error_message_sha256:hash('Model load failed: AccessDenied'),error_type:'model_load_failed',load_error:'AccessDenied'});
+ for(const error of [{type:'secret',message:'Model load failed: Secret'},{type:'secret',message:'/private/credentials'},{type:'secret',message:'generated prose'}])assert.deepEqual(nativeReviewHTTPFailure(500,{error}),{http_status:500,error_message_sha256:hash(error.message)});
+});
 const digest='a'.repeat(64);
 test('native source planning and empty checks never request inference',()=>{
  assert.deepEqual(nativeReviewIntent(['--plan','--capsule','/private/capsule','--sha256',digest,'--output','/private/plan.json']),{mode:'plan',inferenceRequested:false});

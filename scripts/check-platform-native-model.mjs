@@ -12,7 +12,7 @@ import {fileURLToPath} from 'node:url';
 import {setTimeout as delay} from 'node:timers/promises';
 import {createServer} from 'node:net';
 import {verifyNativeReview} from './lib/platform-native-review.mjs';
-import {nativeReviewIntent} from './lib/platform-native-review-intent.mjs';
+import {nativeReviewIntent,nativeReviewHTTPFailure} from './lib/platform-native-review-intent.mjs';
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..'),args=process.argv.slice(2);
 nativeReviewIntent(args);
 const ID='mlx-community/gemma-4-e4b-it-4bit',MODEL=path.join(homedir(),'.mlx-serve/models',ID);
@@ -71,7 +71,7 @@ try{
  else{
   assert(before.data.some(m=>m.id===ID),'Exact selected model not advertised');receipt.native_uncertainty=true;receipt.native_inference=null;receipt.inference_attempted=true;receipt.actual_model_posts=1;save();
   stage='model_request';const response=await fetch('http://127.0.0.1:'+port+'/v1/chat/completions',{method:'POST',headers:{Authorization:'Bearer '+key,'Content-Type':'application/json'},body:JSON.stringify({model:ID,messages:[{role:'user',content:'Reply with one word: ready.'}],max_tokens:8,temperature:0,stream:true,stream_options:{include_usage:true}}),signal:AbortSignal.timeout(LIMITS.request_ms)});
-  assert(response.ok,'Native model request refused');stage='model_stream';let buffer='',bytes=0,done=false,deltas=0,completionTokens=null;
+  if(!response.ok){let bytes=0,body='';for await(const chunk of response.body){bytes+=chunk.length;assert(bytes<=16384);body+=Buffer.from(chunk).toString('utf8');}let value;try{value=JSON.parse(body);}catch{}receipt.http_failure=nativeReviewHTTPFailure(response.status,value);throw Error('Native model request refused');}stage='model_stream';let buffer='',bytes=0,done=false,deltas=0,completionTokens=null;
   for await(const chunk of response.body){bytes+=chunk.length;assert(bytes<=65536&&!failed);buffer+=Buffer.from(chunk).toString('utf8');let at;while((at=buffer.indexOf('\n'))>=0){const line=buffer.slice(0,at).trim();buffer=buffer.slice(at+1);if(!line.startsWith('data:'))continue;const data=line.slice(5).trim();if(data==='[DONE]'){done=true;continue;}const value=JSON.parse(data);assert(!value.error);if(value.choices?.some(c=>['content','reasoning_content'].some(k=>typeof c.delta?.[k]==='string'&&c.delta[k].length>0)))deltas++;if(value.usage?.completion_tokens!==undefined){assert(Number.isSafeInteger(value.usage.completion_tokens)&&value.usage.completion_tokens>=0&&value.usage.completion_tokens<=8);completionTokens=value.usage.completion_tokens;}}}
   assert(done&&completionTokens!==null&&completionTokens>0);receipt.completion_tokens=completionTokens;receipt.delta_events=deltas;postsDone=true;receipt.native_inference=true;assert((await get('/v1/fios/activity')).coverage==='unknown');receipt.result='single_source_model_response_complete';receipt.generated_text_logged=false;
  }

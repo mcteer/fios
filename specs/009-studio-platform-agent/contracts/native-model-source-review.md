@@ -1,6 +1,6 @@
 # Private native source model review
 
-This is a separately gated administrative bypass-client experiment, not a Fios interface path or platform job. It constructs no fixture admission grant. Ordinary interface inference remains under the private Pydantic harness. A prepared capsule/plan confers no installation, runtime-management or native admission authority.
+This is an administrative bypass-client experiment, not a Fios interface path or platform job. It constructs no fixture admission grant. Ordinary interface inference remains under the private Pydantic harness. A prepared capsule/plan confers no installation, runtime-management or native admission authority.
 
 The current fixed case is local `mlx-community/gemma-4-e4b-it-4bit`, backend `gemma4`, in `~/.mlx-serve/models/mlx-community/gemma-4-e4b-it-4bit`. Read-only authenticated discovery reports it available on demand, unloaded. The local weights are5,146,800,534 bytes (about4.79GiB). No catalog URL, peer suffix, model fallback, download or remote execution is used.
 
@@ -19,7 +19,7 @@ Planning fingerprints the existing model files, runner inputs, profile and a rea
 
 ## Explicitly approved single run
 
-Only after separate operator opt-in:
+The operator granted blanket real-inference approval for009 on2026-10-30. That satisfies this run’s inference authorization; do not request it again within this work. The explicit command flag and single-use plan remain technical guards, not another approval request:
 
 ```sh
 node scripts/check-platform-native-model.mjs --run --plan /ABS/PLAN.json --sha256 REVIEWED_PLAN_SHA --allow-native-inference
@@ -29,7 +29,7 @@ The plan is consumed durably before spawning. Its exact runner/profile/observer/
 
 The case uses one authenticated loopback-only private source instance, one selected model, context512, concurrency1 and at most8 output tokens. The model request deadline is90s; work watchdog120s; cleanup allows5s TERM then2s KILL. The12GiB resident/physical-footprint value is an abort threshold sampled every500ms (including the first sample), not a hard GPU/physical-memory quota. The observer must match the original kernel PID/start/UID before signaling; unknown identity remains retained/reported, never signaled by PID alone.
 
-A kernel profile permits only the private listener/control endpoints, denies outbound network access, fork and other execs, and permits filesystem writes only within the child's private home. Model files, capsule and parent-held records remain read-only to the child. Parent receipts and one-use intent are fsynced separately. The source server gets a fresh strict API key through its private environment, never gateway/Studio credentials. Raw diagnostics, generated text and reasoning are not logged. No installed application, launchd, Docker, RDMA or legacy data operation occurs.
+A kernel profile permits only the private listener/control endpoints, denies outbound network access, fork and other execs, and permits filesystem writes only within the child's private home. Model files, capsule and parent-held records remain read-only to the child. Parent receipts and one-use intent are fsynced separately. The source server gets a fresh strict API key through its private environment, never gateway/Studio credentials. Raw diagnostics, generated text and reasoning are not logged. Failed HTTP responses retain only status, fixed diagnostic categories and a message SHA; known source error templates can be compared by hash without retaining server prose. No installed application, launchd, Docker, RDMA or legacy data operation occurs.
 
 The receipt reports source coverage `unknown` and native quiescence `unproven`. A successful response is partial source/backend acceptance, not model competence, all-client admission or T051 completion. Reaping never clears independent inference uncertainty. Runtime data remains available for diagnosis; unrelated resources are not deleted.
 
