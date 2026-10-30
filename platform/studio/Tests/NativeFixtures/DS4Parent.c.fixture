@@ -1,0 +1,57 @@
+// Source-control-flow fixture only. Types/callees below are mocks, not native
+// engine ABI, SDK objects, transport retirement or all-writer acceptance.
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <string.h>
+#define DS4_HAS_DEEPSEEK41_GPU 1
+#define DS4_N_LAYER 1
+#define DS4_TP_GATES_PER_LAYER 1
+typedef struct { void *map; } model;
+typedef struct {
+ struct { void *ctx, *slab, *zero_vec, *host_slab;
+          void **out_views, **in_views, **batch_out_views, **batch_in_views; } tp;
+ int weights,vocab,simulated_memory;
+ model model,mtp_model,vision_model;
+ int shared_prefill_workspace; bool shared_prefill_workspace_ready;
+ void *directional_steering_dirs,*directional_steering_file,*model_path;
+} ds4_engine;
+static void *g_tp_block_ctx;
+static unsigned destructive,checked,legacy;
+static int ds4_gpu_tp_shutdown_checked(void){++checked;return 0;}
+static void ds4_gpu_tp_shutdown(void){++legacy;}
+#define free(...) (++destructive)
+#define ds4_tp_detach_slab(...) (++destructive)
+#define ds4_gpu_tensor_free(...) (++destructive)
+#define ds4_expert_profile_close(...) (++destructive)
+#define weights_free(...) (++destructive)
+#define vocab_free(...) (++destructive)
+#define ds4_threads_shutdown(...) (++destructive)
+#define model_close(...) (++destructive)
+#define metal_graph_free_prefill_workspace(...) (++destructive)
+#define ds4_gpu_cleanup(...) (++destructive)
+#define ds4_ssd_memory_lock_release(...) (++destructive)
+#define ds4_release_instance_lock(...) (++destructive)
+/* SOURCE_FUNCTIONS */
+int main(int argc,char **argv){
+ ds4_engine e={0}; int context=7,slab=11;
+ if(argc==2&&strcmp(argv[1],"--empty")==0){
+  ds4_engine_tp_unbind(NULL);ds4_engine_close(NULL);
+  ds4_engine_tp_unbind(&e);
+  if(destructive||checked||legacy){fputs("PARENT_EMPTY_UNBIND_CHANGED\n",stderr);return 77;}
+  ds4_engine_close(&e);
+  if(!destructive||checked||legacy){fputs("PARENT_EMPTY_CLOSE_REFUSED\n",stderr);return 77;}
+  puts("PASS: empty and null parent mock controls retain legacy behavior.");return 0;
+ }
+ e.tp.ctx=&context;e.tp.slab=&slab;g_tp_block_ctx=&context;
+ ds4_engine before=e;
+ if(argc==1)ds4_engine_tp_unbind(&e);else ds4_engine_close(&e);
+ if(destructive||legacy||checked!=1||memcmp(&e,&before,sizeof(e))||g_tp_block_ctx!=&context){
+  fputs(argc==1?"FIO_DS4_PARENT_UNBIND_IGNORED_REFUSAL\n":"FIO_DS4_PARENT_CLOSE_IGNORED_REFUSAL\n",stderr);return 77;
+ }
+ checked=0;ds4_engine_close(&e);
+ if(destructive||legacy||checked!=1||memcmp(&e,&before,sizeof(e))||g_tp_block_ctx!=&context){
+  fputs("FIO_DS4_PARENT_CLOSE_IGNORED_REFUSAL\n",stderr);return 77;
+ }
+ puts("PASS: actual parent function source preserves all mock resources on checked TP refusal; no native ABI/retirement proof.");
+}

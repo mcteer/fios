@@ -19,9 +19,9 @@ const sha=bytes=>createHash('sha256').update(bytes).digest('hex');
 try{
  const revision='9139e2ae58a41503968a500f36f75895c1ba63fc';
  assert.equal(git(source,'rev-parse','HEAD').trim(),revision);
- assert.equal(git(source,'diff','HEAD','--name-only').trim(),'ds4_metal.m');
+ assert.equal(git(source,'diff','HEAD','--name-only').trim(),'ds4.c\nds4_gpu_tp.h\nds4_metal.m');
  const patchFile=path.join(root,'platform/studio/native/ds4-9139e2a-participant-retirement.patch'),patch=readFileSync(patchFile,'utf8');
- assert.equal(git(source,'diff','--no-ext-diff','HEAD','--','ds4_metal.m'),patch);
+ assert.equal(git(source,'diff','--no-ext-diff','HEAD','--','ds4.c','ds4_gpu_tp.h','ds4_metal.m'),patch);
  assert.equal(run('/usr/bin/xcrun',['--sdk','macosx','--show-sdk-version']).trim(),'27.2');
  const compiler=realpathSync(run('/usr/bin/xcrun',['--sdk','macosx','--find','clang']).trim()),sdk=realpathSync(run('/usr/bin/xcrun',['--sdk','macosx','--show-sdk-path']).trim());
  assert(compiler.startsWith(developer+'/Toolchains/')&&sdk.startsWith(developer+'/Platforms/'));
@@ -43,9 +43,9 @@ try{
  const output=run('/usr/bin/make',['-j2',`CC=${compiler}`,`CFLAGS=${cflags}`,`OBJCFLAGS=${objcflags}`,'ds4-bench'],{cwd:checkout,timeout:180000});
  writeFileSync(path.join(directory,'build.log'),output,{mode:0o600});
  assert.deepEqual(capture(),before,'Declared source changed during build');
- assert.equal(git(checkout,'diff','--no-ext-diff','HEAD','--','ds4_metal.m'),patch);
- assert.equal(git(checkout,'diff','HEAD','--name-only').trim(),'ds4_metal.m');
- assert.equal(git(source,'diff','--no-ext-diff','HEAD','--','ds4_metal.m'),patch);
+ assert.equal(git(checkout,'diff','--no-ext-diff','HEAD','--','ds4.c','ds4_gpu_tp.h','ds4_metal.m'),patch);
+ assert.equal(git(checkout,'diff','HEAD','--name-only').trim(),'ds4.c\nds4_gpu_tp.h\nds4_metal.m');
+ assert.equal(git(source,'diff','--no-ext-diff','HEAD','--','ds4.c','ds4_gpu_tp.h','ds4_metal.m'),patch);
  assert.equal(readFileSync(patchFile,'utf8'),patch);
  const artifact=path.join(checkout,'ds4-bench'),s=lstatSync(artifact);assert(s.isFile()&&s.nlink===1&&s.size>0&&s.size<64<<20);
  const objects=Object.fromEntries(readdirSync(checkout).filter(name=>name.endsWith('.o')).sort().map(name=>{const file=path.join(checkout,name),s=lstatSync(file);assert(s.isFile()&&!s.isSymbolicLink()&&s.nlink===1&&s.size>0&&s.size<64<<20);return [name,{bytes:s.size,sha256:sha(readFileSync(file))}];}));
