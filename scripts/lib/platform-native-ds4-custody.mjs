@@ -16,6 +16,14 @@ export function verifyDs4Custody(arch,registry) {
   const borrow=body.indexOf('const lease = self.fios_lifetime.borrow()'),foreign=body.indexOf('ffi.');
   assert(borrow>=0&&foreign>borrow&&body.includes('defer _ = self.fios_lifetime.release(lease);'),'FIO_DS4_CUSTODY_WIRING_MISSING');
  }
+ for(const name of ['tokenizeText','encodeChatPrompt','encodeChatTranscript','detokenizeOne']) {
+  const start=arch.indexOf(`    pub fn ${name}(`,arch.indexOf('pub const Ds4Engine'));
+  assert(start>=0,'FIO_DS4_ENGINE_OPERATION_CUSTODY_MISSING');
+  const opening=arch.indexOf('{',arch.indexOf(') Error!',start));
+  const next=arch.indexOf('    pub fn ',opening+1),body=arch.slice(opening,next<0?undefined:next);
+  const borrow=body.indexOf('const lease = self.fios_lifetime.borrow() catch return Error.LifetimeUnavailable;'),foreign=body.indexOf('ffi.');
+  assert(borrow>=0&&foreign>borrow&&body.includes('defer _ = self.fios_lifetime.release(lease);'),'FIO_DS4_ENGINE_OPERATION_CUSTODY_MISSING');
+ }
  assert.match(arch,/pub fn tryFree\(self: \*Ds4Snapshot\) bool \{\s*const closing = self\.fios_lifetime\.beginClose\(null\)/,'FIO_DS4_SNAPSHOT_CUSTODY_WIRING_MISSING');
  assert.match(arch,/errdefer ffi\.ds4_session_snapshot_free\(&snap\);/,'FIO_DS4_SNAPSHOT_CUSTODY_WIRING_MISSING');
  assert.match(arch,/const snapshot_lease = snap\.fios_lifetime\.borrow\(\) catch return Error\.LifetimeUnavailable;/,'FIO_DS4_SNAPSHOT_CUSTODY_WIRING_MISSING');

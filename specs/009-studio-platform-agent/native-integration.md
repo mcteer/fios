@@ -204,3 +204,14 @@ does not add any model request or retry to the Pydantic harness. Nonfallible raw
 getters, borrowed template views and caller-owned stable outer references still
 have separate lifetime obligations; these guards do not establish all-client
 coverage, device completion or a native admission capability. These shared lifetime leases do not serialize concurrent backend operations; existing inference-owner/actor serialization remains required.
+
+
+### DS4 fallible engine operation custody
+
+Tokenization, single-turn/transcript encoding and detokenization retain their
+engine lease through native calls, native token cleanup and copying of owned
+results. A closing/uncertain/full lifetime refuses before backend access. These
+shared leases prevent cleanup during the call; they do not serialize concurrent
+backend operations or replace existing actor/thread ownership. Nonfallible raw
+getters and stable enclosing-reference obligations remain separate. No global
+DS4 synchronization, status-induced initialization or native authority is added.

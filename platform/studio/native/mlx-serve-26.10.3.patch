@@ -116,7 +116,7 @@ index 12bd0f7..21ca26c 100644
  int32_t mlx_llama_ctx_mtp_drafts(mlx_llama_ctx *c);
  
 diff --git a/src/arch/ds4.zig b/src/arch/ds4.zig
-index 338a1b1..aebeb8e 100644
+index 338a1b1..9ab9f39 100644
 --- a/src/arch/ds4.zig
 +++ b/src/arch/ds4.zig
 @@ -16,6 +16,8 @@
@@ -184,7 +184,43 @@ index 338a1b1..aebeb8e 100644
  
      pub fn hasMtp(self: *Ds4Engine) bool {
          return ffi.ds4_engine_has_mtp(self.handle);
-@@ -469,6 +490,9 @@ pub const Ds4Engine = struct {
+@@ -385,6 +406,8 @@ pub const Ds4Engine = struct {
+     /// Tokenize free-form text (no chat scaffolding). Caller owns the returned
+     /// slice and frees with `allocator.free`.
+     pub fn tokenizeText(self: *Ds4Engine, allocator: std.mem.Allocator, text: []const u8) Error![]i32 {
++        const lease = self.fios_lifetime.borrow() catch return Error.LifetimeUnavailable;
++        defer _ = self.fios_lifetime.release(lease);
+         const text_z = allocator.dupeSentinel(u8, text, 0) catch return Error.OutOfMemory;
+         defer allocator.free(text_z);
+ 
+@@ -404,6 +427,8 @@ pub const Ds4Engine = struct {
+         user: []const u8,
+         think_mode: ffi.ThinkMode,
+     ) Error![]i32 {
++        const lease = self.fios_lifetime.borrow() catch return Error.LifetimeUnavailable;
++        defer _ = self.fios_lifetime.release(lease);
+         const sys_z: ?[:0]u8 = if (system) |s| (allocator.dupeSentinel(u8, s, 0) catch return Error.OutOfMemory) else null;
+         defer if (sys_z) |s| allocator.free(s);
+         const user_z = allocator.dupeSentinel(u8, user, 0) catch return Error.OutOfMemory;
+@@ -432,6 +457,8 @@ pub const Ds4Engine = struct {
+         turns: []const ChatTurn,
+         think_mode: ffi.ThinkMode,
+     ) Error![]i32 {
++        const lease = self.fios_lifetime.borrow() catch return Error.LifetimeUnavailable;
++        defer _ = self.fios_lifetime.release(lease);
+         var tv = ffi.Tokens{};
+         defer ffi.ds4_tokens_free(&tv);
+ 
+@@ -459,6 +486,8 @@ pub const Ds4Engine = struct {
+     /// Single token → bytes lookup. Caller owns the returned buffer.
+     /// Returned bytes are NOT NUL-terminated; the slice length is authoritative.
+     pub fn detokenizeOne(self: *Ds4Engine, allocator: std.mem.Allocator, token_id: i32) Error![]u8 {
++        const lease = self.fios_lifetime.borrow() catch return Error.LifetimeUnavailable;
++        defer _ = self.fios_lifetime.release(lease);
+         var len_out: usize = 0;
+         const raw = ffi.ds4_token_text(self.handle, @intCast(token_id), &len_out);
+         if (raw == null or len_out == 0) {
+@@ -469,6 +498,9 @@ pub const Ds4Engine = struct {
      }
  
      pub fn createSession(self: *Ds4Engine, ctx_size: i32) Error!*Ds4Session {
@@ -194,7 +230,7 @@ index 338a1b1..aebeb8e 100644
          var raw: ?*ffi.Session = null;
          const rc = ffi.ds4_session_create(&raw, self.handle, @intCast(ctx_size));
          if (rc != 0 or raw == null) {
-@@ -484,6 +508,8 @@ pub const Ds4Engine = struct {
+@@ -484,6 +516,8 @@ pub const Ds4Engine = struct {
              .engine = self,
              .handle = raw.?,
              .ctx_size = ctx_size,
@@ -203,7 +239,7 @@ index 338a1b1..aebeb8e 100644
          };
          return sess;
      }
-@@ -498,13 +524,22 @@ fn tokensToOwnedSlice(allocator: std.mem.Allocator, tv: *const ffi.Tokens) Error
+@@ -498,13 +532,22 @@ fn tokensToOwnedSlice(allocator: std.mem.Allocator, tv: *const ffi.Tokens) Error
      return buf;
  }
  
@@ -227,7 +263,7 @@ index 338a1b1..aebeb8e 100644
  };
  
  pub const Ds4Session = struct {
-@@ -512,11 +547,19 @@ pub const Ds4Session = struct {
+@@ -512,11 +555,19 @@ pub const Ds4Session = struct {
      engine: *Ds4Engine,
      handle: *ffi.Session,
      ctx_size: i32,
@@ -248,7 +284,7 @@ index 338a1b1..aebeb8e 100644
  
      pub fn pos(self: *Ds4Session) i32 {
          return @intCast(ffi.ds4_session_pos(self.handle));
-@@ -533,6 +576,8 @@ pub const Ds4Session = struct {
+@@ -533,6 +584,8 @@ pub const Ds4Session = struct {
      /// Sync the live session to a full prompt prefix. Reuses common prefix
      /// against the live KV cache; otherwise rebuilds from scratch.
      pub fn sync(self: *Ds4Session, prompt_ids: []const i32) Error!void {
@@ -257,7 +293,7 @@ index 338a1b1..aebeb8e 100644
          var holder = try TokenHolder.init(self.allocator, prompt_ids);
          defer holder.deinit();
          var err_buf: [256]u8 = undefined;
-@@ -544,6 +589,8 @@ pub const Ds4Session = struct {
+@@ -544,6 +597,8 @@ pub const Ds4Session = struct {
      }
  
      pub fn commonPrefix(self: *Ds4Session, prompt_ids: []const i32) Error!i32 {
@@ -266,7 +302,7 @@ index 338a1b1..aebeb8e 100644
          var holder = try TokenHolder.init(self.allocator, prompt_ids);
          defer holder.deinit();
          return @intCast(ffi.ds4_session_common_prefix(self.handle, &holder.tv));
-@@ -551,6 +598,8 @@ pub const Ds4Session = struct {
+@@ -551,6 +606,8 @@ pub const Ds4Session = struct {
  
      /// Evaluate one new token. Caller has already synced to the prefix.
      pub fn eval(self: *Ds4Session, token: i32) Error!void {
@@ -275,7 +311,7 @@ index 338a1b1..aebeb8e 100644
          var err_buf: [256]u8 = undefined;
          const rc = ffi.ds4_session_eval(self.handle, @intCast(token), &err_buf, err_buf.len);
          if (rc != 0) {
-@@ -581,6 +630,8 @@ pub const Ds4Session = struct {
+@@ -581,6 +638,8 @@ pub const Ds4Session = struct {
          eos_token: i32,
          out_tokens: []i32,
      ) Error!i32 {
@@ -284,7 +320,7 @@ index 338a1b1..aebeb8e 100644
          var c_out_buf = self.allocator.alloc(c_int, out_tokens.len) catch return Error.OutOfMemory;
          defer self.allocator.free(c_out_buf);
  
-@@ -618,6 +669,8 @@ pub const Ds4Session = struct {
+@@ -618,6 +677,8 @@ pub const Ds4Session = struct {
          rng: *u64,
          out_tokens: []i32,
      ) Error!i32 {
@@ -293,7 +329,7 @@ index 338a1b1..aebeb8e 100644
          var c_out_buf = self.allocator.alloc(c_int, out_tokens.len) catch return Error.OutOfMemory;
          defer self.allocator.free(c_out_buf);
          var err_buf: [256]u8 = undefined;
-@@ -645,18 +698,30 @@ pub const Ds4Session = struct {
+@@ -645,18 +706,30 @@ pub const Ds4Session = struct {
          return @intCast(n);
      }
  
@@ -327,7 +363,7 @@ index 338a1b1..aebeb8e 100644
          var err_buf: [256]u8 = undefined;
          const rc = ffi.ds4_session_load_snapshot(self.handle, &snap.inner, &err_buf, err_buf.len);
          if (rc != 0) {
-@@ -733,3 +798,34 @@ test "kernel hash is stable across calls" {
+@@ -733,3 +806,60 @@ test "kernel hash is stable across calls" {
      const b = computeKernelHash();
      try std.testing.expectEqualSlices(u8, &a, &b);
  }
@@ -361,6 +397,32 @@ index 338a1b1..aebeb8e 100644
 +    try std.testing.expect(snapshot.fios_lifetime.release(held));
 +    try std.testing.expect(snapshot.tryFree());
 +    try std.testing.expectEqual(@as(usize, 1), watch.deallocations);
++}
++
++
++test "fios ds4 engine operations refuse unavailable lifetime before backend access" {
++    // Only lifetime metadata is initialized; there is no native engine handle.
++    var engine: Ds4Engine = undefined;
++    for (0..4) |mode| {
++        engine.fios_lifetime = if (mode == 0) .{} else try lifetime.Lifetime.init();
++        var held: [64]lifetime.Ticket = undefined;
++        if (mode == 1) {
++            _ = try engine.fios_lifetime.beginClose(null);
++        } else if (mode == 2) {
++            engine.fios_lifetime.uncertain = true;
++        } else if (mode == 3) {
++            for (&held) |*ticket| ticket.* = try engine.fios_lifetime.borrow();
++        }
++        try std.testing.expectError(Error.LifetimeUnavailable, engine.tokenizeText(std.testing.allocator, ""));
++        try std.testing.expectError(Error.LifetimeUnavailable, engine.encodeChatPrompt(std.testing.allocator, null, "", .none));
++        try std.testing.expectError(Error.LifetimeUnavailable, engine.encodeChatTranscript(std.testing.allocator, null, &.{}, .none));
++        try std.testing.expectError(Error.LifetimeUnavailable, engine.detokenizeOne(std.testing.allocator, 0));
++        try std.testing.expectError(Error.LifetimeUnavailable, engine.createSession(0));
++        if (mode == 3) {
++            for (held) |ticket| try std.testing.expect(engine.fios_lifetime.release(ticket));
++            try std.testing.expect(engine.fios_lifetime.canClose(null));
++        }
++    }
 +}
 diff --git a/src/arch/ds4_stub.zig b/src/arch/ds4_stub.zig
 index 82e806a..a4b476d 100644
