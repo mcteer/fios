@@ -98,6 +98,31 @@ int main(int argc,char** argv){@autoreleasepool{
   REQUIRE(refused,"FIO_DS4_SEALED_POOL_DISPATCHED_ALTERNATE_READS");
   puts("PASS: actual exhausted pool refuses alternate read threads before data writes; exact original-worker cleanup retains uncertainty.");return 0;
  }
+ if(argc==2&&(strcmp(argv[1],"--tp-service-join")==0||strcmp(argv[1],"--tp-service-success")==0||strcmp(argv[1],"--tp-live-cleanup")==0)){
+  const int success=strcmp(argv[1],"--tp-service-success")==0;
+  // Local idle service thread only: no exchange callback, requests, network,
+  // RDMA/session/model or TP keepalive workload is enabled.
+  setenv("DS4_TP_NO_KEEPALIVE","1",1);unsigned identity=7;
+  REQUIRE(ds4_gpu_tp_init(0,NULL,0,0,0,NULL,&identity),"TP_LOCAL_SERVICE_INIT_FAILED");
+  REQUIRE(g_tp_thread_running&&!g_tp_keepalive_running&&!g_tp_queue_count,"TP_LOCAL_SERVICE_NOT_IDLE");
+  if(strcmp(argv[1],"--tp-live-cleanup")==0){
+   id<MTLCommandQueue> queue=g_queue;ds4_gpu_cleanup();
+   const int preserved=g_initialized&&g_queue==queue&&g_tp_thread_running&&g_tp_exchange_ud==&identity&&g_fios_pending_uncertain;
+   ds4_gpu_tp_shutdown(); // Exact actual idle-service join, retaining refusal.
+   REQUIRE(!g_tp_thread_running,"TP_LIVE_FIXTURE_JOIN_FAILED");
+   REQUIRE(preserved,"FIO_DS4_GLOBAL_CLEANUP_RELEASED_LIVE_TP_SERVICE");
+   ds4_gpu_cleanup();REQUIRE(g_initialized&&g_queue==queue&&g_fios_pending_uncertain,"FIO_DS4_TP_GLOBAL_UNCERTAINTY_REFUNDED");
+   puts("PASS: global cleanup retains an actual idle local service; subsequent exact join does not refund refusal.");return 0;
+  }
+  fios_private_tp_join_failure=success?0:1;
+  ds4_gpu_tp_shutdown();
+  if(success){REQUIRE(!g_tp_thread_running&&!g_tp_exchange_ud&&g_tp_split_world==1&&!g_fios_pending_uncertain,"TP_LOCAL_SERVICE_SUCCESS_REFUSED");
+   puts("PASS: actual idle local service joins normally; no exchange/distributed/model work.");return 0;}
+  REQUIRE(g_tp_thread_running&&g_tp_exchange_ud==&identity&&g_tp_split_world==2&&g_fios_pending_uncertain,"FIO_DS4_TP_JOIN_FAILURE_RELEASED_SERVICE_STATE");
+  fios_private_tp_join_failure=0;ds4_gpu_tp_shutdown();
+  REQUIRE(g_tp_thread_running&&g_tp_exchange_ud==&identity&&!ds4_gpu_tp_init(0,NULL,0,0,0,NULL,&identity),"FIO_DS4_TP_JOIN_UNCERTAINTY_REARMED");
+  puts("PASS: actual idle local service joins before injected acknowledgement failure; exact state remains retained, no distributed proof.");return 0;
+ }
  REQUIRE(argc==1,"PENDING_BAD_ARGS");
  REQUIRE(ds4_gpu_init(),"PENDING_FULL_INIT_FAILED");
  id<MTLCommandBuffer> a=[g_queue commandBuffer],b=[g_queue commandBuffer];
