@@ -63,6 +63,16 @@ try{
  writeFileSync(path.join(directory,'pending-stdout.log'),fault.stdout??'',{mode:0o600});writeFileSync(path.join(directory,'pending-stderr.log'),fault.stderr??'',{mode:0o600});
  assert(!fault.error&&!fault.signal,'Pending fixture deadline/crash is not acceptance');assert.equal(fault.status,0,fault.stderr);
  assert(fault.stdout.includes('PASS: actual completed buffers retained on injected wait failure'));
+ const batch=spawnSync(faultBinary,['--batch-cleanup'],{env,cwd:source,encoding:'utf8',timeout:120000,maxBuffer:4<<20});
+ writeFileSync(path.join(directory,'batch-stdout.log'),batch.stdout??'',{mode:0o600});writeFileSync(path.join(directory,'batch-stderr.log'),batch.stderr??'',{mode:0o600});
+ assert(!batch.error&&!batch.signal,'Batch fixture crash/deadline is not acceptance');assert.equal(batch.status,0,batch.stderr);
+ assert(batch.stdout.includes('PASS: real cleanup batch physically completed before injected wait failure'));
+ const success=spawnSync(faultBinary,['--batch-success'],{env,cwd:source,encoding:'utf8',timeout:120000,maxBuffer:4<<20});
+ writeFileSync(path.join(directory,'batch-success-stdout.log'),success.stdout??'',{mode:0o600});writeFileSync(path.join(directory,'batch-success-stderr.log'),success.stderr??'',{mode:0o600});
+ assert(!success.error&&!success.signal,'Successful batch fixture crash/deadline is not acceptance');assert.equal(success.status,0,success.stderr);
+ assert(success.stdout.includes('PASS: genuine successful empty batch cleanup'));
+
+
  verify();assert.equal(readFileSync(pendingFile,'utf8'),pending);assert.equal(readFileSync(fixtureFile,'utf8'),fixture);assert.equal(readFileSync(path.join(source,'ds4_metal.m'),'utf8'),original);
  assert.equal(sha(readFileSync(document)),args[4]);assert.equal(git('diff','--no-ext-diff','HEAD','--','ds4_metal.m'),patch);
  const sequenceFile=path.join(root,'platform/studio/Tests/NativeFixtures/DS4Sequence.m.fixture'),sequence=readFileSync(sequenceFile,'utf8');
@@ -76,6 +86,6 @@ try{
  assert(counter.stdout.includes('PASS: exhausted actual cache sequence refuses without initialization'));
  }
  verify();assert.equal(readFileSync(sequenceFile,'utf8'),sequence);assert.equal(readFileSync(pendingFile,'utf8'),pending);assert.equal(readFileSync(fixtureFile,'utf8'),fixture);assert.equal(sha(readFileSync(document)),args[4]);assert.equal(git('diff','--no-ext-diff','HEAD','--','ds4_metal.m'),patch);
- const outcome={scope:'full_ds4_initializer_known_keepalive_and_pending_failure_only',build_receipt_sha256:args[4],fixture_sha256:sha(fixture),binary_sha256:sha(readFileSync(binary)),original_full_shader_library:true,sequence_fixture_sha256:sha(sequence),sequence_binary_sha256:sha(readFileSync(sequenceBinary)),pending_fixture_sha256:sha(pending),pending_binary_sha256:sha(readFileSync(faultBinary)),injected_wait_failure_after_real_completion:true,model_opened:false,native_inference:false,installed:false,native_authority:false,all_backend_terminality:false,directory};
+ const outcome={scope:'full_ds4_initializer_known_keepalive_pending_and_batch_failure_only',build_receipt_sha256:args[4],fixture_sha256:sha(fixture),binary_sha256:sha(readFileSync(binary)),original_full_shader_library:true,sequence_fixture_sha256:sha(sequence),sequence_binary_sha256:sha(readFileSync(sequenceBinary)),pending_fixture_sha256:sha(pending),pending_binary_sha256:sha(readFileSync(faultBinary)),injected_wait_failure_after_real_completion:true,batch_cleanup_failure_retained:true,model_opened:false,native_inference:false,installed:false,native_authority:false,all_backend_terminality:false,directory};
  writeFileSync(path.join(directory,'result.json'),JSON.stringify(outcome)+'\n',{mode:0o400});console.log(JSON.stringify(outcome));
 }catch(error){console.error('Full-module fixture state retained:',directory);throw error;}

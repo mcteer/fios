@@ -1,6 +1,34 @@
 // Private fault only after genuine command buffers have physically completed.
 #define REQUIRE(v,m) do{if(!(v)){fprintf(stderr,"%s\n",m);return 77;}}while(0)
-int main(void){@autoreleasepool{
+int main(int argc,char** argv){@autoreleasepool{
+ if(argc==2&&(strcmp(argv[1],"--batch-cleanup")==0||strcmp(argv[1],"--batch-success")==0)){
+  const int success=strcmp(argv[1],"--batch-success")==0;
+  REQUIRE(ds4_gpu_init(),"BATCH_REAL_INIT_FAILED");
+  REQUIRE(ds4_gpu_begin_commands(),"BATCH_BEGIN_FAILED");
+  int owned=99;id<MTLCommandBuffer> batch=ds4_gpu_command_buffer(&owned);
+  REQUIRE(batch&&owned==0&&batch==g_batch_cb,"BATCH_REAL_BUFFER_MISSING");
+  const uint64_t done=g_stream_expert_cache_done_seq,sequence=g_stream_expert_cache_batch_seq;
+  REQUIRE(sequence>done,"BATCH_SEQUENCE_MISSING");
+  id<MTLBuffer> retained=[g_device newBufferWithLength:1024 options:MTLResourceStorageModeShared];
+  REQUIRE(retained,"BATCH_REAL_PAYLOAD_MISSING");
+  g_parallel_q8_weight=retained;g_parallel_ffn_mode=1;
+  fios_private_wait_failure=success?0:1;
+  ds4_gpu_cleanup();
+  REQUIRE(batch.status==MTLCommandBufferStatusCompleted,"BATCH_REAL_COMPLETION_FAILED");
+  if(success){
+   REQUIRE(!g_initialized&&!g_batch_cb&&!g_parallel_q8_weight&&!g_parallel_ffn_mode&&!g_fios_pending_uncertain,"FIO_DS4_SUCCESSFUL_BATCH_CLEANUP_REFUSED");
+   puts("PASS: genuine successful empty batch cleanup releases its local state after checked completion; no model/all-device proof.");return 0;
+  }
+  REQUIRE(g_initialized&&g_batch_cb==batch&&g_stream_expert_cache_done_seq==done&&
+    g_stream_expert_cache_batch_seq==sequence,"FIO_DS4_BATCH_CLEANUP_RELEASED_OR_ACKNOWLEDGED");
+  REQUIRE(g_fios_pending_uncertain,"FIO_DS4_BATCH_CLEANUP_FAILURE_NOT_STICKY");
+  REQUIRE(g_parallel_q8_weight==retained&&g_parallel_ffn_mode==1,"FIO_DS4_BATCH_CLEANUP_DROPPED_PARALLEL_PAYLOAD");
+  fios_private_wait_failure=0;ds4_gpu_cleanup();
+  REQUIRE(g_initialized&&g_batch_cb==batch&&!ds4_gpu_begin_commands(),"FIO_DS4_BATCH_CLEANUP_UNCERTAINTY_REFUNDED");
+  puts("PASS: real cleanup batch physically completed before injected wait failure; buffer/accounting/uncertainty retained, not hardware-error proof.");
+  return 0;
+ }
+ REQUIRE(argc==1,"PENDING_BAD_ARGS");
  REQUIRE(ds4_gpu_init(),"PENDING_FULL_INIT_FAILED");
  id<MTLCommandBuffer> a=[g_queue commandBuffer],b=[g_queue commandBuffer];
  REQUIRE(a&&b,"PENDING_REAL_BUFFERS_MISSING");
