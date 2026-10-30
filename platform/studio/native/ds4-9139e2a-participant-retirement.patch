@@ -1,5 +1,5 @@
 diff --git a/ds4_metal.m b/ds4_metal.m
-index 0d75369..172671e 100644
+index 0d75369..82301b0 100644
 --- a/ds4_metal.m
 +++ b/ds4_metal.m
 @@ -15,6 +15,7 @@
@@ -482,7 +482,35 @@ index 0d75369..172671e 100644
      if (g_stream_expert_pread_pool_initialized) return 1;
      if (!ds4_gpu_stream_expert_pread_pool_enabled() || n_threads <= 1) return 0;
      if (n_threads > 18) n_threads = 18;
-@@ -13559,6 +13663,12 @@ static int ds4_gpu_stream_expert_pread_pool_begin(
+@@ -13511,15 +13615,23 @@ static int ds4_gpu_stream_expert_pread_pool_init(uint32_t n_threads) {
+                     strerror(rc));
+             pthread_mutex_lock(&g_stream_expert_pread_pool_mutex);
+             g_stream_expert_pread_pool_stopping = 1;
+-            g_stream_expert_pread_pool_generation++;
++            g_stream_expert_pread_pool_thread_count = started;
++            g_stream_expert_pread_pool_initialized = started != 0;
++            atomic_store_explicit(&g_fios_pread_pool_sealed, 1, memory_order_release);
+             pthread_cond_broadcast(&g_stream_expert_pread_pool_start_cond);
+             pthread_mutex_unlock(&g_stream_expert_pread_pool_mutex);
+             for (uint32_t j = 0; j < started; j++) {
+-                (void)pthread_join(g_stream_expert_pread_pool_threads[j], NULL);
++                const int partial_join_rc = pthread_join(g_stream_expert_pread_pool_threads[j], NULL);
++                pthread_mutex_lock(&g_stream_expert_pread_pool_mutex);
++                if (partial_join_rc == 0) g_fios_pread_pool_joined |= (1u << j);
++                if (partial_join_rc != 0) g_fios_pread_pool_uncertain = 1;
++                pthread_mutex_unlock(&g_stream_expert_pread_pool_mutex);
+             }
+             pthread_mutex_lock(&g_stream_expert_pread_pool_mutex);
+-            g_stream_expert_pread_pool_thread_count = 0;
+-            g_stream_expert_pread_pool_stopping = 0;
++            if (!g_fios_pread_pool_uncertain) {
++                g_stream_expert_pread_pool_thread_count = 0;
++                g_stream_expert_pread_pool_initialized = 0;
++            }
+             pthread_mutex_unlock(&g_stream_expert_pread_pool_mutex);
+             return 0;
+         }
+@@ -13559,6 +13671,12 @@ static int ds4_gpu_stream_expert_pread_pool_begin(
          return 0;
      }
  
@@ -495,7 +523,7 @@ index 0d75369..172671e 100644
      g_stream_expert_pread_pool_tasks = tasks;
      g_stream_expert_pread_pool_n_tasks = n_tasks;
      g_stream_expert_pread_pool_next_task = 0;
-@@ -13592,7 +13702,73 @@ static int ds4_gpu_stream_expert_pread_pool_dispatch(
+@@ -13592,7 +13710,73 @@ static int ds4_gpu_stream_expert_pread_pool_dispatch(
      return ds4_gpu_stream_expert_pread_pool_wait();
  }
  

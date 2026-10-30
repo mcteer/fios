@@ -22,12 +22,42 @@ static void fixture_checkpoint(void) {
     pthread_mutex_unlock(&checkpoint_mutex);
 }
 #define REQUIRE(test, marker) do { if (!(test)) { fprintf(stderr, "%s\n", marker); exit(77); } } while (0)
+// Explicit syscall-boundary software faults: first worker is real; second
+// creation is refused without creating a thread. Join refusal is injected only
+// after the real owned worker has joined, never by faking thread terminality.
+static int partial_create_fault, partial_join_fault, creation_calls;
+static int fixture_pthread_create(pthread_t* thread,const pthread_attr_t* attributes,void* (*entry)(void*),void* argument){
+    if(partial_create_fault&&creation_calls++==1)return EAGAIN;
+    return pthread_create(thread,attributes,entry,argument);
+}
+static int fixture_pthread_join(pthread_t thread,void** value){
+    int result=pthread_join(thread,value);
+    return result==0&&partial_join_fault?EIO:result;
+}
 // FIOS_GENUINE_PREAD_SOURCE
 int main(int argc, char **argv) {
     REQUIRE(argc == 2, "BAD_ARGUMENTS");
     REQUIRE(!ds4_gpu_fios_pread_pool_try_retire(), "COLD_POOL_CLAIMED_RETIREMENT");
     REQUIRE(!g_stream_expert_pread_pool_initialized && !atomic_load(&g_fios_pread_pool_sealed), "COLD_POOL_MUTATED");
     setenv("DS4_METAL_STREAMING_EXPERT_PREAD_THREADS", "2", 1);
+#ifdef FIOS_COMPOSED_CLEANUP
+    if(!strcmp(argv[1],"--partial-join-error")||!strcmp(argv[1],"--partial-create")){
+        partial_create_fault=1;partial_join_fault=!strcmp(argv[1],"--partial-join-error");
+        REQUIRE(!ds4_gpu_stream_expert_pread_pool_init(2),"PARTIAL_CREATE_WAS_ACCEPTED");
+        if(partial_join_fault){
+            REQUIRE(g_fios_pread_pool_uncertain&&atomic_load(&g_fios_pread_pool_sealed)&&
+                g_stream_expert_pread_pool_thread_count==1&&g_stream_expert_pread_pool_stopping&&
+                !ds4_gpu_fios_pread_pool_prepare_cleanup(),"FIO_DS4_PARTIAL_CREATE_LOST_UNCERTAIN_WORKER");
+            ds4_gpu_stream_expert_pread_pool_shutdown();
+            REQUIRE(g_fios_pread_pool_uncertain&&g_stream_expert_pread_pool_thread_count==1,"FIO_DS4_PARTIAL_CREATE_LEGACY_REFUNDED_JOIN");
+        }else{
+            REQUIRE(!g_fios_pread_pool_uncertain&&atomic_load(&g_fios_pread_pool_sealed)&&
+                !g_stream_expert_pread_pool_thread_count&&g_fios_pread_pool_joined==1&&
+                ds4_gpu_fios_pread_pool_prepare_cleanup(),"FIO_DS4_PARTIAL_CREATE_LOST_CHECKED_JOIN");
+        }
+        puts("PASS: actual first worker/second creation refusal; exact checked join or retained injected acknowledgement failure.");return 0;
+    }
+#endif
     REQUIRE(ds4_gpu_stream_expert_pread_pool_init(2), "POOL_INIT_FAILED");
     if (!strcmp(argv[1], "--exhausted")) {
         uint8_t bytes[16];

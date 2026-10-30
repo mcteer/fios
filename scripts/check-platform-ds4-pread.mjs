@@ -29,6 +29,7 @@ const checkpoint='            task->ok = ds4_gpu_stream_expert_pread_into(';
 assert.equal(pool.split(checkpoint).length,2);
 // Explicit private scheduling checkpoint; original pread/worker ABI is intact.
 pool=pool.replace(checkpoint,'            fixture_checkpoint();\n'+checkpoint);
+pool=pool.replaceAll('pthread_create(', 'fixture_pthread_create(').replaceAll('pthread_join(', 'fixture_pthread_join(');
 const fragment=[type[0],...['ds4_gpu_now_ms','ds4_gpu_mib','ds4_gpu_gib','ds4_gpu_stream_expert_pread_thread_limit','ds4_gpu_stream_expert_pread_into'].map(fn),pool].join('\n');
 assert.equal(fixture.split('// FIOS_GENUINE_PREAD_SOURCE').length,2);
 const unit=fixture.replace('// FIOS_GENUINE_PREAD_SOURCE',fragment);
@@ -37,9 +38,9 @@ const env={PATH:'/usr/bin:/bin',HOME:temporary,LANG:'C',LC_ALL:'C'};
 let passed=false;
 try {
  for(const optimize of ['-O0','-O2']){
-  const compile=text=>{writeFileSync(file,text);execFileSync('/usr/bin/clang',['-std=c11','-D_DARWIN_C_SOURCE',optimize,'-UNDEBUG','-pthread',file,'-o',binary],{env,timeout:30000,stdio:'pipe'});};
+  const compile=text=>{writeFileSync(file,text);execFileSync('/usr/bin/clang',['-std=c11','-D_DARWIN_C_SOURCE',...(composed?['-DFIOS_COMPOSED_CLEANUP']:[]),optimize,'-UNDEBUG','-pthread',file,'-o',binary],{env,timeout:30000,stdio:'pipe'});};
   const execute=(mode,status=0,marker)=>{const result=spawnSync(binary,[mode],{env,encoding:'utf8',timeout:5000,maxBuffer:4096});assert(!result.error&&!result.signal);assert.equal(result.status,status,result.stderr);if(marker)assert(result.stderr.includes(marker));};
-  compile(unit);execute('--positive');execute('--join-error');execute('--exhausted');
+  compile(unit);if(composed){execute('--partial-join-error');execute('--partial-create');}execute('--positive');execute('--join-error');execute('--exhausted');
   const refusal='else { g_fios_pread_pool_uncertain = 1; ok = 0; }';assert.equal(unit.split(refusal).length,2);
   compile(unit.replace(refusal,'else { g_fios_pread_pool_joined |= (1u << i); }'));
   execute('--join-error',77,'FIO_DS4_PREAD_JOIN_REFUSAL_CLEARED');
@@ -47,10 +48,10 @@ try {
   compile(unit.replace(gate,''));execute('--positive',77,'FIO_DS4_PREAD_REARMED_SEALED_POOL');
   const exhausted='    if (g_stream_expert_pread_pool_generation == UINT64_MAX) {\n        g_fios_pread_pool_uncertain = 1;\n        atomic_store_explicit(&g_fios_pread_pool_sealed, 1, memory_order_release);\n        pthread_mutex_unlock(&g_stream_expert_pread_pool_mutex);\n        return 0;\n    }';assert.equal(unit.split(exhausted).length,2);
   compile(unit.replace(exhausted,''));execute('--exhausted',77,'FIO_DS4_PREAD_GENERATION_WRAPPED');
-  compile(unit);execute('--positive');execute('--join-error');execute('--exhausted');
+  compile(unit);if(composed){execute('--partial-join-error');execute('--partial-create');}execute('--positive');execute('--join-error');execute('--exhausted');
  }
  assert.equal(readFileSync(path.join(source,'ds4_metal.m'),'utf8'),original);
  console.log(JSON.stringify({source_fragment_only:true,composed_candidate:composed,backend:'none',model:null,native_inference:false,native_authority:false,patch_sha256:sha(patch),source_sha256:sha(original),fixture_sha256:sha(fixture)}));
- console.log('PASS: Debug/optimized actual pread/pthread fragment, busy/exhaustion refusal, exact joins, genuine self-join refusal and three precise omission witnesses. Legacy cleanup/all-writer/device integration remains open.');
+ console.log('PASS: Debug/optimized actual pread/pthread fragment, busy/exhaustion refusal, exact joins, genuine self-join refusal and three precise omission witnesses. Partial-create fault cases run only for the composed candidate; other raw cleanup/all-writer/device integration remains open.');
  passed=true;
 } finally {if(passed)rmSync(temporary,{recursive:true,force:true});else console.error('Failure state retained:',temporary);}
