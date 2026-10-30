@@ -1,6 +1,10 @@
 // Supplementary source edges only; not a backend/runtime/terminal proof.
 import assert from 'node:assert/strict';
 export function verifyDs4Custody(arch,registry) {
+ const engineOpen=arch.slice(arch.indexOf('    pub fn open('),arch.indexOf('    pub fn fiosCanCloseSession('));
+ const sessionOpen=arch.slice(arch.indexOf('    pub fn createSession('),arch.indexOf('\nfn tokensToOwnedSlice('));
+ assert(engineOpen.indexOf('allocator.create(Ds4Engine)')>=0&&engineOpen.indexOf('allocator.create(Ds4Engine)')<engineOpen.indexOf('ensureMetalKernels(')&&engineOpen.indexOf('allocator.create(Ds4Engine)')<engineOpen.indexOf('ffi.ds4_engine_open('),'FIO_DS4_HEADER_AFTER_NATIVE');
+ assert(sessionOpen.indexOf('self.allocator.create(Ds4Session)')>=0&&sessionOpen.indexOf('self.allocator.create(Ds4Session)')<sessionOpen.indexOf('ffi.ds4_session_create('),'FIO_DS4_HEADER_AFTER_NATIVE');
  for(const edge of [
   /fios_lifetime: lifetime\.Lifetime/,
   /const fios_parent = self\.fios_lifetime\.borrow\(\) catch return Error\.LifetimeUnavailable;/,

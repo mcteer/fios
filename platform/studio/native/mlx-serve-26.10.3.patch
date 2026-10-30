@@ -273,7 +273,7 @@ index 12bd0f7..19dc43b 100644
  // Clear `seq` (position -> 0).
  void    mlx_llama_seq_reset(mlx_llama_ctx *c, int32_t seq);
 diff --git a/src/arch/ds4.zig b/src/arch/ds4.zig
-index 338a1b1..9ab9f39 100644
+index 338a1b1..0e7df9c 100644
 --- a/src/arch/ds4.zig
 +++ b/src/arch/ds4.zig
 @@ -16,6 +16,8 @@
@@ -293,7 +293,7 @@ index 338a1b1..9ab9f39 100644
      EngineOpenFailed,
      SplitGgufUnsupported,
      SessionCreateFailed,
-@@ -275,11 +278,13 @@ pub const Ds4Engine = struct {
+@@ -275,11 +278,15 @@ pub const Ds4Engine = struct {
      handle: *ffi.Engine,
      model_path_owned: [:0]u8,
      mtp_path_owned: ?[:0]u8,
@@ -304,10 +304,22 @@ index 338a1b1..9ab9f39 100644
  
      pub fn open(allocator: std.mem.Allocator, model_path: []const u8, opts: OpenOptions) Error!*Ds4Engine {
 +        const fios_lifetime = lifetime.Lifetime.init() catch return Error.LifetimeUnavailable;
++        const wrapper = allocator.create(Ds4Engine) catch return Error.OutOfMemory;
++        errdefer allocator.destroy(wrapper);
          try refuseSplitGguf(allocator, model_path);
          if (builtin.os.tag == .macos) try ensureMetalKernels(allocator);
  
-@@ -341,16 +346,32 @@ pub const Ds4Engine = struct {
+@@ -331,26 +338,38 @@ pub const Ds4Engine = struct {
+             return Error.EngineOpenFailed;
+         }
+ 
+-        const wrapper = allocator.create(Ds4Engine) catch {
+-            ffi.ds4_engine_close(raw);
+-            return Error.OutOfMemory;
+-        };
+         wrapper.* = .{
+             .allocator = allocator,
+             .handle = raw.?,
              .model_path_owned = path_z,
              .mtp_path_owned = mtp_z,
              .embedded_mtp = embedded_mtp,
@@ -341,7 +353,7 @@ index 338a1b1..9ab9f39 100644
  
      pub fn hasMtp(self: *Ds4Engine) bool {
          return ffi.ds4_engine_has_mtp(self.handle);
-@@ -385,6 +406,8 @@ pub const Ds4Engine = struct {
+@@ -385,6 +404,8 @@ pub const Ds4Engine = struct {
      /// Tokenize free-form text (no chat scaffolding). Caller owns the returned
      /// slice and frees with `allocator.free`.
      pub fn tokenizeText(self: *Ds4Engine, allocator: std.mem.Allocator, text: []const u8) Error![]i32 {
@@ -350,7 +362,7 @@ index 338a1b1..9ab9f39 100644
          const text_z = allocator.dupeSentinel(u8, text, 0) catch return Error.OutOfMemory;
          defer allocator.free(text_z);
  
-@@ -404,6 +427,8 @@ pub const Ds4Engine = struct {
+@@ -404,6 +425,8 @@ pub const Ds4Engine = struct {
          user: []const u8,
          think_mode: ffi.ThinkMode,
      ) Error![]i32 {
@@ -359,7 +371,7 @@ index 338a1b1..9ab9f39 100644
          const sys_z: ?[:0]u8 = if (system) |s| (allocator.dupeSentinel(u8, s, 0) catch return Error.OutOfMemory) else null;
          defer if (sys_z) |s| allocator.free(s);
          const user_z = allocator.dupeSentinel(u8, user, 0) catch return Error.OutOfMemory;
-@@ -432,6 +457,8 @@ pub const Ds4Engine = struct {
+@@ -432,6 +455,8 @@ pub const Ds4Engine = struct {
          turns: []const ChatTurn,
          think_mode: ffi.ThinkMode,
      ) Error![]i32 {
@@ -368,7 +380,7 @@ index 338a1b1..9ab9f39 100644
          var tv = ffi.Tokens{};
          defer ffi.ds4_tokens_free(&tv);
  
-@@ -459,6 +486,8 @@ pub const Ds4Engine = struct {
+@@ -459,6 +484,8 @@ pub const Ds4Engine = struct {
      /// Single token → bytes lookup. Caller owns the returned buffer.
      /// Returned bytes are NOT NUL-terminated; the slice length is authoritative.
      pub fn detokenizeOne(self: *Ds4Engine, allocator: std.mem.Allocator, token_id: i32) Error![]u8 {
@@ -377,17 +389,27 @@ index 338a1b1..9ab9f39 100644
          var len_out: usize = 0;
          const raw = ffi.ds4_token_text(self.handle, @intCast(token_id), &len_out);
          if (raw == null or len_out == 0) {
-@@ -469,6 +498,9 @@ pub const Ds4Engine = struct {
+@@ -469,21 +496,24 @@ pub const Ds4Engine = struct {
      }
  
      pub fn createSession(self: *Ds4Engine, ctx_size: i32) Error!*Ds4Session {
 +        const fios_parent = self.fios_lifetime.borrow() catch return Error.LifetimeUnavailable;
 +        errdefer _ = self.fios_lifetime.release(fios_parent);
 +        const fios_lifetime = lifetime.Lifetime.init() catch return Error.LifetimeUnavailable;
++        const sess = self.allocator.create(Ds4Session) catch return Error.OutOfMemory;
++        errdefer self.allocator.destroy(sess);
          var raw: ?*ffi.Session = null;
          const rc = ffi.ds4_session_create(&raw, self.handle, @intCast(ctx_size));
          if (rc != 0 or raw == null) {
-@@ -484,6 +516,8 @@ pub const Ds4Engine = struct {
+             log.err("[ds4] ds4_session_create rc={d} ctx={d}\n", .{ rc, ctx_size });
+             return Error.SessionCreateFailed;
+         }
+-        const sess = self.allocator.create(Ds4Session) catch {
+-            ffi.ds4_session_free(raw);
+-            return Error.OutOfMemory;
+-        };
+         sess.* = .{
+             .allocator = self.allocator,
              .engine = self,
              .handle = raw.?,
              .ctx_size = ctx_size,
@@ -396,7 +418,7 @@ index 338a1b1..9ab9f39 100644
          };
          return sess;
      }
-@@ -498,13 +532,22 @@ fn tokensToOwnedSlice(allocator: std.mem.Allocator, tv: *const ffi.Tokens) Error
+@@ -498,13 +528,22 @@ fn tokensToOwnedSlice(allocator: std.mem.Allocator, tv: *const ffi.Tokens) Error
      return buf;
  }
  
@@ -420,7 +442,7 @@ index 338a1b1..9ab9f39 100644
  };
  
  pub const Ds4Session = struct {
-@@ -512,11 +555,19 @@ pub const Ds4Session = struct {
+@@ -512,11 +551,19 @@ pub const Ds4Session = struct {
      engine: *Ds4Engine,
      handle: *ffi.Session,
      ctx_size: i32,
@@ -441,7 +463,7 @@ index 338a1b1..9ab9f39 100644
  
      pub fn pos(self: *Ds4Session) i32 {
          return @intCast(ffi.ds4_session_pos(self.handle));
-@@ -533,6 +584,8 @@ pub const Ds4Session = struct {
+@@ -533,6 +580,8 @@ pub const Ds4Session = struct {
      /// Sync the live session to a full prompt prefix. Reuses common prefix
      /// against the live KV cache; otherwise rebuilds from scratch.
      pub fn sync(self: *Ds4Session, prompt_ids: []const i32) Error!void {
@@ -450,7 +472,7 @@ index 338a1b1..9ab9f39 100644
          var holder = try TokenHolder.init(self.allocator, prompt_ids);
          defer holder.deinit();
          var err_buf: [256]u8 = undefined;
-@@ -544,6 +597,8 @@ pub const Ds4Session = struct {
+@@ -544,6 +593,8 @@ pub const Ds4Session = struct {
      }
  
      pub fn commonPrefix(self: *Ds4Session, prompt_ids: []const i32) Error!i32 {
@@ -459,7 +481,7 @@ index 338a1b1..9ab9f39 100644
          var holder = try TokenHolder.init(self.allocator, prompt_ids);
          defer holder.deinit();
          return @intCast(ffi.ds4_session_common_prefix(self.handle, &holder.tv));
-@@ -551,6 +606,8 @@ pub const Ds4Session = struct {
+@@ -551,6 +602,8 @@ pub const Ds4Session = struct {
  
      /// Evaluate one new token. Caller has already synced to the prefix.
      pub fn eval(self: *Ds4Session, token: i32) Error!void {
@@ -468,7 +490,7 @@ index 338a1b1..9ab9f39 100644
          var err_buf: [256]u8 = undefined;
          const rc = ffi.ds4_session_eval(self.handle, @intCast(token), &err_buf, err_buf.len);
          if (rc != 0) {
-@@ -581,6 +638,8 @@ pub const Ds4Session = struct {
+@@ -581,6 +634,8 @@ pub const Ds4Session = struct {
          eos_token: i32,
          out_tokens: []i32,
      ) Error!i32 {
@@ -477,7 +499,7 @@ index 338a1b1..9ab9f39 100644
          var c_out_buf = self.allocator.alloc(c_int, out_tokens.len) catch return Error.OutOfMemory;
          defer self.allocator.free(c_out_buf);
  
-@@ -618,6 +677,8 @@ pub const Ds4Session = struct {
+@@ -618,6 +673,8 @@ pub const Ds4Session = struct {
          rng: *u64,
          out_tokens: []i32,
      ) Error!i32 {
@@ -486,7 +508,7 @@ index 338a1b1..9ab9f39 100644
          var c_out_buf = self.allocator.alloc(c_int, out_tokens.len) catch return Error.OutOfMemory;
          defer self.allocator.free(c_out_buf);
          var err_buf: [256]u8 = undefined;
-@@ -645,18 +706,30 @@ pub const Ds4Session = struct {
+@@ -645,18 +702,30 @@ pub const Ds4Session = struct {
          return @intCast(n);
      }
  
@@ -520,7 +542,7 @@ index 338a1b1..9ab9f39 100644
          var err_buf: [256]u8 = undefined;
          const rc = ffi.ds4_session_load_snapshot(self.handle, &snap.inner, &err_buf, err_buf.len);
          if (rc != 0) {
-@@ -733,3 +806,60 @@ test "kernel hash is stable across calls" {
+@@ -733,3 +802,71 @@ test "kernel hash is stable across calls" {
      const b = computeKernelHash();
      try std.testing.expectEqualSlices(u8, &a, &b);
  }
@@ -558,6 +580,17 @@ index 338a1b1..9ab9f39 100644
 +
 +
 +test "fios ds4 engine operations refuse unavailable lifetime before backend access" {
++    // Genuine CPU allocation failures precede filesystem/kernel/native work.
++    // No initialized backend handle is needed or accessed on either path.
++    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = 0 });
++    try std.testing.expectError(Error.OutOfMemory, Ds4Engine.open(failing.allocator(), "/fixture/never-opened", .{}));
++    var allocation_only: Ds4Engine = undefined;
++    allocation_only.allocator = failing.allocator();
++    allocation_only.fios_lifetime = try lifetime.Lifetime.init();
++    try std.testing.expectError(Error.OutOfMemory, allocation_only.createSession(512));
++    try std.testing.expect(allocation_only.fios_lifetime.canClose(null));
++    try std.testing.expectEqual(@as(usize, 0), failing.allocations);
++    try std.testing.expectEqual(@as(usize, 0), failing.deallocations);
 +    // Only lifetime metadata is initialized; there is no native engine handle.
 +    var engine: Ds4Engine = undefined;
 +    for (0..4) |mode| {
