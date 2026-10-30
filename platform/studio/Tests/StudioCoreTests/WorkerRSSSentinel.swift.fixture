@@ -15,6 +15,19 @@ import Darwin
         // the intended oversized live child even on a pressured CI host.
         // These bytes are never emitted, persisted or used as credentials.
         arc4random_buf(bytes,size)
-        withExtendedLifetime(bytes) {Thread.sleep(forTimeInterval:30)}
+        // Keep the working set active until supervised. A sleeping allocation
+        // can be compressed/paged out on a shared CI host before observation.
+        // No wiring, host-memory setting or production limit is changed.
+        let deadline=ProcessInfo.processInfo.systemUptime+30
+        let page=Int(getpagesize())
+        withExtendedLifetime(bytes) {
+            while ProcessInfo.processInfo.systemUptime<deadline {
+                for offset in stride(from:0,to:size,by:page) {
+                    // External writes keep each actual page hot even under -O.
+                    arc4random_buf(bytes.advanced(by:offset),1)
+                }
+                Thread.sleep(forTimeInterval:0.01)
+            }
+        }
     }
 }
