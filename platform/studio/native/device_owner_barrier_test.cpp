@@ -1,3 +1,5 @@
+#include <algorithm>
+#include <iterator>
 // CPU by default; explicit source-only --gpu-empty creates/syncs an empty GPU
 // stream. No model, array, inference or GPU kernel in either mode.
 #include "device_owner_barrier.h"
@@ -17,6 +19,10 @@ static void require(bool condition) {
     if (!condition) { std::cerr << "FAIL: genuine MLX owner-stream fixture check\n"; std::exit(77); }
 }
 int main(int argc, char** argv) {
+    char absent_components[512];
+    std::fill(std::begin(absent_components),std::end(absent_components),'x');
+    if (fios_mlx_source_components_json(absent_components,sizeof(absent_components))!=0 || absent_components[0]!='x') return 77;
+
     if (argc == 2 && std::string_view(argv[1]) == "--prove-failure") require(false);
     const auto owner = fios_mlx_current_thread();
     require(owner != 0);

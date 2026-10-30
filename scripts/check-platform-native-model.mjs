@@ -13,7 +13,7 @@ import {fileURLToPath} from 'node:url';
 import {setTimeout as delay} from 'node:timers/promises';
 import {createServer,createConnection} from 'node:net';
 import {verifyNativeReview} from './lib/platform-native-review.mjs';
-import {nativeReviewIntent,nativeReviewHTTPFailure,nativeReviewJSON,nativeReviewActivity,nativeReviewModelInputs,nativeReviewLineage} from './lib/platform-native-review-intent.mjs';
+import {nativeReviewIntent,nativeReviewHTTPFailure,nativeReviewJSON,nativeReviewActivity,nativeReviewModelInputs,nativeReviewLineage,nativeReviewComponents} from './lib/platform-native-review-intent.mjs';
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..'),args=process.argv.slice(2);
 const intent=nativeReviewIntent(args),pair=intent.scenario==='same-model-pair';
 const scenario=pair?'same-model-pair':'single-model',scenarioArgs=pair?['--scenario',scenario]:[];
@@ -68,6 +68,16 @@ child.once('error',()=>{failed='launch_failed';});const began=performance.now();
 async function get(route){const r=await fetch('http://127.0.0.1:'+port+route,{headers:{Authorization:'Bearer '+key},redirect:'error',signal:AbortSignal.timeout(2000)});assert(r.ok);return nativeReviewJSON(r);}
 let activityTimer,activityPending,activityStopped=false,activityState;
 function acceptActivity(value){const next=nativeReviewActivity(value,activityState?.instance,activityState?.sequence??0);activityState=next;receipt.source_instance=next.instance;const r=receipt.request_phase_observations??={samples:0,preparing_max:0,active_max:0,responding_max:0,uncertainty_observed:false,observer_included:true,authority:false};r.samples++;for(const phase of ['preparing','active','responding'])r[phase+'_max']=Math.max(r[phase+'_max'],next[phase]);r.uncertainty_observed ||= next.uncertain;}
+let componentSequence=0;
+async function sampleComponents(){
+ if(!capsule.receipt.declared_inputs.source_component_diagnostics)return;
+ const value=nativeReviewComponents(await get('/v1/fios/source-components'),activityState.instance,componentSequence);componentSequence=value.sequence;
+ assert(value.available&&value.stream.enabled&&value.host.enabled&&value.metal.enabled,'Private source components unavailable');
+ const record=receipt.source_component_observations??={samples:0,coherent_samples:0,uncertainty_observed:false,shared_stream_observed:false,stream_registered_max:0,creation_pending_max:0,host_pending_max:0,host_active_max:0,metal_pending_max:0,metal_captures_max:0,authority:false,coverage:'unknown'};
+ record.samples++;if(value.coherent)record.coherent_samples++;
+ record.uncertainty_observed ||= value.stream.uncertain||value.host.uncertain||value.metal.uncertain;record.shared_stream_observed ||= value.stream.shared;
+ for(const [key,n]of Object.entries({stream_registered_max:value.stream.registered,creation_pending_max:value.stream.pending,host_pending_max:value.host.pending,host_active_max:value.host.active,metal_pending_max:value.metal.pending,metal_captures_max:value.metal.captures}))record[key]=Math.max(record[key],n);
+}
 let lineageSequence=0;
 async function readLineage(correlation){
  const controlPath=path.join(home,'.fios-native-control/control.sock'),parent=lstatSync(path.dirname(controlPath)),socketInfo=lstatSync(controlPath);
@@ -95,7 +105,7 @@ async function sampleLineages(){
   assert(proof.distinct_roots,'Distinct requests aliased a native root');
  }
 }
-function sampleActivity(){if(activityStopped||activityPending)return;activityPending=(async()=>{acceptActivity(await get('/v1/fios/activity'));await sampleLineages();})().catch(()=>{failed='request_phase_or_lineage_observation_failed';modelAbort.abort();}).finally(()=>{activityPending=null;});}
+function sampleActivity(){if(activityStopped||activityPending)return;activityPending=(async()=>{acceptActivity(await get('/v1/fios/activity'));await Promise.all([sampleLineages(),sampleComponents()]);})().catch(()=>{failed='request_phase_or_lineage_observation_failed';modelAbort.abort();}).finally(()=>{activityPending=null;});}
 async function requestModel(index){
  const request={index,correlation:randomBytes(32).toString('hex'),dispatched_ms:Math.round(performance.now()-began),response_complete:false};
  (receipt.requests??=[]).push(request);receipt.model_post_attempts++;assert(receipt.model_post_attempts<=LIMITS.model_posts);receipt.actual_model_posts=null;save();
@@ -113,7 +123,7 @@ try{
  timer=setInterval(()=>{if(ended())return;try{const p=observe();assert(p.start===original.start);receipt.peak_resident=Math.max(receipt.peak_resident,p.resident);receipt.peak_footprint=Math.max(receipt.peak_footprint,p.footprint);if(Math.max(p.resident,p.footprint)>LIMITS.memory_abort_bytes){failed='memory_abort_threshold';modelAbort.abort();signalOwned('SIGKILL');}}catch{failed='resource_identity_unknown';modelAbort.abort();signalOwned('SIGTERM');}if(performance.now()-began>LIMITS.work_ms){failed='overall_deadline';modelAbort.abort();signalOwned('SIGKILL');}},500);
  stage='readiness';let ready=false;for(let i=0;i<200&&!ready;i++){assert(!ended()&&!failed);try{ready=(await get('/health')).status==='ok';}catch{await delay(25);}}assert(ready,'Private source readiness unavailable');
  stage='catalog';const before=await get('/v1/models');assert(Array.isArray(before.data));assert(before.data.every(m=>!m.loaded&&m.state!=='ready'),'Unexpected preloaded model');
- stage='diagnostic';acceptActivity(await get('/v1/fios/activity'));
+ stage='diagnostic';acceptActivity(await get('/v1/fios/activity'));await sampleComponents();
  if(check){assert(before.data.length===0);receipt.result='empty_model_profile_and_identity_passed';}
  else{
   assert(before.data.some(m=>m.id===ID),'Exact selected model not advertised');receipt.native_uncertainty=true;receipt.native_inference=null;receipt.inference_attempted=true;save();
@@ -121,7 +131,7 @@ try{
   const pending=Array.from({length:LIMITS.model_posts},(_,index)=>requestModel(index));let results;
   try{results=await Promise.all(pending);}catch(error){modelAbort.abort();await Promise.allSettled(pending);throw error;}
   assert(receipt.model_post_attempts===LIMITS.model_posts&&receipt.actual_model_posts===LIMITS.model_posts);postsDone=true;receipt.native_inference=true;
-  clearInterval(activityTimer);activityStopped=true;if(activityPending)await activityPending;acceptActivity(await get('/v1/fios/activity'));
+  clearInterval(activityTimer);activityStopped=true;if(activityPending)await activityPending;acceptActivity(await get('/v1/fios/activity'));await sampleComponents();
   assert(receipt.request_phase_observations.preparing_max>0||receipt.request_phase_observations.active_max>0||receipt.request_phase_observations.responding_max>0,'No live model request phase observed');
   if(pair){
    assert(Math.max(...results.map(r=>r.dispatched_ms))<Math.min(...results.map(r=>r.completed_ms)),'Client requests did not overlap');

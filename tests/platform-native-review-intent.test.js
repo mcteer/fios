@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
-import {nativeReviewIntent,nativeReviewHTTPFailure,nativeReviewJSON,nativeReviewActivity,nativeReviewModelInputs,nativeReviewLineage} from '../scripts/lib/platform-native-review-intent.mjs';
+import {nativeReviewIntent,nativeReviewHTTPFailure,nativeReviewJSON,nativeReviewActivity,nativeReviewModelInputs,nativeReviewLineage,nativeReviewComponents} from '../scripts/lib/platform-native-review-intent.mjs';
 test('native review JSON is bounded while reading, before parsing',async()=>{
  assert.deepEqual(await nativeReviewJSON(new Response('{"ok":true}'),11),{ok:true});
  await assert.rejects(nativeReviewJSON(new Response('{"ok":true}'),10),/response limit/);
@@ -58,4 +58,15 @@ test('readonly lineage frames bind source/request and missing remains uncertain'
  assert.throws(()=>nativeReviewLineage(frame(),'c'.repeat(32),correlation));assert.throws(()=>nativeReviewLineage(frame(),instance,'d'.repeat(64)));
  assert.throws(()=>nativeReviewLineage(frame(),instance,correlation,10));assert.throws(()=>nativeReviewLineage(frame(),instance,correlation,-1));
  missing[7]=0;assert.throws(()=>nativeReviewLineage(missing,instance,correlation));
+});
+
+test('source components remain partial even when epochs agree and counters are zero',()=>{
+ const instance='a'.repeat(32);
+ const flags={enabled:true,uncertain:false,held:false};
+ const fixture=()=>({source_instance:instance,sample_sequence:1,components:{schema_version:1,scope:'partial_mlx_source_components',coverage:'unknown',authority:false,available:true,coherent:true,stream:{epoch:2,registered:0,pending:0,...flags,shared:false},host:{epoch:2,pending:0,active:0,...flags},metal:{epoch:2,pending:0,captures:0,...flags}}});
+ const value=nativeReviewComponents(fixture(),instance);assert.equal(value.coverage,'unknown');assert.equal(value.authority,false);
+ const absent=fixture();absent.components={schema_version:1,scope:'partial_mlx_source_components',coverage:'unknown',authority:false,available:false};assert.equal(nativeReviewComponents(absent,instance).available,false);
+ const changing=fixture();changing.components.host.epoch=3;changing.components.coherent=false;assert.equal(nativeReviewComponents(changing,instance).coherent,false);
+ for(const change of [v=>v.components.authority=true,v=>v.components.coverage='all_clients',v=>v.components.host.active=-1,v=>v.components.metal.pending=2147483648,v=>v.components.stream.shared=0,v=>v.components.host.epoch=3,v=>v.components.extra=0]){const b=fixture();change(b);assert.throws(()=>nativeReviewComponents(b,instance));}
+ assert.throws(()=>nativeReviewComponents(fixture(),'b'.repeat(32)));assert.throws(()=>nativeReviewComponents(fixture(),instance,1));
 });

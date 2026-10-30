@@ -11,6 +11,7 @@ import { request } from 'node:http';
 import { join, isAbsolute } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
+import {nativeReviewComponents} from './lib/platform-native-review-intent.mjs';
 const args=process.argv.slice(2);
 assert(args.length===5 && args[0]==='--isolated' && args[1]==='--binary' && args[3]==='--sha256' && isAbsolute(args[2]) && /^[a-f0-9]{64}$/.test(args[4]),
   'usage: check-platform-native-http.mjs --isolated --binary ABS_SOURCE_FIXTURE --sha256 REVIEWED_SHA256');
@@ -147,6 +148,14 @@ try {
   assert.equal((await get()).body.source_instance,sourceInstance,'duplicate changed the original serving instance');
   console.log('PASS: opted-in duplicate native fixture refused before native initialization on a separate port, without control-socket conflict; original process remains responsive.');
 
+  const componentsResponse=await get('/v1/fios/source-components');
+  assert.equal(componentsResponse.status,200);
+  const components=nativeReviewComponents(componentsResponse.body,sourceInstance);
+  assert.equal(components.authority,false);
+  if(components.available)console.log('SOURCE_COMPONENT_PROVIDER_AVAILABLE: genuine private renderer returned typed partial metadata');
+  const componentsTunnel=await get('/v1/fios/source-components',{'X-MLX-LAN':'1'});
+  assert.equal(componentsTunnel.status,403,'Source-component observations accepted tunnelled traffic');
+  console.log('PASS: actual local readonly source-component view, explicit availability/unknown coverage and tunnel refusal; no model or terminal authority.');
   assert.equal(lstatSync(join(scratch,'.fios-native-control')).mode&0o777,0o700);
   assert.equal(lstatSync(controlPath).mode&0o777,0o600);assert.equal(lstatSync(controlPath).uid,process.getuid());
   const controlInitial=await control(0);assert.equal(controlInitial.instance,sourceInstance);assert.equal(controlInitial.closed,0);

@@ -25,6 +25,27 @@ export function nativeReviewActivity(value, instance, previousSequence=0) {
  assert(Number.isInteger(value.owned_requests)&&value.owned_requests<=256&&Object.values(counts).reduce((a,b)=>a+b,0)===value.owned_requests&&typeof value.uncertain==='boolean');
  return {instance:value.source_instance,sequence:value.sample_sequence,...counts,uncertain:value.uncertain};
 }
+// Subdomain observations only, including explicit unavailability. Matching
+// SDK epochs do not reserve transitions or establish all-context coverage.
+export function nativeReviewComponents(value,instance,previous=0){
+ const exact=(object,fields)=>{assert(object&&typeof object==='object'&&!Array.isArray(object));assert.deepEqual(Object.keys(object).sort(),[...fields].sort());};
+ exact(value,['source_instance','sample_sequence','components']);
+ assert(typeof value.source_instance==='string'&&value.source_instance===instance&&/^[a-f0-9]{32}$/.test(instance)&&instance!=='0'.repeat(32));
+ assert(Number.isSafeInteger(previous)&&previous>=0&&Number.isSafeInteger(value.sample_sequence)&&value.sample_sequence>0&&value.sample_sequence>previous);
+ const state=value.components;
+ const base=['schema_version','scope','coverage','authority','available'];
+ assert(typeof state?.available==='boolean');exact(state,state.available?[...base,'coherent','stream','host','metal']:base);
+ assert(state.schema_version===1&&state.scope==='partial_mlx_source_components'&&state.coverage==='unknown'&&state.authority===false);
+ if(!state.available)return {sequence:value.sample_sequence,available:false,authority:false};
+ const domains={stream:{counts:['registered','pending'],flags:['enabled','uncertain','held','shared']},host:{counts:['pending','active'],flags:['enabled','uncertain','held']},metal:{counts:['pending','captures'],flags:['enabled','uncertain','held']}};
+ for(const [name,{counts,flags}]of Object.entries(domains)){
+  const part=state[name];exact(part,['epoch',...counts,...flags]);
+  assert(Number.isSafeInteger(part.epoch)&&part.epoch>=0);for(const key of counts)assert(Number.isInteger(part[key])&&part[key]>=0&&part[key]<=2147483647);
+  assert(part.epoch>0);for(const key of flags)assert(typeof part[key]==='boolean');
+ }
+ assert(typeof state.coherent==='boolean'&&state.coherent===(state.stream.epoch===state.host.epoch&&state.host.epoch===state.metal.epoch));
+ return {sequence:value.sample_sequence,...state};
+}
 // Readonly live correlation metadata, never terminal/not-sent/device proof.
 export function nativeReviewLineage(bytes,instance,correlation,previous=0){
  assert(Buffer.isBuffer(bytes)&&bytes.length===112&&bytes.subarray(0,4).toString()==='FIP9'&&bytes[4]===1&&bytes[5]===0&&bytes[6]<=1&&bytes[7]<=1);

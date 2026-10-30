@@ -1,5 +1,6 @@
 #pragma once
 #include <stdint.h>
+#include <stddef.h>
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -49,6 +50,12 @@ int fios_mlx_owner_barrier(uint64_t owner_thread, struct fios_mlx_barrier_result
 // No timeout, thread exit or failed probe refunds/reopens this hold.
 int fios_mlx_hold_owned_registry(uint64_t owner_thread, uint64_t* out_ticket);
 int fios_mlx_release_owned_registry(uint64_t owner_thread, uint64_t ticket);
+// Optional private source-component metadata only. Zero means unavailable,
+// never an empty/idle/terminal result. No backend initialization or holds.
+typedef int (*fios_mlx_source_renderer)(char*, size_t);
+// Trusted compiled private shim only; one registration, no wire setter/reset.
+int fios_mlx_register_source_renderer(fios_mlx_source_renderer renderer);
+int fios_mlx_source_components_json(char* output, size_t capacity);
 #ifdef __cplusplus
 }
 #endif

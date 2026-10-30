@@ -84,3 +84,13 @@ pub const Request = struct {
         if (self.references.fetchSub(1, .acq_rel) == 1) self.allocator.destroy(self);
     }
 };
+
+// Optional readonly source subdomains, never all-context/terminal authority.
+extern "c" fn fios_mlx_source_components_json(output: [*]u8, capacity: usize) c_int;
+pub fn sourceComponents(output: []u8) ?[]const u8 {
+    const count = fios_mlx_source_components_json(output.ptr, output.len);
+    if (count <= 0) return null;
+    const size: usize = @intCast(count);
+    if (size > output.len) return null;
+    return output[0..size];
+}

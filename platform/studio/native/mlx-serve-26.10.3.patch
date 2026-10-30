@@ -4476,7 +4476,7 @@ index 9e12566..b1d4afc 100644
          return runDs4DecodeTick(sch, slot, session);
      }
 diff --git a/src/server.zig b/src/server.zig
-index 720b2c6..bbae7df 100644
+index 720b2c6..f612af1 100644
 --- a/src/server.zig
 +++ b/src/server.zig
 @@ -1,4 +1,8 @@
@@ -4593,7 +4593,7 @@ index 720b2c6..bbae7df 100644
  ) !void {
      // Plan 05: resolve which model this request targets. The registry was
      // set up in `serve()`; per-POST routing happens after we read the body
-@@ -2603,6 +2643,37 @@ fn handleConnection(
+@@ -2603,6 +2643,56 @@ fn handleConnection(
          }
      }
  
@@ -4628,10 +4628,29 @@ index 720b2c6..bbae7df 100644
 +        return;
 +    }
 +
++    // Optional source-build diagnostics only. Same authentication and local,
++    // non-tunnel boundary as activity; no model resolution/backend work.
++    if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/v1/fios/source-components")) {
++        if (!peerIsLoopback(stream) or isTunneledRequest(request[0..header_end_pos])) {
++            try sendErrorResponse(allocator, stream, "403 Forbidden", "forbidden", "Local observation only", 403);
++            return;
++        }
++        var component_buffer: [2048]u8 = undefined;
++        const components = fios_device.sourceComponents(&component_buffer) orelse
++            "{\"schema_version\":1,\"scope\":\"partial_mlx_source_components\",\"coverage\":\"unknown\",\"authority\":false,\"available\":false}";
++        const snapshot = fios_requests.snapshot(stream.io);
++        var response_buffer: [2304]u8 = undefined;
++        const body = try std.fmt.bufPrint(&response_buffer,
++            "{{\"source_instance\":\"{s}\",\"sample_sequence\":{d},\"components\":{s}}}",
++            .{ &std.fmt.bytesToHex(snapshot.instance, .lower), snapshot.sample_sequence, components });
++        try sendResponseQuiet(stream, "200 OK", "application/json", body);
++        return;
++    }
++
      // ── Plan 05: routes that don't depend on a loaded model (connectivity
      //    probes + CORS preflight + listing endpoints). Handle these BEFORE
      //    `scheduler.ensureLoaded` so they don't trigger a cold load of the
-@@ -2705,7 +2776,7 @@ fn handleConnection(
+@@ -2705,7 +2795,7 @@ fn handleConnection(
          // get a 404 here even though the main dispatch path below falls
          // back to default for SDK compatibility.
          log.debug("POST /v1/load-model -> 200\n", .{});
@@ -4640,7 +4659,7 @@ index 720b2c6..bbae7df 100644
          return;
      }
      // Any method: a status route never reaches `ensureLoaded`, whatever its body names.
-@@ -2873,7 +2944,14 @@ fn handleConnection(
+@@ -2873,7 +2963,14 @@ fn handleConnection(
              return;
          }
      }
@@ -4656,7 +4675,7 @@ index 720b2c6..bbae7df 100644
          // Headless gen-only boot (media models resident, no default chat
          // model): /props keeps answering with the live memory counters —
          // the app's tray polls it, and a 503 here read as "0 MB".
-@@ -2887,6 +2965,10 @@ fn handleConnection(
+@@ -2887,6 +2984,10 @@ fn handleConnection(
      // A status read must not look like use — see `isStatusRoute`.
      const status_read = isStatusRoute(method, path);
      defer if (status_read) scheduler.releaseStatus(lm) else scheduler.release(lm);
@@ -4667,7 +4686,7 @@ index 720b2c6..bbae7df 100644
  
      // A model loaded on demand freezes its own auto-context here, for the same
      // reason the `--model` primary does at startup: the number we advertise is
-@@ -7800,7 +7882,7 @@ fn handleModelsRescan(allocator: std.mem.Allocator, stream: *Conn) !void {
+@@ -7800,7 +7901,7 @@ fn handleModelsRescan(allocator: std.mem.Allocator, stream: *Conn) !void {
  /// Plan 05 Phase E: explicit cold-load. Strict on unknown ids (404 — the
  /// caller asked for a specific id, not "anything"). Routes through
  /// scheduler.ensureLoaded so eviction/back-pressure kicks in.
@@ -4676,7 +4695,7 @@ index 720b2c6..bbae7df 100644
      const scheduler = global_scheduler orelse {
          try sendErrorResponse(allocator, stream, "503 Service Unavailable", "internal_error", "Scheduler not ready", 503);
          return;
-@@ -7885,11 +7967,20 @@ fn handleLoadModelStrict(allocator: std.mem.Allocator, stream: *Conn, request_bo
+@@ -7885,11 +7986,20 @@ fn handleLoadModelStrict(allocator: std.mem.Allocator, stream: *Conn, request_bo
          .id => |id| requested_id = id,
          else => {},
      };
@@ -4698,7 +4717,7 @@ index 720b2c6..bbae7df 100644
      // Promotion happens only past ensureLoaded's error switch: a load that
      // FAILED must never steal the default from a model that answers.
      if (make_default) {
-@@ -8030,6 +8121,7 @@ fn handleTranscriptions(allocator: std.mem.Allocator, stream: *Conn, body: []con
+@@ -8030,6 +8140,7 @@ fn handleTranscriptions(allocator: std.mem.Allocator, stream: *Conn, body: []con
              try sendErrorResponse(allocator, stream, "400 Bad Request", "invalid_request_error", "diarized_json needs Nemotron 3 Diarization, which is not on disk or did not load: download " ++ DIARIZER_REPO ++ " beside the ASR model", 400);
              return;
          }).id;
@@ -4706,7 +4725,7 @@ index 720b2c6..bbae7df 100644
          diarizer = global_scheduler.?.ensureLoaded(id) catch |err| blk: {
              log.warn("  diarizer {s} did not load ({s}): one speaker\n", .{ id, @errorName(err) });
              break :blk null;
-@@ -8054,16 +8146,19 @@ fn handleTranscriptions(allocator: std.mem.Allocator, stream: *Conn, body: []con
+@@ -8054,16 +8165,19 @@ fn handleTranscriptions(allocator: std.mem.Allocator, stream: *Conn, body: []con
          defer if (timed) |*x| x.deinit(allocator);
          if (aligner) |*al| {
              if (t.text.len > 0 and al.languages & transcription_mod.languageBit(t.language orelse "") != 0) {
@@ -4736,7 +4755,7 @@ index 720b2c6..bbae7df 100644
                  if (al.lm) |alm| timed = (try alignPiece(allocator, stream, alm, pcm[start..end], t.text, t.language.?, who, start * 1000 / transcription_mod.SAMPLE_RATE)) orelse return;
              }
          }
-@@ -8179,6 +8274,7 @@ fn findCompanion(arch_hint: []const u8) ?*LoadedModel {
+@@ -8179,6 +8293,7 @@ fn findCompanion(arch_hint: []const u8) ?*LoadedModel {
  
  fn findAligner(allocator: std.mem.Allocator) !?Aligner {
      const entry = findCompanion("qwen3_forced_aligner") orelse return null;
@@ -4744,7 +4763,7 @@ index 720b2c6..bbae7df 100644
      var config = model_mod.parseConfig(global_registry.?.io, allocator, entry.path) catch return null;
      defer config.deinit(allocator);
      const fa = config.forced_aligner orelse return null;
-@@ -8584,9 +8680,9 @@ fn embeddedEngineSettings(st: PropsSettings, engine: PropsEngine, engine_mtp: bo
+@@ -8584,9 +8699,9 @@ fn embeddedEngineSettings(st: PropsSettings, engine: PropsEngine, engine_mtp: bo
      return out;
  }
  
@@ -4756,7 +4775,7 @@ index 720b2c6..bbae7df 100644
      var out = embeddedEngineSettings(mlxPropsSettings(lm), engine, engine_mtp);
      if (lm.ane != null) out.kv_quant = "off";
      return out;
-@@ -8754,7 +8850,7 @@ fn handleProps(allocator: std.mem.Allocator, stream: *Conn, lm: *LoadedModel) !v
+@@ -8754,7 +8869,7 @@ fn handleProps(allocator: std.mem.Allocator, stream: *Conn, lm: *LoadedModel) !v
      defer allocator.free(ngram_json);
      const batching_json = try batchingPropsJson(allocator, batchVerdictFor(lm));
      defer allocator.free(batching_json);
@@ -4765,7 +4784,7 @@ index 720b2c6..bbae7df 100644
      defer allocator.free(settings_json);
      const cluster_json = try @import("distributed.zig").propsJson(allocator);
      defer allocator.free(cluster_json);
-@@ -9300,7 +9396,7 @@ fn handleDetokenize(
+@@ -9300,7 +9415,7 @@ fn handleDetokenize(
  
      const ids = try allocator.alloc(u32, tokens_val.array.items.len);
      defer allocator.free(ids);
@@ -4774,7 +4793,7 @@ index 720b2c6..bbae7df 100644
          try sendErrorResponse(allocator, stream, "400 Bad Request", "invalid_request_error", "'tokens' must be integers inside the model's vocabulary", 400);
          return;
      }
-@@ -9665,9 +9761,9 @@ fn echoModelName(root: std.json.ObjectMap, fallback: []const u8) []const u8 {
+@@ -9665,9 +9780,9 @@ fn echoModelName(root: std.json.ObjectMap, fallback: []const u8) []const u8 {
  
  /// The vocabulary a request's token ids index. An embedded engine's stub config keeps the
  /// default vocab; its ids are the engine's, and an id past its vocab aborts inside llama.cpp.
@@ -4786,7 +4805,7 @@ index 720b2c6..bbae7df 100644
      return if (lm.config) |c| c.vocab_size else 0;
  }
  
-@@ -10555,7 +10651,7 @@ fn handleCompletions(
+@@ -10555,7 +10670,7 @@ fn handleCompletions(
          return;
      };
  
@@ -4795,7 +4814,7 @@ index 720b2c6..bbae7df 100644
      defer if (prompt == .ids) allocator.free(prompt.ids);
      switch (prompt) {
          .missing, .invalid => {
-@@ -13838,6 +13934,21 @@ fn findContentLength(headers: []const u8) ?usize {
+@@ -13838,6 +13953,21 @@ fn findContentLength(headers: []const u8) ?usize {
  /// Case-insensitive header lookup returning the trimmed VALUE (`Content-Type`
  /// carries the multipart boundary, so `/v1/images/edits` can't be parsed from
  /// the body alone like every other endpoint).
@@ -4817,7 +4836,7 @@ index 720b2c6..bbae7df 100644
  fn findHeaderValue(headers: []const u8, comptime name_lower: []const u8) ?[]const u8 {
      var lines = std.mem.splitSequence(u8, headers, "\r\n");
      while (lines.next()) |line| {
-@@ -14405,6 +14516,52 @@ test "resolveRequestModelId: a path names its own entry, never the default model
+@@ -14405,6 +14535,52 @@ test "resolveRequestModelId: a path names its own entry, never the default model
      try std.testing.expectEqualStrings("", resolveRequestModelId(reg, &aliases, "", "/v1/chat/completions").id);
  }
  
@@ -4870,7 +4889,7 @@ index 720b2c6..bbae7df 100644
  test "the route-existence 404 is answered BEFORE the model is resolved" {
      // A path we do not serve must cost nothing. Resolution ran first, so
      // `POST /v1/load` (the real route is /v1/load-model) with a `model` field
-@@ -14413,7 +14570,7 @@ test "the route-existence 404 is answered BEFORE the model is resolved" {
+@@ -14413,7 +14589,7 @@ test "the route-existence 404 is answered BEFORE the model is resolved" {
      // answer has to precede `ensureLoaded`, not sit in one of its error arms.
      const src = @embedFile("server.zig");
      const gate = "if (!routeExists(" ++ "path)) {";
@@ -4879,7 +4898,7 @@ index 720b2c6..bbae7df 100644
      const gate_at = std.mem.indexOf(u8, src, gate) orelse return error.GateMissing;
      const resolve_at = std.mem.indexOf(u8, src, resolve) orelse return error.ResolveMissing;
      try std.testing.expect(gate_at < resolve_at);
-@@ -14871,8 +15028,24 @@ pub const insufficient_free_memory_message =
+@@ -14871,8 +15047,24 @@ pub const insufficient_free_memory_message =
      "Not enough free memory to load model: weights + warmup headroom exceed what is currently available. " ++
      "Close other apps or models and retry (the server log names the peak estimate and available memory), or pass --skip-mem-preflight to override.";
  

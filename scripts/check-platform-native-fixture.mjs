@@ -174,7 +174,7 @@ try{
   const libraryEdge='module.addLibraryPath(b.path("lib/mlx/lib"));';assert.equal(graph.split(libraryEdge).length,2);
   graph=graph.replace(libraryEdge,'module.addLibraryPath(.{ .cwd_relative = '+JSON.stringify(mlxLibraries)+' });');
   const participant=path.join(scratch,'source-mlx-participants.cpp');
-  writeFileSync(participant,'#include '+JSON.stringify(path.join(mlxDependency.source,'mlx/stream.h'))+'\n'+participantBytes,{mode:0o600});
+  writeFileSync(participant,'#include '+JSON.stringify(path.join(mlxDependency.source,'mlx/stream.h'))+'\n#include '+JSON.stringify(path.join(root,'platform/studio/native/device_owner_barrier.h'))+'\n'+participantBytes,{mode:0o600});
   const first='    const exe = b.addExecutable(.{';assert.equal(graph.split(first).length,3);
   graph=graph.replace(first,'    mod.addCSourceFile(.{ .file = .{ .cwd_relative = '+JSON.stringify(participant)+' }, .flags = &.{"-std=c++20"} });\n'+first);
  }
@@ -292,10 +292,11 @@ try{
   const libraries=Object.fromEntries(Object.keys(runtime).map(name=>[name,path.join(name==='libwebp.dylib'||name==='libsharpyuv.dylib'?lib:bundle,name)]));
   libraries['libllama.dylib']=path.join(source,'lib/llama/lib/libllama.dylib');
   if(mlxDependency)for(const name of ['libmlx.dylib','mlx.metallib','libjaccl.dylib'])libraries[name]=mlxDependency.libraries[name];
-  review=stageNativeReview({directory:reviewOutput,binary,libraries,inputs:{native_base:'046b647686419df06c6c7132fb1d15d76185c3e5',root_patch_sha256:sha(path.join(root,'platform/studio/native/mlx-serve-26.10.3.patch')),runtime_inputs:runtime,runtime_input_scope:mlxDependency?'readonly_installed_bundle_bracket_not_selected_runtime_provenance':'declared_installed_bundle_inputs_only',mimo_candidate:mimoReceipt,mlx_source_dependency:mlxDependency,mlx_participant_source_sha256:participantBytes?createHash('sha256').update(participantBytes).digest('hex'):null}});
+  review=stageNativeReview({directory:reviewOutput,binary,libraries,inputs:{native_base:'046b647686419df06c6c7132fb1d15d76185c3e5',root_patch_sha256:sha(path.join(root,'platform/studio/native/mlx-serve-26.10.3.patch')),runtime_inputs:runtime,runtime_input_scope:mlxDependency?'readonly_installed_bundle_bracket_not_selected_runtime_provenance':'declared_installed_bundle_inputs_only',mimo_candidate:mimoReceipt,mlx_source_dependency:mlxDependency,source_component_diagnostics:!!mlxDependency,mlx_participant_source_sha256:participantBytes?createHash('sha256').update(participantBytes).digest('hex'):null}});
   binary=review.binary;digest=review.sha256;
  }
  const httpLog=rootOnly?'':run(process.execPath,[path.join(root,'scripts/check-platform-native-http.mjs'),'--isolated','--binary',binary,'--sha256',digest]);
+ if(mlxDependency)assert(httpLog.includes('SOURCE_COMPONENT_PROVIDER_AVAILABLE'),'Private component metadata was not actually available');
  if(mlxDependency){assert.deepEqual(verifyMlxSourceReview(...mlxDependencyConfig),mlxDependency);assert.equal(readFileSync(participantFile,'utf8'),participantBytes);}
  for(const [name,expected]of Object.entries(runtime))assert.equal(sha(path.join(bundle,name)),expected,'installed dependency changed');
  assert.equal(readFileSync(path.join(source,'build.zig'),'utf8'),reviewedGraph,'fixture changed reviewed build graph');

@@ -215,3 +215,18 @@ extern "C" int fios_mlx_owner_barrier(uint64_t owner, fios_mlx_barrier_result* r
         return FIOS_MLX_OWNER_STREAMS_SYNCHRONIZED;
     } catch (...) { return FIOS_MLX_UNSUPPORTED_OR_FAILED; }
 }
+
+// Optional project renderer, not a declaration/substitution of an SDK API.
+// Constant initialization is independent of C++ constructor order.
+#include <atomic>
+namespace { std::atomic<fios_mlx_source_renderer> source_renderer{nullptr}; }
+extern "C" int fios_mlx_register_source_renderer(fios_mlx_source_renderer renderer) {
+    if (!renderer) return 1;
+    fios_mlx_source_renderer expected=nullptr;
+    return source_renderer.compare_exchange_strong(expected,renderer,std::memory_order_release,std::memory_order_relaxed)?0:1;
+}
+extern "C" int fios_mlx_source_components_json(char* output,size_t capacity) {
+    const auto renderer=source_renderer.load(std::memory_order_acquire);
+    if (!output || capacity < 512 || capacity > 4096 || !renderer) return 0;
+    return renderer(output,capacity);
+}
