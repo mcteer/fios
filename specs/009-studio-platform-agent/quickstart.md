@@ -212,3 +212,11 @@ node scripts/check-platform-ds4-pread.mjs --isolated --source /ABS/PRIVATE_REVIE
 ```
 
 The candidate must be pinned9139e2a with exactly the reviewed one-file pread-retirement patch. This runs bounded Debug/optimized CPU source-fragment checks, owned-file pread and real pthread joins, including explicit private scheduling/fault instrumentation. It performs no model/GPU/runtime action. Failures retain the private fixture state. The component is unwired and does not replace legacy cleanup or certify all-writer/device completion; see [the audit](native-backend-terminality.md).
+
+### DS4 genuine keepalive producer source fixture
+
+```sh
+node scripts/check-platform-ds4-keepalive.mjs --isolated --source /ABS/PRIVATE_REVIEWED_DS4_KEEPALIVE_CANDIDATE --developer-dir /Applications/Xcode.app/Contents/Developer
+```
+
+This requires the exact9139e2a keepalive patch and signed Apple clang/SDK27.2. It runs the original fixed1KiB kernel on genuine private Metal objects, a real event gate, checked CPU-thread retirement and explicit private timing/fault instrumentation. No model, installed service or cluster action occurs. Each test has a finite deadline and independent event-release guard; failures retain private diagnostic state. GPU source-fragment success does not prove all device/backend/context participants or grant native admission. The pread and keepalive candidates remain independent, not silently composed.

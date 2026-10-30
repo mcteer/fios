@@ -13,9 +13,9 @@ assert(source.startsWith('/private/tmp/')&&info.isDirectory()&&info.uid===proces
 const gitEnv={PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C',GIT_CONFIG_GLOBAL:'/dev/null',GIT_CONFIG_SYSTEM:'/dev/null',GIT_CONFIG_NOSYSTEM:'1',GIT_NO_REPLACE_OBJECTS:'1'};
 const git=(...argv)=>execFileSync('/usr/bin/git',['--no-replace-objects','-c','core.fsmonitor=false','-C',source,...argv],{env:gitEnv,encoding:'utf8',timeout:5000});
 assert.equal(git('rev-parse','HEAD').trim(),'9139e2ae58a41503968a500f36f75895c1ba63fc');
-assert.equal(git('diff','--name-only').trim(),'ds4_metal.m');
+assert.equal(git('diff','HEAD','--name-only').trim(),'ds4_metal.m');
 const patch=readFileSync(path.join(root,'platform/studio/native/ds4-9139e2a-pread-retirement.patch'),'utf8');
-assert.equal(git('diff','--no-ext-diff','--','ds4_metal.m'),patch);
+assert.equal(git('diff','--no-ext-diff','HEAD','--','ds4_metal.m'),patch);
 const original=readFileSync(path.join(source,'ds4_metal.m'),'utf8'),fixture=readFileSync(path.join(root,'platform/studio/Tests/NativeFixtures/DS4PreadPool.c.fixture'),'utf8');
 const sha=v=>createHash('sha256').update(v).digest('hex');
 function fn(name){const match=new RegExp('^static (?:int|double|uint32_t) '+name+'\\([^;{}]*\\)\\s*\\{[\\s\\S]*?^\\}','m').exec(original);assert(match,name);return match[0];}
