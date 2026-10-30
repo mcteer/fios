@@ -1,5 +1,5 @@
 diff --git a/ds4_metal.m b/ds4_metal.m
-index 0d75369..82301b0 100644
+index 0d75369..00234b5 100644
 --- a/ds4_metal.m
 +++ b/ds4_metal.m
 @@ -15,6 +15,7 @@
@@ -597,3 +597,29 @@ index 0d75369..82301b0 100644
      if (!g_stream_expert_pread_pool_initialized) return;
  
      pthread_mutex_lock(&g_stream_expert_pread_pool_mutex);
+@@ -13626,6 +13810,12 @@ static int ds4_gpu_stream_expert_pread_tasks(
+     if (total_bytes) *total_bytes = 0;
+     if (wall_ms) *wall_ms = 0.0;
+     if (!tasks || n_tasks == 0) return 1;
++    if (g_fios_pending_uncertain) return 0;
++    pthread_mutex_lock(&g_stream_expert_pread_pool_mutex);
++    const int source_refused = g_fios_pread_pool_uncertain ||
++        atomic_load_explicit(&g_fios_pread_pool_sealed, memory_order_acquire);
++    pthread_mutex_unlock(&g_stream_expert_pread_pool_mutex);
++    if (source_refused) return 0;
+ 
+     const uint32_t n_workers =
+         ds4_gpu_stream_expert_pread_thread_count(n_tasks);
+@@ -13642,6 +13832,12 @@ static int ds4_gpu_stream_expert_pread_tasks(
+     } else if (!ds4_gpu_stream_expert_pread_pool_dispatch(tasks,
+                                                           n_tasks,
+                                                           n_workers)) {
++        pthread_mutex_lock(&g_stream_expert_pread_pool_mutex);
++        const int refused = g_fios_pread_pool_uncertain ||
++            atomic_load_explicit(&g_fios_pread_pool_sealed, memory_order_acquire) ||
++            g_stream_expert_pread_pool_initialized;
++        pthread_mutex_unlock(&g_stream_expert_pread_pool_mutex);
++        if (refused) return 0; // No alternate read path after custody refusal.
+         pthread_t threads[18];
+         ds4_gpu_stream_expert_pread_worker_args args[18];
+         uint32_t started = 0;

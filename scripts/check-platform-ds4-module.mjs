@@ -80,11 +80,11 @@ try{
  writeFileSync(path.join(directory,'foreign-cleanup-stdout.log'),foreign.stdout??'',{mode:0o600});writeFileSync(path.join(directory,'foreign-cleanup-stderr.log'),foreign.stderr??'',{mode:0o600});
  assert(!foreign.error&&!foreign.signal,'Foreign cleanup crash/deadline is not acceptance');assert.equal(foreign.status,0,foreign.stderr);
  assert(foreign.stdout.includes('PASS: actual foreign-thread cleanup retains live producer'));
- for(const mode of ['--pread-cleanup','--pread-success']){
+ for(const mode of ['--sealed-pread-dispatch','--ordinary-pread-dispatch','--pread-cleanup','--pread-success']){
  const pread=spawnSync(faultBinary,[mode],{env,cwd:source,encoding:'utf8',timeout:120000,maxBuffer:4<<20});
  writeFileSync(path.join(directory,mode+'-stdout.log'),pread.stdout??'',{mode:0o600});writeFileSync(path.join(directory,mode+'-stderr.log'),pread.stderr??'',{mode:0o600});
  assert(!pread.error&&!pread.signal,'Pread cleanup crash/deadline is not acceptance');assert.equal(pread.status,0,pread.stderr);
- assert(pread.stdout.includes(mode==='--pread-success'?'PASS: actual cleanup joins both idle pread workers':'PASS: cleanup preserves exact pread vector'));
+ assert(pread.stdout.includes(mode==='--sealed-pread-dispatch'?'PASS: actual exhausted pool refuses alternate read threads':mode==='--ordinary-pread-dispatch'?'PASS: ordinary genuine pool dispatch':mode==='--pread-success'?'PASS: actual cleanup joins both idle pread workers':'PASS: cleanup preserves exact pread vector'));
  }
 
 

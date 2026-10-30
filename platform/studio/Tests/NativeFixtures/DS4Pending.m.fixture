@@ -68,6 +68,30 @@ int main(int argc,char** argv){@autoreleasepool{
   REQUIRE(g_initialized&&g_queue==queue&&g_fios_pending_uncertain,"FIO_DS4_PREAD_CLEANUP_UNCERTAINTY_REFUNDED");
   puts("PASS: cleanup preserves exact pread vector/global resources after real joins plus injected failed acknowledgement.");return 0;
  }
+ if(argc==2&&(strcmp(argv[1],"--sealed-pread-dispatch")==0||strcmp(argv[1],"--ordinary-pread-dispatch")==0)){
+  const int ordinary=strcmp(argv[1],"--ordinary-pread-dispatch")==0;
+  REQUIRE(ds4_gpu_init()&&ds4_gpu_stream_expert_pread_pool_init(2),"SEALED_PREAD_REAL_INIT_FAILED");
+  setenv("DS4_METAL_STREAMING_EXPERT_PREAD_THREADS","2",1);
+  FILE* data=tmpfile();REQUIRE(data&&fwrite("abcdefgh",1,8,data)==8&&fflush(data)==0,"SEALED_PREAD_DATA_FAILED");
+  g_model_fd=fileno(data);unsigned char a[8]={0},b[8]={0};
+  ds4_gpu_stream_expert_pread_task tasks[2]={{.offset=0,.len=8,.dst=a},{.offset=0,.len=8,.dst=b}};
+  if(!ordinary)g_stream_expert_pread_pool_generation=UINT64_MAX;
+  uint64_t bytes=99;double wall=99;
+  int accepted=ds4_gpu_stream_expert_pread_tasks(tasks,2,&bytes,&wall);
+  int ordinary_ok=accepted&&!g_fios_pread_pool_uncertain&&!atomic_load(&g_fios_pread_pool_sealed)&&
+   tasks[0].ok&&tasks[1].ok&&!memcmp(a,"abcdefgh",8)&&!memcmp(b,"abcdefgh",8)&&bytes==16&&wall>=0;
+  int refused=!accepted&&g_fios_pread_pool_uncertain&&atomic_load(&g_fios_pread_pool_sealed)&&
+   !tasks[0].ok&&!tasks[1].ok&&a[0]==0&&b[0]==0&&bytes==0&&wall==0;
+  // Join only the actual original idle CPU workers; preserve source flags.
+  pthread_mutex_lock(&g_stream_expert_pread_pool_mutex);g_stream_expert_pread_pool_stopping=1;
+  pthread_cond_broadcast(&g_stream_expert_pread_pool_start_cond);pthread_mutex_unlock(&g_stream_expert_pread_pool_mutex);
+  for(unsigned i=0;i<2;++i)REQUIRE(pthread_join(g_stream_expert_pread_pool_threads[i],NULL)==0,"SEALED_PREAD_FIXTURE_JOIN_FAILED");
+  REQUIRE(fclose(data)==0,"SEALED_PREAD_DATA_CLOSE_FAILED");g_model_fd=-1;
+  if(ordinary){REQUIRE(ordinary_ok,"FIO_DS4_NORMAL_PREAD_DISPATCH_REFUSED");
+   puts("PASS: ordinary genuine pool dispatch still reads exact bytes through the reviewed frontdoor.");return 0;}
+  REQUIRE(refused,"FIO_DS4_SEALED_POOL_DISPATCHED_ALTERNATE_READS");
+  puts("PASS: actual exhausted pool refuses alternate read threads before data writes; exact original-worker cleanup retains uncertainty.");return 0;
+ }
  REQUIRE(argc==1,"PENDING_BAD_ARGS");
  REQUIRE(ds4_gpu_init(),"PENDING_FULL_INIT_FAILED");
  id<MTLCommandBuffer> a=[g_queue commandBuffer],b=[g_queue commandBuffer];
