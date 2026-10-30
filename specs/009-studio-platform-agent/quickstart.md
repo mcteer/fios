@@ -174,3 +174,11 @@ Disable admission; revoke leases; reconcile owned containers/native requests; st
 Uninstall removes only009's verified jobs/binaries/owned ephemeral resources and dedicated keys after drain. Preserve exports/backups per retention/operator choice. Never remove MLX-Serve, OrbStack, existing Fios services, user login configuration or unrelated volumes. Do not re-enable005's installer. Capture exact artifact/revision, backup, rollback and verification in validation; do not call green CI a native deployment.
 
 Manager execution source composition and fixture limits: [manager-execution.md](contracts/manager-execution.md). Public task execution remains disabled; these source fixtures do not enroll native activity/admission.
+
+
+For the serialized DS4 snapshot CPU-custody regression, run the existing finite
+`check-platform-native-fixture.mjs` command with `--root-tests-only`, then with
+`--mutation-ds4-snapshot-free`. The latter privately removes the exact destruction
+guard, requires the allocator-observed runtime failure and restores source.
+These runs use an empty CPU blob, no session/model, and confer no native admission
+or installation authority. Do not run source mutations concurrently.

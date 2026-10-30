@@ -184,4 +184,11 @@ Three bounded metadata tests and a private close-edge bypass cover slots, replay
 
 DS4 now uses the same bounded metadata lifetime: session construction borrows its engine before FFI, error cleanup holds that lease until native cleanup returns, and a published session keeps the engine alive through its own free. LoadedModel checks the exact known parent/child relation before checked teardown; seven fallible session operations borrow session custody. The constructor audit is against the pinned ds4.c source, which publishes its output only on success. No status path calls global DS4 synchronize or initializes a backend.
 
-The disabled-platform stub refuses these operations. Sixteen fixed native paths are now source-bound; supplemental wiring and semantic/full linked receipts are in validation.md. No real DS4 model/session is exercised. Raw FFI, returned snapshot lifetimes, nonfallible raw-operation obligations, all participant/device proof and native admission remain open; this is not an all-client or terminal capability.
+The disabled-platform stub refuses these operations. Sixteen fixed native paths are now source-bound; supplemental wiring and semantic/full linked receipts are in validation.md. No real DS4 model/session is exercised. Raw FFI, nonfallible raw-operation obligations, all participant/device proof and native admission remain open; this is not an all-client or terminal capability.
+
+
+### DS4 serialized snapshot custody
+
+The pinned native snapshot is an independently allocated serialized CPU blob; it does not retain a session or engine. Saving now owns a heap wrapper and frees any partially allocated native buffer on failure. Loading borrows both the snapshot and session; checked snapshot destruction refuses while a reader holds its lease. The snapshot may outlive the session and engine without blocking idle replacement. Existing native payload validation remains unchanged.
+
+The actual optimized root regression uses a valid empty CPU snapshot and an external allocator witness: destroying a borrowed wrapper fails before dereferencing freed storage. This exercises empty-buffer cleanup, not a populated model snapshot, DS4 inference, backend synchronization or terminal authority. Raw-pointer callers still require a stable enclosing reference; a freed wrapper cannot be reused as a lease issuer.

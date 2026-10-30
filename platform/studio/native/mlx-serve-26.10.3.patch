@@ -116,7 +116,7 @@ index 12bd0f7..21ca26c 100644
  int32_t mlx_llama_ctx_mtp_drafts(mlx_llama_ctx *c);
  
 diff --git a/src/arch/ds4.zig b/src/arch/ds4.zig
-index 338a1b1..f346859 100644
+index 338a1b1..aebeb8e 100644
 --- a/src/arch/ds4.zig
 +++ b/src/arch/ds4.zig
 @@ -16,6 +16,8 @@
@@ -203,7 +203,31 @@ index 338a1b1..f346859 100644
          };
          return sess;
      }
-@@ -512,11 +538,19 @@ pub const Ds4Session = struct {
+@@ -498,13 +524,22 @@ fn tokensToOwnedSlice(allocator: std.mem.Allocator, tv: *const ffi.Tokens) Error
+     return buf;
+ }
+ 
++// Owning CPU checkpoint buffer. It intentionally has no session/model lease:
++// a serialized snapshot can outlive an idle session or engine replacement.
+ pub const Ds4Snapshot = struct {
++    allocator: std.mem.Allocator,
+     inner: ffi.SessionSnapshot,
++    fios_lifetime: lifetime.Lifetime = .{},
+ 
+-    pub fn free(self: *Ds4Snapshot) void {
++    pub fn tryFree(self: *Ds4Snapshot) bool {
++        const closing = self.fios_lifetime.beginClose(null) catch return false;
++        if (!self.fios_lifetime.commitClose(closing)) return false;
+         ffi.ds4_session_snapshot_free(&self.inner);
+         self.inner = .{};
++        self.allocator.destroy(self);
++        return true;
+     }
++    pub fn free(self: *Ds4Snapshot) void { _ = self.tryFree(); }
+ };
+ 
+ pub const Ds4Session = struct {
+@@ -512,11 +547,19 @@ pub const Ds4Session = struct {
      engine: *Ds4Engine,
      handle: *ffi.Session,
      ctx_size: i32,
@@ -224,7 +248,7 @@ index 338a1b1..f346859 100644
  
      pub fn pos(self: *Ds4Session) i32 {
          return @intCast(ffi.ds4_session_pos(self.handle));
-@@ -533,6 +567,8 @@ pub const Ds4Session = struct {
+@@ -533,6 +576,8 @@ pub const Ds4Session = struct {
      /// Sync the live session to a full prompt prefix. Reuses common prefix
      /// against the live KV cache; otherwise rebuilds from scratch.
      pub fn sync(self: *Ds4Session, prompt_ids: []const i32) Error!void {
@@ -233,7 +257,7 @@ index 338a1b1..f346859 100644
          var holder = try TokenHolder.init(self.allocator, prompt_ids);
          defer holder.deinit();
          var err_buf: [256]u8 = undefined;
-@@ -544,6 +580,8 @@ pub const Ds4Session = struct {
+@@ -544,6 +589,8 @@ pub const Ds4Session = struct {
      }
  
      pub fn commonPrefix(self: *Ds4Session, prompt_ids: []const i32) Error!i32 {
@@ -242,7 +266,7 @@ index 338a1b1..f346859 100644
          var holder = try TokenHolder.init(self.allocator, prompt_ids);
          defer holder.deinit();
          return @intCast(ffi.ds4_session_common_prefix(self.handle, &holder.tv));
-@@ -551,6 +589,8 @@ pub const Ds4Session = struct {
+@@ -551,6 +598,8 @@ pub const Ds4Session = struct {
  
      /// Evaluate one new token. Caller has already synced to the prefix.
      pub fn eval(self: *Ds4Session, token: i32) Error!void {
@@ -251,7 +275,7 @@ index 338a1b1..f346859 100644
          var err_buf: [256]u8 = undefined;
          const rc = ffi.ds4_session_eval(self.handle, @intCast(token), &err_buf, err_buf.len);
          if (rc != 0) {
-@@ -581,6 +621,8 @@ pub const Ds4Session = struct {
+@@ -581,6 +630,8 @@ pub const Ds4Session = struct {
          eos_token: i32,
          out_tokens: []i32,
      ) Error!i32 {
@@ -260,7 +284,7 @@ index 338a1b1..f346859 100644
          var c_out_buf = self.allocator.alloc(c_int, out_tokens.len) catch return Error.OutOfMemory;
          defer self.allocator.free(c_out_buf);
  
-@@ -618,6 +660,8 @@ pub const Ds4Session = struct {
+@@ -618,6 +669,8 @@ pub const Ds4Session = struct {
          rng: *u64,
          out_tokens: []i32,
      ) Error!i32 {
@@ -269,26 +293,77 @@ index 338a1b1..f346859 100644
          var c_out_buf = self.allocator.alloc(c_int, out_tokens.len) catch return Error.OutOfMemory;
          defer self.allocator.free(c_out_buf);
          var err_buf: [256]u8 = undefined;
-@@ -646,6 +690,8 @@ pub const Ds4Session = struct {
+@@ -645,18 +698,30 @@ pub const Ds4Session = struct {
+         return @intCast(n);
      }
  
-     pub fn saveSnapshot(self: *Ds4Session) Error!Ds4Snapshot {
+-    pub fn saveSnapshot(self: *Ds4Session) Error!Ds4Snapshot {
++    pub fn saveSnapshot(self: *Ds4Session) Error!*Ds4Snapshot {
 +        const lease = self.fios_lifetime.borrow() catch return Error.LifetimeUnavailable;
 +        defer _ = self.fios_lifetime.release(lease);
++        const snapshot_lifetime = lifetime.Lifetime.init() catch return Error.LifetimeUnavailable;
++        const owned = self.allocator.create(Ds4Snapshot) catch return Error.OutOfMemory;
++        errdefer self.allocator.destroy(owned);
          var snap: ffi.SessionSnapshot = .{};
++        // The native writer can allocate ptr before a later save failure.
++        errdefer ffi.ds4_session_snapshot_free(&snap);
          var err_buf: [256]u8 = undefined;
          const rc = ffi.ds4_session_save_snapshot(self.handle, &snap, &err_buf, err_buf.len);
-@@ -657,6 +703,8 @@ pub const Ds4Session = struct {
+         if (rc != 0) {
+             log.err("[ds4] save_snapshot rc={d} err={s}\n", .{ rc, std.mem.sliceTo(&err_buf, 0) });
+             return Error.SnapshotFailed;
+         }
+-        return .{ .inner = snap };
++        owned.* = .{ .allocator = self.allocator, .inner = snap, .fios_lifetime = snapshot_lifetime };
++        return owned;
      }
  
-     pub fn loadSnapshot(self: *Ds4Session, snap: *const Ds4Snapshot) Error!void {
+-    pub fn loadSnapshot(self: *Ds4Session, snap: *const Ds4Snapshot) Error!void {
++    pub fn loadSnapshot(self: *Ds4Session, snap: *Ds4Snapshot) Error!void {
++        const snapshot_lease = snap.fios_lifetime.borrow() catch return Error.LifetimeUnavailable;
++        defer _ = snap.fios_lifetime.release(snapshot_lease);
 +        const lease = self.fios_lifetime.borrow() catch return Error.LifetimeUnavailable;
 +        defer _ = self.fios_lifetime.release(lease);
          var err_buf: [256]u8 = undefined;
          const rc = ffi.ds4_session_load_snapshot(self.handle, &snap.inner, &err_buf, err_buf.len);
          if (rc != 0) {
+@@ -733,3 +798,34 @@ test "kernel hash is stable across calls" {
+     const b = computeKernelHash();
+     try std.testing.expectEqualSlices(u8, &a, &b);
+ }
++
++test "fios ds4 snapshot refuses destruction while its CPU buffer is borrowed" {
++    var watch = std.testing.FailingAllocator.init(std.testing.allocator, .{});
++    const allocator = watch.allocator();
++    const snapshot = try allocator.create(Ds4Snapshot);
++    // Genuine empty CPU snapshot: no model, backend, fake handle or weights.
++    snapshot.* = .{ .allocator = allocator, .inner = .{}, .fios_lifetime = try lifetime.Lifetime.init() };
++    // Deliberately initialize only metadata: both entry points must refuse
++    // before inspecting any session/backend field. This also instantiates the
++    // complete save/load bodies in Zig's otherwise lazy semantic analysis.
++    var unavailable: Ds4Session = undefined;
++    unavailable.fios_lifetime = .{};
++    try std.testing.expectError(Error.LifetimeUnavailable, unavailable.saveSnapshot());
++    try std.testing.expectError(Error.LifetimeUnavailable, unavailable.loadSnapshot(snapshot));
++    try std.testing.expect(snapshot.fios_lifetime.canClose(null));
++    const held = try snapshot.fios_lifetime.borrow();
++    defer if (watch.deallocations == 0) {
++        _ = snapshot.fios_lifetime.release(held);
++        _ = snapshot.tryFree();
++    };
++    const disposed = snapshot.tryFree();
++    // External allocator observation precedes any potentially freed pointer.
++    if (watch.deallocations != 0) {
++        std.debug.print("FIO_DS4_SNAPSHOT_DROPPED_BORROWED_BUFFER\n", .{});
++        return error.FiosBorrowedSnapshotDestroyed;
++    }
++    try std.testing.expect(!disposed);
++    try std.testing.expect(snapshot.fios_lifetime.release(held));
++    try std.testing.expect(snapshot.tryFree());
++    try std.testing.expectEqual(@as(usize, 1), watch.deallocations);
++}
 diff --git a/src/arch/ds4_stub.zig b/src/arch/ds4_stub.zig
-index 82e806a..f3b295d 100644
+index 82e806a..a4b476d 100644
 --- a/src/arch/ds4_stub.zig
 +++ b/src/arch/ds4_stub.zig
 @@ -5,11 +5,13 @@
@@ -305,7 +380,15 @@ index 82e806a..f3b295d 100644
      EngineOpenFailed,
      SplitGgufUnsupported,
      SessionCreateFailed,
-@@ -79,6 +81,10 @@ pub const Ds4Engine = struct {
+@@ -61,6 +63,7 @@ pub const OpenOptions = struct {
+ };
+ 
+ pub const Ds4Snapshot = struct {
++    pub fn tryFree(_: *Ds4Snapshot) bool { return false; }
+     pub fn free(self: *Ds4Snapshot) void {
+         _ = self;
+         @panic(unavailable);
+@@ -79,6 +82,10 @@ pub const Ds4Engine = struct {
          _ = opts;
          return Error.EngineOpenFailed;
      }
@@ -316,7 +399,7 @@ index 82e806a..f3b295d 100644
      pub fn close(self: *Ds4Engine) void {
          _ = self;
          @panic(unavailable);
-@@ -160,6 +166,8 @@ pub const Ds4Engine = struct {
+@@ -160,6 +167,8 @@ pub const Ds4Engine = struct {
  };
  
  pub const Ds4Session = struct {
@@ -324,6 +407,20 @@ index 82e806a..f3b295d 100644
 +    pub fn tryFree(_: *Ds4Session) bool { return false; }
      pub fn free(self: *Ds4Session) void {
          _ = self;
+         @panic(unavailable);
+@@ -241,11 +250,11 @@ pub const Ds4Session = struct {
+         _ = out_tokens;
+         @panic(unavailable);
+     }
+-    pub fn saveSnapshot(self: *Ds4Session) Error!Ds4Snapshot {
++    pub fn saveSnapshot(self: *Ds4Session) Error!*Ds4Snapshot {
+         _ = self;
+         @panic(unavailable);
+     }
+-    pub fn loadSnapshot(self: *Ds4Session, snap: *const Ds4Snapshot) Error!void {
++    pub fn loadSnapshot(self: *Ds4Session, snap: *Ds4Snapshot) Error!void {
+         _ = self;
+         _ = snap;
          @panic(unavailable);
 diff --git a/src/arch/llama.zig b/src/arch/llama.zig
 index 806d641..170a46b 100644
