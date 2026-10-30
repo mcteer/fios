@@ -253,3 +253,7 @@ Context metadata allocation now finishes before native creation. The C bridge ex
 ### Non-fallible llama sequence operations
 
 MTP-width, position, sample/argmax and reset now borrow context custody through their calls. Known unavailable custody returns existing failure/no-draft sentinels; reset retains its CPU mirror, and sampling retains RNG. Metadata-only closing/uncertain/uninitialized cases pass alongside the complete15-root linked fixture. These tickets require a valid outer reference before entry and do not enroll raw C callers or establish device/all-client terminality.
+
+### Owned llama chat-template handoff
+
+The embedded template is copied under an engine ticket and returned as allocator-owned data. Scheduler adoption no longer copies a borrowed native slice after custody has ended; copy/lifetime failure propagates. The native-disabled stub has the same API. Model-free refusal, source-edge omissions and full15-root/HTTP/control/manager integration pass; an actual loaded template/model is not acceptance-tested.

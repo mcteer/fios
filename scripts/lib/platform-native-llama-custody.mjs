@@ -5,6 +5,8 @@ export function verifyLlamaCustody(arch,registry,shim) {
  assert(dropStart>=0&&drop.indexOf('mlx_llama_ctx_terminal(c) != 1')>=0&&drop.indexOf('c->fios_uncertain = true;')>drop.indexOf('mlx_llama_ctx_terminal(c) != 1')&&drop.indexOf('return false;')<drop.indexOf('llama_batch_ext_free(c->dbatch)'),'FIO_LLAMA_MTP_RETIREMENT_MISSING');
  assert(shim.includes('if (c->dft && mtp_catch_up(c, rows, n) != 0 && !drop_mtp(c)) return -1;'),'FIO_LLAMA_MTP_RETIREMENT_MISSING');
  assert.match(shim,/static bool valid_seq\(const mlx_llama_ctx \*c, int32_t seq\) \{\s*return c && !c->fios_uncertain/,'FIO_LLAMA_MTP_RETIREMENT_MISSING');
+ assert(!arch.includes('pub fn chatTemplate(self:'),'FIO_LLAMA_TEMPLATE_BORROW_ESCAPES');
+ assert.match(arch,/return allocator\.dupe\(u8, std\.mem\.sliceTo\(raw\.\?, 0\)\) catch Error\.OutOfMemory;/,'FIO_LLAMA_TEMPLATE_BORROW_ESCAPES');
  const create=arch.indexOf('    pub fn createContext('),native=arch.indexOf('ffi.mlx_llama_ctx_create(',create);
  const allocation=arch.indexOf('self.allocator.create(LlamaContext)',create),sequences=arch.indexOf('self.allocator.alloc(LlamaSeq, n_seq)',create);
  assert(allocation>create&&sequences>allocation&&native>sequences,'FIO_LLAMA_RETIREMENT_WIRING_MISSING');
@@ -33,7 +35,7 @@ export function verifyLlamaCustody(arch,registry,shim) {
   /\.fios_parent = fios_parent/,
  ];
  for(const check of checks)assert.match(arch,check,'FIO_LLAMA_CUSTODY_WIRING_MISSING');
- for(const [scope,names,owner] of [['LlamaEngine',['tokenizeText','detokenizeOne','applyChatTemplate'],'self'],['LlamaContext',['step'],'self'],['LlamaSeq',['sync','syncWithFallback','eval','specStep'],'self.ctx']]) {
+ for(const [scope,names,owner] of [['LlamaEngine',['tokenizeText','detokenizeOne','applyChatTemplate','chatTemplateOwned'],'self'],['LlamaContext',['step'],'self'],['LlamaSeq',['sync','syncWithFallback','eval','specStep'],'self.ctx']]) {
   for(const name of names){
    const start=arch.indexOf(`    pub fn ${name}(`,arch.indexOf(`pub const ${scope} = struct`));
    assert(start>=0,'FIO_LLAMA_OPERATION_CUSTODY_MISSING');
