@@ -170,6 +170,31 @@ int main(int argc,char** argv){@autoreleasepool{
   REQUIRE(!ds4_gpu_tp_init(0,NULL,0,0,0,NULL,NULL),"FIO_DS4_TP_OWNER_EXHAUSTION_REARMED");
   puts("PASS: explicit exhausted owner-token boundary refuses before cold backend creation; uncertainty stays retained.");return 0;
  }
+ if(argc==2&&(strcmp(argv[1],"--tp-active-callback")==0||strcmp(argv[1],"--tp-active-uncertain")==0)){
+  const int initial_uncertain=strcmp(argv[1],"--tp-active-uncertain")==0;
+  setenv("DS4_TP_NO_KEEPALIVE","1",1);unsigned identity=13;
+  REQUIRE(ds4_gpu_tp_init(0,NULL,0,0,0,fios_private_local_callback,&identity)&&ds4_gpu_begin_commands()&&ds4_gpu_tp_gate_encode(0,0),"TP_CALLBACK_REAL_GATE_FAILED");
+  id<MTLCommandBuffer> batch=g_batch_cb;ds4_gpu_close_batch_encoder();[batch commit];
+  for(unsigned n=0;n<2000&&!atomic_load(&fios_private_callback_entered);++n)usleep(1000);
+  REQUIRE(atomic_load(&fios_private_callback_entered),"TP_CALLBACK_NOT_ENTERED");
+  // Explicit independent prior uncertainty, after admission/physical gate
+  // submission; known busy refusal must neither manufacture nor clear it.
+  if(initial_uncertain)g_fios_pending_uncertain=1;
+  pthread_t release;REQUIRE(pthread_create(&release,NULL,fios_private_release_callback,NULL)==0,"TP_CALLBACK_RELEASE_THREAD_FAILED");
+  ds4_gpu_tp_shutdown();
+  const int preserved=g_tp_thread_running&&g_tp_exchange_ud==&identity&&(g_fios_pending_uncertain==initial_uncertain)&&!atomic_load(&fios_private_callback_release)&&!g_tp_shutdown;
+  atomic_store(&fios_private_shutdown_returned,1);
+  REQUIRE(pthread_join(release,NULL)==0,"TP_CALLBACK_RELEASE_JOIN_FAILED");
+  [batch waitUntilCompleted];REQUIRE(batch.status==MTLCommandBufferStatusCompleted,"TP_CALLBACK_REAL_GATE_NOT_COMPLETED");
+#ifdef FIOS_DS4_TP_ACTIVE_CUSTODY
+  int idle=0;for(unsigned n=0;n<2000&&!idle;++n){pthread_mutex_lock(&g_tp_mutex);idle=!g_fios_tp_service_active&&!g_tp_queue_count;pthread_mutex_unlock(&g_tp_mutex);if(!idle)usleep(1000);}
+  REQUIRE(idle,"TP_CALLBACK_DID_NOT_RELINQUISH_LOCAL_WORK");
+#endif
+  ds4_gpu_tp_shutdown();REQUIRE(!g_tp_thread_running,"TP_CALLBACK_CREATOR_JOIN_FAILED");
+  REQUIRE(preserved,"FIO_DS4_TP_SHUTDOWN_PREEMPTED_ACTIVE_CALLBACK");
+  REQUIRE(g_fios_pending_uncertain==initial_uncertain,"FIO_DS4_TP_CALLBACK_UNCERTAINTY_CHANGED");
+  puts("PASS: actual local callback holds native gate work; teardown refuses before signalling/join, known busy refusal preserves the pre-existing uncertainty value.");return 0;
+ }
  REQUIRE(argc==1,"PENDING_BAD_ARGS");
  REQUIRE(ds4_gpu_init(),"PENDING_FULL_INIT_FAILED");
  id<MTLCommandBuffer> a=[g_queue commandBuffer],b=[g_queue commandBuffer];

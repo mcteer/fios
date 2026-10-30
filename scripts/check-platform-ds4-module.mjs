@@ -91,6 +91,8 @@ try{
  assert(!foreign.error&&!foreign.signal,'Foreign cleanup crash/deadline is not acceptance');assert.equal(foreign.status,0,foreign.stderr);
  assert(foreign.stdout.includes('PASS: actual foreign-thread cleanup retains live producer'));
  const participantCases=[
+  ['--tp-active-callback','PASS: actual local callback holds native gate work'],
+  ['--tp-active-uncertain','PASS: actual local callback holds native gate work'],
   ['--tp-invalid-cold','PASS: invalid local service initialization is refused'],
   ['--tp-owner-exhausted','PASS: explicit exhausted owner-token boundary refuses'],
   ['--tp-foreign-owner','PASS: actual foreign-thread TP teardown is refused'],
@@ -124,6 +126,6 @@ try{
  assert(counter.stdout.includes('PASS: exhausted actual cache sequence refuses without initialization'));
  }
  verify();assert.equal(readFileSync(faultHeaderFile,'utf8'),faultHeader);assert.equal(readFileSync(sequenceFile,'utf8'),sequence);assert.equal(readFileSync(pendingFile,'utf8'),pending);assert.equal(readFileSync(fixtureFile,'utf8'),fixture);assert.equal(sha(readFileSync(document)),args[4]);assert.equal(git('diff','--no-ext-diff','HEAD','--','ds4_metal.m'),patch);
- const outcome={scope:'full_ds4_initializer_reviewed_local_participants_only',build_receipt_sha256:args[4],fixture_sha256:sha(fixture),binary_sha256:sha(readFileSync(binary)),original_full_shader_library:true,sequence_fixture_sha256:sha(sequence),sequence_binary_sha256:sha(readFileSync(sequenceBinary)),fault_shim_sha256:sha(faultHeader),pending_fixture_sha256:sha(pending),pending_binary_sha256:sha(readFileSync(faultBinary)),injected_wait_failure_after_real_completion:true,batch_cleanup_failure_retained:true,keepalive_cleanup_failure_retained:true,foreign_cleanup_failure_retained:true,local_idle_tp_service_join_only:true,model_opened:false,native_inference:false,installed:false,native_authority:false,all_backend_terminality:false,directory};
+ const outcome={scope:'full_ds4_initializer_reviewed_local_participants_only',build_receipt_sha256:args[4],fixture_sha256:sha(fixture),binary_sha256:sha(readFileSync(binary)),original_full_shader_library:true,sequence_fixture_sha256:sha(sequence),sequence_binary_sha256:sha(readFileSync(sequenceBinary)),fault_shim_sha256:sha(faultHeader),pending_fixture_sha256:sha(pending),pending_binary_sha256:sha(readFileSync(faultBinary)),injected_wait_failure_after_real_completion:true,batch_cleanup_failure_retained:true,keepalive_cleanup_failure_retained:true,foreign_cleanup_failure_retained:true,local_tp_service:true,tiny_tp_gpu_producer:true,local_callback:true,distributed_exchange:false,model_opened:false,native_inference:false,installed:false,native_authority:false,all_backend_terminality:false,directory};
  writeFileSync(path.join(directory,'result.json'),JSON.stringify(outcome)+'\n',{mode:0o400});console.log(JSON.stringify(outcome));
 }catch(error){console.error('Full-module fixture state retained:',directory);throw error;}

@@ -15,3 +15,18 @@ static MTLCommandBufferStatus fios_private_tp_status(id<MTLCommandBuffer> cb){
     MTLCommandBufferStatus status=cb.status;
     return status==MTLCommandBufferStatusCompleted&&fios_private_tp_gpu_failure?MTLCommandBufferStatusError:status;
 }
+#include <unistd.h>
+static atomic_uint fios_private_callback_entered, fios_private_callback_release, fios_private_shutdown_returned;
+static int fios_private_local_callback(void* context,uint32_t layer,uint32_t gate,uint64_t sequence){
+    (void)context;(void)layer;(void)gate;(void)sequence;
+    atomic_store(&fios_private_callback_entered,1);
+    while(!atomic_load(&fios_private_callback_release))usleep(100);
+    return 1;
+}
+static void* fios_private_release_callback(void* ignored){
+    (void)ignored;
+    // Positive path releases after the caller records refusal; the historical
+    // blocking destructor gets a finite safety release, never a green receipt.
+    for(unsigned n=0;n<1000&&!atomic_load(&fios_private_shutdown_returned);++n)usleep(1000);
+    atomic_store(&fios_private_callback_release,1);return NULL;
+}
