@@ -13,16 +13,17 @@ private func XCTAssertThrowsError<T>(_ expression: @autoclosure () throws -> T) 
 final class ActivityTests {
     private func observation(
         model: String? = "model-a", owners: Int = 0, loading: Bool = false,
-        complete: Bool = true, sampled: Int64 = 10_000
+        complete: Bool = true, sampled: Int64 = 10_000, epoch: String = "server-1"
     ) -> NativeSnapshot {
         NativeSnapshot(host: "edge-a", endpointHash: String(repeating: "a", count: 64),
-                       nativeEpoch: "server-1", sequence: 1, sampledAt: sampled,
+                       nativeEpoch: epoch, sequence: 1, sampledAt: sampled,
                        allClientLifecycleCoverage: complete, residentModel: model,
                        outstandingOwners: owners, loading: loading)
     }
 
     func testIdleRequiresAuthoritativeAllClientCoverage() throws {
         XCTAssertEqual(try ActivityPolicy.evaluate(observation(), now: 10_000), .idle)
+        XCTAssertEqual(try ActivityPolicy.evaluate(observation(epoch:String(repeating:"é",count:64)), now:10_000), .idle)
         XCTAssertEqual(try ActivityPolicy.evaluate(observation(complete: false), now: 10_000), .unknown)
     }
 
@@ -32,6 +33,14 @@ final class ActivityTests {
     }
 
     func testStaleFutureAndMalformedSamplesReject() {
+        for epoch in ["", "server\u{0}1", String(repeating:"é",count:65)] {
+            do {
+                _ = try ActivityPolicy.evaluate(observation(epoch:epoch), now:10_000)
+                fatalError("FIO_ACTIVITY_INVALID_EPOCH_ACCEPTED")
+            } catch PolicyError.invalidObservation {} catch {
+                fatalError("Malformed epoch reported as a different policy failure")
+            }
+        }
         XCTAssertThrowsError(try ActivityPolicy.evaluate(observation(sampled: 4_999), now: 10_000))
         XCTAssertThrowsError(try ActivityPolicy.evaluate(observation(sampled: 11_001), now: 10_000))
         XCTAssertThrowsError(try ActivityPolicy.evaluate(observation(owners: -1), now: 10_000))

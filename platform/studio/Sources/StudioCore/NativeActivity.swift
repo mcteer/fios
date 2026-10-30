@@ -31,6 +31,7 @@ enum ActivityPolicy {
               (0...maximumTimestamp).contains(snapshot.sampledAt),
               WireScalar.host(snapshot.host),WireScalar.sha256(snapshot.endpointHash),
               !snapshot.nativeEpoch.isEmpty, snapshot.nativeEpoch.utf8.count <= 128,
+              !snapshot.nativeEpoch.utf8.contains(0),
               snapshot.sequence > 0,
               (0...2_147_483_647).contains(snapshot.outstandingOwners)
         else { throw PolicyError.invalidObservation }

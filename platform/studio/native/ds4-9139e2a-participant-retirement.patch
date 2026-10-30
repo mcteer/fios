@@ -1,5 +1,5 @@
 diff --git a/ds4_metal.m b/ds4_metal.m
-index 0d75369..00623c4 100644
+index 0d75369..ec56633 100644
 --- a/ds4_metal.m
 +++ b/ds4_metal.m
 @@ -15,6 +15,7 @@
@@ -10,7 +10,25 @@ index 0d75369..00623c4 100644
  #include <unistd.h>
  #include <sys/mman.h>
  #include <sys/sysctl.h>
-@@ -11325,48 +11326,111 @@ int ds4_gpu_warm_command_queue(void) {
+@@ -1347,6 +1348,8 @@ static void ds4_gpu_invalidate_completion_counters(void) {
+ }
+ 
+ static int ds4_gpu_wait_command_buffer(id<MTLCommandBuffer> cb, const char *label) {
++    // An absent object is not a successfully retired command buffer.
++    if (!cb) return 0;
+     [cb waitUntilCompleted];
+     if (getenv("DS4_METAL_CB_TIMES")) {
+         static double prev_gpu_end;
+@@ -1372,7 +1375,7 @@ static int ds4_gpu_wait_command_buffer(id<MTLCommandBuffer> cb, const char *labe
+                     (unsigned long long)g_gpu_busy_cbs);
+         }
+     }
+-    if (cb.status == MTLCommandBufferStatusError) {
++    if (cb.status != MTLCommandBufferStatusCompleted) {
+         fprintf(stderr, "ds4: Metal %s failed: %s\n",
+                 label, [[cb.error localizedDescription] UTF8String]);
+         ds4_gpu_invalidate_completion_counters();
+@@ -11325,48 +11328,111 @@ int ds4_gpu_warm_command_queue(void) {
   * queue keeps the mappings alive at no measurable cost.
   * DS4_METAL_DISABLE_QUEUE_KEEPALIVE=1 opts out. */
  static pthread_t g_queue_keepalive_thread;
@@ -134,7 +152,7 @@ index 0d75369..00623c4 100644
  }
  
  int ds4_gpu_tp_failed(void) {
-@@ -13424,6 +13488,12 @@ static int ds4_gpu_stream_expert_pread_into(
+@@ -13424,6 +13490,12 @@ static int ds4_gpu_stream_expert_pread_into(
  static ds4_gpu_stream_expert_pread_task *g_stream_expert_pread_pool_tasks;
  static int g_stream_expert_pread_pool_initialized;
  static int g_stream_expert_pread_pool_stopping;
@@ -147,7 +165,7 @@ index 0d75369..00623c4 100644
  
  static int ds4_gpu_stream_expert_pread_pool_enabled(void) {
      const char *env = getenv("DS4_METAL_STREAMING_EXPERT_PREAD_POOL");
-@@ -13484,6 +13554,7 @@ static int ds4_gpu_stream_expert_pread_pool_enabled(void) {
+@@ -13484,6 +13556,7 @@ static int ds4_gpu_stream_expert_pread_pool_enabled(void) {
  }
  
  static int ds4_gpu_stream_expert_pread_pool_init(uint32_t n_threads) {
@@ -155,7 +173,7 @@ index 0d75369..00623c4 100644
      if (g_stream_expert_pread_pool_initialized) return 1;
      if (!ds4_gpu_stream_expert_pread_pool_enabled() || n_threads <= 1) return 0;
      if (n_threads > 18) n_threads = 18;
-@@ -13559,6 +13630,12 @@ static int ds4_gpu_stream_expert_pread_pool_begin(
+@@ -13559,6 +13632,12 @@ static int ds4_gpu_stream_expert_pread_pool_begin(
          return 0;
      }
  
@@ -168,7 +186,7 @@ index 0d75369..00623c4 100644
      g_stream_expert_pread_pool_tasks = tasks;
      g_stream_expert_pread_pool_n_tasks = n_tasks;
      g_stream_expert_pread_pool_next_task = 0;
-@@ -13592,7 +13669,53 @@ static int ds4_gpu_stream_expert_pread_pool_dispatch(
+@@ -13592,7 +13671,53 @@ static int ds4_gpu_stream_expert_pread_pool_dispatch(
      return ds4_gpu_stream_expert_pread_pool_wait();
  }
  
