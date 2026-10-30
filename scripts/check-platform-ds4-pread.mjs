@@ -38,16 +38,18 @@ try {
  for(const optimize of ['-O0','-O2']){
   const compile=text=>{writeFileSync(file,text);execFileSync('/usr/bin/clang',['-std=c11','-D_DARWIN_C_SOURCE',optimize,'-UNDEBUG','-pthread',file,'-o',binary],{env,timeout:30000,stdio:'pipe'});};
   const execute=(mode,status=0,marker)=>{const result=spawnSync(binary,[mode],{env,encoding:'utf8',timeout:5000,maxBuffer:4096});assert(!result.error&&!result.signal);assert.equal(result.status,status,result.stderr);if(marker)assert(result.stderr.includes(marker));};
-  compile(unit);execute('--positive');execute('--join-error');
+  compile(unit);execute('--positive');execute('--join-error');execute('--exhausted');
   const refusal='else { g_fios_pread_pool_uncertain = 1; ok = 0; }';assert.equal(unit.split(refusal).length,2);
   compile(unit.replace(refusal,'else { g_fios_pread_pool_joined |= (1u << i); }'));
   execute('--join-error',77,'FIO_DS4_PREAD_JOIN_REFUSAL_CLEARED');
   const gate='    if (atomic_load_explicit(&g_fios_pread_pool_sealed, memory_order_acquire)) return 0;';assert.equal(unit.split(gate).length,2);
   compile(unit.replace(gate,''));execute('--positive',77,'FIO_DS4_PREAD_REARMED_SEALED_POOL');
-  compile(unit);execute('--positive');execute('--join-error');
+  const exhausted='    if (g_stream_expert_pread_pool_generation == UINT64_MAX) {\n        g_fios_pread_pool_uncertain = 1;\n        atomic_store_explicit(&g_fios_pread_pool_sealed, 1, memory_order_release);\n        pthread_mutex_unlock(&g_stream_expert_pread_pool_mutex);\n        return 0;\n    }';assert.equal(unit.split(exhausted).length,2);
+  compile(unit.replace(exhausted,''));execute('--exhausted',77,'FIO_DS4_PREAD_GENERATION_WRAPPED');
+  compile(unit);execute('--positive');execute('--join-error');execute('--exhausted');
  }
  assert.equal(readFileSync(path.join(source,'ds4_metal.m'),'utf8'),original);
  console.log(JSON.stringify({source_fragment_only:true,backend:'none',model:null,native_inference:false,native_authority:false,patch_sha256:sha(patch),source_sha256:sha(original),fixture_sha256:sha(fixture)}));
- console.log('PASS: Debug/optimized actual pread/pthread fragment, busy refusal, exact joins, genuine self-join refusal and two precise omission witnesses. Legacy cleanup/all-writer/device integration remains open.');
+ console.log('PASS: Debug/optimized actual pread/pthread fragment, busy/exhaustion refusal, exact joins, genuine self-join refusal and three precise omission witnesses. Legacy cleanup/all-writer/device integration remains open.');
  passed=true;
 } finally {if(passed)rmSync(temporary,{recursive:true,force:true});else console.error('Failure state retained:',temporary);}
