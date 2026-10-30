@@ -3,16 +3,27 @@
 import assert from 'node:assert/strict';
 import {execFileSync,spawnSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
-import {lstatSync,mkdtempSync,readFileSync,realpathSync,rmSync,writeFileSync} from 'node:fs';
+import {lstatSync,mkdtempSync,mkdirSync,copyFileSync,chmodSync,existsSync,readFileSync,realpathSync,rmSync,writeFileSync} from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 const root=fileURLToPath(new URL('../',import.meta.url)),args=process.argv.slice(2);
 assert(process.platform==='darwin'&&process.getuid()!==0);
+let reviewOutput;
+const reviewIndex=args.indexOf('--review-output');
+if(reviewIndex!==-1){
+ assert.equal(reviewIndex,args.length-2);assert(path.isAbsolute(args[reviewIndex+1]??''));
+ reviewOutput=args[reviewIndex+1];args.splice(reviewIndex,2);
+ const parent=realpathSync(path.dirname(reviewOutput)),info=lstatSync(parent);
+ assert.equal(path.dirname(reviewOutput),parent);
+ assert(parent.startsWith('/private/tmp/')&&info.isDirectory()&&info.uid===process.getuid()&&(info.mode&0o077)===0);
+ assert(/^[A-Za-z0-9_-]+$/.test(path.basename(reviewOutput))&&!existsSync(reviewOutput));
+}
 const privateGPU=args.length===14&&args[13]==='--static-backend-clear';
 const sharedEvents=args.length===14&&args[13]==='--shared-events';
 assert((args.length===13||privateGPU||sharedEvents)&&args[0]==='--isolated'&&args[1]==='--source'&&args[3]==='--cmake'&&args[5]==='--json-source'&&args[7]==='--fmt-source'&&args[9]==='--metal-cpp-zip'&&args[11]==='--developer-dir'&&[2,4,6,8,10,12].every(i=>path.isAbsolute(args[i])),
- 'Use --isolated --source ABS --cmake ABS --json-source ABS --fmt-source ABS --metal-cpp-zip ABS --developer-dir ABS [--static-backend-clear|--shared-events]');
+ 'Use --isolated --source ABS --cmake ABS --json-source ABS --fmt-source ABS --metal-cpp-zip ABS --developer-dir ABS [--static-backend-clear|--shared-events] [--review-output ABS_NEW_PRIVATE_DIRECTORY]');
+assert(!reviewOutput||sharedEvents,'Retained source dependency requires the cumulative shared-event candidate');
 const [source,cmake,json,fmt,metalZIP,developer]=[2,4,6,8,10,12].map(i=>realpathSync(args[i]));
 const env={PATH:'/usr/bin:/bin:/usr/sbin:/sbin',HOME:os.homedir(),LC_ALL:'C',DEVELOPER_DIR:developer,GIT_CONFIG_GLOBAL:'/dev/null',GIT_CONFIG_SYSTEM:'/dev/null',GIT_CONFIG_NOSYSTEM:'1',GIT_NO_REPLACE_OBJECTS:'1',...(privateGPU?{ZERO_AR_DATE:'1'}:{})};
 const run=(file,argv,options={})=>execFileSync(file,argv,{env,encoding:'utf8',timeout:900000,maxBuffer:16<<20,...options});
@@ -27,10 +38,11 @@ assert.equal(sha(metalZIP),'4df3c078b9aadcb516212e9cb03004cbc5ce9a3e9c068fa3144d
 const metal=realpathSync(run('/usr/bin/xcrun',['--sdk','macosx','--find','metal']).trim());
 run('/usr/bin/codesign',['--verify','--strict','--test-requirement','=anchor apple',metal]);
 const metalVersion=run('/usr/bin/xcrun',['--sdk','macosx','metal','--version']);
-assert(metalVersion.startsWith('Apple metal version 32023.921 '));assert.equal(run('/usr/bin/xcrun',['--sdk','macosx','--show-sdk-version']).trim(),'27.0');
+const sdk=run('/usr/bin/xcrun',['--sdk','macosx','--show-sdk-version']).trim();
+const metalVersions={'27.0':'32023.921','27.2':'32023.922'};assert(metalVersions[sdk]&&metalVersion.startsWith('Apple metal version '+metalVersions[sdk]+' '),'Unreviewed SDK/Metal compiler pairing');
 const paths=['mlx/backend/cpu/eval.cpp','mlx/backend/metal/device.cpp','mlx/backend/metal/device.h','mlx/backend/metal/eval.cpp','mlx/scheduler.cpp','mlx/stream.cpp','mlx/stream.h'];
 const patchFile=path.join(root,`platform/studio/native/mlx-64ea011-${sharedEvents?'shared-event':'metal-buffer'}-custody.patch`),patch=readFileSync(patchFile,'utf8'),patchSHA=sha(patchFile);
-assert.equal(git(source,'diff','--',...paths),patch);assert.deepEqual(git(source,'diff','--name-only').trim().split('\n').sort(),paths);
+assert.equal(git(source,'diff','--no-ext-diff','--no-textconv','HEAD','--',...paths),patch);assert.deepEqual(git(source,'diff','HEAD','--name-only').trim().split('\n').sort(),paths);
 const fixture=path.join(root,'platform/studio/native/mlx_metal_buffer_custody_test.cpp'),fixtureSHA=sha(fixture);
 const eventFixture=path.join(root,'platform/studio/native/mlx_shared_event_custody_test.cpp'),eventSHA=sharedEvents?sha(eventFixture):null;
 const temporary=mkdtempSync(path.join(os.tmpdir(),'fios-009-metal-custody-'));env.TMPDIR=temporary;
@@ -39,12 +51,20 @@ try{
  run('/usr/bin/git',['clone','--quiet','--no-hardlinks','--no-checkout',source,checkout]);git(checkout,'checkout','--quiet','--detach',pins.mlx);git(checkout,'apply','--check',patchFile);git(checkout,'apply',patchFile);
  run('/usr/bin/unzip',['-q',metalZIP,'-d',path.join(temporary,'headers')]);
  const headers=path.join(temporary,'headers/metal-cpp');
- console.log(run(cmake,['-S',checkout,'-B',build,'-DCMAKE_BUILD_TYPE=Release','-DCMAKE_C_COMPILER=/usr/bin/clang','-DCMAKE_CXX_COMPILER=/usr/bin/clang++','-DCMAKE_OSX_ARCHITECTURES=arm64','-DCMAKE_OSX_DEPLOYMENT_TARGET=27.0',`-DBUILD_SHARED_LIBS=${privateGPU?'OFF':'ON'}`,'-DMLX_BUILD_CPU=ON','-DMLX_BUILD_METAL=ON','-DMLX_BUILD_CUDA=OFF','-DMLX_BUILD_TESTS=OFF','-DMLX_BUILD_EXAMPLES=OFF','-DMLX_BUILD_BENCHMARKS=OFF','-DMLX_BUILD_PYTHON_BINDINGS=OFF','-DMLX_BUILD_GGUF=OFF','-DMLX_BUILD_SAFETENSORS=OFF','-DMLX_USE_CCACHE=OFF','-DMLX_METAL_JIT=ON','-DFETCHCONTENT_FULLY_DISCONNECTED=ON',`-DFETCHCONTENT_SOURCE_DIR_JSON=${json}`,`-DFETCHCONTENT_SOURCE_DIR_FMT=${fmt}`,`-DFETCHCONTENT_SOURCE_DIR_METAL_CPP=${headers}`,'-DJSON_BuildTests=OFF','-DJSON_Install=OFF','-DCMAKE_FIND_USE_PACKAGE_REGISTRY=OFF']));
+ console.log(run(cmake,['-S',checkout,'-B',build,'-DCMAKE_BUILD_TYPE=Release','-DCMAKE_C_COMPILER=/usr/bin/clang','-DCMAKE_CXX_COMPILER=/usr/bin/clang++','-DCMAKE_OSX_ARCHITECTURES=arm64','-DCMAKE_OSX_DEPLOYMENT_TARGET=27.0',`-DBUILD_SHARED_LIBS=${privateGPU?'OFF':'ON'}`,'-DMLX_BUILD_CPU=ON','-DMLX_BUILD_METAL=ON','-DMLX_BUILD_CUDA=OFF','-DMLX_BUILD_TESTS=OFF','-DMLX_BUILD_EXAMPLES=OFF','-DMLX_BUILD_BENCHMARKS=OFF','-DMLX_BUILD_PYTHON_BINDINGS=OFF','-DMLX_BUILD_GGUF=OFF',`-DMLX_BUILD_SAFETENSORS=${reviewOutput?'ON':'OFF'}`,'-DMLX_USE_CCACHE=OFF','-DMLX_METAL_JIT=ON','-DFETCHCONTENT_FULLY_DISCONNECTED=ON',`-DFETCHCONTENT_SOURCE_DIR_JSON=${json}`,`-DFETCHCONTENT_SOURCE_DIR_FMT=${fmt}`,`-DFETCHCONTENT_SOURCE_DIR_METAL_CPP=${headers}`,'-DJSON_BuildTests=OFF','-DJSON_Install=OFF','-DCMAKE_FIND_USE_PACKAGE_REGISTRY=OFF']));
  const library=path.join(build,privateGPU?'libmlx.a':'libmlx.dylib');
  const linkOne=(input,output,withPrivate)=>run('/usr/bin/clang++',['-std=c++20','-O2','-UNDEBUG',...(withPrivate?['-DFIOS_METAL_PRIVATE_FIXTURE']:[]),'-I',checkout,'-I',headers,input,library,...(privateGPU?['-framework','Accelerate','-framework','MetalPerformanceShaders','-framework','MetalPerformancePrimitives','-framework','QuartzCore']:[`-Wl,-rpath,${build}`]),'-framework','Metal','-framework','Foundation','-o',output]);
  const link=()=>{linkOne(fixture,binary,privateGPU);if(sharedEvents)linkOne(eventFixture,eventBinary,false);};
  const compile=()=>{for(const file of ['stream','backend/metal/device','backend/metal/eval'])rmSync(path.join(build,`CMakeFiles/mlx.dir/mlx/${file}.cpp.o`),{force:true});console.log(run(cmake,['--build',build,'--target','mlx','--parallel','2']));link();};
  compile();
+ const loaderFixture=path.join(root,'platform/studio/native/mlx_safetensors_source_test.cpp');
+ const loaderSHA=reviewOutput?sha(loaderFixture):null;
+ if(reviewOutput){
+  const loader=path.join(temporary,'safetensors-fixture');linkOne(loaderFixture,loader,false);
+  const roundtrip=path.join(temporary,'scalar.safetensors');
+  const log=run(loader,[roundtrip],{timeout:20000,maxBuffer:4096});assert(log.includes('PASS: genuine CPU scalar safetensors roundtrip'));
+  assert(lstatSync(roundtrip).size<65536);console.log(log);
+ }
  const execute=(mode,expected=0,event=false)=>{const result=spawnSync(event?eventBinary:binary,[mode],{env,encoding:'utf8',timeout:20000,maxBuffer:1<<20});assert.equal(result.error,undefined);assert.equal(result.signal,null);const log=(result.stdout??'')+(result.stderr??'');assert.equal(result.status,expected,mode+': '+log);console.log(mode+': '+log);return log;};
  const ordinary=()=>{for(const mode of ['--callback','--payload','--capture','--uncommitted','--exact-gate','--foreign','--owner-exit','--raw-alias',...(privateGPU?['--backend-clear-held','--backend-clear-unheld']:[])])execute(mode);if(sharedEvents)for(const mode of ['--wait','--signal','--held-signal'])execute(mode,0,true);};
  ordinary();const librarySHA=sha(library);
@@ -76,7 +96,26 @@ try{
  assert.equal(streamOriginal.split(release).length,2);writeFileSync(streamFile,streamOriginal.replace(release,boundary+cleared));compile();assert(execute('--exhausted-release',77).includes('METAL_RELEASE_CLEARED_ON_EXHAUSTION'));
  writeFileSync(streamFile,streamOriginal.replace(release,boundary+release));compile();execute('--exhausted-release');
  writeFileSync(streamFile,streamOriginal);compile();ordinary();
- assert.equal(sha(library),librarySHA);assert.equal(git(checkout,'diff','--',...paths),patch);assert.equal(sha(patchFile),patchSHA);assert.equal(sha(fixture),fixtureSHA);if(sharedEvents)assert.equal(sha(eventFixture),eventSHA);clean(json,pins.json);clean(fmt,pins.fmt);
- console.log(JSON.stringify({scope:sharedEvents?'genuine_metal_buffers_callbacks_shared_event_resources_only':'genuine_empty_metal_buffers_callbacks_and_payloads_only',shared_events:sharedEvents,event_fixture_sha256:eventSHA,all_backend_terminality:false,activation:false,private_backend_clear:privateGPU,pins,patch_sha256:patchSHA,fixture_sha256:fixtureSHA,library_sha256:librarySHA,metal_executable_sha256:sha(metal),metal_version:metalVersion.trim(),sdk:'27.0'}));
- console.log(`PASS: ${sharedEvents?'eleven':privateGPU?'ten':'eight'} genuine empty-Metal cases/${sharedEvents?'seven':privateGPU?'six':'five'} actual optimized causal mutations, exact source/library restoration; no arrays/kernels/models/inference/all-context/lifecycle authority. Owner/exhaustion cases deliberately exit without destructor submissions, not retirement proof.`);
+ assert.equal(sha(library),librarySHA);assert.equal(git(checkout,'diff','--no-ext-diff','--no-textconv','HEAD','--',...paths),patch);assert.equal(sha(patchFile),patchSHA);assert.equal(sha(fixture),fixtureSHA);if(sharedEvents)assert.equal(sha(eventFixture),eventSHA);clean(json,pins.json);clean(fmt,pins.fmt);
+ let dependencyReview=null;
+ if(reviewOutput){
+  // Data-only copies of this restored genuine build, never host installation.
+  mkdirSync(reviewOutput,{mode:0o700});
+  const files={};
+  for(const [name,input]of [['libmlx.dylib',library],['mlx.metallib',path.join(build,'mlx/backend/metal/kernels/mlx.metallib')],['libjaccl.dylib',path.join(build,'jaccl/libjaccl.dylib')]]){
+   const before=lstatSync(input),digest=sha(input);assert(before.isFile()&&before.nlink===1&&before.size>0&&before.size<256<<20);
+   const output=path.join(reviewOutput,name);copyFileSync(input,output);chmodSync(output,0o400);
+   assert.equal(sha(output),digest);assert.equal(sha(input),digest);
+   files[name]={bytes:before.size,sha256:digest};
+  }
+  assert.equal(sha(loaderFixture),loaderSHA);
+  assert(readFileSync(path.join(build,'CMakeCache.txt'),'utf8').includes('MLX_BUILD_SAFETENSORS:BOOL=ON'));
+  const declared=Object.fromEntries(paths.map(file=>[file,sha(path.join(checkout,file))]));
+  const receipt={version:1,purpose:'private_mlx_source_dependency_review',activation:false,installed:false,native_authority:false,all_backend_terminality:false,native_inference:false,
+   scope:'reviewed_patch_and_declared_dependencies_not_whole_native_provenance',features:{safetensors:true,gguf:false,cpu:true,metal:true,metal_jit:true},loader_fixture_sha256:loaderSHA,pins,patch_sha256:patchSHA,declared_sources:declared,cmake_sha256:sha(cmake),metal_cpp_zip_sha256:sha(metalZIP),metal_driver_sha256:sha(metal),metal_version:metalVersion.trim(),sdk,files};
+  const bytes=Buffer.from(JSON.stringify(receipt)+'\n');writeFileSync(path.join(reviewOutput,'candidate.json'),bytes,{mode:0o400,flag:'wx'});
+  dependencyReview={directory:reviewOutput,receipt_sha256:createHash('sha256').update(bytes).digest('hex')};
+ }
+ console.log(JSON.stringify({scope:sharedEvents?'genuine_metal_buffers_callbacks_shared_event_resources_only':'genuine_empty_metal_buffers_callbacks_and_payloads_only',shared_events:sharedEvents,safetensors_roundtrip:!!reviewOutput,event_fixture_sha256:eventSHA,all_backend_terminality:false,activation:false,private_backend_clear:privateGPU,pins,patch_sha256:patchSHA,fixture_sha256:fixtureSHA,library_sha256:librarySHA,metal_executable_sha256:sha(metal),metal_version:metalVersion.trim(),sdk,dependency_review:dependencyReview}));
+ console.log(`PASS: ${sharedEvents?'eleven':privateGPU?'ten':'eight'} genuine empty-Metal cases/${sharedEvents?'seven':privateGPU?'six':'five'} actual optimized causal mutations, exact source/library restoration; ${reviewOutput?'one genuine CPU scalar safetensors roundtrip; no models/inference':'no arrays/kernels/models/inference'}/all-context/lifecycle authority. Owner/exhaustion cases deliberately exit without destructor submissions, not retirement proof.`);
 }finally{rmSync(temporary,{recursive:true,force:true});}

@@ -11,8 +11,17 @@ import { homedir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {stageNativeReview,finishNativeReview} from './lib/platform-native-review.mjs';
+import {verifyMlxSourceReview} from './lib/platform-mlx-source-review.mjs';
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const args=process.argv.slice(2);
+// Optional genuine source-built MLX dependency. No installed paths change.
+let mlxDependencyConfig;
+const mlxIndex=args.indexOf('--mlx-dependency');
+if(mlxIndex!==-1){
+ assert([8,10].includes(mlxIndex)&&args[mlxIndex+2]==='--mlx-sha256'&&args[mlxIndex+4]==='--mlx-source');
+ mlxDependencyConfig=[args[mlxIndex+1],args[mlxIndex+3],args[mlxIndex+5]];
+ args.splice(mlxIndex,6);
+}
 // Optional data-only source-review output. No model or inference input.
 let reviewOutput;
 const reviewIndex=args.indexOf('--review-output');
@@ -27,7 +36,7 @@ if(mimoIndex!==-1){
 }
 assert(process.platform==='darwin' && process.getuid()!==0);
 assert((args.length===8 || (args.length===9 && ['--empty-gpu','--root-tests-only','--mutation-request-eviction-guard','--mutation-load-preparation-guard','--mutation-actor-load-preparation','--mutation-encoder-active-owner','--mutation-generation-origin','--mutation-text-origin','--mutation-native-refusal-response','--mutation-drop-model-pins','--mutation-drop-parked-pins','--mutation-access-foreign-release','--mutation-drop-registry-preparation','--mutation-clear-registry-preparation','--mutation-registry-stub-frontdoor','--mutation-registry-path-frontdoor','--mutation-registry-scan-frontdoor','--mutation-registry-teardown','--mutation-loaded-model-teardown','--mutation-retained-cpu-cleanup','--mutation-resident-unload','--mutation-ds4-snapshot-free','--mutation-llama-trim-status'].includes(args[8]))) && args[0]==='--source' && args[2]==='--zig' && args[4]==='--webp-source' && args[6]==='--metal-cpp-zip' && [args[1],args[3],args[5],args[7]].every(path.isAbsolute),
- 'usage: check-platform-native-fixture.mjs --source ABS_CHECKOUT --zig ABS_ZIG --webp-source ABS_WEBP_1_6_0 --metal-cpp-zip ABS_APPLE_METAL_CPP_26_ZIP [--mimo-source ABS_REVIEWED_CANDIDATE] [--mutation-native-refusal-response|--mutation-load-preparation-guard|--mutation-actor-load-preparation|--mutation-encoder-active-owner|--mutation-generation-origin|--mutation-text-origin|--mutation-request-eviction-guard|--empty-gpu|--root-tests-only|--mutation-drop-model-pins|--mutation-drop-parked-pins|--mutation-access-foreign-release|--mutation-drop-registry-preparation|--mutation-clear-registry-preparation|--mutation-registry-stub-frontdoor|--mutation-registry-path-frontdoor|--mutation-registry-scan-frontdoor|--mutation-registry-teardown|--mutation-loaded-model-teardown|--mutation-retained-cpu-cleanup|--mutation-resident-unload|--mutation-ds4-snapshot-free|--mutation-llama-trim-status]');
+ 'usage: check-platform-native-fixture.mjs --source ABS_CHECKOUT --zig ABS_ZIG --webp-source ABS_WEBP_1_6_0 --metal-cpp-zip ABS_APPLE_METAL_CPP_26_ZIP [--mimo-source ABS_REVIEWED_CANDIDATE] [--mlx-dependency ABS_JSON --mlx-sha256 HEX --mlx-source ABS] [--mutation-native-refusal-response|--mutation-load-preparation-guard|--mutation-actor-load-preparation|--mutation-encoder-active-owner|--mutation-generation-origin|--mutation-text-origin|--mutation-request-eviction-guard|--empty-gpu|--root-tests-only|--mutation-drop-model-pins|--mutation-drop-parked-pins|--mutation-access-foreign-release|--mutation-drop-registry-preparation|--mutation-clear-registry-preparation|--mutation-registry-stub-frontdoor|--mutation-registry-path-frontdoor|--mutation-registry-scan-frontdoor|--mutation-registry-teardown|--mutation-loaded-model-teardown|--mutation-retained-cpu-cleanup|--mutation-resident-unload|--mutation-ds4-snapshot-free|--mutation-llama-trim-status]');
 const trimMutation=args[8]==='--mutation-llama-trim-status';
 const snapshotMutation=args[8]==='--mutation-ds4-snapshot-free';
 const residentUnloadMutation=args[8]==='--mutation-resident-unload';
@@ -45,6 +54,8 @@ const nativeRefusalMutation=args[8]==='--mutation-native-refusal-response';
 const evictionMutation=args[8]==='--mutation-request-eviction-guard',loadPreparationMutation=args[8]==='--mutation-load-preparation-guard';
 const registryMutation=residentUnloadMutation||retainedCpuMutation||loadedTeardownMutation||teardownMutation||evictionMutation||accessMutation||clearPreparationMutation||!!frontdoorKind;
 const mutation=trimMutation||snapshotMutation||residentUnloadMutation||retainedCpuMutation||loadedTeardownMutation||teardownMutation ||textOriginMutation || nativeRefusalMutation||generationOriginMutation||encoderActiveMutation||actorLoadMutation||loadPreparationMutation||evictionMutation||parkedMutation||accessMutation||preparationMutation||clearPreparationMutation||!!frontdoorKind||args[8]==='--mutation-drop-model-pins',rootOnly=mutation||args[8]==='--root-tests-only';
+assert(!mlxDependencyConfig||reviewOutput&&!rootOnly,'Source dependency requires a full private review output');
+const mlxDependency=mlxDependencyConfig?verifyMlxSourceReview(...mlxDependencyConfig):null;
 const [source,zig,webp,metalZip]=[args[1],args[3],args[5],args[7]].map(filename=>realpathSync(filename));
 assert(source.startsWith('/private/tmp/'),'only a disposable source checkout is permitted');
 assert.equal(lstatSync(source).uid,process.getuid());assert.equal(lstatSync(source).mode&0o022,0);
@@ -67,6 +78,8 @@ const llamaHeaders=path.join(source,'lib/llama/include');
 const headerRows=readdirSync(llamaHeaders).sort().map(name=>[name,sha(path.join(llamaHeaders,name))]);
 assert.equal(createHash('sha256').update(JSON.stringify(headerRows)).digest('hex'),'81835fcd030ba92eb6e68e948eea0cf906d773f1676a80babe78de7b731a99dc');
 const scratch=mkdtempSync('/tmp/f9-linked-native-');
+const mlxLibraries=mlxDependency?path.join(scratch,'mlx'):path.join(source,'lib/mlx/lib');
+const participantFile=path.join(root,'platform/studio/native/source_mlx_participants.cpp'),participantBytes=mlxDependency?readFileSync(participantFile,'utf8'):null;
 const env={PATH:'/usr/bin:/bin',HOME:scratch,LANG:'C',LC_ALL:'C',TMPDIR:scratch,ZIG_GLOBAL_CACHE_DIR:path.join(homedir(),'.cache/zig')};
 const run=(file,argv,options={})=>execFileSync(file,argv,{encoding:'utf8',env,timeout:600000,maxBuffer:16*1024*1024,...options});
 const filename=`fios-linked-${randomUUID()}.zig`,generated=path.join(source,filename);
@@ -125,6 +138,11 @@ try{
  const metal=path.join(scratch,'apple-metal');mkdirSync(metal);
  run('/usr/bin/unzip',['-q',metalZip,'-d',metal]); // Exact reviewed archive hash above.
  for(const name of ['libmlx.dylib','libmlxc.dylib','libjaccl.dylib','mlx.metallib'])stage(path.join(bundle,name),path.join(source,'lib/mlx/lib',name));
+ if(mlxDependency){
+  mkdirSync(mlxLibraries,{mode:0o700});
+  for(const name of ['libmlx.dylib','mlx.metallib','libjaccl.dylib'])stage(mlxDependency.libraries[name],path.join(mlxLibraries,name));
+  stage(path.join(bundle,'libmlxc.dylib'),path.join(mlxLibraries,'libmlxc.dylib'));
+ }
  stage(path.join(source,'lib/mlx-src/mlx'),path.join(source,'lib/mlx/include/mlx'));
  stage(path.join(source,'lib/mlxc-src/mlx/c'),path.join(source,'lib/mlx/include/mlx/c'));
  stage(path.join(metal,'metal-cpp'),path.join(source,'lib/mlx/include/metal_cpp'));
@@ -134,13 +152,13 @@ try{
  const ownerProbe=path.join(scratch,'owner-stream-probe');
  run(zig,['c++','-std=c++20','-O2','-UNDEBUG','-I',path.join(source,'lib/mlx/include'),'-I',path.join(source,'lib/mlxc-src'),
   path.join(root,'platform/studio/native/device_owner_barrier.cpp'),path.join(root,'platform/studio/native/device_owner_barrier_test.cpp'),
-  '-L',path.join(source,'lib/mlx/lib'),'-lmlxc','-lmlx','-Wl,-rpath,'+path.join(source,'lib/mlx/lib'),'-o',ownerProbe]);
+  '-L',mlxLibraries,'-lmlxc','-lmlx','-Wl,-rpath,'+mlxLibraries,'-o',ownerProbe]);
  const negative=spawnSync(ownerProbe,['--prove-failure'],{encoding:'utf8',timeout:5000,maxBuffer:4096});
  assert.equal(negative.status,77,'optimized C++ fixture checks became inert');
  let ownerLog=run(ownerProbe,[])+run(ownerProbe,['--assigned-global-default'])+run(ownerProbe,['--two-owners'])+run(ownerProbe,['--c-api-handle'])+run(ownerProbe,['--c-api-defaults'])+run(ownerProbe,['--registry-hold']);
  const ownerEpochProbe=path.join(scratch,'owner-epoch-probe');
  run(zig,['c++','-std=c++20','-O2','-UNDEBUG','-I',path.join(source,'lib/mlx/include'),'-I',path.join(source,'lib/mlxc-src'),
-  path.join(root,'platform/studio/native/device_owner_epoch_test.cpp'),'-L',path.join(source,'lib/mlx/lib'),'-lmlxc','-lmlx','-Wl,-rpath,'+path.join(source,'lib/mlx/lib'),'-o',ownerEpochProbe]);
+  path.join(root,'platform/studio/native/device_owner_epoch_test.cpp'),'-L',mlxLibraries,'-lmlxc','-lmlx','-Wl,-rpath,'+mlxLibraries,'-o',ownerEpochProbe]);
  ownerLog+=run(ownerEpochProbe,[]);
  if(args[8]==='--empty-gpu') {
   const gpuLog=run(ownerProbe,['--gpu-empty'],{env:{...env,FIOS_NATIVE_EMPTY_GPU_FIXTURE:'isolated-source-fixture'}});
@@ -152,9 +170,17 @@ try{
  const guards='    if (target.result.os.tag == .macos) {\n        if (webp_prefix) |dir| verifyCopiedDeps(b, dir) else verifyBrewDeps(b);\n        verifyMlxStage(b);\n    }\n';
  assert.equal(graph.split(guards).length,2);
  graph=graph.replace(guards,'    // SOURCE FIXTURE ONLY: real copied deps, NO upstream staging/release attestation.\n');
+ if(mlxDependency){
+  const libraryEdge='module.addLibraryPath(b.path("lib/mlx/lib"));';assert.equal(graph.split(libraryEdge).length,2);
+  graph=graph.replace(libraryEdge,'module.addLibraryPath(.{ .cwd_relative = '+JSON.stringify(mlxLibraries)+' });');
+  const participant=path.join(scratch,'source-mlx-participants.cpp');
+  writeFileSync(participant,'#include '+JSON.stringify(path.join(mlxDependency.source,'mlx/stream.h'))+'\n'+participantBytes,{mode:0o600});
+  const first='    const exe = b.addExecutable(.{';assert.equal(graph.split(first).length,3);
+  graph=graph.replace(first,'    mod.addCSourceFile(.{ .file = .{ .cwd_relative = '+JSON.stringify(participant)+' }, .flags = &.{"-std=c++20"} });\n'+first);
+ }
  const exe='    const exe = b.addExecutable(.{';
  assert.equal(graph.split(exe).length,3);
- graph=graph.replace(exe,['mlx','llama'].map(name=>`    mod.addRPath(.{ .cwd_relative = ${JSON.stringify(path.join(source,'lib',name,'lib'))} });`).join('\n')+'\n'+exe);
+ graph=graph.replace(exe,['mlx','llama'].map(name=>`    mod.addRPath(.{ .cwd_relative = ${JSON.stringify(name==='mlx'?mlxLibraries:path.join(source,'lib',name,'lib'))} });`).join('\n')+'\n'+exe);
  const install='    b.installArtifact(exe);';
  graph=graph.replace(install,install+'\n    b.step("fios-linked-build", "Disposable linked native source fixture").dependOn(&b.addInstallArtifact(exe, .{}).step);');
  const tests='    const unit_tests = b.addTest(.{\n        .root_module = test_mod,\n        .filters = if (test_filter) |f| &.{f} else &.{},\n    });';
@@ -265,10 +291,12 @@ try{
   assert(!rootOnly,'Review output requires full positive executable/HTTP validation');
   const libraries=Object.fromEntries(Object.keys(runtime).map(name=>[name,path.join(name==='libwebp.dylib'||name==='libsharpyuv.dylib'?lib:bundle,name)]));
   libraries['libllama.dylib']=path.join(source,'lib/llama/lib/libllama.dylib');
-  review=stageNativeReview({directory:reviewOutput,binary,libraries,inputs:{native_base:'046b647686419df06c6c7132fb1d15d76185c3e5',root_patch_sha256:sha(path.join(root,'platform/studio/native/mlx-serve-26.10.3.patch')),runtime_inputs:runtime,mimo_candidate:mimoReceipt}});
+  if(mlxDependency)for(const name of ['libmlx.dylib','mlx.metallib','libjaccl.dylib'])libraries[name]=mlxDependency.libraries[name];
+  review=stageNativeReview({directory:reviewOutput,binary,libraries,inputs:{native_base:'046b647686419df06c6c7132fb1d15d76185c3e5',root_patch_sha256:sha(path.join(root,'platform/studio/native/mlx-serve-26.10.3.patch')),runtime_inputs:runtime,runtime_input_scope:mlxDependency?'readonly_installed_bundle_bracket_not_selected_runtime_provenance':'declared_installed_bundle_inputs_only',mimo_candidate:mimoReceipt,mlx_source_dependency:mlxDependency,mlx_participant_source_sha256:participantBytes?createHash('sha256').update(participantBytes).digest('hex'):null}});
   binary=review.binary;digest=review.sha256;
  }
  const httpLog=rootOnly?'':run(process.execPath,[path.join(root,'scripts/check-platform-native-http.mjs'),'--isolated','--binary',binary,'--sha256',digest]);
+ if(mlxDependency){assert.deepEqual(verifyMlxSourceReview(...mlxDependencyConfig),mlxDependency);assert.equal(readFileSync(participantFile,'utf8'),participantBytes);}
  for(const [name,expected]of Object.entries(runtime))assert.equal(sha(path.join(bundle,name)),expected,'installed dependency changed');
  assert.equal(readFileSync(path.join(source,'build.zig'),'utf8'),reviewedGraph,'fixture changed reviewed build graph');
  assert.equal(readFileSync(schedulerFile,'utf8'),schedulerOriginal,'fixture changed reviewed scheduler source');
@@ -278,7 +306,7 @@ try{
  assert.deepEqual(verifyMimo(),mimoReceipt,'candidate input changed during combined fixture');
  const reviewReceipt=review?finishNativeReview(review):null;
  console.log(ownerLog+buildLog+testLog+httpLog);
- console.log(JSON.stringify({source_fixture_only:true,root_tests_only:rootOnly,expected_runtime_mutation:mutation,request_eviction_mutation:evictionMutation,load_preparation_mutation:loadPreparationMutation,actor_load_preparation_mutation:actorLoadMutation,encoder_active_mutation:encoderActiveMutation,generation_origin_mutation:generationOriginMutation,text_origin_mutation:textOriginMutation,native_refusal_mutation:nativeRefusalMutation,parked_reference_mutation:parkedMutation,foreign_access_release_mutation:accessMutation,preparation_visibility_mutation:preparationMutation,preparation_clear_mutation:clearPreparationMutation,registry_frontdoor_mutation:frontdoorKind??null,registry_teardown_mutation:teardownMutation,loaded_model_teardown_mutation:loadedTeardownMutation,retained_cpu_cleanup_mutation:retainedCpuMutation,resident_unload_mutation:residentUnloadMutation,ds4_snapshot_mutation:snapshotMutation,llama_trim_status_mutation:trimMutation,upstream_release_attestation:false,native_inference:false,coverage:'unknown',fixture_sha256:digest,private_review:reviewReceipt,mimo_candidate:mimoReceipt,runtime_inputs:runtime}));
+ console.log(JSON.stringify({source_fixture_only:true,root_tests_only:rootOnly,expected_runtime_mutation:mutation,request_eviction_mutation:evictionMutation,load_preparation_mutation:loadPreparationMutation,actor_load_preparation_mutation:actorLoadMutation,encoder_active_mutation:encoderActiveMutation,generation_origin_mutation:generationOriginMutation,text_origin_mutation:textOriginMutation,native_refusal_mutation:nativeRefusalMutation,parked_reference_mutation:parkedMutation,foreign_access_release_mutation:accessMutation,preparation_visibility_mutation:preparationMutation,preparation_clear_mutation:clearPreparationMutation,registry_frontdoor_mutation:frontdoorKind??null,registry_teardown_mutation:teardownMutation,loaded_model_teardown_mutation:loadedTeardownMutation,retained_cpu_cleanup_mutation:retainedCpuMutation,resident_unload_mutation:residentUnloadMutation,ds4_snapshot_mutation:snapshotMutation,llama_trim_status_mutation:trimMutation,upstream_release_attestation:false,native_inference:false,coverage:'unknown',fixture_sha256:digest,private_review:reviewReceipt,mimo_candidate:mimoReceipt,mlx_source_dependency:mlxDependency,runtime_inputs:runtime,runtime_input_scope:mlxDependency?'readonly_installed_bundle_bracket_not_selected_runtime_provenance':'declared_installed_bundle_inputs_only'}));
 }finally{
  if(mutated)writeFileSync(mutationFile,mutationOriginal);
  if(written)rmSync(generated);

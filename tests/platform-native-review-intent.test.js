@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
-import {nativeReviewIntent,nativeReviewHTTPFailure,nativeReviewJSON,nativeReviewActivity} from '../scripts/lib/platform-native-review-intent.mjs';
+import {nativeReviewIntent,nativeReviewHTTPFailure,nativeReviewJSON,nativeReviewActivity,nativeReviewModelInputs} from '../scripts/lib/platform-native-review-intent.mjs';
 test('native review JSON is bounded while reading, before parsing',async()=>{
  assert.deepEqual(await nativeReviewJSON(new Response('{"ok":true}'),11),{ok:true});
  await assert.rejects(nativeReviewJSON(new Response('{"ok":true}'),10),/response limit/);
@@ -32,4 +32,10 @@ test('operator/model/endpoint overrides cannot expand the fixed native review ca
  for(const tail of [['--model','other/model'],['--endpoint','http://peer.invalid'],['--role','operator'],['--allow-native-inference']])assert.throws(()=>nativeReviewIntent(['--check','--plan','/private/plan.json','--sha256',digest,...tail]));
  assert.throws(()=>nativeReviewIntent(['--check','--plan','relative.json','--sha256',digest]));
  assert.throws(()=>nativeReviewIntent(['--check','--plan','/private/plan.json','--sha256','self-claimed']));
+});
+
+test('source model preparation refuses a declared SDK without selected-format support',()=>{
+ nativeReviewModelInputs({});
+ nativeReviewModelInputs({mlx_source_dependency:{source_fixture_only:true,native_authority:false,features:{safetensors:true}}});
+ for(const dependency of [{},{source_fixture_only:true,native_authority:false},{source_fixture_only:true,native_authority:false,features:{safetensors:false}},{source_fixture_only:true,native_authority:true,features:{safetensors:true}},{source_fixture_only:true,native_authority:false,features:{safetensors:'true'}}])assert.throws(()=>nativeReviewModelInputs({mlx_source_dependency:dependency}));
 });

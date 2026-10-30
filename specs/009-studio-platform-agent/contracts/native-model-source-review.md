@@ -44,3 +44,5 @@ node scripts/check-platform-native-review-abort.mjs --isolated --plan /ABS/PLAN.
 ```
 
 Kernel tests use only owned synthetic files/sockets/children. Exact write, network, fork and exec omissions reach their respective runtime witnesses. The abort fixture supplies explicitly synthetic high-memory observations to an actual empty-model process, verifies first-sample abort/reap and zero model POSTs, and cannot run inference. It is not a genuine memory measurement or native terminal receipt.
+
+Source-built MLX experiments additionally require the retained dependency’s explicit Safetensors feature before planning/run; an advertised model alone does not override a missing format capability. Planning prints `run_command` for the explicit finite invocation under standing authorization. The optional source dependency is not an installation/admission grant; actual capsule file hashes, declared source inputs and the installed-bundle read-only bracket have separate meanings. A later successful request does not clear an earlier failed experiment’s independent uncertainty.

@@ -2,6 +2,14 @@
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import {createHash} from 'node:crypto';
+// An optional source dependency must declare the selected format before any
+// model effect. This is a refusal prerequisite, never an admission grant.
+export function nativeReviewModelInputs(inputs){
+ const dependency=inputs?.mlx_source_dependency;
+ if(dependency!==undefined&&dependency!==null){
+  assert(dependency.source_fixture_only===true&&dependency.native_authority===false&&dependency.features?.safetensors===true,'Source SDK lacks required Safetensors support');
+ }
+}
 export async function nativeReviewJSON(response, maximum=65536) {
  let size=0;const chunks=[];
  for await(const chunk of response.body){size+=chunk.length;assert(size<=maximum,'Native review response limit');chunks.push(Buffer.from(chunk));}

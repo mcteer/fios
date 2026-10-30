@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // Administrative source experiment. No production/native enrollment or task
-// permission is issued. Plan/check never load a model. Run requires separate
-// explicit operator approval; ordinary Fios inference still uses its harness.
+// permission is issued. Plan/check never load a model. Run uses an explicit
+// finite invocation under standing operator inference authorization; ordinary
+// Fios interface inference still uses its harness.
 import assert from 'node:assert/strict';
 import {spawn,spawnSync,execFileSync} from 'node:child_process';
 import {createHash,randomUUID,randomBytes} from 'node:crypto';
@@ -12,7 +13,7 @@ import {fileURLToPath} from 'node:url';
 import {setTimeout as delay} from 'node:timers/promises';
 import {createServer} from 'node:net';
 import {verifyNativeReview} from './lib/platform-native-review.mjs';
-import {nativeReviewIntent,nativeReviewHTTPFailure,nativeReviewJSON,nativeReviewActivity} from './lib/platform-native-review-intent.mjs';
+import {nativeReviewIntent,nativeReviewHTTPFailure,nativeReviewJSON,nativeReviewActivity,nativeReviewModelInputs} from './lib/platform-native-review-intent.mjs';
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..'),args=process.argv.slice(2);
 nativeReviewIntent(args);
 const ID='mlx-community/gemma-4-e4b-it-4bit',MODEL=path.join(homedir(),'.mlx-serve/models',ID);
@@ -27,6 +28,7 @@ function fingerprint(file){const fd=openSync(file,constants.O_RDONLY|constants.O
 if(args[0]==='--plan'){
  assert(args.length===7&&args[1]==='--capsule'&&args[3]==='--sha256'&&args[5]==='--output'&&path.isAbsolute(args[2])&&path.isAbsolute(args[6]));
  const capsule=verifyNativeReview(args[2],args[4]),parent=privateParent(args[6]);
+ nativeReviewModelInputs(capsule.receipt.declared_inputs);
  assert(realpathSync(MODEL)===MODEL);const config=json(path.join(MODEL,'config.json'),1<<20).value;assert(config.model_type==='gemma4');
  const modelFiles=readdirSync(MODEL).filter(n=>n.endsWith('.safetensors')||['config.json','tokenizer.json','tokenizer_config.json','generation_config.json','processor_config.json'].includes(n)).sort();
  assert(modelFiles.some(n=>n.endsWith('.safetensors'))&&modelFiles.length<=32);
@@ -36,13 +38,13 @@ if(args[0]==='--plan'){
  const self=JSON.parse(execFileSync(observer,[String(process.pid)],{encoding:'utf8',timeout:1000}));assert(self.pid===process.pid&&self.uid===process.getuid());
  const plan={version:1,runner_inputs:runnerInputs(),purpose:'private_gemma4_source_experiment',nonce,created:Date.now(),capsule:capsule.directory,capsule_sha256:args[4],model:ID,model_directory:MODEL,model_files:files,limits:LIMITS,observer,observer_sha256:sha(readFileSync(observer)),profile_sha256:sha(readFileSync(path.join(root,'tests/fixtures/platform/native-model-review.sb'))),native_admission_authority:false,requires_explicit_inference_opt_in:true};
  const bytes=Buffer.from(JSON.stringify(plan)+'\n');writeFileSync(args[6],bytes,{flag:'wx',mode:0o400});const fd=openSync(args[6],'r');try{fsyncSync(fd);}finally{closeSync(fd);}
- console.log(JSON.stringify({planning_only:true,native_inference:false,model:ID,model_weight_bytes:Object.entries(files).filter(([n])=>n.endsWith('.safetensors')).reduce((n,[,f])=>n+f.bytes,0),plan:args[6],plan_sha256:sha(bytes),limits:LIMITS,check:[process.execPath,fileURLToPath(import.meta.url),'--check','--plan',args[6],'--sha256',sha(bytes)],approval_command:[process.execPath,fileURLToPath(import.meta.url),'--run','--plan',args[6],'--sha256',sha(bytes),'--allow-native-inference']}));
+ console.log(JSON.stringify({planning_only:true,native_inference:false,model:ID,model_weight_bytes:Object.entries(files).filter(([n])=>n.endsWith('.safetensors')).reduce((n,[,f])=>n+f.bytes,0),plan:args[6],plan_sha256:sha(bytes),limits:LIMITS,check:[process.execPath,fileURLToPath(import.meta.url),'--check','--plan',args[6],'--sha256',sha(bytes)],run_command:[process.execPath,fileURLToPath(import.meta.url),'--run','--plan',args[6],'--sha256',sha(bytes),'--allow-native-inference']}));
  process.exit(0);
 }
 const check=args[0]==='--check';assert((check&&args.length===5)||(!check&&args[0]==='--run'&&args.length===6&&args[5]==='--allow-native-inference'));
 assert(args[1]==='--plan'&&args[3]==='--sha256'&&path.isAbsolute(args[2]));const parent=privateParent(args[2]),document=json(args[2]);assert(sha(document.bytes)===args[4]);const plan=document.value;assert(!plan.synthetic_resource_fixture||check,'Synthetic observations cannot be used for inference');assert.deepEqual(plan.runner_inputs,runnerInputs());
 assert(plan.version===1&&plan.purpose==='private_gemma4_source_experiment'&&plan.model===ID&&plan.model_directory===MODEL&&plan.native_admission_authority===false&&plan.requires_explicit_inference_opt_in===true&&JSON.stringify(plan.limits)===JSON.stringify(LIMITS));
-assert(Date.now()>=plan.created-1000&&Date.now()-plan.created<=24*3600000);const capsule=verifyNativeReview(plan.capsule,plan.capsule_sha256);
+assert(Date.now()>=plan.created-1000&&Date.now()-plan.created<=24*3600000);const capsule=verifyNativeReview(plan.capsule,plan.capsule_sha256);nativeReviewModelInputs(capsule.receipt.declared_inputs);
 assert(path.dirname(plan.observer)===parent&&lstatSync(plan.observer).isFile()&&!lstatSync(plan.observer).isSymbolicLink()&&sha(readFileSync(plan.observer))===plan.observer_sha256);
 const profile=path.join(root,'tests/fixtures/platform/native-model-review.sb');assert(sha(readFileSync(profile))===plan.profile_sha256);
 const directory=mkdtempSync(check?'/private/tmp/f9-model-check-':'/private/tmp/f9-model-run-');chmodSync(directory,0o700);
