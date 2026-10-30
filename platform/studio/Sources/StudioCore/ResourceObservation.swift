@@ -26,7 +26,7 @@ enum ResourceObservationExport {
         publish("thermal",key:"thermal",value:sample.thermal == .unknown ? nil:sample.thermal.rawValue,at:sample.sampledAt,unknown:"unknown")
         publish("low_power_mode",key:"lowPowerMode",value:sample.lowPowerMode,at:sample.sampledAt)
         let boundVM=vmEpoch.map(WireScalar.sha256) == true
-        publish("vm_available",key:"vmAvailable",value:boundVM ? bytes(sample.vmAvailable):nil,at:sample.vmSampledAt)
+        publish("vm_available",key:"vmAvailable",value:boundVM && physical != nil ? sample.vmAvailable.flatMap {$0<=sample.physical ? bytes($0):nil}:nil,at:sample.vmSampledAt)
         publish("gpu",key:"gpu",value:gpu.flatMap {$0.utilization.isFinite && (0...100).contains($0.utilization) ? $0.utilization:nil},at:gpuSampledAt)
         publish("gpu_in_use_memory",key:"gpu_in_use_bytes",value:bytes(gpu?.inUseBytes),at:gpuSampledAt)
         publish("gpu_allocated_memory",key:"gpu_allocated_bytes",value:bytes(gpu?.allocatedBytes),at:gpuSampledAt)

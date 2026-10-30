@@ -7,6 +7,14 @@ func runAdmissionTests() throws {
     let resources = ResourceSample(sampledAt: 10_000, physical: 128 << 30, available: 64 << 30,
                                    vmAvailable: 8 << 30, diskFree: 100 << 30, cpu: 10,
                                    pressure: .normal, thermal: .nominal, vmSampledAt:10_000)
+    for bytes:UInt64 in [(128<<30)+1,UInt64.max] {
+        var impossible=AdmissionPolicy()
+        let measured=resources.replacingVM(bytes,sampledAt:10000)
+        guard !impossible.resourcesSafe(measured,now:10000,needsVM:true) else {fatalError("FIO_VM_EXCEEDS_PHYSICAL_ADMITTED")}
+        expectAdmissionReject {try impossible.reserve(job:UUID().uuidString.lowercased(),memory:512<<20,cpus:1,sample:measured,now:10000)}
+        // A broken VM sensor does not erase independent host-only capacity.
+        try impossible.reserveWorker(key:"independent-host",sample:measured,now:10000)
+    }
     var undatedAdmission=AdmissionPolicy()
     let undatedVM=resources.replacingVM(8<<30)
     do {

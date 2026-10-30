@@ -29,6 +29,13 @@ func runResourceObservationTests() throws {
     guard missingTime.resources["gpu"] is NSNull,quality(missingTime,"gpu")=="unknown" else {fatalError("Undated GPU counter accepted")}
     let noVM=try ResourceObservationExport.encode(sample:sample,gpu:nil,gpuSampledAt:nil,now:10000,epoch:epoch,sequence:1,vmEpoch:nil)
     guard noVM.resources["vmAvailable"] is NSNull,quality(noVM,"vm_available")=="unknown" else {fatalError("Unbound VM capacity published")}
+    for bytes:UInt64 in [(64<<30)+1,UInt64.max] {
+        let oversized=try frame(10000,sample.replacingVM(bytes,sampledAt:10000))
+        guard oversized.resources["vmAvailable"] is NSNull,quality(oversized,"vm_available")=="unknown",
+              oversized.observation["vm_coverage"] as? String=="unknown" else {fatalError("FIO_VM_EXCEEDS_PHYSICAL_EXPORTED")}
+    }
+    let zeroVM=try frame(10000,sample.replacingVM(0,sampledAt:10000))
+    guard zeroVM.resources["vmAvailable"] as? UInt64==0,quality(zeroVM,"vm_available")=="observed" else {fatalError("Observed zero VM capacity lost")}
     let invalid=ResourceSample(sampledAt:10000,physical:64<<30,available:65<<30,vmAvailable:nil,diskFree:UInt64.max,cpu:.nan,pressure:.unknown,thermal:.unknown)
     let rejected=try frame(10000,invalid)
     guard rejected.resources["available"] is NSNull,rejected.resources["diskFree"] is NSNull,rejected.resources["cpu"] is NSNull else {fatalError("Invalid/noninteroperable signal published")}

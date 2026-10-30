@@ -27,7 +27,7 @@ struct AdmissionPolicy {
             guard let vmAt=sample.vmSampledAt,vmAt>=0,vmAt<=ActivityPolicy.maximumTimestamp,
                   (-1000...5000).contains(now-vmAt) else {throw AdmissionError.stale}
             let committed=reservations.values.reduce(UInt64(0), { $0 + $1.memory })
-            guard let vm=sample.vmAvailable,vm>=committed,vm-committed>=newMemory else { throw AdmissionError.capacity }
+            guard let vm=sample.vmAvailable,vm<=sample.physical,vm>=committed,vm-committed>=newMemory else { throw AdmissionError.capacity }
         }
     }
     func resourcesSafe(_ sample:ResourceSample,now:Int64,needsVM:Bool) -> Bool {
