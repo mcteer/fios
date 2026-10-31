@@ -64,6 +64,7 @@ export function nativeReviewLineage(bytes,instance,correlation,previous=0){
 // Retain fixed diagnostic categories only, never server prose or generated data.
 export function nativeReviewHTTPFailure(status, body) {
  const result={http_status:status};
+ if(body?.error?.message==='This model is serving without its vision tower (--no-vision, no vision weights, or on the Neural Engine); image/video content is not supported')result.modality_error='vision_unavailable';
  if(typeof body?.error?.message==='string')result.error_message_sha256=createHash('sha256').update(body.error.message).digest('hex');
  const types=['model_load_failed','model_not_found','invalid_request_error','forbidden','model_busy','native_tracking_unavailable','internal_error','shutting_down','gpu_context_lost'];
  if(types.includes(body?.error?.type))result.error_type=body.error.type;
@@ -75,7 +76,7 @@ export function nativeReviewHTTPFailure(status, body) {
 export function nativeReviewIntent(input) {
  const args=[...input];let scenario;
  const at=args.indexOf('--scenario');
- if(at!==-1){assert(at===args.length-2&&args[at+1]==='same-model-pair');scenario=args[at+1];args.splice(at,2);}
+ if(at!==-1){assert(at===args.length-2&&['same-model-pair','single-image'].includes(args[at+1]));scenario=args[at+1];args.splice(at,2);}
  const result=value=>scenario?{...value,scenario}:value;
  const mode=args[0];assert(['--plan','--check','--run'].includes(mode));
  if(mode==='--plan'){

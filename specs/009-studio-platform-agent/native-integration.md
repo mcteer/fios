@@ -6,6 +6,10 @@ Status: source-only integration/testing authorized by the user's explicit reaffi
 
 Current backend-specific findings and unproven terminality requirements: [native-backend-terminality.md](native-backend-terminality.md).
 
+## Ordinary image-bearing source check —2026-10-31
+
+The finite model runner accepts `--scenario single-image` on plan/check/run, with one fixed64×64 PNG and the same small exact Gemma model/resource limits. Current genuine source integration returns400 because this model variant’s vision tower is explicitly not wired (`model.zig` sets `has_vision=false`). The presence of vision weights/config is insufficient to claim serving support. Retain this unsupported result; it is not model competence or complete modality coverage. No larger-model substitution, retry or native installation follows. See the validation record for the actual one-use plan and result.
+
 ## Source capture metadata integration —2026-10-31
 
 The ordinary private control protocol now optionally returns version3 frames with the original native capture sequence and source UTC milliseconds. Version2 remains the default compatible32/64-byte exchange; version3 uses32/80 bytes. The manager keeps transport receipt age distinct from source age and carries current native metadata into activity export with coverage still unknown. See [native control](contracts/native-private-control.md).

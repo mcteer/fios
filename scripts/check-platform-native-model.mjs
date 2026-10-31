@@ -15,14 +15,14 @@ import {createServer,createConnection} from 'node:net';
 import {verifyNativeReview} from './lib/platform-native-review.mjs';
 import {nativeReviewIntent,nativeReviewHTTPFailure,nativeReviewJSON,nativeReviewActivity,nativeReviewModelInputs,nativeReviewLineage,nativeReviewComponents} from './lib/platform-native-review-intent.mjs';
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..'),args=process.argv.slice(2);
-const intent=nativeReviewIntent(args),pair=intent.scenario==='same-model-pair';
-const scenario=pair?'same-model-pair':'single-model',scenarioArgs=pair?['--scenario',scenario]:[];
-if(pair)args.splice(-2,2);
+const intent=nativeReviewIntent(args),pair=intent.scenario==='same-model-pair',image=intent.scenario==='single-image';
+const scenario=intent.scenario??'single-model',scenarioArgs=intent.scenario?['--scenario',scenario]:[];
+if(intent.scenario)args.splice(-2,2);
 const ID='mlx-community/gemma-4-e4b-it-4bit',MODEL=path.join(homedir(),'.mlx-serve/models',ID);
 const LIMITS={context_tokens:512,output_tokens:8,max_concurrent:pair?2:1,model_posts:pair?2:1,request_ms:90000,work_ms:120000,cleanup_ms:7000,memory_abort_bytes:12*2**30};
 assert(process.platform==='darwin'&&process.arch==='arm64'&&process.getuid()>0);
 const sha=b=>createHash('sha256').update(b).digest('hex');
-function runnerInputs(){return Object.fromEntries(['scripts/check-platform-native-model.mjs','scripts/lib/platform-native-review.mjs','scripts/lib/platform-native-review-intent.mjs','platform/studio/Tests/NativeFixtures/ObserveProcess.c.fixture'].map(name=>[name,sha(readFileSync(path.join(root,name)))]));}
+function runnerInputs(){return Object.fromEntries(['scripts/check-platform-native-model.mjs','scripts/lib/platform-native-review.mjs','scripts/lib/platform-native-review-intent.mjs','platform/studio/Tests/NativeFixtures/ObserveProcess.c.fixture','tests/fixtures/platform/native-image-64.png'].map(name=>[name,sha(readFileSync(path.join(root,name)))]));}
 function privateParent(file){const p=realpathSync(path.dirname(file)),s=lstatSync(p);assert(path.dirname(file)===p&&s.isDirectory()&&s.uid===process.getuid()&&(s.mode&0o077)===0);return p;}
 function json(file,maximum=65536){const fd=openSync(file,constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_NONBLOCK);try{const s=fstatSync(fd);assert(s.isFile()&&s.nlink===1&&s.size>0&&s.size<=maximum);const bytes=Buffer.alloc(s.size);let n=0;while(n<bytes.length){const c=readSync(fd,bytes,n,bytes.length-n,null);assert(c>0);n+=c;}return {bytes,value:JSON.parse(bytes.toString('utf8'))};}finally{closeSync(fd);}}
 function durableNew(file,bytes,mode=0o400){const fd=openSync(file,constants.O_WRONLY|constants.O_CREAT|constants.O_EXCL|constants.O_NOFOLLOW,mode);try{writeFileSync(fd,bytes);fsyncSync(fd);}finally{closeSync(fd);}const parent=openSync(path.dirname(file),constants.O_RDONLY);try{fsyncSync(parent);}finally{closeSync(parent);}}
@@ -32,6 +32,7 @@ if(args[0]==='--plan'){
  const capsule=verifyNativeReview(args[2],args[4]),parent=privateParent(args[6]);
  nativeReviewModelInputs(capsule.receipt.declared_inputs);
  assert(realpathSync(MODEL)===MODEL);const config=json(path.join(MODEL,'config.json'),1<<20).value;assert(config.model_type==='gemma4');
+ if(image)assert(config.vision_config?.model_type==='gemma4_vision'&&config.vision_soft_tokens_per_image<=280);
  const modelFiles=readdirSync(MODEL).filter(n=>n.endsWith('.safetensors')||['config.json','tokenizer.json','tokenizer_config.json','generation_config.json','processor_config.json'].includes(n)).sort();
  assert(modelFiles.some(n=>n.endsWith('.safetensors'))&&modelFiles.length<=32);
  const files=Object.fromEntries(modelFiles.map(n=>[n,fingerprint(path.join(MODEL,n))]));assert(Object.values(files).reduce((n,f)=>n+f.bytes,0)<=8*2**30);
@@ -55,9 +56,9 @@ const home=path.join(directory,'home');mkdirSync(home,{mode:0o700});const models
 if(!check){mkdirSync(path.join(models,'mlx-community'),{mode:0o700});symlinkSync(MODEL,path.join(models,ID),'dir');}
 const reservation=createServer();await new Promise((ok,no)=>{reservation.once('error',no);reservation.listen(0,'127.0.0.1',ok);});const port=reservation.address().port;await new Promise(ok=>reservation.close(ok));
 const key=randomBytes(32).toString('hex'),env={PATH:'/usr/bin:/bin',HOME:home,TMPDIR:path.join(home,'tmp'),XDG_CACHE_HOME:path.join(home,'cache'),LANG:'C',LC_ALL:'C',FIOS_NATIVE_CONTROL:'isolated-source-fixture',FIOS_NATIVE_STARTUP:'isolated-source-fixture',FIOS_SOURCE_MODEL_KEY:key};
-const receipt={source_fixture_only:true,scenario,synthetic_resource_fixture:plan.synthetic_resource_fixture===true,model:check?null:ID,native_inference:check?false:null,inference_requested:!check,model_post_attempts:0,actual_model_posts:0,coverage:'unknown',native_quiescence:'unproven',process_reaped:false,peak_resident:0,peak_footprint:0};
+const receipt={source_fixture_only:true,scenario,...(image?{image_input:{format:'png',width:64,height:64,sha256:sha(readFileSync(path.join(root,'tests/fixtures/platform/native-image-64.png')))}}:{}),synthetic_resource_fixture:plan.synthetic_resource_fixture===true,model:check?null:ID,native_inference:check?false:null,inference_requested:!check,model_post_attempts:0,actual_model_posts:0,coverage:'unknown',native_quiescence:'unproven',process_reaped:false,peak_resident:0,peak_footprint:0};
 function save(){const temporary=path.join(directory,'.result-'+randomUUID());durableNew(temporary,JSON.stringify(receipt)+'\n',0o600);renameSync(temporary,path.join(directory,'result.json'));const fd=openSync(directory,constants.O_RDONLY);try{fsyncSync(fd);}finally{closeSync(fd);}}save();
-const child=spawn('/usr/bin/sandbox-exec',['-D','FIOS_REVIEW_ENDPOINT=localhost:'+port,'-D','FIOS_REVIEW_STATE='+home,'-D','FIOS_REVIEW_BINARY='+capsule.binary,'-f',profile,capsule.binary,'serve','--host','127.0.0.1','--port',String(port),'--model-dir',models,'--no-warmup-eager','--no-vision','--ctx-size','512','--max-concurrent',String(LIMITS.max_concurrent),'--api-key-env','FIOS_SOURCE_MODEL_KEY','--api-key-strict'],{env,cwd:home,stdio:['ignore','pipe','pipe']});
+const child=spawn('/usr/bin/sandbox-exec',['-D','FIOS_REVIEW_ENDPOINT=localhost:'+port,'-D','FIOS_REVIEW_STATE='+home,'-D','FIOS_REVIEW_BINARY='+capsule.binary,'-f',profile,capsule.binary,'serve','--host','127.0.0.1','--port',String(port),'--model-dir',models,'--no-warmup-eager',...(image?[]:['--no-vision']),'--ctx-size','512','--max-concurrent',String(LIMITS.max_concurrent),'--api-key-env','FIOS_SOURCE_MODEL_KEY','--api-key-strict'],{env,cwd:home,stdio:['ignore','pipe','pipe']});
 const modelAbort=new AbortController();
 let original,output=0,failed,timer,postsDone=false,stage='owned_identity';
 function ended(){return child.exitCode!==null||child.signalCode!==null;}
@@ -110,9 +111,9 @@ function sampleActivity(){if(activityStopped||activityPending)return;activityPen
 async function requestModel(index){
  const request={index,correlation:randomBytes(32).toString('hex'),dispatched_ms:Math.round(performance.now()-began),response_complete:false};
  (receipt.requests??=[]).push(request);receipt.model_post_attempts++;assert(receipt.model_post_attempts<=LIMITS.model_posts);receipt.actual_model_posts=null;save();
- const response=await fetch('http://127.0.0.1:'+port+'/v1/chat/completions',{method:'POST',redirect:'error',headers:{Authorization:'Bearer '+key,'Content-Type':'application/json','X-Fios-Request-ID':request.correlation},body:JSON.stringify({model:ID,messages:[{role:'user',content:'Reply with one word: ready.'}],max_tokens:LIMITS.output_tokens,temperature:0,stream:true,stream_options:{include_usage:true}}),signal:AbortSignal.any([AbortSignal.timeout(LIMITS.request_ms),modelAbort.signal])});
+ const response=await fetch('http://127.0.0.1:'+port+'/v1/chat/completions',{method:'POST',redirect:'error',headers:{Authorization:'Bearer '+key,'Content-Type':'application/json','X-Fios-Request-ID':request.correlation},body:JSON.stringify({model:ID,messages:[{role:'user',content:image?[{type:'text',text:'What is the dominant color? Reply with one word.'},{type:'image_url',image_url:{url:'data:image/png;base64,'+readFileSync(path.join(root,'tests/fixtures/platform/native-image-64.png')).toString('base64')}}]:'Reply with one word: ready.'}],max_tokens:LIMITS.output_tokens,temperature:0,stream:true,stream_options:{include_usage:true}}),signal:AbortSignal.any([AbortSignal.timeout(LIMITS.request_ms),modelAbort.signal])});
  request.http_status=response.status;receipt.actual_model_posts=receipt.requests.every(r=>r.http_status!==undefined)?receipt.model_post_attempts:null;save();
- if(!response.ok){let value;try{value=await nativeReviewJSON(response,16384);}catch{}request.http_failure=nativeReviewHTTPFailure(response.status,value);receipt.http_failure??=request.http_failure;throw Error('Native model request refused');}
+ if(!response.ok){let value;try{value=await nativeReviewJSON(response,16384);}catch{}request.http_failure=nativeReviewHTTPFailure(response.status,value);receipt.http_failure??=request.http_failure;if(image&&request.http_failure.modality_error==='vision_unavailable')failed='selected_model_vision_unavailable';throw Error('Native model request refused');}
  let buffer='',bytes=0,done=false,deltas=0,completionTokens=null;const decoder=new TextDecoder('utf-8',{fatal:true});
  for await(const chunk of response.body){bytes+=chunk.length;assert(bytes<=65536&&!failed);buffer+=decoder.decode(chunk,{stream:true});let at;while((at=buffer.indexOf('\n'))>=0){const line=buffer.slice(0,at).trim();buffer=buffer.slice(at+1);if(!line.startsWith('data:'))continue;const data=line.slice(5).trim();if(data==='[DONE]'){done=true;continue;}const value=JSON.parse(data);assert(!value.error);if(value.choices?.some(c=>['content','reasoning_content'].some(k=>typeof c.delta?.[k]==='string'&&c.delta[k].length>0)))deltas++;if(value.usage?.completion_tokens!==undefined){assert(Number.isSafeInteger(value.usage.completion_tokens)&&value.usage.completion_tokens>=0&&value.usage.completion_tokens<=LIMITS.output_tokens);completionTokens=value.usage.completion_tokens;}}}
  assert(decoder.decode()===''&&done&&completionTokens!==null&&completionTokens>0);
@@ -139,7 +140,7 @@ try{
    assert(receipt.correlated_lineage_observations?.retained_overlap_samples>0,'No bracketed retained lineage overlap observed');
    receipt.result='overlapping_same_model_responses_complete';
   }else{
-   receipt.completion_tokens=results[0].completion_tokens;receipt.delta_events=results[0].delta_events;receipt.result='single_source_model_response_complete';
+   receipt.completion_tokens=results[0].completion_tokens;receipt.delta_events=results[0].delta_events;receipt.result=image?'single_source_image_response_complete':'single_source_model_response_complete';
   }
   receipt.generated_text_logged=false;
  }
