@@ -37,7 +37,7 @@ Native-control diagnostics use the existing accepted reply cache and the same ma
 | `closed` | `1` | The source tracker’s ingress fence flag, not complete native admission authority |
 | `tracker_uncertain` | `1` | That tracker’s uncertainty flag, independent of retained inference-record uncertainty |
 | `receipt.time` | `s` | Original accepted reply receipt time |
-| `source.time` | `s` | Original native capture time, omitted for legacy receipt-only replies |
+| `source.time` | `s` | Original native capture time, omitted when absent, including legacy replies |
 
 Every point has fixed `fios.scope=native_ingress_tracker` and `fios.sample.clock=source_and_receipt|receipt_only`. Source and receipt ages remain independent; either expired known clock omits the sample. Missing/unconfigured/unavailable diagnostics omit points rather than inventing zero. These observations never become a `NativeSnapshot`, clear independent uncertainty or authorize model/service work. A zero count is simply a fresh diagnostic count in this partial source scope. No native polling is added by telemetry.
 
