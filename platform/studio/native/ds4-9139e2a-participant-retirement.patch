@@ -1,5 +1,5 @@
 diff --git a/ds4.c b/ds4.c
-index 633a3cf..5879dfa 100644
+index 633a3cf..a043523 100644
 --- a/ds4.c
 +++ b/ds4.c
 @@ -2088,12 +2088,15 @@ typedef struct {
@@ -133,7 +133,7 @@ index 633a3cf..5879dfa 100644
      pthread_t thread;
      const ds4_model *model;
      metal_graph_stream_pagein_range *ranges;
-@@ -19916,6 +19963,11 @@ typedef struct {
+@@ -19916,6 +19963,13 @@ typedef struct {
      bool started;
      bool ok;
      uint8_t sink;
@@ -142,10 +142,12 @@ index 633a3cf..5879dfa 100644
 +    bool uncertain;
 +    uint32_t created;
 +    uint32_t joined;
++    uint64_t creator;
++    uint64_t custody_id;
  } metal_graph_stream_pagein_job;
  
  typedef struct metal_graph_stream_pagein_worker {
-@@ -20789,6 +20841,105 @@ static void *metal_graph_stream_pagein_worker_main(void *arg) {
+@@ -20789,6 +20843,136 @@ static void *metal_graph_stream_pagein_worker_main(void *arg) {
      return NULL;
  }
  
@@ -155,6 +157,22 @@ index 633a3cf..5879dfa 100644
 +static metal_graph_stream_pagein_job *g_fios_pagein_jobs;
 +static unsigned g_fios_pagein_count;
 +static bool g_fios_pagein_uncertain;
++static uint64_t g_fios_pagein_next_owner = 1;
++static uint64_t g_fios_pagein_next_job = 1;
++static _Thread_local uint64_t g_fios_pagein_local_owner;
++
++// Lookup before dereferencing: stale copied tickets cannot adopt a reused
++// allocation, and recycled pthread/kernel identities cannot adopt a creator.
++static metal_graph_stream_pagein_job *metal_graph_stream_pagein_authorize(
++        const metal_graph_stream_pagein_job *owner) {
++    if (!owner || !owner->custody || !owner->custody_id || !g_fios_pagein_local_owner) return NULL;
++    pthread_mutex_lock(&g_fios_pagein_mutex);
++    metal_graph_stream_pagein_job *job = g_fios_pagein_jobs;
++    while (job && (job != owner->custody || job->custody_id != owner->custody_id)) job = job->retained_next;
++    if (job && (job->uncertain || job->creator != g_fios_pagein_local_owner || job->creator != owner->creator)) job = NULL;
++    pthread_mutex_unlock(&g_fios_pagein_mutex);
++    return job;
++}
 +
 +static bool metal_graph_stream_pagein_busy(void) {
 +    pthread_mutex_lock(&g_fios_pagein_mutex);
@@ -171,7 +189,8 @@ index 633a3cf..5879dfa 100644
 +}
 +
 +static bool metal_graph_stream_pagein_release(metal_graph_stream_pagein_job *owner) {
-+    metal_graph_stream_pagein_job *job = owner->custody;
++    metal_graph_stream_pagein_job *job = metal_graph_stream_pagein_authorize(owner);
++    if (!job) return false;
 +    pthread_mutex_lock(&g_fios_pagein_mutex);
 +    metal_graph_stream_pagein_job **link = &g_fios_pagein_jobs;
 +    while (*link && *link != job) link = &(*link)->retained_next;
@@ -208,6 +227,20 @@ index 633a3cf..5879dfa 100644
 +        memset(owner, 0, sizeof(*owner));
 +        return false;
 +    }
++    if ((!g_fios_pagein_local_owner && g_fios_pagein_next_owner == UINT64_MAX) ||
++        g_fios_pagein_next_job == UINT64_MAX) {
++        g_fios_pagein_uncertain = true;
++        pthread_mutex_unlock(&g_fios_pagein_mutex);
++        free(job);
++        free(owner->ranges);
++        memset(owner, 0, sizeof(*owner));
++        return false;
++    }
++    if (!g_fios_pagein_local_owner) g_fios_pagein_local_owner = g_fios_pagein_next_owner++;
++    job->creator = g_fios_pagein_local_owner;
++    job->custody_id = g_fios_pagein_next_job++;
++    owner->creator = job->creator;
++    owner->custody_id = job->custody_id;
 +    job->retained_next = g_fios_pagein_jobs;
 +    g_fios_pagein_jobs = job;
 +    ++g_fios_pagein_count;
@@ -251,7 +284,7 @@ index 633a3cf..5879dfa 100644
  static uint32_t metal_graph_stream_prefill_layer_pagein_threads(void) {
      const char *env = glm_graph_env_value(
              "DS4_ROCM_STREAMING_PREFILL_LAYER_PREPARE_THREADS",
-@@ -21004,74 +21155,43 @@ static bool metal_graph_stream_prefill_selected_pagein_start(
+@@ -21004,74 +21188,43 @@ static bool metal_graph_stream_prefill_selected_pagein_start(
      job->ranges = ranges;
      job->n_ranges = n_ranges;
      job->n_threads = metal_graph_stream_prefill_selected_prepare_threads(madvise_only);
@@ -303,8 +336,8 @@ index 633a3cf..5879dfa 100644
          metal_graph_stream_pagein_job *job) {
      if (!job || !job->started) return true;
 +    metal_graph_stream_pagein_job *owner = job;
-+    if (!owner->custody || owner->custody->uncertain) return false;
-+    job = owner->custody;
++    job = metal_graph_stream_pagein_authorize(owner);
++    if (!job) return false;
      const double t0 = job->profile ? now_sec() : 0.0;
      int rc = 0;
      bool ok = true;
@@ -348,7 +381,7 @@ index 633a3cf..5879dfa 100644
              job->sink ^= job->workers[t].sink;
          }
      }
-@@ -21101,11 +21221,7 @@ static bool metal_graph_stream_prefill_selected_pagein_join(
+@@ -21101,11 +21254,7 @@ static bool metal_graph_stream_prefill_selected_pagein_join(
                  "ds4: Metal streaming prefill selected page-in join failed: %s\n",
                  strerror(rc));
      }
@@ -361,7 +394,7 @@ index 633a3cf..5879dfa 100644
  }
  
  static bool metal_graph_stream_prefill_layer_pagein_start(
-@@ -21218,74 +21334,43 @@ static bool metal_graph_stream_prefill_layer_pagein_start(
+@@ -21218,74 +21367,43 @@ static bool metal_graph_stream_prefill_layer_pagein_start(
      job->ranges = ranges;
      job->n_ranges = n_ranges;
      job->n_threads = n_threads;
@@ -413,8 +446,8 @@ index 633a3cf..5879dfa 100644
          metal_graph_stream_pagein_job *job) {
      if (!job || !job->started) return true;
 +    metal_graph_stream_pagein_job *owner = job;
-+    if (!owner->custody || owner->custody->uncertain) return false;
-+    job = owner->custody;
++    job = metal_graph_stream_pagein_authorize(owner);
++    if (!job) return false;
      const double t0 = job->profile ? now_sec() : 0.0;
      int rc = 0;
      bool ok = true;
@@ -458,7 +491,7 @@ index 633a3cf..5879dfa 100644
              job->sink ^= job->workers[t].sink;
          }
      }
-@@ -21318,11 +21403,7 @@ static bool metal_graph_stream_prefill_layer_pagein_join(
+@@ -21318,11 +21436,7 @@ static bool metal_graph_stream_prefill_layer_pagein_join(
                  "ds4: Metal streaming prefill layer page-in join failed: %s\n",
                  strerror(rc));
      }
@@ -471,7 +504,7 @@ index 633a3cf..5879dfa 100644
  }
  
  typedef struct {
-@@ -23501,6 +23582,15 @@ static bool g_metal_graph_selected_async_load_has_job = false;
+@@ -23501,6 +23615,15 @@ static bool g_metal_graph_selected_async_load_has_job = false;
  static bool g_metal_graph_selected_async_load_done = false;
  static metal_graph_selected_async_load g_metal_graph_selected_async_load_job;
  
@@ -487,7 +520,7 @@ index 633a3cf..5879dfa 100644
  static void metal_graph_selected_async_load_run(
          metal_graph_selected_async_load *job) {
      job->ok = false;
-@@ -42215,6 +42305,7 @@ typedef enum {
+@@ -42215,6 +42338,7 @@ typedef enum {
  } ds4_vision_kind;
  
  struct ds4_engine {
@@ -495,7 +528,7 @@ index 633a3cf..5879dfa 100644
      char *model_path;
      uint64_t ds41_session_bytes;
      ds4_model model;
-@@ -59886,6 +59977,7 @@ typedef struct {
+@@ -59886,6 +60010,7 @@ typedef struct {
  } ds4_vision_identity;
  
  struct ds4_session {
@@ -503,7 +536,7 @@ index 633a3cf..5879dfa 100644
      ds4_engine *engine;
      ds4_dist_session *distributed;
      uint64_t tp_session_id;
-@@ -72190,10 +72282,22 @@ fail:
+@@ -72190,10 +72315,22 @@ fail:
  #endif
  }
  
@@ -528,7 +561,7 @@ index 633a3cf..5879dfa 100644
      ds4_tp_detach_slab(e->tp.ctx);
  #ifdef __APPLE__
      g_tp_block_ctx = NULL;
-@@ -72218,6 +72322,11 @@ void ds4_engine_tp_unbind(ds4_engine *e) {
+@@ -72218,6 +72355,11 @@ void ds4_engine_tp_unbind(ds4_engine *e) {
  #else
      (void)e;
  #endif
@@ -540,7 +573,7 @@ index 633a3cf..5879dfa 100644
  }
  
  bool ds4_engine_is_glm_dsa(ds4_engine *e) {
-@@ -72230,13 +72339,24 @@ bool ds4_engine_is_deepseek41(ds4_engine *e) {
+@@ -72230,13 +72372,24 @@ bool ds4_engine_is_deepseek41(ds4_engine *e) {
      return DS4_MODEL_FAMILY == DS4_MODEL_FAMILY_DEEPSEEK41;
  }
  
@@ -569,7 +602,7 @@ index 633a3cf..5879dfa 100644
      if (e->mtp_model.map) model_close(&e->mtp_model);
      if (e->vision_model.map) model_close(&e->vision_model);
      model_close(&e->model);
-@@ -72253,6 +72373,11 @@ void ds4_engine_close(ds4_engine *e) {
+@@ -72253,6 +72406,11 @@ void ds4_engine_close(ds4_engine *e) {
      free(e->directional_steering_file);
      free(e->model_path);
      free(e);
@@ -581,7 +614,7 @@ index 633a3cf..5879dfa 100644
  }
  
  #ifndef DS4_NO_GPU
-@@ -72814,24 +72939,34 @@ int ds4_session_create(ds4_session **out, ds4_engine *e, int ctx_size) {
+@@ -72814,24 +72972,34 @@ int ds4_session_create(ds4_session **out, ds4_engine *e, int ctx_size) {
  #endif
  }
  
@@ -626,7 +659,7 @@ index 633a3cf..5879dfa 100644
  #ifndef DS4_NO_GPU
      ds4_session_print_dspark_stats(s);
  #endif
-@@ -72882,6 +73017,11 @@ void ds4_session_free(ds4_session *s) {
+@@ -72882,6 +73050,11 @@ void ds4_session_free(ds4_session *s) {
      free(s->dspark_conf_features);
  #endif
      free(s);
