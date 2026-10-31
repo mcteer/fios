@@ -41,6 +41,7 @@ final class StudioOpenTelemetryTests:XCTestCase {
         XCTAssertEqual(memory.unit,"By")
         XCTAssertEqual((memory.data.points as! [DoublePointData]).first!.value,512)
         XCTAssertFalse(metrics.contains{$0.name=="fios.platform.vm.memory.available" && !$0.data.points.isEmpty})
+        XCTAssertFalse(metrics.contains{$0.name=="fios.platform.vm.sample.time" && !$0.data.points.isEmpty})
         telemetry.resources(ResourceSample(sampledAt:HostResources.nowMilliseconds(),physical:1024,available:nil,
                                            vmAvailable:nil,diskFree:4096,cpu:nil,pressure:.unknown,thermal:.nominal))
         let unavailable=telemetry.collectMetrics()
@@ -60,13 +61,17 @@ final class StudioOpenTelemetryTests:XCTestCase {
         let telemetry=StudioOpenTelemetry(),now=HostResources.nowMilliseconds()
         telemetry.resources(ResourceSample(sampledAt:now,physical:1024,available:512,
                                            vmAvailable:256,diskFree:4096,cpu:25,pressure:.normal,thermal:.nominal,
-                                           vmSampledAt:now))
+                                           vmSampledAt:now-1000))
         let vm=try XCTUnwrap(telemetry.collectMetrics().first{$0.name=="fios.platform.vm.memory.available"})
         XCTAssertEqual((vm.data.points as! [DoublePointData]).first!.value,256)
+        let clock=try XCTUnwrap(telemetry.collectMetrics().first{$0.name=="fios.platform.vm.sample.time"})
+        XCTAssertEqual(clock.unit,"s")
+        XCTAssertEqual((clock.data.points as! [DoublePointData]).first!.value,Double(now-1000)/1000)
         telemetry.resources(ResourceSample(sampledAt:now,physical:1024,available:512,
                                            vmAvailable:256,diskFree:4096,cpu:25,pressure:.normal,thermal:.nominal,
                                            vmSampledAt:now-6000))
         XCTAssertFalse(telemetry.collectMetrics().contains{$0.name=="fios.platform.vm.memory.available" && !$0.data.points.isEmpty})
+        XCTAssertFalse(telemetry.collectMetrics().contains{$0.name=="fios.platform.vm.sample.time" && !$0.data.points.isEmpty})
     }
 
     func testGPUAndHostConditionMetrics() throws {

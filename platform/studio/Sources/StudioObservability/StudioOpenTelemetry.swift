@@ -89,6 +89,11 @@ public final class StudioOpenTelemetry:PlatformTelemetry,@unchecked Sendable {
             ("fios.platform.vm.memory.available","By",{sample in
                 guard let time=sample.vmSampledAt,(-1000...5000).contains(HostResources.nowMilliseconds()-time) else {return nil}
                 return sample.vmAvailable.map{Double($0)}
+            }),
+            ("fios.platform.vm.sample.time","s",{sample in
+                guard sample.vmAvailable != nil,let time=sample.vmSampledAt,
+                      (-1000...5000).contains(HostResources.nowMilliseconds()-time) else {return nil}
+                return Double(time)/1000
             })
         ]
         for (name,unit,value) in metrics {
