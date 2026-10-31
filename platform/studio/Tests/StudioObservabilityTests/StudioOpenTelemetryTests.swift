@@ -11,6 +11,26 @@ private final class RecordedLogs:LogRecordProcessor {
 }
 
 final class StudioOpenTelemetryTests:XCTestCase {
+    func testSupervisorMetricsAndLogsHaveTheirOwnServiceResource() throws {
+        let logs=RecordedLogs(),telemetry=StudioOpenTelemetry(service:.supervisor,logProcessors:[logs])
+        let now=HostResources.nowMilliseconds()
+        telemetry.event(.started)
+        telemetry.supervisor(PlatformSupervisorSample(state:.running,starts:1,sampledAt:now))
+        func metric(_ name:String)throws->MetricData {try XCTUnwrap(telemetry.collectMetrics().first{$0.name==name})}
+        let state=try metric("fios.platform.supervisor.state")
+        XCTAssertEqual(state.resource.attributes["service.name"],.string("fios-studio-supervisor"))
+        XCTAssertEqual((state.data.points as! [DoublePointData]).first?.attributes["fios.supervisor.state"],.string("running"))
+        let starts=try metric("fios.platform.supervisor.starts")
+        XCTAssertEqual(starts.unit,"{start}")
+        XCTAssertEqual((starts.data.points as! [DoublePointData]).first?.value,1)
+        XCTAssertEqual((try metric("fios.platform.supervisor.sample.time").data.points as! [DoublePointData]).first?.value,Double(now)/1000)
+        XCTAssertEqual(logs.records.first?.resource,state.resource)
+        telemetry.supervisor(PlatformSupervisorSample(state:.recovering,starts:1,sampledAt:now))
+        XCTAssertEqual((try metric("fios.platform.supervisor.state").data.points as! [DoublePointData]).first?.attributes["fios.supervisor.state"],.string("recovering"))
+        telemetry.supervisor(PlatformSupervisorSample(state:.recovering,starts:1,sampledAt:now-6000))
+        XCTAssertFalse(telemetry.collectMetrics().contains{$0.name=="fios.platform.supervisor.state" && !$0.data.points.isEmpty})
+    }
+
     func testResourceDistinguishesHostAndManagerInstance() throws {
         let logs=RecordedLogs(),telemetry=StudioOpenTelemetry(logProcessors:[logs])
         telemetry.event(.started)

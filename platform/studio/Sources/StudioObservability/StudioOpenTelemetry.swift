@@ -3,6 +3,10 @@ import StudioCore
 import OpenTelemetryApi
 import OpenTelemetrySdk
 
+public enum StudioTelemetryService:String,Sendable {
+    case manager="fios-studio-manager",supervisor="fios-studio-supervisor"
+}
+
 private final class ResourceMetrics:@unchecked Sendable {
     let lock=NSLock()
     var sample:ResourceSample?
@@ -11,6 +15,14 @@ private final class ResourceMetrics:@unchecked Sendable {
     var workload:PlatformWorkloadSample?
     var services:[PlatformServiceSample]=[]
     var nativeIngress:PlatformNativeIngressSample?
+    var supervisor:PlatformSupervisorSample?
+    func updateSupervisor(_ value:PlatformSupervisorSample?) {lock.lock();supervisor=value;lock.unlock()}
+    func currentSupervisor()->PlatformSupervisorSample? {
+        lock.lock();defer {lock.unlock()}
+        guard let supervisor,(0...WireScalar.maximumTimestamp).contains(supervisor.sampledAt),
+              (-1000...5000).contains(HostResources.nowMilliseconds()-supervisor.sampledAt) else {return nil}
+        return supervisor
+    }
     func update(_ value:ResourceSample) {lock.lock();sample=value;lock.unlock()}
     func updateGPU(_ value:GPUSample?,sampledAt:Int64?) {lock.lock();gpu=value;gpuAt=sampledAt;lock.unlock()}
     func currentGPU()->(sample:GPUSample,sampledAt:Int64)? {
@@ -74,8 +86,8 @@ public final class StudioOpenTelemetry:PlatformTelemetry,@unchecked Sendable {
     private let logger:any OpenTelemetryApi.Logger
     private let events:LongCounterSdk
 
-    public init(metricReader:(any MetricReader)?=nil,logProcessors:[any LogRecordProcessor]=[]) {
-        let resource=Resource(attributes:["service.name":.string("fios-studio-manager"),"service.namespace":.string("fios"),
+    public init(service:StudioTelemetryService = .manager,metricReader:(any MetricReader)?=nil,logProcessors:[any LogRecordProcessor]=[]) {
+        let resource=Resource(attributes:["service.name":.string(service.rawValue),"service.namespace":.string("fios"),
             "host.name":.string(ProcessInfo.processInfo.hostName),
             "service.instance.id":.string(UUID().uuidString.lowercased())])
         let builder=MeterProviderSdk.builder().setResource(resource:resource).registerMetricReader(reader:reader)
@@ -87,6 +99,17 @@ public final class StudioOpenTelemetry:PlatformTelemetry,@unchecked Sendable {
         let meter=provider.meterBuilder(name:"fios.studio").build()
         events=meter.counterBuilder(name:"fios.platform.events").setUnit("{event}").setDescription("Operational platform events").build()
         let state=self.state
+        _=meter.gaugeBuilder(name:"fios.platform.supervisor.state").setUnit("1").buildWithCallback { observation in
+            if let sample=state.currentSupervisor() {
+                observation.record(value:1,attributes:["fios.supervisor.state":.string(sample.state.rawValue)])
+            }
+        }
+        _=meter.gaugeBuilder(name:"fios.platform.supervisor.starts").setUnit("{start}").buildWithCallback { observation in
+            if let sample=state.currentSupervisor() {observation.record(value:Double(sample.starts))}
+        }
+        _=meter.gaugeBuilder(name:"fios.platform.supervisor.sample.time").setUnit("s").buildWithCallback { observation in
+            if let sample=state.currentSupervisor() {observation.record(value:Double(sample.sampledAt)/1000)}
+        }
         let metrics:[(String,String,(ResourceSample)->Double?)]=[
             ("fios.platform.host.cpu.utilization","1",{$0.cpu.map{$0/100}}),
             ("fios.platform.host.memory.physical","By",{Double($0.physical)}),
@@ -217,6 +240,7 @@ public final class StudioOpenTelemetry:PlatformTelemetry,@unchecked Sendable {
     public func workload(_ sample:PlatformWorkloadSample?) {state.updateWorkload(sample)}
     public func services(_ samples:[PlatformServiceSample]) {state.updateServices(samples)}
     public func nativeIngress(_ sample:PlatformNativeIngressSample?) {state.updateNativeIngress(sample)}
+    public func supervisor(_ sample:PlatformSupervisorSample?) {state.updateSupervisor(sample)}
     public func collectMetrics()->[MetricData] {reader.collect()}
     deinit {_ = reader.shutdown()}
 }

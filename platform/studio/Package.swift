@@ -22,7 +22,7 @@ let package = Package(
             .product(name:"OpenTelemetrySdk",package:"opentelemetry-swift-core")]),
         .executableTarget(name: "StudioManager", dependencies: ["StudioCore","StudioObservability"]),
         .executableTarget(name: "StudioCLI", dependencies: ["StudioCore"]),
-        .executableTarget(name: "StudioSupervisor", dependencies: ["StudioCore"]),
+        .executableTarget(name: "StudioSupervisor", dependencies: ["StudioCore","StudioObservability"]),
         .executableTarget(name: "StudioSession", dependencies: ["StudioCore"]),
         .testTarget(name:"StudioObservabilityTests",dependencies:["StudioObservability","StudioCore",
             .product(name:"OpenTelemetrySdk",package:"opentelemetry-swift-core")]),

@@ -22,11 +22,12 @@ private final class CapturedTelemetry:PlatformTelemetry,@unchecked Sendable {
     let destination:URL
     private var nativeClocks:[String:Any]?
     var instrumentation:String {sdk.instrumentation}
-    init(destination:URL) {
+    init(destination:URL,service:StudioTelemetryService = .manager) {
         let logs=CapturedLogs();self.logs=logs;self.destination=destination
-        sdk=StudioOpenTelemetry(logProcessors:[logs])
+        sdk=StudioOpenTelemetry(service:service,logProcessors:[logs])
     }
     func resources(_ sample:ResourceSample) {sdk.resources(sample)}
+    func supervisor(_ sample:PlatformSupervisorSample?) {sdk.supervisor(sample);capture()}
     func gpu(_ sample:GPUSample?,sampledAt:Int64?) {sdk.gpu(sample,sampledAt:sampledAt)}
     func event(_ event:OperationalEvent) {sdk.event(event);capture()}
     func nativeIngress(_ sample:PlatformNativeIngressSample?) {

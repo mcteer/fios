@@ -2,7 +2,7 @@ import Foundation
 import Darwin
 
 public enum SupervisorRuntime {
-    public static func run(directory:URL,manager:URL) throws {
+    public static func run(directory:URL,manager:URL,telemetry:any PlatformTelemetry=NoopPlatformTelemetry()) throws {
         guard geteuid() != 0 else { throw ControlError.unauthorized }
         umask(0o077)
         try FileManager.default.createDirectory(at:directory,withIntermediateDirectories:true,attributes:[.posixPermissions:0o700])
@@ -21,6 +21,8 @@ public enum SupervisorRuntime {
         if let stored=try SupervisorRestartBudget.read(directory:directory) {
             policy=try stored.policy(currentBoot:boot)
         }
+        telemetry.event(.started)
+        defer {telemetry.supervisor(nil);telemetry.event(.stopped)}
         var child:Process?
         defer {
             if let child, child.isRunning {
@@ -31,8 +33,8 @@ public enum SupervisorRuntime {
                 child.waitUntilExit()
             }
         }
-        var state="starting"
-        var publishedState:String?
+        var state=PlatformSupervisorState.starting
+        var publishedState:PlatformSupervisorState?
         var publishedStarts:Int?
         var publishedAt:Int64 = -1000
         let termination=Termination()
@@ -57,17 +59,22 @@ public enum SupervisorRuntime {
                 let next=Process(); next.executableURL=manager; next.arguments=["--state",directory.path]
                 next.environment=["PATH":"/usr/bin:/bin","LANG":"C"]
                 next.standardInput=FileHandle.nullDevice; next.standardOutput=FileHandle.nullDevice; next.standardError=FileHandle.nullDevice
-                do { try next.run(); child=next; state="running" } catch { child=nil; state="degraded" }
-            case .terminate: child?.terminate(); state="recovering"
-            case .kill: if let child, child.isRunning { kill(child.processIdentifier,SIGKILL) }
-            case .degraded: state="degraded"
+                do {try next.run();child=next;state = .running;telemetry.event(.reconciled)}
+                catch {child=nil;state = .degraded;telemetry.event(.rejected)}
+            case .terminate: child?.terminate();state = .recovering;telemetry.event(.revoked)
+            case .kill: if let child, child.isRunning {kill(child.processIdentifier,SIGKILL);telemetry.event(.revoked)}
+            case .degraded:
+                if state != .degraded {telemetry.event(.rejected)}
+                state = .degraded
             case .observe: break
             }
             // Keep 250ms watchdog polling, but unchanged telemetry needs only
             // 1s durability (reader freshness is 5s). Publish every transition.
             if state != publishedState || policy.startHistory.count != publishedStarts || now-publishedAt >= 1000 {
-                let status:[String:Any] = ["version":1,"boot":boot,"pid":getpid(),"process_start":birth,"state":state,"starts":policy.startHistory.count,"sampled_uptime_ms":now]
+                let sampledAt=HostResources.nowMilliseconds()
+                let status:[String:Any] = ["version":1,"boot":boot,"pid":getpid(),"process_start":birth,"state":state.rawValue,"starts":policy.startHistory.count,"sampled_uptime_ms":now]
                 try AtomicState.write(JSONSerialization.data(withJSONObject:status),to:directory.appendingPathComponent("supervisor.json"))
+                telemetry.supervisor(PlatformSupervisorSample(state:state,starts:policy.startHistory.count,sampledAt:sampledAt))
                 publishedState=state;publishedStarts=policy.startHistory.count;publishedAt=now
             }
             }

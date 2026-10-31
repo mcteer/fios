@@ -13,6 +13,7 @@ public protocol PlatformTelemetry:Sendable {
     func workload(_ sample:PlatformWorkloadSample?)
     func services(_ samples:[PlatformServiceSample])
     func nativeIngress(_ sample:PlatformNativeIngressSample?)
+    func supervisor(_ sample:PlatformSupervisorSample?)
 }
 
 public struct NoopPlatformTelemetry:PlatformTelemetry {
@@ -39,6 +40,17 @@ public struct PlatformServiceSample:Sendable {
 public extension PlatformTelemetry {
     func services(_ samples:[PlatformServiceSample]) {}
     func nativeIngress(_ sample:PlatformNativeIngressSample?) {}
+    func supervisor(_ sample:PlatformSupervisorSample?) {}
+}
+
+public enum PlatformSupervisorState:String,Sendable {case starting,running,recovering,degraded}
+public struct PlatformSupervisorSample:Sendable {
+    public let state:PlatformSupervisorState
+    public let starts:Int
+    public let sampledAt:Int64
+    public init(state:PlatformSupervisorState,starts:Int,sampledAt:Int64) {
+        self.state=state;self.starts=starts;self.sampledAt=sampledAt
+    }
 }
 
 enum ServiceTelemetry {
