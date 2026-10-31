@@ -89,8 +89,10 @@ def audit(path, expected):
                     for member in layer:
                         entries += 1
                         require(entries <= 200000)
+                        if member.name == '.' and member.isdir():
+                            continue  # Conventional root directory marker, no runtime file.
                         name = member.name.removeprefix('./').rstrip('/')
-                        require(name and not name.startswith('/') and '..' not in name.split('/'))
+                        require(name and not name.startswith('/') and not any(p in ('', '.', '..') for p in name.split('/')))
                         require(not any(p.startswith('.wh.') for p in name.split('/')))
                         selected = name.startswith(ROOTS) or name in ('bin', 'lib', 'lib64', 'bin/cat', 'usr/bin/cat')
                         if not selected:
@@ -99,6 +101,7 @@ def audit(path, expected):
                         # which runtime bytes survived a whiteout/opaque directory.
                         require(not any(p.startswith('.wh.') for p in name.split('/')))
                         require(member.isfile() or member.isdir() or member.issym() or member.islnk())
+                        require(member.sparse is None)
                         item = {'mode': member.mode, 'kind': 'directory'}
                         if member.isfile():
                             require(member.size <= 512 << 20)
