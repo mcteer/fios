@@ -76,7 +76,9 @@ final class TaskCommands {
                       try !journal.sandboxRecords().contains(where:{$0.configuration.job==id}) else {throw TaskCommandError.unauthorized}
             }
             if phase=="begin" {
-                try exact(["phase","idempotency","kind","length","sha256","lifetime","model","image","memory","cpus"])
+                var fields:Set<String>=["phase","idempotency","kind","length","sha256","lifetime","model","image","memory","cpus"]
+                if value["workspace"] != nil {fields.insert("workspace")}
+                try exact(fields)
                 guard let key=value["idempotency"] as? String,UUID(uuidString:key)?.uuidString.lowercased()==key,
                       let kind=value["kind"] as? String,["sandbox","model"].contains(kind),
                       let length=integer(value["length"]),length<=4<<20,let hash=value["sha256"] as? String,
@@ -102,13 +104,18 @@ final class TaskCommands {
                 let transfer=try ChunkTransfer(length:Int(length),sha256:hash,created:now,kind:.input)
                 let job:DurableJob
                 if kind=="model" {
-                    guard let model,value["image"] is NSNull,memory==0,cpus==0 else {throw TaskCommandError.invalid_request}
+                    guard let model,value["image"] is NSNull,memory==0,cpus==0,value["workspace"]==nil else {throw TaskCommandError.invalid_request}
                     job=try tasks.reserveModelUpload(owner:owner,idempotency:key,requestHash:requestHash,binding:model,nativeCapacityProven:nativeCapacityProven,lifetime:lifetime,sample:sample,admission:&admission,now:now)
                 } else {
                     guard let image=value["image"] as? String,approvedImages.contains(image) else {throw TaskCommandError.invalid_request}
+                    let workspace:Int64
+                    if let supplied=value["workspace"] {
+                        guard let size=integer(supplied),size>0,size<=256<<20 else {throw TaskCommandError.invalid_request}
+                        workspace=size
+                    }else {workspace=128<<20}
                     try ModelBroker.restoreReservations(journal:journal,admission:&admission)
                     let id=UUID().uuidString.lowercased()
-                    let config=try SandboxConfiguration(job:id,nonce:nonce(),image:image,memory:UInt64(memory),cpus:Int(cpus))
+                    let config=try SandboxConfiguration(job:id,nonce:nonce(),image:image,memory:UInt64(memory),cpus:Int(cpus),workspace:UInt64(workspace))
                     try admission.reserve(job:id,memory:config.memory,cpus:config.cpus,sample:sample,now:now)
                     let proposed=try DurableJob(id:id,idempotency:key,ownerHash:owner,requestHash:requestHash,created:now,lifetime:lifetime)
                     do {_=try journal.reserveSandbox(job:proposed,configuration:config);job=proposed}

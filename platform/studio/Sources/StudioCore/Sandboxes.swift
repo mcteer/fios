@@ -7,22 +7,40 @@ public struct SandboxConfiguration: Codable, Sendable, Equatable {
     public let image: String
     public let memory: UInt64
     public let cpus: Int
+    public let workspace: UInt64
     public var name: String { "fios-sandbox-" + job }
 
-    public init(job: String, nonce: String, image: String, memory: UInt64, cpus: Int) throws {
+    public init(job: String, nonce: String, image: String, memory: UInt64, cpus: Int, workspace:UInt64 = 128<<20) throws {
         guard let uuid = UUID(uuidString:job), uuid.uuidString.lowercased() == job,
               nonce.utf8.count == 64, nonce.utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }),
               image.hasPrefix("sha256:"), image.utf8.count == 71,
               image.dropFirst(7).utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }),
-              memory >= 512 << 20, memory <= 2 << 30, (1...2).contains(cpus)
+              memory >= 512 << 20, memory <= 2 << 30, (1...2).contains(cpus),
+              workspace>0,workspace<=256<<20
         else { throw RuntimeError.invalid }
         self.job=job; self.nonce=nonce; self.image=image; self.memory=memory; self.cpus=cpus
+        self.workspace=workspace
+    }
+    private enum CodingKeys:String,CodingKey {case job,nonce,image,memory,cpus,workspace}
+    public init(from decoder:any Decoder)throws {
+        let values=try decoder.container(keyedBy:CodingKeys.self)
+        try self.init(job:values.decode(String.self,forKey:.job),nonce:values.decode(String.self,forKey:.nonce),
+                      image:values.decode(String.self,forKey:.image),memory:values.decode(UInt64.self,forKey:.memory),
+                      cpus:values.decode(Int.self,forKey:.cpus),
+                      workspace:values.contains(.workspace) ? values.decode(UInt64.self,forKey:.workspace):128<<20)
+    }
+    public func encode(to encoder:any Encoder)throws {
+        var values=encoder.container(keyedBy:CodingKeys.self)
+        try values.encode(job,forKey:.job);try values.encode(nonce,forKey:.nonce);try values.encode(image,forKey:.image)
+        try values.encode(memory,forKey:.memory);try values.encode(cpus,forKey:.cpus)
+        // Preserve the historical default configuration representation.
+        if workspace != 128<<20 {try values.encode(workspace,forKey:.workspace)}
     }
     public var createArguments: [String] {
         ["create","--name",name,"--pull=never","--network=none","--read-only",
          "--user=65532:65532","--cap-drop=ALL","--security-opt=no-new-privileges:true",
          "--pids-limit=64","--memory=\(memory)","--memory-swap=\(memory)","--cpus=\(cpus)",
-         "--tmpfs=/workspace:rw,nosuid,nodev,size=134217728,mode=0700,uid=65532,gid=65532",
+         "--tmpfs=/workspace:rw,nosuid,nodev,size=\(workspace),mode=0700,uid=65532,gid=65532",
          "--tmpfs=/tmp:rw,noexec,nosuid,nodev,size=67108864,mode=1777",
          "--log-driver=none","--label","fios.platform.job=\(job)",
          "--label","fios.platform.nonce=\(nonce)","--interactive",image]

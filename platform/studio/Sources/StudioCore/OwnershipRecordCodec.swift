@@ -25,9 +25,11 @@ enum OwnershipRecordCodec {
     static func sandbox(_ data:Data)throws->SandboxRecord {
         do {
             let root=try object(data,maximum:4096,allowed:["configuration","runtimeID","createIssued","startIssued","removalProven"],required:["configuration","createIssued","startIssued","removalProven"])
-            guard let configuration=root["configuration"] as? [String:Any],Set(configuration.keys)==Set(["job","nonce","image","memory","cpus"]) else {throw JournalError.invalid}
+            let required:Set<String>=["job","nonce","image","memory","cpus"]
+            guard let configuration=root["configuration"] as? [String:Any],required.isSubset(of:Set(configuration.keys)),
+                  Set(configuration.keys).isSubset(of:required.union(["workspace"])) else {throw JournalError.invalid}
             let record=try JSONDecoder().decode(SandboxRecord.self,from:data),c=record.configuration
-            _=try SandboxConfiguration(job:c.job,nonce:c.nonce,image:c.image,memory:c.memory,cpus:c.cpus)
+            _=try SandboxConfiguration(job:c.job,nonce:c.nonce,image:c.image,memory:c.memory,cpus:c.cpus,workspace:c.workspace)
             if let id=record.runtimeID {guard id.utf8.count==64,id.utf8.allSatisfy({(48...57).contains($0)||(97...102).contains($0)}) else {throw JournalError.invalid}}
             return record
         } catch {throw JournalError.invalid}

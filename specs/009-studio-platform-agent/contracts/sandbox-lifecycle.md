@@ -16,9 +16,17 @@
 | Task output/export |16MiB/job |Explicit bounded byte stream; no arbitrary filesystem traversal |
 | Images |Approved cached arm64 digest |No runtime pull/build, mutable tag or unapproved entrypoint |
 
+The optional sandbox `job.create` begin field `workspace` selects positive bytes up to256MiB, default128MiB. The manager persists that selection before creation and emits the corresponding fixed tmpfs argument; it does not increase container memory or VM capacity. Default records retain their original five-field configuration encoding. Non-default records add `workspace`; current recovery preserves it, while older tools that do not recognize that optional configuration field refuse it. Rollback must use the retained backup produced for the chosen older tool, rather than downgrading the current journal.
+
 Memory admission requires fresh normal pressure and known thermal state below serious, verified VM remaining capacity and system available memory sufficient for `max(16GiB,20% physical RAM)` native headroom **plus all full outstanding sandbox and512MiB/model-worker reservations plus the new reservation**. Treat this conservative double-counting as deliberate: do not reclaim a reservation merely because a sampled usage figure includes it. Missing critical measurements or unknown preparing work reject; GPU may be unsupported with an explicit reason and is never an idle proxy. Disk requires≥10GiB free after bounded retained export commitments. The trusted resource snapshot keeps raw `diskFree` separate from `diskCommitted`: all full retained export bytes (including ready/failed/pending records) plus queued publication declarations are charged before admission and preserved across VM refresh. Ready bytes remain conservatively charged until proven retention cleanup because a recent filesystem sample can predate publication; already allocated ready bytes may therefore be double-counted deliberately. Publication also performs its own fresh free-space check. Never derive these commitments from task-supplied measurements. Preserve existing VM limits; do not raise them.
 
 The native resource envelope must be established at enrollment; external/unmanaged allocation cannot be globally controlled by this manager. Document remaining host-wide pressure risk, reserve margin and enforce sandbox caps; do not promise immunity to arbitrary unrelated allocations. If memory pressure warns/criticals, thermal reaches serious, VM capacity is exhausted or critical telemetry is lost, stop new admissions and revoke/stop newest owned sandbox first until policy is safe; never unload or kill native inference to reclaim resources. Pressure/cap-loss is observed on the2s cycle and starts revocation within the next cycle. Model-only jobs are separately capped at2/host and native worker memory is reserved/reaped under the model-access contract; the2-sandbox limit is not an exemption for unlimited platform tasks.
+
+An ordinary source-only request→journal→reopen check runs both Debug and optimized builds without Docker or model calls:
+
+```sh
+node scripts/check-platform-workspace.mjs --isolated
+```
 
 ## Isolation and mediated model channel
 
