@@ -10,6 +10,7 @@ public protocol PlatformTelemetry:Sendable {
     func event(_ event:OperationalEvent)
     func resources(_ sample:ResourceSample)
     func gpu(_ sample:GPUSample?,sampledAt:Int64?)
+    func workload(_ sample:PlatformWorkloadSample?)
 }
 
 public struct NoopPlatformTelemetry:PlatformTelemetry {
@@ -18,4 +19,5 @@ public struct NoopPlatformTelemetry:PlatformTelemetry {
     public func event(_ event:OperationalEvent) {}
     public func resources(_ sample:ResourceSample) {}
     public func gpu(_ sample:GPUSample?,sampledAt:Int64?) {}
+    public func workload(_ sample:PlatformWorkloadSample?) {}
 }

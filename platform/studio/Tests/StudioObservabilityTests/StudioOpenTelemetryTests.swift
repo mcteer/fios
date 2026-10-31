@@ -98,4 +98,33 @@ final class StudioOpenTelemetryTests:XCTestCase {
         }
     }
 
+    func testWorkloadMetricsUseJournalAggregates() throws {
+        let directory=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer {try? FileManager.default.removeItem(at:directory)}
+        let journal=try Journal(directory:directory),now=HostResources.nowMilliseconds()
+        let id=UUID().uuidString.lowercased()
+        _=try journal.reserveJob(DurableJob(id:id,idempotency:UUID().uuidString.lowercased(),
+            ownerHash:String(repeating:"a",count:64),requestHash:String(repeating:"b",count:64),created:now))
+        try journal.transitionJob(id:id,to:.running,now:now)
+        // Local metadata only; no worker starts and no model request is sent.
+        try journal.claim(job:id,attempt:0,model:"fixture/model",requestID:UUID().uuidString.lowercased())
+        _=try journal.planWorkerLaunch(job:id,attempt:0)
+        try journal.markUncertain(job:id,attempt:0)
+        let sample=try XCTUnwrap(WorkloadTelemetry.sample(journal:journal,artifactBytes:2048,artifactJobs:1,now:now))
+        XCTAssertEqual(sample.jobs[.running],1);XCTAssertEqual(sample.unresolvedRecords,1)
+        XCTAssertEqual(sample.uncertainRecords,1);XCTAssertEqual(sample.workerReservations,1)
+        let telemetry=StudioOpenTelemetry();telemetry.workload(sample)
+        let metrics=telemetry.collectMetrics()
+        let jobs=try XCTUnwrap(metrics.first{$0.name=="fios.platform.jobs"})
+        let points=jobs.data.points as! [DoublePointData]
+        XCTAssertEqual(points.count,JobState.allCases.count)
+        XCTAssertEqual(points.first{$0.attributes["fios.job.state"] == .string("running")}?.value,1)
+        let unresolved=try XCTUnwrap(metrics.first{$0.name=="fios.platform.inference.unresolved_records"})
+        XCTAssertEqual((unresolved.data.points as! [DoublePointData]).first!.value,1)
+        let bytes=try XCTUnwrap(metrics.first{$0.name=="fios.platform.artifacts.size"})
+        XCTAssertEqual(bytes.unit,"By");XCTAssertEqual((bytes.data.points as! [DoublePointData]).first!.value,2048)
+        telemetry.workload(nil)
+        XCTAssertFalse(telemetry.collectMetrics().contains{$0.name=="fios.platform.jobs" && !$0.data.points.isEmpty})
+    }
+
 }

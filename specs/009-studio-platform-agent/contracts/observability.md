@@ -8,6 +8,20 @@ The SDK emits structured logs for the six fixed operational event names and a cu
 
 Additional SDK gauges cover the readings already collected by the manager: `fios.platform.gpu.utilization` (fraction, unit1), GPU memory `.in_use`/`.allocated` (unitBy), and `fios.platform.gpu.sample.time` (original Unix seconds). GPU values use their own collection time, independently of the host/VM sample. `fios.platform.host.power.low` records1/0 only when low-power mode is known. Memory pressure (`fios.platform.host.memory.pressure`) and thermal state (`fios.platform.host.thermal.state`) are one-valued gauges labelled with the fixed `fios.state` enum value; unknown states publish no point. None of these observations establishes GPU idle or allocatable model memory.
 
+Workload gauges are sampled on the same existing2s manager cycle from its own journal and cached artifact statistics:
+
+| Metric | Unit | Meaning |
+| --- | --- | --- |
+| `fios.platform.jobs` | `{job}` | Retained local journal records by fixed `fios.job.state`; includes retained removed-job tombstones |
+| `fios.platform.inference.unresolved_records` | `{record}` | All retained unresolved inference records |
+| `fios.platform.inference.uncertain_records` | `{record}` | The uncertain subset of those records |
+| `fios.platform.workers.reservations` | `{reservation}` | Unreaped worker reservations, including pending startup |
+| `fios.platform.artifacts.size` | `By` | Retained artifact storage bytes |
+| `fios.platform.artifacts.jobs` | `{job}` | Jobs represented in cached artifact storage statistics |
+| `fios.platform.workload.sample.time` | `s` | Original aggregate collection time |
+
+A failed journal query omits the entire workload sample; no additional SQLite instance is opened. Missing or expired samples produce no points. Known zero counts remain zero. These gauges describe retained local records, not live worker/model counts or native completion. They never release a reservation or alter independent inference uncertainty. No job/model/owner IDs or content are included.
+
 No Collector, Prometheus, exporter transport, listener or background export timer is configured or deployed. Metrics are available as actual SDK `MetricData` through `collectMetrics()`; the initializer accepts a standard SDK `MetricReader` and `LogRecordProcessor` implementations for later backend integration. Without such configuration, OTel logs are not delivered externally and cumulative metrics remain in process. The existing audit file supplies durable local event history. Restart resets in-process metrics. This is instrumentation readiness, not end-to-end observability delivery.
 
 A later, separately scoped deployment can select an OTel Collector and Prometheus-compatible backend. It must explicitly configure export, collection and retention; this change does not promise backend availability or create new services. No telemetry is used for service actuation, admission or native idle decisions.

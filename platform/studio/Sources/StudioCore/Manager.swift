@@ -130,6 +130,9 @@ public enum ManagerRuntime {
                 catch ArtifactServiceFailure.capacity {} // Finite I/O slots, retry maintenance next cycle.
                 try journal.expireTerminalJobs(now:timestamp())
                 try journal.recoverWorkerMetadata()
+                let artifactUsage=artifacts.statistics
+                telemetry.workload(WorkloadTelemetry.sample(journal:journal,artifactBytes:artifactUsage.bytes,
+                    artifactJobs:artifactUsage.jobs,now:timestamp()))
                 let body:[String:Any] = ["version":1,"epoch":epoch,"pid":getpid(),"progress":now]
                 try JSONSerialization.data(withJSONObject:body,options:[.sortedKeys]).write(to:progress,options:.atomic)
                 lastHeartbeat=now
