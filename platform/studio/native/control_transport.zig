@@ -116,7 +116,11 @@ pub const Bridge = struct {
             if (count > protocol.lineage_request_size) return;
         } else return;
         var storage: [protocol.lineage_response_size]u8 = undefined;
-        const response: []const u8 = if (count == protocol.request_size) legacy: {
+        const response: []const u8 = if (count == protocol.request_size and input[4] == 3) timestamped: {
+            const value = protocol.dispatchTimestamped(&ownership.shared, self.io, input[0..protocol.request_size], self.barrier);
+            @memcpy(storage[0..protocol.timestamped_response_size], &value);
+            break :timestamped storage[0..protocol.timestamped_response_size];
+        } else if (count == protocol.request_size) legacy: {
             const value = protocol.dispatchWithBarrier(&ownership.shared, self.io, input[0..protocol.request_size], self.barrier);
             @memcpy(storage[0..protocol.response_size], &value);
             break :legacy storage[0..protocol.response_size];

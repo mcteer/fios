@@ -23,3 +23,24 @@ func runNativeControlDiagnosticsTests() throws {
     precondition(diagnostics.summary(now:1300)["state"] as? String == "waiting")
     print("PASS: native-control receipt diagnostics, original receipt time and ordinary source availability")
 }
+
+func runNativeTimestampedControlTests() throws {
+    let now=HostResources.nowMilliseconds()
+    let request=try NativeControlWire.request(operation:.observe,instance:nil,sequence:0,version:3)
+    precondition(request.count==32 && request[4]==3)
+    var reply=Data(repeating:0,count:80)
+    reply.replaceSubrange(0..<4,with:Data("FIR9".utf8));reply[4]=3
+    reply.replaceSubrange(8..<24,with:Array(repeating:UInt8(9),count:16))
+    func write(_ value:UInt64,at:Int) {for index in 0..<8 {reply[at+index]=UInt8(truncatingIfNeeded:value >> (56-index*8))}}
+    write(42,at:64);write(UInt64(now-50),at:72)
+    let value=try NativeControlWire.reply(reply)
+    precondition(value.nativeSampleSequence==42 && value.nativeSampledAt==now-50)
+    var diagnostics=NativeControlDiagnostics(configured:true)
+    diagnostics.completed(value,receivedAt:now)
+    let summary=diagnostics.summary(now:now)
+    precondition(summary["source_sequence"] as? UInt64 == 42 && summary["source_sampled_at"] as? Int64 == now-50)
+    precondition(summary["source_age_ms"] as? Int64 == 50 && summary["receipt_age_ms"] as? Int64 == 0)
+    let capture=diagnostics.capture(now:now)
+    precondition(capture?.instance==value.instance && capture?.sequence==42 && capture?.sampledAt==now-50)
+    print("PASS: timestamped native control decoding preserves source and receipt clocks separately")
+}

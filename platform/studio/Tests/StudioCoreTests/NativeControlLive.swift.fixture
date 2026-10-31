@@ -8,12 +8,12 @@ struct NativeControlLive {
     }
     static func run() throws {
         let args=Array(CommandLine.arguments.dropFirst())
-        if args.count==7,args[0]=="--isolated-manager" {
+        if args.count==7,["--isolated-manager","--isolated-manager-v3"].contains(args[0]) {
             guard args[1].hasPrefix("/tmp/") || args[1].hasPrefix("/private/tmp/"),let pid=Int32(args[6]),pid>1 else {throw NativeControlError.invalid}
             let peer=NativeControlPeer(pid:pid,start:try WorkerResources.startIdentifier(pid:pid),executable:try VerifiedExecutable(path:args[3],sha256:args[4]))
             // args[5] is a fixed source fixture marker, not a role or authority.
             guard args[5]=="source-fixture-only" else {throw NativeControlError.invalid}
-            try ManagerRuntime.run(directory:URL(fileURLWithPath:args[1]),nativeControl:NativeControlClient(path:args[2],peer:peer))
+            try ManagerRuntime.run(directory:URL(fileURLWithPath:args[1]),nativeControl:NativeControlClient(path:args[2],peer:peer,version:args[0]=="--isolated-manager-v3" ? 3:2))
             return
         }
         if args.count==7,args[0]=="--isolated-lineage" {

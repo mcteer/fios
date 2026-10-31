@@ -12,14 +12,14 @@ The manager client additionally authenticates the native socket's UID and kernel
 
 ## Finite binary framing
 
-One request per connection. Client must half-close its write direction. Native waits for EOF before dispatch; truncated, overlong or concatenated frames do not act. Version2 action request32 bytes; response64 bytes (the separate readonly lineage extension below uses64/112 bytes); deadline2s per native connection; one serialized peer, backlog2. Descriptors are nonblocking/CLOEXEC and writes suppress SIGPIPE. There are no subprocesses, paths, argv, credentials, model IDs, force, signal, launch or stop fields.
+One request per connection. Client must half-close its write direction. Native waits for EOF before dispatch; truncated, overlong or concatenated frames do not act. Action request32 bytes; version2 response64 bytes or opt-in version3 response80 bytes (the separate readonly lineage extension below uses64/112 bytes); deadline2s per native connection; one serialized peer, backlog2. Descriptors are nonblocking/CLOEXEC and writes suppress SIGPIPE. There are no subprocesses, paths, argv, credentials, model IDs, force, signal, launch or stop fields.
 
 Request (big endian integers):
 
 | Offset | Bytes | Meaning |
 |---|---:|---|
 |0|4|ASCII `FIC9`|
-|4|1|version2 (development-only; old version refused)|
+|4|1|version2 or3 (development-only)|
 |5|1|opcode0 observe,1 pause ingress,2 resume ingress,3 partial MLX owner-stream probe|
 |6|2|zero reserved|
 |8|8|pause sequence; zero except resume/owner probe, which require the exact current nonzero sequence|
@@ -30,7 +30,7 @@ Response:
 | Offset | Bytes | Meaning |
 |---|---:|---|
 |0|4|ASCII `FIR9`|
-|4|1|version2|
+|4|1|echo version2 or3|
 |5|1|echo opcode|
 |6|1|status0 ok,1 invalid,2 already-maintaining/refused pause,3 wrong instance|
 |7|1|zero reserved|
@@ -48,6 +48,15 @@ Response:
 |59|1|zero reserved|
 |60|4|synchronized MLX streams,0–256; zero unless outcome1|
 
+Version3 appends source capture metadata to the same64-byte base reply:
+
+| Offset | Bytes | Meaning |
+|---|---:|---|
+|64|8|native tracker capture sequence, independent of request/pause sequence|
+|72|8|source capture start time, Unix UTC milliseconds; `UINT64_MAX` means unavailable|
+
+The source reads its real clock immediately before taking the final coherent tracker snapshot. Serialization and receipt do not refresh that time. The existing native client defaults to version2 for compatibility; trusted source fixtures may explicitly select version3. There is no protocol fallback/retry. Activity export forwards the actual source instance/sequence/time only while the received metadata remains current, with coverage still unknown.
+
 Manager decoding rejects unknown/coerced/inconsistent/bounded-count/padding/length/source identities. Its typed `NativeIngressStatus` is deliberately not `NativeSnapshot`; activity is always unknown. Responses have no complete-coverage/device-terminal field.
 
 ## Maintenance and restart
@@ -56,7 +65,7 @@ Native pause shares the request reservation mutex, prevents new ingress, and let
 
 The manager persists explicit operator desired state before emitting native work. An absent desired row is not authority to reopen a fence. One off-loop worker owns at most one connection/result, hashes/authenticates before sending and never retries or falls back. Desired changes during an operation are reconciled against the latest durable intent. Lost outcomes become unknown; subsequent reconciliation observes native truth instead of replaying the uncertain action. A manager restart can recover a native-held pause using authenticated observation. Task/observer sockets cannot change desired service state.
 
-Confirmed closed/open ingress never means native service stopped/running, registry quiet, no external owners, device complete or inference uncertainty cleared. Lifecycle `applied` remains false; native activity and task admission remain unsupported. Ordinary stop/restart still requires an enrolled atomic registry/device-owner reservation and separate scope-bound lifecycle executor. The local operator transport adds no force bypass.
+Confirmed closed/open ingress never means native service stopped/running, registry quiet, no external owners, device complete or inference uncertainty cleared. Lifecycle `applied` remains false; activity is unknown for a configured adapter and unsupported when unconfigured, and task admission remains disabled. Ordinary stop/restart still requires an enrolled atomic registry/device-owner reservation and separate scope-bound lifecycle executor. The local operator transport adds no force bypass.
 
 ## Partial device-owner primitive
 

@@ -8,7 +8,7 @@ Ordinary private native status integration can use an already reviewed source ca
 node scripts/check-platform-native-status.mjs --isolated --capsule /ABS/PRIVATE_REVIEW_CAPSULE --sha256 REVIEWED_CAPSULE_RECEIPT_SHA256
 ```
 
-This starts only a disposable empty-model loopback source server and manager, then exercises normal running/maintenance/running ingress intent. It retains private status receipts, never invokes inference, and does not establish normalized all-client activity authority.
+Append `--protocol-version 3` for a source capsule declaring timestamped replies. This starts only a disposable empty-model loopback source server and manager, then exercises normal running/maintenance/running ingress intent. It retains private status receipts, never invokes inference, and does not establish normalized all-client activity authority.
 
 ## 1. Gates and prerequisites
 

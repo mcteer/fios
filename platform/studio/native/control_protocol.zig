@@ -6,6 +6,7 @@ const device = @import("device_owner.zig");
 pub const OwnerBarrier = struct { context: *anyopaque, probe: *const fn (*anyopaque) device.Reading };
 pub const request_size = 32;
 pub const response_size = 64;
+pub const timestamped_response_size = 80;
 pub const lineage_request_size = 64;
 pub const lineage_response_size = 112;
 pub const Status = enum(u8) { ok, invalid, maintenance, wrong_instance };
@@ -42,12 +43,18 @@ pub fn dispatch(tracker: *ownership.Tracker, io: std.Io, request: *const [reques
     return dispatchWithBarrier(tracker, io, request, null);
 }
 pub fn dispatchWithBarrier(tracker: *ownership.Tracker, io: std.Io, request: *const [request_size]u8, barrier: ?OwnerBarrier) [response_size]u8 {
+    return dispatchVersion(2, tracker, io, request, barrier);
+}
+pub fn dispatchTimestamped(tracker: *ownership.Tracker, io: std.Io, request: *const [request_size]u8, barrier: ?OwnerBarrier) [timestamped_response_size]u8 {
+    return dispatchVersion(3, tracker, io, request, barrier);
+}
+fn dispatchVersion(comptime version: u8, tracker: *ownership.Tracker, io: std.Io, request: *const [request_size]u8, barrier: ?OwnerBarrier) [if (version == 3) timestamped_response_size else response_size]u8 {
     var status: Status = .ok;
     var reading: device.Reading = .{ .outcome = .not_requested };
     const op = request[5];
     const sequence = std.mem.readInt(u64, request[8..16], .big);
     const before = tracker.snapshot(io);
-    if (!std.mem.eql(u8, request[0..4], "FIC9") or request[4] != 2 or
+    if (!std.mem.eql(u8, request[0..4], "FIC9") or request[4] != version or
         request[6] != 0 or request[7] != 0 or op > 3 or (op < 2 and sequence != 0))
     {
         status = .invalid;
@@ -64,12 +71,15 @@ pub fn dispatchWithBarrier(tracker: *ownership.Tracker, io: std.Io, request: *co
         },
         else => unreachable,
     }
+    // Capture the source clock before taking the final coherent tracker
+    // snapshot. Serialization/transport cannot refresh this original time.
+    const captured_at = if (version == 3) std.Io.Clock.real.now(io).toMilliseconds() else 0;
     const snapshot = tracker.snapshot(io);
     if (op == 3 and reading.outcome == .owner_streams_synchronized and
         (!snapshot.admissions_closed or snapshot.admission_pause != sequence or snapshot.owned != 0 or snapshot.uncertain or reading.streams > 256)) reading = .{};
-    var response: [response_size]u8 = @splat(0);
+    var response: [if (version == 3) timestamped_response_size else response_size]u8 = @splat(0);
     @memcpy(response[0..4], "FIR9");
-    response[4] = 2;
+    response[4] = version;
     response[5] = op;
     response[6] = @intFromEnum(status);
     @memcpy(response[8..24], &snapshot.instance);
@@ -81,6 +91,13 @@ pub fn dispatchWithBarrier(tracker: *ownership.Tracker, io: std.Io, request: *co
     response[57] = @intFromBool(snapshot.uncertain);
     response[58] = @intFromEnum(reading.outcome);
     std.mem.writeInt(u32, response[60..64], reading.streams, .big);
+    if (version == 3) {
+        std.mem.writeInt(u64, response[64..72], snapshot.sample_sequence, .big);
+        // An unavailable clock is explicit metadata absence, not receipt time.
+        const stamp: u64 = if (captured_at > 0 and captured_at <= ownership.maximum_sample_sequence)
+            @intCast(captured_at) else std.math.maxInt(u64);
+        std.mem.writeInt(u64, response[72..80], stamp, .big);
+    }
     return response;
 }
 
@@ -186,4 +203,34 @@ test "readonly lineage frames preserve retained ownership and missing stays unkn
     try std.testing.expectEqual(@as(u8, 0), response[6]);
     try std.testing.expectEqual(@as(u8, 1), response[7]);
     try std.testing.expectEqual(@as(u64, 0), std.mem.readInt(u64, response[64..72], .big));
+}
+
+test "timestamped control replies carry native capture metadata" {
+    const io = std.testing.io;
+    var tracker: ownership.Tracker = .{};
+    try tracker.initialize(io, @splat(9));
+    const token = try tracker.enter(io);
+    var request: [request_size]u8 = @splat(0);
+    @memcpy(request[0..4], "FIC9"); request[4] = 3;
+    const began = std.Io.Clock.real.now(io).toMilliseconds();
+    const first = dispatchTimestamped(&tracker, io, &request, null);
+    const ended = std.Io.Clock.real.now(io).toMilliseconds();
+    try std.testing.expectEqual(@as(usize, 80), first.len);
+    try std.testing.expectEqual(@as(u8, 3), first[4]);
+    try std.testing.expectEqual(@as(u8, 0), first[6]);
+    try std.testing.expectEqual(@as(u32, 1), std.mem.readInt(u32, first[32..36], .big));
+    try std.testing.expectEqual(@as(u32, 1), std.mem.readInt(u32, first[36..40], .big));
+    const sequence = std.mem.readInt(u64, first[64..72], .big);
+    const captured = std.mem.readInt(u64, first[72..80], .big);
+    try std.testing.expect(sequence > 0);
+    try std.testing.expect(captured >= began and captured <= ended);
+    try tracker.leave(io, token);
+    const second = dispatchTimestamped(&tracker, io, &request, null);
+    try std.testing.expect(std.mem.readInt(u64, second[64..72], .big) > sequence);
+    try std.testing.expectEqual(@as(u32, 0), std.mem.readInt(u32, second[32..36], .big));
+    try std.testing.expectEqualSlices(u8, first[8..24], second[8..24]);
+    request[4] = 2;
+    const legacy = dispatch(&tracker, io, &request);
+    try std.testing.expectEqual(@as(usize, 64), legacy.len);
+    try std.testing.expectEqual(@as(u8, 2), legacy[4]);
 }

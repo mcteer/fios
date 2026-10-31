@@ -6,6 +6,12 @@ Status: source-only integration/testing authorized by the user's explicit reaffi
 
 Current backend-specific findings and unproven terminality requirements: [native-backend-terminality.md](native-backend-terminality.md).
 
+## Source capture metadata integration —2026-10-31
+
+The ordinary private control protocol now optionally returns version3 frames with the original native capture sequence and source UTC milliseconds. Version2 remains the default compatible32/64-byte exchange; version3 uses32/80 bytes. The manager keeps transport receipt age distinct from source age and carries current native metadata into activity export with coverage still unknown. See [native control](contracts/native-private-control.md).
+
+A private native executable can be compiled/staged without running the earlier test/probe/HTTP matrices by appending `--functional-build-only` to the existing `check-platform-native-fixture.mjs` command, with `--review-output` and the normal exact source/dependency inputs. This mode checks the declared source patch, copies the actual source companions and builds against genuine dependencies; receipts explicitly set `root_tests_rerun:false` and `http_checks_rerun:false`. It does not claim upstream staging/release attestation or all-client/backend coverage. Run `check-platform-native-status.mjs --isolated --capsule ABS --sha256 RECEIPT --protocol-version 3` separately for the normal empty-model source-server/manager flow; the same capsule supports the unchanged version2 check.
+
 ## Source-fixture startup ownership prerequisite
 
 The current reviewed patch adds `src/main.zig` as its tenth fixed path and calls the separate `startup_guard.zig` before native initialization. It is enabled only by the exact `FIOS_NATIVE_STARTUP=isolated-source-fixture` marker plus fixture version suffix, nonroot equal real/effective UID and a preexisting private0700 HOME. The0700 subdirectory and0600 regular single-link/no-ACL lock are opened by descriptor without following their final symlinks; an exclusive nonblocking close-on-exec `flock` is retained for the process lifetime. Release closes the descriptor without unlinking the pathname. The startup refusal carries `StartupGuardUnavailable`, independent of later HTTP-port or control-socket conflicts.

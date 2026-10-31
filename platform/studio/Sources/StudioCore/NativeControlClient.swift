@@ -23,6 +23,8 @@ struct NativeIngressStatus:Sendable {
     let uncertain:Bool
     var ownerStreamOutcome:NativeOwnerStreamOutcome = .notRequested
     var synchronizedStreams:UInt32 = 0
+    var nativeSampleSequence:UInt64? = nil
+    var nativeSampledAt:Int64? = nil
     var activity:HostActivity {.unknown}
 }
 enum NativeControlWire {
@@ -32,21 +34,22 @@ enum NativeControlWire {
         func nibble(_ b:UInt8)->UInt8 {b<=57 ? b-48:b-87}
         return stride(from:0,to:32,by:2).map {nibble(bytes[$0])*16+nibble(bytes[$0+1])}
     }
-    static func request(operation:NativeControlOperation,instance:String?,sequence:UInt64) throws -> Data {
+    static func request(operation:NativeControlOperation,instance:String?,sequence:UInt64,version:UInt8=2) throws -> Data {
+        guard [2,3].contains(version) else {throw NativeControlError.invalid}
         guard (operation == .resume || operation == .ownerBarrier ? sequence>0:sequence==0) else {throw NativeControlError.invalid}
         var bytes=Data(repeating:0,count:32)
-        bytes.replaceSubrange(0..<4,with:Data("FIC9".utf8));bytes[4]=2;bytes[5]=operation.rawValue
+        bytes.replaceSubrange(0..<4,with:Data("FIC9".utf8));bytes[4]=version;bytes[5]=operation.rawValue
         for index in 0..<8 {bytes[8+index]=UInt8(truncatingIfNeeded:sequence >> (56-index*8))}
         if let instance {bytes.replaceSubrange(16..<32,with:try instanceBytes(instance))}
         else if operation != .observe {throw NativeControlError.invalid}
         return bytes
     }
     static func reply(_ input:Data) throws -> NativeIngressStatus {
-        guard input.count==64 else {throw NativeControlError.invalid}
+        guard [64,80].contains(input.count) else {throw NativeControlError.invalid}
         // Data slices/removeFirst retain nonzero indices. Rebase the bounded
         // frame before numeric indexing; malformed backing offsets must not trap.
         let bytes=Array(input)
-        guard bytes.prefix(4).elementsEqual("FIR9".utf8),bytes[4]==2,bytes[7]==0,
+        guard bytes.prefix(4).elementsEqual("FIR9".utf8),((bytes[4]==2 && bytes.count==64) || (bytes[4]==3 && bytes.count==80)),bytes[7]==0,
               let operation=NativeControlOperation(rawValue:bytes[5]),let status=NativeControlStatus(rawValue:bytes[6]),
               bytes[56]<=1,bytes[57]<=1,let ownerOutcome=NativeOwnerStreamOutcome(rawValue:bytes[58]),bytes[59]==0 else {throw NativeControlError.invalid}
         let instance=bytes[8..<24].map {String(format:"%02x",$0)}.joined()
@@ -64,6 +67,13 @@ enum NativeControlWire {
               ownerOutcome != .ownerStreamsSynchronized || (bytes[56]==1 && sequence>0 && values[0]==0 && bytes[57]==0) else {throw NativeControlError.invalid}
         var result=NativeIngressStatus(operation:operation,status:status,instance:instance,pauseSequence:sequence,owners:values[0],ingress:values[1],preparing:values[2],active:values[3],responding:values[4],modelIdentities:values[5],closed:bytes[56]==1,uncertain:bytes[57]==1)
         result.ownerStreamOutcome=ownerOutcome;result.synchronizedStreams=UInt32(streams)
+        if bytes[4]==3 {
+            let captureSequence=number(64,8),stamp=number(72,8)
+            guard captureSequence>0,captureSequence<=UInt64(WireScalar.maximumTimestamp),
+                  stamp==UInt64.max || stamp<=UInt64(WireScalar.maximumTimestamp) else {throw NativeControlError.invalid}
+            result.nativeSampleSequence=captureSequence
+            result.nativeSampledAt=stamp==UInt64.max ? nil:Int64(stamp)
+        }
         return result
     }
 }
@@ -107,9 +117,14 @@ struct NativeControlPeer:Sendable {
 struct NativeControlClient:Sendable {
     let path:String
     let peer:NativeControlPeer
+    let version:UInt8
+    init(path:String,peer:NativeControlPeer,version:UInt8=2) {self.path=path;self.peer=peer;self.version=version}
     func request(operation:NativeControlOperation,instance:String?=nil,sequence:UInt64=0) throws -> NativeIngressStatus {
-        let data=try NativeControlWire.request(operation:operation,instance:instance,sequence:sequence)
-        let value=try NativeControlWire.reply(exchange(data,maximum:64))
+        let data=try NativeControlWire.request(operation:operation,instance:instance,sequence:sequence,version:version)
+        let maximum=version==3 ? 80:64
+        let bytes=try exchange(data,maximum:maximum)
+        guard bytes.count==maximum else {throw NativeControlError.invalid}
+        let value=try NativeControlWire.reply(bytes)
         guard value.operation==operation,instance==nil || value.instance==instance else {throw NativeControlError.unauthorized}
         return value
     }
@@ -122,7 +137,7 @@ struct NativeControlClient:Sendable {
         return NativeRequestLineageSample(peer:peer,sampledAt:stamp,lineage:value)
     }
     private func exchange(_ data:Data,maximum:Int)throws->Data {
-        guard [32,64].contains(data.count),[64,112].contains(maximum) else {throw NativeControlError.invalid}
+        guard [32,64].contains(data.count),[64,80,112].contains(maximum) else {throw NativeControlError.invalid}
         guard path.hasPrefix("/"),path.utf8.count<104,!path.contains("\0") else {throw NativeControlError.invalid}
         var parent=stat(),socketInfo=stat()
         let directory=URL(fileURLWithPath:path).deletingLastPathComponent().path

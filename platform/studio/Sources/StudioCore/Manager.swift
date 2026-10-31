@@ -68,6 +68,7 @@ public enum ManagerRuntime {
         let profileHash=digest("fios009-development-native-unsupported")
         var sequence=0
         var sampledAt:Int64=0
+        var activitySequence:Int64=0
         let progress=directory.appendingPathComponent("progress.json")
         let start=ProcessInfo.processInfo.systemUptime
         let boot=try HostBoot.identity()
@@ -201,6 +202,8 @@ public enum ManagerRuntime {
                         response["resource_observation"]=telemetry.observation
                     case .activity:
                         guard request.payload.isEmpty else { throw ControlError.invalid_request }
+                        guard activitySequence<WireScalar.maximumTimestamp else {throw ControlError.internal_error}
+                        activitySequence+=1
                         response["coverage"]=nativeCoverage.rawValue; response["activity"]="unknown"
                         let ownership=try journal.activityOwnership()
                         var context=ActivityObservationContext(sampledAt:requestResources.sampledAt,pressure:requestResources.pressure,thermal:requestResources.thermal)
@@ -209,8 +212,10 @@ public enum ManagerRuntime {
                             let observed=ServiceStatusPolicy.observed(desired:desired,observation:serviceObservations?.snapshot(for:service),launchPending:serviceRecovery?.isPending(service) ?? false,now:requestedAt)
                             if service == .mlx {context.mlx=observed}else {context.orbstack=observed}
                         }
+                        let capture=nativeDiagnostics.capture(now:requestedAt)
                         let metadata=ActivityObservationMetadata(host:ProcessInfo.processInfo.hostName,endpointHash:endpointHash,profileHash:profileHash,managerEpoch:epoch,
-                            nativeEpoch:"unknown:"+epoch,sequence:Int64(sequence),sampledAt:sampledAt,nativeSequence:nil,nativeSampledAt:nil)
+                            nativeEpoch:capture?.instance ?? "unknown:"+epoch,sequence:activitySequence,sampledAt:requestedAt,
+                            nativeSequence:capture.map{Int64($0.sequence)},nativeSampledAt:capture?.sampledAt)
                         let frame=try ActivityObservationExport.encode(metadata:metadata,coverage:nativeCoverage,sourceCoverage:nativeCoverage,
                             localModels:ownership.models,localUncertain:ownership.uncertain,context:context)
                         response["observation"]=try JSONSerialization.jsonObject(with:frame)

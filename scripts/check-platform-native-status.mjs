@@ -11,6 +11,8 @@ import {join,resolve} from 'node:path';
 import {setTimeout as delay} from 'node:timers/promises';
 import {verifyNativeReview} from './lib/platform-native-review.mjs';
 const args=process.argv.slice(2);
+let protocolVersion=2;
+if(args.length===7){assert.equal(args[5],'--protocol-version');assert.equal(args[6],'3');protocolVersion=3;args.splice(5,2);}
 assert(args.length===5&&args[0]==='--isolated'&&args[1]==='--capsule'&&args[3]==='--sha256');
 assert.equal(process.platform,'darwin');assert.notEqual(process.getuid(),0);
 const capsule=verifyNativeReview(args[2],args[4]),binary=capsule.binary;
@@ -46,7 +48,7 @@ try{
  let logBytes=0;native.stderr.on('data',part=>{logBytes+=part.length;if(logBytes>128*1024)native.kill('SIGTERM');});
  await until(async()=>{assert(!exited(native),'Empty-model native server exited');try{return await health();}catch(error){if(['ECONNREFUSED','ECONNRESET'].includes(error.code))return false;throw error;}});
  const control=join(directory,'.fios-native-control/control.sock');
- const manager=spawn(fixture,['--isolated-manager',state,control,binary,binarySHA,'source-fixture-only',String(native.pid)],{cwd:root,env,stdio:['ignore','ignore','pipe']});children.push(manager);
+ const manager=spawn(fixture,[protocolVersion===3?'--isolated-manager-v3':'--isolated-manager',state,control,binary,binarySHA,'source-fixture-only',String(native.pid)],{cwd:root,env,stdio:['ignore','ignore','pipe']});children.push(manager);
  let managerErrors='';manager.stderr.on('data',part=>{managerErrors+=part.toString();});
  const initial=await until(()=>{assert(!exited(manager),`Private manager exited: ${managerErrors}`);return command(['status']);});
  assert.equal(initial.native_control.state,'waiting');assert.equal(initial.native_control.authoritative,false);
@@ -54,23 +56,41 @@ try{
  const opened=await until(()=>{const value=command(['status']);return value?.native_control.state==='received'&&value.native_admissions==='admissionsOpen' ? value:null;});
  const diagnostic=opened.native_control;
  assert.equal(diagnostic.scope,'native_ingress_tracker');assert.equal(diagnostic.authoritative,false);
- assert.equal(diagnostic.source_sampled_at,null);assert.equal(diagnostic.source_sequence,null);
+ if(protocolVersion===3){
+  assert(Number.isSafeInteger(diagnostic.source_sampled_at)&&diagnostic.source_sampled_at>0);
+  assert(Number.isSafeInteger(diagnostic.source_sequence)&&diagnostic.source_sequence>0);
+  assert(diagnostic.source_age_ms>=0&&diagnostic.source_age_ms<=5000);
+ }else{assert.equal(diagnostic.source_sampled_at,null);assert.equal(diagnostic.source_sequence,null);}
  assert.equal(diagnostic.reported_counts.owners,0);assert.equal(diagnostic.ingress_closed,false);
  assert(diagnostic.receipt_age_ms>=0&&diagnostic.receipt_age_ms<=5000);
  assert.equal(opened.native_activity,'unknown');
  const activity=command(['activity']);assert.equal(activity.coverage,'unknown');
  assert.equal(activity.observation.coverage,'unknown');assert.equal(activity.observation.outstanding_owners,null);
+ if(protocolVersion===3){
+  assert.equal(activity.observation.native_epoch,diagnostic.source_instance);
+  assert.equal(activity.observation.native_sequence,diagnostic.source_sequence);
+  assert.equal(activity.observation.native_sampled_at,diagnostic.source_sampled_at);
+  assert(activity.observation.sampled_at>=diagnostic.received_at,'Activity publication time predates the native reply it includes');
+  await delay(1100);
+  const repeated=command(['activity']).observation;
+  assert(repeated.sequence>activity.observation.sequence);
+  assert.equal(repeated.native_sequence,activity.observation.native_sequence);
+  assert.equal(repeated.native_sampled_at,activity.observation.native_sampled_at);
+  assert(repeated.source_age_ms>=activity.observation.source_age_ms+1000);
+
+ }
  assert.equal(command(['service','mlx','maintenance']).applied,false);
  const paused=await until(()=>{const value=command(['status']);return value?.native_control.state==='received'&&value.native_control.ingress_closed===true&&value.native_admissions==='admissionsClosed' ? value:null;});
  assert.equal(paused.native_control.source_instance,diagnostic.source_instance);
  assert.equal(command(['service','mlx','running']).applied,false);
  const resumed=await until(()=>{const value=command(['status']);return value?.native_control.state==='received'&&value.native_control.ingress_closed===false&&value.native_admissions==='admissionsOpen' ? value:null;});
  assert.equal(resumed.native_control.source_instance,diagnostic.source_instance);
+ if(protocolVersion===3)assert(resumed.native_control.source_sequence>paused.native_control.source_sequence&&paused.native_control.source_sequence>diagnostic.source_sequence);
  assert.equal(resumed.native_control.authoritative,false);assert.deepEqual(readdirSync(models),[]);
  writeFileSync(join(directory,'status-receipts.json'),JSON.stringify({initial,opened,paused,resumed},null,2)+'\n',{mode:0o600});
  manager.kill('SIGTERM');await until(()=>exited(manager),5000);assert.equal(manager.exitCode,0);assert.equal(managerErrors,'');
  native.kill('SIGTERM');await until(()=>exited(native),7000);
- console.log(JSON.stringify({ok:true,source_ingress_roundtrip:true,model_requests:0,installed_service_actions:0,authoritative:false,review_directory:directory}));
+ console.log(JSON.stringify({ok:true,protocol_version:protocolVersion,source_ingress_roundtrip:true,model_requests:0,installed_service_actions:0,authoritative:false,review_directory:directory}));
 }finally{
  for(const child of [...children].reverse())if(!exited(child)){child.kill('SIGTERM');try{await until(()=>exited(child),7000);}catch{child.kill('SIGKILL');await until(()=>exited(child),3000);}}
  // Retain only private source-test data; process exit grants no native proof.

@@ -15,6 +15,9 @@ import {verifyMlxSourceReview} from './lib/platform-mlx-source-review.mjs';
 import {verifyDs4SourceBuild,bindDs4SourceBuildGraph} from './lib/platform-ds4-source-review.mjs';
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const args=process.argv.slice(2);
+// Ordinary compilation/packaging mode, without the historical test matrices.
+const functionalBuildOnly=args.at(-1)==='--functional-build-only';
+if(functionalBuildOnly)args.pop();
 // Checked DS4 ABI is explicitly composed from a hash-bound private build.
 let ds4DependencyConfig;
 const ds4Index=args.indexOf('--ds4-build');
@@ -36,6 +39,7 @@ if(mlxIndex!==-1){
 let reviewOutput;
 const reviewIndex=args.indexOf('--review-output');
 if(reviewIndex!==-1){assert([8,10].includes(reviewIndex)&&path.isAbsolute(args[reviewIndex+1]??''));reviewOutput=args[reviewIndex+1];args.splice(reviewIndex,2);}
+if(functionalBuildOnly)assert(reviewOutput,'Functional build requires a private review output');
 // Optional explicit dependency composition; canonical submodules stay clean.
 let mimoSource;
 const mimoIndex=args.indexOf('--mimo-source');
@@ -47,6 +51,7 @@ if(mimoIndex!==-1){
 assert(process.platform==='darwin' && process.getuid()!==0);
 assert((args.length===8 || (args.length===9 && ['--empty-gpu','--root-tests-only','--mutation-request-eviction-guard','--mutation-load-preparation-guard','--mutation-actor-load-preparation','--mutation-encoder-active-owner','--mutation-generation-origin','--mutation-text-origin','--mutation-native-refusal-response','--mutation-drop-model-pins','--mutation-drop-parked-pins','--mutation-access-foreign-release','--mutation-drop-registry-preparation','--mutation-clear-registry-preparation','--mutation-registry-stub-frontdoor','--mutation-registry-path-frontdoor','--mutation-registry-scan-frontdoor','--mutation-registry-teardown','--mutation-loaded-model-teardown','--mutation-retained-cpu-cleanup','--mutation-resident-unload','--mutation-ds4-snapshot-free','--mutation-llama-trim-status'].includes(args[8]))) && args[0]==='--source' && args[2]==='--zig' && args[4]==='--webp-source' && args[6]==='--metal-cpp-zip' && [args[1],args[3],args[5],args[7]].every(path.isAbsolute),
  'usage: check-platform-native-fixture.mjs --source ABS_CHECKOUT --zig ABS_ZIG --webp-source ABS_WEBP_1_6_0 --metal-cpp-zip ABS_APPLE_METAL_CPP_26_ZIP --ds4-build ABS_JSON --ds4-sha256 HEX [--mimo-source ABS_REVIEWED_CANDIDATE] [--mlx-dependency ABS_JSON --mlx-sha256 HEX --mlx-source ABS] [--mutation-native-refusal-response|--mutation-load-preparation-guard|--mutation-actor-load-preparation|--mutation-encoder-active-owner|--mutation-generation-origin|--mutation-text-origin|--mutation-request-eviction-guard|--empty-gpu|--root-tests-only|--mutation-drop-model-pins|--mutation-drop-parked-pins|--mutation-access-foreign-release|--mutation-drop-registry-preparation|--mutation-clear-registry-preparation|--mutation-registry-stub-frontdoor|--mutation-registry-path-frontdoor|--mutation-registry-scan-frontdoor|--mutation-registry-teardown|--mutation-loaded-model-teardown|--mutation-retained-cpu-cleanup|--mutation-resident-unload|--mutation-ds4-snapshot-free|--mutation-llama-trim-status]');
+if(functionalBuildOnly)assert.equal(args.length,8,'Functional build cannot select a test/mutation mode');
 const trimMutation=args[8]==='--mutation-llama-trim-status';
 const snapshotMutation=args[8]==='--mutation-ds4-snapshot-free';
 const residentUnloadMutation=args[8]==='--mutation-resident-unload';
@@ -134,7 +139,22 @@ try{
  // Before staging: verifies commits/submodules, exact reviewed fixed-file
  // build/roots/llama-context bridge patch and companions, preserved staging
  // guards and real Zig-root Sema.
- run(process.execPath,[path.join(root,'scripts/check-platform-native-sema.mjs'),'--source',source,'--zig',zig,'--webp-source',webp]);
+ if(functionalBuildOnly){
+  const gitArgs=['--no-replace-objects','-c','core.fsmonitor=false','-C',source];
+  const gitEnv={...env,GIT_CONFIG_GLOBAL:'/dev/null',GIT_CONFIG_SYSTEM:'/dev/null',GIT_CONFIG_NOSYSTEM:'1',GIT_NO_REPLACE_OBJECTS:'1'};
+  assert.equal(run('/usr/bin/git',[...gitArgs,'rev-parse','HEAD'],{env:gitEnv}).trim(),'046b647686419df06c6c7132fb1d15d76185c3e5');
+  assert.equal(run('/usr/bin/git',['--no-replace-objects','-C',webp,'rev-parse','HEAD'],{env:gitEnv}).trim(),'4fa21912338357f89e4fd51cf2368325b59e9bd9');
+  assert.equal(run('/usr/bin/git',['--no-replace-objects','-C',webp,'status','--porcelain'],{env:gitEnv}).trim(),'');
+  const patch=readFileSync(path.join(root,'platform/studio/native/mlx-serve-26.10.3.patch'),'utf8');
+  const paths=[...patch.matchAll(/^diff --git a\/(.+) b\/.+$/gm)].map(match=>match[1]);
+  assert(paths.length>0);
+  assert.equal(run('/usr/bin/git',[...gitArgs,'diff','--no-ext-diff','HEAD','--',...paths],{env:gitEnv}),patch,'Native source differs from declared patch');
+  assert.deepEqual(run('/usr/bin/git',[...gitArgs,'diff','--name-only','HEAD'],{env:gitEnv}).trim().split('\n').sort(),[...paths].sort());
+  for(const name of ['backend_lifetime.zig','request_ownership.zig','control_protocol.zig','control_transport.zig','device_owner.zig','startup_guard.zig'])copyFileSync(path.join(root,'platform/studio/native',name),path.join(source,'src',name));
+  for(const name of ['device_owner_barrier.cpp','device_owner_barrier.h'])copyFileSync(path.join(root,'platform/studio/native',name),path.join(source,'lib',name));
+ }else{
+  run(process.execPath,[path.join(root,'scripts/check-platform-native-sema.mjs'),'--source',source,'--zig',zig,'--webp-source',webp]);
+ }
  const prefix=path.join(scratch,'webp'),lib=path.join(prefix,'lib');
  mkdirSync(lib,{recursive:true,mode:0o700});
  for(const name of ['libwebp.dylib','libsharpyuv.dylib'])copyFileSync(path.join(bundle,name),path.join(lib,name));
@@ -157,6 +177,8 @@ try{
  stage(path.join(source,'lib/mlx-src/mlx'),path.join(source,'lib/mlx/include/mlx'));
  stage(path.join(source,'lib/mlxc-src/mlx/c'),path.join(source,'lib/mlx/include/mlx/c'));
  stage(path.join(metal,'metal-cpp'),path.join(source,'lib/mlx/include/metal_cpp'));
+ let ownerLog='';
+ if(!functionalBuildOnly){
  // Independent genuine C++/MLX ABI primitive, CPU by default. Optional
  // --empty-gpu creates/syncs one empty GPU stream, never arrays/kernels/models.
  // This does not modify the upstream graph or claim device-terminal authority.
@@ -166,7 +188,7 @@ try{
   '-L',mlxLibraries,'-lmlxc','-lmlx','-Wl,-rpath,'+mlxLibraries,'-o',ownerProbe]);
  const negative=spawnSync(ownerProbe,['--prove-failure'],{encoding:'utf8',timeout:5000,maxBuffer:4096});
  assert.equal(negative.status,77,'optimized C++ fixture checks became inert');
- let ownerLog=run(ownerProbe,[])+run(ownerProbe,['--assigned-global-default'])+run(ownerProbe,['--two-owners'])+run(ownerProbe,['--c-api-handle'])+run(ownerProbe,['--c-api-defaults'])+run(ownerProbe,['--registry-hold']);
+ ownerLog=run(ownerProbe,[])+run(ownerProbe,['--assigned-global-default'])+run(ownerProbe,['--two-owners'])+run(ownerProbe,['--c-api-handle'])+run(ownerProbe,['--c-api-defaults'])+run(ownerProbe,['--registry-hold']);
  const ownerEpochProbe=path.join(scratch,'owner-epoch-probe');
  run(zig,['c++','-std=c++20','-O2','-UNDEBUG','-I',path.join(source,'lib/mlx/include'),'-I',path.join(source,'lib/mlxc-src'),
   path.join(root,'platform/studio/native/device_owner_epoch_test.cpp'),'-L',mlxLibraries,'-lmlxc','-lmlx','-Wl,-rpath,'+mlxLibraries,'-o',ownerEpochProbe]);
@@ -175,6 +197,7 @@ try{
   const gpuLog=run(ownerProbe,['--gpu-empty'],{env:{...env,FIOS_NATIVE_EMPTY_GPU_FIXTURE:'isolated-source-fixture'}});
   assert(gpuLog.includes('PASS: genuine empty GPU stream'),'Explicit empty-GPU run did not execute');
   ownerLog+=gpuLog;
+ }
  }
  const reviewedGraph=readFileSync(path.join(source,'build.zig'),'utf8');
  let graph=bindDs4SourceBuildGraph(reviewedGraph,ds4Dependency);
@@ -275,7 +298,9 @@ try{
  const buildLog=rootOnly?'':run('/usr/bin/nice',['-n','10',zig,'build','fios-linked-build','-Doptimize=ReleaseFast',...options],{cwd:source});
  let testLog;
  const testArgs=['-n','10',zig,'build','fios-linked-test','-Doptimize=ReleaseSafe',...options];
- if(mutation){
+ if(functionalBuildOnly){
+  testLog='FUNCTIONAL BUILD ONLY: prior probe, runtime-test and HTTP matrices not executed.\n';
+ }else if(mutation){
   const result=spawnSync('/usr/bin/nice',testArgs,{cwd:source,env,encoding:'utf8',timeout:600000,maxBuffer:16*1024*1024});
   testLog=(result.stdout??'')+(result.stderr??'');
   assert.equal(result.status,1,'Deliberate boundary mutation must fail actual optimized runtime tests');
@@ -299,15 +324,15 @@ try{
  }
  let binary=path.join(scratch,'output/bin/mlx-serve'),digest=rootOnly?null:sha(binary),review;
  if(reviewOutput){
-  assert(!rootOnly,'Review output requires full positive executable/HTTP validation');
+  assert(!rootOnly,'Review output requires an actual executable build');
   const libraries=Object.fromEntries(Object.keys(runtime).map(name=>[name,path.join(name==='libwebp.dylib'||name==='libsharpyuv.dylib'?lib:bundle,name)]));
   libraries['libllama.dylib']=path.join(source,'lib/llama/lib/libllama.dylib');
   if(mlxDependency)for(const name of ['libmlx.dylib','mlx.metallib','libjaccl.dylib'])libraries[name]=mlxDependency.libraries[name];
-  review=stageNativeReview({directory:reviewOutput,binary,libraries,inputs:{native_base:'046b647686419df06c6c7132fb1d15d76185c3e5',root_patch_sha256:sha(path.join(root,'platform/studio/native/mlx-serve-26.10.3.patch')),runtime_inputs:runtime,runtime_input_scope:mlxDependency?'readonly_installed_bundle_bracket_not_selected_runtime_provenance':'declared_installed_bundle_inputs_only',mimo_candidate:mimoReceipt,ds4_source_dependency:ds4Dependency,mlx_source_dependency:mlxDependency,source_component_diagnostics:!!mlxDependency,mlx_participant_source_sha256:participantBytes?createHash('sha256').update(participantBytes).digest('hex'):null}});
+  review=stageNativeReview({directory:reviewOutput,binary,libraries,inputs:{verification_mode:functionalBuildOnly?'functional_build_only':'full_source_fixture',root_tests_rerun:!functionalBuildOnly,http_checks_rerun:!functionalBuildOnly,native_control_protocol_versions:[2,3],companion_sources:Object.fromEntries(['backend_lifetime.zig','request_ownership.zig','control_protocol.zig','control_transport.zig','device_owner.zig','startup_guard.zig','device_owner_barrier.cpp','device_owner_barrier.h'].map(name=>[name,sha(path.join(root,'platform/studio/native',name))])),native_base:'046b647686419df06c6c7132fb1d15d76185c3e5',root_patch_sha256:sha(path.join(root,'platform/studio/native/mlx-serve-26.10.3.patch')),runtime_inputs:runtime,runtime_input_scope:mlxDependency?'readonly_installed_bundle_bracket_not_selected_runtime_provenance':'declared_installed_bundle_inputs_only',mimo_candidate:mimoReceipt,ds4_source_dependency:ds4Dependency,mlx_source_dependency:mlxDependency,source_component_diagnostics:!!mlxDependency,mlx_participant_source_sha256:participantBytes?createHash('sha256').update(participantBytes).digest('hex'):null}});
   binary=review.binary;digest=review.sha256;
  }
- const httpLog=rootOnly?'':run(process.execPath,[path.join(root,'scripts/check-platform-native-http.mjs'),'--isolated','--binary',binary,'--sha256',digest]);
- if(mlxDependency)assert(httpLog.includes('SOURCE_COMPONENT_PROVIDER_AVAILABLE'),'Private component metadata was not actually available');
+ const httpLog=rootOnly||functionalBuildOnly?'':run(process.execPath,[path.join(root,'scripts/check-platform-native-http.mjs'),'--isolated','--binary',binary,'--sha256',digest]);
+ if(mlxDependency&&!functionalBuildOnly)assert(httpLog.includes('SOURCE_COMPONENT_PROVIDER_AVAILABLE'),'Private component metadata was not actually available');
  if(mlxDependency){assert.deepEqual(verifyMlxSourceReview(...mlxDependencyConfig),mlxDependency);assert.equal(readFileSync(participantFile,'utf8'),participantBytes);}
  for(const [name,expected]of Object.entries(runtime))assert.equal(sha(path.join(bundle,name)),expected,'installed dependency changed');
  assert.equal(readFileSync(path.join(source,'build.zig'),'utf8'),reviewedGraph,'fixture changed reviewed build graph');
@@ -319,7 +344,7 @@ try{
  const reviewReceipt=review?finishNativeReview(review):null;
  console.log(ownerLog+buildLog+testLog+httpLog);
  assert.deepEqual(verifyDs4SourceBuild(ds4DependencyConfig),ds4Dependency);
- console.log(JSON.stringify({source_fixture_only:true,root_tests_only:rootOnly,expected_runtime_mutation:mutation,request_eviction_mutation:evictionMutation,load_preparation_mutation:loadPreparationMutation,actor_load_preparation_mutation:actorLoadMutation,encoder_active_mutation:encoderActiveMutation,generation_origin_mutation:generationOriginMutation,text_origin_mutation:textOriginMutation,native_refusal_mutation:nativeRefusalMutation,parked_reference_mutation:parkedMutation,foreign_access_release_mutation:accessMutation,preparation_visibility_mutation:preparationMutation,preparation_clear_mutation:clearPreparationMutation,registry_frontdoor_mutation:frontdoorKind??null,registry_teardown_mutation:teardownMutation,loaded_model_teardown_mutation:loadedTeardownMutation,retained_cpu_cleanup_mutation:retainedCpuMutation,resident_unload_mutation:residentUnloadMutation,ds4_snapshot_mutation:snapshotMutation,llama_trim_status_mutation:trimMutation,upstream_release_attestation:false,native_inference:false,coverage:'unknown',fixture_sha256:digest,private_review:reviewReceipt,mimo_candidate:mimoReceipt,ds4_source_dependency:ds4Dependency,mlx_source_dependency:mlxDependency,runtime_inputs:runtime,runtime_input_scope:mlxDependency?'readonly_installed_bundle_bracket_not_selected_runtime_provenance':'declared_installed_bundle_inputs_only'}));
+ console.log(JSON.stringify({source_fixture_only:true,verification_mode:functionalBuildOnly?'functional_build_only':'full_source_fixture',root_tests_rerun:!functionalBuildOnly,http_checks_rerun:!functionalBuildOnly,root_tests_only:rootOnly,expected_runtime_mutation:mutation,request_eviction_mutation:evictionMutation,load_preparation_mutation:loadPreparationMutation,actor_load_preparation_mutation:actorLoadMutation,encoder_active_mutation:encoderActiveMutation,generation_origin_mutation:generationOriginMutation,text_origin_mutation:textOriginMutation,native_refusal_mutation:nativeRefusalMutation,parked_reference_mutation:parkedMutation,foreign_access_release_mutation:accessMutation,preparation_visibility_mutation:preparationMutation,preparation_clear_mutation:clearPreparationMutation,registry_frontdoor_mutation:frontdoorKind??null,registry_teardown_mutation:teardownMutation,loaded_model_teardown_mutation:loadedTeardownMutation,retained_cpu_cleanup_mutation:retainedCpuMutation,resident_unload_mutation:residentUnloadMutation,ds4_snapshot_mutation:snapshotMutation,llama_trim_status_mutation:trimMutation,upstream_release_attestation:false,native_inference:false,coverage:'unknown',fixture_sha256:digest,private_review:reviewReceipt,mimo_candidate:mimoReceipt,ds4_source_dependency:ds4Dependency,mlx_source_dependency:mlxDependency,runtime_inputs:runtime,runtime_input_scope:mlxDependency?'readonly_installed_bundle_bracket_not_selected_runtime_provenance':'declared_installed_bundle_inputs_only'}));
 }finally{
  if(mutated)writeFileSync(mutationFile,mutationOriginal);
  if(written)rmSync(generated);
