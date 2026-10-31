@@ -60,3 +60,20 @@ export function platformRollbackStatePlan({release,current,previousRelease,previ
     limitations:[...plan.limitations,'restore_original_previous_schema_backup_only','never_downgrade_the_new_journal',
       'no_installed_release_switch_or_uninstall','retain_new_state_and_both_reviewed_artifacts_for_diagnosis']};
 }
+
+// Operator workflow review only. Enrollment removal remains a separate step;
+// this plan never deletes a release, state, exports or credential configuration.
+export function platformUninstallPlan(options){
+  const backup=platformStatePlan({...options,operation:'backup'});
+  const command=backup.proposed_commands[0];
+  return {...backup,operation:'platform_uninstall_review',state:'blocked',uninstall_executed:false,data_removal:false,
+    proposed_commands:[{...command,arguments:['--state',command.arguments[1],'status']},command],
+    steps:[
+      {order:1,action:'review_current_platform_status',command_index:0},
+      {order:2,action:'operator_stop_platform_supervisor_and_manager'},
+      {order:3,action:'create_stopped_state_backup',command_index:1},
+      {order:4,action:'review_installed_enrollment_removal',state:'not_implemented'},
+      {order:5,action:'retain_state_exports_credentials_and_release_artifacts'}],
+    blockers:['explicit_operator_review_and_execution_required','installed_enrollment_removal_not_implemented'],
+    limitations:[...backup.limitations,'no_automatic_service_stop','no_enrollment_removal','no_data_deletion']};
+}

@@ -147,3 +147,14 @@ Backup format3 preserves the opaque hold plus optional service-recovery bytes. R
 An isolated old7/new8/old7 rehearsal uses `check-platform-upgrade.mjs` with `--migrate-seven`; default release validation remains schema8-only. Legacy manifest acceptance is an explicit readonly rehearsal option, never an installation/profile authority. These development artifacts do not establish whole-repository/native provenance or installed acceptance.
 
 The cross-schema rehearsal passes with old manifest `dfbb3fc17527de288f10af4f687af6a14f7e7f4273536862afc6f833da31252b` from source `45b3e3e` and new manifest `40fabeffa425acc266219867bc322eb56a4af37638ee720ffde30980f60f03b8` from implementation `28d80fa`. It verifies old7 backup production, held8 migration/rebackup/restore and old7 rollback from the retained original; incompatible/future startup does not rewrite the database. See the feature validation record for exact declared-input hashes and fixture limits. Both are incomplete, inactive development artifacts; this is T050 source recovery evidence, not installed rollout or native acceptance.
+
+
+## Uninstall workflow review
+
+```sh
+node scripts/install-platform.mjs plan-uninstall --release /ABSOLUTE/RELEASE_DIRECTORY --sha256 REVIEWED_MANIFEST_SHA256 --host fios-edge-a.lab --state /ABSOLUTE/PRIVATE_PLATFORM_STATE --to /ABSOLUTE/PRIVATE_PARENT/NEW_BACKUP
+```
+
+This read-only plan orders current status review, an operator stop of supervisor/manager, a stopped-state backup, enrollment-removal review and retention of state/exports/credentials/release artifacts. Its two proposed CLI commands are `status` and `backup-state`; execute them at their numbered steps, with the manual stop between them. Planning executes neither command and creates no backup. The existing backup CLI checks stopped writers when actually run.
+
+The result remains `blocked`: installed enrollment removal is not implemented, no privileged command is issued, and no uninstall or data deletion occurs. This makes the data-preservation workflow reviewable without claiming T049’s installation/uninstall execution is complete.

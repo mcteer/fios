@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 // Read-only installation/state review. Never executes privileged/native commands.
 import {validatePlatformRelease} from './lib/platform-release.mjs';
-import {platformStatePlan,platformRollbackStatePlan} from './lib/platform-state-plan.mjs';
+import {platformStatePlan,platformRollbackStatePlan,platformUninstallPlan} from './lib/platform-state-plan.mjs';
 const args=process.argv.slice(2);
 function failure(){console.error('Platform installation review refused; no changes made.');process.exitCode=1;}
 try{
-  const sizes={'plan':7,'plan-backup':11,'plan-restore':13,'plan-rollback':17,'plan-rollback-seven':17};
+  const sizes={'plan':7,'plan-backup':11,'plan-uninstall':11,'plan-restore':13,'plan-rollback':17,'plan-rollback-seven':17};
   if(args.length!==sizes[args[0]]||args[1]!=='--release'||args[3]!=='--sha256'||args[5]!=='--host')throw Error('arguments');
   const verified=validatePlatformRelease(args[2],args[4]);
   if(!verified.manifest.native_inventory.hosts.includes(args[6]))throw Error('host');
@@ -15,9 +15,10 @@ try{
     console.log(JSON.stringify(platformRollbackStatePlan({release:args[2],current:verified,previousRelease:args[8],previous,
       host:args[6],backup:args[12],backupSHA256:args[14],destination:args[16]}),null,2));
   }else if(args[0]!=='plan'){
-    const backup=args[0]==='plan-backup';
+    const backup=['plan-backup','plan-uninstall'].includes(args[0]);
     if(backup?(args[7]!=='--state'||args[9]!=='--to'):(args[7]!=='--backup'||args[9]!=='--backup-sha256'||args[11]!=='--to'))throw Error('arguments');
-    const plan=platformStatePlan({operation:backup?'backup':'restore',release:args[2],verified,host:args[6],source:args[8],
+    const makePlan=args[0]==='plan-uninstall'?platformUninstallPlan:platformStatePlan;
+    const plan=makePlan({operation:backup?'backup':'restore',release:args[2],verified,host:args[6],source:args[8],
       destination:args[backup?10:12],backupSHA256:backup?undefined:args[10]});
     console.log(JSON.stringify(plan,null,2));
   }else{
