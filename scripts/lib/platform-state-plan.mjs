@@ -1,4 +1,4 @@
-import {lstatSync,realpathSync,readFileSync} from 'node:fs';
+import {lstatSync,realpathSync,readFileSync,mkdirSync,writeFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
 import {isAbsolute,normalize,dirname,basename,join,resolve} from 'node:path';
 
@@ -110,4 +110,24 @@ export function platformConfigurationPlan({release,verified,host,state}){
       'verify_restored_status_without_inference'],
     limitations:['configuration_proposal_only','no_configuration_written','no_launchd_operation',
       'no_native_service_operation','no_credential_configuration','execute_on_the_selected_host_only']};
+}
+
+// Data-only preparation beside the operator's other private review artifacts.
+// Installation destinations remain proposal fields, never write targets here.
+export function stagePlatformConfiguration(options){
+  const plan=platformConfigurationPlan(options),destination=newPrivateDestination(options.destination);
+  mkdirSync(destination,{mode:0o700});
+  // Keep any partial bundle for diagnosis; never replace or erase a prior one.
+  const files=plan.configuration_files.map(file=>{
+    const path=basename(file.destination);
+    writeFileSync(join(destination,path),file.content,{mode:0o600,flag:'wx'});
+    return {path,sha256:file.content_sha256,installation_destination:file.destination,
+      installation_owner:file.owner,installation_mode:file.mode};
+  });
+  const review={...plan,preparation:'private_configuration_bundle',files};
+  const bytes=Buffer.from(JSON.stringify(review,null,2)+'\n');
+  writeFileSync(join(destination,'review.json'),bytes,{mode:0o600,flag:'wx'});
+  return {version:1,operation:'stage_platform_configuration',host:plan.host,destination,
+    manifest_sha256:plan.manifest_sha256,review_sha256:createHash('sha256').update(bytes).digest('hex'),
+    files:files.length,installed:false,activation:false,state:'review_required'};
 }

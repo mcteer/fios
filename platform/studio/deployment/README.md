@@ -56,6 +56,14 @@ node scripts/install-platform.mjs plan-config --release /ABSOLUTE/REVIEWED_RELEA
 
 The JSON includes the proposed supervisor/session plist content, content hashes, source-template hashes, root:wheel/0644 installation metadata and fixed destination paths. The existing approved `mcteer` service user and `/Library/Application Support/Fios/Studio` binary location remain explicit. State paths are XML-escaped. The supervisor runs as that user from the system domain; the session component requires that user's Aqua session. Review each Studio separately; selecting a host does not contact it or verify its identity.
 
+To save the same proposal as a private bundle for independent plist review:
+
+```sh
+node scripts/install-platform.mjs stage-config --release /ABSOLUTE/REVIEWED_RELEASE --sha256 REVIEWED_MANIFEST_SHA --host fios-edge-a.lab --state /ABSOLUTE/PRIVATE_PLATFORM_STATE --to /ABSOLUTE/PRIVATE_PARENT/NEW_CONFIG_BUNDLE
+```
+
+The destination must be new under an existing owned0700 directory. It contains the two rendered plists and `review.json`, all private0600 files. The receipt binds the review bytes; the review binds each plist and its proposed installation destination/owner/mode. This writes only the private bundle. It executes no packaged program, changes no enrollment or launchd configuration, and keeps `installed:false`/`activation:false`. Preserve any partial output after an error; do not treat it as a completed bundle. `plan-config` remains read-only.
+
 The command leaves the state and system directories unchanged and emits no privileged commands. Current release/enrollment and installation-approval blockers remain. Generated content is proposal data, not an installed configuration, complete interpreter/native enrollment or service-start permission. Rollback steps retain current state/configuration, restore reviewed previous artifacts/configuration, restore the previous original backup into a fresh directory and verify status without inference. Actual switching/removal still requires the separately reviewed installation workflow; do not load these development proposals.
 
 ## Verified offline artifact copy

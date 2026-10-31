@@ -1,13 +1,14 @@
 #!/usr/bin/env node
-// Read-only installation/state review. Never executes privileged/native commands.
+// Installation/state review and private data preparation; no service actions.
 import {validatePlatformRelease} from './lib/platform-release.mjs';
-import {platformStatePlan,platformRollbackStatePlan,platformUninstallPlan,platformConfigurationPlan} from './lib/platform-state-plan.mjs';
+import {platformStatePlan,platformRollbackStatePlan,platformUninstallPlan,platformConfigurationPlan,stagePlatformConfiguration} from './lib/platform-state-plan.mjs';
 const args=process.argv.slice(2);
 const usage=`Usage: node scripts/install-platform.mjs COMMAND --release ABS_RELEASE --sha256 REVIEWED_SHA256 --host HOST [OPTIONS]
 
 Commands:
   plan
   plan-config          --state ABS_STATE
+  stage-config         --state ABS_STATE --to ABS_NEW_PRIVATE_BUNDLE
   plan-backup          --state ABS_STATE --to ABS_NEW_BACKUP
   plan-uninstall       --state ABS_STATE --to ABS_NEW_BACKUP
   plan-restore         --backup ABS_BACKUP --backup-sha256 REVIEWED_BACKUP_SHA256 --to ABS_NEW_STATE
@@ -15,18 +16,21 @@ Commands:
   plan-rollback-seven  Same options as plan-rollback; reviews a previous schema7 release only.
 
 HOST: fios-edge-a.lab or fios-edge-b.lab
-Creates review proposals only. Executes no installation or service action.
+Creates review proposals or a private configuration bundle. Executes no installation or service action.
 `;
-function failure(){console.error('Platform installation review refused; no changes made.');process.exitCode=1;}
+function failure(){console.error('Platform review/preparation failed; retain any private output for review.');process.exitCode=1;}
 if(args.length===1&&['--help','-h'].includes(args[0])){
   console.log(usage);
 }else{
 try{
-  const sizes={'plan':7,'plan-config':9,'plan-backup':11,'plan-uninstall':11,'plan-restore':13,'plan-rollback':17,'plan-rollback-seven':17};
+  const sizes={'plan':7,'plan-config':9,'stage-config':11,'plan-backup':11,'plan-uninstall':11,'plan-restore':13,'plan-rollback':17,'plan-rollback-seven':17};
   if(args.length!==sizes[args[0]]||args[1]!=='--release'||args[3]!=='--sha256'||args[5]!=='--host')throw Error('arguments');
   const verified=validatePlatformRelease(args[2],args[4]);
   if(!verified.manifest.native_inventory.hosts.includes(args[6]))throw Error('host');
-  if(args[0]==='plan-config'){
+  if(args[0]==='stage-config'){
+    if(args[7]!=='--state'||args[9]!=='--to')throw Error('arguments');
+    console.log(JSON.stringify(stagePlatformConfiguration({release:args[2],verified,host:args[6],state:args[8],destination:args[10]}),null,2));
+  }else if(args[0]==='plan-config'){
     if(args[7]!=='--state')throw Error('arguments');
     console.log(JSON.stringify(platformConfigurationPlan({release:args[2],verified,host:args[6],state:args[8]}),null,2));
   }else if(['plan-rollback','plan-rollback-seven'].includes(args[0])){
