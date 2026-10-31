@@ -59,7 +59,7 @@ A later, separately scoped deployment can select an OTel Collector and Prometheu
 Run the focused SDK tests with a full Xcode toolchain (the local standalone Command Line Tools lack XCTest):
 
 ```sh
-DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test --package-path platform/studio --filter StudioOpenTelemetryTests
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test --package-path platform/studio --build-system native --filter StudioOpenTelemetryTests
 ```
 
 An ordinary end-to-end SDK check runs the actual manager and CLI against private state:

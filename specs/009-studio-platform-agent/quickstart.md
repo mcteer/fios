@@ -57,7 +57,7 @@ The second form verifies the package and starts its own supervisor/manager again
 The package manager uses the pinned OpenTelemetry Swift SDK for fixed operational events and resource gauges. No export backend is configured or deployed; Collector/Prometheus selection is outside this spec. Existing local audit files remain durable. See [observability](contracts/observability.md) for signals and limitations. With full Xcode, run the ordinary SDK unit tests separately:
 
 ```sh
-DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test --package-path platform/studio --filter StudioOpenTelemetryTests
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test --package-path platform/studio --build-system native --filter StudioOpenTelemetryTests
 node scripts/check-platform-observability.mjs --isolated
 ```
 

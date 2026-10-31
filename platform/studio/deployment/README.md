@@ -36,6 +36,14 @@ Read-only byte review requires the separately retained expected receipt digest:
 
 This command never executes candidate code. It verifies the pinned receipt, finite exact file/directory surface, regular single-link files, ownership/modes and every recorded size/hash, with rooted directory checks and a final receipt recheck. Duplicate JSON keys, extra paths and any claimed approval/enrollment/activation refuse. Results describe per-file observations, not an atomic installed-tree reservation or provenance approval.
 
+Ordinary factory compatibility can then be checked separately:
+
+```sh
+node scripts/check-platform-worker-runtime.mjs --isolated --candidate /ABSOLUTE/PRIVATE_PARENT/RUNTIME --sha256 REVIEWED_CANDIDATE_SHA256
+```
+
+This compiles the actual Core worker factory, verifies the candidate bytes before and after, and executes its existing metadata-only worker check under network denial. It creates no model dispatch binding, job, native admission or installed service. Passing confirms factory/runtime metadata compatibility; it does not enroll the writable development tree or make the nine-artifact release complete.
+
 `candidate.json` is sealed last and binds the actual byte inventory, producer, release template, lockfile and source hashes. This is installed-byte evidence, not publisher/build/whole-OS provenance. The destination remains writable development data; its receipt must be independently checked again after use. It does not expand the nine-artifact release surface, enroll an immutable interpreter, authorize installation or clear any native uncertainty. All approval/enrollment/activation flags remain false.
 
 Read-only, single-host review (list all supported workflows with `node scripts/install-platform.mjs --help`):
