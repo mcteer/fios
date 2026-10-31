@@ -231,6 +231,16 @@ guard, requires the allocator-observed runtime failure and restores source.
 These runs use an empty CPU blob, no session/model, and confer no native admission
 or installation authority. Do not run source mutations concurrently.
 
+## Historical native source validation recipes
+
+The following backend failure/mutation recipes are retained to explain historical receipts. They are outside the operator’s current scope and are not instructions to run them now. Continue ordinary functional builds and checks using already verified dependency inputs. For a fresh native build without the earlier probe/root-test/HTTP matrices, use:
+
+```sh
+node scripts/check-platform-native-fixture.mjs --source /ABS/PRIVATE_NATIVE --zig /ABS/PINNED_ZIG --webp-source /ABS/PINNED_WEBP --metal-cpp-zip /ABS/PINNED_ARCHIVE --ds4-build /ABS/VERIFIED_DS4_BUILD/candidate.json --ds4-sha256 EXACT_DS4_RECEIPT_SHA --mimo-source /ABS/REVIEWED_MIMO --mlx-dependency /ABS/VERIFIED_SDK/candidate.json --mlx-sha256 EXACT_SDK_RECEIPT_SHA --mlx-source /ABS/REVIEWED_MLX --review-output /ABS/PRIVATE_PARENT/NEW_CAPSULE --functional-build-only
+```
+
+The normal empty-model native-status flow near the top of this guide remains available separately. Neither flow installs or activates native code.
+
 ### Model-free llama draft retirement refusal
 
 ```sh
