@@ -17,6 +17,12 @@
 - Q: Which model requests must authoritative activity cover? → A: A. Every request served by the Studio's MLX-Serve, including clients bypassing this manager. Agent-only bookkeeping is insufficient.
 - Q: What network access may sandboxes have? → A: A. No external network, with only scoped mediated local-model access. Dependencies come from approved immutable images; no public-internet or per-job arbitrary egress grants.
 
+### Session 2026-10-31
+
+- Model placement: `fios-core`, the24GiB M4-family Mac Mini, is the small-model host. The two Studios host larger models only. Core development/model receipts do not establish Studio sizing or acceptance, and core is not added to009’s two-Studio installation target set.
+- Observability: use OpenTelemetry where feasible. No Collector/backend currently exists; a Prometheus-compatible backend is a later selection outside this specification. Current SDK instrumentation and limits are recorded in [observability](contracts/observability.md).
+- Execution scope: continue ordinary functional implementation, native integration and correctness checks. Cybersecurity/pen-testing work and adversarial exercises are excluded at the operator’s request. Installation, native activation and disruptive acceptance remain separately gated.
+
 ## User Scenarios & Testing
 
 ### User Story 1 — Recover the Studio management service (Priority: P1)
@@ -172,6 +178,7 @@ As an authorized platform task or sandbox, I can request local inference through
 ## Assumptions
 
 - Initial target Studios are the existing `fios-edge-a.lab` and `fios-edge-b.lab` with user `mcteer`; the phrase “both” is treated as two designated machines, not permission to enroll other hosts. Confirm mapping before SSH or rollout.
+- Small models belong only on `fios-core`; the two target Studios serve larger models. Preserve exact host/model identities and their independently reviewed resource bounds. Small core experiments never substitute for Studio acceptance or authorize moving that model onto a Studio.
 - A minimal host-native management/supervision component is required to recover OrbStack when OrbStack is unavailable. This is a new009 authority boundary, not restoration of the rejected005 native readiness/deployer jobs or blanket permission for other native helpers. The existing006 support-services rule requires an explicit scoped update before implementation/deployment.
 - Controlled sandbox code execution is requested, but the constitution's arbitrary-code-execution prohibition and existing daemon-authority rules need a reviewed narrow amendment/ADR before enabling it. No constitutional protection is silently removed by this draft. Docker/OrbStack authority is daemon-wide and stays only in the trusted platform control boundary, never the app, model worker, observer or sandbox.
 - “Container workloads limited to temporary sandboxes” applies to workloads dispatched by009. Existing persistent Fios Compose services and unrelated containers are not removed, converted or placed under sandbox ownership. Managing OrbStack must respect their presence.
