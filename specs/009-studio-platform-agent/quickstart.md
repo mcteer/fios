@@ -37,6 +37,15 @@ Small-model source experiments in this guide run only on `fios-core` (24GiB M4-f
 
 ## Observability instrumentation
 
+An ordinary supervisor status regression checks the genuine current process through macOS temporary-path aliases:
+
+```sh
+node scripts/check-platform-supervisor-status.mjs --isolated
+node scripts/check-platform-supervisor-status.mjs --isolated --release /ABS/PRIVATE_RELEASE --sha256 REVIEWED_MANIFEST_SHA256
+```
+
+The second form verifies the package and starts its own supervisor/manager against private state, reads public CLI status and shuts them down normally. Neither form installs a service or invokes native/model/runtime actions.
+
 The package manager uses the pinned OpenTelemetry Swift SDK for fixed operational events and resource gauges. No export backend is configured or deployed; Collector/Prometheus selection is outside this spec. Existing local audit files remain durable. See [observability](contracts/observability.md) for signals and limitations. With full Xcode, run the ordinary SDK unit tests separately:
 
 ```sh
