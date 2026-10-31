@@ -17,7 +17,7 @@ Commands:
   plan-rollback-seven  Same options as plan-rollback; reviews a previous schema7 release only.
 
 HOST: fios-edge-a.lab or fios-edge-b.lab
-Creates review proposals or a private configuration bundle. Executes no installation or service action.
+Reviews, stages or verifies private configuration/state data. Executes no installation or service action.
 `;
 function failure(){console.error('Platform review/preparation failed; retain any private output for review.');process.exitCode=1;}
 if(args.length===1&&['--help','-h'].includes(args[0])){

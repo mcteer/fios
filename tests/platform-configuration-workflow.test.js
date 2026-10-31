@@ -1,12 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtempSync,mkdirSync,chmodSync,copyFileSync,readFileSync,existsSync,rmSync} from 'node:fs';
+import {mkdtempSync,mkdirSync,chmodSync,copyFileSync,readFileSync,existsSync,rmSync,renameSync} from 'node:fs';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {createHash} from 'node:crypto';
-import {platformConfigurationPlan} from '../scripts/lib/platform-state-plan.mjs';
+import {platformConfigurationPlan,stagePlatformConfiguration,verifyPlatformConfiguration} from '../scripts/lib/platform-state-plan.mjs';
 
-test('configuration review renders both packaged launchd templates for the selected state',()=>{
+test('configuration workflow renders, stages and verifies templates after state relocation',()=>{
   const directory=mkdtempSync(join(tmpdir(),'fios-configuration-workflow-'));
   try{
     chmodSync(directory,0o700);
@@ -33,5 +33,13 @@ test('configuration review renders both packaged launchd templates for the selec
       assert.equal(existsSync(join(directory,'rendered')),false);
     }
     assert.ok(plan.rollback_steps.includes('retain_current_state_exports_and_configuration'));
+    const staged=stagePlatformConfiguration({release,verified,host:'fios-edge-b.lab',state,destination:join(directory,'rendered')});
+    renameSync(state,join(directory,'retained-state'));
+    const saved=verifyPlatformConfiguration({release,verified,host:'fios-edge-b.lab',bundle:staged.destination,reviewSHA256:staged.review_sha256});
+    assert.equal(saved.scope,'declared_configuration_files');assert.equal(saved.files,2);
+    assert.equal(saved.state,'review_required');assert.equal(saved.installed,false);assert.equal(saved.activation,false);
+    assert.equal(saved.changes_made,false);assert.equal(existsSync(state),false);
+    assert.equal(existsSync(join(directory,'retained-state')),true);
+
   }finally{rmSync(directory,{recursive:true,force:true});}
 });
