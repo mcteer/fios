@@ -2,7 +2,7 @@ import Foundation
 import StudioCore
 
 let arguments=CommandLine.arguments
-let usage="Usage: studioctl --state ABSOLUTE_PRIVATE_DIRECTORY status|activity|resources|supervisor|task|export; service mlx|orbstack running|maintenance|stopped|drain|force prepare|force confirm TOKEN SCOPE_DIGEST; backup|backup-state --to ABSOLUTE_NEW_PATH; verify-backup --sha256 REVIEWED_DIGEST; restore-state|migrate-state-seven --sha256 REVIEWED_DIGEST --to ABSOLUTE_NEW_DIRECTORY\n       studioctl plan-memory --ram-gib POSITIVE_GIB\n       studioctl stage-release --from ABSOLUTE_REVIEWED_RELEASE --sha256 REVIEWED_MANIFEST_SHA --to ABSOLUTE_NEW_DIRECTORY\n"
+let usage="Usage: studioctl --state ABSOLUTE_PRIVATE_DIRECTORY status|activity|resources|supervisor|task|export; service mlx|orbstack status|running|maintenance|stopped|drain|force prepare|force confirm TOKEN SCOPE_DIGEST; backup|backup-state --to ABSOLUTE_NEW_PATH; verify-backup --sha256 REVIEWED_DIGEST; restore-state|migrate-state-seven --sha256 REVIEWED_DIGEST --to ABSOLUTE_NEW_DIRECTORY\n       studioctl plan-memory --ram-gib POSITIVE_GIB\n       studioctl stage-release --from ABSOLUTE_REVIEWED_RELEASE --sha256 REVIEWED_MANIFEST_SHA --to ABSOLUTE_NEW_DIRECTORY\n"
 if arguments.count==2 && ["--help","-h"].contains(arguments[1]) {
     FileHandle.standardOutput.write(Data(usage.utf8))
     exit(0)
@@ -79,7 +79,8 @@ do {
             result=["ok":true,"scope":"platform_journal_only","schema":receipt.schema,"bytes":receipt.bytes,"sha256":receipt.sha256]
         }
     } else if let serviceCommand {
-        result=try ControlClient.request(path:directory.appendingPathComponent("control.sock").path,operation:serviceCommand.operation,payload:serviceCommand.payload)
+        let response=try ControlClient.request(path:directory.appendingPathComponent(serviceCommand.socketName).path,operation:serviceCommand.operation,payload:serviceCommand.payload)
+        result=try serviceCommand.renderResponse(response)
     } else if exporting {
         let response=try ControlClient.request(path:directory.appendingPathComponent("observe.sock").path,operation:.activity)
         guard response["ok"] as? Bool==true,let observation=response["observation"] as? [String:Any] else {throw ControlError.invalid_request}

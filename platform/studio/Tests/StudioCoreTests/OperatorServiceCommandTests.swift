@@ -1,5 +1,28 @@
 import Foundation
 
+func runOperatorServiceStatusTests() throws {
+    for service in ["mlx","orbstack"] {
+        guard let command=OperatorServiceCommand(arguments:["service",service,"status"]) else {fatalError("Service status command missing")}
+        precondition(command.operation == .status && command.payload.isEmpty && command.socketName == "observe.sock")
+        let response:[String:Any]=["ok":true,"services":[service:["desired":"maintenance","observed":"ready"]]]
+        let result=try command.renderResponse(response)
+        precondition(result["service"] as? String == service && result["desired"] as? String == "maintenance" && result["observed"] as? String == "ready")
+        let unavailable=try command.renderResponse(["ok":false,"error":"unavailable"])
+        precondition(unavailable["error"] as? String == "unavailable")
+        let desired=OperatorServiceCommand(arguments:["service",service,"running"])!
+        precondition(desired.socketName == "control.sock")
+        let acknowledgement=try desired.renderResponse(["ok":true,"applied":false])
+        precondition(acknowledgement["applied"] as? Bool == false)
+        for action in [["maintenance"],["stopped"],["drain"],["force","prepare"],
+                       ["force","confirm","00000000-0000-4000-8000-000000000001",String(repeating:"a",count:64)]] {
+            let lifecycle=OperatorServiceCommand(arguments:["service",service]+action)!
+            precondition(lifecycle.socketName == "control.sock" && lifecycle.payload["service"] as? String == service)
+            let result=try lifecycle.renderResponse(["ok":true,"applied":false])
+            precondition(result["applied"] as? Bool == false)
+        }
+    }
+}
+
 func runOperatorServiceCommandTests() throws {
     func expect(_ value:Bool,_ message:String) throws {guard value else {fatalError(message)}}
     for service in ["mlx","orbstack"] {

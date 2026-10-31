@@ -128,13 +128,17 @@ studioctl --state /ABS/PRIVATE_STATE activity
 studioctl --state /ABS/PRIVATE_STATE resources
 studioctl --state /ABS/PRIVATE_STATE supervisor
 studioctl --state /ABS/PRIVATE_STATE task < /ABS/PRIVATE_TASK_REQUEST.json
+studioctl --state /ABS/PRIVATE_STATE service mlx status
+studioctl --state /ABS/PRIVATE_STATE service orbstack status
 studioctl --state /ABS/PRIVATE_STATE service mlx maintenance
 studioctl --state /ABS/PRIVATE_STATE service orbstack stopped
 ```
 
 `task` accepts one bounded versioned JSON request on stdin, including the authenticated task credential only in that private channel, and uses only `task.sock`. See [control-plane](contracts/control-plane.md), [model-access](contracts/model-access.md) and [sandbox-lifecycle](contracts/sandbox-lifecycle.md) for exact operations/payloads; never invent submit/retry flags or grant a model the operator socket. Ordinary manager enrollment remains unavailable; injected fixture success is not production task eligibility.
 
-Fixed operator grammar is `service mlx|orbstack running|maintenance|stopped|drain`, `service SERVICE force prepare`, or `service SERVICE force confirm TOKEN SCOPE_DIGEST`. Desired changes persist with `applied:false`. Drain/force currently return `native_unsupported`, `applied:false`; no production scope issuer/actuator exists. A caller-provided digest does not create trusted affected scope. Malformed grammar exits2; refused requests exit1. `export` is fixed observation-only; SSH use additionally requires separately reviewed forced-command/no-forwarding enrollment, not a general shell.
+Per-service `status` prints that service’s `desired` and `observed` state (and available drain progress). It uses the same observation as aggregate `status`; it does not change service state.
+
+Fixed operator grammar is `service mlx|orbstack status|running|maintenance|stopped|drain`, `service SERVICE force prepare`, or `service SERVICE force confirm TOKEN SCOPE_DIGEST`. Desired changes persist with `applied:false`. Drain/force currently return `native_unsupported`, `applied:false`; no production scope issuer/actuator exists. A caller-provided digest does not create trusted affected scope. Malformed grammar exits2; refused requests exit1. `export` is fixed observation-only; SSH use additionally requires separately reviewed forced-command/no-forwarding enrollment, not a general shell.
 
 Bounds: two sandboxes plus two model-only jobs;512MiB–2GiB and1–2CPU per sandbox,4 aggregate CPUs and64PIDs per sandbox; two512MiB private model workers/host, at most one active POST/job and two active-or-uncertain host requests; four POSTs/job,128000 input/64000 output UTF-16 units/request,256000 output UTF-16 units/job and8192 output tokens/request. Exact approved IDs only, no retries/failover/tools. RAM reserve is ceil(max(16GiB,20%)); CPU≤80%; disk≥10GiB after queued and retained commitments. Unknown/stale host/VM capacity or unmanaged runtime work cannot be converted into free resources. GPU observations are metadata, never idle/terminal proof.
 

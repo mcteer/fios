@@ -7,6 +7,7 @@ struct PolicyTestRunner {
         let checks:[(String,()throws->Void)]=[
             ("mock support",runMockSupportTests),
             ("operator commands",runOperatorServiceCommandTests),
+            ("operator service status",runOperatorServiceStatusTests),
             ("service status",runServiceStatusTests),
             ("service recovery",runServiceRecoveryTests),
             ("service reconciliation",runServiceReconciliationTests),
