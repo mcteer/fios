@@ -17,6 +17,7 @@ struct NativeMaintenanceCoordinator {
     private(set) var observationOnly=false
     private var admissionsInstance:String?
     var lifecycleApplied:Bool {false}
+    init(journal:Journal) {self.journal=journal}
 
     mutating func setDesired(_ desired:ServiceDesired,role:ControlRole) throws {
         guard role == .operator else {throw NativeControlError.unauthorized}
