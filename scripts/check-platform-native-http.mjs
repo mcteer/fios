@@ -257,7 +257,7 @@ try {
   await until(async()=>{const status=await managerRPC('status');return status.ok && status;});
   const denied=await managerRPC('service.desired',{service:'mlx',desired:'maintenance'},'task');assert.equal(denied.ok,false);
   const requested=await managerRPC('service.desired',{service:'mlx',desired:'maintenance'});assert.equal(requested.ok,true);assert.equal(requested.applied,false);
-  await until(async()=>{const status=await managerRPC('status');assert.equal(status.native_activity,'unsupported');return status.native_admissions==='admissionsClosed' && status.services.mlx.desired==='maintenance';});
+  await until(async()=>{const status=await managerRPC('status');assert.equal(status.native_activity,'unknown');return status.native_admissions==='admissionsClosed' && status.services.mlx.desired==='maintenance';});
   assert.equal((await control(0)).closed,1);
   await stopManager();startManager();
   await until(async()=>{const status=await managerRPC('status');return status.native_admissions==='admissionsClosed' && status.services.mlx.desired==='maintenance';});

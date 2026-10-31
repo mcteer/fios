@@ -10,7 +10,7 @@ Aggregate `status.services` and `studioctl --state DIR service mlx|orbstack stat
 
 Aggregate status now includes `native_control`. It reports the last accepted native-control reply under scope `native_ingress_tracker`, with `authoritative:false`. States are `unconfigured`, `waiting`, `received`, `unavailable` and `stale`. Fresh replies expose the source instance, reported ingress/preparing/active/responding/owner/model-identity counts, ingress closure and tracker uncertainty. Missing or expired replies expose no current counts.
 
-`received_at` is captured by the existing off-loop native client when its request completes, and `receipt_age_ms` measures that receipt's age. Neither field is a native capture timestamp. `source_sampled_at` and `source_sequence` remain null because the current control reply supplies neither. The existing normalized `native_activity`/activity coverage stays unsupported; these diagnostics do not prove all-client/device completion or authorize dispatch/lifecycle operations. This adds no native polling, queue, listener or action.
+`received_at` is captured by the existing off-loop native client when its request completes, and `receipt_age_ms` measures that receipt's age. Neither field is a native capture timestamp. `source_sampled_at` and `source_sequence` remain null because the current control reply supplies neither. Normalized `native_activity`/activity coverage is `unsupported` without a configured native client and `unknown` when the adapter exists but full source coverage remains unproven; these diagnostics do not prove all-client/device completion or authorize dispatch/lifecycle operations. This adds no native polling, queue, listener or action.
 
 ## Identity and framing
 

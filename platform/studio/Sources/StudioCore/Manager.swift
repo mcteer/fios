@@ -26,6 +26,7 @@ public enum ManagerRuntime {
         var serviceCursor=0,serviceTransportUnavailable=false
         var nativeMaintenance=NativeMaintenanceCoordinator(journal:journal)
         let nativeQueue=activeNativeControl.map {AsyncNativeControl(client:$0)}
+        let nativeCoverage:NativeCoverage = nativeQueue == nil ? .unsupported:.unknown
         var nativeDiagnostics=NativeControlDiagnostics(configured:nativeQueue != nil)
         func enqueueNative(_ command:NativeMaintenanceCommand) {
             guard let nativeQueue else {return}
@@ -188,7 +189,7 @@ public enum ManagerRuntime {
                         response["native_admissions"]=nativeQueue == nil ? "unsupported":nativeMaintenance.phase.rawValue
                         response["native_control"]=nativeDiagnostics.summary(now:requestedAt)
                         response["migration_maintenance"]=migrationHeld
-                        response["native_activity"]="unsupported"
+                        response["native_activity"]=nativeCoverage.rawValue
                         response["sandbox_admission"]=activeExecution == nil ? "disabled":"configured"
                         response["artifact_bytes"]=artifacts.statistics.bytes
                         response["artifact_jobs"]=artifacts.statistics.jobs
@@ -200,7 +201,7 @@ public enum ManagerRuntime {
                         response["resource_observation"]=telemetry.observation
                     case .activity:
                         guard request.payload.isEmpty else { throw ControlError.invalid_request }
-                        response["coverage"]="unsupported"; response["activity"]="unknown"
+                        response["coverage"]=nativeCoverage.rawValue; response["activity"]="unknown"
                         let ownership=try journal.activityOwnership()
                         var context=ActivityObservationContext(sampledAt:requestResources.sampledAt,pressure:requestResources.pressure,thermal:requestResources.thermal)
                         for service in ManagedService.allCases {
@@ -210,7 +211,7 @@ public enum ManagerRuntime {
                         }
                         let metadata=ActivityObservationMetadata(host:ProcessInfo.processInfo.hostName,endpointHash:endpointHash,profileHash:profileHash,managerEpoch:epoch,
                             nativeEpoch:"unknown:"+epoch,sequence:Int64(sequence),sampledAt:sampledAt,nativeSequence:nil,nativeSampledAt:nil)
-                        let frame=try ActivityObservationExport.encode(metadata:metadata,coverage:.unsupported,sourceCoverage:.unsupported,
+                        let frame=try ActivityObservationExport.encode(metadata:metadata,coverage:nativeCoverage,sourceCoverage:nativeCoverage,
                             localModels:ownership.models,localUncertain:ownership.uncertain,context:context)
                         response["observation"]=try JSONSerialization.jsonObject(with:frame)
                     case .jobCreate,.jobStatus,.jobRenew,.jobCancel,.modelRequest,.artifactRead:

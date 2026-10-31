@@ -57,7 +57,9 @@ try{
  assert.equal(diagnostic.source_sampled_at,null);assert.equal(diagnostic.source_sequence,null);
  assert.equal(diagnostic.reported_counts.owners,0);assert.equal(diagnostic.ingress_closed,false);
  assert(diagnostic.receipt_age_ms>=0&&diagnostic.receipt_age_ms<=5000);
- assert.equal(opened.native_activity,'unsupported');
+ assert.equal(opened.native_activity,'unknown');
+ const activity=command(['activity']);assert.equal(activity.coverage,'unknown');
+ assert.equal(activity.observation.coverage,'unknown');assert.equal(activity.observation.outstanding_owners,null);
  assert.equal(command(['service','mlx','maintenance']).applied,false);
  const paused=await until(()=>{const value=command(['status']);return value?.native_control.state==='received'&&value.native_control.ingress_closed===true&&value.native_admissions==='admissionsClosed' ? value:null;});
  assert.equal(paused.native_control.source_instance,diagnostic.source_instance);
