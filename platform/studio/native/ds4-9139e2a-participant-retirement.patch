@@ -1,0 +1,2005 @@
+diff --git a/ds4.c b/ds4.c
+index 633a3cf..5b43469 100644
+--- a/ds4.c
++++ b/ds4.c
+@@ -2088,15 +2088,35 @@ typedef struct {
+     uint32_t done;
+     bool initialized;
+     bool shutdown;
++    bool active; // whole outer dispatch, including the inline caller kernel
+     ds4_parallel_fn fn;
+     void *ctx;
+     uint64_t n_rows;
+ } ds4_thread_pool;
+ 
+ static ds4_thread_pool g_pool;
++static int g_fios_cpu_pool_uncertain;
++static uint32_t g_fios_cpu_pool_joined;
++static uint64_t g_fios_cpu_pool_next_owner = 1;
++static __thread uint64_t g_fios_cpu_pool_local_owner;
++static uint64_t g_fios_cpu_pool_owner;
+ static __thread int g_parallel_depth;
+ static uint32_t g_requested_threads;
+ 
++// Source-owned non-reusable thread lifetimes, not recyclable pthread IDs.
++static uint64_t ds4_threads_owner_token(void) {
++    if (g_fios_cpu_pool_local_owner) return g_fios_cpu_pool_local_owner;
++    uint64_t previous = __atomic_load_n(&g_fios_cpu_pool_next_owner, __ATOMIC_ACQUIRE);
++    while (previous != UINT64_MAX) {
++        if (__atomic_compare_exchange_n(&g_fios_cpu_pool_next_owner, &previous,
++                                        previous + 1, true, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
++            g_fios_cpu_pool_local_owner = previous;
++            return previous;
++        }
++    }
++    return 0;
++}
++
+ static void *ds4_worker_main(void *arg) {
+     const uint32_t tid = (uint32_t)(uintptr_t)arg;
+     uint32_t seen_generation = 0;
+@@ -2140,7 +2160,16 @@ static void *ds4_worker_main(void *arg) {
+ /* Create the persistent CPU worker pool.  Decode reuses these threads instead
+  * of creating pthreads in the token loop. */
+ static void ds4_threads_init(void) {
++    if (__atomic_load_n(&g_fios_cpu_pool_uncertain, __ATOMIC_ACQUIRE))
++        ds4_die("CPU pool retirement is uncertain");
+     if (g_pool.initialized) return;
++    const uint64_t owner = ds4_threads_owner_token();
++    if (!owner) {
++        __atomic_store_n(&g_fios_cpu_pool_uncertain, 1, __ATOMIC_RELEASE);
++        ds4_die("CPU pool owner identities exhausted");
++    }
++    g_fios_cpu_pool_owner = owner;
++    g_fios_cpu_pool_joined = 0;
+ 
+     pthread_once(&iq2xxs_signed_grid_once, iq2xxs_signed_grid_init);
+ 
+@@ -2176,23 +2205,52 @@ static void ds4_threads_init(void) {
+     }
+ }
+ 
+-static void ds4_threads_shutdown(void) {
+-    if (!g_pool.initialized) return;
++// Known local pool activity/uncertainty only, never an all-writer proof.
++static int ds4_threads_work_busy(void) {
++    if (__atomic_load_n(&g_fios_cpu_pool_uncertain, __ATOMIC_ACQUIRE)) return 1;
++    if (!g_pool.initialized) return 0;
++    if (!g_fios_cpu_pool_local_owner || g_fios_cpu_pool_local_owner != g_fios_cpu_pool_owner) return 1;
++    if (pthread_mutex_lock(&g_pool.mutex) != 0) return 1;
++    const int busy = g_pool.active || g_pool.shutdown;
++    if (pthread_mutex_unlock(&g_pool.mutex) != 0) return 1;
++    return busy;
++}
++
++// Checked local pool teardown. Serialized lifecycle/init remains a precondition;
++// this is not a census of every CPU/model writer or an all-client receipt.
++static int ds4_threads_shutdown_checked(void) {
++    if (__atomic_load_n(&g_fios_cpu_pool_uncertain, __ATOMIC_ACQUIRE)) return 0;
++    if (!g_pool.initialized) return 1;
++    if (!g_fios_cpu_pool_local_owner || g_fios_cpu_pool_local_owner != g_fios_cpu_pool_owner) return 0;
+ 
+     pthread_mutex_lock(&g_pool.mutex);
++    if (g_pool.active) {
++        pthread_mutex_unlock(&g_pool.mutex);
++        return 0; // known busy: do not signal/cancel/poison admitted work
++    }
+     g_pool.shutdown = true;
+-    g_pool.generation++;
+     pthread_cond_broadcast(&g_pool.work_cond);
+     pthread_mutex_unlock(&g_pool.mutex);
+ 
++    int ok = 1;
+     for (uint32_t i = 1; i < g_pool.n_threads; i++) {
+-        pthread_join(g_pool.threads[i], NULL);
++        if (pthread_join(g_pool.threads[i], NULL) == 0)
++            g_fios_cpu_pool_joined |= (1u << i);
++        else ok = 0;
++    }
++    if (!ok) {
++        __atomic_store_n(&g_fios_cpu_pool_uncertain, 1, __ATOMIC_RELEASE);
++        return 0; // retain exact vector/conditions/context; never rejoin unknowns
++    }
++    if (pthread_cond_destroy(&g_pool.done_cond) != 0 ||
++        pthread_cond_destroy(&g_pool.work_cond) != 0 ||
++        pthread_mutex_destroy(&g_pool.mutex) != 0) {
++        __atomic_store_n(&g_fios_cpu_pool_uncertain, 1, __ATOMIC_RELEASE);
++        return 0; // partially destroyed synchronization state cannot reinitialize
+     }
+-
+-    pthread_cond_destroy(&g_pool.done_cond);
+-    pthread_cond_destroy(&g_pool.work_cond);
+-    pthread_mutex_destroy(&g_pool.mutex);
+     memset(&g_pool, 0, sizeof(g_pool));
++    g_fios_cpu_pool_owner = 0;
++    return 1;
+ }
+ 
+ /* Run a row-parallel CPU kernel, falling back to serial execution for small
+@@ -2200,12 +2258,26 @@ static void ds4_threads_shutdown(void) {
+ static void ds4_parallel_for_min_rows(uint64_t n_rows, ds4_parallel_fn fn, void *ctx, uint64_t min_parallel_rows) {
+     ds4_threads_init();
+ 
+-    if (g_parallel_depth > 0 || g_pool.n_threads <= 1 || n_rows < min_parallel_rows) {
++    if (g_parallel_depth > 0) {
+         fn(ctx, 0, n_rows);
+         return;
+     }
+-
+     pthread_mutex_lock(&g_pool.mutex);
++    if (g_pool.active || g_pool.shutdown || g_pool.generation == UINT32_MAX) {
++        pthread_mutex_unlock(&g_pool.mutex);
++        ds4_die("CPU pool dispatch is busy, stopped or exhausted");
++    }
++    g_pool.active = true;
++    if (g_pool.n_threads <= 1 || n_rows < min_parallel_rows) {
++        pthread_mutex_unlock(&g_pool.mutex);
++        g_parallel_depth++;
++        fn(ctx, 0, n_rows);
++        g_parallel_depth--;
++        pthread_mutex_lock(&g_pool.mutex);
++        g_pool.active = false;
++        pthread_mutex_unlock(&g_pool.mutex);
++        return;
++    }
+     g_pool.fn = fn;
+     g_pool.ctx = ctx;
+     g_pool.n_rows = n_rows;
+@@ -2228,6 +2300,7 @@ static void ds4_parallel_for_min_rows(uint64_t n_rows, ds4_parallel_fn fn, void
+     while (g_pool.done < g_pool.n_workers) {
+         pthread_cond_wait(&g_pool.done_cond, &g_pool.mutex);
+     }
++    g_pool.active = false;
+     pthread_mutex_unlock(&g_pool.mutex);
+ }
+ 
+@@ -19894,7 +19967,7 @@ typedef struct {
+     uint64_t size;
+ } metal_graph_stream_pagein_range;
+ 
+-typedef struct {
++typedef struct metal_graph_stream_pagein_job {
+     pthread_t thread;
+     const ds4_model *model;
+     metal_graph_stream_pagein_range *ranges;
+@@ -19916,6 +19989,13 @@ typedef struct {
+     bool started;
+     bool ok;
+     uint8_t sink;
++    struct metal_graph_stream_pagein_job *custody;
++    struct metal_graph_stream_pagein_job *retained_next;
++    bool uncertain;
++    uint32_t created;
++    uint32_t joined;
++    uint64_t creator;
++    uint64_t custody_id;
+ } metal_graph_stream_pagein_job;
+ 
+ typedef struct metal_graph_stream_pagein_worker {
+@@ -20789,6 +20869,136 @@ static void *metal_graph_stream_pagein_worker_main(void *arg) {
+     return NULL;
+ }
+ 
++// Local page-in custody only. Lifecycle-owner serialization remains required;
++// an empty list is not an all-writer, device or admission receipt.
++static pthread_mutex_t g_fios_pagein_mutex = PTHREAD_MUTEX_INITIALIZER;
++static metal_graph_stream_pagein_job *g_fios_pagein_jobs;
++static unsigned g_fios_pagein_count;
++static bool g_fios_pagein_uncertain;
++static uint64_t g_fios_pagein_next_owner = 1;
++static uint64_t g_fios_pagein_next_job = 1;
++static _Thread_local uint64_t g_fios_pagein_local_owner;
++
++// Lookup before dereferencing: stale copied tickets cannot adopt a reused
++// allocation, and recycled pthread/kernel identities cannot adopt a creator.
++static metal_graph_stream_pagein_job *metal_graph_stream_pagein_authorize(
++        const metal_graph_stream_pagein_job *owner) {
++    if (!owner || !owner->custody || !owner->custody_id || !g_fios_pagein_local_owner) return NULL;
++    pthread_mutex_lock(&g_fios_pagein_mutex);
++    metal_graph_stream_pagein_job *job = g_fios_pagein_jobs;
++    while (job && (job != owner->custody || job->custody_id != owner->custody_id)) job = job->retained_next;
++    if (job && (job->uncertain || job->creator != g_fios_pagein_local_owner || job->creator != owner->creator)) job = NULL;
++    pthread_mutex_unlock(&g_fios_pagein_mutex);
++    return job;
++}
++
++static bool metal_graph_stream_pagein_busy(void) {
++    pthread_mutex_lock(&g_fios_pagein_mutex);
++    const bool busy = g_fios_pagein_count || g_fios_pagein_uncertain;
++    pthread_mutex_unlock(&g_fios_pagein_mutex);
++    return busy;
++}
++
++static void metal_graph_stream_pagein_refuse(metal_graph_stream_pagein_job *job) {
++    pthread_mutex_lock(&g_fios_pagein_mutex);
++    job->uncertain = true;
++    g_fios_pagein_uncertain = true;
++    pthread_mutex_unlock(&g_fios_pagein_mutex);
++}
++
++static bool metal_graph_stream_pagein_release(metal_graph_stream_pagein_job *owner) {
++    metal_graph_stream_pagein_job *job = metal_graph_stream_pagein_authorize(owner);
++    if (!job) return false;
++    pthread_mutex_lock(&g_fios_pagein_mutex);
++    metal_graph_stream_pagein_job **link = &g_fios_pagein_jobs;
++    while (*link && *link != job) link = &(*link)->retained_next;
++    if (!*link || job->uncertain || !g_fios_pagein_count) {
++        g_fios_pagein_uncertain = true;
++        pthread_mutex_unlock(&g_fios_pagein_mutex);
++        return false;
++    }
++    *link = job->retained_next;
++    --g_fios_pagein_count;
++    pthread_mutex_unlock(&g_fios_pagein_mutex);
++    free(job->workers);
++    free(job->threads);
++    free(job->ranges);
++    free(job);
++    memset(owner, 0, sizeof(*owner));
++    return true;
++}
++
++static bool metal_graph_stream_pagein_launch(metal_graph_stream_pagein_job *owner) {
++    if (!owner || owner->custody) return false;
++    if (owner->n_threads > 16) {
++        free(owner->ranges);
++        memset(owner, 0, sizeof(*owner));
++        return false;
++    }
++    metal_graph_stream_pagein_job *job = xcalloc(1, sizeof(*job));
++    *job = *owner;
++    pthread_mutex_lock(&g_fios_pagein_mutex);
++    if (g_fios_pagein_uncertain || g_fios_pagein_count >= 64) {
++        pthread_mutex_unlock(&g_fios_pagein_mutex);
++        free(job);
++        free(owner->ranges);
++        memset(owner, 0, sizeof(*owner));
++        return false;
++    }
++    if ((!g_fios_pagein_local_owner && g_fios_pagein_next_owner == UINT64_MAX) ||
++        g_fios_pagein_next_job == UINT64_MAX) {
++        g_fios_pagein_uncertain = true;
++        pthread_mutex_unlock(&g_fios_pagein_mutex);
++        free(job);
++        free(owner->ranges);
++        memset(owner, 0, sizeof(*owner));
++        return false;
++    }
++    if (!g_fios_pagein_local_owner) g_fios_pagein_local_owner = g_fios_pagein_next_owner++;
++    job->creator = g_fios_pagein_local_owner;
++    job->custody_id = g_fios_pagein_next_job++;
++    owner->creator = job->creator;
++    owner->custody_id = job->custody_id;
++    job->retained_next = g_fios_pagein_jobs;
++    g_fios_pagein_jobs = job;
++    ++g_fios_pagein_count;
++    pthread_mutex_unlock(&g_fios_pagein_mutex);
++    owner->custody = job;
++    owner->started = true;
++    job->started = true;
++    const uint32_t count = job->n_threads > 1 ? job->n_threads : 1;
++    if (count > 1) {
++        job->threads = xcalloc(count, sizeof(job->threads[0]));
++        job->workers = xcalloc(count, sizeof(job->workers[0]));
++    }
++    uint32_t created = 0;
++    for (; created < count; ++created) {
++        int rc;
++        if (count == 1) {
++            rc = pthread_create(&job->thread, NULL, metal_graph_stream_pagein_thread_main, job);
++        } else {
++            job->workers[created].job = job;
++            job->workers[created].first = created;
++            job->workers[created].stride = count;
++            rc = pthread_create(&job->threads[created], NULL,
++                                metal_graph_stream_pagein_worker_main, &job->workers[created]);
++        }
++        if (rc != 0) {
++            bool retired = true;
++            for (uint32_t i = 0; i < created; ++i) {
++                const pthread_t thread = count == 1 ? job->thread : job->threads[i];
++                if (pthread_join(thread, NULL) != 0) retired = false;
++                else job->joined |= 1u << i;
++            }
++            if (!retired) metal_graph_stream_pagein_refuse(job);
++            else metal_graph_stream_pagein_release(owner);
++            return false;
++        }
++        job->created = created + 1;
++    }
++    return true;
++}
++
+ static uint32_t metal_graph_stream_prefill_layer_pagein_threads(void) {
+     const char *env = glm_graph_env_value(
+             "DS4_ROCM_STREAMING_PREFILL_LAYER_PREPARE_THREADS",
+@@ -21004,74 +21214,43 @@ static bool metal_graph_stream_prefill_selected_pagein_start(
+     job->ranges = ranges;
+     job->n_ranges = n_ranges;
+     job->n_threads = metal_graph_stream_prefill_selected_prepare_threads(madvise_only);
+-    if (job->n_threads <= 1) {
+-        const int rc = pthread_create(&job->thread,
+-                                      NULL,
+-                                      metal_graph_stream_pagein_thread_main,
+-                                      job);
+-        if (rc != 0) {
+-            fprintf(stderr,
+-                    "ds4: Metal streaming prefill selected page-in thread failed: %s\n",
+-                    strerror(rc));
+-            free(ranges);
+-            memset(job, 0, sizeof(*job));
+-            return false;
+-        }
+-    } else {
+-        job->threads = xcalloc(job->n_threads, sizeof(job->threads[0]));
+-        job->workers = xcalloc(job->n_threads, sizeof(job->workers[0]));
+-        for (uint32_t t = 0; t < job->n_threads; t++) {
+-            job->workers[t].job = job;
+-            job->workers[t].first = t;
+-            job->workers[t].stride = job->n_threads;
+-            const int rc = pthread_create(&job->threads[t],
+-                                          NULL,
+-                                          metal_graph_stream_pagein_worker_main,
+-                                          &job->workers[t]);
+-            if (rc != 0) {
+-                fprintf(stderr,
+-                        "ds4: Metal streaming prefill selected page-in worker failed: %s\n",
+-                        strerror(rc));
+-                for (uint32_t j = 0; j < t; j++) {
+-                    (void)pthread_join(job->threads[j], NULL);
+-                }
+-                free(job->workers);
+-                free(job->threads);
+-                free(ranges);
+-                memset(job, 0, sizeof(*job));
+-                return false;
+-            }
+-        }
+-    }
+-    job->started = true;
+-    return true;
++    return metal_graph_stream_pagein_launch(job);
+ }
+ 
+ static bool metal_graph_stream_prefill_selected_pagein_join(
+         metal_graph_stream_pagein_job *job) {
+     if (!job || !job->started) return true;
++    metal_graph_stream_pagein_job *owner = job;
++    job = metal_graph_stream_pagein_authorize(owner);
++    if (!job) return false;
+     const double t0 = job->profile ? now_sec() : 0.0;
+     int rc = 0;
+     bool ok = true;
+     if (job->n_threads <= 1) {
+         rc = pthread_join(job->thread, NULL);
+-        ok = rc == 0 && job->ok;
++        if (rc == 0) job->joined |= 1u;
++    } else {
++        for (uint32_t t = 0; t < job->n_threads; t++) {
++            const int trc = pthread_join(job->threads[t], NULL);
++            if (trc != 0 && rc == 0) rc = trc;
++            if (trc == 0) job->joined |= 1u << t;
++        }
++    }
++    if (rc != 0) {
++        metal_graph_stream_pagein_refuse(job);
++        return false;
++    }
++    if (job->n_threads <= 1) {
++        ok = job->ok;
+     } else {
+         job->touched = 0;
+         job->thread_ms = 0.0;
+         job->sink = 0;
+         for (uint32_t t = 0; t < job->n_threads; t++) {
+-            const int trc = pthread_join(job->threads[t], NULL);
+-            if (trc != 0 && rc == 0) rc = trc;
+-            if (trc != 0 || !job->workers[t].ok) ok = false;
+-            if (job->touched > UINT64_MAX - job->workers[t].touched) {
+-                job->touched = UINT64_MAX;
+-            } else {
+-                job->touched += job->workers[t].touched;
+-            }
+-            if (job->workers[t].thread_ms > job->thread_ms) {
+-                job->thread_ms = job->workers[t].thread_ms;
+-            }
++            if (!job->workers[t].ok) ok = false;
++            if (job->touched > UINT64_MAX - job->workers[t].touched) job->touched = UINT64_MAX;
++            else job->touched += job->workers[t].touched;
++            if (job->workers[t].thread_ms > job->thread_ms) job->thread_ms = job->workers[t].thread_ms;
+             job->sink ^= job->workers[t].sink;
+         }
+     }
+@@ -21101,11 +21280,7 @@ static bool metal_graph_stream_prefill_selected_pagein_join(
+                 "ds4: Metal streaming prefill selected page-in join failed: %s\n",
+                 strerror(rc));
+     }
+-    free(job->workers);
+-    free(job->threads);
+-    free(job->ranges);
+-    memset(job, 0, sizeof(*job));
+-    return ok;
++    return metal_graph_stream_pagein_release(owner) && ok;
+ }
+ 
+ static bool metal_graph_stream_prefill_layer_pagein_start(
+@@ -21218,74 +21393,43 @@ static bool metal_graph_stream_prefill_layer_pagein_start(
+     job->ranges = ranges;
+     job->n_ranges = n_ranges;
+     job->n_threads = n_threads;
+-    if (n_threads == 1) {
+-        const int rc = pthread_create(&job->thread,
+-                                      NULL,
+-                                      metal_graph_stream_pagein_thread_main,
+-                                      job);
+-        if (rc != 0) {
+-            fprintf(stderr,
+-                    "ds4: Metal streaming prefill layer page-in thread failed: %s\n",
+-                    strerror(rc));
+-            free(ranges);
+-            memset(job, 0, sizeof(*job));
+-            return false;
+-        }
+-    } else {
+-        job->threads = xcalloc(n_threads, sizeof(job->threads[0]));
+-        job->workers = xcalloc(n_threads, sizeof(job->workers[0]));
+-        for (uint32_t t = 0; t < n_threads; t++) {
+-            job->workers[t].job = job;
+-            job->workers[t].first = t;
+-            job->workers[t].stride = n_threads;
+-            const int rc = pthread_create(&job->threads[t],
+-                                          NULL,
+-                                          metal_graph_stream_pagein_worker_main,
+-                                          &job->workers[t]);
+-            if (rc != 0) {
+-                fprintf(stderr,
+-                        "ds4: Metal streaming prefill layer page-in worker failed: %s\n",
+-                        strerror(rc));
+-                for (uint32_t j = 0; j < t; j++) {
+-                    (void)pthread_join(job->threads[j], NULL);
+-                }
+-                free(job->workers);
+-                free(job->threads);
+-                free(ranges);
+-                memset(job, 0, sizeof(*job));
+-                return false;
+-            }
+-        }
+-    }
+-    job->started = true;
+-    return true;
++    return metal_graph_stream_pagein_launch(job);
+ }
+ 
+ static bool metal_graph_stream_prefill_layer_pagein_join(
+         metal_graph_stream_pagein_job *job) {
+     if (!job || !job->started) return true;
++    metal_graph_stream_pagein_job *owner = job;
++    job = metal_graph_stream_pagein_authorize(owner);
++    if (!job) return false;
+     const double t0 = job->profile ? now_sec() : 0.0;
+     int rc = 0;
+     bool ok = true;
+     if (job->n_threads <= 1) {
+         rc = pthread_join(job->thread, NULL);
+-        ok = rc == 0 && job->ok;
++        if (rc == 0) job->joined |= 1u;
++    } else {
++        for (uint32_t t = 0; t < job->n_threads; t++) {
++            const int trc = pthread_join(job->threads[t], NULL);
++            if (trc != 0 && rc == 0) rc = trc;
++            if (trc == 0) job->joined |= 1u << t;
++        }
++    }
++    if (rc != 0) {
++        metal_graph_stream_pagein_refuse(job);
++        return false;
++    }
++    if (job->n_threads <= 1) {
++        ok = job->ok;
+     } else {
+         job->touched = 0;
+         job->thread_ms = 0.0;
+         job->sink = 0;
+         for (uint32_t t = 0; t < job->n_threads; t++) {
+-            const int trc = pthread_join(job->threads[t], NULL);
+-            if (trc != 0 && rc == 0) rc = trc;
+-            if (trc != 0 || !job->workers[t].ok) ok = false;
+-            if (job->touched > UINT64_MAX - job->workers[t].touched) {
+-                job->touched = UINT64_MAX;
+-            } else {
+-                job->touched += job->workers[t].touched;
+-            }
+-            if (job->workers[t].thread_ms > job->thread_ms) {
+-                job->thread_ms = job->workers[t].thread_ms;
+-            }
++            if (!job->workers[t].ok) ok = false;
++            if (job->touched > UINT64_MAX - job->workers[t].touched) job->touched = UINT64_MAX;
++            else job->touched += job->workers[t].touched;
++            if (job->workers[t].thread_ms > job->thread_ms) job->thread_ms = job->workers[t].thread_ms;
+             job->sink ^= job->workers[t].sink;
+         }
+     }
+@@ -21318,11 +21462,7 @@ static bool metal_graph_stream_prefill_layer_pagein_join(
+                 "ds4: Metal streaming prefill layer page-in join failed: %s\n",
+                 strerror(rc));
+     }
+-    free(job->workers);
+-    free(job->threads);
+-    free(job->ranges);
+-    memset(job, 0, sizeof(*job));
+-    return ok;
++    return metal_graph_stream_pagein_release(owner) && ok;
+ }
+ 
+ typedef struct {
+@@ -23474,6 +23614,8 @@ static bool metal_graph_cuda_stream_prefill_batch_selected_load(
+ }
+ 
+ typedef struct metal_graph_selected_async_load {
++    uint64_t                  fios_creator;
++    uint64_t                  fios_ticket;
+     bool                      active;
+     bool                      ok;
+     /* Selected ids remain usable for a synchronous retry if the service
+@@ -23499,8 +23641,23 @@ static pthread_t g_metal_graph_selected_async_load_thread;
+ static bool g_metal_graph_selected_async_load_thread_started = false;
+ static bool g_metal_graph_selected_async_load_has_job = false;
+ static bool g_metal_graph_selected_async_load_done = false;
++static bool g_fios_selected_result_finishing = false;
++static bool g_fios_selected_enqueue_starting = false;
++static uint64_t g_fios_selected_next_ticket = 1; // mailbox mutex; never recycled
+ static metal_graph_selected_async_load g_metal_graph_selected_async_load_job;
+ 
++// Coherent local mailbox/result-consumer guard only. Lifecycle/init serialization remains a
++// precondition; this does not retire the worker or certify other writers/GPU.
++static bool metal_graph_selected_async_load_idle(void) {
++    if (pthread_mutex_lock(&g_metal_graph_selected_async_load_mutex) != 0) return false;
++    const bool idle = !g_metal_graph_selected_async_load_has_job &&
++                      !g_metal_graph_selected_async_load_done &&
++                      !g_fios_selected_result_finishing &&
++                      !g_fios_selected_enqueue_starting;
++    if (pthread_mutex_unlock(&g_metal_graph_selected_async_load_mutex) != 0) return false;
++    return idle;
++}
++
+ static void metal_graph_selected_async_load_run(
+         metal_graph_selected_async_load *job) {
+     job->ok = false;
+@@ -23626,8 +23783,29 @@ static DS4_MAYBE_UNUSED bool metal_graph_selected_async_load_start_tensor(
+         uint64_t                         gate_expert_bytes,
+         uint64_t                         down_expert_bytes) {
+     if (!job || !router_selected || event_value == 0) return false;
+-    if (!metal_graph_selected_async_load_ensure_worker()) return false;
++    // Reuse the source's non-reusable thread-lifetime issuer, not pthread IDs.
++    const uint64_t creator = ds4_threads_owner_token();
++    if (!creator) return false;
++    pthread_mutex_lock(&g_metal_graph_selected_async_load_mutex);
++    if (g_metal_graph_selected_async_load_has_job ||
++        g_metal_graph_selected_async_load_done || g_fios_selected_result_finishing ||
++        g_fios_selected_enqueue_starting || !g_fios_selected_next_ticket ||
++        g_fios_selected_next_ticket == UINT64_MAX) {
++        pthread_mutex_unlock(&g_metal_graph_selected_async_load_mutex);
++        return false;
++    }
++    const uint64_t ticket = g_fios_selected_next_ticket++;
++    g_fios_selected_enqueue_starting = true;
++    pthread_mutex_unlock(&g_metal_graph_selected_async_load_mutex);
++    if (!metal_graph_selected_async_load_ensure_worker()) {
++        pthread_mutex_lock(&g_metal_graph_selected_async_load_mutex);
++        g_fios_selected_enqueue_starting = false;
++        pthread_mutex_unlock(&g_metal_graph_selected_async_load_mutex);
++        return false;
++    }
+     memset(job, 0, sizeof(*job));
++    job->fios_creator = creator;
++    job->fios_ticket = ticket;
+     job->router_selected = router_selected;
+     job->model = model;
+     job->layer = layer;
+@@ -23638,16 +23816,18 @@ static DS4_MAYBE_UNUSED bool metal_graph_selected_async_load_start_tensor(
+ 
+     pthread_mutex_lock(&g_metal_graph_selected_async_load_mutex);
+     if (g_metal_graph_selected_async_load_has_job ||
+-        g_metal_graph_selected_async_load_done) {
++        g_metal_graph_selected_async_load_done || g_fios_selected_result_finishing) {
++        g_fios_selected_enqueue_starting = false;
+         pthread_mutex_unlock(&g_metal_graph_selected_async_load_mutex);
+         return false;
+     }
+     g_metal_graph_selected_async_load_job = *job;
+     g_metal_graph_selected_async_load_job.ok = false;
++    job->active = true; // publish caller state before dropping preparation custody
+     g_metal_graph_selected_async_load_has_job = true;
++    g_fios_selected_enqueue_starting = false;
+     pthread_cond_signal(&g_metal_graph_selected_async_load_cond);
+     pthread_mutex_unlock(&g_metal_graph_selected_async_load_mutex);
+-    job->active = true;
+     return true;
+ }
+ 
+@@ -23675,17 +23855,32 @@ static bool metal_graph_selected_async_load_finish(
+         metal_graph_selected_async_load *job) {
+     if (!job || !job->active) return false;
+     pthread_mutex_lock(&g_metal_graph_selected_async_load_mutex);
++    const uint64_t creator = g_fios_cpu_pool_local_owner;
++    if (!creator || job->fios_creator != creator || !job->fios_ticket ||
++        g_metal_graph_selected_async_load_job.fios_creator != creator ||
++        g_metal_graph_selected_async_load_job.fios_ticket != job->fios_ticket ||
++        g_fios_selected_enqueue_starting || g_fios_selected_result_finishing ||
++        (!g_metal_graph_selected_async_load_has_job && !g_metal_graph_selected_async_load_done)) {
++        pthread_mutex_unlock(&g_metal_graph_selected_async_load_mutex);
++        return false;
++    }
+     while (!g_metal_graph_selected_async_load_done) {
+         pthread_cond_wait(&g_metal_graph_selected_async_load_done_cond,
+                           &g_metal_graph_selected_async_load_mutex);
+     }
+     *job = g_metal_graph_selected_async_load_job;
++    g_fios_selected_result_finishing = true;
+     g_metal_graph_selected_async_load_done = false;
+     pthread_mutex_unlock(&g_metal_graph_selected_async_load_mutex);
+     job->active = false;
+-    if (!job->ok) return false;
+-    return ds4_gpu_routed_moe_set_selected_override(job->selected_ids,
+-                                                   DS4_N_EXPERT_USED) != 0;
++    const bool ok = job->ok &&
++        ds4_gpu_routed_moe_set_selected_override(job->selected_ids,
++                                                DS4_N_EXPERT_USED) != 0;
++    pthread_mutex_lock(&g_metal_graph_selected_async_load_mutex);
++    memset(&g_metal_graph_selected_async_load_job, 0, sizeof(g_metal_graph_selected_async_load_job));
++    g_fios_selected_result_finishing = false;
++    pthread_mutex_unlock(&g_metal_graph_selected_async_load_mutex);
++    return ok;
+ }
+ 
+ #ifdef DS4_ROCM_BUILD
+@@ -42215,6 +42410,7 @@ typedef enum {
+ } ds4_vision_kind;
+ 
+ struct ds4_engine {
++    bool fios_teardown_uncertain;
+     char *model_path;
+     uint64_t ds41_session_bytes;
+     ds4_model model;
+@@ -59886,6 +60082,7 @@ typedef struct {
+ } ds4_vision_identity;
+ 
+ struct ds4_session {
++    bool fios_destroy_uncertain;
+     ds4_engine *engine;
+     ds4_dist_session *distributed;
+     uint64_t tp_session_id;
+@@ -72190,10 +72387,22 @@ fail:
+ #endif
+ }
+ 
+-void ds4_engine_tp_unbind(ds4_engine *e) {
++int ds4_engine_tp_unbind_checked(ds4_engine *e) {
++    if (e && e->fios_teardown_uncertain) return 0;
++    if (ds4_threads_work_busy()) return 0;
++#if defined(__APPLE__) && !defined(DS4_NO_GPU)
++    if (!metal_graph_selected_async_load_idle()) return 0;
++#endif
+ #ifdef DS4_HAS_DEEPSEEK41_GPU
+-    if (!e || !e->tp.ctx) return;
++    if (!e || !e->tp.ctx) return 1;
++#ifdef __APPLE__
++    // Refusal retains callback userdata, transport/slab/views and the engine.
++    // A successful local join is not an all-writer or RDMA retirement proof.
++    if (!ds4_gpu_tp_shutdown_checked()) return 0;
++    if (!ds4_gpu_prepare_release()) return 0;
++#else
+     ds4_gpu_tp_shutdown();
++#endif
+     ds4_tp_detach_slab(e->tp.ctx);
+ #ifdef __APPLE__
+     g_tp_block_ctx = NULL;
+@@ -72218,6 +72427,11 @@ void ds4_engine_tp_unbind(ds4_engine *e) {
+ #else
+     (void)e;
+ #endif
++    return 1;
++}
++
++void ds4_engine_tp_unbind(ds4_engine *e) {
++    (void)ds4_engine_tp_unbind_checked(e);
+ }
+ 
+ bool ds4_engine_is_glm_dsa(ds4_engine *e) {
+@@ -72230,13 +72444,24 @@ bool ds4_engine_is_deepseek41(ds4_engine *e) {
+     return DS4_MODEL_FAMILY == DS4_MODEL_FAMILY_DEEPSEEK41;
+ }
+ 
+-void ds4_engine_close(ds4_engine *e) {
+-    if (!e) return;
+-    ds4_engine_tp_unbind(e);
++void ds4_engine_fence_teardown(ds4_engine *e) {
++    if (e) e->fios_teardown_uncertain = true;
++}
++
++int ds4_engine_close_checked(ds4_engine *e) {
++    if (!e) return 1;
++    if (e->fios_teardown_uncertain) return 0;
++#if defined(__APPLE__) && !defined(DS4_NO_GPU)
++    if (!metal_graph_selected_async_load_idle() || metal_graph_stream_pagein_busy()) return 0;
++#endif
++    if (!ds4_threads_shutdown_checked()) return 0;
++    if (!ds4_engine_tp_unbind_checked(e)) return 0;
++#if defined(__APPLE__) && !defined(DS4_NO_GPU)
++    if (!ds4_gpu_prepare_release()) return 0;
++#endif
+     ds4_expert_profile_close();
+     weights_free(&e->weights);
+     vocab_free(&e->vocab);
+-    ds4_threads_shutdown();
+     if (e->mtp_model.map) model_close(&e->mtp_model);
+     if (e->vision_model.map) model_close(&e->vision_model);
+     model_close(&e->model);
+@@ -72253,6 +72478,11 @@ void ds4_engine_close(ds4_engine *e) {
+     free(e->directional_steering_file);
+     free(e->model_path);
+     free(e);
++    return 1;
++}
++
++void ds4_engine_close(ds4_engine *e) {
++    (void)ds4_engine_close_checked(e);
+ }
+ 
+ #ifndef DS4_NO_GPU
+@@ -72814,24 +73044,34 @@ int ds4_session_create(ds4_session **out, ds4_engine *e, int ctx_size) {
+ #endif
+ }
+ 
+-void ds4_session_free(ds4_session *s) {
+-    if (!s) return;
+-    if (s->glm_reserved_graph_bytes && s->engine) {
+-        s->engine->glm_session_graph_bytes -= s->glm_reserved_graph_bytes;
+-        s->engine->glm_session_count--;
+-    }
+-    if (ds4_session_tp_leader(s) && s->tp_session_id != 0 &&
+-        !ds4_tp_failed(s->engine->tp.ctx)) {
++int ds4_session_free_checked(ds4_session *s) {
++    if (!s) return 1;
++    if (s->fios_destroy_uncertain ||
++        (s->engine && s->engine->fios_teardown_uncertain)) return 0;
++    if (ds4_threads_work_busy()) return 0;
++#if defined(__APPLE__) && !defined(DS4_NO_GPU)
++    if (!metal_graph_selected_async_load_idle()) return 0;
++    if (ds4_gpu_tp_local_work_busy()) return 0;
++#endif
++    if (ds4_session_tp_leader(s) && s->tp_session_id != 0) {
+         char err[256] = "";
+-        if (!ds4_tp_send_session_destroy(s->engine->tp.ctx,
++        if (ds4_tp_failed(s->engine->tp.ctx) ||
++            !ds4_tp_send_session_destroy(s->engine->tp.ctx,
+                                          s->tp_session_id) ||
+             !ds4_tp_wait_command_ack(s->engine->tp.ctx, s->tp_session_id,
+                                      "session destroy", err, sizeof(err))) {
+             fprintf(stderr, "ds4: %s\n",
+-                    err[0] ? err : "tp: worker session destroy send failed");
++                    err[0] ? err : "tp: worker session destroy unresolved");
++            s->fios_destroy_uncertain = true;
++            s->engine->fios_teardown_uncertain = true;
++            return 0;
+         }
+         s->tp_session_id = 0;
+     }
++    if (s->glm_reserved_graph_bytes && s->engine) {
++        s->engine->glm_session_graph_bytes -= s->glm_reserved_graph_bytes;
++        s->engine->glm_session_count--;
++    }
+ #ifndef DS4_NO_GPU
+     ds4_session_print_dspark_stats(s);
+ #endif
+@@ -72882,6 +73122,11 @@ void ds4_session_free(ds4_session *s) {
+     free(s->dspark_conf_features);
+ #endif
+     free(s);
++    return 1;
++}
++
++void ds4_session_free(ds4_session *s) {
++    (void)ds4_session_free_checked(s);
+ }
+ 
+ int ds4_session_distributed_route_ready(ds4_session *s, char *err, size_t errlen) {
+diff --git a/ds4.h b/ds4.h
+index c817abc..6a3373f 100644
+--- a/ds4.h
++++ b/ds4.h
+@@ -243,6 +243,9 @@ int ds4_engine_create_with_gpu_config(ds4_engine **out,
+                                        const ds4_engine_options *opt,
+                                        const struct ds4_gpu_config *gpu_cfg);
+ void ds4_engine_close(ds4_engine *e);
++/* Zero retains the engine on known local teardown refusal. Nonzero reports
++ * local destruction only, never all-client/device/RDMA terminality. */
++int ds4_engine_close_checked(ds4_engine *e);
+ void ds4_engine_summary(ds4_engine *e);
+ int ds4_engine_vocab_size(ds4_engine *e);
+ uint32_t ds4_engine_prefill_chunk(ds4_engine *e);
+@@ -402,9 +405,15 @@ int ds4_engine_tp_bind(ds4_engine *e, struct ds4_tp *tp, char *err, size_t errle
+ /* Release gate resources before freeing a bound transport. Sessions must
+  * already be closed. Also called by ds4_engine_close(). */
+ void ds4_engine_tp_unbind(ds4_engine *e);
++/* Local refusal propagation only; not transport/RDMA/device terminality. */
++int ds4_engine_tp_unbind_checked(ds4_engine *e);
++void ds4_engine_fence_teardown(ds4_engine *e);
+ 
+ int ds4_session_create(ds4_session **out, ds4_engine *e, int ctx_size);
+ void ds4_session_free(ds4_session *s);
++/* Local destructor result only. A failed peer-destroy acknowledgement retains
++ * session and parent custody; success is not peer/device terminality proof. */
++int ds4_session_free_checked(ds4_session *s);
+ int ds4_session_power(ds4_session *s);
+ int ds4_session_set_power(ds4_session *s, int power_percent);
+ float ds4_session_directional_steering_ffn(ds4_session *s);
+diff --git a/ds4_gpu.h b/ds4_gpu.h
+index 599f02b..447f9c9 100644
+--- a/ds4_gpu.h
++++ b/ds4_gpu.h
+@@ -43,6 +43,11 @@ typedef struct {
+ 
+ int ds4_gpu_init(void);
+ void ds4_gpu_cleanup(void);
++#ifdef __APPLE__
++/* Lifecycle-owner serialized local release preparation. Retains tensor
++ * tracking; zero forbids parent release. Not an all-writer/device proof. */
++int ds4_gpu_prepare_release(void);
++#endif
+ 
+ ds4_gpu_tensor *ds4_gpu_tensor_alloc(uint64_t bytes);
+ ds4_gpu_tensor *ds4_gpu_tensor_alloc_managed(uint64_t bytes);
+diff --git a/ds4_gpu_tp.h b/ds4_gpu_tp.h
+index 3c0328d..5895ea7 100644
+--- a/ds4_gpu_tp.h
++++ b/ds4_gpu_tp.h
+@@ -25,6 +25,15 @@ int ds4_gpu_tp_init(uint32_t rank, ds4_gpu_tensor *slab,
+                     uint64_t gpu_flags_off, uint64_t out_off, uint64_t vec_bytes,
+                     ds4_gpu_tp_exchange_fn fn, void *ud);
+ void ds4_gpu_tp_shutdown(void);
++#ifdef __APPLE__
++/* Checked local TP participant teardown only. Zero forbids parent release;
++ * nonzero is not all-writer, transport/RDMA or device terminality proof.
++ * Requires lifecycle-owner serialization, like the compatibility wrapper. */
++int ds4_gpu_tp_shutdown_checked(void);
++/* Read-only local known-busy/uncertain check. Zero is NOT a terminal or
++ * admission proof; serialized lifecycle remains a caller precondition. */
++int ds4_gpu_tp_local_work_busy(void);
++#endif
+ int ds4_gpu_tp_failed(void);
+ int ds4_gpu_tp_gate_encode(uint32_t layer, uint32_t gate);
+ void ds4_gpu_tp_set_batch_exchange(ds4_gpu_tp_batch_exchange_fn fn);
+diff --git a/ds4_metal.m b/ds4_metal.m
+index 0d75369..f842a53 100644
+--- a/ds4_metal.m
++++ b/ds4_metal.m
+@@ -15,6 +15,7 @@
+ #include <limits.h>
+ #include <time.h>
+ #include <pthread.h>
++#include <stdatomic.h>
+ #include <unistd.h>
+ #include <sys/mman.h>
+ #include <sys/sysctl.h>
+@@ -376,6 +377,8 @@ static void ds4_gpu_timeline_attach(id<MTLCommandBuffer> cb) {
+ 
+ static void ds4_gpu_parallel_ffn_reset_state(BOOL close_encoder);
+ static NSMutableArray<id<MTLCommandBuffer>> *g_pending_cbs;
++// Lifecycle-owner serialized; a later wait/cleanup cannot refund this failure.
++static atomic_int g_fios_pending_uncertain;
+ static id<MTLSharedEvent> g_selected_readback_event;
+ static uint64_t g_selected_readback_event_value;
+ static id<MTLComputePipelineState> g_set_rows_f32_i32_pipeline;
+@@ -829,6 +832,7 @@ static int ds4_gpu_stream_expert_cache_note_expert_size(
+ static void ds4_gpu_stream_expert_cache_clear_all(int reset_stats);
+ static void ds4_gpu_stream_expert_pending_load_clear(void);
+ static void ds4_gpu_stream_expert_pread_pool_shutdown(void);
++static int ds4_gpu_fios_pread_pool_prepare_cleanup(void);
+ static int ds4_gpu_stream_expert_timing_summary_enabled(void);
+ static int ds4_gpu_stream_expert_cache_entry_protected(
+         uint32_t       layer,
+@@ -840,17 +844,16 @@ static int ds4_gpu_stream_expert_cache_entry_protected(
+ /* The async selected-load worker registers itself so cache paths that would
+  * flush/wait on command buffers (a race against the encoding thread) fail
+  * the load instead; the caller then retries on the main thread. */
+-static pthread_t g_stream_expert_service_thread;
+-static int g_stream_expert_service_thread_set;
++// Registration belongs to the actual thread lifetime. A departed pthread's
++// reusable handle cannot classify a later unrelated thread as this service.
++static _Thread_local int g_stream_expert_service_thread_set;
+ 
+ void ds4_gpu_stream_expert_cache_note_service_thread(void) {
+-    g_stream_expert_service_thread = pthread_self();
+     g_stream_expert_service_thread_set = 1;
+ }
+ 
+ static int ds4_gpu_stream_expert_cache_on_service_thread(void) {
+-    return g_stream_expert_service_thread_set &&
+-           pthread_equal(pthread_self(), g_stream_expert_service_thread);
++    return g_stream_expert_service_thread_set;
+ }
+ static NSUInteger g_flash_attn_mask_bytes;
+ static NSUInteger g_flash_attn_zero_mask_bytes;
+@@ -1280,20 +1283,23 @@ static NSUInteger ds4_gpu_tensor_offset(const ds4_gpu_tensor *tensor) {
+ }
+ 
+ static id<MTLCommandBuffer> ds4_gpu_new_command_buffer(void);
+-static void ds4_gpu_stream_expert_cache_note_owned_created(void);
++static int ds4_gpu_stream_expert_cache_note_owned_created(void);
++static int ds4_gpu_fios_cache_sequence_available(void);
+ 
+ static id<MTLCommandBuffer> ds4_gpu_command_buffer(int *owned) {
++    if (g_fios_pending_uncertain) { *owned = 0; return nil; }
+     if (g_batch_cb) {
+         *owned = 0;
+         return g_batch_cb;
+     }
+     *owned = 1;
+     id<MTLCommandBuffer> cb = ds4_gpu_new_command_buffer();
+-    if (cb) ds4_gpu_stream_expert_cache_note_owned_created();
++    if (cb && !ds4_gpu_stream_expert_cache_note_owned_created()) { *owned = 0; return nil; }
+     return cb;
+ }
+ 
+ static id<MTLComputeCommandEncoder> ds4_gpu_compute_encoder(id<MTLCommandBuffer> cb) {
++    if (g_fios_pending_uncertain) return nil;
+     if (g_batch_cb && cb == g_batch_cb) {
+         g_batch_has_work = YES;
+         if (g_timeline_enabled && g_timeline_batch) {
+@@ -1347,6 +1353,8 @@ static void ds4_gpu_invalidate_completion_counters(void) {
+ }
+ 
+ static int ds4_gpu_wait_command_buffer(id<MTLCommandBuffer> cb, const char *label) {
++    // An absent object is not a successfully retired command buffer.
++    if (!cb) return 0;
+     [cb waitUntilCompleted];
+     if (getenv("DS4_METAL_CB_TIMES")) {
+         static double prev_gpu_end;
+@@ -1372,7 +1380,7 @@ static int ds4_gpu_wait_command_buffer(id<MTLCommandBuffer> cb, const char *labe
+                     (unsigned long long)g_gpu_busy_cbs);
+         }
+     }
+-    if (cb.status == MTLCommandBufferStatusError) {
++    if (cb.status != MTLCommandBufferStatusCompleted) {
+         fprintf(stderr, "ds4: Metal %s failed: %s\n",
+                 label, [[cb.error localizedDescription] UTF8String]);
+         ds4_gpu_invalidate_completion_counters();
+@@ -1382,6 +1390,7 @@ static int ds4_gpu_wait_command_buffer(id<MTLCommandBuffer> cb, const char *labe
+ }
+ 
+ static id<MTLCommandBuffer> ds4_gpu_new_command_buffer(void) {
++    if (!ds4_gpu_fios_cache_sequence_available()) return nil;
+     static int initialized;
+     static int use_unretained;
+     if (!initialized) {
+@@ -1468,30 +1477,25 @@ static void ds4_gpu_model_buffer_cache_maybe_evict(const char *reason) {
+     }
+ }
+ 
+-static uint64_t ds4_gpu_stream_expert_cache_next_cb_seq(void) {
++static int ds4_gpu_fios_cache_sequence_available(void) {
++    if (g_fios_pending_uncertain) return 0;
+     if (g_stream_expert_cache_cb_seq == UINT64_MAX) {
+-        /*
+-         * A real wrap would require an astronomical number of command buffers.
+-         * Resetting the epoch space is still safer than letting zero become a
+-         * valid in-flight marker.
+-         */
+-        g_stream_expert_cache_cb_seq = 0;
+-        g_stream_expert_cache_done_seq = 0;
+-        g_stream_expert_cache_batch_seq = 0;
+-        g_stream_expert_cache_owned_seq = 0;
+-        g_stream_expert_cache_pending_max_seq = 0;
+-        for (uint32_t layer = 0; layer < DS4_METAL_STREAM_EXPERT_CACHE_MAX_LAYER; layer++) {
+-            for (uint32_t expert = 0; expert < DS4_METAL_STREAM_EXPERT_CACHE_MAX_EXPERT; expert++) {
+-                g_stream_expert_cache[layer][expert].inflight_seq = 0;
+-            }
+-        }
++        g_fios_pending_uncertain = 1;
++        return 0;
+     }
++    return 1;
++}
++
++static uint64_t ds4_gpu_stream_expert_cache_next_cb_seq(void) {
++    if (!ds4_gpu_fios_cache_sequence_available()) return 0;
+     return ++g_stream_expert_cache_cb_seq;
+ }
+ 
+-static void ds4_gpu_stream_expert_cache_note_batch_created(void) {
+-    g_stream_expert_cache_batch_seq =
+-        ds4_gpu_stream_expert_cache_next_cb_seq();
++static int ds4_gpu_stream_expert_cache_note_batch_created(void) {
++    const uint64_t seq = ds4_gpu_stream_expert_cache_next_cb_seq();
++    if (!seq) return 0;
++    g_stream_expert_cache_batch_seq = seq;
++    return 1;
+ }
+ 
+ static void ds4_gpu_stream_expert_cache_note_batch_committed(void) {
+@@ -1501,9 +1505,11 @@ static void ds4_gpu_stream_expert_cache_note_batch_committed(void) {
+     g_stream_expert_cache_batch_seq = 0;
+ }
+ 
+-static void ds4_gpu_stream_expert_cache_note_owned_created(void) {
+-    g_stream_expert_cache_owned_seq =
+-        ds4_gpu_stream_expert_cache_next_cb_seq();
++static int ds4_gpu_stream_expert_cache_note_owned_created(void) {
++    const uint64_t seq = ds4_gpu_stream_expert_cache_next_cb_seq();
++    if (!seq) return 0;
++    g_stream_expert_cache_owned_seq = seq;
++    return 1;
+ }
+ 
+ static void ds4_gpu_stream_expert_cache_note_pending_completed(void) {
+@@ -1551,14 +1557,19 @@ static int ds4_gpu_stream_expert_cache_mark_entries_inflight(
+ static int ds4_gpu_stream_expert_cache_wait_inflight(const char *label);
+ 
+ static int ds4_gpu_wait_pending_command_buffers(const char *label) {
++    if (g_fios_pending_uncertain) return 0;
+     int ok = 1;
+     for (id<MTLCommandBuffer> pending in g_pending_cbs) {
+         if (!ds4_gpu_wait_command_buffer(pending, label)) ok = 0;
+     }
++    if (!ok) {
++        g_fios_pending_uncertain = 1;
++        ds4_gpu_invalidate_zero_prefix_prefill_block_maps();
++        return 0;
++    }
+     [g_pending_cbs removeAllObjects];
+     ds4_gpu_stream_expert_cache_note_pending_completed();
+-    if (!ok) ds4_gpu_invalidate_zero_prefix_prefill_block_maps();
+-    return ok;
++    return 1;
+ }
+ 
+ static double g_batch_cb_created_ms;
+@@ -1595,6 +1606,7 @@ static int ds4_gpu_finish_command_buffer(id<MTLCommandBuffer> cb, int owned, con
+             fprintf(stderr, "\n");
+         }
+     }
++    if (!ok) return 0;
+     ds4_gpu_stream_expert_cache_note_owned_completed();
+     if (getenv("DS4_METAL_CB_TIMES")) {
+         uint64_t bytes = 0;
+@@ -9483,6 +9495,7 @@ int ds4_gpu_pack_slot_rows_f32_tensor(
+ }
+ 
+ int ds4_gpu_begin_commands(void) {
++    if (!ds4_gpu_fios_cache_sequence_available()) return 0;
+     if (!g_initialized && !ds4_gpu_init()) return 0;
+     /* A failed concurrent FFN must never affect the next command batch. */
+     ds4_gpu_parallel_ffn_reset_state(YES);
+@@ -9496,12 +9509,13 @@ int ds4_gpu_begin_commands(void) {
+     g_batch_cb_created_ms = ds4_gpu_now_ms();
+     g_batch_cb = ds4_gpu_new_command_buffer();
+     g_batch_has_work = NO;
+-    if (g_batch_cb) ds4_gpu_stream_expert_cache_note_batch_created();
++    if (g_batch_cb && !ds4_gpu_stream_expert_cache_note_batch_created()) return 0;
+     ds4_gpu_timeline_attach(g_batch_cb);
+     return g_batch_cb != nil;
+ }
+ 
+ int ds4_gpu_flush_encoder(void) {
++    if (g_fios_pending_uncertain) return 0;
+     if (!g_initialized && !ds4_gpu_init()) return 0;
+     ds4_gpu_parallel_ffn_reset_state(YES);
+     if (!g_batch_cb) return 0;
+@@ -9510,6 +9524,7 @@ int ds4_gpu_flush_encoder(void) {
+ }
+ 
+ int ds4_gpu_flush_commands(void) {
++    if (g_fios_pending_uncertain) return 0;
+     if (!g_initialized && !ds4_gpu_init()) return 0;
+     ds4_gpu_parallel_ffn_reset_state(YES);
+     if (!g_batch_cb) return 0;
+@@ -9524,10 +9539,10 @@ int ds4_gpu_flush_commands(void) {
+ 
+     g_batch_cb = ds4_gpu_new_command_buffer();
+     g_batch_has_work = NO;
+-    if (g_batch_cb) ds4_gpu_stream_expert_cache_note_batch_created();
++    if (g_batch_cb && !ds4_gpu_stream_expert_cache_note_batch_created()) return 0;
+     ds4_gpu_timeline_attach(g_batch_cb);
+     if (!g_batch_cb) {
+-        (void)ds4_gpu_wait_pending_command_buffers("command batch");
++        if (!ds4_gpu_wait_pending_command_buffers("command batch")) return 0;
+         [g_transient_buffers removeAllObjects];
+         return 0;
+     }
+@@ -10107,6 +10122,10 @@ static int ds4_gpu_stream_expert_cache_wait_inflight(const char *label) {
+ int ds4_gpu_signal_selected_readback_ready(uint64_t *event_value) {
+     if (!event_value) return 0;
+     *event_value = 0;
++    if (g_fios_pending_uncertain || g_selected_readback_event_value == UINT64_MAX) {
++        g_fios_pending_uncertain = 1;
++        return 0; // no wrap, implicit initialization, encoder change or refund
++    }
+     if (!g_initialized && !ds4_gpu_init()) return 0;
+     ds4_gpu_parallel_ffn_reset_state(YES);
+     if (!g_batch_cb) return 0;
+@@ -10153,7 +10172,7 @@ int ds4_gpu_commit_and_wait_selected_readback(uint64_t event_value, const char *
+         [g_pending_cbs addObject:cb];
+         if (!signaled) {
+             fprintf(stderr, "ds4: timeout waiting for Metal shared event in %s\n", what);
+-            (void)ds4_gpu_wait_pending_command_buffers(what);
++            if (!ds4_gpu_wait_pending_command_buffers(what)) return 0;
+             [g_transient_buffers removeAllObjects];
+             return 0;
+         }
+@@ -10161,16 +10180,16 @@ int ds4_gpu_commit_and_wait_selected_readback(uint64_t event_value, const char *
+             fprintf(stderr, "ds4: Metal %s failed: %s\n",
+                     what,
+                     [[cb.error localizedDescription] UTF8String]);
+-            (void)ds4_gpu_wait_pending_command_buffers(what);
++            if (!ds4_gpu_wait_pending_command_buffers(what)) return 0;
+             [g_transient_buffers removeAllObjects];
+             return 0;
+         }
+ 
+         g_batch_cb = ds4_gpu_new_command_buffer();
+         g_batch_has_work = NO;
+-        if (g_batch_cb) ds4_gpu_stream_expert_cache_note_batch_created();
++        if (g_batch_cb && !ds4_gpu_stream_expert_cache_note_batch_created()) return 0;
+         if (!g_batch_cb) {
+-            (void)ds4_gpu_wait_pending_command_buffers(what);
++            if (!ds4_gpu_wait_pending_command_buffers(what)) return 0;
+             [g_transient_buffers removeAllObjects];
+             return 0;
+         }
+@@ -10346,7 +10365,14 @@ void ds4_gpu_tp_set_big_exchange(ds4_gpu_tp_big_exchange_fn fn) {
+ static void *g_tp_exchange_ud;
+ static pthread_t g_tp_thread;
+ static int g_tp_thread_running;
+-static int g_tp_shutdown;
++static atomic_int g_fios_tp_uncertain;
++#define FIOS_DS4_TP_ACTIVE_CUSTODY 1
++static unsigned g_fios_tp_service_active; // protected by g_tp_mutex
++static uint64_t g_fios_tp_owner;
++// Same non-wrapping per-thread token primitive as the ordinary producer;
++// numeric kernel/pthread IDs cannot adopt a departed creator's custody.
++static uint64_t ds4_gpu_fios_keepalive_owner(void);
++static atomic_int g_tp_shutdown;
+ static int g_tp_failed_flag;
+ static pthread_mutex_t g_tp_mutex = PTHREAD_MUTEX_INITIALIZER;
+ static pthread_cond_t g_tp_cond = PTHREAD_COND_INITIALIZER;
+@@ -10377,7 +10403,11 @@ void ds4_gpu_tp_set_big_exchange(ds4_gpu_tp_big_exchange_fn fn) {
+ /* Nonzero while a verify block runs: the GPU is genuinely busy
+  * there, so the keep-alive is a pure parasite (~2.3ms per 5-row block
+  * measured against the single-machine verify). */
+-static volatile int g_tp_keepalive_paused;
++static atomic_int g_tp_keepalive_paused;
++#define FIOS_DS4_TP_GPU_CUSTODY 1
++static atomic_int g_fios_tp_gpu_uncertain;
++static id<MTLCommandBuffer> g_fios_tp_keepalive_pending;
++static id<MTLComputePipelineState> g_fios_tp_keepalive_pipeline;
+ 
+ void ds4_gpu_tp_keepalive_pause(int paused) {
+     g_tp_keepalive_paused = paused;
+@@ -10524,7 +10554,10 @@ static uint32_t ds4_gpu_tp_keepalive_tgs_from_env(void) {
+     uint32_t ka_tgs = ds4_gpu_tp_keepalive_tgs_from_env();
+     id<MTLComputePipelineState> pipeline =
+         ds4_gpu_get_pipeline("kernel_dsv4_tp_keepalive");
++    g_fios_tp_keepalive_pipeline = pipeline;
+     if (!pipeline) {
++        g_fios_tp_gpu_uncertain = 1;
++        g_fios_pending_uncertain = 1;
+         fprintf(stderr, "ds4: TP keep-alive pipeline missing\n");
+         return NULL;
+     }
+@@ -10535,7 +10568,10 @@ static uint32_t ds4_gpu_tp_keepalive_tgs_from_env(void) {
+         }
+         @autoreleasepool {
+             id<MTLCommandBuffer> cb = [g_tp_keepalive_queue commandBuffer];
++            g_fios_tp_keepalive_pending = cb;
++            if (!cb) { g_fios_tp_gpu_uncertain = 1; g_fios_pending_uncertain = 1; return NULL; }
+             id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
++            if (!enc) { g_fios_tp_gpu_uncertain = 1; g_fios_pending_uncertain = 1; return NULL; }
+             [enc setComputePipelineState:pipeline];
+             [enc setBuffer:g_tp_keepalive_buffer offset:0 atIndex:0];
+             [enc setBytes:&iters length:sizeof(iters) atIndex:1];
+@@ -10544,8 +10580,16 @@ static uint32_t ds4_gpu_tp_keepalive_tgs_from_env(void) {
+             [enc endEncoding];
+             [cb commit];
+             [cb waitUntilCompleted];
++            if (cb.status != MTLCommandBufferStatusCompleted) {
++                g_fios_tp_gpu_uncertain = 1;
++                g_fios_pending_uncertain = 1;
++                return NULL; // Retain exact buffer, pipeline and scratch owner.
++            }
++            g_fios_tp_keepalive_pending = nil;
+         }
+     }
++    if (!g_fios_tp_gpu_uncertain && !g_fios_tp_keepalive_pending)
++        g_fios_tp_keepalive_pipeline = nil;
+     return NULL;
+ }
+ 
+@@ -10563,6 +10607,7 @@ static uint32_t ds4_gpu_tp_keepalive_tgs_from_env(void) {
+         ds4_gpu_tp_request req = g_tp_queue[g_tp_queue_head];
+         g_tp_queue_head = (g_tp_queue_head + 1) % DS4_GPU_TP_QUEUE;
+         g_tp_queue_count--;
++        g_fios_tp_service_active = 1;
+         pthread_mutex_unlock(&g_tp_mutex);
+ 
+         /* Wait for the GPU to reach this gate.  Tight spin: gate arrival is
+@@ -10770,6 +10815,9 @@ static uint32_t ds4_gpu_tp_keepalive_tgs_from_env(void) {
+                         (unsigned long long)g_tp_stat_poll_count);
+             }
+         }
++        pthread_mutex_lock(&g_tp_mutex);
++        g_fios_tp_service_active = 0;
++        pthread_mutex_unlock(&g_tp_mutex);
+     }
+     return NULL;
+ }
+@@ -10778,8 +10826,11 @@ int ds4_gpu_tp_init(uint32_t rank,
+                     ds4_gpu_tensor *slab, uint64_t gpu_flags_off,
+                     uint64_t out_off, uint64_t vec_bytes,
+                     ds4_gpu_tp_exchange_fn fn, void *ud) {
++    if (g_fios_pending_uncertain || g_fios_tp_uncertain || g_tp_thread_running || rank > 1) return 0;
++    const uint64_t owner = ds4_gpu_fios_keepalive_owner();
++    if (!owner) { g_fios_tp_uncertain = 1; g_fios_pending_uncertain = 1; return 0; }
+     if (!g_initialized && !ds4_gpu_init()) return 0;
+-    if (g_tp_thread_running || rank > 1) return 0;
++    g_fios_tp_owner = owner;
+     g_tp_split_rank = (int32_t)rank;
+     g_tp_split_world = 2;
+     g_tp_slab_buffer = slab ? ds4_gpu_tensor_buffer(slab) : nil;
+@@ -10849,6 +10900,7 @@ int ds4_gpu_tp_init(uint32_t rank,
+     g_tp_failed_flag = 0;
+     g_tp_queue_head = 0;
+     g_tp_queue_count = 0;
++    g_fios_tp_service_active = 0;
+     g_tp_stat_gates = 0;
+     g_tp_stat_gpu_wait_ms = 0.0;
+     g_tp_stat_exchange_ms = 0.0;
+@@ -10883,17 +10935,61 @@ int ds4_gpu_tp_init(uint32_t rank,
+     return 1;
+ }
+ 
+-void ds4_gpu_tp_shutdown(void) {
+-    if (!g_tp_thread_running) return;
++int ds4_gpu_tp_local_work_busy(void) {
++    // Read-only guard against known local readers/uncertainty. Absence here
++    // is not all-writer/device terminality; lifecycle serialization is required.
++    if (g_fios_pending_uncertain || g_fios_tp_uncertain || g_fios_tp_gpu_uncertain) return 1;
++    if ((!g_initialized && (g_device || g_queue)) || g_batch_cb || [g_pending_cbs count]) return 1;
++    if (pthread_mutex_lock(&g_tp_mutex) != 0) return 1;
++    const int busy = g_tp_queue_count || g_fios_tp_service_active;
++    if (pthread_mutex_unlock(&g_tp_mutex) != 0) return 1;
++    return busy;
++}
++
++int ds4_gpu_tp_shutdown_checked(void) {
++    // Lifecycle-owner serialized, local TP participants only. A missing
++    // service thread cannot erase partial producer custody or uncertainty.
++    if (g_fios_tp_uncertain) return 0;
++    if (!g_tp_thread_running) {
++        return !g_fios_tp_gpu_uncertain && !g_tp_keepalive_running && !g_fios_tp_keepalive_pending &&
++               !g_fios_tp_keepalive_pipeline && !g_fios_tp_owner &&
++               !g_fios_pending_uncertain;
++    }
++    const uint64_t owner = ds4_gpu_fios_keepalive_owner();
++    if (!owner || owner != g_fios_tp_owner) {
++        // No join was attempted. The actual creator may retire this known
++        // participant later, without clearing the independent refusal.
++        g_fios_pending_uncertain = 1;
++        return 0;
++    }
+     pthread_mutex_lock(&g_tp_mutex);
++    if (g_tp_queue_count || g_fios_tp_service_active) {
++        // Known busy: do not signal, join, cancel or poison admitted work.
++        // Independent uncertainty retains its existing value.
++        pthread_mutex_unlock(&g_tp_mutex);
++        return 0;
++    }
+     g_tp_shutdown = 1;
+     pthread_cond_broadcast(&g_tp_cond);
+     pthread_mutex_unlock(&g_tp_mutex);
+-    pthread_join(g_tp_thread, NULL);
++    if (pthread_join(g_tp_thread, NULL) != 0) {
++        g_fios_tp_uncertain = 1;
++        g_fios_pending_uncertain = 1;
++        return 0;
++    }
+     g_tp_thread_running = 0;
+     if (g_tp_keepalive_running) {
+-        pthread_join(g_tp_keepalive_thread, NULL);
++        if (pthread_join(g_tp_keepalive_thread, NULL) != 0) {
++            g_fios_tp_uncertain = 1;
++            g_fios_pending_uncertain = 1;
++            return 0;
++        }
+         g_tp_keepalive_running = 0;
++        if (g_fios_tp_gpu_uncertain || g_fios_tp_keepalive_pending || g_fios_tp_keepalive_pipeline) {
++            g_fios_tp_uncertain = 1;
++            g_fios_pending_uncertain = 1;
++            return 0;
++        }
+         g_tp_keepalive_queue = nil;
+         g_tp_keepalive_buffer = nil;
+     }
+@@ -10907,6 +11003,13 @@ void ds4_gpu_tp_shutdown(void) {
+     g_tp_poll_buffer = nil;
+     g_tp_poll_region = NULL;
+     g_tp_poll_status = NULL;
++    g_fios_tp_owner = 0;
++    // Exact local joins do not refund independent backend uncertainty.
++    return !g_fios_pending_uncertain;
++}
++
++void ds4_gpu_tp_shutdown(void) {
++    (void)ds4_gpu_tp_shutdown_checked();
+ }
+ 
+ void ds4_gpu_tp_suspend_expert_sharding(int suspend) {
+@@ -11325,48 +11428,111 @@ int ds4_gpu_warm_command_queue(void) {
+  * queue keeps the mappings alive at no measurable cost.
+  * DS4_METAL_DISABLE_QUEUE_KEEPALIVE=1 opts out. */
+ static pthread_t g_queue_keepalive_thread;
+-static volatile int g_queue_keepalive_running;
+-static volatile int g_queue_keepalive_stop;
++static atomic_int g_queue_keepalive_running;
++static atomic_int g_queue_keepalive_stop;
++static atomic_int g_fios_keepalive_sealed;
++static atomic_int g_fios_keepalive_uncertain;
++static _Atomic uint64_t g_fios_keepalive_next_owner = 1;
++static _Thread_local uint64_t g_fios_keepalive_local_owner;
++static uint64_t g_fios_keepalive_owner;
++// Strong source-owned resources survive refusal; only the joined creator may
++// consume success. This is one producer, not main/TP/all-client terminality.
++static id<MTLCommandBuffer> g_fios_keepalive_pending;
++static id<MTLComputePipelineState> g_fios_keepalive_pipeline;
++static id<MTLBuffer> g_fios_keepalive_scratch;
++
++static uint64_t ds4_gpu_fios_keepalive_owner(void) {
++    if (g_fios_keepalive_local_owner) return g_fios_keepalive_local_owner;
++    uint64_t previous = atomic_load_explicit(&g_fios_keepalive_next_owner, memory_order_acquire);
++    while (previous != UINT64_MAX) {
++        if (atomic_compare_exchange_weak_explicit(&g_fios_keepalive_next_owner,
++                &previous, previous + 1, memory_order_acq_rel, memory_order_acquire)) {
++            g_fios_keepalive_local_owner = previous;
++            return previous;
++        }
++    }
++    return 0; // Never wrap or adopt a recycled kernel thread identity.
++}
+ 
+ static void *ds4_gpu_queue_keepalive_thread(void *arg) {
+     (void)arg;
+     id<MTLComputePipelineState> pipeline = ds4_gpu_get_pipeline("kernel_dsv4_tp_keepalive");
+     id<MTLBuffer> scratch = [g_device newBufferWithLength:256u * sizeof(float)
+                                                   options:MTLResourceStorageModeShared];
+-    if (!pipeline || !scratch) return NULL;
++    g_fios_keepalive_pipeline = pipeline;
++    g_fios_keepalive_scratch = scratch;
++    if (!pipeline || !scratch) {
++        atomic_store(&g_fios_keepalive_uncertain, 1);
++        return NULL;
++    }
+     memset(scratch.contents, 0, 256u * sizeof(float));
+     const uint32_t iters = 1u;
+     uint64_t period_ms = ds4_gpu_env_u64("DS4_METAL_QUEUE_KEEPALIVE_MS", 1000u, 50u, 10000u);
+-    while (!g_queue_keepalive_stop) {
++    while (!atomic_load(&g_queue_keepalive_stop)) {
+         @autoreleasepool {
+             id<MTLCommandBuffer> cb = [g_queue commandBuffer];
++            g_fios_keepalive_pending = cb;
++            if (!cb) { atomic_store(&g_fios_keepalive_uncertain, 1); return NULL; }
+             id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
++            if (!enc) { atomic_store(&g_fios_keepalive_uncertain, 1); return NULL; }
+             [enc setComputePipelineState:pipeline];
+             [enc setBuffer:scratch offset:0 atIndex:0];
+             [enc setBytes:&iters length:sizeof(iters) atIndex:1];
+             [enc dispatchThreadgroups:MTLSizeMake(1, 1, 1) threadsPerThreadgroup:MTLSizeMake(256, 1, 1)];
+             [enc endEncoding];
+             [cb commit];
++            // Every actual producer buffer, not a sample of the main list.
++            [cb waitUntilCompleted];
++            if (cb.status != MTLCommandBufferStatusCompleted) {
++                atomic_store(&g_fios_keepalive_uncertain, 1);
++                return NULL; // Keep exact buffer/pipeline/scratch ownership.
++            }
++            g_fios_keepalive_pending = nil;
+         }
+-        for (uint64_t slept = 0; slept < period_ms && !g_queue_keepalive_stop; slept += 50)
++        for (uint64_t slept = 0; slept < period_ms && !atomic_load(&g_queue_keepalive_stop); slept += 50)
+             usleep(50000);
+     }
++    if (!atomic_load(&g_fios_keepalive_uncertain) && !g_fios_keepalive_pending) {
++        g_fios_keepalive_scratch = nil;
++        g_fios_keepalive_pipeline = nil;
++    }
+     return NULL;
+ }
+ 
+ static void ds4_gpu_queue_keepalive_start(void) {
+-    if (g_queue_keepalive_running) return;
++    // Existing lifecycle-owner serialization is required; no raw-writer or
++    // whole-backend enrollment is supplied by this participant candidate.
++    if (atomic_load(&g_fios_keepalive_sealed) || atomic_load(&g_fios_keepalive_uncertain) ||
++        atomic_load(&g_queue_keepalive_running)) return;
+     if (getenv("DS4_METAL_DISABLE_QUEUE_KEEPALIVE")) return;
+-    g_queue_keepalive_stop = 0;
++    const uint64_t owner = ds4_gpu_fios_keepalive_owner();
++    if (!owner) { atomic_store(&g_fios_keepalive_uncertain, 1); atomic_store(&g_fios_keepalive_sealed, 1); return; }
++    g_fios_keepalive_owner = owner;
++    atomic_store(&g_queue_keepalive_stop, 0);
+     if (pthread_create(&g_queue_keepalive_thread, NULL, ds4_gpu_queue_keepalive_thread, NULL) == 0)
+-        g_queue_keepalive_running = 1;
++        atomic_store(&g_queue_keepalive_running, 1);
++    else { atomic_store(&g_fios_keepalive_uncertain, 1); atomic_store(&g_fios_keepalive_sealed, 1); }
++}
++
++static int ds4_gpu_fios_keepalive_try_stop(void) {
++    // No initialization, owner adoption, timeout refund or integer-PID action.
++    const uint64_t owner = ds4_gpu_fios_keepalive_owner();
++    if (!owner || owner != g_fios_keepalive_owner || atomic_load(&g_fios_keepalive_sealed) ||
++        !atomic_load(&g_queue_keepalive_running)) return 0;
++    atomic_store(&g_fios_keepalive_sealed, 1);
++    atomic_store(&g_queue_keepalive_stop, 1);
++    if (pthread_join(g_queue_keepalive_thread, NULL) != 0) {
++        atomic_store(&g_fios_keepalive_uncertain, 1);
++        return 0;
++    }
++    if (atomic_load(&g_fios_keepalive_uncertain) || g_fios_keepalive_pending ||
++        g_fios_keepalive_scratch || g_fios_keepalive_pipeline) return 0;
++    atomic_store(&g_queue_keepalive_running, 0);
++    return 1;
+ }
+ 
+ static void ds4_gpu_queue_keepalive_stop_thread(void) {
+-    if (!g_queue_keepalive_running) return;
+-    g_queue_keepalive_stop = 1;
+-    pthread_join(g_queue_keepalive_thread, NULL);
+-    g_queue_keepalive_running = 0;
++    (void)ds4_gpu_fios_keepalive_try_stop();
+ }
+ 
+ int ds4_gpu_tp_failed(void) {
+@@ -11423,7 +11589,7 @@ static int ds4_gpu_signal_batch_and_wait_event(const char *label) {
+         if (!signaled) {
+             fprintf(stderr, "ds4: timeout waiting for Metal shared event in %s\n",
+                     label ? label : "selected-id readback");
+-            (void)ds4_gpu_wait_pending_command_buffers(label ? label : "selected-id readback");
++            if (!ds4_gpu_wait_pending_command_buffers(label ? label : "selected-id readback")) return 0;
+             [g_transient_buffers removeAllObjects];
+             return 0;
+         }
+@@ -11431,16 +11597,16 @@ static int ds4_gpu_signal_batch_and_wait_event(const char *label) {
+             fprintf(stderr, "ds4: Metal %s failed: %s\n",
+                     label ? label : "selected-id readback",
+                     [[cb.error localizedDescription] UTF8String]);
+-            (void)ds4_gpu_wait_pending_command_buffers(label ? label : "selected-id readback");
++            if (!ds4_gpu_wait_pending_command_buffers(label ? label : "selected-id readback")) return 0;
+             [g_transient_buffers removeAllObjects];
+             return 0;
+         }
+ 
+         g_batch_cb = ds4_gpu_new_command_buffer();
+         g_batch_has_work = NO;
+-        if (g_batch_cb) ds4_gpu_stream_expert_cache_note_batch_created();
++        if (g_batch_cb && !ds4_gpu_stream_expert_cache_note_batch_created()) return 0;
+         if (!g_batch_cb) {
+-            (void)ds4_gpu_wait_pending_command_buffers(label ? label : "selected-id readback");
++            if (!ds4_gpu_wait_pending_command_buffers(label ? label : "selected-id readback")) return 0;
+             [g_transient_buffers removeAllObjects];
+             return 0;
+         }
+@@ -11458,6 +11624,7 @@ static int ds4_gpu_signal_batch_and_wait_event(const char *label) {
+ }
+ 
+ int ds4_gpu_end_commands(void) {
++    if (g_fios_pending_uncertain) return 0;
+     if (!g_batch_cb) {
+         ds4_gpu_parallel_ffn_reset_state(YES);
+         return 0;
+@@ -11517,11 +11684,13 @@ static int ds4_gpu_flash_attn_stage_profile_boundary(
+ }
+ 
+ int ds4_gpu_synchronize(void) {
++    if (g_fios_pending_uncertain) return 0;
+     if (!g_initialized && !ds4_gpu_init()) return 0;
+     if (g_batch_cb) return ds4_gpu_end_commands();
+     ds4_gpu_parallel_ffn_reset_state(YES);
+     if ([g_pending_cbs count] != 0) {
+         int ok = ds4_gpu_wait_pending_command_buffers("synchronize");
++        if (!ok) return 0;
+         [g_transient_buffers removeAllObjects];
+         ds4_gpu_model_buffer_cache_maybe_evict("synchronize");
+         return ok;
+@@ -11534,24 +11703,56 @@ int ds4_gpu_synchronize(void) {
+ 
+ static void qwen4_nax_release_scratch(void);
+ 
+-void ds4_gpu_cleanup(void) {
+-    if (!g_initialized) return;
++int ds4_gpu_prepare_release(void) {
++    if (g_fios_pending_uncertain) return 0;
++    // Cold teardown never starts the backend; partial initialization refuses.
++    if (!g_initialized) return !g_device && !g_queue && !g_batch_cb &&
++        ![g_pending_cbs count] && !g_tp_thread_running && !g_tp_keepalive_running &&
++        !atomic_load(&g_queue_keepalive_running) && !g_fios_tp_uncertain &&
++        !atomic_load(&g_fios_keepalive_uncertain);
++    if (g_fios_tp_uncertain || g_tp_thread_running || g_tp_keepalive_running) {
++        g_fios_pending_uncertain = 1;
++        return 0;
++    }
+     ds4_gpu_queue_keepalive_stop_thread();
++    // A void legacy stop is not a retirement receipt. Unknown/foreign-owner
++    // joins and independently retained producer objects forbid global release.
++    if (atomic_load(&g_queue_keepalive_running) ||
++        atomic_load(&g_fios_keepalive_uncertain) || g_fios_keepalive_pending ||
++        g_fios_keepalive_pipeline || g_fios_keepalive_scratch) {
++        g_fios_pending_uncertain = 1;
++        return 0;
++    }
+ 
++    if (!ds4_gpu_fios_pread_pool_prepare_cleanup()) {
++        g_fios_pending_uncertain = 1;
++        return 0;
++    }
+     @autoreleasepool {
+-        ds4_gpu_decode_pipeline_fast_cache_reset();
+-        ds4_gpu_parallel_ffn_reset_state(YES);
+         if (g_batch_cb) {
+             ds4_gpu_close_batch_encoder();
+             [g_batch_cb commit];
+-            [g_batch_cb waitUntilCompleted];
++            if (!ds4_gpu_wait_command_buffer(g_batch_cb, "cleanup batch")) {
++                g_fios_pending_uncertain = 1;
++                return 0;
++            }
+             g_batch_cb = nil;
+             if (g_stream_expert_cache_batch_seq > g_stream_expert_cache_done_seq) {
+                 g_stream_expert_cache_done_seq = g_stream_expert_cache_batch_seq;
+             }
+             g_stream_expert_cache_batch_seq = 0;
+         }
+-        (void)ds4_gpu_wait_pending_command_buffers("cleanup");
++        if (!ds4_gpu_wait_pending_command_buffers("cleanup")) return 0;
++    }
++    // Preserve tensor registry, model caches and all parent-owned allocations.
++    return 1;
++}
++
++void ds4_gpu_cleanup(void) {
++    if (!g_initialized || !ds4_gpu_prepare_release()) return;
++    @autoreleasepool {
++        ds4_gpu_decode_pipeline_fast_cache_reset();
++        ds4_gpu_parallel_ffn_reset_state(YES);
+         if (ds4_gpu_stream_expert_timing_summary_enabled() &&
+             getenv("DS4_METAL_MEMORY_REPORT") == NULL) {
+             ds4_gpu_print_memory_report("at cleanup");
+@@ -13424,6 +13625,12 @@ static int ds4_gpu_stream_expert_pread_into(
+ static ds4_gpu_stream_expert_pread_task *g_stream_expert_pread_pool_tasks;
+ static int g_stream_expert_pread_pool_initialized;
+ static int g_stream_expert_pread_pool_stopping;
++// Source candidate only: caller already owns backend lifecycle serialization.
++// A one-way pool gate and exact joins are NOT GPU/all-client terminal proof.
++static atomic_int g_fios_pread_pool_sealed;
++static int g_fios_pread_pool_uncertain;
++static uint32_t g_fios_pread_pool_joined;
++
+ 
+ static int ds4_gpu_stream_expert_pread_pool_enabled(void) {
+     const char *env = getenv("DS4_METAL_STREAMING_EXPERT_PREAD_POOL");
+@@ -13484,6 +13691,7 @@ static int ds4_gpu_stream_expert_pread_pool_enabled(void) {
+ }
+ 
+ static int ds4_gpu_stream_expert_pread_pool_init(uint32_t n_threads) {
++    if (atomic_load_explicit(&g_fios_pread_pool_sealed, memory_order_acquire)) return 0;
+     if (g_stream_expert_pread_pool_initialized) return 1;
+     if (!ds4_gpu_stream_expert_pread_pool_enabled() || n_threads <= 1) return 0;
+     if (n_threads > 18) n_threads = 18;
+@@ -13511,15 +13719,23 @@ static int ds4_gpu_stream_expert_pread_pool_init(uint32_t n_threads) {
+                     strerror(rc));
+             pthread_mutex_lock(&g_stream_expert_pread_pool_mutex);
+             g_stream_expert_pread_pool_stopping = 1;
+-            g_stream_expert_pread_pool_generation++;
++            g_stream_expert_pread_pool_thread_count = started;
++            g_stream_expert_pread_pool_initialized = started != 0;
++            atomic_store_explicit(&g_fios_pread_pool_sealed, 1, memory_order_release);
+             pthread_cond_broadcast(&g_stream_expert_pread_pool_start_cond);
+             pthread_mutex_unlock(&g_stream_expert_pread_pool_mutex);
+             for (uint32_t j = 0; j < started; j++) {
+-                (void)pthread_join(g_stream_expert_pread_pool_threads[j], NULL);
++                const int partial_join_rc = pthread_join(g_stream_expert_pread_pool_threads[j], NULL);
++                pthread_mutex_lock(&g_stream_expert_pread_pool_mutex);
++                if (partial_join_rc == 0) g_fios_pread_pool_joined |= (1u << j);
++                if (partial_join_rc != 0) g_fios_pread_pool_uncertain = 1;
++                pthread_mutex_unlock(&g_stream_expert_pread_pool_mutex);
+             }
+             pthread_mutex_lock(&g_stream_expert_pread_pool_mutex);
+-            g_stream_expert_pread_pool_thread_count = 0;
+-            g_stream_expert_pread_pool_stopping = 0;
++            if (!g_fios_pread_pool_uncertain) {
++                g_stream_expert_pread_pool_thread_count = 0;
++                g_stream_expert_pread_pool_initialized = 0;
++            }
+             pthread_mutex_unlock(&g_stream_expert_pread_pool_mutex);
+             return 0;
+         }
+@@ -13559,6 +13775,12 @@ static int ds4_gpu_stream_expert_pread_pool_begin(
+         return 0;
+     }
+ 
++    if (g_stream_expert_pread_pool_generation == UINT64_MAX) {
++        g_fios_pread_pool_uncertain = 1;
++        atomic_store_explicit(&g_fios_pread_pool_sealed, 1, memory_order_release);
++        pthread_mutex_unlock(&g_stream_expert_pread_pool_mutex);
++        return 0;
++    }
+     g_stream_expert_pread_pool_tasks = tasks;
+     g_stream_expert_pread_pool_n_tasks = n_tasks;
+     g_stream_expert_pread_pool_next_task = 0;
+@@ -13592,7 +13814,73 @@ static int ds4_gpu_stream_expert_pread_pool_dispatch(
+     return ds4_gpu_stream_expert_pread_pool_wait();
+ }
+ 
++// Checked participant primitive. No legacy cleanup caller may treat
++// this as an engine/device receipt. Existing lifecycle-owner serialization is
++// a precondition; this does not enroll unknown/raw concurrent init/shutdown.
++static int ds4_gpu_fios_pread_pool_try_retire(void) {
++    pthread_mutex_lock(&g_stream_expert_pread_pool_mutex);
++    if (atomic_load_explicit(&g_fios_pread_pool_sealed, memory_order_acquire) ||
++        g_fios_pread_pool_uncertain || !g_stream_expert_pread_pool_initialized ||
++        g_stream_expert_pread_pool_stopping ||
++        g_stream_expert_pread_pool_remaining_workers ||
++        g_stream_expert_pread_pool_active_workers ||
++        g_stream_expert_pread_pool_n_tasks || g_stream_expert_pread_pool_tasks) {
++        pthread_mutex_unlock(&g_stream_expert_pread_pool_mutex);
++        return 0;
++    }
++    const uint32_t count = g_stream_expert_pread_pool_thread_count;
++    if (count == 0 || count > 18) {
++        g_fios_pread_pool_uncertain = 1;
++        atomic_store_explicit(&g_fios_pread_pool_sealed, 1, memory_order_release);
++        pthread_mutex_unlock(&g_stream_expert_pread_pool_mutex);
++        return 0;
++    }
++    atomic_store_explicit(&g_fios_pread_pool_sealed, 1, memory_order_release);
++    g_stream_expert_pread_pool_stopping = 1;
++    pthread_cond_broadcast(&g_stream_expert_pread_pool_start_cond);
++    pthread_mutex_unlock(&g_stream_expert_pread_pool_mutex);
++
++    int ok = 1;
++    for (uint32_t i = 0; i < count; ++i) {
++        const int rc = pthread_join(g_stream_expert_pread_pool_threads[i], NULL);
++        pthread_mutex_lock(&g_stream_expert_pread_pool_mutex);
++        if (rc == 0) g_fios_pread_pool_joined |= (1u << i);
++        else { g_fios_pread_pool_uncertain = 1; ok = 0; }
++        pthread_mutex_unlock(&g_stream_expert_pread_pool_mutex);
++    }
++    pthread_mutex_lock(&g_stream_expert_pread_pool_mutex);
++    // Preserve the original vector/count and sticky uncertainty on refusal.
++    if (ok) {
++        g_stream_expert_pread_pool_thread_count = 0;
++        g_stream_expert_pread_pool_initialized = 0;
++    }
++    pthread_mutex_unlock(&g_stream_expert_pread_pool_mutex);
++    return ok;
++}
++
++// Only the lifecycle-owner cleanup path uses this gate. It does not certify
++// other raw writers, parent lifetime or the entire device/backend.
++static int ds4_gpu_fios_pread_pool_prepare_cleanup(void) {
++    pthread_mutex_lock(&g_stream_expert_pread_pool_mutex);
++    if (g_fios_pread_pool_uncertain) {
++        pthread_mutex_unlock(&g_stream_expert_pread_pool_mutex);
++        return 0;
++    }
++    if (!g_stream_expert_pread_pool_initialized) {
++        const int empty = !g_stream_expert_pread_pool_thread_count &&
++            !g_stream_expert_pread_pool_remaining_workers &&
++            !g_stream_expert_pread_pool_active_workers &&
++            !g_stream_expert_pread_pool_n_tasks && !g_stream_expert_pread_pool_tasks;
++        pthread_mutex_unlock(&g_stream_expert_pread_pool_mutex);
++        return empty;
++    }
++    pthread_mutex_unlock(&g_stream_expert_pread_pool_mutex);
++    return ds4_gpu_fios_pread_pool_try_retire();
++}
++
+ static void ds4_gpu_stream_expert_pread_pool_shutdown(void) {
++    // Legacy cleanup cannot refund a sealed checked retirement/refusal.
++    if (atomic_load_explicit(&g_fios_pread_pool_sealed, memory_order_acquire)) return;
+     if (!g_stream_expert_pread_pool_initialized) return;
+ 
+     pthread_mutex_lock(&g_stream_expert_pread_pool_mutex);
+@@ -13626,6 +13914,12 @@ static int ds4_gpu_stream_expert_pread_tasks(
+     if (total_bytes) *total_bytes = 0;
+     if (wall_ms) *wall_ms = 0.0;
+     if (!tasks || n_tasks == 0) return 1;
++    if (g_fios_pending_uncertain) return 0;
++    pthread_mutex_lock(&g_stream_expert_pread_pool_mutex);
++    const int source_refused = g_fios_pread_pool_uncertain ||
++        atomic_load_explicit(&g_fios_pread_pool_sealed, memory_order_acquire);
++    pthread_mutex_unlock(&g_stream_expert_pread_pool_mutex);
++    if (source_refused) return 0;
+ 
+     const uint32_t n_workers =
+         ds4_gpu_stream_expert_pread_thread_count(n_tasks);
+@@ -13642,30 +13936,21 @@ static int ds4_gpu_stream_expert_pread_tasks(
+     } else if (!ds4_gpu_stream_expert_pread_pool_dispatch(tasks,
+                                                           n_tasks,
+                                                           n_workers)) {
+-        pthread_t threads[18];
+-        ds4_gpu_stream_expert_pread_worker_args args[18];
+-        uint32_t started = 0;
+-        for (uint32_t i = 0; i < n_workers; i++) {
+-            args[i].tasks = tasks;
+-            args[i].n_tasks = n_tasks;
+-            args[i].worker_index = i;
+-            args[i].n_workers = n_workers;
+-            const int rc = pthread_create(&threads[i],
+-                                          NULL,
+-                                          ds4_gpu_stream_expert_pread_worker,
+-                                          &args[i]);
+-            if (rc != 0) {
+-                fprintf(stderr,
+-                        "ds4: Metal streaming expert pread thread creation failed: %s\n",
+-                        strerror(rc));
+-                ok = 0;
+-                break;
+-            }
+-            started++;
+-        }
+-        for (uint32_t i = 0; i < started; i++) {
+-            if (pthread_join(threads[i], NULL) != 0) ok = 0;
+-        }
++        pthread_mutex_lock(&g_stream_expert_pread_pool_mutex);
++        const int refused = g_fios_pread_pool_uncertain ||
++            atomic_load_explicit(&g_fios_pread_pool_sealed, memory_order_acquire) ||
++            g_stream_expert_pread_pool_initialized;
++        pthread_mutex_unlock(&g_stream_expert_pread_pool_mutex);
++        if (refused) return 0; // No alternate read path after custody refusal.
++        // Without a tracked pool, keep argument/destination lifetime on the
++        // calling thread. Never return past an uncertain transient join.
++        ds4_gpu_stream_expert_pread_worker_args wa = {
++            .tasks = tasks,
++            .n_tasks = n_tasks,
++            .worker_index = 0,
++            .n_workers = 1,
++        };
++        (void)ds4_gpu_stream_expert_pread_worker(&wa);
+     }
+     const double dt = ds4_gpu_now_ms() - t0;
+ 
+diff --git a/ds4_tp.c b/ds4_tp.c
+index 5edd905..eae5008 100644
+--- a/ds4_tp.c
++++ b/ds4_tp.c
+@@ -180,6 +180,7 @@ typedef struct {
+ #endif
+ 
+ struct ds4_tp {
++    struct ds4_tp_worker_custody *fios_worker_custody;
+     ds4_tp_options opt;
+     int rank;                   /* 0 leader, 1 worker */
+     int control_fd;
+@@ -2121,7 +2122,7 @@ int ds4_tp_attach_slab(ds4_tp *tp, void *base, char *err, size_t errlen) {
+ }
+ 
+ void ds4_tp_free(ds4_tp *tp) {
+-    if (!tp) return;
++    if (!tp || tp->fios_worker_custody) return;
+ #ifdef DS4_TP_HAVE_VERBS
+     tp_rdma_close(tp);
+ #endif
+@@ -2958,6 +2959,15 @@ typedef struct {
+     uint32_t cap;
+ } ds4_tp_worker_sessions;
+ 
++// Heap custody is anchored on the transport while the worker is active or
++// cleanup is refused. Never drop the table, prompt or logits on uncertainty.
++typedef struct ds4_tp_worker_custody {
++    ds4_tp_worker_sessions sessions;
++    float *logits;
++    ds4_tokens prompt;
++    bool held;
++} ds4_tp_worker_custody;
++
+ static int tp_worker_session_index(const ds4_tp_worker_sessions *sessions,
+                                    uint64_t id) {
+     if (!sessions || id == 0) return -1;
+@@ -2989,15 +2999,16 @@ static int tp_worker_session_add(ds4_tp_worker_sessions *sessions,
+     return 1;
+ }
+ 
+-static void tp_worker_session_remove(ds4_tp_worker_sessions *sessions,
++static int tp_worker_session_remove(ds4_tp_worker_sessions *sessions,
+                                      uint32_t index) {
+-    if (!sessions || index >= sessions->len) return;
+-    ds4_session_free(sessions->v[index].session);
++    if (!sessions || index >= sessions->len) return 0;
++    if (!ds4_session_free_checked(sessions->v[index].session)) return 0;
+     if (index + 1u < sessions->len) {
+         memmove(&sessions->v[index], &sessions->v[index + 1u],
+                 (size_t)(sessions->len - index - 1u) * sizeof(sessions->v[0]));
+     }
+     sessions->len--;
++    return 1;
+ }
+ 
+ static int tp_worker_send_logits(ds4_tp *tp, ds4_session *session,
+@@ -3008,6 +3019,33 @@ static int tp_worker_send_logits(ds4_tp *tp, ds4_session *session,
+            ds4_tp_send_logits_half(tp, logits + vhalf, vhalf);
+ }
+ 
++static int tp_worker_finish(ds4_engine *engine, ds4_tp *tp,
++                            ds4_tp_worker_custody *custody, int rc) {
++    if (!tp || !custody || tp->fios_worker_custody != custody || custody->held) {
++        ds4_engine_fence_teardown(engine);
++        return 1;
++    }
++    while (custody->sessions.len != 0) {
++        if (!tp_worker_session_remove(&custody->sessions, custody->sessions.len - 1u)) {
++            custody->held = true;
++            ds4_engine_fence_teardown(engine);
++            return 1;
++        }
++    }
++    if (!ds4_engine_tp_unbind_checked(engine)) {
++        custody->held = true;
++        ds4_engine_fence_teardown(engine);
++        return 1;
++    }
++    ds4_tokens_free(&custody->prompt);
++    free(custody->sessions.v);
++    free(custody->logits);
++    tp->fios_worker_custody = NULL;
++    free(custody);
++    ds4_tp_free(tp);
++    return rc;
++}
++
+ int ds4_tp_worker_run(ds4_engine *engine, const ds4_tp_options *opt) {
+     char err[256] = "";
+     ds4_tp_identity id = {
+@@ -3032,23 +3070,36 @@ int ds4_tp_worker_run(ds4_engine *engine, const ds4_tp_options *opt) {
+     }
+     if (!ds4_engine_tp_bind(engine, tp, err, sizeof(err))) {
+         ds4_log(stderr, DS4_LOG_ERROR, "tp worker: %s", err);
++        if (!ds4_engine_tp_unbind_checked(engine)) {
++            ds4_engine_fence_teardown(engine);
++            return 1;
++        }
++        ds4_tp_free(tp);
++        return 1;
++    }
++    ds4_tp_worker_custody *custody = calloc(1, sizeof(*custody));
++    if (!custody) {
++        if (!ds4_engine_tp_unbind_checked(engine)) {
++            ds4_engine_fence_teardown(engine);
++            return 1;
++        }
+         ds4_tp_free(tp);
+         return 1;
+     }
+-    ds4_tp_worker_sessions sessions = {0};
++    tp->fios_worker_custody = custody;
++    ds4_tp_worker_sessions *sessions = &custody->sessions;
+     const int vocab = ds4_engine_vocab_size(engine);
+     float *logits = ds4_engine_tp_vocab_split(engine) ?
+         malloc((size_t)vocab * sizeof(*logits)) : NULL;
++    custody->logits = logits;
+     if (ds4_engine_tp_vocab_split(engine) && !logits) {
+         ds4_log(stderr, DS4_LOG_ERROR, "tp worker: logits buffer allocation failed");
+-        ds4_engine_tp_unbind(engine);
+-        ds4_tp_free(tp);
+-        return 1;
++        return tp_worker_finish(engine, tp, custody, 1);
+     }
+     ds4_log(stderr, DS4_LOG_OK, "tp worker ready for mirrored sessions");
+ 
+     int rc = 0;
+-    ds4_tokens prompt = {0};
++    ds4_tokens *prompt = &custody->prompt;
+     while (1) {
+         ds4_tp_command command;
+         if (!ds4_tp_recv_command(tp, &command, err, sizeof(err))) {
+@@ -3066,9 +3117,9 @@ int ds4_tp_worker_run(ds4_engine *engine, const ds4_tp_options *opt) {
+             ds4_session *session = NULL;
+             int status = 1;
+             if (command.session_id != 0 && command.value > 0 &&
+-                tp_worker_session_index(&sessions, command.session_id) < 0 &&
++                tp_worker_session_index(sessions, command.session_id) < 0 &&
+                 ds4_session_create(&session, engine, command.value) == 0 &&
+-                tp_worker_session_add(&sessions, command.session_id, session)) {
++                tp_worker_session_add(sessions, command.session_id, session)) {
+                 /* Pay the first-submit cost before acknowledging creation so
+                  * it cannot land in the leader's first timed prefill. */
+                 ds4_session_gpu_warmup(session);
+@@ -3085,10 +3136,10 @@ int ds4_tp_worker_run(ds4_engine *engine, const ds4_tp_options *opt) {
+         }
+ 
+         if (command.type == DS4_TP_FRAME_SESSION_DESTROY) {
+-            const int index = tp_worker_session_index(&sessions,
++            const int index = tp_worker_session_index(sessions,
+                                                       command.session_id);
+-            const int status = index >= 0 ? 0 : 1;
+-            if (index >= 0) tp_worker_session_remove(&sessions, (uint32_t)index);
++            const int status = index >= 0 &&
++                tp_worker_session_remove(sessions, (uint32_t)index) ? 0 : 1;
+             if (!ds4_tp_send_command_ack(tp, command.session_id, status)) rc = 1;
+             ds4_tp_command_free(&command);
+             if (rc != 0) break;
+@@ -3096,7 +3147,7 @@ int ds4_tp_worker_run(ds4_engine *engine, const ds4_tp_options *opt) {
+         }
+ 
+         ds4_session *session =
+-            tp_worker_session_find(&sessions, command.session_id);
++            tp_worker_session_find(sessions, command.session_id);
+         if (command.type != DS4_TP_FRAME_EVAL_BATCH &&
+             command.type != DS4_TP_FRAME_MIXED_BATCH && !session) {
+             ds4_log(stderr, DS4_LOG_ERROR,
+@@ -3110,15 +3161,15 @@ int ds4_tp_worker_run(ds4_engine *engine, const ds4_tp_options *opt) {
+ 
+         if (command.type == DS4_TP_FRAME_SYNC ||
+             command.type == DS4_TP_FRAME_SYNC_MULTIMODAL) {
+-            prompt.len = 0;
++            prompt->len = 0;
+             for (uint32_t i = 0; i < command.n_tokens; i++) {
+-                ds4_tokens_push(&prompt, command.tokens[i]);
++                ds4_tokens_push(prompt, command.tokens[i]);
+             }
+             int sync_rc = command.type == DS4_TP_FRAME_SYNC_MULTIMODAL ?
+-                ds4_session_sync_multimodal(session, &prompt,
++                ds4_session_sync_multimodal(session, prompt,
+                                             command.images, command.n_images,
+                                             err, sizeof(err)) :
+-                ds4_session_sync(session, &prompt, err, sizeof(err));
++                ds4_session_sync(session, prompt, err, sizeof(err));
+             if (!ds4_tp_send_command_ack(tp, command.session_id, sync_rc)) {
+                 rc = 1;
+             } else if (sync_rc != 0 && sync_rc != DS4_SESSION_SYNC_INTERRUPTED) {
+@@ -3160,18 +3211,18 @@ int ds4_tp_worker_run(ds4_engine *engine, const ds4_tp_options *opt) {
+             bool mapped = items != NULL;
+             for (uint32_t i = 0; mapped && i < command.n_items; i++) {
+                 items[i].session = tp_worker_session_find(
+-                    &sessions, command.items[i].session_id);
++                    sessions, command.items[i].session_id);
+                 items[i].token = command.items[i].token;
+                 mapped = items[i].session != NULL;
+             }
+             ds4_session *prefill = NULL;
+             if (mapped && command.type == DS4_TP_FRAME_MIXED_BATCH) {
+-                prefill = tp_worker_session_find(&sessions,
++                prefill = tp_worker_session_find(sessions,
+                                                  command.session_id);
+                 mapped = prefill != NULL;
+-                prompt.len = 0;
++                prompt->len = 0;
+                 for (uint32_t i = 0; mapped && i < command.n_tokens; i++) {
+-                    ds4_tokens_push(&prompt, command.tokens[i]);
++                    ds4_tokens_push(prompt, command.tokens[i]);
+                 }
+             }
+             int batch_rc = 1;
+@@ -3180,7 +3231,7 @@ int ds4_tp_worker_run(ds4_engine *engine, const ds4_tp_options *opt) {
+                     items, (int)command.n_items, err, sizeof(err));
+             } else if (mapped) {
+                 batch_rc = ds4_sessions_eval_batch_with_prefill(
+-                    items, (int)command.n_items, prefill, &prompt,
++                    items, (int)command.n_items, prefill, prompt,
+                     err, sizeof(err));
+             }
+             if (!ds4_tp_send_command_ack(tp, command.session_id, batch_rc)) {
+@@ -3208,13 +3259,5 @@ int ds4_tp_worker_run(ds4_engine *engine, const ds4_tp_options *opt) {
+         ds4_tp_command_free(&command);
+         if (rc != 0) break;
+     }
+-    ds4_tokens_free(&prompt);
+-    while (sessions.len != 0) {
+-        tp_worker_session_remove(&sessions, sessions.len - 1u);
+-    }
+-    free(sessions.v);
+-    free(logits);
+-    ds4_engine_tp_unbind(engine);
+-    ds4_tp_free(tp);
+-    return rc;
++    return tp_worker_finish(engine, tp, custody, rc);
+ }

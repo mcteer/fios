@@ -15,6 +15,7 @@ export function mockMlx(port = 0) {
   ];
   const server = createServer(async (req, res) => {
     if (req.url === "/health") {
+      if (health.delayMs) await new Promise((resolve) => setTimeout(resolve, health.delayMs));
       res.writeHead(health.status, {"Content-Type": "application/json"});
       return res.end(JSON.stringify({status: health.status === 200 ? "ok" : "down"}));
     }
@@ -49,6 +50,7 @@ export function mockMlx(port = 0) {
     }
     res.writeHead(200, { "Content-Type": "text/event-stream" });
     res.flushHeaders();
+    server.emit("model-request", data);
     if (text.includes("NO_FIRST_TOKEN")) return;
     const chunk = (delta, finish_reason = null) => ({
       id: "chatcmpl-mock",

@@ -1,0 +1,103 @@
+// Genuine Engine(Metal), actual upstream queue/kernel/retirement and real SDK.
+// Two tiny chunks, individually event-gated; no model/weights/inference.
+const std = @import("std");
+const warm = @import("arch/mimo_v2/gpu_warm.zig");
+const injected_retire_failure = false;
+extern fn fios_test_mimo_event_create() u64;
+extern fn fios_test_mimo_event_set(u64, u64) void;
+extern fn fios_test_mimo_event_release(u64) void;
+extern fn fios_test_mimo_configure(?*anyopaque, u64, u64) c_int;
+extern fn fios_test_mimo_retires() u64;
+extern fn fios_test_mimo_destroys() u64;
+extern fn fios_test_mimo_second_pending(?*anyopaque) c_int;
+extern fn fios_test_mimo_timer_start(u64, u64) ?*anyopaque;
+extern fn fios_test_mimo_timer_stop(?*anyopaque) c_int;
+fn tick() void {
+    const ts = std.c.timespec{ .sec = 0, .nsec = 1_000_000 };
+    _ = std.c.nanosleep(&ts, null);
+}
+test "fios real metal: actual warm chunk retirement precedes exact pause acknowledgement" {
+    const first = fios_test_mimo_event_create();
+    try std.testing.expect(first != 0);
+    defer fios_test_mimo_event_release(first);
+    const second = fios_test_mimo_event_create();
+    try std.testing.expect(second != 0);
+    defer fios_test_mimo_event_release(second);
+    var timer = fios_test_mimo_timer_start(first, second);
+    try std.testing.expect(timer != null);
+    defer { if (timer) |t| { _ = fios_test_mimo_timer_stop(t); } }
+    const engine = blk: {
+        var backend = try warm.Metal.init(1, first);
+        errdefer backend.deinit();
+        try std.testing.expectEqual(@as(c_int, 0), fios_test_mimo_configure(backend.h, first, second));
+        break :blk try warm.Warm.create(std.testing.allocator, backend, .{
+            .fios_fixture_control = true, .first_iters = 1,
+            .target_chunk_ns = 1, .stuck_ns = 5 * std.time.ns_per_s,
+        });
+    };
+    const lifetime = try engine.fixtureRetainLifetime();
+    defer if (fios_test_mimo_destroys() == 0) {
+        _ = engine.fixtureReleaseLifetime(lifetime);
+        engine.destroy();
+    };
+    engine.arm(1);
+    var attempts: usize = 0;
+    while (engine.n_chunks.load(.seq_cst) < 2 and attempts < 1000) : (attempts += 1) tick();
+    try std.testing.expectEqual(@as(u64, 2), engine.n_chunks.load(.seq_cst));
+    try std.testing.expectEqual(@as(c_int, 1), fios_test_mimo_second_pending(engine.backend.h));
+    const ticket = try engine.fixturePause();
+    try std.testing.expectEqual(warm.FiosPauseState.pending, engine.fixturePauseState(ticket));
+    try std.testing.expect(!engine.fixtureResume(ticket));
+    // First chunk can now really retire. Second chunk remains GPU-event-gated;
+    // the actual worker reaches the actual C++ retirement call for that chunk.
+    fios_test_mimo_event_set(first, 1);
+    attempts = 0;
+    while (fios_test_mimo_retires() < 2 and attempts < 1000) : (attempts += 1) tick();
+    try std.testing.expectEqual(@as(u64, 2), fios_test_mimo_retires());
+    try std.testing.expectEqual(@as(c_int, 1), fios_test_mimo_second_pending(engine.backend.h));
+    try std.testing.expectEqual(warm.FiosPauseState.pending, engine.fixturePauseState(ticket));
+    try std.testing.expect(!engine.fixtureResume(ticket));
+    fios_test_mimo_event_set(second, 1);
+    const wanted: warm.FiosPauseState = if (injected_retire_failure) .unknown else .retired;
+    attempts = 0;
+    while (engine.fixturePauseState(ticket) != wanted and attempts < 1000) : (attempts += 1) tick();
+    try std.testing.expectEqual(wanted, engine.fixturePauseState(ticket));
+    try std.testing.expectEqual(@as(usize, 0), engine.ring_n);
+    if (injected_retire_failure) {
+        try std.testing.expect(engine.failed.load(.seq_cst));
+        try std.testing.expectEqual(@as(u64, 0), engine.n_retired.load(.seq_cst));
+    } else {
+        try std.testing.expect(!engine.failed.load(.seq_cst));
+        try std.testing.expectEqual(@as(u64, 2), engine.n_retired.load(.seq_cst));
+        try std.testing.expect(engine.gpu_ns.load(.seq_cst) > 0);
+        var foreign = ticket;
+        foreign.instance += 1;
+        try std.testing.expect(!engine.fixtureResume(foreign));
+        try std.testing.expect(engine.fixtureResume(ticket));
+        try std.testing.expect(!engine.fixtureResume(ticket));
+        const replacement = try engine.fixturePause();
+        attempts = 0;
+        while (engine.fixturePauseState(replacement) != .retired and attempts < 1000) : (attempts += 1) tick();
+        try std.testing.expectEqual(warm.FiosPauseState.retired, engine.fixturePauseState(replacement));
+        try std.testing.expect(!engine.fixtureResume(ticket));
+        try std.testing.expect(engine.fixtureResume(replacement));
+    }
+    // GPU work has actually retired before this destructor attempt. Observe
+    // external native destruction count before any possibly-freed pointer.
+    engine.destroy();
+    if (fios_test_mimo_destroys() != 0) {
+        std.debug.print("FIO_MIMO_METAL_DESTROY_DROPPED_HELD_ENGINE\n", .{});
+        return error.FiosHeldMetalEngineDestroyed;
+    }
+    try std.testing.expect(!engine.quit.load(.seq_cst));
+    try std.testing.expect(engine.fixtureReleaseLifetime(lifetime));
+    try std.testing.expect(!engine.fixtureReleaseLifetime(lifetime));
+    const deadline = fios_test_mimo_timer_stop(timer);
+    timer = null;
+    try std.testing.expectEqual(@as(c_int, 0), deadline);
+    std.debug.print("GENUINE_MIMO_METAL chunks={d} successful_retires={d} gpu_ns={d} injected_api_error={any}; no model/all-context/lifecycle grant\n", .{
+        engine.n_chunks.load(.seq_cst), engine.n_retired.load(.seq_cst), engine.gpu_ns.load(.seq_cst), injected_retire_failure,
+    });
+    engine.destroy();
+    try std.testing.expectEqual(@as(u64, 1), fios_test_mimo_destroys());
+}

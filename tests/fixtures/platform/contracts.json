@@ -1,0 +1,45 @@
+{
+  "version": 1,
+  "control": [
+    {"name":"observer status", "accept":true, "json":"{\"version\":1,\"id\":\"11111111-1111-4111-8111-111111111111\",\"operation\":\"status\",\"payload\":{}}"},
+    {"name":"duplicate version", "accept":false, "json":"{\"version\":1,\"version\":1,\"id\":\"11111111-1111-4111-8111-111111111111\",\"operation\":\"status\",\"payload\":{}}"},
+    {"name":"escaped duplicate", "accept":false, "json":"{\"version\":1,\"id\":\"11111111-1111-4111-8111-111111111111\",\"operation\":\"status\",\"payload\":{\"a\":1,\"\\u0061\":2}}"},
+    {"name":"unknown version", "accept":false, "json":"{\"version\":2,\"id\":\"11111111-1111-4111-8111-111111111111\",\"operation\":\"status\",\"payload\":{}}"},
+    {"name":"boolean version", "accept":false, "json":"{\"version\":true,\"id\":\"11111111-1111-4111-8111-111111111111\",\"operation\":\"status\",\"payload\":{}}"},
+    {"name":"floating version", "accept":false, "json":"{\"version\":1.0,\"id\":\"11111111-1111-4111-8111-111111111111\",\"operation\":\"status\",\"payload\":{}}"},
+    {"name":"exponent version", "accept":false, "json":"{\"version\":1e0,\"id\":\"11111111-1111-4111-8111-111111111111\",\"operation\":\"status\",\"payload\":{}}"},
+    {"name":"caller role", "accept":false, "json":"{\"version\":1,\"id\":\"11111111-1111-4111-8111-111111111111\",\"operation\":\"status\",\"payload\":{},\"role\":\"operator\"}"},
+    {"name":"host shell", "accept":false, "json":"{\"version\":1,\"id\":\"11111111-1111-4111-8111-111111111111\",\"operation\":\"shell\",\"payload\":{}}"},
+    {"name":"trailing object", "accept":false, "json":"{\"version\":1,\"id\":\"11111111-1111-4111-8111-111111111111\",\"operation\":\"status\",\"payload\":{}}{}"}
+  ],
+  "roles": {
+    "observer":["status","activity","resources"],
+    "task":["status","job.create","job.status","job.renew","job.cancel","artifact.read","model.request"],
+    "operator":["status","activity","resources","service.desired","service.drain","service.force","reconcile"],
+    "sandbox":["model.request"]
+  },
+  "operations":["status","activity","resources","reconcile","job.create","job.status","job.renew","job.cancel","artifact.read","model.request","service.desired","service.drain","service.force"],
+  "states": {
+    "service":["mlx","orbstack"],
+    "desired":["running","maintenance","stopped"],
+    "observed":["starting","ready","waiting_session","waiting_credentials","stopped","degraded","unknown"],
+    "reservation":["reserved","committed","releasing","released"],
+    "coverage":["all_clients","unknown","unsupported"],
+    "activity":["idle","preparing","queued","active","unknown"],
+    "inference":["reserved","dispatched","uncertain","complete","not_sent"],
+    "job_kind":["sandbox","model_only"],
+    "job":["reserved","creating","running","revoking","stopping","removing","removed","reconciling"],
+    "pressure":["normal","warning","critical","unknown"],
+    "thermal":["nominal","fair","serious","critical","unknown"]
+  },
+  "fake_clock":[
+    {"name":"zero clock","now":0,"sampled":0,"accept":true},
+    {"name":"exact five second age","now":10000,"sampled":5000,"accept":true},
+    {"name":"one millisecond stale","now":10000,"sampled":4999,"accept":false},
+    {"name":"exact one second future","now":10000,"sampled":11000,"accept":true},
+    {"name":"one millisecond too future","now":10000,"sampled":11001,"accept":false},
+    {"name":"negative sample","now":10000,"sampled":-1,"accept":false},
+    {"name":"negative clock","now":-1,"sampled":0,"accept":false}
+  ],
+  "limits": {"control_bytes":65536,"native_raw_bytes":1048576,"utc_max":9007199254740991,"chunk_bytes":32768,"input_bytes":4194304,"upload_ms":10000,"artifact_ms":30000,"lease_ms":30000,"model_chunk_utf16":8192,"model_request_input_utf16":128000,"model_request_output_utf16":64000,"model_job_requests":4,"worker_bytes":536870912,"output_events":64,"output_queue_bytes":1048576,"output_backpressure_ms":2000}
+}

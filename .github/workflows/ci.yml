@@ -145,6 +145,18 @@ jobs:
         run: |
           node scripts/check-agent-container.mjs
           node scripts/check-searxng-container.mjs
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          version: "0.13.5"
+          python-version: "3.11.17"
+      - name: Test isolated platform runner with mock-only model pipe
+        run: |
+          uv sync --locked --no-editable
+          tag="fios-platform-fixture:${{ github.run_id }}-${{ github.run_attempt }}"
+          trap 'docker image rm "$tag" >/dev/null 2>&1 || true' EXIT
+          docker build -t "$tag" .
+          export FIOS_PLATFORM_TEST_BASE_IMAGE="$(docker image inspect --format '{{.Id}}' "$tag")"
+          node scripts/check-platform-runner.mjs --isolated
       - name: Preserve mock-only container logs on failure
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -154,10 +166,61 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
+  platform:
+    name: Native platform mock and process tests
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24.15.0"
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          version: "0.13.5"
+          python-version: "3.11.17"
+      - name: Build native package and run disposable local checks
+        run: |
+          uv sync --locked --no-editable
+          # This job is the macOS15 compatibility/mock lane, not a release
+          # artifact build. The release producer separately enforces6.4/SDK27.
+          node --input-type=module - <<'NODE'
+          import {execFileSync} from 'node:child_process';
+          const version=execFileSync('/usr/bin/swift',['--version'],{encoding:'utf8'});
+          if(!version.includes('Apple Swift version 6.1.2 ')||!version.includes('swiftlang-6.1.2.1.2'))throw Error('Unreviewed CI compatibility toolchain');
+          console.log(version.trim());
+          console.log('Compatibility SDK: '+execFileSync('/usr/bin/xcrun',['--show-sdk-version'],{encoding:'utf8'}).trim());
+          NODE
+          swift build --package-path platform/studio
+          swift test --package-path platform/studio --filter StudioOpenTelemetryTests
+          node scripts/check-platform-observability.mjs --isolated
+          node scripts/check-platform.mjs --mock
+          node scripts/check-platform.mjs --mock --release
+          node scripts/check-platform-process.mjs --isolated
+          node scripts/check-platform-boot.mjs --isolated
+          node scripts/check-platform-boot-state.mjs --isolated
+          node scripts/check-platform-manager-execution.mjs --mock --models
+          node scripts/check-platform-drain.mjs --isolated
+          node scripts/check-platform-service-status.mjs --isolated
+          node scripts/check-platform-service-recovery-status.mjs --isolated
+          node scripts/check-platform-session.mjs --isolated
+          node scripts/check-platform-session-control.mjs --isolated
+          node scripts/check-platform-session-driver.mjs --isolated
+          node scripts/check-platform-supervisor-lock.mjs --isolated
+          node scripts/check-platform-supervisor-budget.mjs --isolated
+          node scripts/check-platform-supervisor-publication.mjs --isolated
+          node scripts/check-platform-watchdog.mjs --isolated
+          node scripts/check-platform-idle.mjs --isolated 300
+          plutil -lint platform/studio/deployment/*.plist
+      # No SSH, native lifecycle, live inference, launchd install or host socket
+      # is passed to a PR-built image. Runtime rehearsal remains separate.
+
   gate:
     name: CI gate
     if: always()
-    needs: [tests, browser, audit, container]
+    needs: [tests, browser, audit, container, platform]
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     steps:

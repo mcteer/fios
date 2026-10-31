@@ -1,0 +1,156 @@
+import Foundation
+import Darwin
+
+@main
+struct PolicyTestRunner {
+    static func main() throws {
+        let checks:[(String,()throws->Void)]=[
+            ("mock support",runMockSupportTests),
+            ("operator commands",runOperatorServiceCommandTests),
+            ("operator service status",runOperatorServiceStatusTests),
+            ("service status",runServiceStatusTests),
+            ("service status summary",runServiceStatusSummaryTests),
+            ("cleanup status recovery",runCleanupStatusRecoveryTests),
+            ("native control diagnostics",runNativeControlDiagnosticsTests),
+            ("timestamped native control",runNativeTimestampedControlTests),
+            ("model placement",runModelPlacementTests),
+            ("workspace configuration",runWorkspaceConfigurationTests),
+            ("read-only native observation",runNativeReadOnlyObservationTests),
+            ("service recovery status",runServiceRecoveryStatusTests),
+            ("service recovery",runServiceRecoveryTests),
+            ("service reconciliation",runServiceReconciliationTests),
+            ("async session control",runAsyncSessionControlTests),
+            ("session endpoint",runSessionEndpointTests),
+            ("service recovery backup",runServiceRecoveryBackupTests),
+            ("service identity",runServiceIdentityTests),
+            ("service process census",runServiceProcessCensusTests),
+            ("service health",runServiceHealthTests),
+            ("async native control",runAsyncNativeControlTests),
+            ("native maintenance",runNativeMaintenanceTests),
+            ("native control",runNativeControlTests),
+            ("native request lineage",runNativeRequestLineageTests),
+            ("native lineage consumer",runNativeLineageConsumerTests),
+            ("scalars",runScalarTests),
+            ("enums",runEnumTests),
+            ("shared kernel VM",runSharedKernelVMTests),
+            ("VM footprint",runVMHostFootprintTests),
+            ("command slots",runCommandSlotTests),
+            ("async VM resources",runAsyncVMResourceTests),
+            ("owned VM resources",runOwnedVMResourceTests),
+            ("VM probe permission",runVMProbePermissionTests),
+            ("model-only VM isolation",runModelOnlyVMIsolationTests),
+            ("global host pressure",runGlobalHostPressureTests),
+            ("VM controller",runVMControllerTests),
+            ("native VM inventory",runNativeVMInventoryTests),
+            ("VM envelope",runVMEnvelopeTests),
+            ("VM resources",runVMResourceTests),
+            ("GPU resources",runGPUResourceTests),
+            ("resource observations",runResourceObservationTests),
+            ("VM resource enrollment",runVMResourceEnrollmentTests),
+            ("VM resource profile reader",runVMResourceProfileReaderTests),
+            ("VM running prerequisite",runVMRunningTests),
+            ("security",runSecurityTests),
+            ("contracts",runContractTests),
+            ("backup",runBackupTests),
+            ("task mailbox",runTaskMailboxTests),
+            ("composed pressure",runComposedPressureTests),
+            ("task commands",runTaskCommandTests),
+            ("task owner",runTaskOwnerTests),
+            ("async artifacts",runAsyncArtifactTests),
+            ("artifact disk admission",runArtifactDiskAdmissionTests),
+            ("sandbox stream",runSandboxStreamTests),
+            ("Docker VM metadata flow",runDockerVMMetadataFlowTests),
+            ("Docker VM metadata",runDockerVMMetadataTests),
+            ("Docker attach",runDockerAttachTests),
+            ("sandbox executor",runSandboxExecutorTests),
+            ("sandbox removal",runSandboxRemovalTests),
+            ("job controller",runJobControllerTests),
+            ("sandbox exit proof",runSandboxExitProofTests),
+            ("sandbox model",runSandboxModelTests),
+            ("worker census",runWorkerCensusTests),
+            ("worker recovery",runWorkerRecoveryTests),
+            ("worker reap durability",runWorkerReapDurabilityTests),
+            ("model broker",runModelBrokerTests),
+            ("Python factory",runPythonFactoryTests),
+            ("private worker",runPrivateWorkerTests),
+            ("model protocol",runModelProtocolTests),
+            ("session",runSessionTests),
+            ("session operations",runSessionOperationTests),
+            ("root policy file",runRootPolicyFileTests),
+            ("session enrollment",runSessionEnrollmentTests),
+            ("application identity",runApplicationIdentityTests),
+            ("application links",runApplicationLinkTests),
+            ("sandbox lifecycle",runSandboxLifecycleTests),
+            ("sandbox safety",runSandboxSafetyTests),
+            ("sandbox journal",runSandboxJournalTests),
+            ("observation",runObservationTests),
+            ("consumer",runConsumerTests),
+            ("CPU",runCPUTests),
+            ("worker resources",runWorkerResourceTests),
+            ("drain",runDrainTests),
+            ("drain controller",runServiceDrainControllerTests),
+            ("force controller",runServiceForceControllerTests),
+            ("services",runServiceTests),
+            ("artifact limits",runArtifactLimitTests),
+            ("artifacts",runArtifactTests),
+            ("audit",runAuditTests),
+            ("transfers",runTransferTests),
+            ("framing",runFramingTests),
+            ("runtime",runRuntimeTests),
+            ("runtime enrollment",runRuntimeEnrollmentTests),
+            ("runtime endpoint",runRuntimeEndpointTests),
+            ("runtime peer",runRuntimePeerTests),
+            ("manager execution",runManagerExecutionTests),
+            ("sandbox source identity",runSandboxSourceIdentityTests),
+            ("service admission",runServiceAdmissionTests),
+            ("admission",runAdmissionTests),
+            ("admission boundaries",runAdmissionBoundaryTests),
+            ("protocol",runProtocolTests),
+            ("journal views",runJournalViewTests),
+            ("journal",runJournalTests),
+            ("journal schema",runJournalSchemaTests),
+            ("journal rows",runJournalRowTests),
+            ("journal lock",runJournalLockTests),
+            ("ownership records",runOwnershipRecordTests),
+            ("job lease limits",runJobLeaseLimitTests),
+            ("job journal",runJobJournalTests),
+            ("watchdog",runWatchdogTests)
+        ]
+        func progress(_ name:String) {
+            FileHandle.standardError.write(Data(("Policy suite starting: "+name+"\n").utf8))
+        }
+        for (name,check) in checks {
+            progress(name)
+            do {try check();fflush(nil)} catch {
+                // Suite name only: no SQL, argv, credentials or workload data.
+                FileHandle.standardError.write(Data(("Policy suite failed: "+name+"\n").utf8))
+                throw error
+            }
+        }
+        progress("activity coherence")
+        try ActivityCoherenceTests.run()
+        progress("detailed observations")
+        try DetailedObservationTests.run()
+        progress("inference scopes")
+        try InferenceScopeTests.run()
+        progress("worker RSS breach")
+        try runWorkerRSSBreachTests()
+        progress("async worker start")
+        try runAsyncWorkerStartTests()
+        progress("late worker recovery")
+        try runLateWorkerRecoveryTests()
+        progress("migration")
+        try MigrationTests.run()
+        progress("release staging")
+        try runReleaseStagingTests()
+        let tests = ActivityTests()
+        try tests.testIdleRequiresAuthoritativeAllClientCoverage()
+        try tests.testQueuedPreparingAndResponseOwnersAreBusy()
+        tests.testStaleFutureAndMalformedSamplesReject()
+        try tests.testIdleReplacementIsAllowedButBusySwitchIsNot()
+        try tests.testNewerSuccessDoesNotClearEarlierUncertainty()
+        try tests.testDuplicateAndUnknownCompletionFailClosed()
+        try tests.testOwnershipIsBoundedAndRestartDoesNotRelease()
+        print("PASS: 7 activity/ownership policy tests (no native side effects)")
+    }
+}

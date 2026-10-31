@@ -1,0 +1,134 @@
+// Source-control-flow fixture only. Types/callees below are mocks, not native
+// engine ABI, SDK objects, transport retirement or all-writer acceptance.
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <string.h>
+#define DS4_HAS_DEEPSEEK41_GPU 1
+#define DS4_N_LAYER 1
+#define DS4_TP_GATES_PER_LAYER 1
+typedef struct { void *map; } model;
+typedef struct {
+ bool fios_teardown_uncertain;
+ struct { void *ctx, *slab, *zero_vec, *host_slab;
+          void **out_views, **in_views, **batch_out_views, **batch_in_views; } tp;
+ int weights,vocab,simulated_memory;
+ model model,mtp_model,vision_model;
+ int shared_prefill_workspace; bool shared_prefill_workspace_ready;
+ void *directional_steering_dirs,*directional_steering_file,*model_path;
+} ds4_engine;
+static void *g_tp_block_ctx;
+static unsigned destructive,checked,legacy,prepared,unordered;
+static int destroy(void){if(!prepared)++unordered;return ++destructive;}
+static int checked_result,prepare_result=1,cpu_result=1;
+static unsigned cpu_checked,selected_probes;
+static int cpu_work_busy;
+static int ds4_threads_work_busy(void){return cpu_work_busy;}
+static int selected_idle=1,pagein_busy;
+static bool metal_graph_stream_pagein_busy(void){return pagein_busy;}
+static int metal_graph_selected_async_load_idle(void){++selected_probes;return selected_idle;}
+static int ds4_threads_shutdown_checked(void){++cpu_checked;return cpu_result;}
+static int ds4_gpu_tp_shutdown_checked(void){++checked;return checked_result;}
+static int ds4_gpu_prepare_release(void){++prepared;return prepare_result;}
+static void ds4_gpu_tp_shutdown(void){++legacy;}
+#define free(...) destroy()
+#define ds4_tp_detach_slab(...) destroy()
+#define ds4_gpu_tensor_free(...) destroy()
+#define ds4_expert_profile_close(...) destroy()
+#define weights_free(...) destroy()
+#define vocab_free(...) destroy()
+#define ds4_threads_shutdown(...) destroy()
+#define model_close(...) destroy()
+#define metal_graph_free_prefill_workspace(...) destroy()
+#define ds4_gpu_cleanup(...) destroy()
+#define ds4_ssd_memory_lock_release(...) destroy()
+#define ds4_release_instance_lock(...) destroy()
+/* SOURCE_FUNCTIONS */
+int main(int argc,char **argv){
+ ds4_engine e={0}; int context=7,slab=11;
+ if(argc==2&&strcmp(argv[1],"--empty")==0){
+  ds4_engine_tp_unbind(NULL);ds4_engine_close(NULL);
+  if(!ds4_engine_close_checked(NULL)){fputs("PUBLIC_NULL_CLOSE_REFUSED\n",stderr);return 77;}
+  ds4_engine_tp_unbind(&e);
+  if(destructive||checked||legacy){fputs("PARENT_EMPTY_UNBIND_CHANGED\n",stderr);return 77;}
+  ds4_engine_close(&e);
+  if(!destructive||checked||legacy||unordered){fputs("PARENT_EMPTY_CLOSE_REFUSED\n",stderr);return 77;}
+  puts("PASS: empty and null parent mock controls retain legacy behavior.");return 0;
+ }
+ if(argc==2&&strcmp(argv[1],"--prepared-success")==0){
+  checked_result=1;e.tp.ctx=&context;e.tp.slab=&slab;g_tp_block_ctx=&context;
+  ds4_engine_tp_unbind(&e);
+  if(prepared!=1||checked!=1||!destructive||unordered||e.tp.ctx||g_tp_block_ctx){fputs("PARENT_PREPARED_UNBIND_ORDER\n",stderr);return 77;}
+  ds4_engine_close(&e);
+  if(prepared!=2||unordered){fputs("PARENT_PREPARED_CLOSE_ORDER\n",stderr);return 77;}
+  return 0;
+ }
+ if(argc==2&&strncmp(argv[1],"--gpu-",6)==0){
+  const int empty=strcmp(argv[1],"--gpu-empty")==0;
+  checked_result=1;prepare_result=0;
+  if(!empty){e.tp.ctx=&context;e.tp.slab=&slab;g_tp_block_ctx=&context;}
+  const ds4_engine before=e;
+  if(strcmp(argv[1],"--gpu-unbind")==0)ds4_engine_tp_unbind(&e);else ds4_engine_close(&e);
+  if(destructive||legacy||prepared!=1||checked!=(empty?0:1)||memcmp(&e,&before,sizeof(e))||(!empty&&g_tp_block_ctx!=&context)){
+   fputs("FIO_DS4_PARENT_IGNORED_RELEASE_PREPARATION_REFUSAL\n",stderr);return 77;
+  }
+  puts("PASS: parent function source preserves mock resources after local release preparation refusal.");return 0;
+ }
+ if(argc==2&&strncmp(argv[1],"--cpu-",6)==0){
+  cpu_result=0;checked_result=1;
+  const int empty=strcmp(argv[1],"--cpu-empty")==0;
+  if(!empty){e.tp.ctx=&context;e.tp.slab=&slab;g_tp_block_ctx=&context;}
+  const ds4_engine before=e;ds4_engine_close(&e);
+  if(destructive||checked||prepared||cpu_checked!=1||memcmp(&e,&before,sizeof(e))){
+   fputs("FIO_DS4_PARENT_RELEASED_BEFORE_CPU_RETIREMENT\n",stderr);return 77;
+  }
+  return 0;
+ }
+ if(argc==2&&strcmp(argv[1],"--cpu-unbind")==0){
+  cpu_work_busy=1;e.tp.ctx=&context;e.tp.slab=&slab;const ds4_engine before=e;
+  if(ds4_engine_tp_unbind_checked(&e)||destructive||cpu_checked||prepared||checked||memcmp(&e,&before,sizeof(e))){
+   fputs("FIO_DS4_UNBIND_RELEASED_WITH_ACTIVE_CPU_WORK\n",stderr);return 77;
+  }
+  return 0;
+ }
+ if(argc==2&&strcmp(argv[1],"--pagein-active")==0){
+  pagein_busy=1;const ds4_engine before=e;
+  if(ds4_engine_close_checked(&e)||destructive||cpu_checked||prepared||checked||memcmp(&e,&before,sizeof(e))){
+   fputs("FIO_DS4_ENGINE_RELEASED_WITH_PAGEIN_CUSTODY\n",stderr);return 77;
+  }
+  return 0;
+ }
+ if(argc==2&&strcmp(argv[1],"--selected-active")==0){
+  selected_idle=0;const ds4_engine before=e;
+  const int destroyed=ds4_engine_close_checked(&e);
+  if(destroyed||destructive||cpu_checked||prepared||checked||selected_probes!=1||memcmp(&e,&before,sizeof(e))){
+   fputs("FIO_DS4_ENGINE_RELEASED_WITH_ACTIVE_SELECTED_LOADER\n",stderr);return 77;
+  }
+  return 0;
+ }
+ if(argc==2&&strcmp(argv[1],"--child-uncertain")==0){
+  e.fios_teardown_uncertain=true;const ds4_engine before=e;
+  const int destroyed=ds4_engine_close_checked(&e);
+  if(destroyed||destructive||cpu_checked||prepared||checked||memcmp(&e,&before,sizeof(e))){
+   fputs("FIO_DS4_ENGINE_RELEASED_AFTER_UNCERTAIN_SESSION_DESTROY\n",stderr);return 77;
+  }
+  return 0;
+ }
+ if(argc==2&&strcmp(argv[1],"--checked-refusal")==0){
+  cpu_result=0;const ds4_engine before=e;
+  const int destroyed=ds4_engine_close_checked(&e);
+  if(destroyed||destructive||memcmp(&e,&before,sizeof(e))){fputs("FIO_DS4_PUBLIC_CLOSE_ACKNOWLEDGED_REFUSAL\n",stderr);return 77;}
+  return 0;
+ }
+ e.tp.ctx=&context;e.tp.slab=&slab;g_tp_block_ctx=&context;
+ ds4_engine before=e;
+ if(argc==1)ds4_engine_tp_unbind(&e);else ds4_engine_close(&e);
+ if(destructive||legacy||checked!=1||memcmp(&e,&before,sizeof(e))||g_tp_block_ctx!=&context){
+  fputs(argc==1?"FIO_DS4_PARENT_UNBIND_IGNORED_REFUSAL\n":"FIO_DS4_PARENT_CLOSE_IGNORED_REFUSAL\n",stderr);return 77;
+ }
+ checked=0;ds4_engine_close(&e);
+ if(destructive||legacy||checked!=1||memcmp(&e,&before,sizeof(e))||g_tp_block_ctx!=&context){
+  fputs("FIO_DS4_PARENT_CLOSE_IGNORED_REFUSAL\n",stderr);return 77;
+ }
+ puts("PASS: actual parent function source preserves all mock resources on checked TP refusal; no native ABI/retirement proof.");
+}

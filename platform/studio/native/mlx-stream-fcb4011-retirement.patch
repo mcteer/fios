@@ -1,0 +1,554 @@
+diff --git a/src/arch/mimo_v2/gpu_warm.zig b/src/arch/mimo_v2/gpu_warm.zig
+index fa7f751..6da164c 100644
+--- a/src/arch/mimo_v2/gpu_warm.zig
++++ b/src/arch/mimo_v2/gpu_warm.zig
+@@ -168,7 +168,13 @@ pub const Stats = struct {
+ };
+ 
+ /// Tunables (tests shorten them).
++pub const FiosLifetimeTicket = struct { instance: u64, sequence: u64 };
++pub const FiosPauseTicket = struct { instance: u64, sequence: u64 };
++pub const FiosPauseState = enum { unsupported, pending, retired, unknown };
++
+ pub const Params = struct {
++    /// Source fixture only; served installation never enables this control.
++    fios_fixture_control: bool = false,
+     target_chunk_ns: u64 = chunk_target_ns,
+     stuck_ns: u64 = stuck_ns,
+     first_iters: u32 = initial_iters,
+@@ -179,6 +185,15 @@ pub const Params = struct {
+ pub fn Engine(comptime B: type) type {
+     return struct {
+         const Self = @This();
++        var next_fixture_instance = std.atomic.Value(u64).init(0);
++        fios_instance: u64 = 0,
++        fios_closed: std.atomic.Value(bool) = .init(false),
++        // Under mu. No device operation runs while mu is held.
++        fios_sequence: u64 = 0,
++        fios_ack: u64 = 0,
++        fios_unknown: bool = false,
++        fios_lifetime_sequence: u64 = 0,
++        fios_lifetime_ticket: u64 = 0,
+         a: std.mem.Allocator,
+         backend: B,
+         params: Params,
+@@ -216,26 +231,148 @@ pub fn Engine(comptime B: type) type {
+         pub fn create(a: std.mem.Allocator, backend: B, params: Params) !*Self {
+             const self = try a.create(Self);
+             errdefer a.destroy(self);
+-            self.* = .{ .a = a, .backend = backend, .params = params, .iters = params.first_iters };
++            self.* = .{ .a = a, .backend = backend, .params = params, .iters = params.first_iters,
++                .fios_instance = if (params.fios_fixture_control) try newFixtureInstance() else 0 };
+             if (comptime counting) self.cur_iters.store(params.first_iters, .monotonic);
+             self.thread = try std.Thread.spawn(.{ .stack_size = 256 * 1024 }, main, .{self});
+             return self;
+         }
+ 
++        // Enclosing owners must check custody before releasing their fields.
++        pub fn fiosCanDestroy(self: *Self) bool {
++            if (!self.params.fios_fixture_control) return true;
++            _ = std.c.pthread_mutex_lock(&self.mu);
++            defer _ = std.c.pthread_mutex_unlock(&self.mu);
++            return self.fios_lifetime_ticket == 0;
++        }
++
+         /// Stops the thread (it retires its chunks in flight), joins it, releases the backend.
+         pub fn destroy(self: *Self) void {
+-            self.quit.store(true, .seq_cst);
++            _ = self.tryDestroy();
++        }
++
++        pub fn tryDestroy(self: *Self) bool {
++            if (self.params.fios_fixture_control) {
++                _ = std.c.pthread_mutex_lock(&self.mu);
++                if (self.fios_lifetime_ticket != 0) {
++                    self.fios_unknown = true;
++                    _ = std.c.pthread_mutex_unlock(&self.mu);
++                    return false; // Preserve engine/backend; original owner must retry.
++                }
++                self.quit.store(true, .seq_cst);
++                _ = std.c.pthread_mutex_unlock(&self.mu);
++            } else self.quit.store(true, .seq_cst);
+             self.signal();
+             self.thread.join();
+             if (comptime @hasDecl(B, "deinit")) self.backend.deinit();
+             _ = std.c.pthread_cond_destroy(&self.cv);
+             _ = std.c.pthread_mutex_destroy(&self.mu);
+-            self.a.destroy(self);
++            const a = self.a;
++            a.destroy(self);
++            return true;
++        }
++
++        fn newFixtureInstance() !u64 {
++            var previous = next_fixture_instance.load(.seq_cst);
++            while (true) {
++                if (previous == std.math.maxInt(u64)) return error.FiosWarmControlExhausted;
++                if (next_fixture_instance.cmpxchgWeak(previous, previous + 1, .seq_cst, .seq_cst)) |observed| previous = observed else return previous + 1;
++            }
++        }
++
++        // Caller must already own the live enclosing model/engine reference.
++        // This lease preserves this Engine only, not every enclosing context.
++        pub fn fixtureRetainLifetime(self: *Self) !FiosLifetimeTicket {
++            if (!self.params.fios_fixture_control or self.fios_instance == 0) return error.FiosWarmControlUnsupported;
++            _ = std.c.pthread_mutex_lock(&self.mu);
++            defer _ = std.c.pthread_mutex_unlock(&self.mu);
++            if (self.quit.load(.seq_cst) or self.fios_lifetime_ticket != 0) return error.FiosWarmControlBusy;
++            if (self.fios_lifetime_sequence == std.math.maxInt(u64)) {
++                self.fios_unknown = true;
++                return error.FiosWarmControlExhausted;
++            }
++            self.fios_lifetime_sequence += 1;
++            self.fios_lifetime_ticket = self.fios_lifetime_sequence;
++            return .{ .instance = self.fios_instance, .sequence = self.fios_lifetime_ticket };
++        }
++
++        pub fn fixtureReleaseLifetime(self: *Self, ticket: FiosLifetimeTicket) bool {
++            if (!self.params.fios_fixture_control) return false;
++            _ = std.c.pthread_mutex_lock(&self.mu);
++            defer _ = std.c.pthread_mutex_unlock(&self.mu);
++            if (ticket.instance != self.fios_instance or ticket.sequence == 0 or
++                ticket.sequence != self.fios_lifetime_ticket or self.quit.load(.seq_cst)) return false;
++            self.fios_lifetime_ticket = 0;
++            // Releasing custody is neither successful retirement nor resume;
++            // sticky failure/uncertainty and the pause gate remain unchanged.
++            return true;
++        }
++
++        pub fn fixturePause(self: *Self) !FiosPauseTicket {
++            if (!self.params.fios_fixture_control or self.fios_instance == 0) return error.FiosWarmControlUnsupported;
++            _ = std.c.pthread_mutex_lock(&self.mu);
++            defer _ = std.c.pthread_mutex_unlock(&self.mu);
++            if (self.quit.load(.seq_cst) or self.fios_closed.load(.seq_cst)) return error.FiosWarmControlBusy;
++            if (self.fios_sequence == std.math.maxInt(u64)) {
++                self.fios_unknown = true;
++                return error.FiosWarmControlExhausted;
++            }
++            self.fios_sequence += 1;
++            self.fios_ack = 0;
++            self.fios_closed.store(true, .seq_cst);
++            self.wakeLocked();
++            return .{ .instance = self.fios_instance, .sequence = self.fios_sequence };
++        }
++
++        pub fn fixturePauseState(self: *const Self, ticket: FiosPauseTicket) FiosPauseState {
++            if (!self.params.fios_fixture_control) return .unsupported;
++            const mutable: *Self = @constCast(self);
++            _ = std.c.pthread_mutex_lock(&mutable.mu);
++            defer _ = std.c.pthread_mutex_unlock(&mutable.mu);
++            if (ticket.instance != self.fios_instance or ticket.sequence == 0 or ticket.sequence != self.fios_sequence or
++                !self.fios_closed.load(.seq_cst) or self.quit.load(.seq_cst)) return .unknown;
++            if (self.fios_ack != ticket.sequence) return .pending;
++            return if (self.fios_unknown or self.failed.load(.monotonic)) .unknown else .retired;
++        }
++
++        pub fn fixtureResume(self: *Self, ticket: FiosPauseTicket) bool {
++            if (!self.params.fios_fixture_control) return false;
++            _ = std.c.pthread_mutex_lock(&self.mu);
++            defer _ = std.c.pthread_mutex_unlock(&self.mu);
++            if (ticket.instance != self.fios_instance or ticket.sequence == 0 or ticket.sequence != self.fios_sequence or
++                self.fios_ack != ticket.sequence or !self.fios_closed.load(.seq_cst) or self.quit.load(.seq_cst)) return false;
++            self.fios_closed.store(false, .seq_cst);
++            self.wakeLocked();
++            return true;
++        }
++
++        fn fixtureCheckpoint(self: *Self) bool {
++            if (!self.params.fios_fixture_control or !self.fios_closed.load(.seq_cst)) return false;
++            self.drain();
++            _ = std.c.pthread_mutex_lock(&self.mu);
++            if (self.fios_closed.load(.seq_cst) and !self.quit.load(.seq_cst)) self.fios_ack = self.fios_sequence;
++            _ = std.c.pthread_mutex_unlock(&self.mu);
++            self.park();
++            return true;
++        }
++
++        fn wakeLocked(self: *Self) void {
++            self.wake = true;
++            _ = std.c.pthread_cond_signal(&self.cv);
+         }
+ 
+         /// The decode lane's gated miss parts wait for `value` (`StreamSource.gate`): warm until the stream's event
+         /// reaches it. Never blocks on the warm thread: one atomic max, and a signal only when the thread is parked.
+         pub fn arm(self: *Self, value: u64) void {
++            if (self.params.fios_fixture_control) {
++                _ = std.c.pthread_mutex_lock(&self.mu);
++                defer _ = std.c.pthread_mutex_unlock(&self.mu);
++                if (self.fios_closed.load(.seq_cst)) { self.fios_unknown = true; return; }
++                var current = self.target.load(.seq_cst);
++                while (value > current) current = self.target.cmpxchgWeak(current, value, .seq_cst, .seq_cst) orelse break;
++                if (self.parked.load(.seq_cst) != 0 and !self.failed.load(.monotonic)) self.wakeLocked();
++                return;
++            }
+             var cur = self.target.load(.seq_cst);
+             while (value > cur) cur = self.target.cmpxchgWeak(cur, value, .seq_cst, .seq_cst) orelse break;
+             if (self.parked.load(.seq_cst) != 0 and !self.failed.load(.monotonic)) self.signal();
+@@ -244,6 +381,17 @@ pub fn Engine(comptime B: type) type {
+         /// A host wait on bytes begins (`on`) or ends: warm while any is in progress (the read-ahead's, whose GPU work
+         /// is not gated on a value). Never blocks on the warm thread.
+         pub fn hold(self: *Self, on: bool) void {
++            if (self.params.fios_fixture_control) {
++                _ = std.c.pthread_mutex_lock(&self.mu);
++                defer _ = std.c.pthread_mutex_unlock(&self.mu);
++                const count = self.holds.load(.seq_cst);
++                if ((on and (self.fios_closed.load(.seq_cst) or count == std.math.maxInt(u32))) or (!on and count == 0)) {
++                    self.fios_unknown = true; return;
++                }
++                self.holds.store(if (on) count + 1 else count - 1, .seq_cst);
++                if (on and self.parked.load(.seq_cst) != 0 and !self.failed.load(.monotonic)) self.wakeLocked();
++                return;
++            }
+             if (on) {
+                 _ = self.holds.fetchAdd(1, .seq_cst);
+                 if (self.parked.load(.seq_cst) != 0 and !self.failed.load(.monotonic)) self.signal();
+@@ -268,6 +416,7 @@ pub fn Engine(comptime B: type) type {
+ 
+         /// A target past the event's value and past a target given up as stuck, and no failure.
+         fn wants(self: *Self, t: u64) bool {
++            if (self.params.fios_fixture_control and self.fios_closed.load(.seq_cst)) return false;
+             if (self.failed.load(.monotonic)) return false;
+             if (self.holds.load(.seq_cst) > 0) return true;
+             return t > self.stuck_at and self.backend.eventValue() < t;
+@@ -275,6 +424,7 @@ pub fn Engine(comptime B: type) type {
+ 
+         fn main(self: *Self) void {
+             while (!self.quit.load(.seq_cst)) {
++                if (self.fixtureCheckpoint()) continue;
+                 if (self.wants(self.target.load(.seq_cst))) {
+                     self.warm();
+                     continue;
+@@ -303,6 +453,7 @@ pub fn Engine(comptime B: type) type {
+             var seen = self.backend.eventValue();
+             var moved = nowNs();
+             while (true) {
++                if (self.params.fios_fixture_control and self.fios_closed.load(.seq_cst)) return;
+                 const t = self.target.load(.seq_cst);
+                 const v = self.backend.eventValue();
+                 const held = self.holds.load(.seq_cst) > 0;
+@@ -359,12 +510,16 @@ pub fn Engine(comptime B: type) type {
+         }
+ 
+         fn drain(self: *Self) void {
+-            while (self.ring_n > 0) self.retireOldest() catch {};
++            while (self.ring_n > 0) self.retireOldest() catch |e| self.recordFailure(e);
++        }
++
++        fn recordFailure(self: *Self, e: anyerror) void {
++            if (!self.failed.swap(true, .monotonic)) log.warn("gpu_keep_warm: the warm thread stopped for the process: {s} ({s})", .{ @errorName(e), if (B == Metal) Metal.lastError() else "trace" });
+         }
+ 
+         /// A backend error: the warming stops for the process (the model is unaffected), said once.
+         fn fail(self: *Self, e: anyerror) void {
+-            if (!self.failed.swap(true, .monotonic)) log.warn("gpu_keep_warm: the warm thread stopped for the process: {s} ({s})", .{ @errorName(e), if (B == Metal) Metal.lastError() else "trace" });
++            self.recordFailure(e);
+             self.drain();
+         }
+     };
+@@ -491,6 +646,237 @@ pub const Trace = struct {
+ 
+ pub const TraceEngine = Engine(Trace);
+ 
++fn fiosRetired(e: *const TraceEngine, ticket: FiosPauseTicket) bool {
++    return e.fixturePauseState(ticket) == .retired;
++}
++
++test "fios mimo retirement: lifetime lease preserves engine before destruction" {
++    const Backend = struct {
++        pub const Chunk = u64;
++        destroyed: *std.atomic.Value(u32),
++        pub fn eventValue(_: *const @This()) u64 { return 0; }
++        pub fn commit(_: *@This(), _: u32) !Chunk { return 1; }
++        pub fn retire(_: *@This(), _: Chunk) !u64 { return 0; }
++        pub fn deinit(self: *@This()) void { _ = self.destroyed.fetchAdd(1, .seq_cst); }
++    };
++    const E = Engine(Backend);
++    var destroyed = std.atomic.Value(u32).init(0);
++    const engine = try E.create(std.testing.allocator, .{ .destroyed = &destroyed }, .{ .fios_fixture_control = true });
++    const lease = try engine.fixtureRetainLifetime();
++    var paused: ?FiosPauseTicket = null;
++    defer if (destroyed.load(.seq_cst) == 0) {
++        _ = engine.fixtureReleaseLifetime(lease);
++        if (paused) |ticket| _ = engine.fixtureResume(ticket);
++        engine.destroy();
++    };
++    if (engine.fiosCanDestroy()) {
++        std.debug.print("FIO_MIMO_ENCLOSING_CUSTODY_ACCEPTED_HELD_ENGINE\n", .{});
++        return error.FiosEnclosingCustodyLost;
++    }
++    try testing.expectError(error.FiosWarmControlBusy, engine.fixtureRetainLifetime());
++    const ticket = try engine.fixturePause();
++    paused = ticket;
++    try waitFor(struct {
++        fn ready(e: *const E, t: FiosPauseTicket) bool { return e.fixturePauseState(t) == .retired; }
++    }.ready, .{ engine, ticket }, 500);
++    const destroyed_now = engine.tryDestroy();
++    if (destroyed.load(.seq_cst) != 0) {
++        std.debug.print("FIO_MIMO_DESTROY_DROPPED_HELD_ENGINE\n", .{});
++        return error.FiosHeldEngineDestroyed;
++    }
++    if (destroyed_now) {
++        std.debug.print("FIO_MIMO_DESTRUCTION_REFUSAL_REPORTED_SUCCESS\n", .{});
++        return error.FiosDestructionRefusalLost;
++    }
++    engine.destroy();
++    // Observe the external deinit counter BEFORE any possibly-freed pointer.
++    if (destroyed.load(.seq_cst) != 0) {
++        std.debug.print("FIO_MIMO_DESTROY_DROPPED_HELD_ENGINE\n", .{});
++        return error.FiosHeldEngineDestroyed;
++    }
++    try testing.expect(!engine.quit.load(.seq_cst));
++    try testing.expectEqual(FiosPauseState.unknown, engine.fixturePauseState(ticket));
++    var foreign = lease;
++    foreign.instance += 1;
++    try testing.expect(!engine.fixtureReleaseLifetime(foreign));
++    try testing.expect(engine.fixtureReleaseLifetime(lease));
++    try testing.expect(!engine.fixtureReleaseLifetime(lease));
++    const newer = try engine.fixtureRetainLifetime();
++    try testing.expect(newer.sequence != lease.sequence);
++    try testing.expect(!engine.fixtureReleaseLifetime(lease));
++    try testing.expect(engine.fixtureReleaseLifetime(newer));
++    _ = std.c.pthread_mutex_lock(&engine.mu);
++    engine.fios_lifetime_sequence = std.math.maxInt(u64);
++    _ = std.c.pthread_mutex_unlock(&engine.mu);
++    try testing.expectError(error.FiosWarmControlExhausted, engine.fixtureRetainLifetime());
++    try testing.expectEqual(FiosPauseState.unknown, engine.fixturePauseState(ticket));
++    try testing.expect(engine.fixtureResume(ticket));
++    try testing.expect(engine.tryDestroy());
++    try testing.expectEqual(@as(u32, 1), destroyed.load(.seq_cst));
++}
++
++test "fios mimo retirement: explicit fixture pause drains and closes rearm until exact resume" {
++    var event = std.atomic.Value(u64).init(0);
++    var trace: Trace.Log = .{};
++    const engine = try TraceEngine.create(std.testing.allocator, Trace.word(&event, &trace), .{ .fios_fixture_control = true });
++    defer engine.destroy();
++    engine.arm(1);
++    try waitFor(atLeast, .{ &trace, 2 }, 500);
++    const ticket = try engine.fixturePause();
++    try waitFor(fiosRetired, .{ engine, ticket }, 500);
++    const commits = trace.commits.load(.seq_cst);
++    sleepUs(5_000);
++    try testing.expectEqual(commits, trace.commits.load(.seq_cst));
++    var wrong = ticket;
++    wrong.sequence += 1;
++    try testing.expect(!engine.fixtureResume(wrong));
++    const previous_target = engine.target.load(.seq_cst);
++    engine.arm(2);
++    try testing.expectEqual(previous_target, engine.target.load(.seq_cst));
++    try testing.expectEqual(FiosPauseState.unknown, engine.fixturePauseState(ticket));
++    engine.hold(true);
++    try testing.expectEqual(FiosPauseState.unknown, engine.fixturePauseState(ticket));
++    try testing.expectEqual(@as(u32, 0), engine.holds.load(.seq_cst));
++    try testing.expect(engine.fixtureResume(ticket));
++    try testing.expect(!engine.fixtureResume(ticket));
++    try waitFor(atLeast, .{ &trace, commits + 1 }, 500);
++    const next = try engine.fixturePause();
++    try testing.expect(next.sequence != ticket.sequence);
++    try testing.expect(!engine.fixtureResume(ticket));
++    try waitFor(struct {
++        fn acknowledged(e: *const TraceEngine, t: FiosPauseTicket) bool { return e.fixturePauseState(t) == .unknown; }
++    }.acknowledged, .{ engine, next }, 500);
++    try testing.expect(engine.fixtureResume(next));
++}
++
++test "fios mimo retirement: pause is disabled by default and binds nonreusable engine instance" {
++    var event = std.atomic.Value(u64).init(0);
++    var trace: Trace.Log = .{};
++    const ordinary = try TraceEngine.create(std.testing.allocator, Trace.word(&event, &trace), .{});
++    defer ordinary.destroy();
++    try testing.expectError(error.FiosWarmControlUnsupported, ordinary.fixturePause());
++    try testing.expectError(error.FiosWarmControlUnsupported, ordinary.fixtureRetainLifetime());
++    const old = try TraceEngine.create(std.testing.allocator, Trace.word(&event, &trace), .{ .fios_fixture_control = true });
++    var old_live = true;
++    defer if (old_live) old.destroy();
++    const old_ticket = try old.fixturePause();
++    try waitFor(fiosRetired, .{ old, old_ticket }, 500);
++    old.destroy();
++    old_live = false;
++    const replacement = try TraceEngine.create(std.testing.allocator, Trace.word(&event, &trace), .{ .fios_fixture_control = true });
++    defer replacement.destroy();
++    const current = try replacement.fixturePause();
++    try testing.expect(current.instance != old_ticket.instance);
++    try testing.expect(!replacement.fixtureResume(old_ticket));
++    try waitFor(fiosRetired, .{ replacement, current }, 500);
++    try testing.expect(replacement.fixtureResume(current));
++}
++
++test "fios mimo retirement: failure and exhausted sequence never produce a pause retirement receipt" {
++    var event = std.atomic.Value(u64).init(0);
++    var trace: Trace.Log = .{};
++    var backend = Trace.word(&event, &trace);
++    backend.fail_at = 1;
++    const engine = try TraceEngine.create(std.testing.allocator, backend, .{ .fios_fixture_control = true });
++    defer engine.destroy();
++    engine.arm(1);
++    try waitFor(struct {
++        fn failed(e: *const TraceEngine) bool { return e.stats().failed; }
++    }.failed, .{engine}, 500);
++    const ticket = try engine.fixturePause();
++    try waitFor(struct {
++        fn acknowledged(e: *const TraceEngine, t: FiosPauseTicket) bool { return e.fixturePauseState(t) == .unknown; }
++    }.acknowledged, .{ engine, ticket }, 500);
++    try testing.expect(engine.fios_closed.load(.seq_cst));
++    try testing.expect(engine.fixtureResume(ticket));
++    try testing.expect(engine.stats().failed);
++    engine.hold(false);
++    try testing.expectEqual(@as(u32, 0), engine.holds.load(.seq_cst));
++    _ = std.c.pthread_mutex_lock(&engine.mu);
++    engine.fios_sequence = std.math.maxInt(u64);
++    _ = std.c.pthread_mutex_unlock(&engine.mu);
++    try testing.expectError(error.FiosWarmControlExhausted, engine.fixturePause());
++}
++
++test "fios mimo retirement: parked chunks require actual retire outcome before pause acknowledgement" {
++    const Backend = struct {
++        pub const Chunk = u64;
++        commits: *std.atomic.Value(u64),
++        retires: *std.atomic.Value(u64),
++        entered: *std.atomic.Value(bool),
++        release: *std.atomic.Value(bool),
++        fail: bool,
++        pub fn commit(self: *@This(), _: u32) !Chunk { return self.commits.fetchAdd(1, .seq_cst) + 1; }
++        pub fn eventValue(self: *const @This()) u64 { return if (self.commits.load(.seq_cst) >= 2) 1 else 0; }
++        pub fn retire(self: *@This(), _: Chunk) !u64 {
++            _ = self.retires.fetchAdd(1, .seq_cst);
++            self.entered.store(true, .seq_cst);
++            while (!self.release.load(.seq_cst)) sleepUs(200);
++            if (self.fail) return error.FiosBlockedRetire;
++            return 0;
++        }
++    };
++    const E = Engine(Backend);
++    for ([_]bool{ false, true }) |failure| {
++        var commits = std.atomic.Value(u64).init(0);
++        var retires = std.atomic.Value(u64).init(0);
++        var entered = std.atomic.Value(bool).init(false);
++        var release = std.atomic.Value(bool).init(false);
++        const engine = try E.create(std.testing.allocator, .{ .commits = &commits, .retires = &retires, .entered = &entered, .release = &release, .fail = failure }, .{ .fios_fixture_control = true });
++        defer { release.store(true, .seq_cst); engine.destroy(); }
++        engine.arm(1);
++        try waitFor(struct {
++            fn parked(e: *const E, count: *const std.atomic.Value(u64)) bool { return e.isParked() and count.load(.seq_cst) == 2; }
++        }.parked, .{ engine, &commits }, 500);
++        try testing.expectEqual(@as(u64, 0), retires.load(.seq_cst));
++        const ticket = try engine.fixturePause();
++        try waitFor(struct {
++            fn blocked(flag: *const std.atomic.Value(bool)) bool { return flag.load(.seq_cst); }
++        }.blocked, .{&entered}, 500);
++        try testing.expectEqual(FiosPauseState.pending, engine.fixturePauseState(ticket));
++        try testing.expect(!engine.fixtureResume(ticket));
++        release.store(true, .seq_cst);
++        const expected: FiosPauseState = if (failure) .unknown else .retired;
++        try waitFor(struct {
++            fn acknowledged(e: *const E, t: FiosPauseTicket, wanted: FiosPauseState) bool { return e.fixturePauseState(t) == wanted; }
++        }.acknowledged, .{ engine, ticket, expected }, 500);
++        try testing.expectEqual(@as(u64, 2), retires.load(.seq_cst));
++        try testing.expect(engine.fixtureResume(ticket));
++    }
++}
++
++test "fios mimo retirement: drain preserves failure and still retires every queued chunk" {
++    const Backend = struct {
++        pub const Chunk = u64;
++        calls: u32 = 0,
++        fail_mask: u8 = 0,
++        pub fn retire(self: *@This(), chunk: Chunk) !u64 {
++            self.calls += 1;
++            if ((chunk == 1 and self.fail_mask & 1 != 0) or
++                (chunk == 2 and self.fail_mask & 2 != 0)) return error.FiosRetirementFailure;
++            return 0;
++        }
++    };
++    for ([_]u8{ 0, 1, 2, 3 }) |mask| {
++        for ([_]usize{ 0, 1 }) |head| {
++            var engine: Engine(Backend) = .{ .a = std.testing.allocator, .backend = .{ .fail_mask = mask }, .params = .{}, .iters = initial_iters };
++            engine.ring = .{ 1, 2 };
++            engine.ring_iters = .{ initial_iters, initial_iters };
++            engine.ring_head = head;
++            engine.ring_n = 2;
++            engine.n_chunks.store(2, .monotonic);
++            engine.drain();
++            try std.testing.expectEqual(@as(u32, 2), engine.backend.calls);
++            try std.testing.expectEqual(@as(usize, 0), engine.ring_n);
++            try std.testing.expectEqual(mask != 0, engine.stats().failed);
++            try std.testing.expectEqual(@as(u64, 2) - @as(u64, @popCount(mask)), engine.stats().retired);
++            engine.drain();
++            try std.testing.expectEqual(mask != 0, engine.stats().failed);
++            try std.testing.expectEqual(@as(u32, 2), engine.backend.calls);
++        }
++    }
++}
++
+ // ── CPU proofs (no device, no lock) ──
+ 
+ const testing = std.testing;
+diff --git a/src/arch/mimo_v2/module.zig b/src/arch/mimo_v2/module.zig
+index 25070ac..5169056 100644
+--- a/src/arch/mimo_v2/module.zig
++++ b/src/arch/mimo_v2/module.zig
+@@ -442,7 +442,16 @@ pub const Module = struct {
+         log.info("{s}", .{expert_usage.seedLine(&lb, "mimo_v2", &d, r, source.sdk_stream.stats().expert_bytes_read -| b0, ms)});
+     }
+ 
++    pub fn fiosCanDeinit(self: *Module) bool {
++        return self.source.fiosCanDeinit();
++    }
++
++    pub fn fiosRetireWarm(self: *Module) bool {
++        return self.source.fiosRetireWarm();
++    }
++
+     pub fn deinit(self: *Module) void {
++        if (!self.fiosRetireWarm()) return;
+         self.reset();
+         if (comptime profile.enabled) if (self.trace) |t| {
+             self.source.stream_source.trace = null;
+diff --git a/src/arch/mimo_v2/root.zig b/src/arch/mimo_v2/root.zig
+index 8dfb183..62b5316 100644
+--- a/src/arch/mimo_v2/root.zig
++++ b/src/arch/mimo_v2/root.zig
+@@ -119,6 +119,14 @@ fn admitted(io: std.Io, c: *const Config, facts: *const sdk.LoadFacts) !Config {
+     return built;
+ }
+ 
++pub fn fiosCanDeinit(m: *Module) bool {
++    return m.fiosCanDeinit();
++}
++
++pub fn fiosRetireWarm(m: *Module) bool {
++    return m.fiosRetireWarm();
++}
++
+ pub fn deinit(m: *Module) void {
+     m.deinit();
+ }
+diff --git a/src/arch/mimo_v2/source.zig b/src/arch/mimo_v2/source.zig
+index 9845b66..7f73e76 100644
+--- a/src/arch/mimo_v2/source.zig
++++ b/src/arch/mimo_v2/source.zig
+@@ -566,10 +566,23 @@ pub const Source = struct {
+         return initBank(a, owned_bank, rows, gates, stream, .{});
+     }
+ 
++    pub fn fiosCanDeinit(self: *Source) bool {
++        return if (self.warm) |w| w.fiosCanDestroy() else true;
++    }
++
++    // Cleanup only: consume the warm owner before any enclosing teardown.
++    pub fn fiosRetireWarm(self: *Source) bool {
++        if (self.warm) |w| {
++            if (!w.tryDestroy()) return false;
++            self.warm = null;
++        }
++        return true;
++    }
++
+     pub fn deinit(self: *Source) void {
++        if (!self.fiosRetireWarm()) return;
+         _ = mlx.mlx_synchronize(self.g.s);
+         // X12: the warm thread joined (its chunks in flight retired) before anything else goes.
+-        if (self.warm) |w| w.destroy();
+         self.ex.releaseParts(&self.g);
+         self.ex.math.deinit(&self.g);
+         self.combine_kernel.deinit();

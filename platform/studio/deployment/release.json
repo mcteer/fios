@@ -1,0 +1,44 @@
+{
+  "schema": 1,
+  "approval": "development_observation_only",
+  "architecture": "arm64",
+  "toolchain": {
+    "swift": "6.4",
+    "swift_build": "swiftlang-6.4.0.34.1",
+    "sdk": "27.0",
+    "minimum_macos": "14.0"
+  },
+  "sqlite": {"provider": "macos_system", "version": "3.54.0"},
+  "journal_schema": 8,
+  "journal_application_id": "FIS9",
+  "python": {
+    "version": "3.11.17",
+    "package": "fios-agent",
+    "package_version": "0.1.0",
+    "uv_lock_sha256": "70d3089dbcb6c40b080543dd40555d94fa062249cd58f1db51a5dbed5fa2aa2a",
+    "policy_sha256": "1cf3a27e1f6490b4cfce433f7770c1fcea53c581bd513ed4c368ea4df7fa993a",
+    "policy_input_utf16": 504,
+    "immutable_tree_enrolled": false
+  },
+  "native_inventory": {
+    "hosts": ["fios-edge-a.lab", "fios-edge-b.lab"],
+    "mlx_version": "26.10.3",
+    "mlx_server_sha256": "4c2416121c33011bddd0002f4179b7b0b1a273136a6f2041286c80285d422a62",
+    "mlx_application_sha256": "26a368e8dc05c963ff8521d5ddef36a9103214387f4857ca436dba0e1fa6e3bf",
+    "mlx_application_identifier": "com.dalcu.mlx-core",
+    "mlx_team_identifier": "S77TW432YG",
+    "orbstack_version": "2.2.5",
+    "orbstack_application_sha256": "48e096f309541c42ff9aa029dd1afae06bcae2875aa4a6c1ca273f79d44d9738",
+    "docker_cli_sha256": "927c58aed356a37f08f2586a90df4c6d8c5e890060de95ac3d11301d03959463",
+    "orbctl_cli_sha256": "b2793e99e3f452b86233d59cd5e503e069821224c022628f52521dc5b4bcab8a",
+    "all_client_coverage": "unsupported",
+    "enrolled": false
+  },
+  "approved_sandbox_images": [],
+  "activation": {
+    "managed_inference": false,
+    "sandbox_tasks": false,
+    "native_lifecycle": false,
+    "launchd_installation": false
+  }
+}

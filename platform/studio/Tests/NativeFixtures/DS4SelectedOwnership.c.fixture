@@ -1,0 +1,59 @@
+// Complete actual C module, genuine GPU tensor/event and copied actual tickets.
+// NULL model/layer is an explicitly empty invalid-model payload, not inference.
+#define REQUIRE(v,m) do{if(!(v)){fprintf(stderr,"%s\n",m);exit(77);}}while(0)
+typedef struct {metal_graph_selected_async_load *job;bool initialized;} foreign_result;
+static void *foreign_finish(void *context){
+ foreign_result *value=context;
+ if(value->initialized)REQUIRE(ds4_threads_owner_token()!=0,"SELECTED_FOREIGN_TOKEN_NOT_ISSUED");
+ (void)metal_graph_selected_async_load_finish(value->job);return NULL;
+}
+static void wait_result(void){
+ bool done=false;
+ for(unsigned i=0;i<2000&&!done;++i){
+  pthread_mutex_lock(&g_metal_graph_selected_async_load_mutex);
+  done=g_metal_graph_selected_async_load_done&&!g_metal_graph_selected_async_load_has_job;
+  pthread_mutex_unlock(&g_metal_graph_selected_async_load_mutex);
+  if(!done)usleep(1000);
+ }
+ REQUIRE(done,"SELECTED_OWNERSHIP_RESULT_NOT_READY");
+}
+int main(int argc,char **argv){
+ REQUIRE(argc==2,"SELECTED_OWNERSHIP_ARGUMENTS");
+ const bool stale=!strcmp(argv[1],"--stale"),initialized=!strcmp(argv[1],"--foreign-initialized");
+ const bool exhausted=!strcmp(argv[1],"--ticket-exhaustion");
+ REQUIRE(stale||initialized||exhausted||!strcmp(argv[1],"--foreign"),"SELECTED_OWNERSHIP_MODE");
+ REQUIRE(ds4_gpu_init(),"SELECTED_OWNERSHIP_GPU_INIT_FAILED");
+ ds4_gpu_tensor *router=ds4_gpu_tensor_alloc(sizeof(int32_t)*DS4_N_EXPERT_USED);uint64_t event=0;
+ REQUIRE(router&&ds4_gpu_begin_commands()&&ds4_gpu_signal_selected_readback_ready(&event)&&event&&
+         ds4_gpu_commit_and_wait_selected_readback(event,"private ownership control")&&ds4_gpu_synchronize(),
+         "SELECTED_OWNERSHIP_GENUINE_EVENT_FAILED");
+ metal_graph_selected_async_load job={0};
+ if(exhausted)g_fios_selected_next_ticket=UINT64_MAX-1;
+ REQUIRE(metal_graph_selected_async_load_start_tensor(&job,router,NULL,NULL,0,event,0,0),"SELECTED_OWNERSHIP_REAL_ENQUEUE_FAILED");
+ wait_result();metal_graph_selected_async_load copy=job;
+ if(exhausted){
+  REQUIRE(job.fios_ticket==UINT64_MAX-1&&g_fios_selected_next_ticket==UINT64_MAX,
+          "SELECTED_LAST_VALID_TICKET_NOT_ISSUED");
+  REQUIRE(!metal_graph_selected_async_load_finish(&job)&&metal_graph_selected_async_load_idle(),"SELECTED_LAST_VALID_TICKET_NOT_CONSUMED");
+  metal_graph_selected_async_load refused={0};
+  REQUIRE(!metal_graph_selected_async_load_start_tensor(&refused,router,NULL,NULL,0,event,0,0)&&!refused.active&&
+          g_fios_selected_next_ticket==UINT64_MAX&&metal_graph_selected_async_load_idle(),
+          "FIO_DS4_SELECTED_TICKET_EXHAUSTION_ACCEPTED");
+  ds4_gpu_tensor_free(router);
+  puts("PASS: private last-valid selected job ticket is genuinely issued/consumed; exhaustion refuses without wrap or admission.");return 0;
+ }else if(stale){
+  REQUIRE(!metal_graph_selected_async_load_finish(&job)&&metal_graph_selected_async_load_idle(),"SELECTED_FIRST_RESULT_CONSUMPTION_FAILED");
+  REQUIRE(metal_graph_selected_async_load_start_tensor(&job,router,NULL,NULL,0,event,0,0),"SELECTED_SECOND_ENQUEUE_FAILED");
+  wait_result();(void)metal_graph_selected_async_load_finish(&copy);
+  REQUIRE(copy.active&&!metal_graph_selected_async_load_idle(),"FIO_DS4_STALE_SELECTED_RESULT_CONSUMED_NEW_JOB");
+ }else{
+  foreign_result result={.job=&copy,.initialized=initialized};pthread_t thread;
+  REQUIRE(!pthread_create(&thread,NULL,foreign_finish,&result)&&!pthread_join(thread,NULL),"SELECTED_FOREIGN_FINISH_THREAD_FAILED");
+  REQUIRE(copy.active&&!metal_graph_selected_async_load_idle(),"FIO_DS4_FOREIGN_SELECTED_RESULT_CONSUMED_OWNER_JOB");
+ }
+ REQUIRE(!metal_graph_selected_async_load_finish(&job)&&!job.active&&metal_graph_selected_async_load_idle(),
+         "SELECTED_CREATOR_CANNOT_CONSUME_RETAINED_RESULT");
+ ds4_gpu_tensor_free(router);
+ puts("PASS: actual copied selected-result ticket cannot release foreign/stale ownership; creator consumes the real empty failed result.");
+ return 0;
+}

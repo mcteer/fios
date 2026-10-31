@@ -1,0 +1,19 @@
+// Ordinary RAM planning examples only. No hardware sampling or service calls.
+@main
+struct HostRAMBudgetBasic {
+    static func main() {
+        let gib: UInt64 = 1 << 30
+        let examples: [(UInt64, UInt64)] = [
+            (16 * gib, 16 * gib),
+            (32 * gib, 16 * gib),
+            (64 * gib, 16 * gib),
+            (128 * gib, 27_487_790_695),
+            (256 * gib, 54_975_581_389),
+            (512 * gib, 109_951_162_778),
+        ]
+        for (physical, expected) in examples {
+            precondition(HostRAMBudget.nativeHeadroom(physicalBytes: physical) == expected)
+        }
+        print("PASS: six ordinary Studio RAM planning examples; no hardware or service operations.")
+    }
+}

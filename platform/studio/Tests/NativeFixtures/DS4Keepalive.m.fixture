@@ -1,0 +1,119 @@
+// Actual source producer/pipeline fragment and original 1KiB keepalive kernel.
+// Genuine Metal objects only; no model, fake SDK/backend, or device-idle claim.
+#import <Foundation/Foundation.h>
+#import <Metal/Metal.h>
+#include <pthread.h>
+#include <stdatomic.h>
+#include <stdint.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include <string.h>
+#include <ctype.h>
+#include <errno.h>
+#include <unistd.h>
+#include <time.h>
+static id<MTLDevice> g_device;
+static id<MTLCommandQueue> g_queue;
+static id<MTLLibrary> g_library;
+static NSMutableDictionary<NSString *,id<MTLComputePipelineState>> *g_pipeline_cache;
+static id<MTLSharedEvent> fixture_event;
+static id<MTLCommandBuffer> fixture_buffer;
+static id<MTLBuffer> fixture_scratch;
+static id<MTLComputePipelineState> fixture_pipeline;
+static pthread_mutex_t fixture_mutex=PTHREAD_MUTEX_INITIALIZER;
+static atomic_int fixture_seen, fixture_actor_ready, fixture_actor_go, fixture_actor_done;
+static atomic_int fixture_actor_result, fixture_rearmed, fixture_finished, fixture_hold_worker, fixture_worker_seen, fixture_worker_release;
+static int fixture_force_error;
+#define REQUIRE(value,marker) do { if(!(value)){fprintf(stderr,"%s\n",marker);exit(77);} } while(0)
+static void fixture_worker_checkpoint(void) {
+    if(!atomic_load(&fixture_hold_worker))return;
+    atomic_store(&fixture_worker_seen,1);
+    while(!atomic_load(&fixture_worker_release))usleep(1000);
+}
+static void fixture_capture(id<MTLCommandBuffer> cb,id<MTLComputePipelineState> pipeline,id<MTLBuffer> scratch) {
+    // Extra test-owned references keep a bad early-release mutant safe until
+    // the genuine buffer is physically drained. They are not source receipts.
+    pthread_mutex_lock(&fixture_mutex);
+    fixture_buffer=cb;fixture_pipeline=pipeline;fixture_scratch=scratch;
+    pthread_mutex_unlock(&fixture_mutex);
+    [cb encodeWaitForEvent:fixture_event value:1];
+    atomic_store(&fixture_seen,1);
+}
+// FIOS_GENUINE_KEEPALIVE_SOURCE
+static double fixture_now(void){struct timespec t;clock_gettime(CLOCK_MONOTONIC,&t);return t.tv_sec+t.tv_nsec/1e9;}
+static int fixture_wait(atomic_int *value,double seconds){double end=fixture_now()+seconds;while(!atomic_load(value)&&fixture_now()<end)usleep(1000);return atomic_load(value);}
+static void *fixture_guard(void *unused){(void)unused;for(int i=0;i<100&&!atomic_load(&fixture_finished);++i)usleep(100000);if(!atomic_load(&fixture_finished))fixture_event.signaledValue=1;return NULL;}
+static void *fixture_actor(void *unused){
+    (void)unused;
+    ds4_gpu_queue_keepalive_start();atomic_store(&fixture_actor_ready,1);
+    while(!atomic_load(&fixture_actor_go))usleep(1000);
+    int result=ds4_gpu_fios_keepalive_try_stop();atomic_store(&fixture_actor_result,result);
+    if(result){
+        ds4_gpu_queue_keepalive_start();
+        int rearmed=atomic_load(&g_queue_keepalive_running);atomic_store(&fixture_rearmed,rearmed);
+        if(rearmed){atomic_store(&g_queue_keepalive_stop,1);REQUIRE(pthread_join(g_queue_keepalive_thread,NULL)==0,"OWNED_REARM_THREAD_NOT_JOINED");}
+    }
+    atomic_store(&fixture_actor_done,1);return NULL;
+}
+static void *fixture_exhausted(void *unused){(void)unused;ds4_gpu_queue_keepalive_start();return NULL;}
+int main(int argc,char **argv){@autoreleasepool{
+    REQUIRE(argc==2,"BAD_ARGUMENTS");
+    REQUIRE(!ds4_gpu_fios_keepalive_try_stop()&&!atomic_load(&g_queue_keepalive_running),"COLD_KEEPALIVE_CLAIMED_COMPLETION");
+    if(!strcmp(argv[1],"--exhausted")){
+        atomic_store(&g_fios_keepalive_next_owner,UINT64_MAX);
+        pthread_t thread;REQUIRE(pthread_create(&thread,NULL,fixture_exhausted,NULL)==0,"EXHAUSTED_THREAD_CREATE_FAILED");
+        REQUIRE(pthread_join(thread,NULL)==0,"EXHAUSTED_THREAD_NOT_JOINED");
+        REQUIRE(atomic_load(&g_fios_keepalive_uncertain)&&atomic_load(&g_fios_keepalive_sealed)&&!atomic_load(&g_queue_keepalive_running),"KEEPALIVE_OWNER_WRAPPED");
+        puts("PASS: exhausted creator identity refuses before producer/device work.");return 0;
+    }
+    g_device=MTLCreateSystemDefaultDevice();REQUIRE(g_device!=nil,"GENUINE_METAL_DEVICE_UNAVAILABLE");
+    g_queue=[g_device newCommandQueue];REQUIRE(g_queue!=nil,"GENUINE_QUEUE_UNAVAILABLE");
+    NSError *error=nil;
+    g_library=[g_device newLibraryWithSource:FIOS_ORIGINAL_KEEPALIVE_SHADER options:nil error:&error];
+    REQUIRE(g_library!=nil,"ORIGINAL_KEEPALIVE_SHADER_FAILED");
+    g_pipeline_cache=[NSMutableDictionary dictionary];fixture_event=[g_device newSharedEvent];
+    REQUIRE(fixture_event!=nil,"GENUINE_SHARED_EVENT_UNAVAILABLE");
+    setenv("DS4_METAL_QUEUE_KEEPALIVE_MS","50",1);
+    if(!strcmp(argv[1],"--join-error")){
+        atomic_store(&fixture_hold_worker,1);ds4_gpu_queue_keepalive_start();
+        REQUIRE(fixture_wait(&fixture_worker_seen,7),"OWNED_WORKER_CHECKPOINT_UNAVAILABLE");
+        pthread_t original=g_queue_keepalive_thread;g_queue_keepalive_thread=pthread_self();
+        int result=ds4_gpu_fios_keepalive_try_stop();
+        int retained=!result&&atomic_load(&g_fios_keepalive_uncertain)&&atomic_load(&g_queue_keepalive_running)&&atomic_load(&g_fios_keepalive_sealed);
+        atomic_store(&fixture_worker_release,1);
+        REQUIRE(pthread_join(original,NULL)==0,"ORIGINAL_WORKER_NOT_JOINED");
+        ds4_gpu_queue_keepalive_stop_thread();
+        REQUIRE(retained&&atomic_load(&g_fios_keepalive_uncertain)&&atomic_load(&g_queue_keepalive_running),"FIO_DS4_KEEPALIVE_JOIN_REFUSAL_CLEARED");
+        puts("PASS: genuine self-join refusal and later exact local reap never refund source uncertainty.");return 0;
+    }
+    REQUIRE(!strcmp(argv[1],"--positive")||!strcmp(argv[1],"--gpu-error"),"BAD_MODE");
+    fixture_force_error=!strcmp(argv[1],"--gpu-error");
+    pthread_t guard,actor;
+    REQUIRE(pthread_create(&guard,NULL,fixture_guard,NULL)==0,"GUARD_CREATE_FAILED");
+    REQUIRE(pthread_create(&actor,NULL,fixture_actor,NULL)==0,"ACTOR_CREATE_FAILED");
+    int observed=fixture_wait(&fixture_actor_ready,7)&&fixture_wait(&fixture_seen,7);
+    id<MTLCommandBuffer> buffer;id<MTLBuffer> scratch;id<MTLComputePipelineState> pipeline;
+    pthread_mutex_lock(&fixture_mutex);buffer=fixture_buffer;scratch=fixture_scratch;pipeline=fixture_pipeline;pthread_mutex_unlock(&fixture_mutex);
+    int foreign_refused=!ds4_gpu_fios_keepalive_try_stop()&&!atomic_load(&g_fios_keepalive_sealed)&&!atomic_load(&g_queue_keepalive_stop);
+    atomic_store(&fixture_actor_go,1);
+    // A success acknowledgement while the actual GPU waits on our event is
+    // forbidden. Failure/unknown is not treated as a terminal acknowledgement.
+    (void)fixture_wait(&fixture_actor_done,0.5);
+    int early_success=atomic_load(&fixture_actor_done)&&atomic_load(&fixture_actor_result);
+    int blocked=buffer&&buffer.status!=MTLCommandBufferStatusCompleted;
+    fixture_event.signaledValue=1;
+    if(buffer)[buffer waitUntilCompleted];
+    REQUIRE(pthread_join(actor,NULL)==0,"OWNED_ACTOR_NOT_JOINED");
+    atomic_store(&fixture_finished,1);REQUIRE(pthread_join(guard,NULL)==0,"GUARD_NOT_JOINED");
+    REQUIRE(observed&&buffer&&scratch&&pipeline&&foreign_refused,"GENUINE_PRODUCER_SCOPE_NOT_OBSERVED");
+    REQUIRE(!early_success&&blocked,"FIO_DS4_KEEPALIVE_ACK_BEFORE_GPU_COMPLETION");
+    REQUIRE(buffer.status==MTLCommandBufferStatusCompleted,"GENUINE_GPU_BUFFER_DID_NOT_COMPLETE");
+    REQUIRE(!atomic_load(&fixture_rearmed),"FIO_DS4_KEEPALIVE_REARMED_SEALED_PRODUCER");
+    if(fixture_force_error){
+        REQUIRE(!atomic_load(&fixture_actor_result)&&atomic_load(&g_fios_keepalive_uncertain)&&atomic_load(&g_queue_keepalive_running)&&g_fios_keepalive_pending,"COMPLETED_BUFFER_FAULT_WAS_REFUNDED");
+    }else{
+        REQUIRE(atomic_load(&fixture_actor_result)&&!atomic_load(&g_fios_keepalive_uncertain)&&!atomic_load(&g_queue_keepalive_running)&&!g_fios_keepalive_pending&&!g_fios_keepalive_pipeline&&!g_fios_keepalive_scratch,"CHECKED_PRODUCER_STOP_FAILED");
+    }
+    puts("PASS: original 1KiB kernel/real GPU event, creator-bound checked producer stop and retained failure state; no device/all-client authority.");
+    return 0;
+}}
