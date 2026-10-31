@@ -2,10 +2,13 @@ import Foundation
 import CoreFoundation
 import IOKit
 
-struct GPUSample {
-    let utilization:Double
-    let inUseBytes:UInt64?
-    let allocatedBytes:UInt64?
+public struct GPUSample:Sendable {
+    public let utilization:Double
+    public let inUseBytes:UInt64?
+    public let allocatedBytes:UInt64?
+    public init(utilization:Double,inUseBytes:UInt64?,allocatedBytes:UInt64?) {
+        self.utilization=utilization;self.inUseBytes=inUseBytes;self.allocatedBytes=allocatedBytes
+    }
 }
 
 enum GPUResources {

@@ -76,6 +76,7 @@ public enum ManagerRuntime {
         var gpuSampledAt:Int64?=timestamp()
         var gpuSample=GPUResources.sample()
         if gpuSample == nil {gpuSampledAt=nil}
+        telemetry.gpu(gpuSample,sampledAt:gpuSampledAt)
         let termination=Termination()
         var clients:[PendingControl]=[]
         while !termination.requested {
@@ -124,6 +125,7 @@ public enum ManagerRuntime {
                 gpuSampledAt=timestamp()
                 gpuSample=GPUResources.sample()
                 if gpuSample == nil {gpuSampledAt=nil}
+                telemetry.gpu(gpuSample,sampledAt:gpuSampledAt)
                 do {try artifacts.expire(request:UUID().uuidString.lowercased(),now:timestamp())}
                 catch ArtifactServiceFailure.capacity {} // Finite I/O slots, retry maintenance next cycle.
                 try journal.expireTerminalJobs(now:timestamp())

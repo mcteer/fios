@@ -9,6 +9,7 @@ public protocol PlatformTelemetry:Sendable {
     var instrumentation:String {get}
     func event(_ event:OperationalEvent)
     func resources(_ sample:ResourceSample)
+    func gpu(_ sample:GPUSample?,sampledAt:Int64?)
 }
 
 public struct NoopPlatformTelemetry:PlatformTelemetry {
@@ -16,4 +17,5 @@ public struct NoopPlatformTelemetry:PlatformTelemetry {
     public var instrumentation:String {"none"}
     public func event(_ event:OperationalEvent) {}
     public func resources(_ sample:ResourceSample) {}
+    public func gpu(_ sample:GPUSample?,sampledAt:Int64?) {}
 }

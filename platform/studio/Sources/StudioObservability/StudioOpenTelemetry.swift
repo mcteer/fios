@@ -6,7 +6,15 @@ import OpenTelemetrySdk
 private final class ResourceMetrics:@unchecked Sendable {
     let lock=NSLock()
     var sample:ResourceSample?
+    var gpu:GPUSample?
+    var gpuAt:Int64?
     func update(_ value:ResourceSample) {lock.lock();sample=value;lock.unlock()}
+    func updateGPU(_ value:GPUSample?,sampledAt:Int64?) {lock.lock();gpu=value;gpuAt=sampledAt;lock.unlock()}
+    func currentGPU()->(sample:GPUSample,sampledAt:Int64)? {
+        lock.lock();defer {lock.unlock()}
+        guard let gpu,let gpuAt,(-1000...5000).contains(HostResources.nowMilliseconds()-gpuAt) else {return nil}
+        return (gpu,gpuAt)
+    }
     func current()->ResourceSample? {
         lock.lock();defer {lock.unlock()}
         guard let sample,(-1000...5000).contains(HostResources.nowMilliseconds()-sample.sampledAt) else {return nil}
@@ -54,6 +62,7 @@ public final class StudioOpenTelemetry:PlatformTelemetry,@unchecked Sendable {
             ("fios.platform.host.memory.physical","By",{Double($0.physical)}),
             ("fios.platform.host.memory.available","By",{$0.available.map{Double($0)}}),
             ("fios.platform.host.disk.free","By",{$0.diskFree.map{Double($0)}}),
+            ("fios.platform.host.power.low","1",{$0.lowPowerMode.map{$0 ? 1.0:0.0}}),
             ("fios.platform.vm.memory.available","By",{sample in
                 guard let time=sample.vmSampledAt,(-1000...5000).contains(HostResources.nowMilliseconds()-time) else {return nil}
                 return sample.vmAvailable.map{Double($0)}
@@ -64,6 +73,30 @@ public final class StudioOpenTelemetry:PlatformTelemetry,@unchecked Sendable {
                 if let sample=state.current(),let number=value(sample) {observation.record(value:number)}
             }
         }
+        let conditions:[(String,(ResourceSample)->String?)]=[
+            ("fios.platform.host.memory.pressure",{$0.pressure == .unknown ? nil:$0.pressure.rawValue}),
+            ("fios.platform.host.thermal.state",{$0.thermal == .unknown ? nil:$0.thermal.rawValue})
+        ]
+        for (name,value) in conditions {
+            _=meter.gaugeBuilder(name:name).setUnit("1").buildWithCallback { observation in
+                if let sample=state.current(),let condition=value(sample) {
+                    observation.record(value:1,attributes:["fios.state":.string(condition)])
+                }
+            }
+        }
+        let gpuMetrics:[(String,String,(GPUSample)->Double?)]=[
+            ("fios.platform.gpu.utilization","1",{$0.utilization/100}),
+            ("fios.platform.gpu.memory.in_use","By",{$0.inUseBytes.map{Double($0)}}),
+            ("fios.platform.gpu.memory.allocated","By",{$0.allocatedBytes.map{Double($0)}})
+        ]
+        for (name,unit,value) in gpuMetrics {
+            _=meter.gaugeBuilder(name:name).setUnit(unit).buildWithCallback { observation in
+                if let sample=state.currentGPU(),let number=value(sample.sample) {observation.record(value:number)}
+            }
+        }
+        _=meter.gaugeBuilder(name:"fios.platform.gpu.sample.time").setUnit("s").buildWithCallback { observation in
+            if let sample=state.currentGPU() {observation.record(value:Double(sample.sampledAt)/1000)}
+        }
         _=meter.gaugeBuilder(name:"fios.platform.resource.sample.time").setUnit("s").buildWithCallback { observation in
             if let sample=state.current() {observation.record(value:Double(sample.sampledAt)/1000)}
         }
@@ -73,6 +106,7 @@ public final class StudioOpenTelemetry:PlatformTelemetry,@unchecked Sendable {
         logger.logRecordBuilder().setEventName("fios.platform."+event.rawValue).setBody(.string(event.rawValue)).emit()
     }
     public func resources(_ sample:ResourceSample) {state.update(sample)}
+    public func gpu(_ sample:GPUSample?,sampledAt:Int64?) {state.updateGPU(sample,sampledAt:sampledAt)}
     public func collectMetrics()->[MetricData] {reader.collect()}
     deinit {_ = reader.shutdown()}
 }
