@@ -6,6 +6,12 @@ Local Unix IPC only; no native TCP listener. The development manager implements 
 
 Aggregate `status.services` and `studioctl --state DIR service mlx|orbstack status` expose each service's durable `desired` and observed state, plus `launch_pending`, source `sampled_at` (UTC milliseconds) and `age_ms` at response time. Missing observations use null timestamps/age and `unknown`; a stale observation retains its original timestamp/age for diagnosis while observed state becomes `unknown`. Pending indicates the manager's retained recovery request, not successful startup. These status fields do not operate a service or establish native idle. The per-service CLI preserves any drain detail returned by the manager.
 
+## Native-control diagnostic status
+
+Aggregate status now includes `native_control`. It reports the last accepted native-control reply under scope `native_ingress_tracker`, with `authoritative:false`. States are `unconfigured`, `waiting`, `received`, `unavailable` and `stale`. Fresh replies expose the source instance, reported ingress/preparing/active/responding/owner/model-identity counts, ingress closure and tracker uncertainty. Missing or expired replies expose no current counts.
+
+`received_at` is captured by the existing off-loop native client when its request completes, and `receipt_age_ms` measures that receipt's age. Neither field is a native capture timestamp. `source_sampled_at` and `source_sequence` remain null because the current control reply supplies neither. The existing normalized `native_activity`/activity coverage stays unsupported; these diagnostics do not prove all-client/device completion or authorize dispatch/lifecycle operations. This adds no native polling, queue, listener or action.
+
 ## Identity and framing
 
 Separate operator/task and read-only observation sockets,0700 parent/0600 sockets, verified peer credentials and role grants. Do not trust a `role` supplied in JSON. Optional SSH export runs a fixed installed `studioctl export` command on the observation socket using a dedicated forced-command key, `restrict`, no PTY/forwarding/agent forwarding/user environment/alternate command. Verify server host key; do not use the operator's general SSH identity in a container. Enrollment is separately reviewed; initial operation is local.

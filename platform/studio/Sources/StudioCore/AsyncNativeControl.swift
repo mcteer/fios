@@ -3,6 +3,7 @@ import Foundation
 struct NativeControlResult:Sendable {
     let id:String
     let value:Result<NativeIngressStatus,NativeControlError>
+    let receivedAt:Int64 = HostResources.nowMilliseconds()
 }
 // One bounded native connection/hash operation off the manager heartbeat loop.
 // No automatic retry, result queue growth, native process launch or fallback.

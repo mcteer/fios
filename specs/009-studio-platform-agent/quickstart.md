@@ -2,6 +2,14 @@
 
 G1 and implementation authorization are resolved. Independent mock/disposable-process development proceeds now; G2 remains a native activation/acceptance gate. Commands below distinguish implemented tests from future acceptance. No sudo/SSH/reboot/model command is hidden in the mock path.
 
+Ordinary private native status integration can use an already reviewed source capsule, without models or installed service operations:
+
+```sh
+node scripts/check-platform-native-status.mjs --isolated --capsule /ABS/PRIVATE_REVIEW_CAPSULE --sha256 REVIEWED_CAPSULE_RECEIPT_SHA256
+```
+
+This starts only a disposable empty-model loopback source server and manager, then exercises normal running/maintenance/running ingress intent. It retains private status receipts, never invokes inference, and does not establish normalized all-client activity authority.
+
 ## 1. Gates and prerequisites
 
 1. Review the accepted [governance-proposal.md](governance-proposal.md), constitution2.1.0 and ADR0003. No repeated implementation approval is needed; the16/16 specification checklist alone was never operational permission.

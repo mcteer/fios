@@ -1,6 +1,6 @@
 # Native activity integration: concrete implementation seam
 
-**Current scope (2026-10-31):** Native hardening and security-adjacent investigation are stopped at the operator’s request. The source matrices and receipts below are historical evidence, not instructions to resume that work. Functional implementation/ordinary validation continues; installed activation and disruptive acceptance remain separately gated.
+**Current scope (2026-10-31):** Native hardening and security-adjacent investigation are stopped at the operator’s request. The source matrices and receipts below are historical evidence, not instructions to resume that work. Ordinary functional implementation, native integration and correctness checks continue; installed activation and disruptive acceptance remain separately gated.
 
 Status: source-only integration/testing authorized by the user's explicit reaffirmation on2026-10-27; implementation/source audit in progress, not a deployed native modification. Do not ask again for this scope. Installed binaries/configuration, service restarts, network/RDMA changes and deployment remain separately gated. The user granted standing real-inference approval on2026-10-30; bounded private source-model experiments may run without another inference permission/model-ID request. This does not approve installed lifecycle or disruptive/native acceptance. No resident-only API is required. Ordinary on-demand replacement of an idle model is allowed.
 

@@ -26,9 +26,10 @@ public enum ManagerRuntime {
         var serviceCursor=0,serviceTransportUnavailable=false
         var nativeMaintenance=NativeMaintenanceCoordinator(journal:journal)
         let nativeQueue=activeNativeControl.map {AsyncNativeControl(client:$0)}
+        var nativeDiagnostics=NativeControlDiagnostics(configured:nativeQueue != nil)
         func enqueueNative(_ command:NativeMaintenanceCommand) {
             guard let nativeQueue else {return}
-            do {try nativeQueue.submit(command)} catch {nativeMaintenance.failed(id:command.id)}
+            do {try nativeQueue.submit(command);nativeDiagnostics.begin()} catch {nativeMaintenance.failed(id:command.id);nativeDiagnostics.failed()}
         }
         if nativeQueue != nil,let command=try nativeMaintenance.beginReconciliation() {enqueueNative(command)}
         var admission=AdmissionPolicy()
@@ -94,9 +95,12 @@ public enum ManagerRuntime {
             if let result=nativeQueue?.poll() {
                 switch result.value {
                 case .success(let value):
-                    do {if let command=try nativeMaintenance.receive(id:result.id,value:value) {enqueueNative(command)}}
-                    catch {nativeMaintenance.failed(id:result.id)}
-                case .failure: nativeMaintenance.failed(id:result.id)
+                    do {
+                        let command=try nativeMaintenance.receive(id:result.id,value:value)
+                        nativeDiagnostics.completed(value,receivedAt:result.receivedAt)
+                        if let command {enqueueNative(command)}
+                    } catch {nativeMaintenance.failed(id:result.id);nativeDiagnostics.failed()}
+                case .failure: nativeMaintenance.failed(id:result.id);nativeDiagnostics.failed()
                 }
             }
             try workerRecovery.poll(now:Int64(now*1000),admission:&admission,failedLaunches:tasks.failedLaunches)
@@ -182,6 +186,7 @@ public enum ManagerRuntime {
                         }
                         response["services"]=serviceStates
                         response["native_admissions"]=nativeQueue == nil ? "unsupported":nativeMaintenance.phase.rawValue
+                        response["native_control"]=nativeDiagnostics.summary(now:requestedAt)
                         response["migration_maintenance"]=migrationHeld
                         response["native_activity"]="unsupported"
                         response["sandbox_admission"]=activeExecution == nil ? "disabled":"configured"

@@ -1,6 +1,6 @@
 # Native backend terminality audit — source engineering
 
-**Current scope (2026-10-31):** Native hardening and security-adjacent investigation are stopped at the operator’s request. The source matrices and receipts below are historical evidence, not instructions to resume that work. Functional implementation/ordinary validation continues; installed activation and disruptive acceptance remain separately gated.
+**Current scope (2026-10-31):** Native hardening and security-adjacent investigation are stopped at the operator’s request. The source matrices and receipts below are historical evidence, not instructions to resume that work. Ordinary functional implementation, native integration and correctness checks continue; installed activation and disruptive acceptance remain separately gated.
 
 Status: **incomplete; no complete-coverage/quiescence/lifecycle authority**. This records pinned-source findings, not native model inference acceptance. Source is MLX-Serve `046b647686419df06c6c7132fb1d15d76185c3e5`; genuine dependency identities/evidence are in [native-integration.md](native-integration.md). Installed services, RDMA and production data remain unchanged.
 
