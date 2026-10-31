@@ -1,5 +1,7 @@
 # Installed Studio compatibility — 2026-10-26
 
+**Current scope (2026-10-31):** Native hardening and security-adjacent investigation are stopped at the operator’s request. The source matrices and receipts below are historical evidence, not instructions to resume that work. Functional implementation/ordinary validation continues; installed activation and disruptive acceptance remain separately gated.
+
 ## Authorized read-only inventory
 
 After the user reaffirmed proceeding in response to the explicit narrow amendment/read-only SSH proposal, used existing SSH authentication with `BatchMode=yes`, `StrictHostKeyChecking=yes`,5s connection timeout. No host-key enrollment, privilege escalation, process changes, service configuration or model workload.
