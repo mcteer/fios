@@ -17,6 +17,16 @@ final class ServiceObservationCache:@unchecked Sendable {
 }
 
 enum ServiceStatusPolicy {
+    static func summary(desired:ServiceDesired,observation:ServiceObservation?,launchPending:Bool,now:Int64)->[String:Any] {
+        let observed=observed(desired:desired,observation:observation,launchPending:launchPending,now:now)
+        var value:[String:Any]=["desired":desired.rawValue,"observed":observed.rawValue,"launch_pending":launchPending,
+                                "sampled_at":NSNull(),"age_ms":NSNull()]
+        if let time=observation?.sampledAt,(0...ActivityPolicy.maximumTimestamp).contains(time),
+           (0...ActivityPolicy.maximumTimestamp).contains(now) {
+            value["sampled_at"]=time;value["age_ms"]=now-time
+        }
+        return value
+    }
     static func observed(desired:ServiceDesired,observation:ServiceObservation?,launchPending:Bool,now:Int64)->ServiceObserved {
         guard let observation,now>=0,now<=ActivityPolicy.maximumTimestamp,
               observation.sampledAt>=0,observation.sampledAt<=ActivityPolicy.maximumTimestamp,

@@ -2,6 +2,10 @@
 
 Local Unix IPC only; no native TCP listener. The development manager implements observation/operator sockets plus a separate task socket and the owner/stream payloads below. New task/inference/runtime admission remains disabled until reviewed enrollment/G2; this is not native activation evidence. The manager/supervisor run as the enrolled nonroot UID. Root is needed only for reviewed installation/ownership, not task processing.
 
+## Operator service status
+
+Aggregate `status.services` and `studioctl --state DIR service mlx|orbstack status` expose each service's durable `desired` and observed state, plus `launch_pending`, source `sampled_at` (UTC milliseconds) and `age_ms` at response time. Missing observations use null timestamps/age and `unknown`; a stale observation retains its original timestamp/age for diagnosis while observed state becomes `unknown`. Pending indicates the manager's retained recovery request, not successful startup. These status fields do not operate a service or establish native idle. The per-service CLI preserves any drain detail returned by the manager.
+
 ## Identity and framing
 
 Separate operator/task and read-only observation sockets,0700 parent/0600 sockets, verified peer credentials and role grants. Do not trust a `role` supplied in JSON. Optional SSH export runs a fixed installed `studioctl export` command on the observation socket using a dedicated forced-command key, `restrict`, no PTY/forwarding/agent forwarding/user environment/alternate command. Verify server host key; do not use the operator's general SSH identity in a container. Enrollment is separately reviewed; initial operation is local.

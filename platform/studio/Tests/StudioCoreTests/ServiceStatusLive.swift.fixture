@@ -1,0 +1,27 @@
+import Foundation
+import Darwin
+
+// Ordinary status integration only. Observations are synthetic metadata;
+// no session/native recovery adapter or lifecycle operation is configured.
+@main struct ServiceStatusLive {
+    static func main() throws {
+        let args=CommandLine.arguments
+        guard args.count==3,geteuid()>0 else {throw ServiceError.invalid}
+        let cache=ServiceObservationCache(),now=HostResources.nowMilliseconds()
+        for service in ManagedService.allCases {
+            let identity=ServiceIdentity(pid:42,start:1,sha256:String(repeating:"a",count:64))
+            let sample:ServiceObservation?
+            switch args[2] {
+            case "unknown":sample=nil
+            case "waiting_session":sample=ServiceObservation(identity:nil,responding:false,sessionReady:false,credentialsReady:true,nativeIdle:nil,runtimeUnmanaged:nil,sampledAt:now)
+            case "waiting_credentials":sample=ServiceObservation(identity:nil,responding:false,sessionReady:true,credentialsReady:false,nativeIdle:nil,runtimeUnmanaged:nil,sampledAt:now)
+            case "stopped":sample=ServiceObservation(identity:nil,responding:false,sessionReady:true,credentialsReady:true,nativeIdle:nil,runtimeUnmanaged:nil,sampledAt:now)
+            case "ready":sample=ServiceObservation(identity:identity,responding:true,sessionReady:true,credentialsReady:true,nativeIdle:nil,runtimeUnmanaged:nil,sampledAt:now)
+            case "degraded":sample=ServiceObservation(identity:identity,responding:false,sessionReady:true,credentialsReady:true,nativeIdle:nil,runtimeUnmanaged:nil,sampledAt:now)
+            default:throw ServiceError.invalid
+            }
+            cache.publish(sample,for:service)
+        }
+        try ManagerRuntime.run(directory:URL(fileURLWithPath:args[1]),nativeControl:nil,serviceObservations:cache)
+    }
+}

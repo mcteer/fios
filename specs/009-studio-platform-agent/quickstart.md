@@ -41,6 +41,7 @@ node scripts/check-platform.mjs --isolated-metrics
 # Artifact-only staging/corruption/publication rehearsal; independently reviewed receipt required.
 node scripts/check-platform-staging.mjs --isolated --release /ABSOLUTE/REVIEWED_RELEASE --sha256 REVIEWED_MANIFEST_SHA
 node scripts/check-platform-process.mjs --isolated
+node scripts/check-platform-service-status.mjs --isolated
 node scripts/check-platform-boot.mjs --isolated
 node scripts/check-platform-boot-state.mjs --isolated
 node scripts/check-platform-manager-execution.mjs --mock --models

@@ -53,3 +53,18 @@ func runServiceStatusTests() throws {
     guard cache.snapshot(for:.mlx)==nil else {fatalError("Lost source retained known service state")}
     print("PASS: desired vs observed service states, missing session/credentials, pending launch and unknown/stale/incoherent evidence")
 }
+
+func runServiceStatusSummaryTests() throws {
+    let sample=ServiceObservation(identity:nil,responding:false,sessionReady:false,credentialsReady:true,
+                                  nativeIdle:nil,runtimeUnmanaged:nil,sampledAt:1000)
+    let waiting=ServiceStatusPolicy.summary(desired:.running,observation:sample,launchPending:false,now:1200)
+    precondition(waiting["observed"] as? String == "waiting_session")
+    precondition(waiting["sampled_at"] as? Int64 == 1000 && waiting["age_ms"] as? Int64 == 200)
+    precondition(waiting["launch_pending"] as? Bool == false)
+    let missing=ServiceStatusPolicy.summary(desired:.maintenance,observation:nil,launchPending:false,now:1200)
+    precondition(missing["desired"] as? String == "maintenance" && missing["observed"] as? String == "unknown")
+    precondition(missing["sampled_at"] is NSNull && missing["age_ms"] is NSNull)
+    let pending=ServiceStatusPolicy.summary(desired:.running,observation:ServiceObservation(identity:nil,responding:false,
+        sessionReady:true,credentialsReady:true,nativeIdle:nil,runtimeUnmanaged:nil,sampledAt:1000),launchPending:true,now:1200)
+    precondition(pending["observed"] as? String == "starting" && pending["launch_pending"] as? Bool == true)
+}

@@ -171,8 +171,7 @@ public enum ManagerRuntime {
                             guard let typed=ServiceDesired(rawValue:desired) else {throw ControlError.invalid_request}
                             // No production observation issuer is enrolled. A
                             // failed/missing adapter remains unknown, not absent.
-                            let observed=ServiceStatusPolicy.observed(desired:typed,observation:serviceObservations?.snapshot(for:service),launchPending:serviceRecovery?.isPending(service) ?? false,now:requestedAt)
-                            var details:[String:Any]=["desired":desired,"observed":observed.rawValue]
+                            var details=ServiceStatusPolicy.summary(desired:typed,observation:serviceObservations?.snapshot(for:service),launchPending:serviceRecovery?.isPending(service) ?? false,now:requestedAt)
                             if let progress=drainer?.status(service:service) {details["drain"]=ServiceDrainController.summary(progress)}
                             serviceStates[service.rawValue]=details
                         }

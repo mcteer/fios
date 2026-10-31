@@ -9,6 +9,7 @@ struct PolicyTestRunner {
             ("operator commands",runOperatorServiceCommandTests),
             ("operator service status",runOperatorServiceStatusTests),
             ("service status",runServiceStatusTests),
+            ("service status summary",runServiceStatusSummaryTests),
             ("service recovery",runServiceRecoveryTests),
             ("service reconciliation",runServiceReconciliationTests),
             ("async session control",runAsyncSessionControlTests),
