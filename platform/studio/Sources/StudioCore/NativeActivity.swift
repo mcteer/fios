@@ -53,6 +53,7 @@ enum ActivityPolicy {
     // observation-to-dispatch race. This is NOT a native model reservation.
     static func permits(target: String, snapshot: NativeSnapshot, now: Int64) throws -> Bool {
         guard WireScalar.model(target) else { throw PolicyError.invalidObservation }
+        guard ModelPlacementPolicy.respectsCoreSmallAssignment(host:snapshot.host,canonical:target,native:target) else {return false}
         switch try evaluate(snapshot, now: now) {
         case .idle: return true // Idle resident replacement is intentionally allowed.
         case .busy(let model): return WireScalar.exactModel(model,target)

@@ -8,6 +8,8 @@ Approved profile maps a canonical exact catalog identity to its independently ve
 
 009 task access names an exact approved model and checks its readiness/resource envelope. Ordinary native on-demand inference may replace an idle resident model. No loaded-only option is required; native in-use ownership must prevent conflicting active-model displacement at admission. Do not issue separate admin load/unload calls or synthetic warmups.008's future Gemma/delegation policy is separate and remains parked.
 
+The known small model `mlx-community/gemma-4-e4b-it-4bit` belongs only on `fios-core`/`fios-core.lab`. The placement constraint checks both canonical and native mapping fields before broker submission/startup and worker construction; the advisory activity predicate also preserves it. Other IDs still require their existing reviewed host/model profiles and all readiness/resource/native checks. This constraint neither infers model size from arbitrary IDs nor adds core to009’s two-Studio installation targets. The Studios’ approved operational allocation remains larger models only.
+
 ## Budgets and command/event lifecycle
 
 - At most4 actual model POSTs/job, attempts0..3; at most1 active per job and2 active/uncertain manager-originated model requests/host (external native same-model concurrency is not prohibited).≤32 unresolved owned records/host is a separate safety bound.

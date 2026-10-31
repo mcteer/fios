@@ -84,7 +84,7 @@ final class PythonWorkerFactory:Sendable {
     // Pure binding validation. Binary verification/spawn occur off-loop for
     // broker starts; no journal, caller argv or permission bytes enter work.
     private func validate(_ binding:WorkerDispatchBinding,now:Int64)throws {
-        guard binding.nativeCompatibilityAccepted,binding.nativeSnapshot.host==binding.host,
+        guard binding.modelPlacementAccepted,binding.nativeCompatibilityAccepted,binding.nativeSnapshot.host==binding.host,
               binding.nativeSnapshot.endpointHash==Self.digest(binding.baseURL),
               binding.profileHash.utf8.count==64,binding.profileHash.utf8.allSatisfy({ (48...57).contains($0)||(97...102).contains($0) }),
               UUID(uuidString:binding.managerEpoch)?.uuidString.lowercased()==binding.managerEpoch,

@@ -69,7 +69,7 @@ final class ModelBroker {
         guard let factory else {throw PolicyError.invalidObservation}
         try validate(context:context)
         let owned=try job(id,owner:owner,now:now)
-        guard nativeCapacityProven,binding.nativeCompatibilityAccepted,entries[id]==nil,starting[id]==nil,launchHolds.isEmpty,
+        guard binding.modelPlacementAccepted,nativeCapacityProven,binding.nativeCompatibilityAccepted,entries[id]==nil,starting[id]==nil,launchHolds.isEmpty,
               try ActivityPolicy.permits(target:binding.canonicalModel,snapshot:binding.nativeSnapshot,now:now)
         else { throw AdmissionError.capacity }
         let scope=Self.scopeIdentity(binding)
@@ -127,7 +127,7 @@ final class ModelBroker {
             let lease=(try? job(id,now:now)) != nil
             let current=try? source(id)
             let eligible=current.map { binding in
-                Self.scopeIdentity(binding)==Self.scopeIdentity(pending.binding) && binding.nativeCompatibilityAccepted
+                Self.scopeIdentity(binding)==Self.scopeIdentity(pending.binding) && binding.modelPlacementAccepted && binding.nativeCompatibilityAccepted
                     && binding.nativeSnapshot.sequence>=pending.binding.nativeSnapshot.sequence
                     && ((try? ActivityPolicy.permits(target:binding.canonicalModel,snapshot:binding.nativeSnapshot,now:now)) ?? false)
             } ?? false
