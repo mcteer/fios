@@ -194,6 +194,7 @@ jobs:
           console.log('Compatibility SDK: '+execFileSync('/usr/bin/xcrun',['--show-sdk-version'],{encoding:'utf8'}).trim());
           NODE
           swift build --package-path platform/studio
+          swift test --package-path platform/studio --filter StudioOpenTelemetryTests
           node scripts/check-platform.mjs --mock
           node scripts/check-platform.mjs --mock --release
           node scripts/check-platform-process.mjs --isolated

@@ -5,12 +5,12 @@ import CryptoKit
 public enum ManagerRuntime {
     // Local developer/installed entry point. Production installation must pin
     // reviewed binaries and use a private operator-owned state directory.
-    public static func run(directory:URL) throws {
-        try run(directory:directory,nativeControl:nil)
+    public static func run(directory:URL,telemetry:any PlatformTelemetry=NoopPlatformTelemetry()) throws {
+        try run(directory:directory,nativeControl:nil,telemetry:telemetry)
     }
     // No production issuer yet: only reviewed native enrollment may supply
     // this internal client. Never construct it from operator/model payloads.
-    static func run(directory:URL,nativeControl:NativeControlClient?,serviceObservations:ServiceObservationCache?=nil,serviceControl:SessionControlClient?=nil,drainObservations:ServiceDrainObservationCache?=nil,execution:ManagerExecutionPorts?=nil) throws {
+    static func run(directory:URL,nativeControl:NativeControlClient?,serviceObservations:ServiceObservationCache?=nil,serviceControl:SessionControlClient?=nil,drainObservations:ServiceDrainObservationCache?=nil,execution:ManagerExecutionPorts?=nil,telemetry:any PlatformTelemetry=NoopPlatformTelemetry()) throws {
         guard geteuid() != 0 else { throw ControlError.unauthorized }
         umask(0o077)
         let journal=try Journal(directory:directory)
@@ -33,7 +33,7 @@ public enum ManagerRuntime {
         if nativeQueue != nil,let command=try nativeMaintenance.beginReconciliation() {enqueueNative(command)}
         var admission=AdmissionPolicy()
         let workerRecovery=try WorkerReconciler(journal:journal,admission:&admission)
-        let audit=try AuditLog(directory:directory.appendingPathComponent("audit"))
+        let audit=try AuditLog(directory:directory.appendingPathComponent("audit"),telemetry:telemetry)
         let artifacts=AsyncArtifacts(store:try ArtifactStore(directory:directory.appendingPathComponent("artifacts")))
         let tasks=TaskController(journal:journal,broker:ModelBroker(journal:journal,factory:activeExecution?.workerFactory))
         let executor:any SandboxExecuting = try activeExecution?.makeExecutor() ?? UnavailableSandboxRuntime()
@@ -72,6 +72,7 @@ public enum ManagerRuntime {
         var lastHeartbeat:TimeInterval = -2
         var cpuSampler=CPUSampler()
         var resourceSample=activeExecution?.sample(now:timestamp(),cpu:nil) ?? HostResources.sample(statePath:directory.path)
+        telemetry.resources(resourceSample)
         var gpuSampledAt:Int64?=timestamp()
         var gpuSample=GPUResources.sample()
         if gpuSample == nil {gpuSampledAt=nil}
@@ -119,6 +120,7 @@ public enum ManagerRuntime {
                 }
                 let cpu=cpuSampler.observe(ticks:CPUSampler.readTicks(),now:sampledAt)
                 resourceSample=applyingVM(to:activeExecution?.sample(now:sampledAt,cpu:cpu) ?? HostResources.sample(statePath:directory.path,measuredCPU:cpu),now:sampledAt)
+                telemetry.resources(resourceSample)
                 gpuSampledAt=timestamp()
                 gpuSample=GPUResources.sample()
                 if gpuSample == nil {gpuSampledAt=nil}
@@ -156,6 +158,7 @@ public enum ManagerRuntime {
                         response["session"]=["state":session?.console == true ? "available" : "waiting_session",
                                              "lifecycle_enabled":false]
                         response["state"]="ready"
+                        response["observability"]=["instrumentation":telemetry.instrumentation]
                         response["uptime_ms"]=Int((now-start)*1000)
                         response["unresolved_requests"]=try journal.unresolvedCount()
                         response["worker_reservations"]=try journal.activeLaunchCount()

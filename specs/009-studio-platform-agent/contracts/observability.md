@@ -1,0 +1,19 @@
+# Platform observability
+
+The Studio manager uses the official OpenTelemetry Swift SDK, pinned to2.4.2 in `platform/studio/Package.swift` and `Package.resolved`. This follows the operator’s2026-10-31 request to use OTel where possible. It deliberately adds that dependency to the original dependency-free package plan; StudioCore and its local runner remain independent of the SDK, and007 Python locks are unchanged.
+
+`StudioObservability` implements the core `PlatformTelemetry` interface. The SwiftPM manager passes this adapter into its existing audit and resource sampling paths. Aggregate status reports `observability.instrumentation: opentelemetry-swift`; this identifies instrumentation, not exporter connectivity. Direct Core-only development fixtures default to a no-op adapter.
+
+The SDK emits structured logs for the six fixed operational event names and a cumulative `fios.platform.events` counter with the fixed `fios.event` label. Existing durable local audit records remain unchanged. Gauges use existing resource samples: `fios.platform.host.cpu.utilization` (fraction, unit1), host physical/available memory, disk free space and VM available memory (bytes, unitBy), plus `fios.platform.resource.sample.time` (original Unix seconds). Unknown or expired resource values are omitted; samples do not gain authority or freshness by entering telemetry. Resource attributes are only `service.name=fios-studio-manager` and `service.namespace=fios`. No prompts, generated text, model identifiers or job content are added.
+
+No Collector, Prometheus, exporter transport, listener or background export timer is configured or deployed. Metrics are available as actual SDK `MetricData` through `collectMetrics()`; the initializer accepts a standard SDK `MetricReader` and `LogRecordProcessor` implementations for later backend integration. Without such configuration, OTel logs are not delivered externally and cumulative metrics remain in process. The existing audit file supplies durable local event history. Restart resets in-process metrics. This is instrumentation readiness, not end-to-end observability delivery.
+
+A later, separately scoped deployment can select an OTel Collector and Prometheus-compatible backend. It must explicitly configure export, collection and retention; this change does not promise backend availability or create new services. No telemetry is used for service actuation, admission or native idle decisions.
+
+Run the focused SDK tests with a full Xcode toolchain (the local standalone Command Line Tools lack XCTest):
+
+```sh
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test --package-path platform/studio --filter StudioOpenTelemetryTests
+```
+
+References: [Swift instrumentation](https://opentelemetry.io/docs/languages/swift/), [official Swift core SDK](https://github.com/open-telemetry/opentelemetry-swift-core), [OTLP specification](https://opentelemetry.io/docs/specs/otlp/). No custom wire protocol is introduced.

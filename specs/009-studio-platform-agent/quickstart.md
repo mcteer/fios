@@ -9,6 +9,14 @@ G1 and implementation authorization are resolved. Independent mock/disposable-pr
 3. Before native activation, prove the [native contract](contracts/activity.md) covers all clients and admission races. If missing, separately review native integration; continue independent implementation without turning on unsupported sampling or exposing metrics on LAN.
 4. Install development toolchain versions from the release manifest; retain current locked Python and app dependencies. No native service installation is needed for mock tests.
 
+## Observability instrumentation
+
+The package manager uses the pinned OpenTelemetry Swift SDK for fixed operational events and resource gauges. No export backend is configured or deployed; Collector/Prometheus selection is outside this spec. Existing local audit files remain durable. See [observability](contracts/observability.md) for signals and limitations. With full Xcode, run the ordinary SDK unit tests separately:
+
+```sh
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test --package-path platform/studio --filter StudioOpenTelemetryTests
+```
+
 ## 2. Mock-first implementation validation
 
 ```sh

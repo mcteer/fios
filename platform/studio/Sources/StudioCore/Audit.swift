@@ -2,17 +2,18 @@ import Foundation
 import Darwin
 
 enum AuditError: Error { case invalid, storage }
-enum AuditEvent: String, Codable { case started, stopped, desiredChanged, rejected, revoked, reconciled }
+typealias AuditEvent = OperationalEvent
 
 // Serialized-manager writer. No API accepts free text, payloads or CLI output.
 final class AuditLog {
     private let directory:URL
     private let maximumBytes:Int
+    private let telemetry:any PlatformTelemetry
     private var previous:Int64 = -1
     private struct Entry:Encodable { let version=1;let event:AuditEvent;let time:Int64;let job:String?;let count:Int? }
-    init(directory:URL,maximumBytes:Int=10<<20) throws {
+    init(directory:URL,maximumBytes:Int=10<<20,telemetry:any PlatformTelemetry=NoopPlatformTelemetry()) throws {
         guard directory.isFileURL,(256...10<<20).contains(maximumBytes) else { throw AuditError.invalid }
-        self.directory=directory;self.maximumBytes=maximumBytes
+        self.directory=directory;self.maximumBytes=maximumBytes;self.telemetry=telemetry
         try FileManager.default.createDirectory(at:directory,withIntermediateDirectories:true,attributes:[.posixPermissions:0o700])
         var info=stat()
         guard lstat(directory.path,&info)==0,info.st_mode & S_IFMT == S_IFDIR,info.st_uid==geteuid(),info.st_mode & 0o077==0 else { throw AuditError.invalid }
@@ -57,5 +58,6 @@ final class AuditLog {
             }
         }
         previous=now
+        telemetry.event(event)
     }
 }
