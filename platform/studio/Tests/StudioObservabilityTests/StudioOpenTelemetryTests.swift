@@ -132,6 +132,54 @@ final class StudioOpenTelemetryTests:XCTestCase {
         XCTAssertFalse(telemetry.collectMetrics().contains{$0.name=="fios.platform.jobs" && !$0.data.points.isEmpty})
     }
 
+    func testSandboxReservationMetricsFollowJournalResources() throws {
+        let directory=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer {try? FileManager.default.removeItem(at:directory)}
+        let journal=try Journal(directory:directory),now=HostResources.nowMilliseconds()
+        var ids:[String]=[]
+        for (memory,cpus,workspace):(UInt64,Int,UInt64) in [(512<<20,1,128<<20),(2<<30,2,256<<20)] {
+            let id=UUID().uuidString.lowercased();ids.append(id)
+            let job=try DurableJob(id:id,idempotency:UUID().uuidString.lowercased(),ownerHash:String(repeating:"a",count:64),requestHash:String(repeating:"b",count:64),created:now)
+            _=try journal.reserveSandbox(job:job,configuration:SandboxConfiguration(job:id,nonce:String(repeating:"c",count:64),image:"sha256:"+String(repeating:"d",count:64),memory:memory,cpus:cpus,workspace:workspace))
+        }
+        // Independent ownership metadata; no worker or model call is made.
+        let modelJob=UUID().uuidString.lowercased()
+        _=try journal.reserveJob(DurableJob(id:modelJob,idempotency:UUID().uuidString.lowercased(),ownerHash:String(repeating:"a",count:64),requestHash:String(repeating:"b",count:64),created:now))
+        try journal.claim(job:modelJob,attempt:0,model:"fixture/model")
+        try journal.markUncertain(job:modelJob,attempt:0)
+        let telemetry=StudioOpenTelemetry()
+        func refresh()throws {
+            telemetry.workload(try XCTUnwrap(WorkloadTelemetry.sample(journal:journal,artifactBytes:0,artifactJobs:0,now:now)))
+        }
+        func number(_ name:String,_ unit:String)throws->Double {
+            let metric=try XCTUnwrap(telemetry.collectMetrics().first{$0.name==name})
+            XCTAssertEqual(metric.unit,unit)
+            let point=try XCTUnwrap((metric.data.points as? [DoublePointData])?.first)
+            XCTAssertTrue(point.attributes.isEmpty)
+            return point.value
+        }
+        try refresh()
+        XCTAssertEqual(try number("fios.platform.sandbox.memory.reserved","By"),Double((2<<30)+(512<<20)))
+        XCTAssertEqual(try number("fios.platform.sandbox.cpu.reserved","{cpu}"),3)
+        XCTAssertEqual(try number("fios.platform.sandbox.workspace.capacity","By"),Double(384<<20))
+        try journal.transitionJob(id:ids[0],to:.revoking,now:now)
+        try refresh()
+        XCTAssertEqual(try number("fios.platform.sandbox.memory.reserved","By"),Double((2<<30)+(512<<20)))
+        // The fixture never issued create; confirmed absence releases only
+        // this record's local runtime reservation, with no external action.
+        try journal.confirmSandboxAbsent(job:ids[0])
+        try journal.transitionJob(id:ids[0],to:.removed,now:now)
+        try refresh()
+        XCTAssertEqual(try number("fios.platform.sandbox.memory.reserved","By"),Double(2<<30))
+        XCTAssertEqual(try number("fios.platform.sandbox.cpu.reserved","{cpu}"),2)
+        XCTAssertEqual(try number("fios.platform.sandbox.workspace.capacity","By"),Double(256<<20))
+        XCTAssertEqual(try number("fios.platform.inference.uncertain_records","{record}"),1)
+        telemetry.workload(nil)
+        for name in ["fios.platform.sandbox.memory.reserved","fios.platform.sandbox.cpu.reserved","fios.platform.sandbox.workspace.capacity"] {
+            XCTAssertFalse(telemetry.collectMetrics().contains{$0.name==name && !$0.data.points.isEmpty})
+        }
+    }
+
     func testCleanupMetricsFollowCurrentWaitAndRecovery() throws {
         let telemetry=StudioOpenTelemetry(),now=HostResources.nowMilliseconds()
         func sample(pending:Int,wait:Int64?)->PlatformWorkloadSample {

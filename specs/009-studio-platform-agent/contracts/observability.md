@@ -20,9 +20,14 @@ Workload gauges are sampled on the same existing2s manager cycle from its own jo
 | `fios.platform.workers.reservations` | `{reservation}` | Unreaped worker reservations, including pending startup |
 | `fios.platform.artifacts.size` | `By` | Retained artifact storage bytes |
 | `fios.platform.artifacts.jobs` | `{job}` | Jobs represented in cached artifact storage statistics |
+| `fios.platform.sandbox.memory.reserved` | `By` | Sum of declared memory limits for sandbox records without confirmed runtime removal |
+| `fios.platform.sandbox.cpu.reserved` | `{cpu}` | Sum of declared CPU reservations for those records |
+| `fios.platform.sandbox.workspace.capacity` | `By` | Sum of selected workspace tmpfs capacities for those records |
 | `fios.platform.sandbox.cleanup.pending` | `{sandbox}` | Owned sandboxes currently awaiting runtime cleanup |
 | `fios.platform.sandbox.cleanup.wait` | `s` | Oldest currently observed cleanup wait; omitted when its clock is unknown |
 | `fios.platform.workload.sample.time` | `s` | Original aggregate collection time |
+
+Sandbox reservation totals stay counted during cancellation/reconciliation and disappear only when each record has confirmed runtime removal. They describe declared local reservations, not measured consumption, allocatable VM memory or a native release. Workspace capacity is inside the container memory limit; adding it to memory reservation would double-count that capacity.
 
 Cleanup gauges share the controller’s current operator-status observation. Recovery returns pending/wait to zero without clearing independent inference records. Wait age includes observed runtime outages and is not an availability-relative SLA verdict.
 

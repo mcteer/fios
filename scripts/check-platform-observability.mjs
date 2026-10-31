@@ -40,7 +40,7 @@ try{
  assert(first.logs.includes('fios.platform.started'));
  assert.equal(first.metrics['fios.platform.jobs'].points.length,8);
  assert.equal(first.metrics['fios.platform.jobs'].points.reduce((sum,point)=>sum+point.value,0),0);
- for(const name of ['fios.platform.inference.unresolved_records','fios.platform.inference.uncertain_records','fios.platform.workers.reservations','fios.platform.artifacts.size','fios.platform.sandbox.cleanup.pending','fios.platform.sandbox.cleanup.wait'])assert.equal(scalar(first,name),0);
+ for(const name of ['fios.platform.inference.unresolved_records','fios.platform.inference.uncertain_records','fios.platform.workers.reservations','fios.platform.artifacts.size','fios.platform.sandbox.cleanup.pending','fios.platform.sandbox.cleanup.wait','fios.platform.sandbox.memory.reserved','fios.platform.sandbox.cpu.reserved','fios.platform.sandbox.workspace.capacity'])assert.equal(scalar(first,name),0);
  assert(scalar(first,'fios.platform.host.memory.physical')>0);
  const services=first.metrics['fios.platform.service.state'].points;
  assert.deepEqual(services.map(p=>p.attributes['fios.service']).sort(),['mlx','orbstack']);
