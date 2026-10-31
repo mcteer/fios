@@ -68,8 +68,9 @@ export function stageNativeReview({directory,binary,libraries,inputs}) {
  assert(Object.values(files).reduce((n,f)=>n+f.bytes,0)<=256<<20);
  return {directory,binary:target,sha256:files['bin/mlx-serve'].sha256,receipt:{version:1,purpose:'private_native_source_review',source_fixture_only:true,activation:false,native_inference:false,native_admission_authority:false,coverage:'unknown',original_binary_sha256:originalBinarySHA256,binary_change:'private_rpath_and_adhoc_signature_only',unchanged_section_payloads:{binary:binaryPayload,libraries:libraryPayloads},files,declared_inputs:inputs}};
 }
-export function finishNativeReview(review) {
- const receipt={...review.receipt,empty_model_validation:'passed'};
+export function finishNativeReview(review,{emptyModelValidation='passed'}={}) {
+ assert(['passed','not_run'].includes(emptyModelValidation));
+ const receipt={...review.receipt,empty_model_validation:emptyModelValidation};
  const bytes=Buffer.from(JSON.stringify(receipt)+'\n'),file=path.join(review.directory,'review.json');
  writeFileSync(file,bytes,{flag:'wx',mode:0o400});const fd=openSync(file,constants.O_RDONLY|constants.O_NOFOLLOW);try{fsyncSync(fd);}finally{closeSync(fd);}
  return {directory:review.directory,receipt_sha256:sha(bytes),binary_sha256:review.sha256,native_inference:false,activation:false};
@@ -78,7 +79,9 @@ export function verifyNativeReview(directory,expected) {
  assert(/^[a-f0-9]{64}$/.test(expected));directory=realpathSync(directory);privateDirectory(directory);
  for(const child of ['bin','Frameworks'])privateDirectory(path.join(directory,child));
  const bytes=boundedRead(path.join(directory,'review.json'),65536);assert(bytes.length<=65536&&sha(bytes)===expected);
- const receipt=JSON.parse(bytes);assert(receipt.version===1&&receipt.purpose==='private_native_source_review'&&receipt.source_fixture_only===true&&receipt.activation===false&&receipt.native_inference===false&&receipt.native_admission_authority===false&&receipt.coverage==='unknown'&&receipt.empty_model_validation==='passed');
+ const receipt=JSON.parse(bytes);assert(receipt.version===1&&receipt.purpose==='private_native_source_review'&&receipt.source_fixture_only===true&&receipt.activation===false&&receipt.native_inference===false&&receipt.native_admission_authority===false&&receipt.coverage==='unknown');
+ const buildOnly=receipt.declared_inputs?.verification_mode==='functional_build_only'&&receipt.declared_inputs?.root_tests_rerun===false&&receipt.declared_inputs?.http_checks_rerun===false;
+ assert(receipt.empty_model_validation==='passed'||(receipt.empty_model_validation==='not_run'&&buildOnly));
  const wanted=['bin/mlx-serve',...names.map(n=>'Frameworks/'+n)];assert.deepEqual(Object.keys(receipt.files).sort(),wanted.sort());
  assert.deepEqual(readdirSync(directory).sort(),['Frameworks','bin','review.json']);assert.deepEqual(readdirSync(path.join(directory,'bin')),['mlx-serve']);assert.deepEqual(readdirSync(path.join(directory,'Frameworks')).sort(),[...names].sort());
  for(const name of wanted){const file=path.join(directory,name),s=lstatSync(file);assert(s.isFile()&&!s.isSymbolicLink()&&s.nlink===1&&s.uid===process.getuid()&&(s.mode&0o222)===0&&s.size===receipt.files[name].bytes&&s.size>0&&s.size<=256<<20);assert.equal(sha(boundedRead(file,256<<20)),receipt.files[name].sha256);}

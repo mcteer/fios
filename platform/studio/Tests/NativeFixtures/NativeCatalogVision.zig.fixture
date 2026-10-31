@@ -1,0 +1,15 @@
+const std = @import("std");
+const discovery = @import("model_discovery.zig");
+
+test "catalog serving modalities match implemented Gemma support" {
+    const actual = discovery.parseStubMeta(std.testing.allocator, @embedFile("@MODEL_CONFIG@"), true);
+    try std.testing.expect(actual.found and actual.has_chat);
+    try std.testing.expect(!actual.has_vision and !actual.has_video);
+    // Ordinary metadata controls; these do not instantiate a model/backend.
+    const qwen = discovery.parseStubMeta(std.testing.allocator,
+        "{\"model_type\":\"qwen3_vl\",\"vision_config\":{},\"video_token_id\":123}", true);
+    try std.testing.expect(qwen.found and qwen.has_vision and qwen.has_video);
+    const text = discovery.parseStubMeta(std.testing.allocator,
+        "{\"model_type\":\"gemma4_text\",\"text_config\":{\"hidden_size\":2560}}", true);
+    try std.testing.expect(text.found and text.has_chat and !text.has_vision);
+}

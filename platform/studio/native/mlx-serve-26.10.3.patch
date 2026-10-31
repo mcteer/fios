@@ -1930,6 +1930,38 @@ index 1f982ed..291853f 100644
  /// True when the stream targets a GPU that runs custom Metal kernels: every
  /// `metal_kernel` helper gates on this, so on CUDA they all take the MLX-op path.
  pub fn streamIsGpu(s: mlx_stream) bool {
+diff --git a/src/model_discovery.zig b/src/model_discovery.zig
+index 8f16a57..02da4d8 100644
+--- a/src/model_discovery.zig
++++ b/src/model_discovery.zig
+@@ -1443,6 +1443,9 @@ pub fn parseStubMeta(allocator: std.mem.Allocator, config_json: []const u8, has_
+     // Vision: a `vision_config` block on a non-`_text` arch (the `_text` guard
+     // skips text-only quantized checkpoints with a vestigial block).
+     meta.has_vision = root.get("vision_config") != null and !std.mem.endsWith(u8, mt, "_text");
++    // model.zig currently disables these Gemma towers. A config block alone
++    // must not advertise a modality that the serving loader cannot supply.
++    if (std.mem.eql(u8, mt, "gemma4") or std.mem.eql(u8, mt, "gemma4_unified")) meta.has_vision = false;
+     const nemotron = std.mem.eql(u8, mt, "nemotron_h") or std.mem.eql(u8, mt, "nemotron_h_puzzle") or std.mem.eql(u8, mt, "nemotron_h_omni");
+     const radio = nemotron and hasRadioVision(root);
+     if (nemotron) meta.has_vision = radio;
+@@ -2505,7 +2508,7 @@ test "parseStubMeta extracts dims/ctx/quant/MoE + chat/vision capabilities" {
+     }
+     // Vision: vision_config on a non-_text arch → has_vision.
+     {
+-        const m = parseStubMeta(a, "{\"model_type\":\"gemma4\",\"vision_config\":{\"hidden_size\":1152}}", true);
++        const m = parseStubMeta(a, "{\"model_type\":\"qwen3_vl\",\"vision_config\":{\"hidden_size\":1152}}", true);
+         try testing.expect(m.has_vision);
+     }
+     // …but a `_text` arch with a vestigial vision_config must NOT report vision.
+@@ -2613,7 +2616,7 @@ test "parseStubMeta extracts dims/ctx/quant/MoE + chat/vision capabilities" {
+         try testing.expectEqual(@as(u32, 131072), m.max_position_embeddings);
+         try testing.expectEqual(@as(u32, 4), m.quant_bits); // still root-level
+         try testing.expect(m.is_moe);
+-        try testing.expect(m.has_vision);
++        try testing.expect(!m.has_vision);
+     }
+     // A flat checkpoint whose text_config is absent keeps reading the root, and
+     // a nested block that OMITS a field falls back to the root rather than
 diff --git a/src/model_registry.zig b/src/model_registry.zig
 index da1f791..8345350 100644
 --- a/src/model_registry.zig

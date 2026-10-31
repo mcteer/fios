@@ -10,6 +10,12 @@ Current backend-specific findings and unproven terminality requirements: [native
 
 The finite model runner accepts `--scenario single-image` on plan/check/run, with one fixed64×64 PNG and the same small exact Gemma model/resource limits. Current genuine source integration returns400 because this model variant’s vision tower is explicitly not wired (`model.zig` sets `has_vision=false`). The presence of vision weights/config is insufficient to claim serving support. Retain this unsupported result; it is not model competence or complete modality coverage. No larger-model substitution, retry or native installation follows. See the validation record for the actual one-use plan and result.
 
+## Cold catalog capability alignment —2026-10-31
+
+The ordinary image check exposed a separate metadata bug: unloaded Gemma4 entries advertised image/video merely from `vision_config`, although `model.zig` disables their vision tower. The private source candidate now makes `model_discovery.zig` match that implemented loader capability. This changes cold catalog advertisement only; it does not add vision, load a model or alter native ownership/admission proof.
+
+This deliberately adds `src/model_discovery.zig` as the18th reviewed root-patch path; current source-path checkers include it. Earlier17-path receipts remain historical. The focused source metadata check uses the actual core Gemma config and normal Qwen/text controls in Debug/ReleaseSafe, without loading a backend. The real old private executable reproduces the cold HTTP mismatch with loaded:false and0 model POSTs. A genuine rebuild and separate real cold HTTP catalog check now pass with loaded:false, text-only modalities and0 model POSTs; installed inputs remain unchanged. Build-only receipts now explicitly record skipped empty-model validation as not_run. An ABI/root-checked `--functional-copy-only` recomposition can preserve genuine binary/dependency bytes without running the historical HTTP matrix or claiming a rebuild. See validation for the corrected derived receipt and independent HTTP result.
+
 ## Source capture metadata integration —2026-10-31
 
 The ordinary private control protocol now optionally returns version3 frames with the original native capture sequence and source UTC milliseconds. Version2 remains the default compatible32/64-byte exchange; version3 uses32/80 bytes. The manager keeps transport receipt age distinct from source age and carries current native metadata into activity export with coverage still unknown. See [native control](contracts/native-private-control.md).
