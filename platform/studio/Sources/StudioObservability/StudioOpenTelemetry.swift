@@ -28,7 +28,12 @@ private final class ResourceMetrics:@unchecked Sendable {
     func currentServices()->[PlatformServiceSample] {
         lock.lock();defer {lock.unlock()}
         let now=HostResources.nowMilliseconds()
-        return services.filter{(-1000...5000).contains(now-$0.sampledAt)}
+        func fresh(_ time:Int64)->Bool {(0...WireScalar.maximumTimestamp).contains(time) && (-1000...5000).contains(now-time)}
+        return services.filter{fresh($0.sampledAt)}.map {sample in
+            guard let source=sample.sourceSampledAt,!fresh(source) else {return sample}
+            return PlatformServiceSample(service:sample.service,desired:sample.desired,observed:.unknown,
+                sampledAt:sample.sampledAt,sourceSampledAt:source)
+        }
     }
     func updateNativeIngress(_ value:PlatformNativeIngressSample?) {lock.lock();nativeIngress=value;lock.unlock()}
     func currentNativeIngress()->PlatformNativeIngressSample? {
@@ -163,6 +168,20 @@ public final class StudioOpenTelemetry:PlatformTelemetry,@unchecked Sendable {
             for sample in state.currentServices() {
                 observation.record(value:1,attributes:["fios.service":.string(sample.service.rawValue),
                     "fios.service.desired":.string(sample.desired.rawValue),"fios.service.observed":.string(sample.observed.rawValue)])
+            }
+        }
+        let serviceClocks:[(String,(PlatformServiceSample)->Int64?)]=[
+            ("fios.platform.service.sample.time",{$0.sampledAt}),
+            ("fios.platform.service.source.time",{$0.sourceSampledAt})
+        ]
+        for (name,time) in serviceClocks {
+            _=meter.gaugeBuilder(name:name).setUnit("s").buildWithCallback { observation in
+                let now=HostResources.nowMilliseconds()
+                for sample in state.currentServices() {
+                    if let stamp=time(sample),(0...WireScalar.maximumTimestamp).contains(stamp),(-1000...5000).contains(now-stamp) {
+                        observation.record(value:Double(stamp)/1000,attributes:["fios.service":.string(sample.service.rawValue)])
+                    }
+                }
             }
         }
         let nativeMetrics:[(String,String,(PlatformNativeIngressSample)->Double?)]=[

@@ -48,6 +48,10 @@ try{
  assert.equal(first.metrics['fios.platform.jobs'].points.reduce((sum,point)=>sum+point.value,0),0);
  for(const name of ['fios.platform.inference.unresolved_records','fios.platform.inference.uncertain_records','fios.platform.workers.reservations','fios.platform.artifacts.size','fios.platform.sandbox.cleanup.pending','fios.platform.sandbox.cleanup.wait','fios.platform.sandbox.memory.reserved','fios.platform.sandbox.cpu.reserved','fios.platform.sandbox.workspace.capacity'])assert.equal(scalar(first,name),0);
  assert(scalar(first,'fios.platform.host.memory.physical')>0);
+ const serviceTimes=first.metrics['fios.platform.service.sample.time'].points;
+ assert.equal(serviceTimes.length,2);
+ for(const point of serviceTimes)assert(Date.now()/1000-point.value>=-1&&Date.now()/1000-point.value<=5);
+ assert.equal(first.metrics['fios.platform.service.source.time']?.points.length??0,0,'Unconfigured source clocks must remain absent');
  const services=first.metrics['fios.platform.service.state'].points;
  assert.deepEqual(services.map(p=>p.attributes['fios.service']).sort(),['mlx','orbstack']);
  for(const point of services){assert.equal(point.value,1);assert.equal(point.attributes['fios.service.desired'],'running');assert.equal(point.attributes['fios.service.observed'],'unknown');}

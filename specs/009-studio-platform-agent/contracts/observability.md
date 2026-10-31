@@ -10,6 +10,8 @@ Additional SDK gauges cover the readings already collected by the manager: `fios
 
 The same2s manager cycle emits `fios.platform.service.state` (unit1): one current point per fixed `fios.service` (`mlx` or `orbstack`), labelled by the existing `fios.service.desired` and `fios.service.observed` enum values. Desired state comes from the manager journal; observed state uses the same source-age/session/pending classification as operator status. Missing or stale observations therefore remain `unknown`, even when desired intent changes. The metric is a status sample, not proof of native state or actuation. Expired aggregate samples are omitted. Failed journal reads clear the service sample rather than retaining old states; no extra connection, service probe or listener is created.
 
+Service clocks are separate gauges in seconds, labelled only by fixed `fios.service`: `fios.platform.service.sample.time` is the original manager classification time; `fios.platform.service.source.time` is the original adapter observation time, when supplied and still current. A new classification does not refresh the source clock. Missing/expired source clocks emit no point; if an explicitly timestamped source expires before collection, the observed-state gauge becomes unknown even when its classification cache is still fresh. Desired intent remains unchanged. These diagnostic times grant no lifecycle or native-completion authority.
+
 Workload gauges are sampled on the same existing2s manager cycle from its own journal and cached artifact statistics:
 
 | Metric | Unit | Meaning |

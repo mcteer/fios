@@ -29,8 +29,10 @@ public struct PlatformServiceSample:Sendable {
     public let desired:ServiceDesired
     public let observed:ServiceObserved
     public let sampledAt:Int64
-    public init(service:ManagedService,desired:ServiceDesired,observed:ServiceObserved,sampledAt:Int64) {
+    public let sourceSampledAt:Int64?
+    public init(service:ManagedService,desired:ServiceDesired,observed:ServiceObserved,sampledAt:Int64,sourceSampledAt:Int64?=nil) {
         self.service=service;self.desired=desired;self.observed=observed;self.sampledAt=sampledAt
+        self.sourceSampledAt=sourceSampledAt
     }
 }
 
@@ -44,9 +46,10 @@ enum ServiceTelemetry {
         do {
             return try ManagedService.allCases.map {service in
                 guard let desired=ServiceDesired(rawValue:try journal.desired(service:service.rawValue)) else {throw ServiceError.invalid}
-                let observed=ServiceStatusPolicy.observed(desired:desired,observation:observations?.snapshot(for:service),
+                let observation=observations?.snapshot(for:service)
+                let observed=ServiceStatusPolicy.observed(desired:desired,observation:observation,
                     launchPending:recovery?.isPending(service) ?? false,now:now)
-                return PlatformServiceSample(service:service,desired:desired,observed:observed,sampledAt:now)
+                return PlatformServiceSample(service:service,desired:desired,observed:observed,sampledAt:now,sourceSampledAt:observation?.sampledAt)
             }
         }catch {return []}
     }

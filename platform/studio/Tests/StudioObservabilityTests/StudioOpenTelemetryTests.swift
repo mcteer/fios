@@ -265,6 +265,36 @@ final class StudioOpenTelemetryTests:XCTestCase {
         XCTAssertFalse(telemetry.collectMetrics().contains{$0.name=="fios.platform.service.state" && !$0.data.points.isEmpty})
     }
 
+    func testServiceMetricsKeepSourceAndClassificationClocksSeparate() throws {
+        let directory=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer {try? FileManager.default.removeItem(at:directory)}
+        let journal=try Journal(directory:directory),cache=ServiceObservationCache()
+        let now=HostResources.nowMilliseconds(),telemetry=StudioOpenTelemetry()
+        // Plain adapter metadata, with no process handles or service actions.
+        func observe(at:Int64) {
+            cache.publish(ServiceObservation(identity:nil,responding:false,sessionReady:true,credentialsReady:true,nativeIdle:nil,runtimeUnmanaged:nil,sampledAt:at),for:.mlx)
+            telemetry.services(ServiceTelemetry.sample(journal:journal,observations:cache,recovery:nil,now:now))
+        }
+        func point(_ name:String,_ service:String)->DoublePointData? {
+            let metric=telemetry.collectMetrics().first{$0.name==name}
+            return (metric?.data.points as? [DoublePointData])?.first{$0.attributes["fios.service"] == .string(service)}
+        }
+        observe(at:now-1000)
+        XCTAssertEqual(try XCTUnwrap(point("fios.platform.service.sample.time","mlx")).value,Double(now)/1000)
+        XCTAssertEqual(try XCTUnwrap(point("fios.platform.service.source.time","mlx")).value,Double(now-1000)/1000)
+        XCTAssertNil(point("fios.platform.service.source.time","orbstack"))
+        observe(at:now-6000)
+        XCTAssertEqual(try XCTUnwrap(point("fios.platform.service.sample.time","mlx")).value,Double(now)/1000)
+        XCTAssertNil(point("fios.platform.service.source.time","mlx"))
+        let state=try XCTUnwrap(point("fios.platform.service.state","mlx"))
+        XCTAssertEqual(state.attributes["fios.service.observed"],.string("unknown"))
+        // A cached classification was valid when made two seconds earlier,
+        // but its original source has expired by the SDK collection time.
+        telemetry.services([PlatformServiceSample(service:.mlx,desired:.running,observed:.ready,sampledAt:now-2000,sourceSampledAt:now-6000)])
+        XCTAssertNil(point("fios.platform.service.source.time","mlx"))
+        XCTAssertEqual(point("fios.platform.service.state","mlx")?.attributes["fios.service.observed"],.string("unknown"))
+    }
+
     func testNativeIngressMetricsPreserveReceiptAndSourceTimes() throws {
         let telemetry=StudioOpenTelemetry(),now=HostResources.nowMilliseconds()
         var diagnostics=NativeControlDiagnostics(configured:true)
