@@ -27,14 +27,14 @@ enum ResourceObservationExport {
         publish("low_power_mode",key:"lowPowerMode",value:sample.lowPowerMode,at:sample.sampledAt)
         let boundVM=vmEpoch.map(WireScalar.sha256) == true
         publish("vm_available",key:"vmAvailable",value:boundVM && physical != nil ? sample.vmAvailable.flatMap {$0<=sample.physical ? bytes($0):nil}:nil,at:sample.vmSampledAt)
-        publish("gpu",key:"gpu",value:gpu.flatMap {$0.utilization.isFinite && (0...100).contains($0.utilization) ? $0.utilization:nil},at:gpuSampledAt)
+        publish("gpu",key:"gpu",value:gpu.flatMap{$0.utilization}.flatMap{$0.isFinite && (0...100).contains($0) ? $0:nil},at:gpuSampledAt)
         publish("gpu_in_use_memory",key:"gpu_in_use_bytes",value:bytes(gpu?.inUseBytes),at:gpuSampledAt)
         publish("gpu_allocated_memory",key:"gpu_allocated_bytes",value:bytes(gpu?.allocatedBytes),at:gpuSampledAt)
         values["sampledAt"]=validTime(sample.sampledAt).map {$0 as Any} ?? empty
         values["vmSampledAt"]=validTime(sample.vmSampledAt).map {$0 as Any} ?? empty
         values["diskCommitted"]=bytes(sample.diskCommitted).map {$0 as Any} ?? empty
         let vmObserved=signals["vm_available"]?["availability"] as? String == "observed"
-        let gpuObserved=signals["gpu"]?["availability"] as? String == "observed"
+        let gpuObserved=["gpu","gpu_in_use_memory","gpu_allocated_memory"].contains{signals[$0]?["availability"] as? String == "observed"}
         return Frame(resources:values,observation:["version":2,"epoch":epoch,"sequence":sequence,"sampled_at":values["sampledAt"]!,"observed_at":now,
             "gpu_coverage":gpuObserved ? "observed_registry":"unavailable","vm_coverage":vmObserved ? "verified_envelope":"unknown",
             "vm_sampled_at":values["vmSampledAt"]!,"vm_epoch":vmObserved ? vmEpoch! as Any:empty,"signals":signals])

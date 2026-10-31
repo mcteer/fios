@@ -115,7 +115,7 @@ public final class StudioOpenTelemetry:PlatformTelemetry,@unchecked Sendable {
             }
         }
         let gpuMetrics:[(String,String,(GPUSample)->Double?)]=[
-            ("fios.platform.gpu.utilization","1",{$0.utilization/100}),
+            ("fios.platform.gpu.utilization","1",{$0.utilization.map{$0/100}}),
             ("fios.platform.gpu.memory.in_use","By",{$0.inUseBytes.map{Double($0)}}),
             ("fios.platform.gpu.memory.allocated","By",{$0.allocatedBytes.map{Double($0)}})
         ]

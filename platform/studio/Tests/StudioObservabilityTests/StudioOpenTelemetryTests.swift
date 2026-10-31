@@ -120,6 +120,36 @@ final class StudioOpenTelemetryTests:XCTestCase {
         }
     }
 
+    func testGPUMemoryRemainsObservedWithoutUtilization() throws {
+        let now=HostResources.nowMilliseconds()
+        let gpu=try XCTUnwrap(GPUResources.decode(["In use system memory":1024,"Alloc system memory":2048]))
+        let sample=ResourceSample(sampledAt:now,physical:1024,available:512,vmAvailable:nil,diskFree:4096,cpu:nil,pressure:.unknown,thermal:.unknown)
+        let frame=try ResourceObservationExport.encode(sample:sample,gpu:gpu,gpuSampledAt:now,now:now,epoch:UUID().uuidString.lowercased(),sequence:1,vmEpoch:nil)
+        XCTAssertTrue(frame.resources["gpu"] is NSNull)
+        XCTAssertEqual((frame.resources["gpu_in_use_bytes"] as? NSNumber)?.uint64Value,1024)
+        XCTAssertEqual((frame.resources["gpu_allocated_bytes"] as? NSNumber)?.uint64Value,2048)
+        let signals=try XCTUnwrap(frame.observation["signals"] as? [String:[String:Any]])
+        XCTAssertEqual(signals["gpu"]?["availability"] as? String,"unknown")
+        XCTAssertEqual(signals["gpu_in_use_memory"]?["availability"] as? String,"observed")
+        XCTAssertEqual(frame.observation["gpu_coverage"] as? String,"observed_registry")
+        let telemetry=StudioOpenTelemetry();telemetry.gpu(gpu,sampledAt:now)
+        func value(_ name:String)->Double? {
+            let metric=telemetry.collectMetrics().first{$0.name==name}
+            return (metric?.data.points as? [DoublePointData])?.first?.value
+        }
+        XCTAssertNil(value("fios.platform.gpu.utilization"))
+        XCTAssertEqual(value("fios.platform.gpu.memory.in_use"),1024)
+        XCTAssertEqual(value("fios.platform.gpu.memory.allocated"),2048)
+        XCTAssertEqual(value("fios.platform.gpu.sample.time"),Double(now)/1000)
+        telemetry.gpu(GPUResources.decode(["Device Utilization %":25]),sampledAt:now)
+        XCTAssertEqual(value("fios.platform.gpu.utilization"),0.25)
+        XCTAssertNil(value("fios.platform.gpu.memory.in_use"))
+        telemetry.gpu(GPUResources.decode(["In use system memory":0]),sampledAt:now)
+        XCTAssertNil(value("fios.platform.gpu.utilization"))
+        XCTAssertEqual(value("fios.platform.gpu.memory.in_use"),0)
+        XCTAssertNil(value("fios.platform.gpu.memory.allocated"))
+    }
+
     func testWorkloadMetricsUseJournalAggregates() throws {
         let directory=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer {try? FileManager.default.removeItem(at:directory)}
