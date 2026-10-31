@@ -2,12 +2,14 @@ import assert from 'node:assert/strict';
 import {spawn,spawnSync} from 'node:child_process';
 import {mkdtempSync,copyFileSync,writeFileSync,readFileSync,rmSync} from 'node:fs';
 import {join} from 'node:path';
-import {tmpdir} from 'node:os';
+import {tmpdir,userInfo} from 'node:os';
 import {createHash,randomUUID} from 'node:crypto';
 import {fileURLToPath} from 'node:url';
 import {validateSandboxImage} from './lib/platform-sandbox-image.mjs';
-const supplied=process.argv.length===5&&process.argv[3]==='--image'&&/^sha256:[a-f0-9]{64}$/.test(process.argv[4]);
-if((process.argv.length!==3&&!supplied)||process.argv[2]!=='--isolated')throw Error('Use --isolated [--image IMMUTABLE_ID]');
+const args=process.argv.slice(2),functionalOnly=args.at(-1)==='--functional-only';
+if(functionalOnly)args.pop();
+const supplied=args.length===3&&args[1]==='--image'&&/^sha256:[a-f0-9]{64}$/.test(args[2]);
+if((args.length!==1&&!supplied)||args[0]!=='--isolated'||(functionalOnly&&!supplied))throw Error('Use --isolated [--image IMMUTABLE_ID] [--functional-only]');
 const directory=mkdtempSync(join(tmpdir(),'fios-runner-'));
 let image,container,attachedChild,possible=false,success=false;
 const owned=[],ownerNonce=randomUUID();
@@ -19,10 +21,14 @@ const environment={PATH:process.env.PATH,HOME:'/var/empty',LANG:'C',DOCKER_CONFI
 function docker(args){const p=spawnSync('docker',[...host,...args],{encoding:'utf8',timeout:120000,maxBuffer:1<<20,env:environment});assert.equal(p.status,0,p.stderr);return p.stdout.trim();}
 function frame(value){const body=Buffer.from(JSON.stringify(value));assert.ok(body.length<=65536);const header=Buffer.alloc(4);header.writeUInt32BE(body.length);return Buffer.concat([header,body]);}
 try{
- const context=spawnSync('docker',['context','inspect','--format','{{.Endpoints.docker.Host}}'],{encoding:'utf8',timeout:10000,maxBuffer:8192});
- assert.equal(context.status,0,'Local runtime context unavailable');const socket=context.stdout.trim();
+ let socket;
+ if(functionalOnly){socket='unix://'+join(userInfo().homedir,'.orbstack/run/docker.sock');}
+ else{
+  const context=spawnSync('docker',['context','inspect','--format','{{.Endpoints.docker.Host}}'],{encoding:'utf8',timeout:10000,maxBuffer:8192});
+  assert.equal(context.status,0,'Local runtime context unavailable');socket=context.stdout.trim();
+ }
  assert.ok(socket.startsWith('unix:///'),'Fixture requires a local Unix runtime');host=['--host',socket];
- if(supplied){image=process.argv[4];validateSandboxImage(JSON.parse(docker(['image','inspect',image]))[0],image);}
+ if(supplied){image=args[2];validateSandboxImage(JSON.parse(docker(['image','inspect',image]))[0],image);}
  else {
  const requested=process.env.FIOS_PLATFORM_TEST_BASE_IMAGE??'fios:current';
  assert.ok(requested==='fios:current'||/^sha256:[a-f0-9]{64}$/.test(requested),'Fixture base must be an existing immutable ID');
@@ -43,7 +49,7 @@ try{
   docker(['rm',id]);assert.equal(docker(['container','ls','--all','--no-trunc','--filter','id='+id,'--format','{{.ID}}']),'');record.removed=true;state();
  }
  container=create();
- const source=readFileSync(new URL('../tests/fixtures/platform/sandbox-task.py',import.meta.url));
+ const source=readFileSync(new URL(functionalOnly?'../tests/fixtures/platform/sandbox-task-functional.py':'../tests/fixtures/platform/sandbox-task.py',import.meta.url));
  const child=spawn('docker',[...host,'start','--attach','--interactive',container],{stdio:['pipe','pipe','pipe'],env:environment});
  attachedChild=child;
  let buffer=Buffer.alloc(0),events=[],errors=0,artifact;
@@ -103,8 +109,11 @@ try{
  const output=events.filter(e=>e.type==='output').map(e=>Buffer.from(e.data,'base64').toString()).join('');
  for(const result of await Promise.all(workerResults)){assert.equal(result.code,0);assert.equal(result.failure,undefined);assert.equal(result.terminal,true);}
  assert.equal(workers.length,1);
- assert.ok(/SANDBOX_TASK_PASS/.test(output),'Task fixture marker missing');assert.ok(/service.force/.test(output),'Frame-looking output missing');assert.ok(!events.some(e=>e.type==='service.force'));assert.equal(events.at(-1).type,'done');assert.equal(events.at(-1).status,'complete');assert.equal(events.at(-1).exit_code,0);
+ assert.ok(/SANDBOX_TASK_PASS/.test(output),'Task fixture marker missing');
+ if(!functionalOnly){assert.ok(/service.force/.test(output),'Frame-looking output missing');assert.ok(!events.some(e=>e.type==='service.force'));}
+ assert.equal(events.at(-1).type,'done');assert.equal(events.at(-1).status,'complete');assert.equal(events.at(-1).exit_code,0);
  removeOwned(container);container=undefined;
+ if(!functionalOnly){
  const over=Buffer.alloc(4);over.writeUInt32BE(65537);
  const duplicate=Buffer.from('{"version":1,"version":1,"type":"input.begin"}');const dupeHeader=Buffer.alloc(4);dupeHeader.writeUInt32BE(duplicate.length);
  const bad=Buffer.from('print("MUST_NOT_RUN")\n');
@@ -118,8 +127,9 @@ try{
   assert.ok(!output.includes(Buffer.from('MUST_NOT_RUN')));
   removeOwned(container);container=undefined;
  }
+ }
  success=true;state();
- console.log('PASS: isolated task → installed private Pydantic worker → mocked model → task; explicit artifacts and hostile frames; no live inference');
+ console.log(functionalOnly?'PASS: ordinary isolated task → installed private Pydantic worker → mocked model → task and explicit artifact; no live inference':'PASS: isolated task → installed private Pydantic worker → mocked model → task; explicit artifacts and hostile frames; no live inference');
 }finally{
  for(const worker of workers)if(worker.exitCode===null&&worker.signalCode===null)worker.kill('SIGKILL');
  if(attachedChild&&attachedChild.exitCode===null&&attachedChild.signalCode===null)attachedChild.kill('SIGKILL');

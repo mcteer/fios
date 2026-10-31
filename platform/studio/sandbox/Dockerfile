@@ -2,12 +2,11 @@
 # No runtime build/pull, package install or network-enabled build step.
 ARG APPROVED_BASE
 FROM ${APPROVED_BASE} AS reviewed_python
-# Fresh configuration excludes inherited app env, CMD, ports, volumes and
-# health actions. Copy only the baked Python environment and ELF libraries;
-# no app tree, host credentials, general shell entry point or runtime socket.
+# The runner requires only the pinned standalone Python standard library.
+# Relocate that runtime to the existing entry-point prefix, independently of
+# the application virtual environment. Keep the fresh image configuration.
 FROM scratch
-COPY --from=reviewed_python /opt/python /opt/python
-COPY --from=reviewed_python /opt/venv /opt/venv
+COPY --from=reviewed_python /opt/python/cpython-3.11.17-linux-aarch64-gnu /opt/venv
 COPY --from=reviewed_python /usr/lib /usr/lib
 COPY --from=reviewed_python /lib /lib
 # Fixed unprivileged VM metadata reader; no general shell/tool distribution.
