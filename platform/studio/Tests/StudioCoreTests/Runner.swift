@@ -84,6 +84,7 @@ struct PolicyTestRunner {
             ("sandbox safety",runSandboxSafetyTests),
             ("sandbox journal",runSandboxJournalTests),
             ("observation",runObservationTests),
+            ("supervisor path aliases",runSupervisorStatusAliasTests),
             ("consumer",runConsumerTests),
             ("CPU",runCPUTests),
             ("worker resources",runWorkerResourceTests),

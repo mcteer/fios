@@ -33,7 +33,11 @@ public enum SupervisorStatus {
         let size=executable.withUnsafeMutableBytes { proc_pidpath(Int32(pid),$0.baseAddress,UInt32($0.count)) }
         guard size>0 else { throw ControlError.busy }
         let actual=String(decoding:executable.prefix(while:{$0 != 0}),as:UTF8.self)
-        guard actual==URL(fileURLWithPath:expectedExecutable).resolvingSymlinksInPath().path else { throw ControlError.unauthorized }
+        guard let actualPath=realpath(actual,nil) else { throw ControlError.unauthorized }
+        defer { free(actualPath) }
+        guard let expectedPath=realpath(expectedExecutable,nil) else { throw ControlError.unauthorized }
+        defer { free(expectedPath) }
+        guard strcmp(actualPath,expectedPath)==0 else { throw ControlError.unauthorized }
         return ["version":1,"ok":true,"supervisor":value]
     }
 }
