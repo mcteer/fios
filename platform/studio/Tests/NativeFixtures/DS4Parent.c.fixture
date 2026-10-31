@@ -24,7 +24,8 @@ static int checked_result,prepare_result=1,cpu_result=1;
 static unsigned cpu_checked,selected_probes;
 static int cpu_work_busy;
 static int ds4_threads_work_busy(void){return cpu_work_busy;}
-static int selected_idle=1;
+static int selected_idle=1,pagein_busy;
+static bool metal_graph_stream_pagein_busy(void){return pagein_busy;}
 static int metal_graph_selected_async_load_idle(void){++selected_probes;return selected_idle;}
 static int ds4_threads_shutdown_checked(void){++cpu_checked;return cpu_result;}
 static int ds4_gpu_tp_shutdown_checked(void){++checked;return checked_result;}
@@ -87,6 +88,13 @@ int main(int argc,char **argv){
   cpu_work_busy=1;e.tp.ctx=&context;e.tp.slab=&slab;const ds4_engine before=e;
   if(ds4_engine_tp_unbind_checked(&e)||destructive||cpu_checked||prepared||checked||memcmp(&e,&before,sizeof(e))){
    fputs("FIO_DS4_UNBIND_RELEASED_WITH_ACTIVE_CPU_WORK\n",stderr);return 77;
+  }
+  return 0;
+ }
+ if(argc==2&&strcmp(argv[1],"--pagein-active")==0){
+  pagein_busy=1;const ds4_engine before=e;
+  if(ds4_engine_close_checked(&e)||destructive||cpu_checked||prepared||checked||memcmp(&e,&before,sizeof(e))){
+   fputs("FIO_DS4_ENGINE_RELEASED_WITH_PAGEIN_CUSTODY\n",stderr);return 77;
   }
   return 0;
  }

@@ -27,7 +27,7 @@ const fixtureFile=path.join(root,'platform/studio/Tests/NativeFixtures/DS4Parent
 const unit=path.join(directory,'parent.c'),binary=path.join(directory,'parent');
 writeFileSync(unit,fixture.replace('/* SOURCE_FUNCTIONS */',original.slice(start,end)+'\n'+close));
 execFileSync('/usr/bin/clang',['-std=c11','-O2','-UNDEBUG',unit,'-o',binary],{env,timeout:30000});
-const preparationResults=['--gpu-unbind','--gpu-close','--gpu-empty','--prepared-success','--cpu-close','--cpu-empty','--checked-refusal','--child-uncertain','--selected-active','--cpu-unbind'].map(mode=>{
+const preparationResults=['--gpu-unbind','--gpu-close','--gpu-empty','--prepared-success','--cpu-close','--cpu-empty','--checked-refusal','--child-uncertain','--selected-active','--pagein-active','--cpu-unbind'].map(mode=>{
  const r=spawnSync(binary,[mode],{env,encoding:'utf8',timeout:5000});
  writeFileSync(path.join(directory,mode+'-stderr.log'),r.stderr??'');return r;
 });
@@ -42,6 +42,13 @@ assert(!result.error&&!result.signal,'Parent fixture crash/deadline is not accep
 assert(!closeResult.error&&!closeResult.signal,'Parent close fixture crash/deadline is not acceptance');assert.equal(closeResult.status,0,closeResult.stderr);
 assert(!emptyResult.error&&!emptyResult.signal,'Empty parent fixture crash/deadline is not acceptance');assert.equal(emptyResult.status,0,emptyResult.stderr);
 for(const r of preparationResults){assert(!r.error&&!r.signal,'Preparation refusal fixture crash/deadline is not acceptance');assert.equal(r.status,0,r.stderr);}
+const pageinGuard=' || metal_graph_stream_pagein_busy()';assert.equal(close.split(pageinGuard).length,2);
+const mutationUnit=path.join(directory,'parent-pagein-guard-omission.c'),mutationBinary=path.join(directory,'parent-pagein-guard-omission');
+writeFileSync(mutationUnit,fixture.replace('/* SOURCE_FUNCTIONS */',original.slice(start,end)+'\n'+close.replace(pageinGuard,'')));
+execFileSync('/usr/bin/clang',['-std=c11','-O2','-UNDEBUG',mutationUnit,'-o',mutationBinary],{env,timeout:30000});
+const mutation=spawnSync(mutationBinary,['--pagein-active'],{env,encoding:'utf8',timeout:5000});
+writeFileSync(path.join(directory,'pagein-guard-omission-stderr.log'),mutation.stderr??'');
+assert(!mutation.error&&!mutation.signal);assert.equal(mutation.status,77);assert(mutation.stderr.includes('FIO_DS4_ENGINE_RELEASED_WITH_PAGEIN_CUSTODY'));
 assert.equal(readFileSync(path.join(source,'ds4.c'),'utf8'),original);assert.equal(readFileSync(fixtureFile,'utf8'),fixture);assert.equal(readFileSync(patchFile,'utf8'),patch);assert.equal(git('diff','--no-ext-diff','HEAD','--',...files),patch);
 console.log(result.stdout.trim());
 console.log(JSON.stringify({directory,source_sha256:createHash('sha256').update(original).digest('hex'),fixture_sha256:createHash('sha256').update(fixture).digest('hex'),source_control_flow_only:true,native_abi:false,native_authority:false}));

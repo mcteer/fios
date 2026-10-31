@@ -1,5 +1,5 @@
 diff --git a/ds4.c b/ds4.c
-index 633a3cf..e636fb6 100644
+index 633a3cf..5879dfa 100644
 --- a/ds4.c
 +++ b/ds4.c
 @@ -2088,12 +2088,15 @@ typedef struct {
@@ -124,7 +124,354 @@ index 633a3cf..e636fb6 100644
      pthread_mutex_unlock(&g_pool.mutex);
  }
  
-@@ -23501,6 +23548,15 @@ static bool g_metal_graph_selected_async_load_has_job = false;
+@@ -19894,7 +19941,7 @@ typedef struct {
+     uint64_t size;
+ } metal_graph_stream_pagein_range;
+ 
+-typedef struct {
++typedef struct metal_graph_stream_pagein_job {
+     pthread_t thread;
+     const ds4_model *model;
+     metal_graph_stream_pagein_range *ranges;
+@@ -19916,6 +19963,11 @@ typedef struct {
+     bool started;
+     bool ok;
+     uint8_t sink;
++    struct metal_graph_stream_pagein_job *custody;
++    struct metal_graph_stream_pagein_job *retained_next;
++    bool uncertain;
++    uint32_t created;
++    uint32_t joined;
+ } metal_graph_stream_pagein_job;
+ 
+ typedef struct metal_graph_stream_pagein_worker {
+@@ -20789,6 +20841,105 @@ static void *metal_graph_stream_pagein_worker_main(void *arg) {
+     return NULL;
+ }
+ 
++// Local page-in custody only. Lifecycle-owner serialization remains required;
++// an empty list is not an all-writer, device or admission receipt.
++static pthread_mutex_t g_fios_pagein_mutex = PTHREAD_MUTEX_INITIALIZER;
++static metal_graph_stream_pagein_job *g_fios_pagein_jobs;
++static unsigned g_fios_pagein_count;
++static bool g_fios_pagein_uncertain;
++
++static bool metal_graph_stream_pagein_busy(void) {
++    pthread_mutex_lock(&g_fios_pagein_mutex);
++    const bool busy = g_fios_pagein_count || g_fios_pagein_uncertain;
++    pthread_mutex_unlock(&g_fios_pagein_mutex);
++    return busy;
++}
++
++static void metal_graph_stream_pagein_refuse(metal_graph_stream_pagein_job *job) {
++    pthread_mutex_lock(&g_fios_pagein_mutex);
++    job->uncertain = true;
++    g_fios_pagein_uncertain = true;
++    pthread_mutex_unlock(&g_fios_pagein_mutex);
++}
++
++static bool metal_graph_stream_pagein_release(metal_graph_stream_pagein_job *owner) {
++    metal_graph_stream_pagein_job *job = owner->custody;
++    pthread_mutex_lock(&g_fios_pagein_mutex);
++    metal_graph_stream_pagein_job **link = &g_fios_pagein_jobs;
++    while (*link && *link != job) link = &(*link)->retained_next;
++    if (!*link || job->uncertain || !g_fios_pagein_count) {
++        g_fios_pagein_uncertain = true;
++        pthread_mutex_unlock(&g_fios_pagein_mutex);
++        return false;
++    }
++    *link = job->retained_next;
++    --g_fios_pagein_count;
++    pthread_mutex_unlock(&g_fios_pagein_mutex);
++    free(job->workers);
++    free(job->threads);
++    free(job->ranges);
++    free(job);
++    memset(owner, 0, sizeof(*owner));
++    return true;
++}
++
++static bool metal_graph_stream_pagein_launch(metal_graph_stream_pagein_job *owner) {
++    if (!owner || owner->custody) return false;
++    if (owner->n_threads > 16) {
++        free(owner->ranges);
++        memset(owner, 0, sizeof(*owner));
++        return false;
++    }
++    metal_graph_stream_pagein_job *job = xcalloc(1, sizeof(*job));
++    *job = *owner;
++    pthread_mutex_lock(&g_fios_pagein_mutex);
++    if (g_fios_pagein_uncertain || g_fios_pagein_count >= 64) {
++        pthread_mutex_unlock(&g_fios_pagein_mutex);
++        free(job);
++        free(owner->ranges);
++        memset(owner, 0, sizeof(*owner));
++        return false;
++    }
++    job->retained_next = g_fios_pagein_jobs;
++    g_fios_pagein_jobs = job;
++    ++g_fios_pagein_count;
++    pthread_mutex_unlock(&g_fios_pagein_mutex);
++    owner->custody = job;
++    owner->started = true;
++    job->started = true;
++    const uint32_t count = job->n_threads > 1 ? job->n_threads : 1;
++    if (count > 1) {
++        job->threads = xcalloc(count, sizeof(job->threads[0]));
++        job->workers = xcalloc(count, sizeof(job->workers[0]));
++    }
++    uint32_t created = 0;
++    for (; created < count; ++created) {
++        int rc;
++        if (count == 1) {
++            rc = pthread_create(&job->thread, NULL, metal_graph_stream_pagein_thread_main, job);
++        } else {
++            job->workers[created].job = job;
++            job->workers[created].first = created;
++            job->workers[created].stride = count;
++            rc = pthread_create(&job->threads[created], NULL,
++                                metal_graph_stream_pagein_worker_main, &job->workers[created]);
++        }
++        if (rc != 0) {
++            bool retired = true;
++            for (uint32_t i = 0; i < created; ++i) {
++                const pthread_t thread = count == 1 ? job->thread : job->threads[i];
++                if (pthread_join(thread, NULL) != 0) retired = false;
++                else job->joined |= 1u << i;
++            }
++            if (!retired) metal_graph_stream_pagein_refuse(job);
++            else metal_graph_stream_pagein_release(owner);
++            return false;
++        }
++        job->created = created + 1;
++    }
++    return true;
++}
++
+ static uint32_t metal_graph_stream_prefill_layer_pagein_threads(void) {
+     const char *env = glm_graph_env_value(
+             "DS4_ROCM_STREAMING_PREFILL_LAYER_PREPARE_THREADS",
+@@ -21004,74 +21155,43 @@ static bool metal_graph_stream_prefill_selected_pagein_start(
+     job->ranges = ranges;
+     job->n_ranges = n_ranges;
+     job->n_threads = metal_graph_stream_prefill_selected_prepare_threads(madvise_only);
+-    if (job->n_threads <= 1) {
+-        const int rc = pthread_create(&job->thread,
+-                                      NULL,
+-                                      metal_graph_stream_pagein_thread_main,
+-                                      job);
+-        if (rc != 0) {
+-            fprintf(stderr,
+-                    "ds4: Metal streaming prefill selected page-in thread failed: %s\n",
+-                    strerror(rc));
+-            free(ranges);
+-            memset(job, 0, sizeof(*job));
+-            return false;
+-        }
+-    } else {
+-        job->threads = xcalloc(job->n_threads, sizeof(job->threads[0]));
+-        job->workers = xcalloc(job->n_threads, sizeof(job->workers[0]));
+-        for (uint32_t t = 0; t < job->n_threads; t++) {
+-            job->workers[t].job = job;
+-            job->workers[t].first = t;
+-            job->workers[t].stride = job->n_threads;
+-            const int rc = pthread_create(&job->threads[t],
+-                                          NULL,
+-                                          metal_graph_stream_pagein_worker_main,
+-                                          &job->workers[t]);
+-            if (rc != 0) {
+-                fprintf(stderr,
+-                        "ds4: Metal streaming prefill selected page-in worker failed: %s\n",
+-                        strerror(rc));
+-                for (uint32_t j = 0; j < t; j++) {
+-                    (void)pthread_join(job->threads[j], NULL);
+-                }
+-                free(job->workers);
+-                free(job->threads);
+-                free(ranges);
+-                memset(job, 0, sizeof(*job));
+-                return false;
+-            }
+-        }
+-    }
+-    job->started = true;
+-    return true;
++    return metal_graph_stream_pagein_launch(job);
+ }
+ 
+ static bool metal_graph_stream_prefill_selected_pagein_join(
+         metal_graph_stream_pagein_job *job) {
+     if (!job || !job->started) return true;
++    metal_graph_stream_pagein_job *owner = job;
++    if (!owner->custody || owner->custody->uncertain) return false;
++    job = owner->custody;
+     const double t0 = job->profile ? now_sec() : 0.0;
+     int rc = 0;
+     bool ok = true;
+     if (job->n_threads <= 1) {
+         rc = pthread_join(job->thread, NULL);
+-        ok = rc == 0 && job->ok;
++        if (rc == 0) job->joined |= 1u;
++    } else {
++        for (uint32_t t = 0; t < job->n_threads; t++) {
++            const int trc = pthread_join(job->threads[t], NULL);
++            if (trc != 0 && rc == 0) rc = trc;
++            if (trc == 0) job->joined |= 1u << t;
++        }
++    }
++    if (rc != 0) {
++        metal_graph_stream_pagein_refuse(job);
++        return false;
++    }
++    if (job->n_threads <= 1) {
++        ok = job->ok;
+     } else {
+         job->touched = 0;
+         job->thread_ms = 0.0;
+         job->sink = 0;
+         for (uint32_t t = 0; t < job->n_threads; t++) {
+-            const int trc = pthread_join(job->threads[t], NULL);
+-            if (trc != 0 && rc == 0) rc = trc;
+-            if (trc != 0 || !job->workers[t].ok) ok = false;
+-            if (job->touched > UINT64_MAX - job->workers[t].touched) {
+-                job->touched = UINT64_MAX;
+-            } else {
+-                job->touched += job->workers[t].touched;
+-            }
+-            if (job->workers[t].thread_ms > job->thread_ms) {
+-                job->thread_ms = job->workers[t].thread_ms;
+-            }
++            if (!job->workers[t].ok) ok = false;
++            if (job->touched > UINT64_MAX - job->workers[t].touched) job->touched = UINT64_MAX;
++            else job->touched += job->workers[t].touched;
++            if (job->workers[t].thread_ms > job->thread_ms) job->thread_ms = job->workers[t].thread_ms;
+             job->sink ^= job->workers[t].sink;
+         }
+     }
+@@ -21101,11 +21221,7 @@ static bool metal_graph_stream_prefill_selected_pagein_join(
+                 "ds4: Metal streaming prefill selected page-in join failed: %s\n",
+                 strerror(rc));
+     }
+-    free(job->workers);
+-    free(job->threads);
+-    free(job->ranges);
+-    memset(job, 0, sizeof(*job));
+-    return ok;
++    return metal_graph_stream_pagein_release(owner) && ok;
+ }
+ 
+ static bool metal_graph_stream_prefill_layer_pagein_start(
+@@ -21218,74 +21334,43 @@ static bool metal_graph_stream_prefill_layer_pagein_start(
+     job->ranges = ranges;
+     job->n_ranges = n_ranges;
+     job->n_threads = n_threads;
+-    if (n_threads == 1) {
+-        const int rc = pthread_create(&job->thread,
+-                                      NULL,
+-                                      metal_graph_stream_pagein_thread_main,
+-                                      job);
+-        if (rc != 0) {
+-            fprintf(stderr,
+-                    "ds4: Metal streaming prefill layer page-in thread failed: %s\n",
+-                    strerror(rc));
+-            free(ranges);
+-            memset(job, 0, sizeof(*job));
+-            return false;
+-        }
+-    } else {
+-        job->threads = xcalloc(n_threads, sizeof(job->threads[0]));
+-        job->workers = xcalloc(n_threads, sizeof(job->workers[0]));
+-        for (uint32_t t = 0; t < n_threads; t++) {
+-            job->workers[t].job = job;
+-            job->workers[t].first = t;
+-            job->workers[t].stride = n_threads;
+-            const int rc = pthread_create(&job->threads[t],
+-                                          NULL,
+-                                          metal_graph_stream_pagein_worker_main,
+-                                          &job->workers[t]);
+-            if (rc != 0) {
+-                fprintf(stderr,
+-                        "ds4: Metal streaming prefill layer page-in worker failed: %s\n",
+-                        strerror(rc));
+-                for (uint32_t j = 0; j < t; j++) {
+-                    (void)pthread_join(job->threads[j], NULL);
+-                }
+-                free(job->workers);
+-                free(job->threads);
+-                free(ranges);
+-                memset(job, 0, sizeof(*job));
+-                return false;
+-            }
+-        }
+-    }
+-    job->started = true;
+-    return true;
++    return metal_graph_stream_pagein_launch(job);
+ }
+ 
+ static bool metal_graph_stream_prefill_layer_pagein_join(
+         metal_graph_stream_pagein_job *job) {
+     if (!job || !job->started) return true;
++    metal_graph_stream_pagein_job *owner = job;
++    if (!owner->custody || owner->custody->uncertain) return false;
++    job = owner->custody;
+     const double t0 = job->profile ? now_sec() : 0.0;
+     int rc = 0;
+     bool ok = true;
+     if (job->n_threads <= 1) {
+         rc = pthread_join(job->thread, NULL);
+-        ok = rc == 0 && job->ok;
++        if (rc == 0) job->joined |= 1u;
++    } else {
++        for (uint32_t t = 0; t < job->n_threads; t++) {
++            const int trc = pthread_join(job->threads[t], NULL);
++            if (trc != 0 && rc == 0) rc = trc;
++            if (trc == 0) job->joined |= 1u << t;
++        }
++    }
++    if (rc != 0) {
++        metal_graph_stream_pagein_refuse(job);
++        return false;
++    }
++    if (job->n_threads <= 1) {
++        ok = job->ok;
+     } else {
+         job->touched = 0;
+         job->thread_ms = 0.0;
+         job->sink = 0;
+         for (uint32_t t = 0; t < job->n_threads; t++) {
+-            const int trc = pthread_join(job->threads[t], NULL);
+-            if (trc != 0 && rc == 0) rc = trc;
+-            if (trc != 0 || !job->workers[t].ok) ok = false;
+-            if (job->touched > UINT64_MAX - job->workers[t].touched) {
+-                job->touched = UINT64_MAX;
+-            } else {
+-                job->touched += job->workers[t].touched;
+-            }
+-            if (job->workers[t].thread_ms > job->thread_ms) {
+-                job->thread_ms = job->workers[t].thread_ms;
+-            }
++            if (!job->workers[t].ok) ok = false;
++            if (job->touched > UINT64_MAX - job->workers[t].touched) job->touched = UINT64_MAX;
++            else job->touched += job->workers[t].touched;
++            if (job->workers[t].thread_ms > job->thread_ms) job->thread_ms = job->workers[t].thread_ms;
+             job->sink ^= job->workers[t].sink;
+         }
+     }
+@@ -21318,11 +21403,7 @@ static bool metal_graph_stream_prefill_layer_pagein_join(
+                 "ds4: Metal streaming prefill layer page-in join failed: %s\n",
+                 strerror(rc));
+     }
+-    free(job->workers);
+-    free(job->threads);
+-    free(job->ranges);
+-    memset(job, 0, sizeof(*job));
+-    return ok;
++    return metal_graph_stream_pagein_release(owner) && ok;
+ }
+ 
+ typedef struct {
+@@ -23501,6 +23582,15 @@ static bool g_metal_graph_selected_async_load_has_job = false;
  static bool g_metal_graph_selected_async_load_done = false;
  static metal_graph_selected_async_load g_metal_graph_selected_async_load_job;
  
@@ -140,7 +487,7 @@ index 633a3cf..e636fb6 100644
  static void metal_graph_selected_async_load_run(
          metal_graph_selected_async_load *job) {
      job->ok = false;
-@@ -42215,6 +42271,7 @@ typedef enum {
+@@ -42215,6 +42305,7 @@ typedef enum {
  } ds4_vision_kind;
  
  struct ds4_engine {
@@ -148,7 +495,7 @@ index 633a3cf..e636fb6 100644
      char *model_path;
      uint64_t ds41_session_bytes;
      ds4_model model;
-@@ -59886,6 +59943,7 @@ typedef struct {
+@@ -59886,6 +59977,7 @@ typedef struct {
  } ds4_vision_identity;
  
  struct ds4_session {
@@ -156,7 +503,7 @@ index 633a3cf..e636fb6 100644
      ds4_engine *engine;
      ds4_dist_session *distributed;
      uint64_t tp_session_id;
-@@ -72190,10 +72248,22 @@ fail:
+@@ -72190,10 +72282,22 @@ fail:
  #endif
  }
  
@@ -181,7 +528,7 @@ index 633a3cf..e636fb6 100644
      ds4_tp_detach_slab(e->tp.ctx);
  #ifdef __APPLE__
      g_tp_block_ctx = NULL;
-@@ -72218,6 +72288,11 @@ void ds4_engine_tp_unbind(ds4_engine *e) {
+@@ -72218,6 +72322,11 @@ void ds4_engine_tp_unbind(ds4_engine *e) {
  #else
      (void)e;
  #endif
@@ -193,7 +540,7 @@ index 633a3cf..e636fb6 100644
  }
  
  bool ds4_engine_is_glm_dsa(ds4_engine *e) {
-@@ -72230,13 +72305,24 @@ bool ds4_engine_is_deepseek41(ds4_engine *e) {
+@@ -72230,13 +72339,24 @@ bool ds4_engine_is_deepseek41(ds4_engine *e) {
      return DS4_MODEL_FAMILY == DS4_MODEL_FAMILY_DEEPSEEK41;
  }
  
@@ -208,7 +555,7 @@ index 633a3cf..e636fb6 100644
 +    if (!e) return 1;
 +    if (e->fios_teardown_uncertain) return 0;
 +#if defined(__APPLE__) && !defined(DS4_NO_GPU)
-+    if (!metal_graph_selected_async_load_idle()) return 0;
++    if (!metal_graph_selected_async_load_idle() || metal_graph_stream_pagein_busy()) return 0;
 +#endif
 +    if (!ds4_threads_shutdown_checked()) return 0;
 +    if (!ds4_engine_tp_unbind_checked(e)) return 0;
@@ -222,7 +569,7 @@ index 633a3cf..e636fb6 100644
      if (e->mtp_model.map) model_close(&e->mtp_model);
      if (e->vision_model.map) model_close(&e->vision_model);
      model_close(&e->model);
-@@ -72253,6 +72339,11 @@ void ds4_engine_close(ds4_engine *e) {
+@@ -72253,6 +72373,11 @@ void ds4_engine_close(ds4_engine *e) {
      free(e->directional_steering_file);
      free(e->model_path);
      free(e);
@@ -234,7 +581,7 @@ index 633a3cf..e636fb6 100644
  }
  
  #ifndef DS4_NO_GPU
-@@ -72814,24 +72905,34 @@ int ds4_session_create(ds4_session **out, ds4_engine *e, int ctx_size) {
+@@ -72814,24 +72939,34 @@ int ds4_session_create(ds4_session **out, ds4_engine *e, int ctx_size) {
  #endif
  }
  
@@ -279,7 +626,7 @@ index 633a3cf..e636fb6 100644
  #ifndef DS4_NO_GPU
      ds4_session_print_dspark_stats(s);
  #endif
-@@ -72882,6 +72983,11 @@ void ds4_session_free(ds4_session *s) {
+@@ -72882,6 +73017,11 @@ void ds4_session_free(ds4_session *s) {
      free(s->dspark_conf_features);
  #endif
      free(s);
