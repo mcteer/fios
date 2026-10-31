@@ -38,6 +38,12 @@ function scalar(snapshot,name){const points=snapshot.metrics[name]?.points;asser
 try{
  const first=await until(()=>{assert(!exited(),`Telemetry manager failed: ${stderr}`);const value=snapshot();return value?.metrics['fios.platform.jobs']&&value?.metrics['fios.platform.service.state']?.points.length===2 ? value:null;});
  assert(first.logs.includes('fios.platform.started'));
+ const resource=first.metrics['fios.platform.jobs'].resource;
+ assert.equal(resource['service.name'],'fios-studio-manager');assert.equal(resource['service.namespace'],'fios');
+ assert.equal(typeof resource['host.name'],'string');assert(resource['host.name'].length>0);
+ assert.match(resource['service.instance.id'],/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/);
+ for(const metric of Object.values(first.metrics))assert.deepEqual(metric.resource,resource);
+ assert(first.log_resources.length>0);for(const logResource of first.log_resources)assert.deepEqual(logResource,resource);
  assert.equal(first.metrics['fios.platform.jobs'].points.length,8);
  assert.equal(first.metrics['fios.platform.jobs'].points.reduce((sum,point)=>sum+point.value,0),0);
  for(const name of ['fios.platform.inference.unresolved_records','fios.platform.inference.uncertain_records','fios.platform.workers.reservations','fios.platform.artifacts.size','fios.platform.sandbox.cleanup.pending','fios.platform.sandbox.cleanup.wait','fios.platform.sandbox.memory.reserved','fios.platform.sandbox.cpu.reserved','fios.platform.sandbox.workspace.capacity'])assert.equal(scalar(first,name),0);
@@ -51,6 +57,8 @@ try{
  await until(()=>{const value=snapshot();return value?.metrics['fios.platform.service.state']?.points.some(p=>p.attributes['fios.service']==='mlx'&&p.attributes['fios.service.desired']==='maintenance'&&p.attributes['fios.service.observed']==='unknown');});
  child.kill('SIGTERM');await until(exited,5000);assert.equal(child.exitCode,0);assert.equal(stderr,'');
  const stopped=snapshot();assert(stopped.logs.includes('fios.platform.stopped'));
+ for(const metric of Object.values(stopped.metrics))assert.deepEqual(metric.resource,resource);
+ for(const logResource of stopped.log_resources)assert.deepEqual(logResource,resource);
  assert.equal(stopped.metrics['fios.platform.events'].points.reduce((sum,point)=>sum+point.value,0),3);
  console.log(JSON.stringify({ok:true,events:3,job_state_series:8,service_state_series:2,actual_sdk:true,native_actions:0,review_directory:directory}));
 }finally{

@@ -7,7 +7,12 @@ import OpenTelemetrySdk
 // manager runs with no native/runtime/model/session execution ports.
 private final class CapturedLogs:LogRecordProcessor {
     var events:[String]=[]
-    func onEmit(logRecord:ReadableLogRecord) {if let name=logRecord.eventName {events.append(name)}}
+    var resources:[[String:String]]=[]
+    func onEmit(logRecord:ReadableLogRecord) {
+        if let name=logRecord.eventName {
+            events.append(name);resources.append(logRecord.resource.attributes.mapValues{$0.description})
+        }
+    }
     func forceFlush(explicitTimeout:TimeInterval?)->ExportResult {.success}
     func shutdown(explicitTimeout:TimeInterval?)->ExportResult {.success}
 }
@@ -37,9 +42,9 @@ private final class CapturedTelemetry:PlatformTelemetry,@unchecked Sendable {
                     else {return ["unsupported":true]}
                     return ["value":number,"attributes":point.attributes.mapValues{$0.description}]
                 }
-                values[metric.name] = ["unit":metric.unit,"points":points]
+                values[metric.name] = ["unit":metric.unit,"points":points,"resource":metric.resource.attributes.mapValues{$0.description}]
             }
-            let body:[String:Any] = ["metrics":values,"logs":logs.events]
+            let body:[String:Any] = ["metrics":values,"logs":logs.events,"log_resources":logs.resources]
             try JSONSerialization.data(withJSONObject:body,options:[.sortedKeys]).write(to:destination,options:.atomic)
         }catch {
             FileHandle.standardError.write(Data("TELEMETRY_FIXTURE_CAPTURE_FAILED\n".utf8));exit(1)

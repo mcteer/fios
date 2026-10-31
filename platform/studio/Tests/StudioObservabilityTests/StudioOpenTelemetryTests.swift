@@ -11,6 +11,23 @@ private final class RecordedLogs:LogRecordProcessor {
 }
 
 final class StudioOpenTelemetryTests:XCTestCase {
+    func testResourceDistinguishesHostAndManagerInstance() throws {
+        let logs=RecordedLogs(),telemetry=StudioOpenTelemetry(logProcessors:[logs])
+        telemetry.event(.started)
+        let first=try XCTUnwrap(telemetry.collectMetrics().first?.resource)
+        XCTAssertEqual(first.attributes["host.name"],.string(ProcessInfo.processInfo.hostName))
+        guard case .string(let id)?=first.attributes["service.instance.id"] else {return XCTFail("Missing manager instance")}
+        XCTAssertEqual(UUID(uuidString:id)?.uuidString.lowercased(),id)
+        XCTAssertEqual(logs.records.first?.resource,first)
+        telemetry.event(.desiredChanged)
+        XCTAssertEqual(telemetry.collectMetrics().first?.resource,first)
+        XCTAssertEqual(logs.records.last?.resource,first)
+        let next=StudioOpenTelemetry();next.event(.started)
+        let restarted=try XCTUnwrap(next.collectMetrics().first?.resource)
+        XCTAssertEqual(restarted.attributes["host.name"],first.attributes["host.name"])
+        XCTAssertNotEqual(restarted.attributes["service.instance.id"],first.attributes["service.instance.id"])
+    }
+
     func testAuditEventsUseSDKLogsAndRetainLocalAudit() throws {
         let records=RecordedLogs(),telemetry=StudioOpenTelemetry(logProcessors:[records])
         let directory=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)

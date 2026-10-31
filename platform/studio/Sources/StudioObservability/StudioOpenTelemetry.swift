@@ -70,7 +70,9 @@ public final class StudioOpenTelemetry:PlatformTelemetry,@unchecked Sendable {
     private let events:LongCounterSdk
 
     public init(metricReader:(any MetricReader)?=nil,logProcessors:[any LogRecordProcessor]=[]) {
-        let resource=Resource(attributes:["service.name":.string("fios-studio-manager"),"service.namespace":.string("fios")])
+        let resource=Resource(attributes:["service.name":.string("fios-studio-manager"),"service.namespace":.string("fios"),
+            "host.name":.string(ProcessInfo.processInfo.hostName),
+            "service.instance.id":.string(UUID().uuidString.lowercased())])
         let builder=MeterProviderSdk.builder().setResource(resource:resource).registerMetricReader(reader:reader)
             .registerView(selector:InstrumentSelector.builder().build(),view:View.builder().build())
         if let metricReader {_=builder.registerMetricReader(reader:metricReader)}
