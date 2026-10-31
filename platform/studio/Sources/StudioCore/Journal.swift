@@ -7,6 +7,8 @@ public enum JournalError: Error { case invalid, locked, storage, conflict, track
 // Owned by one serialized manager loop. Never share across threads or open
 // Fios's database. Values are bound parameters; no workload content is stored.
 public final class Journal {
+    // Retained native uncertainty is independent of the two live worker slots.
+    private static let maximumUnresolvedInference=32
     let directory:URL
     private var db: OpaquePointer?
     private var lockFD: Int32 = -1
@@ -238,7 +240,7 @@ public final class Journal {
             while true {
                 let code=sqlite3_step(rows)
                 if code==SQLITE_DONE {break}
-                guard code==SQLITE_ROW,count<(table=="inference" ? 2:1024),
+                guard code==SQLITE_ROW,count<(table=="inference" ? Self.maximumUnresolvedInference:1024),
                       sqlite3_column_type(rows,1)==SQLITE_INTEGER else {throw JournalError.invalid}
                 try validate(job:storedString(rows,0),attempt:Int(sqlite3_column_int64(rows,1)))
                 let bytes=try storedBytes(rows,2,maximum:WireLimits.modelBytes)
@@ -327,7 +329,7 @@ public final class Journal {
         if let requestID { try validate(job:requestID,attempt:0) }
         guard WireScalar.model(model) else { throw JournalError.invalid }
         try transaction {
-            guard try scalar("SELECT count(*) FROM inference") < 2,
+            guard try scalar("SELECT count(*) FROM inference") < Self.maximumUnresolvedInference,
                   try scalar("SELECT count(*) FROM request_history") < 1024 else { throw JournalError.trackingLimit }
             guard try scalar("SELECT count(*) FROM request_history WHERE job=?",[job]) == attempt else { throw JournalError.conflict }
             if let requestID {

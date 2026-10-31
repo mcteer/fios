@@ -109,6 +109,7 @@ struct PolicyTestRunner {
             ("protocol",runProtocolTests),
             ("journal views",runJournalViewTests),
             ("journal",runJournalTests),
+            ("inference record retention",runInferenceRetentionTests),
             ("journal schema",runJournalSchemaTests),
             ("journal rows",runJournalRowTests),
             ("journal lock",runJournalLockTests),

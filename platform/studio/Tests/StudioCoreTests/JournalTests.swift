@@ -20,7 +20,9 @@ func runJournalTests() throws {
         try journal.markUncertain(job: first, attempt: 0)
         expectJournalError { try journal.claim(job: first, attempt: 1, model: "exact-a") }
         try journal.claim(job: second, attempt: 0, model: "exact-a")
-        expectJournalError { try journal.claim(job: UUID().uuidString.lowercased(), attempt: 0, model: "exact-a") }
+        let third=UUID().uuidString.lowercased()
+        try journal.claim(job:third,attempt:0,model:"exact-a")
+        try journal.complete(job:third,attempt:0) // Low-level fixture completion only.
         try journal.complete(job: second, attempt: 0)
         expectJournalError { try journal.claim(job: second, attempt: 0, model: "exact-a") }
         precondition(try journal.unresolvedCount() == 1)
