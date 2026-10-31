@@ -22,10 +22,18 @@ public struct ResourceSample: Codable, Sendable {
 
 public enum HostResources {
     public static func nowMilliseconds() -> Int64 { Int64(Date().timeIntervalSince1970 * 1000) }
-    public static func sample(statePath: String, verifiedVMAvailable: UInt64? = nil, verifiedVMAt:Int64? = nil, measuredCPU: Double? = nil) -> ResourceSample {
+    public static func sample(statePath: String, verifiedVMAvailable: UInt64? = nil, verifiedVMAt:Int64? = nil, measuredCPU: Double? = nil, measuredCPUAt:Int64? = nil) -> ResourceSample {
         // Keep the oldest collection edge; a slow later sensor must not
         // refresh earlier CPU/memory readings on return.
-        let sampledAt = nowMilliseconds()
+        let collectedAt = nowMilliseconds()
+        // Load average is not utilization. Missing tick measurements or their
+        // original collection time remain unknown, rather than gaining this clock.
+        let cpu = measuredCPU.flatMap { value -> Double? in
+            guard value.isFinite,(0...100).contains(value),let time=measuredCPUAt,
+                  (0...ActivityPolicy.maximumTimestamp).contains(time),time<=collectedAt else {return nil}
+            return value
+        }
+        let sampledAt = cpu == nil ? collectedAt:min(collectedAt,measuredCPUAt!)
         let physical = ProcessInfo.processInfo.physicalMemory
         var statistics = vm_statistics64_data_t()
         var count = mach_msg_type_number_t(MemoryLayout<vm_statistics64_data_t>.size / MemoryLayout<integer_t>.size)
@@ -43,9 +51,6 @@ public enum HostResources {
         var levelSize = MemoryLayout<Int32>.size
         let pressureKnown = sysctlbyname("kern.memorystatus_vm_pressure_level", &level, &levelSize, nil, 0) == 0
         let pressure: MemoryPressure = !pressureKnown ? .unknown : (level == 1 ? .normal : (level == 2 ? .warning : (level == 4 ? .critical : .unknown)))
-        // Load average is not CPU utilization. First/stalled/missing tick
-        // measurements remain unknown until the persistent sampler can compare.
-        let cpu = measuredCPU.flatMap { $0.isFinite && (0...100).contains($0) ? $0 : nil }
         let attributes = try? FileManager.default.attributesOfFileSystem(forPath: statePath)
         let disk = (attributes?[.systemFreeSize] as? NSNumber)?.uint64Value
         let thermal: ThermalState

@@ -55,6 +55,12 @@ try{
  const services=first.metrics['fios.platform.service.state'].points;
  assert.deepEqual(services.map(p=>p.attributes['fios.service']).sort(),['mlx','orbstack']);
  for(const point of services){assert.equal(point.value,1);assert.equal(point.attributes['fios.service.desired'],'running');assert.equal(point.attributes['fios.service.observed'],'unknown');}
+ await until(()=>snapshot()?.metrics['fios.platform.host.cpu.utilization']?.points.length===1);
+ const resources=JSON.parse(run(join(bin,'studioctl'),['--state',state,'resources'],3000));
+ assert.equal(resources.resource_observation.signals.cpu.availability,'observed');
+ const originalCPUTime=resources.resource_observation.signals.cpu.sampled_at;
+ const measured=await until(()=>{const value=snapshot();return value?.metrics['fios.platform.resource.sample.time']?.points[0]?.value===originalCPUTime/1000 ? value:null;});
+ assert.ok(Math.abs(scalar(measured,'fios.platform.host.cpu.utilization')-resources.resources.cpu/100)<1e-9);
  const result=JSON.parse(run(join(bin,'studioctl'),['--state',state,'service','mlx','maintenance'],3000));assert.equal(result.applied,false);
  const changed=await until(()=>{const value=snapshot();return value?.logs.includes('fios.platform.desiredChanged') ? value:null;});
  assert.equal(changed.metrics['fios.platform.events'].points.reduce((sum,point)=>sum+point.value,0),2);

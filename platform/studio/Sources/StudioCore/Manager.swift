@@ -126,8 +126,9 @@ public enum ManagerRuntime {
                         }
                     }
                 }
-                let cpu=cpuSampler.observe(ticks:CPUSampler.readTicks(),now:sampledAt)
-                resourceSample=applyingVM(to:activeExecution?.sample(now:sampledAt,cpu:cpu) ?? HostResources.sample(statePath:directory.path,measuredCPU:cpu),now:sampledAt)
+                let cpuSampledAt=timestamp()
+                let cpu=cpuSampler.observe(ticks:CPUSampler.readTicks(),now:cpuSampledAt)
+                resourceSample=applyingVM(to:activeExecution?.sample(now:sampledAt,cpu:cpu) ?? HostResources.sample(statePath:directory.path,measuredCPU:cpu,measuredCPUAt:cpuSampledAt),now:sampledAt)
                 telemetry.resources(resourceSample)
                 gpuSampledAt=timestamp()
                 gpuSample=GPUResources.sample()

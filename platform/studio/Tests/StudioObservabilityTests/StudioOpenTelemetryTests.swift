@@ -11,6 +11,24 @@ private final class RecordedLogs:LogRecordProcessor {
 }
 
 final class StudioOpenTelemetryTests:XCTestCase {
+    func testUndatedCPUMeasurementRemainsUnknown() {
+        let sample=HostResources.sample(statePath:NSTemporaryDirectory(),measuredCPU:12.5)
+        XCTAssertNil(sample.cpu,"A supplied CPU value without its collection time must not acquire the later host clock")
+    }
+
+    func testHostSampleAndSDKKeepOriginalCPUCollectionTime() throws {
+        let original=HostResources.nowMilliseconds()-1000
+        let sample=HostResources.sample(statePath:NSTemporaryDirectory(),measuredCPU:12.5,measuredCPUAt:original)
+        XCTAssertEqual(sample.cpu,12.5)
+        XCTAssertEqual(sample.sampledAt,original)
+        let telemetry=StudioOpenTelemetry();telemetry.resources(sample)
+        let metrics=telemetry.collectMetrics()
+        let cpu=try XCTUnwrap(metrics.first{$0.name=="fios.platform.host.cpu.utilization"})
+        XCTAssertEqual((cpu.data.points as! [DoublePointData]).first?.value,0.125)
+        let clock=try XCTUnwrap(metrics.first{$0.name=="fios.platform.resource.sample.time"})
+        XCTAssertEqual((clock.data.points as! [DoublePointData]).first?.value,Double(original)/1000)
+    }
+
     func testSupervisorMetricsAndLogsHaveTheirOwnServiceResource() throws {
         let logs=RecordedLogs(),telemetry=StudioOpenTelemetry(service:.supervisor,logProcessors:[logs])
         let now=HostResources.nowMilliseconds()
