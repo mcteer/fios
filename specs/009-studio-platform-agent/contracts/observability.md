@@ -32,4 +32,12 @@ Run the focused SDK tests with a full Xcode toolchain (the local standalone Comm
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test --package-path platform/studio --filter StudioOpenTelemetryTests
 ```
 
+An ordinary end-to-end SDK check runs the actual manager and CLI against private state:
+
+```sh
+node scripts/check-platform-observability.mjs --isolated
+```
+
+It copies the actual package sources/dependency pins into a private fixture build and adds only a test capture wrapper. The real SDK captures startup, operator service-intent change and shutdown, resource gauges and empty journal aggregates. Its JSON capture is a test assertion format, not an exporter or product protocol. IP networking is denied during fixture execution; no backend, model, session or native service operation is configured. Private build/state/capture data are retained for review. CI runs the same finite check.
+
 References: [Swift instrumentation](https://opentelemetry.io/docs/languages/swift/), [official Swift core SDK](https://github.com/open-telemetry/opentelemetry-swift-core), [OTLP specification](https://opentelemetry.io/docs/specs/otlp/). No custom wire protocol is introduced.

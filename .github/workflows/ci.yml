@@ -195,6 +195,7 @@ jobs:
           NODE
           swift build --package-path platform/studio
           swift test --package-path platform/studio --filter StudioOpenTelemetryTests
+          node scripts/check-platform-observability.mjs --isolated
           node scripts/check-platform.mjs --mock
           node scripts/check-platform.mjs --mock --release
           node scripts/check-platform-process.mjs --isolated

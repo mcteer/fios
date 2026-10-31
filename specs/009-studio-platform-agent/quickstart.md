@@ -15,6 +15,7 @@ The package manager uses the pinned OpenTelemetry Swift SDK for fixed operationa
 
 ```sh
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test --package-path platform/studio --filter StudioOpenTelemetryTests
+node scripts/check-platform-observability.mjs --isolated
 ```
 
 ## 2. Mock-first implementation validation

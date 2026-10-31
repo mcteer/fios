@@ -1,0 +1,53 @@
+import Foundation
+import StudioCore
+import StudioObservability
+import OpenTelemetrySdk
+
+// Test-only SDK capture, not an exporter or product endpoint. The actual
+// manager runs with no native/runtime/model/session execution ports.
+private final class CapturedLogs:LogRecordProcessor {
+    var events:[String]=[]
+    func onEmit(logRecord:ReadableLogRecord) {if let name=logRecord.eventName {events.append(name)}}
+    func forceFlush(explicitTimeout:TimeInterval?)->ExportResult {.success}
+    func shutdown(explicitTimeout:TimeInterval?)->ExportResult {.success}
+}
+private final class CapturedTelemetry:PlatformTelemetry,@unchecked Sendable {
+    let sdk:StudioOpenTelemetry
+    let logs:CapturedLogs
+    let destination:URL
+    var instrumentation:String {sdk.instrumentation}
+    init(destination:URL) {
+        let logs=CapturedLogs();self.logs=logs;self.destination=destination
+        sdk=StudioOpenTelemetry(logProcessors:[logs])
+    }
+    func resources(_ sample:ResourceSample) {sdk.resources(sample)}
+    func gpu(_ sample:GPUSample?,sampledAt:Int64?) {sdk.gpu(sample,sampledAt:sampledAt)}
+    func event(_ event:OperationalEvent) {sdk.event(event);capture()}
+    func workload(_ sample:PlatformWorkloadSample?) {sdk.workload(sample);capture()}
+    private func capture() {
+        do {
+            var values:[String:Any]=[:]
+            for metric in sdk.collectMetrics() {
+                let points:[[String:Any]]=metric.data.points.map {point in
+                    let number:Double
+                    if let value=point as? DoublePointData {number=value.value}
+                    else if let value=point as? LongPointData {number=Double(value.value)}
+                    else {return ["unsupported":true]}
+                    return ["value":number,"attributes":point.attributes.mapValues{$0.description}]
+                }
+                values[metric.name] = ["unit":metric.unit,"points":points]
+            }
+            let body:[String:Any] = ["metrics":values,"logs":logs.events]
+            try JSONSerialization.data(withJSONObject:body,options:[.sortedKeys]).write(to:destination,options:.atomic)
+        }catch {
+            FileHandle.standardError.write(Data("TELEMETRY_FIXTURE_CAPTURE_FAILED\n".utf8));exit(1)
+        }
+    }
+}
+@main struct TelemetryLive {
+    static func main() throws {
+        let args=CommandLine.arguments
+        guard args.count==3,args[1].hasPrefix("/"),args[2].hasPrefix("/") else {exit(2)}
+        try ManagerRuntime.run(directory:URL(fileURLWithPath:args[1]),telemetry:CapturedTelemetry(destination:URL(fileURLWithPath:args[2])))
+    }
+}
