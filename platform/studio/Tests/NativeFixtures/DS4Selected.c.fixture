@@ -1,13 +1,55 @@
 // Appended to the complete actual C engine source, with one private checkpoint
-// before its real empty-job runner. No model, tensor or fake SDK handle exists.
-// Publishes empty CPU metadata directly into the actual mailbox, not through
-// production enqueue/admission. Tests busy observation only, NOT retirement.
+// before its real empty-job runner. Mailbox cases publish empty CPU metadata.
+// The enqueue case obtains genuine tensor/event objects from public GPU APIs;
+// NULL model/layer is an explicitly invalid empty payload, never inference.
+// No SDK handle is manufactured. Tests local custody only, NOT retirement.
 #define REQUIRE(v,m) do{if(!(v)){fprintf(stderr,"%s\n",m);return 77;}}while(0)
 static void *finish_result(void *context){
  metal_graph_selected_async_load *result=context;
  (void)metal_graph_selected_async_load_finish(result);return NULL;
 }
+typedef struct {metal_graph_selected_async_load job;ds4_gpu_tensor *router;uint64_t event;bool accepted;} enqueue_context;
+static void *enqueue_result(void *context){
+ enqueue_context *value=context;
+ value->accepted=metal_graph_selected_async_load_start_tensor(&value->job,value->router,NULL,NULL,0,value->event,0,0);
+ return NULL;
+}
+static int enqueue_frame(bool refuse_creation){
+ REQUIRE(ds4_gpu_init(),"SELECTED_ENQUEUE_REAL_GPU_INIT_FAILED");
+ ds4_gpu_tensor *router=ds4_gpu_tensor_alloc(sizeof(int32_t)*DS4_N_EXPERT_USED);
+ REQUIRE(router&&ds4_gpu_begin_commands(),"SELECTED_ENQUEUE_REAL_TENSOR_BATCH_FAILED");
+ uint64_t event=0;
+ REQUIRE(ds4_gpu_signal_selected_readback_ready(&event)&&event&&
+         ds4_gpu_commit_and_wait_selected_readback(event,"private enqueue control")&&ds4_gpu_synchronize(),
+         "SELECTED_ENQUEUE_REAL_EVENT_COMPLETION_FAILED");
+ enqueue_context context={.router=router,.event=event};
+ __atomic_store_n(&fios_selected_create_refused,refuse_creation,__ATOMIC_RELEASE);
+ __atomic_store_n(&fios_selected_start_hold,1,__ATOMIC_RELEASE);
+ __atomic_store_n(&fios_selected_release,1,__ATOMIC_RELEASE);
+ pthread_t starter;REQUIRE(!pthread_create(&starter,NULL,enqueue_result,&context),"SELECTED_STARTER_CREATE_FAILED");
+ for(unsigned n=0;n<2000&&!__atomic_load_n(&fios_selected_start_entered,__ATOMIC_ACQUIRE);++n)usleep(1000);
+ REQUIRE(__atomic_load_n(&fios_selected_start_entered,__ATOMIC_ACQUIRE),"SELECTED_STARTER_CHECKPOINT_NOT_ENTERED");
+ const bool held=!metal_graph_selected_async_load_idle();
+ __atomic_store_n(&fios_selected_start_release,1,__ATOMIC_RELEASE);
+ REQUIRE(!pthread_join(starter,NULL),"SELECTED_STARTER_JOIN_FAILED");
+ if(refuse_creation){
+  REQUIRE(!context.accepted&&!g_metal_graph_selected_async_load_thread_started&&metal_graph_selected_async_load_idle(),
+          "FIO_DS4_SELECTED_FAILED_CREATE_RETAINED_PREPARATION");
+  __atomic_store_n(&fios_selected_create_refused,0,__ATOMIC_RELEASE);
+  __atomic_store_n(&fios_selected_start_hold,0,__ATOMIC_RELEASE);
+  REQUIRE(metal_graph_selected_async_load_start_tensor(&context.job,router,NULL,NULL,0,event,0,0),
+          "SELECTED_FAILED_CREATE_POISONED_NEW_EMPTY_ENQUEUE");
+ }else REQUIRE(context.accepted,"SELECTED_EMPTY_ENQUEUE_CONTROL_FAILED");
+ REQUIRE(!metal_graph_selected_async_load_finish(&context.job)&&metal_graph_selected_async_load_idle(),
+         "SELECTED_EMPTY_ENQUEUE_CONSUMPTION_FAILED");
+ ds4_gpu_tensor_free(router);
+ REQUIRE(held,"FIO_DS4_SELECTED_ENQUEUE_FRAME_REPORTED_IDLE");
+ puts("PASS: actual enqueue preparation holds local custody; genuine tensor/event, empty invalid-model payload rejected by worker, no model inference.");
+ return 0;
+}
 int main(int argc,char **argv){
+ if(argc==2&&!strcmp(argv[1],"--enqueue-held"))return enqueue_frame(false);
+ if(argc==2&&!strcmp(argv[1],"--enqueue-start-failure"))return enqueue_frame(true);
  const bool hold_finish=argc==2&&strcmp(argv[1],"--finish-held")==0;
  REQUIRE(argc==1||hold_finish,"SELECTED_BAD_MODE");
  REQUIRE(metal_graph_selected_async_load_idle(),"SELECTED_COLD_NOT_IDLE");

@@ -34,6 +34,16 @@ finish=finish.replace(activePin,`    if(__atomic_load_n(&fios_selected_finish_ho
     }
 ${activePin}`);
 actual=actual.slice(0,finishStart)+finish+actual.slice(finishEnd);
+const startPin='    if (!metal_graph_selected_async_load_ensure_worker())';assert.equal(actual.split(startPin).length,2);
+actual=actual.replace(startPin,`    if(__atomic_load_n(&fios_selected_start_hold,__ATOMIC_ACQUIRE)){
+        __atomic_store_n(&fios_selected_start_entered,1,__ATOMIC_RELEASE);
+        while(!__atomic_load_n(&fios_selected_start_release,__ATOMIC_ACQUIRE))usleep(100);
+    }
+${startPin}`);
+const createPin='const int rc = pthread_create(&g_metal_graph_selected_async_load_thread,';assert.equal(actual.split(createPin).length,2);
+// Explicit software refusal before that one worker-creation syscall; no
+// phantom worker or successful join is manufactured by this fault case.
+actual=actual.replace(createPin,'const int rc = __atomic_load_n(&fios_selected_create_refused,__ATOMIC_ACQUIRE) ? EAGAIN : pthread_create(&g_metal_graph_selected_async_load_thread,');
 // Missing-interface baseline only. The actual parent-source fixture separately
 // reproduces destructive cleanup without the busy guard before implementation.
 if(!original.includes('static bool metal_graph_selected_async_load_idle(void)'))actual+='\nstatic bool metal_graph_selected_async_load_idle(void){return true;}\n';
@@ -41,13 +51,13 @@ const fixtureFile=path.join(root,'platform/studio/Tests/NativeFixtures/DS4Select
 const objects=['ds4_image.o','ds4_distributed.o','ds4_tp.o','ds4_ssd.o','ds4_layer_pack.o','ds4_engram.o','ds4_gpu_args.o','ds4_help.o','ds4_metal.o'];
 for(const name of objects){const value=receipt.objects[name];assert(value);const b=readFileSync(path.join(source,name));assert.equal(b.length,value.bytes);assert.equal(createHash('sha256').update(b).digest('hex'),value.sha256);}
 const unit=path.join(directory,'selected.c'),binary=path.join(directory,'selected');
-writeFileSync(unit,'static unsigned fios_selected_entered,fios_selected_release,fios_selected_finish_hold,fios_selected_finish_entered,fios_selected_finish_release;\n'+actual+'\n'+fixture);
+writeFileSync(unit,'static unsigned fios_selected_entered,fios_selected_release,fios_selected_finish_hold,fios_selected_finish_entered,fios_selected_finish_release,fios_selected_start_hold,fios_selected_start_entered,fios_selected_start_release,fios_selected_create_refused;\n'+actual+'\n'+fixture);
 console.log('Selected-loader fixture state:',directory);
 run(compiler,['-isysroot',sdk,'-I',source,'-std=gnu11','-O3','-ffast-math','-g','-mcpu=native','-UNDEBUG',unit,...objects.map(name=>path.join(source,name)),'-lm','-pthread','-framework','Foundation','-framework','Metal','-o',binary]);
-for(const mode of [[],['--finish-held']]){
+for(const mode of [[],['--finish-held'],['--enqueue-held'],['--enqueue-start-failure']]){
  const result=spawnSync(binary,mode,{env,cwd:source,encoding:'utf8',timeout:10000,maxBuffer:1<<20});
- writeFileSync(path.join(directory,mode.length?'finish-stderr.log':'stderr.log'),result.stderr??'');assert(!result.error&&!result.signal,'Selected-loader crash/deadline is not acceptance');assert.equal(result.status,0,result.stderr);
+ writeFileSync(path.join(directory,mode.length?mode[0]+'-stderr.log':'stderr.log'),result.stderr??'');assert(!result.error&&!result.signal,'Selected-loader crash/deadline is not acceptance');assert.equal(result.status,0,result.stderr);
  console.log(result.stdout.trim());
 }
 assert.deepEqual(verifyDs4SourceBuild(config),selected);assert.equal(readFileSync(path.join(source,'ds4.c'),'utf8'),original);assert.equal(readFileSync(fixtureFile,'utf8'),fixture);
-console.log(JSON.stringify({directory,build_receipt_sha256:args[4],fixture_sha256:createHash('sha256').update(fixture).digest('hex'),binary_sha256:createHash('sha256').update(readFileSync(binary)).digest('hex'),actual_cpu_worker:true,empty_payload:true,production_enqueue:false,worker_retirement_tested:false,native_inference:false,native_authority:false}));
+console.log(JSON.stringify({directory,build_receipt_sha256:args[4],fixture_sha256:createHash('sha256').update(fixture).digest('hex'),binary_sha256:createHash('sha256').update(readFileSync(binary)).digest('hex'),actual_cpu_worker:true,empty_payload:true,production_enqueue:true,genuine_tensor_and_event:true,empty_invalid_model_payload:true,worker_retirement_tested:false,native_inference:false,native_authority:false}));
