@@ -1,4 +1,5 @@
-import {lstatSync,realpathSync} from 'node:fs';
+import {lstatSync,realpathSync,readFileSync} from 'node:fs';
+import {createHash} from 'node:crypto';
 import {isAbsolute,normalize,dirname,basename,join,resolve} from 'node:path';
 
 const fail=()=>{throw Error('Invalid offline state review');};
@@ -76,4 +77,37 @@ export function platformUninstallPlan(options){
       {order:5,action:'retain_state_exports_credentials_and_release_artifacts'}],
     blockers:['explicit_operator_review_and_execution_required','installed_enrollment_removal_not_implemented'],
     limitations:[...backup.limitations,'no_automatic_service_stop','no_enrollment_removal','no_data_deletion']};
+}
+
+// Render reviewed configuration as proposal data. No files are written and no
+// launchd/native service operation is executed by this review command.
+export function platformConfigurationPlan({release,verified,host,state}){
+  if(!verified.manifest.native_inventory.hosts.includes(host))fail();
+  const stateDirectory=privateDirectory(state);
+  const xml=value=>value.replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;')
+    .replaceAll('"','&quot;').replaceAll("'",'&apos;');
+  const sha=bytes=>createHash('sha256').update(bytes).digest('hex');
+  const defaults='/Users/mcteer/Library/Application Support/Fios/Studio';
+  const files=[['supervisor','/Library/LaunchDaemons'],['session','/Library/LaunchAgents']].map(([kind,directory])=>{
+    const name=`lab.fios.studio.${kind}.plist`,path=`launchd/${name}`;
+    const artifact=verified.manifest.artifacts.find(item=>item.path===path);
+    if(!artifact)fail();
+    const bytes=readFileSync(join(resolve(release),path));
+    if(sha(bytes)!==artifact.sha256)fail();
+    const template=bytes.toString('utf8');
+    if(!template.includes(`<string>${defaults}</string>`))fail();
+    const content=template.replaceAll(`<string>${defaults}</string>`,`<string>${xml(stateDirectory)}</string>`);
+    return {destination:join(directory,name),owner:'root:wheel',mode:0o644,
+      source_artifact_sha256:artifact.sha256,content_sha256:sha(content),content};
+  });
+  return {version:1,operation:'platform_configuration_review',host,manifest_sha256:verified.manifestSHA256,
+    service_user:'mcteer',state_directory:stateDirectory,installed_release:'/Library/Application Support/Fios/Studio',
+    state:'blocked',changes_made:false,activation:false,privileged_commands:[],configuration_files:files,
+    startup:{supervisor:'system_boot_as_service_user',session:'approved_user_aqua_session'},
+    blockers:['release_and_native_enrollment_incomplete','installation_not_authorized'],
+    rollback_steps:['stop_platform_supervisor_and_manager','retain_current_state_exports_and_configuration',
+      'restore_previous_reviewed_configuration_and_artifacts','restore_previous_original_backup_to_fresh_state_directory',
+      'verify_restored_status_without_inference'],
+    limitations:['configuration_proposal_only','no_configuration_written','no_launchd_operation',
+      'no_native_service_operation','no_credential_configuration','execute_on_the_selected_host_only']};
 }

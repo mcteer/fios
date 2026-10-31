@@ -1,15 +1,18 @@
 #!/usr/bin/env node
 // Read-only installation/state review. Never executes privileged/native commands.
 import {validatePlatformRelease} from './lib/platform-release.mjs';
-import {platformStatePlan,platformRollbackStatePlan,platformUninstallPlan} from './lib/platform-state-plan.mjs';
+import {platformStatePlan,platformRollbackStatePlan,platformUninstallPlan,platformConfigurationPlan} from './lib/platform-state-plan.mjs';
 const args=process.argv.slice(2);
 function failure(){console.error('Platform installation review refused; no changes made.');process.exitCode=1;}
 try{
-  const sizes={'plan':7,'plan-backup':11,'plan-uninstall':11,'plan-restore':13,'plan-rollback':17,'plan-rollback-seven':17};
+  const sizes={'plan':7,'plan-config':9,'plan-backup':11,'plan-uninstall':11,'plan-restore':13,'plan-rollback':17,'plan-rollback-seven':17};
   if(args.length!==sizes[args[0]]||args[1]!=='--release'||args[3]!=='--sha256'||args[5]!=='--host')throw Error('arguments');
   const verified=validatePlatformRelease(args[2],args[4]);
   if(!verified.manifest.native_inventory.hosts.includes(args[6]))throw Error('host');
-  if(['plan-rollback','plan-rollback-seven'].includes(args[0])){
+  if(args[0]==='plan-config'){
+    if(args[7]!=='--state')throw Error('arguments');
+    console.log(JSON.stringify(platformConfigurationPlan({release:args[2],verified,host:args[6],state:args[8]}),null,2));
+  }else if(['plan-rollback','plan-rollback-seven'].includes(args[0])){
     if(args[7]!=='--previous'||args[9]!=='--previous-sha256'||args[11]!=='--backup'||args[13]!=='--backup-sha256'||args[15]!=='--to')throw Error('arguments');
     const previous=validatePlatformRelease(args[8],args[10],{journalSchema:args[0]==='plan-rollback-seven'?7:8});
     console.log(JSON.stringify(platformRollbackStatePlan({release:args[2],current:verified,previousRelease:args[8],previous,

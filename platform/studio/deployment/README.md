@@ -46,6 +46,18 @@ node scripts/install-platform.mjs plan --release /ABSOLUTE/RELEASE_DIRECTORY --s
 
 The expected digest must come from the reviewed build receipt, not an untrusted package's own claim. File review rejects special/set-ID files before reading, opens nonblocking/no-follow to cover a raced FIFO, and checks exact descriptor/named inode metadata and byte count after reading. These are per-file observations, not an atomic whole-tree reservation; future installation must stage and independently reverify protected destination bytes before activation. The reviewer verifies the finite tree, receipt and every byte/mode, rejects links/extra files, and emits explicit blockers. Current packages cannot produce privileged commands. No SSH, launchctl, app/runtime lifecycle, inference, RDMA/network change or deletion is performed. Unknown/apply/rollback/uninstall commands fail closed. This is a review scaffold, **not completion of T049**.
 
+## Per-host configuration review
+
+Render the actual two packaged launchd templates against an existing private state directory, without writing or installing them:
+
+```sh
+node scripts/install-platform.mjs plan-config --release /ABSOLUTE/REVIEWED_RELEASE --sha256 REVIEWED_MANIFEST_SHA --host fios-edge-a.lab --state /ABSOLUTE/PRIVATE_PLATFORM_STATE
+```
+
+The JSON includes the proposed supervisor/session plist content, content hashes, source-template hashes, root:wheel/0644 installation metadata and fixed destination paths. The existing approved `mcteer` service user and `/Library/Application Support/Fios/Studio` binary location remain explicit. State paths are XML-escaped. The supervisor runs as that user from the system domain; the session component requires that user's Aqua session. Review each Studio separately; selecting a host does not contact it or verify its identity.
+
+The command leaves the state and system directories unchanged and emits no privileged commands. Current release/enrollment and installation-approval blockers remain. Generated content is proposal data, not an installed configuration, complete interpreter/native enrollment or service-start permission. Rollback steps retain current state/configuration, restore reviewed previous artifacts/configuration, restore the previous original backup into a fresh directory and verify status without inference. Actual switching/removal still requires the separately reviewed installation workflow; do not load these development proposals.
+
 ## Verified offline artifact copy
 
 A newly reviewed CLI built from this source supports a data-only staging operation:
