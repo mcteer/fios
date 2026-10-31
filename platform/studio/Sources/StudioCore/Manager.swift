@@ -194,6 +194,7 @@ public enum ManagerRuntime {
                         response["sandbox_admission"]=activeExecution == nil ? "disabled":"configured"
                         response["artifact_bytes"]=artifacts.statistics.bytes
                         response["artifact_jobs"]=artifacts.statistics.jobs
+                        response["runtime_cleanup"]=jobs.cleanupStatus(now:requestedAt)
                     case .resources:
                         guard request.payload.isEmpty else { throw ControlError.invalid_request }
                         let telemetry=try ResourceObservationExport.encode(sample:requestResources,gpu:gpuSample,gpuSampledAt:gpuSampledAt,

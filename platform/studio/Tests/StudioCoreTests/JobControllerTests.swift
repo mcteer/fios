@@ -6,6 +6,7 @@ private final class FakeSandboxExecutor:SandboxExecuting {
     var present:[String:(SandboxConfiguration,String,Bool)]=[:]
     var active:Int { 0 }
     var reportExitCodes=false
+    var holdResponses=false
     var resourceNow:Int64=0
     var resourceFailure=false
     var resourceRequests:[Int64]=[]
@@ -35,7 +36,7 @@ private final class FakeSandboxExecutor:SandboxExecuting {
         }
         values.append(SandboxExecution(job:job,result:.success(result)))
     }
-    func drain()->[SandboxExecution] { let result=values;values=[];return result }
+    func drain()->[SandboxExecution] { if holdResponses {return []};let result=values;values=[];return result }
 }
 
 func runJobControllerTests() throws {
@@ -217,4 +218,52 @@ func runSandboxExitProofTests()throws {
     guard controller.exitProof[id]==nil else {fatalError("FIO_SANDBOX_RUNNING_RESTART_REUSED_PRIOR_EXIT_PROOF")}
     guard try journal.sandboxRecords().first(where:{$0.configuration.job==id})?.removalProven == false else {fatalError("Restart observation released sandbox reservation")}
     print("PASS: synthetic created/running snapshots cannot certify exit; observed restart clears old local exit proof without releasing cleanup custody")
+}
+
+func runCleanupStatusRecoveryTests() throws {
+    let directory=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer {try? FileManager.default.removeItem(at:directory)}
+    let journal=try Journal(directory:directory),runtime=FakeSandboxExecutor()
+    let controller=JobController(journal:journal,executor:runtime)
+    var admission=AdmissionPolicy()
+    func sample(_ now:Int64)->ResourceSample {
+        ResourceSample(sampledAt:now,physical:128<<30,available:64<<30,vmAvailable:8<<30,
+            diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal,vmSampledAt:now)
+    }
+    let id=UUID().uuidString.lowercased()
+    let job=try DurableJob(id:id,idempotency:UUID().uuidString.lowercased(),ownerHash:String(repeating:"a",count:64),requestHash:String(repeating:"b",count:64),created:10000)
+    let configuration=try SandboxConfiguration(job:id,nonce:String(repeating:"a",count:64),image:"sha256:"+String(repeating:"b",count:64),memory:512<<20,cpus:1)
+    try admission.reserve(job:id,memory:configuration.memory,cpus:1,sample:sample(10000),now:10000)
+    _=try journal.reserveSandbox(job:job,configuration:configuration)
+    for index in 0..<14 {
+        let now:Int64=10000+Int64(index)*500
+        try controller.tick(now:now,sample:sample(now),admission:&admission,transportReady:{_ in true},cancelModel:{_ in})
+    }
+    let running=try journal.jobs()[0];precondition(running.state == .running)
+    // Independent local model metadata has no dispatched worker/request here.
+    let modelID=UUID().uuidString.lowercased()
+    _=try journal.reserveJob(DurableJob(id:modelID,idempotency:UUID().uuidString.lowercased(),
+        ownerHash:job.ownerHash,requestHash:job.requestHash,created:18000))
+    try journal.transitionJob(id:modelID,to:.running,now:18000)
+    try journal.claim(job:modelID,attempt:0,model:"fixture/model")
+    try journal.markUncertain(job:modelID,attempt:0)
+    try journal.transitionJob(id:id,to:.revoking,now:20000)
+    runtime.holdResponses=true
+    try controller.tick(now:20000,sample:sample(20000),admission:&admission,transportReady:{_ in true},cancelModel:{_ in})
+    let first=controller.cleanupStatus(now:20000)
+    precondition(first["pending_sandboxes"] as? Int == 1 && first["waiting_over_60s"] as? Bool == false)
+    try controller.tick(now:81000,sample:sample(81000),admission:&admission,transportReady:{_ in true},cancelModel:{_ in})
+    let waiting=controller.cleanupStatus(now:81000)
+    precondition(waiting["observed_wait_ms"] as? Int64 == 61000 && waiting["waiting_over_60s"] as? Bool == true)
+    runtime.holdResponses=false
+    for index in 0..<20 {
+        let now:Int64=82000+Int64(index)*500
+        try controller.tick(now:now,sample:sample(now),admission:&admission,transportReady:{_ in true},cancelModel:{_ in})
+    }
+    let removed=try journal.jobs().first{$0.id==id};precondition(removed?.state == .removed)
+    let completed=controller.cleanupStatus(now:92000)
+    precondition(completed["pending_sandboxes"] as? Int == 0 && completed["waiting_over_60s"] as? Bool == false)
+    let unresolved=try journal.unresolvedCount(),uncertain=try journal.uncertainCount()
+    precondition(unresolved==1 && uncertain==1)
+    print("PASS: ordinary delayed runtime completion reports waiting, then clears current cleanup status after removal")
 }

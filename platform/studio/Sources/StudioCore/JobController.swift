@@ -12,7 +12,6 @@ final class JobController {
     private var released=Set<String>()
     private var previous:Int64=0
     private var lastCycle:Int64 = -2000
-    private(set) var cleanupOverdue=false
     private(set) var exitProof:[String:Bool]=[:]
     private var revokingSince:[String:Int64]=[:]
     private let collectVM:Bool
@@ -22,6 +21,17 @@ final class JobController {
     private var vmProbes=Set<String>()
     init(journal:Journal,executor:any SandboxExecuting,collectVM:Bool=false) {
         self.journal=journal;self.executor=executor;self.collectVM=collectVM;lifecycle=SandboxLifecycle(journal:journal)
+    }
+    // Current owned-runtime cleanup only; this does not describe native
+    // inference completion. Wait age starts when this manager observes it.
+    func cleanupStatus(now:Int64)->[String:Any] {
+        let clockKnown=(0...ActivityPolicy.maximumTimestamp).contains(now) && now>=previous &&
+            revokingSince.values.allSatisfy{$0>=0 && $0<=now}
+        let wait=clockKnown ? revokingSince.values.map{now-$0}.max() ?? 0:nil
+        return ["scope":"owned_runtime_cleanup","pending_sandboxes":revokingSince.count,
+            "observed_at":previous>0 ? previous as Any:NSNull(),
+            "observed_wait_ms":wait.map{$0 as Any} ?? NSNull(),
+            "waiting_over_60s":wait.map{($0>=60000) as Any} ?? NSNull()]
     }
     func authorizeVMProbe(id:String,permission:VMProbePermission,now:Int64)throws {
         guard collectVM,vmProbes.isEmpty,
@@ -128,6 +138,7 @@ final class JobController {
                 catch {latestVM=nil}
             }
         }
+        var pendingCleanup=Set<String>()
         for record in records {
             let id=record.configuration.job
             guard var job=jobIndex[id] else { throw JournalError.storage }
@@ -142,9 +153,9 @@ final class JobController {
                 if record.removalProven && !released.contains(id) { admission.releaseProvenAbsent(job:id);released.insert(id);vmProbes.remove(id) }
                 continue
             }
-            if [.revoking,.stopping,.removing,.reconciling].contains(job.state) {
+            if !record.removalProven && [.revoking,.stopping,.removing,.reconciling].contains(job.state) {
+                pendingCleanup.insert(id)
                 revokingSince[id]=revokingSince[id] ?? now
-                if let began=revokingSince[id],now>=began,now-began>=60000 { cleanupOverdue=true }
             }
             guard inFlight[id]==nil else { continue }
             if let command=deferred[id] {
@@ -163,6 +174,7 @@ final class JobController {
             if !safeFor(id) && job.state == .reserved { continue }
             if let command=try lifecycle.next(job:id,now:now,resourcesSafe:!rollback && (safeFor(id) || id != victim)) { try dispatch(command,job:id) }
         }
+        revokingSince=revokingSince.filter{pendingCleanup.contains($0.key)}
         if now>=lastCycle+2000 { lastCycle=now }
     }
 }

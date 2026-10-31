@@ -10,6 +10,7 @@ struct PolicyTestRunner {
             ("operator service status",runOperatorServiceStatusTests),
             ("service status",runServiceStatusTests),
             ("service status summary",runServiceStatusSummaryTests),
+            ("cleanup status recovery",runCleanupStatusRecoveryTests),
             ("native control diagnostics",runNativeControlDiagnosticsTests),
             ("timestamped native control",runNativeTimestampedControlTests),
             ("service recovery",runServiceRecoveryTests),

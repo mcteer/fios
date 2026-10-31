@@ -33,6 +33,8 @@ try{
   child=spawn('/usr/bin/sandbox-exec',['-f',profile,binary,state,mode],{cwd:root,env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C',HOME:'/var/empty'},stdio:'ignore'});
   await until(()=>{assert(!exited(child),'Status manager exited early');return status(state);});
   const combined=status(state);
+  assert.equal(combined.runtime_cleanup.scope,'owned_runtime_cleanup');
+  assert.equal(combined.runtime_cleanup.pending_sandboxes,0);assert.equal(combined.runtime_cleanup.waiting_over_60s,false);
   for(const service of ['mlx','orbstack']){
    const selected=status(state,['service',service,'status']);
    assert.equal(selected.observed,mode);assert.equal(selected.desired,'running');assert.equal(selected.launch_pending,false);

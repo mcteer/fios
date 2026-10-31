@@ -8,6 +8,8 @@ Aggregate `status.services` and `studioctl --state DIR service mlx|orbstack stat
 
 Activity publications have an independent manager counter and composition time for each read. The resource context retains its original sample time, and native metadata retains its own capture sequence/time; reading cached native data advances neither native field.
 
+Aggregate status includes `runtime_cleanup`, scoped to owned sandbox runtime cleanup observed by the current manager. It reports pending sandboxes, the original controller observation time, longest observed wait and whether that wait exceeds60s. Completion/known absence removes entries from this current view. This wait includes runtime outages and is not a claim that the availability-relative cleanup deadline was missed. It neither describes nor clears native inference uncertainty; restart begins a new manager's observed waiting interval.
+
 ## Native-control diagnostic status
 
 Aggregate status now includes `native_control`. It reports the last accepted native-control reply under scope `native_ingress_tracker`, with `authoritative:false`. States are `unconfigured`, `waiting`, `received`, `unavailable` and `stale`. Fresh replies expose the source instance, reported ingress/preparing/active/responding/owner/model-identity counts, ingress closure and tracker uncertainty. Missing or expired replies expose no current counts.
