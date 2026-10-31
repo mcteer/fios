@@ -56,6 +56,13 @@ test('ordinary cancellation is a fixed single-model source scenario',()=>{
  }
 });
 
+test('cancelled older request followed by success is an explicit fixed scenario',()=>{
+ const scenario='cancel-then-success',base=['--plan','--capsule','/private/capsule','--sha256','a'.repeat(64),'--output','/private/plan'];
+ assert.deepEqual(nativeReviewIntent([...base,'--scenario',scenario]),{mode:'plan',inferenceRequested:false,scenario});
+ assert.deepEqual(nativeReviewIntent(['--check','--plan','/private/plan','--sha256','a'.repeat(64),'--scenario',scenario]),{mode:'check',inferenceRequested:false,scenario});
+ assert.deepEqual(nativeReviewIntent(['--run','--plan','/private/plan','--sha256','a'.repeat(64),'--allow-native-inference','--scenario',scenario]),{mode:'run',inferenceRequested:true,scenario});
+});
+
 test('readonly lineage frames bind source/request and missing remains uncertain',()=>{
  const instance='a'.repeat(32),correlation='b'.repeat(64);
  const frame=()=>{const b=Buffer.alloc(112);b.write('FIP9');b[4]=1;b[6]=1;Buffer.from(instance,'hex').copy(b,8);Buffer.from(correlation,'hex').copy(b,24);b.writeBigUInt64BE(10n,56);b.writeBigUInt64BE(5n,64);b.writeBigUInt64BE(3n,72);b.writeUInt32BE(2,80);b.writeUInt32BE(1,88);b.writeUInt32BE(1,92);return b;};

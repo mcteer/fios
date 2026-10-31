@@ -17,11 +17,12 @@ import {nativeReviewIntent,nativeReviewHTTPFailure,nativeReviewJSON,nativeReview
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..'),args=process.argv.slice(2);
 const intent=nativeReviewIntent(args),pair=intent.scenario==='same-model-pair',image=intent.scenario==='single-image';
 const cancelRequest=intent.scenario==='cancel-request';
-const cancelResponse=intent.scenario==='cancel-response',cancellation=cancelRequest||cancelResponse;
+const followup=intent.scenario==='cancel-then-success';
+const cancelResponse=intent.scenario==='cancel-response'||followup,cancellation=cancelRequest||cancelResponse;
 const scenario=intent.scenario??'single-model',scenarioArgs=intent.scenario?['--scenario',scenario]:[];
 if(intent.scenario)args.splice(-2,2);
 const ID='mlx-community/gemma-4-e4b-it-4bit',MODEL=path.join(homedir(),'.mlx-serve/models',ID);
-const LIMITS={context_tokens:512,output_tokens:8,max_concurrent:pair?2:1,model_posts:pair?2:1,request_ms:90000,work_ms:120000,cleanup_ms:7000,memory_abort_bytes:12*2**30};
+const LIMITS={context_tokens:512,output_tokens:8,max_concurrent:pair||followup?2:1,model_posts:pair||followup?2:1,request_ms:90000,work_ms:120000,cleanup_ms:7000,memory_abort_bytes:12*2**30};
 assert(process.platform==='darwin'&&process.arch==='arm64'&&process.getuid()>0);
 function coreModelHost(){
  const read=(program,args)=>execFileSync(program,args,{encoding:'utf8',timeout:2000,maxBuffer:1024,env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C'}}).trim();
@@ -71,6 +72,7 @@ const receipt={source_fixture_only:true,execution_host:executionHost,scenario,..
 function save(){const temporary=path.join(directory,'.result-'+randomUUID());durableNew(temporary,JSON.stringify(receipt)+'\n',0o600);renameSync(temporary,path.join(directory,'result.json'));const fd=openSync(directory,constants.O_RDONLY);try{fsyncSync(fd);}finally{closeSync(fd);}}save();
 const child=spawn('/usr/bin/sandbox-exec',['-D','FIOS_REVIEW_ENDPOINT=localhost:'+port,'-D','FIOS_REVIEW_STATE='+home,'-D','FIOS_REVIEW_BINARY='+capsule.binary,'-f',profile,capsule.binary,'serve','--host','127.0.0.1','--port',String(port),'--model-dir',models,'--no-warmup-eager',...(image?[]:['--no-vision']),'--ctx-size','512','--max-concurrent',String(LIMITS.max_concurrent),'--api-key-env','FIOS_SOURCE_MODEL_KEY','--api-key-strict'],{env,cwd:home,stdio:['ignore','pipe','pipe']});
 const modelAbort=new AbortController();
+const requestAborts=new Map();
 let original,output=0,failed,timer,postsDone=false,stage='owned_identity';
 function ended(){return child.exitCode!==null||child.signalCode!==null;}
 function observe(){const r=spawnSync(plan.observer,[String(child.pid)],{encoding:'utf8',timeout:1000,maxBuffer:1024,env:{PATH:'/usr/bin:/bin',LANG:'C'}});assert(r.status===0);const p=JSON.parse(r.stdout);assert(p.pid===child.pid&&p.uid===process.getuid()&&/^\d+:\d+$/.test(p.start)&&Number.isSafeInteger(p.resident)&&Number.isSafeInteger(p.footprint));return p;}
@@ -115,7 +117,7 @@ async function sampleLineages(){
   receipt.client_cancellation={requested_ms:Math.round(performance.now()-began),source_root:lineage.root_sequence,
    source_sequence:lineage.sequence,references:lineage.references,owners:lineage.owners,
    source_lineage_observed:true,observer_included:true,authority:false,native_completion_proven:false};
-  save();modelAbort.abort();return;
+  save();requestAborts.get(0).abort();return;
  }
  if(!pair||receipt.requests?.length!==2)return;
  const [a,b]=receipt.requests;
@@ -131,28 +133,30 @@ async function sampleLineages(){
 }
 function sampleActivity(){if(activityStopped||activityPending)return;activityPending=(async()=>{acceptActivity(await get('/v1/fios/activity'));await Promise.all([sampleLineages(),sampleComponents()]);})().catch(()=>{failed='request_phase_or_lineage_observation_failed';modelAbort.abort();}).finally(()=>{activityPending=null;});}
 async function requestModel(index){
+ const requestAbort=new AbortController(),shouldCancel=cancelResponse&&index===0;
+ requestAborts.set(index,requestAbort);
  const request={index,correlation:randomBytes(32).toString('hex'),dispatched_ms:Math.round(performance.now()-began),response_complete:false};
  (receipt.requests??=[]).push(request);receipt.model_post_attempts++;assert(receipt.model_post_attempts<=LIMITS.model_posts);receipt.actual_model_posts=null;save();
- const response=await fetch('http://127.0.0.1:'+port+'/v1/chat/completions',{method:'POST',redirect:'error',headers:{Authorization:'Bearer '+key,'Content-Type':'application/json','X-Fios-Request-ID':request.correlation},body:JSON.stringify({model:ID,messages:[{role:'user',content:image?[{type:'text',text:'What is the dominant color? Reply with one word.'},{type:'image_url',image_url:{url:'data:image/png;base64,'+readFileSync(path.join(root,'tests/fixtures/platform/native-image-64.png')).toString('base64')}}]:cancelResponse?'Count from one through four.':'Reply with one word: ready.'}],max_tokens:LIMITS.output_tokens,temperature:0,stream:true,stream_options:{include_usage:true}}),signal:AbortSignal.any([AbortSignal.timeout(LIMITS.request_ms),modelAbort.signal])});
+ const response=await fetch('http://127.0.0.1:'+port+'/v1/chat/completions',{method:'POST',redirect:'error',headers:{Authorization:'Bearer '+key,'Content-Type':'application/json','X-Fios-Request-ID':request.correlation},body:JSON.stringify({model:ID,messages:[{role:'user',content:image?[{type:'text',text:'What is the dominant color? Reply with one word.'},{type:'image_url',image_url:{url:'data:image/png;base64,'+readFileSync(path.join(root,'tests/fixtures/platform/native-image-64.png')).toString('base64')}}]:shouldCancel?'Count from one through four.':'Reply with one word: ready.'}],max_tokens:LIMITS.output_tokens,temperature:0,stream:true,stream_options:{include_usage:true}}),signal:AbortSignal.any([AbortSignal.timeout(LIMITS.request_ms),modelAbort.signal,requestAbort.signal])});
  request.http_status=response.status;receipt.actual_model_posts=receipt.requests.every(r=>r.http_status!==undefined)?receipt.model_post_attempts:null;save();
  if(!response.ok){let value;try{value=await nativeReviewJSON(response,16384);}catch{}request.http_failure=nativeReviewHTTPFailure(response.status,value);receipt.http_failure??=request.http_failure;if(image&&request.http_failure.modality_error==='vision_unavailable')failed='selected_model_vision_unavailable';throw Error('Native model request refused');}
  let buffer='',bytes=0,done=false,deltas=0,completionTokens=null;const decoder=new TextDecoder('utf-8',{fatal:true});
  for await(const chunk of response.body){
   bytes+=chunk.length;assert(bytes<=65536&&!failed);
-  if(cancelResponse&&receipt.client_cancellation)continue;
+  if(shouldCancel&&receipt.client_cancellation)continue;
   buffer+=decoder.decode(chunk,{stream:true});let at;
   while((at=buffer.indexOf('\n'))>=0){
    const line=buffer.slice(0,at).trim();buffer=buffer.slice(at+1);if(!line.startsWith('data:'))continue;
    const data=line.slice(5).trim();if(data==='[DONE]'){done=true;continue;}const value=JSON.parse(data);assert(!value.error);
    if(value.choices?.some(c=>['content','reasoning_content'].some(k=>typeof c.delta?.[k]==='string'&&c.delta[k].length>0))){
     deltas++;
-    if(cancelResponse&&!receipt.client_cancellation){
+    if(shouldCancel&&!receipt.client_cancellation){
      assert(responseLineage,'A correlated source lineage must precede response cancellation');
      request.delta_events=deltas;
      receipt.client_cancellation={requested_ms:Math.round(performance.now()-began),lineage_observed_ms:responseLineage.observed_ms,
       source_root:responseLineage.root_sequence,source_sequence:responseLineage.sequence,references:responseLineage.references,owners:responseLineage.owners,
       source_lineage_observed:true,response_delta_observed:true,observer_included:true,authority:false,native_completion_proven:false};
-     save();modelAbort.abort();break;
+     save();requestAbort.abort();break;
     }
    }
    if(value.usage?.completion_tokens!==undefined){assert(Number.isSafeInteger(value.usage.completion_tokens)&&value.usage.completion_tokens>=0&&value.usage.completion_tokens<=LIMITS.output_tokens);completionTokens=value.usage.completion_tokens;}
@@ -179,7 +183,7 @@ try{
   }
   receipt.native_uncertainty=true;receipt.native_inference=null;receipt.inference_attempted=true;save();
   activityTimer=setInterval(sampleActivity,100);stage='model_requests';
-  const pending=Array.from({length:LIMITS.model_posts},(_,index)=>requestModel(index));let results;
+  const pending=Array.from({length:followup?1:LIMITS.model_posts},(_,index)=>requestModel(index));let results;
   if(cancellation){
    const outcomes=await Promise.allSettled(pending),outcome=outcomes[0];
    assert(!failed&&receipt.client_cancellation?.source_lineage_observed&&receipt.model_post_attempts===1);
@@ -187,6 +191,14 @@ try{
    assert(!receipt.requests[0].response_complete);
    receipt.client_cancellation.client_abort_observed=true;
    receipt.native_inference=null; // Accepted lineage is not completed inference.
+   if(followup){
+    receipt.client_cancellation.abort_observed_ms=Math.round(performance.now()-began);save();
+    const newer=await requestModel(1);
+    assert(newer.response_complete&&newer.dispatched_ms>=receipt.client_cancellation.abort_observed_ms);
+    assert(receipt.model_post_attempts===2&&receipt.actual_model_posts===2);
+    assert.equal(receipt.native_uncertainty,true);assert.equal(receipt.native_inference,null);
+    receipt.newer_response_complete=true;
+   }
   }else{
    try{results=await Promise.all(pending);}catch(error){modelAbort.abort();await Promise.allSettled(pending);throw error;}
    assert(receipt.model_post_attempts===LIMITS.model_posts&&receipt.actual_model_posts===LIMITS.model_posts);postsDone=true;receipt.native_inference=true;
@@ -200,7 +212,7 @@ try{
   }
   assert(receipt.request_phase_observations.preparing_max>0||receipt.request_phase_observations.active_max>0||receipt.request_phase_observations.responding_max>0,'No live model request phase observed');
   if(cancellation){
-   receipt.result='client_cancelled_after_retained_source_lineage_observed';
+   receipt.result=followup?'older_client_cancelled_newer_same_model_response_complete':'client_cancelled_after_retained_source_lineage_observed';
   }else if(pair){
    assert(Math.max(...results.map(r=>r.dispatched_ms))<Math.min(...results.map(r=>r.completed_ms)),'Client requests did not overlap');
    assert(receipt.correlated_lineage_observations?.retained_overlap_samples>0,'No bracketed retained lineage overlap observed');

@@ -81,7 +81,7 @@ export function nativeReviewHTTPFailure(status, body) {
 export function nativeReviewIntent(input) {
  const args=[...input];let scenario;
  const at=args.indexOf('--scenario');
- if(at!==-1){assert(at===args.length-2&&['same-model-pair','single-image','cancel-request','cancel-response'].includes(args[at+1]));scenario=args[at+1];args.splice(at,2);}
+ if(at!==-1){assert(at===args.length-2&&['same-model-pair','single-image','cancel-request','cancel-response','cancel-then-success'].includes(args[at+1]));scenario=args[at+1];args.splice(at,2);}
  const result=value=>scenario?{...value,scenario}:value;
  const mode=args[0];assert(['--plan','--check','--run'].includes(mode));
  if(mode==='--plan'){
