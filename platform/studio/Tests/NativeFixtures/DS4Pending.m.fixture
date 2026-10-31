@@ -208,6 +208,7 @@ int main(int argc,char** argv){@autoreleasepool{
   // submission; known busy refusal must neither manufacture nor clear it.
   if(initial_uncertain)g_fios_pending_uncertain=1;
   pthread_t release;REQUIRE(pthread_create(&release,NULL,fios_private_release_callback,NULL)==0,"TP_CALLBACK_RELEASE_THREAD_FAILED");
+  const int local_work_busy=ds4_gpu_tp_local_work_busy();
   const int busy_retired=ds4_gpu_tp_shutdown_checked();
   const int preserved=!busy_retired&&g_tp_thread_running&&g_tp_exchange_ud==&identity&&(g_fios_pending_uncertain==initial_uncertain)&&!atomic_load(&fios_private_callback_release)&&!g_tp_shutdown;
   atomic_store(&fios_private_shutdown_returned,1);
@@ -221,6 +222,7 @@ int main(int argc,char** argv){@autoreleasepool{
   REQUIRE(final_retired==!initial_uncertain,"FIO_DS4_CHECKED_TP_INDEPENDENT_UNCERTAINTY_LOST");
   REQUIRE(ds4_gpu_tp_shutdown_checked()==!initial_uncertain,"FIO_DS4_CHECKED_TP_EMPTY_STATE_REFUNDED");
   REQUIRE(preserved,"FIO_DS4_TP_SHUTDOWN_PREEMPTED_ACTIVE_CALLBACK");
+  REQUIRE(local_work_busy,"FIO_DS4_TP_ACTIVE_WORK_REPORTED_NOT_BUSY");
   REQUIRE(g_fios_pending_uncertain==initial_uncertain,"FIO_DS4_TP_CALLBACK_UNCERTAINTY_CHANGED");
   puts("PASS: actual local callback holds native gate work; teardown refuses before signalling/join, known busy refusal preserves the pre-existing uncertainty value.");return 0;
  }

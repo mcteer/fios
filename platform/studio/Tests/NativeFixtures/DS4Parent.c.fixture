@@ -9,7 +9,7 @@
 #define DS4_TP_GATES_PER_LAYER 1
 typedef struct { void *map; } model;
 typedef struct {
- bool fios_session_destroy_uncertain;
+ bool fios_teardown_uncertain;
  struct { void *ctx, *slab, *zero_vec, *host_slab;
           void **out_views, **in_views, **batch_out_views, **batch_in_views; } tp;
  int weights,vocab,simulated_memory;
@@ -22,6 +22,8 @@ static unsigned destructive,checked,legacy,prepared,unordered;
 static int destroy(void){if(!prepared)++unordered;return ++destructive;}
 static int checked_result,prepare_result=1,cpu_result=1;
 static unsigned cpu_checked,selected_probes;
+static int cpu_work_busy;
+static int ds4_threads_work_busy(void){return cpu_work_busy;}
 static int selected_idle=1;
 static int metal_graph_selected_async_load_idle(void){++selected_probes;return selected_idle;}
 static int ds4_threads_shutdown_checked(void){++cpu_checked;return cpu_result;}
@@ -81,6 +83,13 @@ int main(int argc,char **argv){
   }
   return 0;
  }
+ if(argc==2&&strcmp(argv[1],"--cpu-unbind")==0){
+  cpu_work_busy=1;e.tp.ctx=&context;e.tp.slab=&slab;const ds4_engine before=e;
+  if(ds4_engine_tp_unbind_checked(&e)||destructive||cpu_checked||prepared||checked||memcmp(&e,&before,sizeof(e))){
+   fputs("FIO_DS4_UNBIND_RELEASED_WITH_ACTIVE_CPU_WORK\n",stderr);return 77;
+  }
+  return 0;
+ }
  if(argc==2&&strcmp(argv[1],"--selected-active")==0){
   selected_idle=0;const ds4_engine before=e;
   const int destroyed=ds4_engine_close_checked(&e);
@@ -90,7 +99,7 @@ int main(int argc,char **argv){
   return 0;
  }
  if(argc==2&&strcmp(argv[1],"--child-uncertain")==0){
-  e.fios_session_destroy_uncertain=true;const ds4_engine before=e;
+  e.fios_teardown_uncertain=true;const ds4_engine before=e;
   const int destroyed=ds4_engine_close_checked(&e);
   if(destroyed||destructive||cpu_checked||prepared||checked||memcmp(&e,&before,sizeof(e))){
    fputs("FIO_DS4_ENGINE_RELEASED_AFTER_UNCERTAIN_SESSION_DESTROY\n",stderr);return 77;

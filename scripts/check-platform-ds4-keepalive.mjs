@@ -19,9 +19,9 @@ const sha=value=>createHash('sha256').update(value).digest('hex');
 let passed=false;
 try {
  assert.equal(git('rev-parse','HEAD').trim(),'9139e2ae58a41503968a500f36f75895c1ba63fc');
- assert.equal(git('diff','HEAD','--name-only').trim(),composed?'ds4.c\nds4.h\nds4_gpu.h\nds4_gpu_tp.h\nds4_metal.m':'ds4_metal.m');
+ assert.equal(git('diff','HEAD','--name-only').trim(),composed?'ds4.c\nds4.h\nds4_gpu.h\nds4_gpu_tp.h\nds4_metal.m\nds4_tp.c':'ds4_metal.m');
  const patch=readFileSync(path.join(root,composed?'platform/studio/native/ds4-9139e2a-participant-retirement.patch':'platform/studio/native/ds4-9139e2a-keepalive-retirement.patch'),'utf8');
- assert.equal(git('diff','--no-ext-diff','HEAD','--',...(composed?['ds4.c','ds4.h','ds4_gpu.h','ds4_gpu_tp.h','ds4_metal.m']:['ds4_metal.m'])),patch);
+ assert.equal(git('diff','--no-ext-diff','HEAD','--',...(composed?['ds4.c','ds4.h','ds4_gpu.h','ds4_gpu_tp.h','ds4_metal.m','ds4_tp.c']:['ds4_metal.m'])),patch);
  const original=readFileSync(path.join(source,'ds4_metal.m'),'utf8');
  const shaderFile=readFileSync(path.join(source,'metal/dsv4_misc.metal'),'utf8');assert.equal(shaderFile,git('show','HEAD:metal/dsv4_misc.metal'));
  const kernel=/^kernel void kernel_dsv4_tp_keepalive\([\s\S]*?^\}/m.exec(shaderFile);assert(kernel);

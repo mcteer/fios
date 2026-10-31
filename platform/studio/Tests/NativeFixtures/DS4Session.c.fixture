@@ -4,16 +4,24 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
-#define DS4_NO_GPU 1
-typedef struct {bool fios_session_destroy_uncertain;uint64_t glm_session_graph_bytes;unsigned glm_session_count;struct {void *ctx;} tp;} ds4_engine;
+// GPU branches compile against CPU-only placeholder fields/callees; no SDK objects.
+typedef struct {bool fios_teardown_uncertain;uint64_t glm_session_graph_bytes;unsigned glm_session_count;struct {void *ctx;} tp;} ds4_engine;
 typedef struct {
  ds4_engine *engine;uint64_t glm_reserved_graph_bytes;uint32_t tp_session_id;
  bool fios_destroy_uncertain;
  void *distributed,*checkpoint_images,*logits,*sample_probs,*mtp_logits;
- int cpu_cache,cpu_scratch,checkpoint,greedy_splitkv_segment;
+ int cpu_cache,cpu_scratch,checkpoint,greedy_splitkv_segment,graph,glm_graph;
+ void *glm_mtp_hc,*glm_mtp_logits0,*spec_row_logits,*dspark_markov_bias,*dspark_conf_features;
 } ds4_session;
 static unsigned destructive,sends,acks;
-static int send_result=1,ack_result=1,transport_failed;
+static int send_result=1,ack_result=1,transport_failed,local_busy,cpu_busy,selected_idle=1;
+static int ds4_threads_work_busy(void){return cpu_busy;}
+static int ds4_gpu_tp_local_work_busy(void){return local_busy;}
+static int metal_graph_selected_async_load_idle(void){return selected_idle;}
+static int ds4_session_is_glm(ds4_session *s){(void)s;return 0;}
+#define ds4_session_print_dspark_stats(...) ((void)0)
+#define glm_graph_free(...) (++destructive)
+#define metal_graph_free(...) (++destructive)
 static int ds4_session_tp_leader(ds4_session *s){(void)s;return 1;}
 static int ds4_session_is_cpu(ds4_session *s){(void)s;return 1;}
 static int ds4_tp_failed(void *ctx){(void)ctx;return transport_failed;}
@@ -36,12 +44,22 @@ int main(int argc,char **argv){
  if(strcmp(argv[1],"--send-failure")==0)send_result=0;
  if(strcmp(argv[1],"--ack-failure")==0)ack_result=0;
  if(strcmp(argv[1],"--failed-transport")==0)transport_failed=1;
+ if(strcmp(argv[1],"--tp-busy")==0||strcmp(argv[1],"--selected-busy")==0||strcmp(argv[1],"--cpu-busy")==0){
+  cpu_busy=strcmp(argv[1],"--cpu-busy")==0;local_busy=strcmp(argv[1],"--tp-busy")==0;selected_idle=cpu_busy||local_busy;
+  const int refused=!ds4_session_free_checked(&s);
+  if(!refused||destructive||sends||acks||s.fios_destroy_uncertain||e.fios_teardown_uncertain||s.tp_session_id!=7||e.glm_session_graph_bytes!=40||e.glm_session_count!=2){
+   fputs("FIO_DS4_SESSION_BUSY_GUARD_MUTATED_OWNERSHIP\n",stderr);return 77;
+  }
+  cpu_busy=0;local_busy=0;selected_idle=1;
+  if(!ds4_session_free_checked(&s)||!destructive||sends!=1||acks!=1){fputs("SESSION_KNOWN_BUSY_CONTROL_NEVER_RECOVERED\n",stderr);return 77;}
+  return 0;
+ }
  const int result=ds4_session_free_checked(&s);
  if(success){
   if(result!=1||!destructive||s.tp_session_id||e.glm_session_graph_bytes!=24||e.glm_session_count!=1||sends!=1||acks!=1){fputs("SESSION_LOCAL_SUCCESS_CONTROL_CHANGED\n",stderr);return 77;}
   return 0;
  }
- if(result||destructive||!e.fios_session_destroy_uncertain||s.tp_session_id!=7||s.engine!=&e||s.glm_reserved_graph_bytes!=16||e.glm_session_graph_bytes!=40||e.glm_session_count!=2){
+ if(result||destructive||!e.fios_teardown_uncertain||s.tp_session_id!=7||s.engine!=&e||s.glm_reserved_graph_bytes!=16||e.glm_session_graph_bytes!=40||e.glm_session_count!=2){
   fputs("FIO_DS4_SESSION_RELEASED_AFTER_UNACKNOWLEDGED_DESTROY\n",stderr);return 77;
  }
  const unsigned old_sends=sends,old_acks=acks;

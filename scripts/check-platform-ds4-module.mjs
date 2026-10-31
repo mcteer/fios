@@ -30,7 +30,7 @@ function verify(){
 try{
  assert.equal(git('rev-parse','HEAD').trim(),receipt.revision);
  const patch=readFileSync(path.join(root,'platform/studio/native/ds4-9139e2a-participant-retirement.patch'),'utf8');
- assert.equal(git('diff','HEAD','--name-only').trim(),'ds4.c\nds4.h\nds4_gpu.h\nds4_gpu_tp.h\nds4_metal.m');assert.equal(git('diff','--no-ext-diff','HEAD','--','ds4.c','ds4.h','ds4_gpu.h','ds4_gpu_tp.h','ds4_metal.m'),patch);
+ assert.equal(git('diff','HEAD','--name-only').trim(),'ds4.c\nds4.h\nds4_gpu.h\nds4_gpu_tp.h\nds4_metal.m\nds4_tp.c');assert.equal(git('diff','--no-ext-diff','HEAD','--','ds4.c','ds4.h','ds4_gpu.h','ds4_gpu_tp.h','ds4_metal.m','ds4_tp.c'),patch);
  const declared=git('ls-files','-z').split('\0').filter(name=>name==='Makefile'||/\.(?:c|m|h|inc|metal)$/.test(name)).sort();
  assert.deepEqual(Object.keys(receipt.declared_sources).sort(),declared);
  verify();
@@ -49,7 +49,7 @@ try{
  assert(!result.error&&!result.signal,'Full-module fixture deadline/crash is not acceptance');assert.equal(result.status,0,result.stderr);
  assert(result.stdout.includes('PASS: complete genuine DS4 module/full original shader initializer'));
  verify();assert.equal(readFileSync(fixtureFile,'utf8'),fixture);assert.equal(sha(readFileSync(document)),args[4]);
- assert.equal(git('diff','--no-ext-diff','HEAD','--','ds4.c','ds4.h','ds4_gpu.h','ds4_gpu_tp.h','ds4_metal.m'),patch);
+ assert.equal(git('diff','--no-ext-diff','HEAD','--','ds4.c','ds4.h','ds4_gpu.h','ds4_gpu_tp.h','ds4_metal.m','ds4_tp.c'),patch);
  // A second executable injects a wait failure only AFTER actual completion.
  // It exercises genuine pending-list/accounting code, not a fake SDK object.
  const pendingFile=path.join(root,'platform/studio/Tests/NativeFixtures/DS4Pending.m.fixture'),pending=readFileSync(pendingFile,'utf8');
@@ -116,7 +116,7 @@ try{
   assert(check.stdout.includes(marker));
  }
  verify();assert.equal(readFileSync(pendingFile,'utf8'),pending);assert.equal(readFileSync(fixtureFile,'utf8'),fixture);assert.equal(readFileSync(path.join(source,'ds4_metal.m'),'utf8'),original);
- assert.equal(sha(readFileSync(document)),args[4]);assert.equal(git('diff','--no-ext-diff','HEAD','--','ds4.c','ds4.h','ds4_gpu.h','ds4_gpu_tp.h','ds4_metal.m'),patch);
+ assert.equal(sha(readFileSync(document)),args[4]);assert.equal(git('diff','--no-ext-diff','HEAD','--','ds4.c','ds4.h','ds4_gpu.h','ds4_gpu_tp.h','ds4_metal.m','ds4_tp.c'),patch);
  const sequenceFile=path.join(root,'platform/studio/Tests/NativeFixtures/DS4Sequence.m.fixture'),sequence=readFileSync(sequenceFile,'utf8');
  const sequenceUnit=path.join(directory,'sequence.m'),sequenceBinary=path.join(directory,'sequence');
  writeFileSync(sequenceUnit,'#include '+JSON.stringify(path.join(source,'ds4_metal.m'))+'\n'+sequence);
@@ -127,7 +127,7 @@ try{
  assert(!counter.error&&!counter.signal,'Sequence fixture deadline/crash is not acceptance');assert.equal(counter.status,0,counter.stderr);
  assert(counter.stdout.includes('PASS: exhausted actual cache sequence refuses without initialization'));
  }
- verify();assert.equal(readFileSync(faultHeaderFile,'utf8'),faultHeader);assert.equal(readFileSync(sequenceFile,'utf8'),sequence);assert.equal(readFileSync(pendingFile,'utf8'),pending);assert.equal(readFileSync(fixtureFile,'utf8'),fixture);assert.equal(sha(readFileSync(document)),args[4]);assert.equal(git('diff','--no-ext-diff','HEAD','--','ds4.c','ds4.h','ds4_gpu.h','ds4_gpu_tp.h','ds4_metal.m'),patch);
+ verify();assert.equal(readFileSync(faultHeaderFile,'utf8'),faultHeader);assert.equal(readFileSync(sequenceFile,'utf8'),sequence);assert.equal(readFileSync(pendingFile,'utf8'),pending);assert.equal(readFileSync(fixtureFile,'utf8'),fixture);assert.equal(sha(readFileSync(document)),args[4]);assert.equal(git('diff','--no-ext-diff','HEAD','--','ds4.c','ds4.h','ds4_gpu.h','ds4_gpu_tp.h','ds4_metal.m','ds4_tp.c'),patch);
  const outcome={scope:'full_ds4_initializer_reviewed_local_participants_only',build_receipt_sha256:args[4],fixture_sha256:sha(fixture),binary_sha256:sha(readFileSync(binary)),original_full_shader_library:true,sequence_fixture_sha256:sha(sequence),sequence_binary_sha256:sha(readFileSync(sequenceBinary)),fault_shim_sha256:sha(faultHeader),pending_fixture_sha256:sha(pending),pending_binary_sha256:sha(readFileSync(faultBinary)),injected_wait_failure_after_real_completion:true,batch_cleanup_failure_retained:true,keepalive_cleanup_failure_retained:true,foreign_cleanup_failure_retained:true,local_tp_service:true,tiny_tp_gpu_producer:true,local_callback:true,distributed_exchange:false,model_opened:false,native_inference:false,installed:false,native_authority:false,all_backend_terminality:false,directory};
  writeFileSync(path.join(directory,'result.json'),JSON.stringify(outcome)+'\n',{mode:0o400});console.log(JSON.stringify(outcome));
 }catch(error){console.error('Full-module fixture state retained:',directory);throw error;}

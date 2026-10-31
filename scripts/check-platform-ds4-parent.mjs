@@ -13,13 +13,13 @@ assert(source.startsWith('/private/tmp/')&&info.uid===process.getuid()&&info.isD
 const directory=mkdtempSync('/private/tmp/fios-ds4-parent-');
 const env={PATH:'/usr/bin:/bin',HOME:directory,LANG:'C',LC_ALL:'C',GIT_CONFIG_GLOBAL:'/dev/null',GIT_CONFIG_SYSTEM:'/dev/null',GIT_CONFIG_NOSYSTEM:'1',GIT_NO_REPLACE_OBJECTS:'1'};
 const git=(...argv)=>execFileSync('/usr/bin/git',['--no-replace-objects','-c','core.fsmonitor=false','-C',source,...argv],{env,encoding:'utf8',timeout:5000});
-const files=['ds4.c','ds4.h','ds4_gpu.h','ds4_gpu_tp.h','ds4_metal.m'];
+const files=['ds4.c','ds4.h','ds4_gpu.h','ds4_gpu_tp.h','ds4_metal.m','ds4_tp.c'];
 const patchFile=path.join(root,'platform/studio/native/ds4-9139e2a-participant-retirement.patch'),patch=readFileSync(patchFile,'utf8');
 assert.equal(git('rev-parse','HEAD').trim(),'9139e2ae58a41503968a500f36f75895c1ba63fc');
 assert.equal(git('diff','HEAD','--name-only').trim(),files.join('\n'));
 assert.equal(git('diff','--no-ext-diff','HEAD','--',...files),patch);
 const original=readFileSync(path.join(source,'ds4.c'),'utf8');
-const start=original.indexOf('static int ds4_engine_tp_unbind_checked(ds4_engine *e) {')>=0?original.indexOf('static int ds4_engine_tp_unbind_checked(ds4_engine *e) {'):original.indexOf('void ds4_engine_tp_unbind(ds4_engine *e) {');
+const start=original.indexOf('int ds4_engine_tp_unbind_checked(ds4_engine *e) {')>=0?original.indexOf('int ds4_engine_tp_unbind_checked(ds4_engine *e) {'):original.indexOf('void ds4_engine_tp_unbind(ds4_engine *e) {');
 const end=original.indexOf('\nbool ds4_engine_is_glm_dsa',start);
 const close=[...original.matchAll(/^(?:void ds4_engine_close|int ds4_engine_close_checked)\(ds4_engine \*e\) \{[\s\S]*?^\}/gm)].map(m=>m[0]).join('\n');
 assert(start>0&&end>start&&close);
@@ -27,7 +27,7 @@ const fixtureFile=path.join(root,'platform/studio/Tests/NativeFixtures/DS4Parent
 const unit=path.join(directory,'parent.c'),binary=path.join(directory,'parent');
 writeFileSync(unit,fixture.replace('/* SOURCE_FUNCTIONS */',original.slice(start,end)+'\n'+close));
 execFileSync('/usr/bin/clang',['-std=c11','-O2','-UNDEBUG',unit,'-o',binary],{env,timeout:30000});
-const preparationResults=['--gpu-unbind','--gpu-close','--gpu-empty','--prepared-success','--cpu-close','--cpu-empty','--checked-refusal','--child-uncertain','--selected-active'].map(mode=>{
+const preparationResults=['--gpu-unbind','--gpu-close','--gpu-empty','--prepared-success','--cpu-close','--cpu-empty','--checked-refusal','--child-uncertain','--selected-active','--cpu-unbind'].map(mode=>{
  const r=spawnSync(binary,[mode],{env,encoding:'utf8',timeout:5000});
  writeFileSync(path.join(directory,mode+'-stderr.log'),r.stderr??'');return r;
 });

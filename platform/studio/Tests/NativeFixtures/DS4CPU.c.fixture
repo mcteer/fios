@@ -18,6 +18,7 @@ int main(int argc,char **argv){
   int result=ds4_threads_shutdown_checked();
   REQUIRE(!result&&g_pool.initialized&&g_pool.n_threads==2&&pthread_equal(g_pool.threads[1],thread),"FIO_DS4_CPU_JOIN_REFUSAL_LOST_POOL");
   REQUIRE(fios_actual_joins==1,"CPU_FAULT_DID_NOT_FOLLOW_ACTUAL_JOIN");
+  REQUIRE(ds4_threads_work_busy(),"FIO_DS4_CPU_UNCERTAINTY_REPORTED_NOT_BUSY");
   fios_join_failure=0;
   REQUIRE(!ds4_threads_shutdown_checked()&&fios_actual_joins==1,"FIO_DS4_CPU_JOIN_UNCERTAINTY_REFUNDED");
   puts("PASS: actual idle CPU worker joins before injected failed acknowledgement; exact pool custody retained.");return 0;
@@ -28,10 +29,12 @@ int main(int argc,char **argv){
   REQUIRE(pthread_create(&writer,NULL,producer,&payload)==0,"CPU_INLINE_WRITER_CREATE_FAILED");
   for(unsigned n=0;n<2000&&atomic_load(&entered)<(parallel?2u:1u);++n)usleep(1000);
   REQUIRE(atomic_load(&entered)==(parallel?2u:1u),"CPU_WRITERS_NOT_ENTERED");
+  const int busy=ds4_threads_work_busy();
   const int result=ds4_threads_shutdown_checked();
   const int preserved=!result&&g_pool.initialized&&!g_pool.shutdown&&!fios_actual_joins;
   atomic_store(&released,1);REQUIRE(pthread_join(writer,NULL)==0,"CPU_INLINE_WRITER_JOIN_FAILED");
   REQUIRE(preserved,"FIO_DS4_CPU_SHUTDOWN_RELEASED_ACTIVE_INLINE_WRITER");
+  REQUIRE(busy,"FIO_DS4_CPU_ACTIVE_WORK_REPORTED_NOT_BUSY");
   REQUIRE(ds4_threads_shutdown_checked()&&!g_pool.initialized,"CPU_IDLE_AFTER_INLINE_REFUSED");
   puts(parallel?"PASS: actual parallel CPU writers hold pool lifetime; busy shutdown refuses before signalling or joins.":"PASS: actual inline CPU writer holds pool lifetime; busy shutdown refuses before signalling or joins.");return 0;
  }
