@@ -2,6 +2,12 @@
 
 **Current scope (2026-10-31):** Native hardening and security-adjacent investigation are stopped at the operator’s request. The source matrices and receipts below are historical evidence, not instructions to resume that work. Ordinary functional implementation, native integration and correctness checks continue; installed activation and disruptive acceptance remain separately gated.
 
+## Host/model roles clarified2026-10-31
+
+Small models run only on `fios-core`, the24GiB M4-family Mac Mini. The two Studios (`fios-edge-a`/`fios-edge-b`) host larger models only. The local read-only observation reports hostname `fios-core.lab`, LocalHostName `fios-core`,25,769,803,776 memory bytes and CPU `Apple M4 Pro`. This identifies the development host for the fixed small-model source runner; it does not enroll a Studio or authorize any model/lifecycle change there.
+
+The fixed Gemma source experiment now checks/binds core’s host profile in its plan/check/run receipts. Its small-model response/unsupported-image observations,12GiB process abort threshold, local12GiB VM-cap reading and24GiB-host performance measurements are core development evidence. They are not Studio resource sizing, large-model compatibility or Studio acceptance. Future Studio scenarios must use their reviewed larger exact model IDs and host-specific budgets, with installation/disruptive acceptance still separately gated.
+
 ## Authorized read-only inventory
 
 After the user reaffirmed proceeding in response to the explicit narrow amendment/read-only SSH proposal, used existing SSH authentication with `BatchMode=yes`, `StrictHostKeyChecking=yes`,5s connection timeout. No host-key enrollment, privilege escalation, process changes, service configuration or model workload.

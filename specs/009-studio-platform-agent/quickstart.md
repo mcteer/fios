@@ -26,6 +26,8 @@ node scripts/check-platform-vm.mjs --isolated --image sha256:ACTUAL_CACHED_IMAGE
 
 The64MiB probe reads kernel memory and existing cap/inventory metadata, retains private identity data and removes only its already-stopped container. Readings remain unenrolled development observations.
 
+Small-model source experiments in this guide run only on `fios-core` (24GiB M4-family Mac Mini). The Studios host larger models only. Core receipts never substitute for Studio sizing or acceptance; see [compatibility](compatibility.md). The fixed Gemma plan/check/run tool records and checks its core host profile.
+
 ## 1. Gates and prerequisites
 
 1. Review the accepted [governance-proposal.md](governance-proposal.md), constitution2.1.0 and ADR0003. No repeated implementation approval is needed; the16/16 specification checklist alone was never operational permission.
@@ -211,7 +213,7 @@ No live tests occur as a side effect of CI or planning. Give the user the exact 
 - Boot/session and watchdog tests need explicit reboot/failure-injection approval. Preserve disk encryption and login settings; demonstrate supervisor before login and dependent services waiting when appropriate.
 - Native source/admission tests need distinct approval for direct/tunnelled/manager requests, overlaps/cancellation/races and model resource envelopes. Never intentionally replace a busy model or start a huge cold model. Record source/native version and coverage gaps; fail acceptance if all-client coverage is absent.
 - Resource and sandbox tests need permission for temporary container work, bounded images/input and controlled pressure fixtures. Real hardware stress or competing native workloads require their own envelope.
-- Demonstrate one bounded platform model task and one sandbox model interaction using an explicitly approved exact already-loaded small identity, then revoke/clean up and verify absence. Mocks do not prove semantic model competence.
+- Demonstrate one bounded platform model task and one sandbox model interaction using an explicitly approved exact Studio-sized larger model identity and host-specific resource bounds, then revoke/clean up and verify absence. Mocks do not prove semantic model competence.
 
 ## 5. Release, rollback and uninstall rehearsal
 
