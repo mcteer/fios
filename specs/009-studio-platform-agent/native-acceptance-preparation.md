@@ -61,6 +61,10 @@ node scripts/check-platform-native-config.mjs --isolated --source /ABS/PRIVATE_N
 
 The checker executes only its named positive parser test using actual source modules, with a180s deadline. It records and compares349 declared root/Sushi Zig source inputs before/after, retains private fixture/config/log/receipt data, and removes only its own temporary source helper files. This is a CPU configuration check, not the full upstream build/link/SDK graph or whole-repository/native provenance. The passing receipt is `/private/tmp/fios-009-native-config-cpXfGP/receipt.json` (`/tmp/fios-009-native-config-check.log`). No native server, model inference, installed action, memory-fit or native authority follows; T002/T051 remain open.
 
+The optional fixed suffix `--index /ABS/BOUNDED_INDEX_COPY.json --index-sha256 bc41d6bbdfd3c215d50d66ced0f2dfab12bcd52ec6e0da4d0fed93f453bf9964` also executes the actual embedded-table inspector. The separately observed305027-byte index has3167 tensor entries and no embedded PLE entries (`/private/tmp/fios-009-large-model-index-dp1a_i4l/observation.json`). The genuine inspector returns null without any weight files present/opened in the private metadata directory; the combined one-test run passes (`/tmp/fios-009-native-config-index-check.log`, `/private/tmp/fios-009-native-config-HUoWz6/receipt.json`).
+
+**Source-level inference only:** `model.zig` sets embedded payload metadata only when that inspector returns a table; `transformer.zig` chooses the separate `NgramTable.open` branch otherwise. With this same config/index, the reviewed source would therefore take the separate-table branch if loading reaches that stage. This is not an actual installed disk-loader execution or proof of sidecar header/geometry validity, successful loading, runtime placement, touched pages or memory fit. The JSON-only parser still does not select a disk path. The prior config-only receipt remains separate.
+
 ## Remaining prerequisites
 
 - Complete T002's actual source/native all-client non-preemption and completion contract; observations and successful core responses do not satisfy it.

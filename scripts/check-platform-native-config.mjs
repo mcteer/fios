@@ -7,14 +7,21 @@ import {mkdtempSync,readFileSync,writeFileSync,readdirSync,lstatSync,realpathSyn
 import {createHash,randomUUID} from 'node:crypto';
 import {join,isAbsolute} from 'node:path';
 const args=process.argv.slice(2);
-assert(args.length===9&&args[0]==='--isolated'&&args[1]==='--source'&&args[3]==='--zig'&&args[5]==='--config'&&args[7]==='--sha256',
- 'Usage: --isolated --source ABS_PRIVATE_SOURCE --zig ABS_ZIG --config ABS_CONFIG --sha256 REVIEWED_CONFIG_SHA256');
+assert([9,13].includes(args.length)&&args[0]==='--isolated'&&args[1]==='--source'&&args[3]==='--zig'&&args[5]==='--config'&&args[7]==='--sha256',
+ 'Usage: --isolated --source ABS_PRIVATE_SOURCE --zig ABS_ZIG --config ABS_CONFIG --sha256 REVIEWED_CONFIG_SHA256 [--index ABS_INDEX --index-sha256 REVIEWED_INDEX_SHA256]');
 assert.equal(process.platform,'darwin');assert.notEqual(process.getuid(),0);
 assert([args[2],args[4],args[6]].every(isAbsolute));
 const source=realpathSync(args[2]),zig=realpathSync(args[4]),config=readFileSync(args[6]);
 assert(source.startsWith('/private/tmp/'));assert.equal(lstatSync(source).uid,process.getuid());
 assert(config.length>0&&config.length<=65536);
 const hash=data=>createHash('sha256').update(data).digest('hex');
+let index=null;
+if(args.length===13){
+ assert.equal(args[9],'--index');assert.equal(args[11],'--index-sha256');assert(isAbsolute(args[10]));
+ index=readFileSync(args[10]);assert(index.length>0&&index.length<=16*1024*1024);
+ assert.equal(args[12],'bc41d6bbdfd3c215d50d66ced0f2dfab12bcd52ec6e0da4d0fed93f453bf9964');
+ assert.equal(hash(index),args[12]);
+}
 assert.equal(args[8],'3b75deecf2341a23fdd46e0eb36c9ff3c4f4f9d3ff89656c5c5cca142c0824a7');
 assert.equal(hash(config),args[8]);
 assert.equal(hash(readFileSync(zig)),'1c5f706db0ed6d55451940f31dc05a6177d05696bc1fa5d853696d04c718b523');
@@ -61,10 +68,13 @@ test "fios ordinary reviewed configuration" {
  try std.testing.expectEqual(@as(u32,128),value.split_ngram_parts);
  try std.testing.expect(value.ssm_state_f32);
  try std.testing.expect(value.ngram_table_path == null);
+ ${index ? `const embedded = try @import("qwen4_exp.zig").inspectEmbedded("${directory}", try @import("model.zig").qwen4EmbeddedSpec(&value));
+ try std.testing.expect(embedded == null);` : ''}
 }
 `;
 writeFileSync(join(directory,'fixture.zig'),fixture,{mode:0o600});
 writeFileSync(join(directory,'config.json'),config,{mode:0o600});
+if(index)writeFileSync(join(directory,'model.safetensors.index.json'),index,{mode:0o600});
 let helperWritten=false,dataWritten=false,result;
 try{
  writeFileSync(helper,fixture,{flag:'wx',mode:0o600});helperWritten=true;
@@ -82,7 +92,8 @@ assert.equal(result.status,0,`Actual configuration parser failed; retain ${direc
 assert.match((result.stdout??'')+(result.stderr??''),/All 1 tests passed\./);
 const receipt={ok:true,source_base:git.stdout.trim(),config_sha256:args[8],fixture_sha256:hash(fixture),
  source_scope:'declared_src_and_sushi_zig_inventory_not_whole_repository_or_native_provenance',source_inputs:before,
- tests:1,parser:'parseConfigFromJson',sidecar_path_selected:false,weight_files_read:0,model_requests:0,
+ tests:1,parser:'parseConfigFromJson',index_sha256:index?hash(index):null,embedded_inspector:index?'no_embedded_table':'not_run',
+ sidecar_path_selected:false,weight_files_read:0,model_requests:0,
  installed_service_actions:0,model_fit_proven:false,native_authority:false,review_directory:directory};
 writeFileSync(join(directory,'receipt.json'),JSON.stringify(receipt,null,2)+'\n',{mode:0o600});
 console.log(JSON.stringify({...receipt,source_inputs:before.length}));
