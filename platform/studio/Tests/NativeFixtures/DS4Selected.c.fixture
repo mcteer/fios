@@ -3,7 +3,13 @@
 // Publishes empty CPU metadata directly into the actual mailbox, not through
 // production enqueue/admission. Tests busy observation only, NOT retirement.
 #define REQUIRE(v,m) do{if(!(v)){fprintf(stderr,"%s\n",m);return 77;}}while(0)
-int main(void){
+static void *finish_result(void *context){
+ metal_graph_selected_async_load *result=context;
+ (void)metal_graph_selected_async_load_finish(result);return NULL;
+}
+int main(int argc,char **argv){
+ const bool hold_finish=argc==2&&strcmp(argv[1],"--finish-held")==0;
+ REQUIRE(argc==1||hold_finish,"SELECTED_BAD_MODE");
  REQUIRE(metal_graph_selected_async_load_idle(),"SELECTED_COLD_NOT_IDLE");
  REQUIRE(metal_graph_selected_async_load_ensure_worker(),"SELECTED_ACTUAL_WORKER_START_FAILED");
  REQUIRE(metal_graph_selected_async_load_idle(),"SELECTED_EMPTY_WORKER_NOT_IDLE");
@@ -25,8 +31,20 @@ int main(void){
  }
  REQUIRE(done,"SELECTED_ACTUAL_EMPTY_JOB_DID_NOT_RETURN");
  REQUIRE(refused,"FIO_DS4_ACTIVE_SELECTED_LOADER_REPORTED_IDLE");
- REQUIRE(metal_graph_selected_async_load_idle(),"SELECTED_RETURNED_JOB_STILL_BUSY");
- puts("PASS: actual selected-loader pthread/mailbox refuses busy observation through the real empty-job return; no retirement/model/SDK proof.");
+ if(!hold_finish)REQUIRE(!metal_graph_selected_async_load_idle(),"FIO_DS4_UNCONSUMED_SELECTED_RESULT_REPORTED_IDLE");
+ metal_graph_selected_async_load result={.active=true};
+ if(hold_finish){
+  __atomic_store_n(&fios_selected_finish_hold,1,__ATOMIC_RELEASE);
+  pthread_t consumer;REQUIRE(pthread_create(&consumer,NULL,finish_result,&result)==0,"SELECTED_CONSUMER_CREATE_FAILED");
+  for(unsigned n=0;n<2000&&!__atomic_load_n(&fios_selected_finish_entered,__ATOMIC_ACQUIRE);++n)usleep(1000);
+  REQUIRE(__atomic_load_n(&fios_selected_finish_entered,__ATOMIC_ACQUIRE),"SELECTED_CONSUMER_CHECKPOINT_NOT_ENTERED");
+  const bool held=!metal_graph_selected_async_load_idle();
+  __atomic_store_n(&fios_selected_finish_release,1,__ATOMIC_RELEASE);
+  REQUIRE(pthread_join(consumer,NULL)==0,"SELECTED_CONSUMER_JOIN_FAILED");
+  REQUIRE(held,"FIO_DS4_SELECTED_RESULT_CONSUMER_REPORTED_IDLE");
+ }else REQUIRE(!metal_graph_selected_async_load_finish(&result),"SELECTED_EMPTY_JOB_UNEXPECTEDLY_SUCCEEDED");
+ REQUIRE(!result.active&&metal_graph_selected_async_load_idle(),"SELECTED_CONSUMED_JOB_STILL_BUSY");
+ puts("PASS: actual selected-loader pthread/mailbox retains activity through completed-but-unconsumed result; empty failed result consumption releases only the mailbox guard.");
  // The one-shot fixture process exits with its idle local thread. This is not
  // a tested participant join, backend terminality or inference uncertainty release.
  return 0;

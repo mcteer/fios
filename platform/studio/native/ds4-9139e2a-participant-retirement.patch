@@ -1,5 +1,5 @@
 diff --git a/ds4.c b/ds4.c
-index 633a3cf..d8a42f7 100644
+index 633a3cf..3a54f9b 100644
 --- a/ds4.c
 +++ b/ds4.c
 @@ -2088,15 +2088,35 @@ typedef struct {
@@ -533,15 +533,20 @@ index 633a3cf..d8a42f7 100644
  }
  
  typedef struct {
-@@ -23501,6 +23641,15 @@ static bool g_metal_graph_selected_async_load_has_job = false;
+@@ -23499,8 +23639,20 @@ static pthread_t g_metal_graph_selected_async_load_thread;
+ static bool g_metal_graph_selected_async_load_thread_started = false;
+ static bool g_metal_graph_selected_async_load_has_job = false;
  static bool g_metal_graph_selected_async_load_done = false;
++static bool g_fios_selected_result_finishing = false;
  static metal_graph_selected_async_load g_metal_graph_selected_async_load_job;
  
-+// Coherent local mailbox guard only. Lifecycle/init serialization remains a
++// Coherent local mailbox/result-consumer guard only. Lifecycle/init serialization remains a
 +// precondition; this does not retire the worker or certify other writers/GPU.
 +static bool metal_graph_selected_async_load_idle(void) {
 +    if (pthread_mutex_lock(&g_metal_graph_selected_async_load_mutex) != 0) return false;
-+    const bool idle = !g_metal_graph_selected_async_load_has_job;
++    const bool idle = !g_metal_graph_selected_async_load_has_job &&
++                      !g_metal_graph_selected_async_load_done &&
++                      !g_fios_selected_result_finishing;
 +    if (pthread_mutex_unlock(&g_metal_graph_selected_async_load_mutex) != 0) return false;
 +    return idle;
 +}
@@ -549,7 +554,46 @@ index 633a3cf..d8a42f7 100644
  static void metal_graph_selected_async_load_run(
          metal_graph_selected_async_load *job) {
      job->ok = false;
-@@ -42215,6 +42364,7 @@ typedef enum {
+@@ -23638,7 +23790,7 @@ static DS4_MAYBE_UNUSED bool metal_graph_selected_async_load_start_tensor(
+ 
+     pthread_mutex_lock(&g_metal_graph_selected_async_load_mutex);
+     if (g_metal_graph_selected_async_load_has_job ||
+-        g_metal_graph_selected_async_load_done) {
++        g_metal_graph_selected_async_load_done || g_fios_selected_result_finishing) {
+         pthread_mutex_unlock(&g_metal_graph_selected_async_load_mutex);
+         return false;
+     }
+@@ -23675,17 +23827,26 @@ static bool metal_graph_selected_async_load_finish(
+         metal_graph_selected_async_load *job) {
+     if (!job || !job->active) return false;
+     pthread_mutex_lock(&g_metal_graph_selected_async_load_mutex);
++    if (g_fios_selected_result_finishing) {
++        pthread_mutex_unlock(&g_metal_graph_selected_async_load_mutex);
++        return false;
++    }
+     while (!g_metal_graph_selected_async_load_done) {
+         pthread_cond_wait(&g_metal_graph_selected_async_load_done_cond,
+                           &g_metal_graph_selected_async_load_mutex);
+     }
+     *job = g_metal_graph_selected_async_load_job;
++    g_fios_selected_result_finishing = true;
+     g_metal_graph_selected_async_load_done = false;
+     pthread_mutex_unlock(&g_metal_graph_selected_async_load_mutex);
+     job->active = false;
+-    if (!job->ok) return false;
+-    return ds4_gpu_routed_moe_set_selected_override(job->selected_ids,
+-                                                   DS4_N_EXPERT_USED) != 0;
++    const bool ok = job->ok &&
++        ds4_gpu_routed_moe_set_selected_override(job->selected_ids,
++                                                DS4_N_EXPERT_USED) != 0;
++    pthread_mutex_lock(&g_metal_graph_selected_async_load_mutex);
++    g_fios_selected_result_finishing = false;
++    pthread_mutex_unlock(&g_metal_graph_selected_async_load_mutex);
++    return ok;
+ }
+ 
+ #ifdef DS4_ROCM_BUILD
+@@ -42215,6 +42376,7 @@ typedef enum {
  } ds4_vision_kind;
  
  struct ds4_engine {
@@ -557,7 +601,7 @@ index 633a3cf..d8a42f7 100644
      char *model_path;
      uint64_t ds41_session_bytes;
      ds4_model model;
-@@ -59886,6 +60036,7 @@ typedef struct {
+@@ -59886,6 +60048,7 @@ typedef struct {
  } ds4_vision_identity;
  
  struct ds4_session {
@@ -565,7 +609,7 @@ index 633a3cf..d8a42f7 100644
      ds4_engine *engine;
      ds4_dist_session *distributed;
      uint64_t tp_session_id;
-@@ -72190,10 +72341,22 @@ fail:
+@@ -72190,10 +72353,22 @@ fail:
  #endif
  }
  
@@ -590,7 +634,7 @@ index 633a3cf..d8a42f7 100644
      ds4_tp_detach_slab(e->tp.ctx);
  #ifdef __APPLE__
      g_tp_block_ctx = NULL;
-@@ -72218,6 +72381,11 @@ void ds4_engine_tp_unbind(ds4_engine *e) {
+@@ -72218,6 +72393,11 @@ void ds4_engine_tp_unbind(ds4_engine *e) {
  #else
      (void)e;
  #endif
@@ -602,7 +646,7 @@ index 633a3cf..d8a42f7 100644
  }
  
  bool ds4_engine_is_glm_dsa(ds4_engine *e) {
-@@ -72230,13 +72398,24 @@ bool ds4_engine_is_deepseek41(ds4_engine *e) {
+@@ -72230,13 +72410,24 @@ bool ds4_engine_is_deepseek41(ds4_engine *e) {
      return DS4_MODEL_FAMILY == DS4_MODEL_FAMILY_DEEPSEEK41;
  }
  
@@ -631,7 +675,7 @@ index 633a3cf..d8a42f7 100644
      if (e->mtp_model.map) model_close(&e->mtp_model);
      if (e->vision_model.map) model_close(&e->vision_model);
      model_close(&e->model);
-@@ -72253,6 +72432,11 @@ void ds4_engine_close(ds4_engine *e) {
+@@ -72253,6 +72444,11 @@ void ds4_engine_close(ds4_engine *e) {
      free(e->directional_steering_file);
      free(e->model_path);
      free(e);
@@ -643,7 +687,7 @@ index 633a3cf..d8a42f7 100644
  }
  
  #ifndef DS4_NO_GPU
-@@ -72814,24 +72998,34 @@ int ds4_session_create(ds4_session **out, ds4_engine *e, int ctx_size) {
+@@ -72814,24 +73010,34 @@ int ds4_session_create(ds4_session **out, ds4_engine *e, int ctx_size) {
  #endif
  }
  
@@ -688,7 +732,7 @@ index 633a3cf..d8a42f7 100644
  #ifndef DS4_NO_GPU
      ds4_session_print_dspark_stats(s);
  #endif
-@@ -72882,6 +73076,11 @@ void ds4_session_free(ds4_session *s) {
+@@ -72882,6 +73088,11 @@ void ds4_session_free(ds4_session *s) {
      free(s->dspark_conf_features);
  #endif
      free(s);
