@@ -32,3 +32,11 @@ A fixed harmless framed task verifies actual CPython3.11.17/arm64/nonroot execut
 `candidate.json` and its printed receipt SHA bind the actual immutable image ID, base/review/provenance/source-input hashes, recipe/runner hashes and probe scope. Both `approved` and `activation` are always false. Review the actual resulting ID; byte-identical rebuilds/layer digests are not promised. Runtime admission must use its separately approved immutable ID with pull-never, never rebuild from this receipt or silently substitute another image.
 
 Failures retain the private context, IDs/nonces, available probe stdout/stderr and build state; there is no automatic uncertain-resource cleanup. Diagnose exact ownership/terminality before any explicit cleanup. Successful output retains the image/receipt for review, with the probe verified absent. This is not native inference terminal proof or whole-repository/native provenance. The runner and attach rehearsals likewise retain evidence on failure and preserve supplied images.
+
+For a cached OCI image saved to a private directory, an offline content inventory can bind the archive, addressed OCI index/manifest/config, compressed blobs, uncompressed layer digests and selected runtime paths without extracting or executing image files:
+
+```sh
+.venv/bin/python -I -B scripts/audit-platform-sandbox-base.py --archive /ABSOLUTE/base.tar --image sha256:EXACT_CACHED_IMAGE_ID --output /ABSOLUTE/PRIVATE_PARENT/NEW_AUDIT
+```
+
+The auditor requires a new output directory under an owned0700 parent, limits archive/layer/member sizes and rechecks the archive's file identity. It refuses duplicate archive names, digest substitution, traversal, whiteouts and special runtime files. Output records file hashes and link targets; it does not resolve arbitrary filesystem links or authenticate a publisher/build chain. `provenance.json` binds `inventory.json` and the auditor bytes, with approval/activation false. Its digest may describe content evidence in a candidate's base review, but does not turn that metadata into production approval. Review baked site packages explicitly: the current application-derived base includes the installed `fios_agent` package and its dependencies even though the final image omits `/app`. A content inventory is not an audit of those packages or proof that every possible helper executable is absent.
