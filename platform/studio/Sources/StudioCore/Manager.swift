@@ -184,6 +184,7 @@ public enum ManagerRuntime {
                             // No production observation issuer is enrolled. A
                             // failed/missing adapter remains unknown, not absent.
                             var details=ServiceStatusPolicy.summary(desired:typed,observation:serviceObservations?.snapshot(for:service),launchPending:serviceRecovery?.isPending(service) ?? false,now:requestedAt)
+                            if let recovery=serviceRecovery {details["recovery"]=recovery.summary(service:service,tick:Int64(ProcessInfo.processInfo.systemUptime*1000))}
                             if let progress=drainer?.status(service:service) {details["drain"]=ServiceDrainController.summary(progress)}
                             serviceStates[service.rawValue]=details
                         }

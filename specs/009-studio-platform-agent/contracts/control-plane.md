@@ -10,6 +10,8 @@ Activity publications have an independent manager counter and composition time f
 
 Aggregate status includes `runtime_cleanup`, scoped to owned sandbox runtime cleanup observed by the current manager. It reports pending sandboxes, the original controller observation time, longest observed wait and whether that wait exceeds60s. Completion/known absence removes entries from this current view. This wait includes runtime outages and is not a claim that the availability-relative cleanup deadline was missed. It neither describes nor clears native inference uncertainty; restart begins a new manager's observed waiting interval.
 
+When session recovery is configured, each service status also includes `recovery`: the existing local three-start/600s budget,10s minimum spacing, current starts in that window and remaining budget wait in milliseconds. `budget_state` is `available`, `rate_limited`, `pending`, `clock_fenced` or `unknown`. Pending/unknown/fenced states omit the numeric wait. These are local scheduling diagnostics; available budget does not establish service absence, session readiness or permission to launch. Reading the summary does not advance or consume the budget.
+
 ## Native-control diagnostic status
 
 Aggregate status now includes `native_control`. It reports the last accepted native-control reply under scope `native_ingress_tracker`, with `authoritative:false`. States are `unconfigured`, `waiting`, `received`, `unavailable` and `stale`. Fresh replies expose the source instance, reported ingress/preparing/active/responding/owner/model-identity counts, ingress closure and tracker uncertainty. Missing or expired replies expose no current counts.

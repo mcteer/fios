@@ -137,6 +137,25 @@ final class ServiceRecoveryController {
         state.entries.first(where:{$0.service==service})?.pending != nil
     }
 
+    // Read-only local restart-budget diagnostics. Available budget does not
+    // establish service absence/session readiness or authorize a launch.
+    func summary(service:ManagedService,tick:Int64)->[String:Any] {
+        var result:[String:Any]=["budget_state":"unknown","starts_in_window":NSNull(),
+            "budget_wait_ms":NSNull(),"window_ms":600000,"maximum_starts":3,"minimum_spacing_ms":10000]
+        guard let entry=state.entries.first(where:{$0.service==service}) else {return result}
+        if state.fenced {result["budget_state"]="clock_fenced";return result}
+        guard (0...WireScalar.maximumTimestamp).contains(tick),tick>=state.previousTick else {return result}
+        let starts=entry.starts.filter{tick-$0<600000}
+        result["starts_in_window"]=starts.count
+        if entry.pending != nil {result["budget_state"]="pending";return result}
+        let spacing=starts.last.map{max(0,10000-(tick-$0))} ?? 0
+        let window=starts.count>=3 ? max(0,600000-(tick-starts[0])):0
+        let wait=max(spacing,window)
+        result["budget_state"]=wait>0 ? "rate_limited":"available"
+        result["budget_wait_ms"]=wait
+        return result
+    }
+
     private func observeClock(now:Int64,tick:Int64)throws->Bool {
         guard (0...WireScalar.maximumTimestamp).contains(now),(0...WireScalar.maximumTimestamp).contains(tick) else {throw ServiceError.invalid}
         if now<state.previousWall || tick<state.previousTick {
