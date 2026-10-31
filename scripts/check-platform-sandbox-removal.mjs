@@ -37,13 +37,13 @@ try {
  run(compiler,['-sdk',sdk,'-target','arm64-apple-macosx14.0','-parse-as-library','-swift-version','6','-warnings-as-errors','-O','-I',join(root,'platform/studio/Sources/CSQLite'),...files,unit,'-o',binary],180000);
  const context=join(directory,'context');mkdirSync(context,{mode:0o700});
  writeFileSync(join(context,'Dockerfile'),`FROM ${args[2]}\nCOPY hold.py /hold.py\nENTRYPOINT ["/opt/venv/bin/python","-I","-B","/hold.py"]\n`,{mode:0o600});
- writeFileSync(join(context,'hold.py'),"import signal,time\nsignal.signal(signal.SIGTERM,signal.SIG_IGN)\nopen('/workspace/ready','w').write('READY\\n')\ntime.sleep(45)\n",{mode:0o644});
+ writeFileSync(join(context,'hold.py'),"import signal,sys,time\nsignal.signal(signal.SIGTERM,signal.SIG_IGN)\nopen('/workspace/ready','w').write('READY\\n')\ntime.sleep(0.05 if sys.argv[1:]==['fast'] else 45)\n",{mode:0o644});
  writeFileSync(join(directory,'fixture-state.json'),JSON.stringify({phase:'before-image-build',base:args[2],activation:false})+'\n',{mode:0o600});possible=true;
  const image=runtime(['build','--quiet','--pull=false','--network=none',context],120000);assert.match(image,/^sha256:[a-f0-9]{64}$/);
  writeFileSync(join(directory,'fixture-state.json'),JSON.stringify({phase:'before-owned-runtime-check',base:args[2],image,activation:false})+'\n',{mode:0o600});
  const result=spawnSync(binary,[docker,cliHash,socket,image],{env,encoding:'utf8',timeout:90000,maxBuffer:1<<20});
  writeFileSync(join(directory,'stdout.log'),result.stdout??'',{mode:0o600});writeFileSync(join(directory,'stderr.log'),result.stderr??'',{mode:0o600});assert(!result.error&&!result.signal);assert.equal(result.status,0,'Owned runtime check failed; retained: '+directory);
- const measured=JSON.parse(result.stdout.trim());assert.equal(measured.running_remove_refused,true);assert.equal(measured.daemon_plain_rm_running_refused,true);assert(measured.graceful_stop_then_absence_ms>=9000&&measured.graceful_stop_then_absence_ms<60000);
+ const measured=JSON.parse(result.stdout.trim());assert.equal(measured.running_remove_refused,true);assert.equal(measured.daemon_plain_rm_running_refused,true);assert.equal(measured.unstarted_exit_not_certified,true);assert.equal(measured.successful_zero_exit_certified,true);assert(measured.graceful_stop_then_absence_ms>=9000&&measured.graceful_stop_then_absence_ms<60000);
  verifyPlatformSources(proof,root,inputs);assert.equal(sha(sandboxImageFile(realpathSync(compiler),512<<20)),compilerHash);
  const receipt={version:1,purpose:'isolated_owned_sandbox_removal',base_image:args[2],image,source_inputs_sha256:proof.digest,scope:'declared_swift_runtime_and_fixture_inputs_only',compiler_sha256:compilerHash,binary_sha256:sha(readFileSync(binary)),...measured,activation:false};
  const bytes=Buffer.from(JSON.stringify(receipt,null,2)+'\n');writeFileSync(join(directory,'candidate.json'),bytes,{mode:0o600});complete=true;console.log(JSON.stringify({directory,receipt_sha256:sha(bytes),...measured}));

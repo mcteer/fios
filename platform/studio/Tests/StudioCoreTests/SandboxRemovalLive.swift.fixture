@@ -11,7 +11,7 @@ import Darwin
         let directory=URL(fileURLWithPath:args[0]).deletingLastPathComponent()
         let stateFile=directory.appendingPathComponent("runtime-state.json")
         let runtime=try DockerRuntime(executable:VerifiedExecutable(path:args[1],sha256:args[2]),socket:args[3])
-        let configuration=try SandboxConfiguration(job:UUID().uuidString.lowercased(),nonce:String(UUID().uuidString.replacingOccurrences(of:"-",with:"").lowercased()+UUID().uuidString.replacingOccurrences(of:"-",with:"").lowercased()),image:args[4],memory:512<<20,cpus:1)
+        var configuration=try SandboxConfiguration(job:UUID().uuidString.lowercased(),nonce:String(UUID().uuidString.replacingOccurrences(of:"-",with:"").lowercased()+UUID().uuidString.replacingOccurrences(of:"-",with:"").lowercased()),image:args[4],memory:512<<20,cpus:1)
         var savedID:String?
         func save(_ phase:String)throws {
             var value:[String:Any]=["phase":phase,"name":configuration.name,"job":configuration.job,"nonce":configuration.nonce,"image":configuration.image,"activation":false]
@@ -19,7 +19,7 @@ import Darwin
             try JSONSerialization.data(withJSONObject:value,options:[.sortedKeys]).write(to:stateFile,options:.atomic)
         }
         try save("before-create")
-        let id=try runtime.create(configuration);savedID=id;try save("created")
+        var id=try runtime.create(configuration);savedID=id;try save("created")
         func inspect()throws->[String:Any] {
             let reply=try runtime.command(["inspect","--type=container",id],timeout:2)
             guard reply.status==0 else {throw RuntimeError.launch}
@@ -28,6 +28,9 @@ import Darwin
                   configuration.verifies(inspect:objects[0],savedID:id),let state=objects[0]["State"] as? [String:Any] else {throw RuntimeError.identity}
             return state
         }
+        let unstarted=try inspect()
+        guard unstarted["Running"] as? Bool==false,
+              SandboxExitStatus.recorded(running:false,code:0,finishedAt:unstarted["FinishedAt"])==nil else {throw RuntimeError.identity}
         guard try runtime.command(["start",id]).status==0 else {throw RuntimeError.launch}
         try save("started")
         let readyUntil=ProcessInfo.processInfo.systemUptime+5
@@ -53,7 +56,8 @@ import Darwin
         while ProcessInfo.processInfo.systemUptime<until {
             let state=try inspect()
             if state["Running"] as? Bool==false {
-                guard (state["ExitCode"] as? NSNumber)?.intValue==137 else {throw RuntimeError.identity}
+                guard (state["ExitCode"] as? NSNumber)?.intValue==137,
+                      SandboxExitStatus.recorded(running:false,code:137,finishedAt:state["FinishedAt"])==137 else {throw RuntimeError.identity}
                 stopped=true;break
             }
             Thread.sleep(forTimeInterval:0.1)
@@ -65,7 +69,32 @@ import Darwin
         let elapsed=ProcessInfo.processInfo.systemUptime-began
         guard remaining.status==0,remaining.output.isEmpty,elapsed<60 else {throw RuntimeError.identity}
         try save("removed-and-exact-id-absence-verified")
-        let result:[String:Any]=["running_remove_refused":true,"daemon_plain_rm_running_refused":true,"stop_acknowledged":stopAcknowledged,"graceful_stop_then_absence_ms":Int(elapsed*1000),"exit_code":137,"native_inference":false,"native_authority":false,"installed":false]
+        // A separate fixed fast invocation supplies genuine successful-exit
+        // metadata, independently of the earlier forced-after-grace outcome.
+        configuration=try SandboxConfiguration(job:UUID().uuidString.lowercased(),nonce:UUID().uuidString.replacingOccurrences(of:"-",with:"").lowercased()+UUID().uuidString.replacingOccurrences(of:"-",with:"").lowercased(),image:args[4],memory:512<<20,cpus:1)
+        savedID=nil;try save("before-fast-create")
+        let created=try runtime.command(configuration.createArguments+["fast"])
+        id=String(decoding:created.output,as:UTF8.self).trimmingCharacters(in:.whitespacesAndNewlines)
+        guard created.status==0,id.utf8.count==64,id.utf8.allSatisfy({(48...57).contains($0)||(97...102).contains($0)}) else {throw RuntimeError.identity}
+        savedID=id;try save("fast-created")
+        guard try runtime.command(["start",id]).status==0 else {throw RuntimeError.launch}
+        let finishedUntil=ProcessInfo.processInfo.systemUptime+5
+        var successful=false
+        while ProcessInfo.processInfo.systemUptime<finishedUntil {
+            let state=try inspect()
+            if state["Running"] as? Bool==false,let code=(state["ExitCode"] as? NSNumber)?.intValue,
+               let verified=SandboxExitStatus.recorded(running:false,code:code,finishedAt:state["FinishedAt"]) {
+                guard verified==0 else {throw RuntimeError.identity}
+                successful=true;break
+            }
+            Thread.sleep(forTimeInterval:0.05)
+        }
+        guard successful else {throw RuntimeError.identity}
+        try runtime.removeOwned(configuration,savedID:id)
+        let fastAbsent=try runtime.command(["container","ls","--all","--no-trunc","--filter","id="+id,"--format","{{.ID}}"],timeout:2)
+        guard fastAbsent.status==0,fastAbsent.output.isEmpty else {throw RuntimeError.identity}
+        try save("both-owned-containers-verified-absent")
+        let result:[String:Any]=["running_remove_refused":true,"daemon_plain_rm_running_refused":true,"stop_acknowledged":stopAcknowledged,"graceful_stop_then_absence_ms":Int(elapsed*1000),"exit_code":137,"unstarted_exit_not_certified":true,"successful_zero_exit_certified":true,"native_inference":false,"native_authority":false,"installed":false]
         print(String(decoding:try JSONSerialization.data(withJSONObject:result,options:[.sortedKeys]),as:UTF8.self))
     }
 }

@@ -5,6 +5,7 @@ private final class FakeSandboxExecutor:SandboxExecuting {
     var commands:[SandboxCommand]=[]
     var present:[String:(SandboxConfiguration,String,Bool)]=[:]
     var active:Int { 0 }
+    var reportExitCodes=false
     var resourceNow:Int64=0
     var resourceFailure=false
     var resourceRequests:[Int64]=[]
@@ -24,7 +25,7 @@ private final class FakeSandboxExecutor:SandboxExecuting {
             let id=String(repeating:job.first=="a" ? "a" : "b",count:64)
             present[job]=(config,id,false);result = .created(id)
         case .inspect:
-            if let (config,id,running)=present[job] { result = .observed(.present(id:id,name:"/"+config.name,image:config.image,nonce:config.nonce,running:running)) }
+            if let (config,id,running)=present[job] { result = .observed(.present(id:id,name:"/"+config.name,image:config.image,nonce:config.nonce,running:running),exitCode:reportExitCodes ? 0:nil) }
             else { result = .observed(.absent) }
         case .start:
             if let (config,id,_)=present[job] { present[job]=(config,id,true) };result = .acknowledged
@@ -184,4 +185,36 @@ func runVMControllerTests() throws {
     }
     guard controller.vmAvailable(now:20500)==nil,controller.vmEpoch(now:20500)==nil else {fatalError("Failed source retained verified VM capacity")}
     print("PASS: serialized VM coordinator polls owned running targets at2s, publishes only fresh envelopes and immediately invalidates failed/stale resource authority (fake runtime telemetry)")
+}
+
+func runSandboxExitProofTests()throws {
+    let directory=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer {try? FileManager.default.removeItem(at:directory)}
+    let journal=try Journal(directory:directory),runtime=FakeSandboxExecutor()
+    runtime.reportExitCodes=true
+    let controller=JobController(journal:journal,executor:runtime)
+    var admission=AdmissionPolicy()
+    func sample(_ now:Int64)->ResourceSample {ResourceSample(sampledAt:now,physical:128<<30,available:64<<30,vmAvailable:8<<30,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal,vmSampledAt:now)}
+    let id=UUID().uuidString.lowercased()
+    let job=try DurableJob(id:id,idempotency:UUID().uuidString.lowercased(),ownerHash:String(repeating:"a",count:64),requestHash:String(repeating:"b",count:64),created:10000)
+    let config=try SandboxConfiguration(job:id,nonce:String(repeating:"a",count:64),image:"sha256:"+String(repeating:"b",count:64),memory:512<<20,cpus:1)
+    try admission.reserve(job:id,memory:config.memory,cpus:1,sample:sample(10000),now:10000)
+    _=try journal.reserveSandbox(job:job,configuration:config)
+    func tick(_ now:Int64)throws {try controller.tick(now:now,sample:sample(now),admission:&admission,transportReady:{_ in true},cancelModel:{_ in})}
+    for index in 0..<14 {
+        try tick(10000+Int64(index)*500)
+        if try journal.jobs().first(where:{$0.id==id})?.state == .creating,
+           try journal.sandboxRecords().first(where:{$0.configuration.job==id})?.startIssued == true,
+           controller.exitProof[id] != nil {fatalError("FIO_SANDBOX_CREATED_STATE_BECAME_EXIT_PROOF")}
+    }
+    guard try journal.jobs().first(where:{$0.id==id})?.state == .running,controller.exitProof[id]==nil,
+          let (_,runtimeID,_)=runtime.present[id] else {fatalError("Running sandbox retained birth exit status")}
+    runtime.present[id]=(config,runtimeID,false)
+    try tick(19000);try tick(20000)
+    guard controller.exitProof[id]==true else {fatalError("Verified post-start mock exit status was lost")}
+    runtime.present[id]=(config,runtimeID,true)
+    try tick(21000);try tick(21001)
+    guard controller.exitProof[id]==nil else {fatalError("FIO_SANDBOX_RUNNING_RESTART_REUSED_PRIOR_EXIT_PROOF")}
+    guard try journal.sandboxRecords().first(where:{$0.configuration.job==id})?.removalProven == false else {fatalError("Restart observation released sandbox reservation")}
+    print("PASS: synthetic created/running snapshots cannot certify exit; observed restart clears old local exit proof without releasing cleanup custody")
 }

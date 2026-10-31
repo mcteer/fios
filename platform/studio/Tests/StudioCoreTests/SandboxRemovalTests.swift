@@ -33,5 +33,29 @@ func runSandboxRemovalTests()throws {
     try scenario(["Running":false]);try Data().write(to:URL(fileURLWithPath:home+"/race-running"));refused=false
     do {try runtime.removeOwned(configuration,savedID:id)}catch RuntimeError.launch {refused=true}
     guard refused,try JSONSerialization.jsonObject(with:Data(contentsOf:marker)) as? [String]==["rm",id] else {fatalError("Daemon running-race refusal became successful cleanup")}
-    print("PASS: finite fake CLI proves running/malformed refusal before remove, plain full-ID argv and daemon-race failure propagation; no daemon/terminal proof")
+    let executor=try SandboxExecutor(runtime:runtime,allowedImages:[configuration.image])
+    let formatter=ISO8601DateFormatter()
+    let cases:[(String,[String:Any],Int?)]=[
+        ("never-started",[:],nil),
+        ("zero-time",["FinishedAt":"0001-01-01T00:00:00Z"],nil),
+        ("past",["FinishedAt":"2000-01-01T00:00:00Z"],0),
+        ("nanoseconds",["FinishedAt":"2000-01-01T00:00:00.123456789Z"],0),
+        ("future",["FinishedAt":formatter.string(from:Date().addingTimeInterval(60))],nil),
+        ("invalid-date",["FinishedAt":"2026-02-30T00:00:00Z"],nil),
+        ("null",["FinishedAt":NSNull()],nil),
+        ("numeric",["FinishedAt":0],nil),
+        ("long-fraction",["FinishedAt":"2000-01-01T00:00:00.1234567890Z"],nil),
+        ("still-running",["Running":true,"FinishedAt":"2000-01-01T00:00:00Z"],nil)
+    ]
+    for (label,fields,expected) in cases {
+        var state:[String:Any]=["Running":false,"ExitCode":0,"OOMKilled":false]
+        for (key,value) in fields {state[key]=value}
+        try scenario(state)
+        try executor.submit(job:configuration.job,command:.inspect(configuration,id))
+        var values:[SandboxExecution]=[]
+        let until=ProcessInfo.processInfo.systemUptime+2
+        while values.isEmpty && ProcessInfo.processInfo.systemUptime<until {values=executor.drain();Thread.sleep(forTimeInterval:0.001)}
+        guard values.count==1,case .success(.observed(_,let code,_))=values[0].result,code==expected else {fatalError("FIO_SANDBOX_UNVERIFIED_EXIT_STATUS_"+label)}
+    }
+    print("PASS: finite fake CLI proves running/malformed refusal, plain full-ID argv/race failure and completed-exit timestamp attenuation; no daemon/native terminal proof")
 }

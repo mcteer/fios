@@ -91,15 +91,21 @@ final class JobController {
                 guard case .create=command else { throw JournalError.conflict }
                 try lifecycle.created(job:completed.job,runtimeID:id)
             case .success(.observed(let presence,let exitCode,let oom)):
-                if case .present(_,_,_,_,false)=presence,let exitCode {exitProof[completed.job]=exitCode==0 && !oom}
                 guard case .inspect=command else { throw JournalError.conflict }
+                let startIssued=try journal.sandboxRecords().first(where:{$0.configuration.job==completed.job})?.startIssued == true
                 if case .present(_,_,_,_,false)=presence,
                    let job=try journal.jobs().first(where:{$0.id==completed.job}),job.state == .creating,
-                   let record=try journal.sandboxRecords().first(where:{$0.configuration.job==job.id}),
-                   !record.startIssued,(!safeFor(job.id) || !transportReady(job.id)) { continue }
-                if let next=try lifecycle.observed(job:completed.job,presence:presence,now:now,resourcesSafe:!rollback && (safeFor(completed.job) || completed.job != victim)) {
-                    try dispatch(next,job:completed.job)
+                   !startIssued,(!safeFor(job.id) || !transportReady(job.id)) {
+                    exitProof.removeValue(forKey:completed.job)
+                    continue
                 }
+                // Validate ownership/causality before publishing exit status.
+                let next=try lifecycle.observed(job:completed.job,presence:presence,now:now,resourcesSafe:!rollback && (safeFor(completed.job) || completed.job != victim))
+                if case .present(_,_,_,_,let running)=presence {
+                    if running || !startIssued || exitCode==nil {exitProof.removeValue(forKey:completed.job)}
+                    else if let exitCode {exitProof[completed.job]=exitCode==0 && !oom}
+                }
+                if let next {try dispatch(next,job:completed.job)}
             case .success(.acknowledged):break
             }
         }

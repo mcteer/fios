@@ -56,6 +56,7 @@ struct PolicyTestRunner {
             ("sandbox executor",runSandboxExecutorTests),
             ("sandbox removal",runSandboxRemovalTests),
             ("job controller",runJobControllerTests),
+            ("sandbox exit proof",runSandboxExitProofTests),
             ("sandbox model",runSandboxModelTests),
             ("worker census",runWorkerCensusTests),
             ("worker recovery",runWorkerRecoveryTests),

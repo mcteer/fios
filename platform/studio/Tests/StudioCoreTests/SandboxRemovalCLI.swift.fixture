@@ -19,6 +19,9 @@ import Darwin
         let data=try Data(contentsOf:URL(fileURLWithPath:home+"/inspect.json"))
         guard data.count<=4096,let records=try JSONSerialization.jsonObject(with:data) as? [[String:Any]],records.count==1,
               let id=records[0]["Id"] as? String,id.utf8.count==64,id.utf8.allSatisfy({(48...57).contains($0)||(97...102).contains($0)}) else {exit(2)}
+        if Array(args.dropFirst(3)) == ["container","ls","--all","--no-trunc","--filter","id="+id,"--format","{{.ID}}"] {
+            print(id);return
+        }
         if args.count==6,args[3]=="inspect",args[4]=="--type=container",args[5]==id {
             FileHandle.standardOutput.write(data);return
         }

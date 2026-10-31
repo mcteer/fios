@@ -1,6 +1,26 @@
 import Foundation
 import CoreFoundation
 
+// Container absence permits local resource cleanup, never an execution-success
+// claim. A never-started container also reports the numeric exit code zero.
+enum SandboxExitStatus {
+    static func recorded(running:Bool,code:Int,finishedAt:Any?,now:Date=Date())->Int? {
+        guard !running,let stamp=finishedAt as? String,(20...30).contains(stamp.utf8.count),
+              stamp.range(of:#"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]{1,9})?Z$"#,options:.regularExpression) != nil else {return nil}
+        let whole=String(stamp.prefix(19))+"Z",formatter=ISO8601DateFormatter()
+        formatter.formatOptions=[.withInternetDateTime];formatter.timeZone=TimeZone(secondsFromGMT:0)
+        guard let base=formatter.date(from:whole),formatter.string(from:base)==whole else {return nil}
+        var seconds=base.timeIntervalSince1970
+        if stamp.utf8.count>20 {
+            guard let fraction=Double("0."+stamp.dropFirst(20).dropLast()) else {return nil}
+            seconds+=fraction
+        }
+        let current=now.timeIntervalSince1970
+        guard seconds.isFinite,seconds>0,current.isFinite,current>=0,seconds<=current+1 else {return nil}
+        return code
+    }
+}
+
 enum SandboxExecutionValue:Sendable { case created(String),observed(SandboxPresence,exitCode:Int? = nil,oom:Bool = false),acknowledged }
 enum SandboxExecutionFailure:Error,Sendable { case unavailable,identity,unapprovedImage }
 struct SandboxExecution:Sendable {
@@ -123,7 +143,7 @@ final class SandboxExecutor:SandboxExecuting,@unchecked Sendable {
                   let oomNumber=state["OOMKilled"] as? NSNumber,CFGetTypeID(oomNumber)==CFBooleanGetTypeID(),
                   let oom=state["OOMKilled"] as? Bool else { throw SandboxExecutionFailure.identity }
             remember(job:job,id:id,image:configuration.image)
-            return .observed(.present(id:id,name:"/"+configuration.name,image:configuration.image,nonce:configuration.nonce,running:running),exitCode:code.intValue,oom:oom)
+            return .observed(.present(id:id,name:"/"+configuration.name,image:configuration.image,nonce:configuration.nonce,running:running),exitCode:SandboxExitStatus.recorded(running:running,code:code.intValue,finishedAt:state["FinishedAt"]),oom:oom)
         case .start(let id):
             try fullID(id)
             let result=try runtime.command(["start",id])
