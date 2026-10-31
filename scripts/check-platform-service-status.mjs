@@ -42,12 +42,22 @@ try{
    if(mode==='unknown'){assert.equal(selected.sampled_at,null);assert.equal(selected.age_ms,null);}
    else{assert(Number.isSafeInteger(selected.sampled_at));assert(selected.age_ms>=0&&selected.age_ms<=5000);}
   }
+  if(mode==='ready'){
+   // Ordinary passage of time must age the observation without changing intent.
+   await delay(5200);
+   for(const service of ['mlx','orbstack']){
+    const aged=status(state,['service',service,'status']);
+    assert.equal(aged.observed,'unknown');assert.equal(aged.desired,'running');
+    assert.equal(aged.sampled_at,combined.services[service].sampled_at);
+    assert(aged.age_ms>5000);assert.equal(aged.launch_pending,false);
+   }
+  }
   const maintenance=status(state,['service','mlx','maintenance']);assert.equal(maintenance.applied,false);
   assert.equal(status(state,['service','mlx','status']).desired,'maintenance');
   assert.equal(status(state,['service','orbstack','status']).desired,'running');
   child.kill('SIGTERM');await until(()=>exited(child));assert.equal(child.exitCode,0);child=null;
  }
- console.log(JSON.stringify({ok:true,states:6,service_views:12,native_actions:0,review_directory:directory}));
+ console.log(JSON.stringify({ok:true,states:6,service_views:12,aged_service_views:2,native_actions:0,review_directory:directory}));
 }finally{
  if(child&&!exited(child)){child.kill('SIGTERM');try{await until(()=>exited(child),3000);}catch{child.kill('SIGKILL');await until(()=>exited(child),3000);}}
  // Retain the private development states; no database cleanup or native work.
