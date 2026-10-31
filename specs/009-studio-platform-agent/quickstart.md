@@ -18,6 +18,14 @@ node scripts/check-platform-service-recovery-status.mjs --isolated
 
 It runs only the single-completion functional scenario, reports pending/spacing-wait/available budget states and exits its own processes. It launches no native application and does not supply installed lifecycle acceptance.
 
+For an already-running local runtime, a one-shot VM observation can use an explicitly selected cached image without pulling or changing settings:
+
+```sh
+node scripts/check-platform-vm.mjs --isolated --image sha256:ACTUAL_CACHED_IMAGE_ID
+```
+
+The64MiB probe reads kernel memory and existing cap/inventory metadata, retains private identity data and removes only its already-stopped container. Readings remain unenrolled development observations.
+
 ## 1. Gates and prerequisites
 
 1. Review the accepted [governance-proposal.md](governance-proposal.md), constitution2.1.0 and ADR0003. No repeated implementation approval is needed; the16/16 specification checklist alone was never operational permission.

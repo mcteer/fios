@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 // Explicit disposable telemetry-source experiment, never production enrollment.
 import {spawnSync} from 'node:child_process';
-import {mkdtempSync,realpathSync,copyFileSync,chmodSync,rmSync} from 'node:fs';
+import {mkdtempSync,realpathSync,copyFileSync,chmodSync,writeFileSync} from 'node:fs';
 import {homedir,tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {randomUUID} from 'node:crypto';
-if(process.argv.length!==3||process.argv[2]!=='--isolated')throw Error('Usage: node scripts/check-platform-vm.mjs --isolated');
+const args=process.argv.slice(2),supplied=args.length===3&&args[1]==='--image'&&/^sha256:[a-f0-9]{64}$/.test(args[2]);
+if((args.length!==1&&!supplied)||args[0]!=='--isolated')throw Error('Usage: node scripts/check-platform-vm.mjs --isolated [--image IMMUTABLE_ID]');
 const directory=mkdtempSync(join(tmpdir(),'fios-vm-observation-')),nonce=randomUUID(),name='fios-vm-probe-'+nonce;
 const socket='unix://'+join(homedir(),'.orbstack/run/docker.sock'),docker=join(directory,'docker');
 const env={PATH:'/usr/bin:/bin',HOME:homedir(),LANG:'C',DOCKER_CONFIG:directory};
@@ -24,11 +25,12 @@ try{
   const capBytes=Number(capText)*1048576;
   function configuredMachines(){const value=JSON.parse(run(orbctl,['list','--format','json']));const list=Array.isArray(value)?value:value.machines;if(!Array.isArray(list))throw Error('Unknown native topology schema');return list.length;}
   const machinesBefore=configuredMachines();
-  image=runtime(['image','inspect','fios:current','--format','{{.Id}}']);if(!/^sha256:[a-f0-9]{64}$/.test(image))throw Error('Existing immutable image required; no pulls');
+  image=runtime(['image','inspect',supplied?args[2]:'fios:current','--format','{{.Id}}']);if(!/^sha256:[a-f0-9]{64}$/.test(image))throw Error('Existing immutable image required; no pulls');
   const code="import json,re; s=open('/proc/meminfo').read(16384); d={k:int(v) for k,v in re.findall(r'^(MemTotal|MemFree|MemAvailable):\\s+(\\d+) kB$',s,re.M)}; m=open('/proc/self/mountinfo').read(65536).splitlines(); d['kernel_procfs_view']=any(' /proc ' in x and ' - proc ' in x for x in m) and not any(len(x.split())>4 and x.split()[4]=='/proc/meminfo' for x in m); print(json.dumps(d))";
   createAttempted=true;
   id=runtime(['create','--pull=never','--name',name,'--label','lab.fios.telemetry-fixture='+nonce,'--network=none','--read-only','--user','65532:65532','--cap-drop=ALL','--security-opt','no-new-privileges','--memory','64m','--memory-swap','64m','--oom-score-adj','1000','--cpus','1','--pids-limit','8','--entrypoint','/opt/venv/bin/python',image,'-I','-S','-B','-c',code]);
   if(!/^[a-f0-9]{64}$/.test(id))throw Error('Uncertain fixture identity');
+  writeFileSync(join(directory,'owned-probe.json'),JSON.stringify({id,image,name,nonce})+'\n',{mode:0o600});
   const sampledAt=Date.now(),monotonicStart=performance.now();
   const data=JSON.parse(runtime(['start','--attach',id]));
   if(Object.keys(data).sort().join(',')!=='MemAvailable,MemFree,MemTotal,kernel_procfs_view'||data.kernel_procfs_view!==true||!['MemTotal','MemFree','MemAvailable'].every(k=>Number.isSafeInteger(data[k])&&data[k]>=0)||data.MemFree>data.MemTotal||data.MemAvailable>data.MemTotal||data.MemTotal<=65536)throw Error('Not a coherent global-kernel memory observation');
@@ -40,7 +42,7 @@ try{
   // A nonempty machine inventory needs separate shared-kernel attestation.
   // Even the empty-inventory candidate is not production enrollment.
   const candidateRemaining=machinesBefore===0&&machinesAfter===0?Math.min(data.MemFree*1024,Math.max(0,capBytes-occupiedBytes)):null;
-  console.log(JSON.stringify({source:'isolated_linux_proc_meminfo',sampled_at:envelopeSampledAt,kernel_sampled_at:sampledAt,age_ms:Math.ceil(envelopeAge),kernel_age_ms:Math.ceil(age),container_limit_mib:64,vm_total_kib:data.MemTotal,vm_free_kib:data.MemFree,vm_available_kib:data.MemAvailable,configured_cap_bytes:capBytes,configured_machines_before:machinesBefore,configured_machines_after:machinesAfter,candidate_remaining_bytes:candidateRemaining,container_scoped_total:false,kernel_procfs_view:data.kernel_procfs_view,production_enrollment:false}));
+  console.log(JSON.stringify({source:'isolated_linux_proc_meminfo',runtime_image:image,sampled_at:envelopeSampledAt,kernel_sampled_at:sampledAt,age_ms:Math.ceil(envelopeAge),kernel_age_ms:Math.ceil(age),container_limit_mib:64,vm_total_kib:data.MemTotal,vm_free_kib:data.MemFree,vm_available_kib:data.MemAvailable,configured_cap_bytes:capBytes,configured_machines_before:machinesBefore,configured_machines_after:machinesAfter,candidate_remaining_bytes:candidateRemaining,container_scoped_total:false,kernel_procfs_view:data.kernel_procfs_view,production_enrollment:false}));
   console.log('PASS: fixed read-only probe observes VM kernel memory beyond its own cgroup; all-machine coverage/cap mapping still requires validation; no inference/persistent monitor');
 }finally{
   try{
@@ -50,7 +52,9 @@ try{
       const identity=runtime(['inspect','--format','{{.Id}} {{.Name}} {{.Image}} {{index .Config.Labels "lab.fios.telemetry-fixture"}}',id||name]).split(' ');
       const [fullID,actualName,actualImage,owned]=identity;
       if(identity.length!==4||!/^[a-f0-9]{64}$/.test(fullID)||actualName!=='/'+name||actualImage!==image||owned!==nonce||(id&&id!==fullID))throw Error('Foreign/uncertain runtime object; cleanup refused');
-      runtime(['rm','--force',fullID]);
+      if(runtime(['inspect','--format','{{.State.Running}}',fullID])!=='false')throw Error('Probe still running; retained for review');
+      runtime(['rm',fullID]);
+      if(runtime(['container','ls','--all','--no-trunc','--filter','id='+fullID,'--format','{{.ID}}'])!=='')throw Error('Probe removal not confirmed');
     }
-  }finally{rmSync(directory,{recursive:true,force:true});}
+  }finally{console.log('Retained private VM observation data: '+directory);}
 }
