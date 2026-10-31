@@ -18,7 +18,11 @@ Workload gauges are sampled on the same existing2s manager cycle from its own jo
 | `fios.platform.workers.reservations` | `{reservation}` | Unreaped worker reservations, including pending startup |
 | `fios.platform.artifacts.size` | `By` | Retained artifact storage bytes |
 | `fios.platform.artifacts.jobs` | `{job}` | Jobs represented in cached artifact storage statistics |
+| `fios.platform.sandbox.cleanup.pending` | `{sandbox}` | Owned sandboxes currently awaiting runtime cleanup |
+| `fios.platform.sandbox.cleanup.wait` | `s` | Oldest currently observed cleanup wait; omitted when its clock is unknown |
 | `fios.platform.workload.sample.time` | `s` | Original aggregate collection time |
+
+Cleanup gauges share the controller’s current operator-status observation. Recovery returns pending/wait to zero without clearing independent inference records. Wait age includes observed runtime outages and is not an availability-relative SLA verdict.
 
 A failed journal query omits the entire workload sample; no additional SQLite instance is opened. Missing or expired samples produce no points. Known zero counts remain zero. These gauges describe retained local records, not live worker/model counts or native completion. They never release a reservation or alter independent inference uncertainty. No job/model/owner IDs or content are included.
 

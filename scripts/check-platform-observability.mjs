@@ -40,7 +40,7 @@ try{
  assert(first.logs.includes('fios.platform.started'));
  assert.equal(first.metrics['fios.platform.jobs'].points.length,8);
  assert.equal(first.metrics['fios.platform.jobs'].points.reduce((sum,point)=>sum+point.value,0),0);
- for(const name of ['fios.platform.inference.unresolved_records','fios.platform.inference.uncertain_records','fios.platform.workers.reservations','fios.platform.artifacts.size'])assert.equal(scalar(first,name),0);
+ for(const name of ['fios.platform.inference.unresolved_records','fios.platform.inference.uncertain_records','fios.platform.workers.reservations','fios.platform.artifacts.size','fios.platform.sandbox.cleanup.pending','fios.platform.sandbox.cleanup.wait'])assert.equal(scalar(first,name),0);
  assert(scalar(first,'fios.platform.host.memory.physical')>0);
  const result=JSON.parse(run(join(bin,'studioctl'),['--state',state,'service','mlx','maintenance'],3000));assert.equal(result.applied,false);
  const changed=await until(()=>{const value=snapshot();return value?.logs.includes('fios.platform.desiredChanged') ? value:null;});

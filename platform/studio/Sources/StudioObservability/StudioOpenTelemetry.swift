@@ -124,6 +124,15 @@ public final class StudioOpenTelemetry:PlatformTelemetry,@unchecked Sendable {
                 if let sample=state.currentWorkload() {observation.record(value:value(sample))}
             }
         }
+        let cleanupMetrics:[(String,String,(PlatformWorkloadSample)->Double?)]=[
+            ("fios.platform.sandbox.cleanup.pending","{sandbox}",{$0.cleanupPending.map{Double($0)}}),
+            ("fios.platform.sandbox.cleanup.wait","s",{$0.cleanupWaitMilliseconds.map{Double($0)/1000}})
+        ]
+        for (name,unit,value) in cleanupMetrics {
+            _=meter.gaugeBuilder(name:name).setUnit(unit).buildWithCallback { observation in
+                if let sample=state.currentWorkload(),let number=value(sample) {observation.record(value:number)}
+            }
+        }
         _=meter.gaugeBuilder(name:"fios.platform.resource.sample.time").setUnit("s").buildWithCallback { observation in
             if let sample=state.current() {observation.record(value:Double(sample.sampledAt)/1000)}
         }

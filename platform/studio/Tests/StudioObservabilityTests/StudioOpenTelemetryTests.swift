@@ -127,4 +127,27 @@ final class StudioOpenTelemetryTests:XCTestCase {
         XCTAssertFalse(telemetry.collectMetrics().contains{$0.name=="fios.platform.jobs" && !$0.data.points.isEmpty})
     }
 
+    func testCleanupMetricsFollowCurrentWaitAndRecovery() throws {
+        let telemetry=StudioOpenTelemetry(),now=HostResources.nowMilliseconds()
+        func sample(pending:Int,wait:Int64?)->PlatformWorkloadSample {
+            PlatformWorkloadSample(sampledAt:now,jobs:[:],unresolvedRecords:1,uncertainRecords:1,
+                workerReservations:0,artifactBytes:0,artifactJobs:0,
+                cleanupPending:pending,cleanupWaitMilliseconds:wait)
+        }
+        func value(_ name:String)->Double? {
+            let metric=telemetry.collectMetrics().first{$0.name==name}
+            return (metric?.data.points as? [DoublePointData])?.first?.value
+        }
+        telemetry.workload(sample(pending:1,wait:61000))
+        XCTAssertEqual(value("fios.platform.sandbox.cleanup.pending"),1)
+        XCTAssertEqual(value("fios.platform.sandbox.cleanup.wait"),61)
+        telemetry.workload(sample(pending:0,wait:0))
+        XCTAssertEqual(value("fios.platform.sandbox.cleanup.pending"),0)
+        XCTAssertEqual(value("fios.platform.sandbox.cleanup.wait"),0)
+        XCTAssertEqual(value("fios.platform.inference.uncertain_records"),1)
+        telemetry.workload(sample(pending:1,wait:nil))
+        XCTAssertEqual(value("fios.platform.sandbox.cleanup.pending"),1)
+        XCTAssertNil(value("fios.platform.sandbox.cleanup.wait"))
+    }
+
 }

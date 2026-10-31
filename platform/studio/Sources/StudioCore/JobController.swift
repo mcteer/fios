@@ -24,14 +24,18 @@ final class JobController {
     }
     // Current owned-runtime cleanup only; this does not describe native
     // inference completion. Wait age starts when this manager observes it.
-    func cleanupStatus(now:Int64)->[String:Any] {
+    func cleanupObservation(now:Int64)->(pending:Int,wait:Int64?,observedAt:Int64?) {
         let clockKnown=(0...ActivityPolicy.maximumTimestamp).contains(now) && now>=previous &&
             revokingSince.values.allSatisfy{$0>=0 && $0<=now}
         let wait=clockKnown ? revokingSince.values.map{now-$0}.max() ?? 0:nil
-        return ["scope":"owned_runtime_cleanup","pending_sandboxes":revokingSince.count,
-            "observed_at":previous>0 ? previous as Any:NSNull(),
-            "observed_wait_ms":wait.map{$0 as Any} ?? NSNull(),
-            "waiting_over_60s":wait.map{($0>=60000) as Any} ?? NSNull()]
+        return (revokingSince.count,wait,previous>0 ? previous:nil)
+    }
+    func cleanupStatus(now:Int64)->[String:Any] {
+        let sample=cleanupObservation(now:now)
+        return ["scope":"owned_runtime_cleanup","pending_sandboxes":sample.pending,
+            "observed_at":sample.observedAt.map{$0 as Any} ?? NSNull(),
+            "observed_wait_ms":sample.wait.map{$0 as Any} ?? NSNull(),
+            "waiting_over_60s":sample.wait.map{($0>=60000) as Any} ?? NSNull()]
     }
     func authorizeVMProbe(id:String,permission:VMProbePermission,now:Int64)throws {
         guard collectVM,vmProbes.isEmpty,
