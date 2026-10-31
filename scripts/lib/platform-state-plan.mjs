@@ -79,24 +79,28 @@ export function platformUninstallPlan(options){
     limitations:[...backup.limitations,'no_automatic_service_stop','no_enrollment_removal','no_data_deletion']};
 }
 
+function renderConfigurationTemplate(template,stateDirectory){
+  absolute(stateDirectory);
+  const defaults='/Users/mcteer/Library/Application Support/Fios/Studio';
+  const escaped=stateDirectory.replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;')
+    .replaceAll('"','&quot;').replaceAll("'",'&apos;');
+  if(!template.includes(`<string>${defaults}</string>`))fail();
+  return template.replaceAll(`<string>${defaults}</string>`,`<string>${escaped}</string>`);
+}
+
 // Render reviewed configuration as proposal data. No files are written and no
 // launchd/native service operation is executed by this review command.
 export function platformConfigurationPlan({release,verified,host,state}){
   if(!verified.manifest.native_inventory.hosts.includes(host))fail();
   const stateDirectory=privateDirectory(state);
-  const xml=value=>value.replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;')
-    .replaceAll('"','&quot;').replaceAll("'",'&apos;');
   const sha=bytes=>createHash('sha256').update(bytes).digest('hex');
-  const defaults='/Users/mcteer/Library/Application Support/Fios/Studio';
   const files=[['supervisor','/Library/LaunchDaemons'],['session','/Library/LaunchAgents']].map(([kind,directory])=>{
     const name=`lab.fios.studio.${kind}.plist`,path=`launchd/${name}`;
     const artifact=verified.manifest.artifacts.find(item=>item.path===path);
     if(!artifact)fail();
     const bytes=readFileSync(join(resolve(release),path));
     if(sha(bytes)!==artifact.sha256)fail();
-    const template=bytes.toString('utf8');
-    if(!template.includes(`<string>${defaults}</string>`))fail();
-    const content=template.replaceAll(`<string>${defaults}</string>`,`<string>${xml(stateDirectory)}</string>`);
+    const content=renderConfigurationTemplate(bytes.toString('utf8'),stateDirectory);
     return {destination:join(directory,name),owner:'root:wheel',mode:0o644,
       source_artifact_sha256:artifact.sha256,content_sha256:sha(content),content};
   });
@@ -130,4 +134,36 @@ export function stagePlatformConfiguration(options){
   return {version:1,operation:'stage_platform_configuration',host:plan.host,destination,
     manifest_sha256:plan.manifest_sha256,review_sha256:createHash('sha256').update(bytes).digest('hex'),
     files:files.length,installed:false,activation:false,state:'review_required'};
+}
+
+// Verify saved proposal bytes without opening state, a journal or destinations.
+export function verifyPlatformConfiguration({release,verified,host,bundle,reviewSHA256}){
+  if(!verified.manifest.native_inventory.hosts.includes(host)||!/^[a-f0-9]{64}$/.test(reviewSHA256))fail();
+  const directory=privateDirectory(bundle),sha=bytes=>createHash('sha256').update(bytes).digest('hex');
+  function read(name){
+    const path=join(directory,name),info=lstatSync(path);
+    if(!info.isFile()||info.isSymbolicLink()||info.uid!==process.geteuid()||info.nlink!==1||
+       (info.mode&0o077)!==0||info.size<=0||info.size>65536)fail();
+    const bytes=readFileSync(path);if(bytes.length!==info.size)fail();return bytes;
+  }
+  const bytes=read('review.json');if(sha(bytes)!==reviewSHA256)fail();
+  const review=JSON.parse(bytes);
+  if(review.preparation!=='private_configuration_bundle'||review.host!==host||review.manifest_sha256!==verified.manifestSHA256||
+     review.activation!==false||!Array.isArray(review.files)||review.files.length!==2||
+     !Array.isArray(review.configuration_files)||review.configuration_files.length!==2)fail();
+  for(const [kind,parent] of [['supervisor','/Library/LaunchDaemons'],['session','/Library/LaunchAgents']]){
+    const name=`lab.fios.studio.${kind}.plist`,destination=join(parent,name);
+    const proposal=review.configuration_files.find(file=>file.destination===destination),file=review.files.find(file=>file.path===name);
+    const artifact=verified.manifest.artifacts.find(item=>item.path===`launchd/${name}`);
+    if(!proposal||!file||!artifact||proposal.source_artifact_sha256!==artifact.sha256)fail();
+    const template=readFileSync(join(resolve(release),artifact.path));if(sha(template)!==artifact.sha256)fail();
+    const expected=renderConfigurationTemplate(template.toString('utf8'),review.state_directory);
+    const content=read(name);
+    if(!content.equals(Buffer.from(expected))||proposal.content!==expected||proposal.content_sha256!==sha(content)||
+       file.sha256!==sha(content)||proposal.owner!=='root:wheel'||proposal.mode!==0o644||
+       file.installation_destination!==destination||file.installation_owner!=='root:wheel'||file.installation_mode!==0o644)fail();
+  }
+  return {version:1,operation:'verify_platform_configuration',scope:'declared_configuration_files',host,
+    bundle:directory,manifest_sha256:verified.manifestSHA256,review_sha256:reviewSHA256,files:2,
+    state:'review_required',installed:false,activation:false,changes_made:false};
 }

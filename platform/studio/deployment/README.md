@@ -64,6 +64,14 @@ node scripts/install-platform.mjs stage-config --release /ABSOLUTE/REVIEWED_RELE
 
 The destination must be new under an existing owned0700 directory. It contains the two rendered plists and `review.json`, all private0600 files. The receipt binds the review bytes; the review binds each plist and its proposed installation destination/owner/mode. This writes only the private bundle. It executes no packaged program, changes no enrollment or launchd configuration, and keeps `installed:false`/`activation:false`. Preserve any partial output after an error; do not treat it as a completed bundle. `plan-config` remains read-only.
 
+Verify a saved bundle later against the same chosen release and the independently retained review digest:
+
+```sh
+node scripts/install-platform.mjs verify-config --release /ABSOLUTE/REVIEWED_RELEASE --sha256 REVIEWED_MANIFEST_SHA --host fios-edge-a.lab --bundle /ABSOLUTE/PRIVATE_CONFIG_BUNDLE --bundle-sha256 REVIEWED_BUNDLE_SHA256
+```
+
+This checks the review bytes and both declared plists, including their source-template binding and expected rendered content. It opens neither a journal nor installation destinations, and does not require the old state directory to remain present; retained rollback proposals can therefore be checked after state is moved. It returns `review_required`, `installed:false`, `activation:false` and `changes_made:false`. This is byte/configuration consistency for those declared files, not verification of installed state, credentials, native enrollment or an atomic installation reservation.
+
 The command leaves the state and system directories unchanged and emits no privileged commands. Current release/enrollment and installation-approval blockers remain. Generated content is proposal data, not an installed configuration, complete interpreter/native enrollment or service-start permission. Rollback steps retain current state/configuration, restore reviewed previous artifacts/configuration, restore the previous original backup into a fresh directory and verify status without inference. Actual switching/removal still requires the separately reviewed installation workflow; do not load these development proposals.
 
 ## Verified offline artifact copy
