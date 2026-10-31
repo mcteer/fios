@@ -28,6 +28,14 @@ A separate private runtime candidate can be produced with the pinned noneditable
 
 This finite development command copies actual CPython3.11.17 and installed distribution RECORD bytes, flattens contained interpreter file aliases, excludes console wrappers/caches, and refuses escaping links, special/multiply linked files, editable packages and source/package mismatches. It rechecks original identities and copied hashes/modes/tree around a30s network-denied import probe. Copy/review work has a120s cooperative deadline,10000-file/512MiB total and128MiB per-file limits; filesystem syscalls are not preempted. The copied interpreter must report its private prefix, load the installed worker/Pydantic extension from that tree and observe denied network access. Source/installed agent file sets and bytes must match before and after probing. Failures retain private data; there is no cleanup, installation, service or model action.
 
+Read-only byte review requires the separately retained expected receipt digest:
+
+```sh
+.venv/bin/python -I -B scripts/check-platform-python-candidate.py --candidate /ABSOLUTE/PRIVATE_PARENT/RUNTIME --sha256 REVIEWED_CANDIDATE_SHA256
+```
+
+This command never executes candidate code. It verifies the pinned receipt, finite exact file/directory surface, regular single-link files, ownership/modes and every recorded size/hash, with rooted directory checks and a final receipt recheck. Duplicate JSON keys, extra paths and any claimed approval/enrollment/activation refuse. Results describe per-file observations, not an atomic installed-tree reservation or provenance approval.
+
 `candidate.json` is sealed last and binds the actual byte inventory, producer, release template, lockfile and source hashes. This is installed-byte evidence, not publisher/build/whole-OS provenance. The destination remains writable development data; its receipt must be independently checked again after use. It does not expand the nine-artifact release surface, enroll an immutable interpreter, authorize installation or clear any native uncertainty. All approval/enrollment/activation flags remain false.
 
 Read-only, single-host review:

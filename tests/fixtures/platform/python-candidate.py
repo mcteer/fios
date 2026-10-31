@@ -1,14 +1,49 @@
 """Filesystem-only runtime candidate contracts; no SDK/model/runtime authority."""
 from pathlib import Path
+import hashlib
+import json
 import os
 import runpy
 import tempfile
 import unittest
 
 API = runpy.run_path(str(Path(__file__).resolve().parents[3] / 'scripts/package-platform-python.py'))
+REVIEW = runpy.run_path(str(Path(__file__).resolve().parents[3] / 'scripts/check-platform-python-candidate.py'))
 
 
 class RuntimeCandidateTests(unittest.TestCase):
+    def test_independent_review_rejects_changed_bytes_modes_links_and_extra_paths(self):
+        for mutation in ('none', 'bytes', 'mode', 'link', 'extra-file', 'extra-directory', 'digest', 'approval', 'duplicate-key'):
+            with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary).resolve()
+                data = b'not executable fixture data'
+                (root / 'payload').write_bytes(data)
+                manifest = dict(version=1, purpose='python_worker_runtime_candidate', python_version='3.11.17',
+                    platform='macos/arm64', uv_lock_sha256='0'*64, producer_sha256='0'*64,
+                    release_template_sha256='0'*64, agent_sources={}, distributions=[],
+                    files={'payload':dict(bytes=len(data),sha256=hashlib.sha256(data).hexdigest(),mode=0o644)},
+                    bytes=len(data), console_wrappers_excluded=0, probe={},
+                    scope='declared_installed_runtime_bytes_not_publisher_build_or_whole_os_provenance',
+                    immutable_tree_enrolled=False, approved=mutation=='approval', activation=False)
+                payload=json.dumps(manifest).encode()
+                if mutation=='duplicate-key':
+                    payload=payload[:-1]+b',"version":1}'
+                (root / 'candidate.json').write_bytes(payload)
+                expected=hashlib.sha256(payload).hexdigest()
+                if mutation=='bytes': (root / 'payload').write_bytes(b'x'*len(data))
+                if mutation=='mode': (root / 'payload').chmod(0o755)
+                if mutation=='link':
+                    (root / 'payload').unlink(); (root / 'payload').symlink_to(Path(__file__))
+                if mutation=='extra-file': (root / 'extra').write_bytes(b'unknown')
+                if mutation=='extra-directory': (root / 'extra').mkdir(mode=0o700)
+                if mutation=='digest': expected='0'*64
+                if mutation=='none':
+                    result=REVIEW['review'](root,expected)
+                    self.assertEqual(result['files'],1)
+                    self.assertFalse(result['candidate_executed'])
+                else:
+                    with self.assertRaises(ValueError): REVIEW['review'](root,expected)
+
     def test_installed_agent_requires_exact_source_set_and_bytes(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary).resolve()
