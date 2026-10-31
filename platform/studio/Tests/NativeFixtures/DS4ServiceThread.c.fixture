@@ -1,0 +1,43 @@
+// Actual service-role source fragment; genuine pthread lifetimes, no GPU ABI.
+#include <pthread.h>
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+#define REQUIRE(v,m) do{if(!(v)){fprintf(stderr,"%s\n",m);exit(77);}}while(0)
+// FIOS_GENUINE_SERVICE_THREAD_SOURCE
+static pthread_t departed;
+typedef struct {int reused;int marked;} observation;
+static void *register_service(void *unused){
+ (void)unused;departed=pthread_self();
+ ds4_gpu_stream_expert_cache_note_service_thread();
+ REQUIRE(ds4_gpu_stream_expert_cache_on_service_thread(),"SERVICE_OWNER_NOT_MARKED");
+ return NULL;
+}
+static void *observe_fresh_thread(void *context){
+ observation *result=context;pthread_t current=pthread_self();
+ // Compare stored representation only; never call pthread_equal ourselves on
+ // a departed handle. The unmodified original source does use that handle.
+ result->reused=!memcmp(&current,&departed,sizeof(current));
+ result->marked=ds4_gpu_stream_expert_cache_on_service_thread();return NULL;
+}
+int main(void){
+ REQUIRE(!ds4_gpu_stream_expert_cache_on_service_thread(),"SERVICE_COLD_THREAD_MARKED");
+ pthread_t thread;REQUIRE(!pthread_create(&thread,NULL,register_service,NULL),"SERVICE_THREAD_CREATE_FAILED");
+ REQUIRE(!pthread_join(thread,NULL),"SERVICE_THREAD_JOIN_FAILED");
+ REQUIRE(!ds4_gpu_stream_expert_cache_on_service_thread(),"SERVICE_FOREIGN_MAIN_MARKED");
+ int reused=0;
+ for(unsigned i=0;i<128&&!reused;++i){
+  observation result={0};REQUIRE(!pthread_create(&thread,NULL,observe_fresh_thread,&result),"SERVICE_OBSERVER_CREATE_FAILED");
+  REQUIRE(!pthread_join(thread,NULL),"SERVICE_OBSERVER_JOIN_FAILED");
+  reused=result.reused;
+  REQUIRE(!result.marked||result.reused,"SERVICE_ROLE_WRONG_WITHOUT_HANDLE_REUSE");
+  if(reused)fputs("OBSERVED_REUSED_PTHREAD_HANDLE_BYTES\n",stderr);
+  REQUIRE(!result.marked,"FIO_DS4_SERVICE_ROLE_INHERITED_BY_FRESH_THREAD");
+ }
+ if(!reused){fputs("FIO_DS4_SERVICE_HANDLE_REUSE_NOT_OBSERVED\n",stderr);return 78;}
+ ds4_gpu_stream_expert_cache_note_service_thread();
+ REQUIRE(ds4_gpu_stream_expert_cache_on_service_thread(),"SERVICE_MAIN_CANNOT_REGISTER");
+ observation other={0};REQUIRE(!pthread_create(&thread,NULL,observe_fresh_thread,&other),"SERVICE_FINAL_CREATE_FAILED");
+ REQUIRE(!pthread_join(thread,NULL)&&!other.marked,"SERVICE_MAIN_ROLE_LEAKED_TO_FOREIGN_THREAD");
+ puts("PASS: actual departed pthread handle representation reused; fresh thread inherits no service role; independent registration remains local.");
+}
