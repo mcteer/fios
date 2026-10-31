@@ -8,7 +8,7 @@ Current backend-specific findings and unproven terminality requirements: [native
 
 ## Ordinary image-bearing source check —2026-10-31
 
-The finite model runner accepts `--scenario single-image` on plan/check/run, with one fixed64×64 PNG and the same small exact Gemma model/resource limits. Current genuine source integration returns400 because this model variant’s vision tower is explicitly not wired (`model.zig` sets `has_vision=false`). The presence of vision weights/config is insufficient to claim serving support. Retain this unsupported result; it is not model competence or complete modality coverage. No larger-model substitution, retry or native installation follows. See the validation record for the actual one-use plan and result.
+The finite model runner accepts `--scenario single-image` on plan/check/run, with one fixed64×64 PNG and the same small exact Gemma model/resource limits. Current genuine source integration returns400 because this model variant’s vision tower is explicitly not wired (`model.zig` sets `has_vision=false`). The presence of vision weights/config is insufficient to claim serving support. Retain this unsupported result; it is not model competence or complete modality coverage. The corrected cold catalog advertises text only, and the fixed experiment now checks that advertised modality before dispatch: its image intent stops with0 model POSTs. A separate actual bounded text request on the rebuilt binary returns200/2 tokens. No larger-model substitution, retry or native installation follows. See the validation record for the actual one-use plan and result.
 
 ## Cold catalog capability alignment —2026-10-31
 

@@ -10,6 +10,11 @@ export function nativeReviewModelInputs(inputs){
   assert(dependency.source_fixture_only===true&&dependency.native_authority===false&&dependency.features?.safetensors===true,'Source SDK lacks required Safetensors support');
  }
 }
+// Fixed experiment capability check only; not native admission/ownership proof.
+export function nativeReviewModelSupports(catalog,id,modality){
+ const model=catalog.data.find(entry=>entry.id===id);
+ return Array.isArray(model?.input_modalities)&&model.input_modalities.includes(modality);
+}
 export async function nativeReviewJSON(response, maximum=65536) {
  let size=0;const chunks=[];
  for await(const chunk of response.body){size+=chunk.length;assert(size<=maximum,'Native review response limit');chunks.push(Buffer.from(chunk));}

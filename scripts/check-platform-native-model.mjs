@@ -13,7 +13,7 @@ import {fileURLToPath} from 'node:url';
 import {setTimeout as delay} from 'node:timers/promises';
 import {createServer,createConnection} from 'node:net';
 import {verifyNativeReview} from './lib/platform-native-review.mjs';
-import {nativeReviewIntent,nativeReviewHTTPFailure,nativeReviewJSON,nativeReviewActivity,nativeReviewModelInputs,nativeReviewLineage,nativeReviewComponents} from './lib/platform-native-review-intent.mjs';
+import {nativeReviewIntent,nativeReviewHTTPFailure,nativeReviewJSON,nativeReviewActivity,nativeReviewModelInputs,nativeReviewLineage,nativeReviewComponents,nativeReviewModelSupports} from './lib/platform-native-review-intent.mjs';
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..'),args=process.argv.slice(2);
 const intent=nativeReviewIntent(args),pair=intent.scenario==='same-model-pair',image=intent.scenario==='single-image';
 const scenario=intent.scenario??'single-model',scenarioArgs=intent.scenario?['--scenario',scenario]:[];
@@ -137,7 +137,14 @@ try{
  stage='diagnostic';acceptActivity(await get('/v1/fios/activity'));await sampleComponents();
  if(check){assert(before.data.length===0);receipt.result='empty_model_profile_and_identity_passed';}
  else{
-  assert(before.data.some(m=>m.id===ID),'Exact selected model not advertised');receipt.native_uncertainty=true;receipt.native_inference=null;receipt.inference_attempted=true;save();
+  const selected=before.data.find(m=>m.id===ID);assert(selected,'Exact selected model not advertised');
+  receipt.selected_model_loaded=typeof selected.loaded==='boolean'?selected.loaded:null;
+  receipt.selected_model_input_modalities=['text','image','video','audio'].filter(mode=>nativeReviewModelSupports(before,ID,mode));
+  if(!nativeReviewModelSupports(before,ID,image?'image':'text')){
+   failed=image?'selected_model_vision_unavailable':'selected_model_text_unavailable';
+   receipt.native_inference=false;receipt.inference_attempted=false;save();throw Error('Selected model modality unavailable');
+  }
+  receipt.native_uncertainty=true;receipt.native_inference=null;receipt.inference_attempted=true;save();
   activityTimer=setInterval(sampleActivity,100);stage='model_requests';
   const pending=Array.from({length:LIMITS.model_posts},(_,index)=>requestModel(index));let results;
   try{results=await Promise.all(pending);}catch(error){modelAbort.abort();await Promise.allSettled(pending);throw error;}
