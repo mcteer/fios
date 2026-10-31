@@ -38,7 +38,7 @@ This command never executes candidate code. It verifies the pinned receipt, fini
 
 `candidate.json` is sealed last and binds the actual byte inventory, producer, release template, lockfile and source hashes. This is installed-byte evidence, not publisher/build/whole-OS provenance. The destination remains writable development data; its receipt must be independently checked again after use. It does not expand the nine-artifact release surface, enroll an immutable interpreter, authorize installation or clear any native uncertainty. All approval/enrollment/activation flags remain false.
 
-Read-only, single-host review:
+Read-only, single-host review (list all supported workflows with `node scripts/install-platform.mjs --help`):
 
 ```sh
 node scripts/install-platform.mjs plan --release /ABSOLUTE/RELEASE_DIRECTORY --sha256 REVIEWED_MANIFEST_SHA256 --host fios-edge-a.lab

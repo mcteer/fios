@@ -3,7 +3,24 @@
 import {validatePlatformRelease} from './lib/platform-release.mjs';
 import {platformStatePlan,platformRollbackStatePlan,platformUninstallPlan,platformConfigurationPlan} from './lib/platform-state-plan.mjs';
 const args=process.argv.slice(2);
+const usage=`Usage: node scripts/install-platform.mjs COMMAND --release ABS_RELEASE --sha256 REVIEWED_SHA256 --host HOST [OPTIONS]
+
+Commands:
+  plan
+  plan-config          --state ABS_STATE
+  plan-backup          --state ABS_STATE --to ABS_NEW_BACKUP
+  plan-uninstall       --state ABS_STATE --to ABS_NEW_BACKUP
+  plan-restore         --backup ABS_BACKUP --backup-sha256 REVIEWED_BACKUP_SHA256 --to ABS_NEW_STATE
+  plan-rollback        --previous ABS_PREVIOUS_RELEASE --previous-sha256 REVIEWED_PREVIOUS_SHA256 --backup ABS_BACKUP --backup-sha256 REVIEWED_BACKUP_SHA256 --to ABS_NEW_STATE
+  plan-rollback-seven  Same options as plan-rollback; reviews a previous schema7 release only.
+
+HOST: fios-edge-a.lab or fios-edge-b.lab
+Creates review proposals only. Executes no installation or service action.
+`;
 function failure(){console.error('Platform installation review refused; no changes made.');process.exitCode=1;}
+if(args.length===1&&['--help','-h'].includes(args[0])){
+  console.log(usage);
+}else{
 try{
   const sizes={'plan':7,'plan-config':9,'plan-backup':11,'plan-uninstall':11,'plan-restore':13,'plan-rollback':17,'plan-rollback-seven':17};
   if(args.length!==sizes[args[0]]||args[1]!=='--release'||args[3]!=='--sha256'||args[5]!=='--host')throw Error('arguments');
@@ -38,3 +55,4 @@ try{
       next_steps:['complete_reviewed_release_and_host_enrollment','obtain_separate_installation_approval','stop_supervisor_and_manager_before_backup','back_up_journal_and_exports_before_upgrade','execute_reviewed_privileged_commands_manually_one_host_at_a_time']},null,2));
   }
 }catch{failure();}
+}
