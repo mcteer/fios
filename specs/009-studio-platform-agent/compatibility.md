@@ -49,6 +49,10 @@ The native orbctl alias resolves to `/Applications/OrbStack.app/Contents/MacOS/s
 
 This establishes actual target GPU-counter accessibility and a16GiB configured cap on both Studios. Zero here is an observed instantaneous counter, **not** all-client idle proof. The configured cap is **not** remaining usable VM capacity. No inference, remote containers, application restart, settings change or installation occurred. Fixed same-kernel memory readers and capacity-policy tests are described in telemetry-research.md; their production enrollment and continuous whole-VM coverage remain pending.
 
+## Current serving/catalog preparation (2026-10-31)
+
+A later authorized read-only inventory uses only fixed loopback native health/catalog GETs over existing strict-host-key SSH. Edge-a SSH works, but its native health read returns no HTTP response (curl000); no model/catalog call, restart or configuration action follows. Edge-b returns health/catalog200/status ok and advertises five unloaded entries, including the two large text candidates recorded in [native acceptance preparation](native-acceptance-preparation.md). Disk/resident/model capability metadata is not peak native memory, idle, locality/enrollment or acceptance proof. No model was loaded or invoked; existing profiles and services are unchanged. Logs: `/tmp/fios-009-studio-model-inventory-20261031.log`, `/tmp/fios-009-edge-b-text-model-metadata.log`.
+
 ## Gate G2: NOT SATISFIED
 
 Both local metrics responses expose `counters`, `decode_serial`, `gauges`, `histograms`, `sessions`. Gauge keys include `process_start_time_seconds`, `requests_prefilling`, `requests_running`, `requests_waiting` and resource/token counters. No raw session content was logged. Loopback metric availability resolves access feasibility; it does **not** establish coherent per-request ownership or all-client idle semantics.
