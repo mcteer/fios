@@ -23,6 +23,7 @@ private final class CapturedTelemetry:PlatformTelemetry,@unchecked Sendable {
     func resources(_ sample:ResourceSample) {sdk.resources(sample)}
     func gpu(_ sample:GPUSample?,sampledAt:Int64?) {sdk.gpu(sample,sampledAt:sampledAt)}
     func event(_ event:OperationalEvent) {sdk.event(event);capture()}
+    func services(_ samples:[PlatformServiceSample]) {sdk.services(samples);capture()}
     func workload(_ sample:PlatformWorkloadSample?) {sdk.workload(sample);capture()}
     private func capture() {
         do {

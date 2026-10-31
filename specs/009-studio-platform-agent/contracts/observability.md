@@ -8,6 +8,8 @@ The SDK emits structured logs for the six fixed operational event names and a cu
 
 Additional SDK gauges cover the readings already collected by the manager: `fios.platform.gpu.utilization` (fraction, unit1), GPU memory `.in_use`/`.allocated` (unitBy), and `fios.platform.gpu.sample.time` (original Unix seconds). GPU values use their own collection time, independently of the host/VM sample. `fios.platform.host.power.low` records1/0 only when low-power mode is known. Memory pressure (`fios.platform.host.memory.pressure`) and thermal state (`fios.platform.host.thermal.state`) are one-valued gauges labelled with the fixed `fios.state` enum value; unknown states publish no point. None of these observations establishes GPU idle or allocatable model memory.
 
+The same2s manager cycle emits `fios.platform.service.state` (unit1): one current point per fixed `fios.service` (`mlx` or `orbstack`), labelled by the existing `fios.service.desired` and `fios.service.observed` enum values. Desired state comes from the manager journal; observed state uses the same source-age/session/pending classification as operator status. Missing or stale observations therefore remain `unknown`, even when desired intent changes. The metric is a status sample, not proof of native state or actuation. Expired aggregate samples are omitted. Failed journal reads clear the service sample rather than retaining old states; no extra connection, service probe or listener is created.
+
 Workload gauges are sampled on the same existing2s manager cycle from its own journal and cached artifact statistics:
 
 | Metric | Unit | Meaning |

@@ -9,6 +9,7 @@ private final class ResourceMetrics:@unchecked Sendable {
     var gpu:GPUSample?
     var gpuAt:Int64?
     var workload:PlatformWorkloadSample?
+    var services:[PlatformServiceSample]=[]
     func update(_ value:ResourceSample) {lock.lock();sample=value;lock.unlock()}
     func updateGPU(_ value:GPUSample?,sampledAt:Int64?) {lock.lock();gpu=value;gpuAt=sampledAt;lock.unlock()}
     func currentGPU()->(sample:GPUSample,sampledAt:Int64)? {
@@ -21,6 +22,12 @@ private final class ResourceMetrics:@unchecked Sendable {
         lock.lock();defer {lock.unlock()}
         guard let workload,(-1000...5000).contains(HostResources.nowMilliseconds()-workload.sampledAt) else {return nil}
         return workload
+    }
+    func updateServices(_ values:[PlatformServiceSample]) {lock.lock();services=values;lock.unlock()}
+    func currentServices()->[PlatformServiceSample] {
+        lock.lock();defer {lock.unlock()}
+        let now=HostResources.nowMilliseconds()
+        return services.filter{(-1000...5000).contains(now-$0.sampledAt)}
     }
     func current()->ResourceSample? {
         lock.lock();defer {lock.unlock()}
@@ -133,6 +140,12 @@ public final class StudioOpenTelemetry:PlatformTelemetry,@unchecked Sendable {
                 if let sample=state.currentWorkload(),let number=value(sample) {observation.record(value:number)}
             }
         }
+        _=meter.gaugeBuilder(name:"fios.platform.service.state").setUnit("1").buildWithCallback { observation in
+            for sample in state.currentServices() {
+                observation.record(value:1,attributes:["fios.service":.string(sample.service.rawValue),
+                    "fios.service.desired":.string(sample.desired.rawValue),"fios.service.observed":.string(sample.observed.rawValue)])
+            }
+        }
         _=meter.gaugeBuilder(name:"fios.platform.resource.sample.time").setUnit("s").buildWithCallback { observation in
             if let sample=state.current() {observation.record(value:Double(sample.sampledAt)/1000)}
         }
@@ -144,6 +157,7 @@ public final class StudioOpenTelemetry:PlatformTelemetry,@unchecked Sendable {
     public func resources(_ sample:ResourceSample) {state.update(sample)}
     public func gpu(_ sample:GPUSample?,sampledAt:Int64?) {state.updateGPU(sample,sampledAt:sampledAt)}
     public func workload(_ sample:PlatformWorkloadSample?) {state.updateWorkload(sample)}
+    public func services(_ samples:[PlatformServiceSample]) {state.updateServices(samples)}
     public func collectMetrics()->[MetricData] {reader.collect()}
     deinit {_ = reader.shutdown()}
 }

@@ -150,4 +150,19 @@ final class StudioOpenTelemetryTests:XCTestCase {
         XCTAssertNil(value("fios.platform.sandbox.cleanup.wait"))
     }
 
+    func testServiceStateMetricsUseFixedStatesAndExpire() throws {
+        let telemetry=StudioOpenTelemetry(),now=HostResources.nowMilliseconds()
+        telemetry.services([PlatformServiceSample(service:.mlx,desired:.maintenance,observed:.unknown,sampledAt:now)])
+        let metric=try XCTUnwrap(telemetry.collectMetrics().first{$0.name=="fios.platform.service.state"})
+        let point=try XCTUnwrap((metric.data.points as? [DoublePointData])?.first)
+        XCTAssertEqual(point.value,1)
+        XCTAssertEqual(point.attributes["fios.service"],.string("mlx"))
+        XCTAssertEqual(point.attributes["fios.service.desired"],.string("maintenance"))
+        XCTAssertEqual(point.attributes["fios.service.observed"],.string("unknown"))
+        telemetry.services([PlatformServiceSample(service:.orbstack,desired:.running,observed:.ready,sampledAt:now-6000)])
+        XCTAssertFalse(telemetry.collectMetrics().contains{$0.name=="fios.platform.service.state" && !$0.data.points.isEmpty})
+        telemetry.services([])
+        XCTAssertFalse(telemetry.collectMetrics().contains{$0.name=="fios.platform.service.state" && !$0.data.points.isEmpty})
+    }
+
 }

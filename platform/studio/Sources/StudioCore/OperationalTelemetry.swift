@@ -11,6 +11,7 @@ public protocol PlatformTelemetry:Sendable {
     func resources(_ sample:ResourceSample)
     func gpu(_ sample:GPUSample?,sampledAt:Int64?)
     func workload(_ sample:PlatformWorkloadSample?)
+    func services(_ samples:[PlatformServiceSample])
 }
 
 public struct NoopPlatformTelemetry:PlatformTelemetry {
@@ -20,4 +21,31 @@ public struct NoopPlatformTelemetry:PlatformTelemetry {
     public func resources(_ sample:ResourceSample) {}
     public func gpu(_ sample:GPUSample?,sampledAt:Int64?) {}
     public func workload(_ sample:PlatformWorkloadSample?) {}
+}
+
+public struct PlatformServiceSample:Sendable {
+    public let service:ManagedService
+    public let desired:ServiceDesired
+    public let observed:ServiceObserved
+    public let sampledAt:Int64
+    public init(service:ManagedService,desired:ServiceDesired,observed:ServiceObserved,sampledAt:Int64) {
+        self.service=service;self.desired=desired;self.observed=observed;self.sampledAt=sampledAt
+    }
+}
+
+public extension PlatformTelemetry {
+    func services(_ samples:[PlatformServiceSample]) {}
+}
+
+enum ServiceTelemetry {
+    static func sample(journal:Journal,observations:ServiceObservationCache?,recovery:ServiceRecoveryController?,now:Int64)->[PlatformServiceSample] {
+        do {
+            return try ManagedService.allCases.map {service in
+                guard let desired=ServiceDesired(rawValue:try journal.desired(service:service.rawValue)) else {throw ServiceError.invalid}
+                let observed=ServiceStatusPolicy.observed(desired:desired,observation:observations?.snapshot(for:service),
+                    launchPending:recovery?.isPending(service) ?? false,now:now)
+                return PlatformServiceSample(service:service,desired:desired,observed:observed,sampledAt:now)
+            }
+        }catch {return []}
+    }
 }

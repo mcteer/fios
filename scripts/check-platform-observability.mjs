@@ -36,19 +36,23 @@ async function until(check,timeout=10000){const end=performance.now()+timeout;wh
 function snapshot(){try{return JSON.parse(readFileSync(capture,'utf8'));}catch(error){if(error.code==='ENOENT')return null;throw error;}}
 function scalar(snapshot,name){const points=snapshot.metrics[name]?.points;assert.equal(points?.length,1,`Missing ${name}`);return points[0].value;}
 try{
- const first=await until(()=>{assert(!exited(),`Telemetry manager failed: ${stderr}`);const value=snapshot();return value?.metrics['fios.platform.jobs'] ? value:null;});
+ const first=await until(()=>{assert(!exited(),`Telemetry manager failed: ${stderr}`);const value=snapshot();return value?.metrics['fios.platform.jobs']&&value?.metrics['fios.platform.service.state']?.points.length===2 ? value:null;});
  assert(first.logs.includes('fios.platform.started'));
  assert.equal(first.metrics['fios.platform.jobs'].points.length,8);
  assert.equal(first.metrics['fios.platform.jobs'].points.reduce((sum,point)=>sum+point.value,0),0);
  for(const name of ['fios.platform.inference.unresolved_records','fios.platform.inference.uncertain_records','fios.platform.workers.reservations','fios.platform.artifacts.size','fios.platform.sandbox.cleanup.pending','fios.platform.sandbox.cleanup.wait'])assert.equal(scalar(first,name),0);
  assert(scalar(first,'fios.platform.host.memory.physical')>0);
+ const services=first.metrics['fios.platform.service.state'].points;
+ assert.deepEqual(services.map(p=>p.attributes['fios.service']).sort(),['mlx','orbstack']);
+ for(const point of services){assert.equal(point.value,1);assert.equal(point.attributes['fios.service.desired'],'running');assert.equal(point.attributes['fios.service.observed'],'unknown');}
  const result=JSON.parse(run(join(bin,'studioctl'),['--state',state,'service','mlx','maintenance'],3000));assert.equal(result.applied,false);
  const changed=await until(()=>{const value=snapshot();return value?.logs.includes('fios.platform.desiredChanged') ? value:null;});
  assert.equal(changed.metrics['fios.platform.events'].points.reduce((sum,point)=>sum+point.value,0),2);
+ await until(()=>{const value=snapshot();return value?.metrics['fios.platform.service.state']?.points.some(p=>p.attributes['fios.service']==='mlx'&&p.attributes['fios.service.desired']==='maintenance'&&p.attributes['fios.service.observed']==='unknown');});
  child.kill('SIGTERM');await until(exited,5000);assert.equal(child.exitCode,0);assert.equal(stderr,'');
  const stopped=snapshot();assert(stopped.logs.includes('fios.platform.stopped'));
  assert.equal(stopped.metrics['fios.platform.events'].points.reduce((sum,point)=>sum+point.value,0),3);
- console.log(JSON.stringify({ok:true,events:3,job_state_series:8,actual_sdk:true,native_actions:0,review_directory:directory}));
+ console.log(JSON.stringify({ok:true,events:3,job_state_series:8,service_state_series:2,actual_sdk:true,native_actions:0,review_directory:directory}));
 }finally{
  if(!exited()){child.kill('SIGTERM');try{await until(exited,3000);}catch{child.kill('SIGKILL');await until(exited,3000);}}
  // Retain private build/capture/state for review, never touch installed state.
