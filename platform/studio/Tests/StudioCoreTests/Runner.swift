@@ -54,6 +54,7 @@ struct PolicyTestRunner {
             ("Docker VM metadata",runDockerVMMetadataTests),
             ("Docker attach",runDockerAttachTests),
             ("sandbox executor",runSandboxExecutorTests),
+            ("sandbox removal",runSandboxRemovalTests),
             ("job controller",runJobControllerTests),
             ("sandbox model",runSandboxModelTests),
             ("worker census",runWorkerCensusTests),

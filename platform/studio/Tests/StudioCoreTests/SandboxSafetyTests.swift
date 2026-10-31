@@ -33,6 +33,10 @@ func runSandboxSafetyTests() throws {
     // grace. A still-running observation must not advance to rm --force.
     guard case .stop(let repeated)?=try lifecycle!.observed(job:job.id,presence:running,now:1006,resourcesSafe:true),repeated==id else {fatalError("Lost stop reply bypassed graceful stop with force removal")}
     guard case .remove(_,let remove)?=try lifecycle!.observed(job:job.id,presence:stopped,now:1007,resourcesSafe:true),remove==id else {fatalError("Observed exit did not allow exact owned removal")}
+    // A restart after the stopped snapshot must restore graceful-stop work,
+    // even though durable intent has already advanced to removing.
+    guard case .stop(let restarted)?=try lifecycle!.observed(job:job.id,presence:running,now:1007,resourcesSafe:true),restarted==id else {fatalError("FIO_SANDBOX_REMOVING_RESTART_BYPASSED_GRACE")}
+    guard case .remove(_,let stoppedAgain)?=try lifecycle!.observed(job:job.id,presence:stopped,now:1007,resourcesSafe:true),stoppedAgain==id else {fatalError("Restarted sandbox exit did not restore owned removal")}
     _=try lifecycle!.observed(job:job.id,presence:.absent,now:1008,resourcesSafe:true)
     guard try journal!.jobs().first(where:{$0.id==job.id})?.state == .removed else {fatalError("Owned cleanup incomplete")}
 

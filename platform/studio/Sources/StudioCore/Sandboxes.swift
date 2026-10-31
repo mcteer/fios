@@ -1,4 +1,5 @@
 import Foundation
+import CoreFoundation
 
 public struct SandboxConfiguration: Codable, Sendable, Equatable {
     public let job: String
@@ -79,8 +80,13 @@ public struct DockerRuntime:Sendable {
         try StrictJSON.validate(result.output,maximum:1 << 20)
         guard let records = try JSONSerialization.jsonObject(with:result.output) as? [[String:Any]], records.count == 1,
               configuration.verifies(inspect:records[0],savedID:savedID) else { throw RuntimeError.identity }
-        // Remove by verified full daemon ID, not a reusable name or forged label.
-        let removed = try command(["rm","--force",savedID])
+        guard let state=records[0]["State"] as? [String:Any],
+              let number=state["Running"] as? NSNumber,CFGetTypeID(number)==CFBooleanGetTypeID(),
+              let running=state["Running"] as? Bool else {throw RuntimeError.identity}
+        guard !running else {throw RuntimeError.launch}
+        // The daemon must refuse a restart racing this stopped snapshot.
+        // Acknowledgement is not absence; the lifecycle still queries full ID.
+        let removed = try command(["rm",savedID])
         guard removed.status == 0 else { throw RuntimeError.launch }
     }
 }

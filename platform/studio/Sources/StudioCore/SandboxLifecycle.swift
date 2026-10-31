@@ -86,7 +86,11 @@ final class SandboxLifecycle {
                 try journal.transitionJob(id:id,to:.removing,now:now)
                 return .remove(c,runtimeID)
             }
-            if job.state == .removing { return .remove(c,runtimeID) }
+            if job.state == .removing {
+                // Durable removal intent cannot bypass grace after a restart.
+                if running { return .stop(runtimeID) }
+                return .remove(c,runtimeID)
+            }
             if running {
                 guard record.startIssued else { throw RuntimeError.identity }
                 if job.state == .creating { try journal.transitionJob(id:id,to:.running,now:now) }

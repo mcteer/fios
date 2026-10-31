@@ -1,0 +1,71 @@
+import Foundation
+import Darwin
+
+@main struct SandboxRemovalLive {
+    static func main() {
+        do {try run()} catch {FileHandle.standardError.write(Data("RETAINED: owned sandbox removal fixture failed; inspect runtime-state.json\n".utf8));exit(1)}
+    }
+    static func run()throws {
+        let args=CommandLine.arguments
+        guard args.count==5 else {throw RuntimeError.invalid}
+        let directory=URL(fileURLWithPath:args[0]).deletingLastPathComponent()
+        let stateFile=directory.appendingPathComponent("runtime-state.json")
+        let runtime=try DockerRuntime(executable:VerifiedExecutable(path:args[1],sha256:args[2]),socket:args[3])
+        let configuration=try SandboxConfiguration(job:UUID().uuidString.lowercased(),nonce:String(UUID().uuidString.replacingOccurrences(of:"-",with:"").lowercased()+UUID().uuidString.replacingOccurrences(of:"-",with:"").lowercased()),image:args[4],memory:512<<20,cpus:1)
+        var savedID:String?
+        func save(_ phase:String)throws {
+            var value:[String:Any]=["phase":phase,"name":configuration.name,"job":configuration.job,"nonce":configuration.nonce,"image":configuration.image,"activation":false]
+            if let savedID {value["id"]=savedID}
+            try JSONSerialization.data(withJSONObject:value,options:[.sortedKeys]).write(to:stateFile,options:.atomic)
+        }
+        try save("before-create")
+        let id=try runtime.create(configuration);savedID=id;try save("created")
+        func inspect()throws->[String:Any] {
+            let reply=try runtime.command(["inspect","--type=container",id],timeout:2)
+            guard reply.status==0 else {throw RuntimeError.launch}
+            try StrictJSON.validate(reply.output,maximum:1<<20)
+            guard let objects=try JSONSerialization.jsonObject(with:reply.output) as? [[String:Any]],objects.count==1,
+                  configuration.verifies(inspect:objects[0],savedID:id),let state=objects[0]["State"] as? [String:Any] else {throw RuntimeError.identity}
+            return state
+        }
+        guard try runtime.command(["start",id]).status==0 else {throw RuntimeError.launch}
+        try save("started")
+        let readyUntil=ProcessInfo.processInfo.systemUptime+5
+        var ready=false
+        while ProcessInfo.processInfo.systemUptime<readyUntil {
+            let reply=try runtime.command(["exec","--user=65532:65532",id,"/bin/cat","/workspace/ready"],timeout:2)
+            if reply.status==0,reply.output==Data("READY\n".utf8) {ready=true;break}
+            Thread.sleep(forTimeInterval:0.05)
+        }
+        guard ready,try inspect()["Running"] as? Bool==true else {throw RuntimeError.identity}
+        var refused=false
+        do {try runtime.removeOwned(configuration,savedID:id)}catch RuntimeError.launch {refused=true}
+        guard refused,try inspect()["Running"] as? Bool==true else {throw RuntimeError.identity}
+        // Independently exercise the daemon's plain-rm atomic running guard.
+        guard try runtime.command(["rm",id],timeout:2).status != 0,try inspect()["Running"] as? Bool==true else {throw RuntimeError.identity}
+        try save("running-refused-before-graceful-stop")
+        let began=ProcessInfo.processInfo.systemUptime
+        var stopAcknowledged=false
+        do {stopAcknowledged=try runtime.command(["stop","--time=10",id]).status==0}
+        catch RuntimeError.deadline {} // Lost CLI reply is not retirement proof.
+        let until=ProcessInfo.processInfo.systemUptime+15
+        var stopped=false
+        while ProcessInfo.processInfo.systemUptime<until {
+            let state=try inspect()
+            if state["Running"] as? Bool==false {
+                guard (state["ExitCode"] as? NSNumber)?.intValue==137 else {throw RuntimeError.identity}
+                stopped=true;break
+            }
+            Thread.sleep(forTimeInterval:0.1)
+        }
+        guard stopped,ProcessInfo.processInfo.systemUptime-began>=9 else {throw RuntimeError.identity}
+        try save("observed-stopped-after-grace")
+        try runtime.removeOwned(configuration,savedID:id)
+        let remaining=try runtime.command(["container","ls","--all","--no-trunc","--filter","id="+id,"--format","{{.ID}}"],timeout:2)
+        let elapsed=ProcessInfo.processInfo.systemUptime-began
+        guard remaining.status==0,remaining.output.isEmpty,elapsed<60 else {throw RuntimeError.identity}
+        try save("removed-and-exact-id-absence-verified")
+        let result:[String:Any]=["running_remove_refused":true,"daemon_plain_rm_running_refused":true,"stop_acknowledged":stopAcknowledged,"graceful_stop_then_absence_ms":Int(elapsed*1000),"exit_code":137,"native_inference":false,"native_authority":false,"installed":false]
+        print(String(decoding:try JSONSerialization.data(withJSONObject:result,options:[.sortedKeys]),as:UTF8.self))
+    }
+}

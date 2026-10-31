@@ -72,6 +72,11 @@ try {
   const rssBuild=spawnSync('swiftc',['-parse-as-library','-swift-version','6','-warnings-as-errors','-O',rssSource,'-o',rssBinary],{cwd:root,stdio:'inherit',timeout:30000});
   if(rssBuild.error)throw rssBuild.error;
   if(rssBuild.status!==0)throw Error('Finite RSS fixture build failed');
+  const removalSource=join(directory,'SandboxRemovalCLI.swift'),removalBinary=join(directory,'sandbox-removal-cli');
+  copyFileSync(resolve(root,'platform/studio/Tests/StudioCoreTests/SandboxRemovalCLI.swift.fixture'),removalSource);
+  const removalBuild=spawnSync('swiftc',['-parse-as-library','-swift-version','6','-warnings-as-errors','-O',removalSource,'-o',removalBinary],{cwd:root,stdio:'inherit',timeout:30000});
+  if(removalBuild.error)throw removalBuild.error;
+  if(removalBuild.status!==0)throw Error('Finite sandbox-removal fixture build failed');
   const sources = ['Sources/StudioCore', 'Tests/StudioCoreTests'].flatMap(part => {
     const path = resolve(root, 'platform/studio', part);
     return readdirSync(path).filter(name => name.endsWith('.swift')).sort().map(name => {
@@ -120,7 +125,7 @@ try {
   ]) {
     // Compilation has its own finite hosted-runner allowance. Runtime tests
     // retain120s; no model, IPC, native-command or cleanup deadline is raised.
-    const result = spawnSync(command, args, { cwd: root, stdio: 'inherit', timeout: command==='swiftc'?300_000:120_000, env: { ...process.env, FIOS_PLATFORM_MOCK_PORT: String(port), FIOS_PLATFORM_SETID_FIXTURE: setidFixture, FIOS_PLATFORM_LOCK_SETID_FIXTURE: setidLock, FIOS_PLATFORM_CENSUS_FIXTURE:censusBinary, FIOS_PLATFORM_ENDPOINT_FIXTURE:endpointBinary, FIOS_PLATFORM_VM_STATUS_FIXTURE:vmStatusBinary, FIOS_PLATFORM_RSS_FIXTURE:rssBinary } });
+    const result = spawnSync(command, args, { cwd: root, stdio: 'inherit', timeout: command==='swiftc'?300_000:120_000, env: { ...process.env, FIOS_PLATFORM_MOCK_PORT: String(port), FIOS_PLATFORM_SETID_FIXTURE: setidFixture, FIOS_PLATFORM_LOCK_SETID_FIXTURE: setidLock, FIOS_PLATFORM_CENSUS_FIXTURE:censusBinary, FIOS_PLATFORM_ENDPOINT_FIXTURE:endpointBinary, FIOS_PLATFORM_VM_STATUS_FIXTURE:vmStatusBinary, FIOS_PLATFORM_RSS_FIXTURE:rssBinary, FIOS_PLATFORM_SANDBOX_REMOVAL_FIXTURE:removalBinary } });
     if (result.error) throw result.error;
     if (result.status !== 0) throw new Error(`Platform policy validation failed (${result.status ?? result.signal})`);
   }
