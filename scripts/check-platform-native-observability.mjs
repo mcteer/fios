@@ -43,19 +43,26 @@ try{
  const manager=spawn('/usr/bin/sandbox-exec',['-f',profile,join(bin,'telemetry-live'),state,capture,join(home,'.fios-native-control/control.sock'),capsule.binary,capsule.receipt.files['bin/mlx-serve'].sha256,String(native.pid)],{env:{PATH:'/usr/bin:/bin',HOME:'/var/empty',LANG:'C'},stdio:['ignore','ignore','pipe']});children.push(manager);
  let managerErrors='';manager.stderr.on('data',part=>{managerErrors+=part.toString();});
  await until(()=>{assert(!exited(manager),managerErrors);return command('status');});
- assert.equal(command('service','mlx','running').applied,false);
  const first=await until(()=>{const value=snapshot();return point(value,'owners') ? value:null;});
  const owners=point(first,'owners');assert.equal(owners.value,0);assert.equal(owners.attributes['fios.scope'],'native_ingress_tracker');assert.equal(owners.attributes['fios.sample.clock'],'source_and_receipt');
  const receiptTime=point(first,'receipt.time').value,sourceTime=point(first,'source.time').value;assert(sourceTime<=receiptTime);
  const status=command('status');assert.equal(status.native_control.authoritative,false);assert.equal(status.native_activity,'unknown');
- assert.equal(sourceTime,status.native_control.source_sampled_at/1000);assert.equal(receiptTime,status.native_control.received_at/1000);
- await until(()=>{const value=snapshot();return value&&!point(value,'owners');},10000);
- assert.equal(command('status').native_control.state,'stale');
+ assert.equal(sourceTime,first.native_ingress_sample.source_sampled_at/1000);assert.equal(receiptTime,first.native_ingress_sample.received_at/1000);
+ assert.equal(status.native_admissions,'unknown');
+ let previous=sourceTime;
+ for(let index=0;index<2;index++){
+  const refreshed=await until(()=>{const value=snapshot();return point(value,'source.time')?.value>previous ? value:null;});
+  previous=point(refreshed,'source.time').value;
+  assert.equal(previous,refreshed.native_ingress_sample.source_sampled_at/1000);
+  assert.equal(point(refreshed,'receipt.time').value,refreshed.native_ingress_sample.received_at/1000);
+  assert.equal(point(refreshed,'closed').value,0);assert(Date.now()/1000-previous<=5);
+ }
+ assert.equal(command('status').native_admissions,'unknown');
  assert.equal(command('service','mlx','running').applied,false);
- await until(()=>{const value=snapshot();return point(value,'source.time')?.value>sourceTime;});
+ await until(()=>command('status')?.native_admissions==='admissionsOpen');
  manager.kill('SIGTERM');await until(()=>exited(manager));assert.equal(manager.exitCode,0);assert.equal(managerErrors,'');
  native.kill('SIGTERM');await until(()=>exited(native));assert.equal(native.exitCode,0);
- console.log(JSON.stringify({ok:true,actual_sdk:true,actual_native_control:true,protocol:3,clock_values_preserved:true,expired_sample_omitted:true,normal_refresh:true,model_posts:0,native_authority:false,review_directory:directory}));
+ console.log(JSON.stringify({ok:true,actual_sdk:true,actual_native_control:true,protocol:3,clock_values_preserved:true,automatic_refresh:true,observed_samples:3,model_posts:0,native_authority:false,review_directory:directory}));
 }finally{
  for(const child of children.reverse())if(!exited(child)){child.kill('SIGTERM');try{await until(()=>exited(child),5000);}catch{child.kill('SIGKILL');await until(()=>exited(child),2000);}}
 }

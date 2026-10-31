@@ -20,6 +20,7 @@ private final class CapturedTelemetry:PlatformTelemetry,@unchecked Sendable {
     let sdk:StudioOpenTelemetry
     let logs:CapturedLogs
     let destination:URL
+    private var nativeClocks:[String:Any]?
     var instrumentation:String {sdk.instrumentation}
     init(destination:URL) {
         let logs=CapturedLogs();self.logs=logs;self.destination=destination
@@ -28,7 +29,10 @@ private final class CapturedTelemetry:PlatformTelemetry,@unchecked Sendable {
     func resources(_ sample:ResourceSample) {sdk.resources(sample)}
     func gpu(_ sample:GPUSample?,sampledAt:Int64?) {sdk.gpu(sample,sampledAt:sampledAt)}
     func event(_ event:OperationalEvent) {sdk.event(event);capture()}
-    func nativeIngress(_ sample:PlatformNativeIngressSample?) {sdk.nativeIngress(sample);capture()}
+    func nativeIngress(_ sample:PlatformNativeIngressSample?) {
+        nativeClocks=sample.map{["received_at":$0.receivedAt,"source_sampled_at":$0.sourceSampledAt.map{$0 as Any} ?? NSNull()]}
+        sdk.nativeIngress(sample);capture()
+    }
     func services(_ samples:[PlatformServiceSample]) {sdk.services(samples);capture()}
     func workload(_ sample:PlatformWorkloadSample?) {sdk.workload(sample);capture()}
     private func capture() {
@@ -44,7 +48,8 @@ private final class CapturedTelemetry:PlatformTelemetry,@unchecked Sendable {
                 }
                 values[metric.name] = ["unit":metric.unit,"points":points,"resource":metric.resource.attributes.mapValues{$0.description}]
             }
-            let body:[String:Any] = ["metrics":values,"logs":logs.events,"log_resources":logs.resources]
+            let body:[String:Any] = ["metrics":values,"logs":logs.events,"log_resources":logs.resources,
+                "native_ingress_sample":nativeClocks.map{$0 as Any} ?? NSNull()]
             try JSONSerialization.data(withJSONObject:body,options:[.sortedKeys]).write(to:destination,options:.atomic)
         }catch {
             FileHandle.standardError.write(Data("TELEMETRY_FIXTURE_CAPTURE_FAILED\n".utf8));exit(1)

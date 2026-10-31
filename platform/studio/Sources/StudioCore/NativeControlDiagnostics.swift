@@ -14,7 +14,9 @@ struct NativeControlDiagnostics {
     private var receivedAt:Int64?
     private var unavailable=false
     init(configured:Bool) {self.configured=configured}
-    mutating func begin() {value=nil;receivedAt=nil;unavailable=false}
+    mutating func begin(retainingObservation:Bool=false) {
+        if !retainingObservation {value=nil;receivedAt=nil;unavailable=false}
+    }
     mutating func completed(_ value:NativeIngressStatus,receivedAt:Int64) {
         self.value=value;self.receivedAt=receivedAt;unavailable=false
     }

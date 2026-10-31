@@ -15,6 +15,7 @@ struct PolicyTestRunner {
             ("timestamped native control",runNativeTimestampedControlTests),
             ("model placement",runModelPlacementTests),
             ("workspace configuration",runWorkspaceConfigurationTests),
+            ("read-only native observation",runNativeReadOnlyObservationTests),
             ("service recovery status",runServiceRecoveryStatusTests),
             ("service recovery",runServiceRecoveryTests),
             ("service reconciliation",runServiceReconciliationTests),

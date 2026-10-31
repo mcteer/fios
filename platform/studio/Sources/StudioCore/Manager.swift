@@ -30,7 +30,7 @@ public enum ManagerRuntime {
         var nativeDiagnostics=NativeControlDiagnostics(configured:nativeQueue != nil)
         func enqueueNative(_ command:NativeMaintenanceCommand) {
             guard let nativeQueue else {return}
-            do {try nativeQueue.submit(command);nativeDiagnostics.begin()} catch {nativeMaintenance.failed(id:command.id);nativeDiagnostics.failed()}
+            do {try nativeQueue.submit(command);nativeDiagnostics.begin(retainingObservation:nativeMaintenance.observationOnly)} catch {nativeMaintenance.failed(id:command.id);nativeDiagnostics.failed()}
         }
         if nativeQueue != nil,let command=try nativeMaintenance.beginReconciliation() {enqueueNative(command)}
         var admission=AdmissionPolicy()
@@ -113,6 +113,7 @@ public enum ManagerRuntime {
             try taskCommands.tick(now:timestamp(),uptime:Int64(now*1000),artifactResults:updates.artifactResults,output:updates.output,model:updates.model,finished:updates.finished)
             if now - lastHeartbeat >= 2 {
                 sequence+=1;sampledAt=timestamp()
+                if nativeQueue != nil,let command=nativeMaintenance.beginObservation() {enqueueNative(command)}
                 if let serviceRecovery,let serviceQueue,serviceQueue.available {
                     let services=ManagedService.allCases
                     for offset in 0..<services.count {
