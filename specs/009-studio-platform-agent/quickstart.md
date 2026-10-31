@@ -2,6 +2,8 @@
 
 G1 and implementation authorization are resolved. Independent mock/disposable-process development proceeds now; G2 remains a native activation/acceptance gate. Commands below distinguish implemented tests from future acceptance. No sudo/SSH/reboot/model command is hidden in the mock path.
 
+**Current operator scope (2026-10-31):** Continue ordinary functional implementation and correctness checks. Historical mutation, injected-failure, adversarial and security recipes below are retained as past evidence/reference; they are not current work instructions. Native installation/activation and disruptive operational acceptance remain separately gated. Existing CI configuration is unchanged.
+
 Ordinary private native status integration can use an already reviewed source capsule, without models or installed service operations:
 
 ```sh

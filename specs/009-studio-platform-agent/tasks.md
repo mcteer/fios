@@ -210,7 +210,7 @@
 
 - [x] T053 Integrate pinned/read-only macOS Swift+mock and installed-Python/platform-container checks in `.github/workflows/ci.yml`, feeding the aggregate gate while preserving all six existing checks, secret-free PR jobs and no untrusted test-image socket mounts (FR-018).
 - [x] T054 Update `README.md`, `specs/009-studio-platform-agent/quickstart.md`, `specs/README.md` and `AGENTS.md` with approved topology/authority, task commands, maintenance/rollback/cleanup/model limits and accurate evidence; document008 consumer handoff while leaving008 parked (FR-006/017/018, SC-008).
-- [ ] T055 Complete final consistency/security review, exact-head PR checks, independently green merged-main CI and separately authorized native rollout/verification; record actual PR/runs/artifact/backup/deployment or honest blockers in `specs/009-studio-platform-agent/validation.md`, never equate merged app delivery with native acceptance (FR-017/018, SC-008).
+- [ ] T055 Complete final consistency/functional review (cybersecurity and pen-testing work excluded at the operator’s request), exact-head PR checks, independently green merged-main CI and separately authorized native rollout/verification; record actual PR/runs/artifact/backup/deployment or honest blockers in `specs/009-studio-platform-agent/validation.md`, never equate merged app delivery with native acceptance (FR-017/018, SC-008).
 
 ## Dependencies and execution order
 
