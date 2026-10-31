@@ -14,12 +14,13 @@ for(const argv of [[],['--state'],['--state','relative','status'],['--state','/n
  assert.ifError(result.error);assert.equal(result.status,2,'invalid invocation should return usage, not attempt IPC');
  assert.match(result.stderr,/Usage: studioctl/);assert.equal(result.stdout,'');
 }
-for(const [ram,headroom,headroomGiB] of [['64',17179869184,16],['128',27487790695,25.6]]){
+for(const [ram,headroom,headroomGiB] of [['24',17179869184,16],['64',17179869184,16],['128',27487790695,25.6],['256',54975581389,51.2]]){
  const result=spawnSync(args[1],['plan-memory','--ram-gib',ram],{encoding:'utf8',timeout:5000});
  assert.ifError(result.error);assert.equal(result.status,0,'RAM planning should work without a manager');
  assert.equal(result.stderr,'');const plan=JSON.parse(result.stdout);
  assert.equal(plan.mode,'planning_only');assert.equal(plan.measured,false);
  assert.equal(plan.physical_bytes,Number(ram)*2**30);assert.equal(plan.native_headroom_bytes,headroom);
  assert.equal(plan.physical_gib,Number(ram));assert.equal(plan.native_headroom_gib_approx,headroomGiB);
+ assert.equal(result.stdout.match(/"native_headroom_gib_approx":([^,}\s]+)/)?.[1],JSON.stringify(headroomGiB),"Approximate GiB should have concise decimal output");
 }
 console.log('PASS: standalone CLI help, ordinary argument handling and offline RAM planning; no manager connection, service action or inference.');

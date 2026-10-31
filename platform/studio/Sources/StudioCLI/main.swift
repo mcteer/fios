@@ -11,7 +11,7 @@ if arguments.count==4,arguments[1]=="plan-memory",arguments[2]=="--ram-gib",
    let gib=UInt64(arguments[3]),gib>0,gib<=UInt64.max/(1<<30) {
     let physical=gib*(1<<30)
     let headroom=HostRAMBudget.nativeHeadroom(physicalBytes:physical)
-    let headroomGiB=(Double(headroom)/Double(1<<30)*100).rounded()/100
+    let headroomGiB=NSDecimalNumber(string:String(format:"%.2f",locale:Locale(identifier:"en_US_POSIX"),Double(headroom)/Double(1<<30)))
     let plan:[String:Any] = ["mode":"planning_only","measured":false,"physical_bytes":physical,
                            "physical_gib":gib,"native_headroom_bytes":headroom,
                            "native_headroom_gib_approx":headroomGiB]

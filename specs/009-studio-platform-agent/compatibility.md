@@ -8,6 +8,12 @@ Small models run only on `fios-core`, the24GiB M4-family Mac Mini. The two Studi
 
 The fixed Gemma source experiment now checks/binds core’s host profile in its plan/check/run receipts. Its small-model response/unsupported-image observations,12GiB process abort threshold, local12GiB VM-cap reading and24GiB-host performance measurements are core development evidence. They are not Studio resource sizing, large-model compatibility or Studio acceptance. Future Studio scenarios must use their reviewed larger exact model IDs and host-specific budgets, with installation/disruptive acceptance still separately gated.
 
+## Hardware planning follow-up2026-10-31
+
+Within the existing read-only inventory authorization, a fixed `sysctl -n hw.memsize hw.model machdep.cpu.brand_string` over existing strict-host-key SSH reports EdgeB RAM274,877,906,944 bytes (256GiB), hardware model `Mac15,14`, CPU `Apple M3 Ultra`. No model, application, runtime or configuration operation ran. EdgeA’s SSH connection to its existing `.lab` address failed before remote command execution with “Host is down”; current SSH availability/RAM are unknown, not evidence of native idle or power state. The operator subsequently reported rebooting EdgeA; this does not authorize agent-initiated lifecycle/acceptance work or retries during that reboot.
+
+Offline planning with the confirmed EdgeB total retains the existing reserve formula:54,975,581,389 bytes (20% rounded up to a byte), displayed approximately51.2GiB. This is a planning calculation, not current free RAM, model fit, a reservation, global VM enrollment or Studio acceptance. The separate core24GiB figures remain core-only development data.
+
 ## Authorized read-only inventory
 
 After the user reaffirmed proceeding in response to the explicit narrow amendment/read-only SSH proposal, used existing SSH authentication with `BatchMode=yes`, `StrictHostKeyChecking=yes`,5s connection timeout. No host-key enrollment, privilege escalation, process changes, service configuration or model workload.
