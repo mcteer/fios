@@ -65,6 +65,20 @@ The optional fixed suffix `--index /ABS/BOUNDED_INDEX_COPY.json --index-sha256 b
 
 **Source-level inference only:** `model.zig` sets embedded payload metadata only when that inspector returns a table; `transformer.zig` chooses the separate `NgramTable.open` branch otherwise. With this same config/index, the reviewed source would therefore take the separate-table branch if loading reaches that stage. This is not an actual installed disk-loader execution or proof of sidecar header/geometry validity, successful loading, runtime placement, touched pages or memory fit. The JSON-only parser still does not select a disk path. The prior config-only receipt remains separate.
 
+## Separate-table header and derived geometry
+
+A later fixed read observes only the8-byte length and368-byte JSON header of the separate table, with no weight payload read. The raw header SHA is `13b17d8ffd3148893f95eb70ff0174cfede6c30a6f39e2ee9371726edc02d946`; selected metadata is `/private/tmp/fios-009-large-table-header-e9jhk4ai/observation.json`. It declares format `mlx-serve-ngram`,8 bits and group size32. The text weights' group size64 must not be reused for this table.
+
+| Header region | Dtype | Shape | Encoded bytes |
+| --- | --- | --- | ---: |
+| weight | U32 |320001536 ×40 |51200245760 |
+| scales | BF16 |320001536 ×5 |3200015360 |
+| biases | BF16 |320001536 ×5 |3200015360 |
+
+The config's n-gram size3 and8 heads per n-gram produce16 total heads. The genuine `qwen4EmbeddedSpec` derives320001536 rows and dimension160 (2560/16), matching the header's packed8-bit weight width and group32 scale width. Encoded payload57600276480 plus376 prefix/header bytes equals the observed file length57600276856. These are encoded storage dimensions, not a resident-memory estimate.
+
+The source checker now also uses [normalized observed header metadata](../../platform/studio/Tests/NativeFixtures/QwenLargeTableHeader.json.fixture), SHA `8e31b3b0df6e198471c0e45994254922f1a509d4bb93ff02d5e903950586aa78`. Actual `headerRegion` functions check its three regions against the observed numeric extent, and the actual hash/spec function checks expected geometry. The final combined positive check passes (`/tmp/fios-009-native-config-table-header-final.log`, `/private/tmp/fios-009-native-config-qPlh4N/receipt.json`). It allocates no weight mapping and does not call the full `NgramTable.open`/disk model loader. Payload contents, complete runtime sidecar validity, installation identity, actual loading/placement/working pages and memory fit remain unproven; `table_payload_validated` and native authority stay false.
+
 ## Remaining prerequisites
 
 - Complete T002's actual source/native all-client non-preemption and completion contract; observations and successful core responses do not satisfy it.

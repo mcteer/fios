@@ -43,6 +43,10 @@ function inputs(){
  walk('src');walk('lib/sushi/src');return rows;
 }
 const before=inputs(),tag=randomUUID(),helper=join(source,'src',`fios-config-${tag}.zig`),data=join(source,'src',`fios-config-${tag}.json`);
+// Normalized JSON from the separately observed 368-byte sidecar header.
+// The numeric file extent is observed metadata, not an allocated weight map.
+const tableHeader=readFileSync(new URL('../platform/studio/Tests/NativeFixtures/QwenLargeTableHeader.json.fixture',import.meta.url),'utf8');
+assert.equal(hash(tableHeader),'8e31b3b0df6e198471c0e45994254922f1a509d4bb93ff02d5e903950586aa78');
 const fixture=`const std = @import("std");
 pub const mlx = @import("mlx.zig");
 pub const log = @import("log.zig");
@@ -68,7 +72,29 @@ test "fios ordinary reviewed configuration" {
  try std.testing.expectEqual(@as(u32,128),value.split_ngram_parts);
  try std.testing.expect(value.ssm_state_f32);
  try std.testing.expect(value.ngram_table_path == null);
- ${index ? `const embedded = try @import("qwen4_exp.zig").inspectEmbedded("${directory}", try @import("model.zig").qwen4EmbeddedSpec(&value));
+ const table_spec = try @import("model.zig").qwen4EmbeddedSpec(&value);
+ try std.testing.expectEqual(@as(u64,320001536),table_spec.rows);
+ try std.testing.expectEqual(@as(u32,160),table_spec.dim);
+ try std.testing.expectEqual(@as(u32,128),table_spec.shards);
+ const table_header = try std.json.parseFromSliceLeaky(std.json.Value,arena.allocator(),${JSON.stringify(tableHeader)},.{});
+ const metadata = table_header.object.get("__metadata__").?.object;
+ try std.testing.expectEqualStrings("mlx-serve-ngram",metadata.get("format").?.string);
+ const table_bits = try std.fmt.parseInt(u32,metadata.get("bits").?.string,10);
+ const table_group = try std.fmt.parseInt(u32,metadata.get("group_size").?.string,10);
+ try std.testing.expectEqual(@as(u32,8),table_bits);
+ try std.testing.expectEqual(@as(u32,32),table_group);
+ const region_parser = @import("qwen4_ple.zig");
+ const weight = try region_parser.headerRegion(table_header.object,"weight","U32",4,57600276856,376,.matrix);
+ const scales = try region_parser.headerRegion(table_header.object,"scales","BF16",2,57600276856,376,.matrix);
+ const biases = try region_parser.headerRegion(table_header.object,"biases","BF16",2,57600276856,376,.matrix);
+ try std.testing.expectEqual(table_spec.rows,weight.rows);
+ try std.testing.expectEqual(weight.rows,scales.rows);
+ try std.testing.expectEqual(weight.rows,biases.rows);
+ try std.testing.expectEqual(@as(u64,table_spec.dim),weight.cols*32/table_bits);
+ try std.testing.expectEqual(@as(u64,table_spec.dim),scales.cols*table_group);
+ try std.testing.expectEqual(scales.cols,biases.cols);
+ try std.testing.expectEqual(@as(u64,57600276856),biases.end+376);
+ ${index ? `const embedded = try @import("qwen4_exp.zig").inspectEmbedded("${directory}", table_spec);
  try std.testing.expect(embedded == null);` : ''}
 }
 `;
@@ -93,6 +119,9 @@ assert.match((result.stdout??'')+(result.stderr??''),/All 1 tests passed\./);
 const receipt={ok:true,source_base:git.stdout.trim(),config_sha256:args[8],fixture_sha256:hash(fixture),
  source_scope:'declared_src_and_sushi_zig_inventory_not_whole_repository_or_native_provenance',source_inputs:before,
  tests:1,parser:'parseConfigFromJson',index_sha256:index?hash(index):null,embedded_inspector:index?'no_embedded_table':'not_run',
+ derived_table_geometry:{rows:320001536,dimension:160,split_parts:128},
+ normalized_table_header_sha256:hash(tableHeader),table_payload_validated:false,
+ sidecar_quantization:{bits:8,group_size:32},
  sidecar_path_selected:false,weight_files_read:0,model_requests:0,
  installed_service_actions:0,model_fit_proven:false,native_authority:false,review_directory:directory};
 writeFileSync(join(directory,'receipt.json'),JSON.stringify(receipt,null,2)+'\n',{mode:0o600});
