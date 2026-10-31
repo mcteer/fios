@@ -40,11 +40,22 @@ for(const optimization of ['-O0','-O3']){
  const unit=path.join(directory,'cpu.c'),binary=path.join(directory,'cpu'+optimization);
  writeFileSync(unit,prelude+fragment+fixture);
  execFileSync('/usr/bin/clang',['-std=gnu11',optimization,'-UNDEBUG','-pthread',unit,'-o',binary],{env,timeout:30000});
- const results=['--join-error','--busy-inline','--busy-parallel',null].map(mode=>{
+ const results=['--foreign-owner','--owner-churn','--owner-exhaustion','--join-error','--busy-inline','--busy-parallel',null].map(mode=>{
   const r=spawnSync(binary,mode?[mode]:[],{env,encoding:'utf8',timeout:10000});
   writeFileSync(path.join(directory,optimization+(mode??'ordinary')+'-stderr.log'),r.stderr??'');return r;
  });
  for(const r of results){assert(!r.error&&!r.signal,'CPU fixture crash/deadline is not acceptance');assert.equal(r.status,0,r.stderr);console.log(r.stdout.trim());}
+ for(const [gate,mode,marker] of [
+  ['    if (!g_fios_cpu_pool_local_owner || g_fios_cpu_pool_local_owner != g_fios_cpu_pool_owner) return 0;','--foreign-owner','FIO_DS4_CPU_FOREIGN_OWNER_RETIRED_POOL'],
+  ['    if (!g_fios_cpu_pool_local_owner || g_fios_cpu_pool_local_owner != g_fios_cpu_pool_owner) return 1;','--owner-churn','FIO_DS4_CPU_FOREIGN_OWNER_REPORTED_AVAILABLE']
+ ]){
+  assert.equal(fragment.split(gate).length,2);
+  writeFileSync(unit,prelude+fragment.replace(gate,'')+fixture);
+  execFileSync('/usr/bin/clang',['-std=gnu11',optimization,'-UNDEBUG','-pthread',unit,'-o',binary],{env,timeout:30000});
+  const r=spawnSync(binary,[mode],{env,encoding:'utf8',timeout:10000});
+  assert(!r.error&&!r.signal);assert.equal(r.status,77,r.stderr);assert(r.stderr.includes(marker));
+  console.log('PASS: precise CPU owner guard omission:',marker);
+ }
 }
 assert.equal(readFileSync(path.join(source,'ds4.c'),'utf8'),original);assert.equal(readFileSync(fixtureFile,'utf8'),fixture);assert.equal(readFileSync(patchFile,'utf8'),patch);assert.equal(git('diff','--no-ext-diff','HEAD','--',...files),patch);
 console.log(JSON.stringify({directory,source_sha256:createHash('sha256').update(original).digest('hex'),fixture_sha256:createHash('sha256').update(fixture).digest('hex'),actual_cpu_pool_fragment:true,native_authority:false,all_writer_terminality:false}));

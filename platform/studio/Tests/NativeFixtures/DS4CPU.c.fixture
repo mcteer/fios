@@ -10,9 +10,48 @@ static uint64_t producer_rows=1;
 static void* producer(void *ctx){ds4_parallel_for(producer_rows,held,ctx);return NULL;}
 static void write_rows(void *ctx,uint64_t a,uint64_t b){unsigned *values=ctx;for(uint64_t i=a;i<b;++i)++values[i];}
 static void nested_rows(void *ctx,uint64_t a,uint64_t b){ds4_parallel_for(b-a,write_rows,(unsigned*)ctx+a);}
+static void *foreign_shutdown(void *ctx){
+ int *result=ctx;*result=ds4_threads_shutdown_checked();return NULL;
+}
+typedef struct {uint64_t token;int result;int busy;} foreign_identity_result;
+static void *foreign_initialized_shutdown(void *ctx){
+ foreign_identity_result *result=ctx;
+ result->token=ds4_threads_owner_token();result->busy=ds4_threads_work_busy();
+ result->result=ds4_threads_shutdown_checked();return NULL;
+}
 int main(int argc,char **argv){
  setenv("DS4_THREADS","2",1);ds4_threads_init();
  REQUIRE(g_pool.initialized&&g_pool.n_threads==2,"CPU_REAL_POOL_NOT_CREATED");
+ if(argc==2&&(strcmp(argv[1],"--owner-churn")==0||strcmp(argv[1],"--owner-exhaustion")==0)){
+  const int exhausted=strcmp(argv[1],"--owner-exhaustion")==0;
+  if(exhausted)g_fios_cpu_pool_next_owner=UINT64_MAX-1;
+  uint64_t previous=g_fios_cpu_pool_local_owner;
+  for(unsigned i=0;i<(exhausted?2u:16u);++i){
+   pthread_t foreign;foreign_identity_result result={0};
+   REQUIRE(pthread_create(&foreign,NULL,foreign_initialized_shutdown,&result)==0,"CPU_TOKEN_THREAD_CREATE_FAILED");
+   REQUIRE(pthread_join(foreign,NULL)==0,"CPU_TOKEN_THREAD_JOIN_FAILED");
+   REQUIRE(result.result==0&&g_pool.initialized&&!g_pool.shutdown&&!fios_actual_joins&&!g_fios_cpu_pool_uncertain,
+           "FIO_DS4_CPU_INITIALIZED_FOREIGN_OWNER_RETIRED_POOL");
+   REQUIRE(result.busy,"FIO_DS4_CPU_FOREIGN_OWNER_REPORTED_AVAILABLE");
+   if(exhausted)REQUIRE(result.token==(i?0:UINT64_MAX-1),"FIO_DS4_CPU_OWNER_TOKEN_WRAPPED");
+   else REQUIRE(result.token>previous,"FIO_DS4_CPU_THREAD_LIFETIME_TOKEN_REUSED");
+   previous=result.token;
+  }
+  REQUIRE(!ds4_threads_work_busy()&&ds4_threads_shutdown_checked()&&!g_pool.initialized,
+          "CPU_CREATOR_CUSTODY_LOST_AFTER_FOREIGN_TOKENS");
+  puts(exhausted?"PASS: last usable CPU creator token then refusal; no wrap or adoption.":
+       "PASS: sixteen real thread lifetimes get distinct source tokens and cannot retire creator pool.");return 0;
+ }
+ if(argc==2&&strcmp(argv[1],"--foreign-owner")==0){
+  pthread_t foreign;int result=-1;
+  REQUIRE(pthread_create(&foreign,NULL,foreign_shutdown,&result)==0,"CPU_FOREIGN_CREATE_FAILED");
+  REQUIRE(pthread_join(foreign,NULL)==0,"CPU_FOREIGN_JOIN_FAILED");
+  REQUIRE(result==0&&g_pool.initialized&&!g_pool.shutdown&&!fios_actual_joins&&!g_fios_cpu_pool_uncertain,
+          "FIO_DS4_CPU_FOREIGN_OWNER_RETIRED_POOL");
+  REQUIRE(ds4_threads_shutdown_checked()&&!g_pool.initialized&&fios_actual_joins==1,
+          "CPU_CREATOR_CANNOT_RETIRE_AFTER_FOREIGN_REFUSAL");
+  puts("PASS: foreign thread refuses before signalling/joins/uncertainty; actual creator still retires.");return 0;
+ }
  if(argc==2&&strcmp(argv[1],"--join-error")==0){
   const pthread_t thread=g_pool.threads[1];fios_join_failure=1;
   int result=ds4_threads_shutdown_checked();

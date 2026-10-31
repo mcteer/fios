@@ -1,8 +1,8 @@
 diff --git a/ds4.c b/ds4.c
-index 633a3cf..a043523 100644
+index 633a3cf..d8a42f7 100644
 --- a/ds4.c
 +++ b/ds4.c
-@@ -2088,12 +2088,15 @@ typedef struct {
+@@ -2088,15 +2088,35 @@ typedef struct {
      uint32_t done;
      bool initialized;
      bool shutdown;
@@ -15,21 +15,47 @@ index 633a3cf..a043523 100644
  static ds4_thread_pool g_pool;
 +static int g_fios_cpu_pool_uncertain;
 +static uint32_t g_fios_cpu_pool_joined;
++static uint64_t g_fios_cpu_pool_next_owner = 1;
++static __thread uint64_t g_fios_cpu_pool_local_owner;
++static uint64_t g_fios_cpu_pool_owner;
  static __thread int g_parallel_depth;
  static uint32_t g_requested_threads;
  
-@@ -2140,7 +2143,10 @@ static void *ds4_worker_main(void *arg) {
++// Source-owned non-reusable thread lifetimes, not recyclable pthread IDs.
++static uint64_t ds4_threads_owner_token(void) {
++    if (g_fios_cpu_pool_local_owner) return g_fios_cpu_pool_local_owner;
++    uint64_t previous = __atomic_load_n(&g_fios_cpu_pool_next_owner, __ATOMIC_ACQUIRE);
++    while (previous != UINT64_MAX) {
++        if (__atomic_compare_exchange_n(&g_fios_cpu_pool_next_owner, &previous,
++                                        previous + 1, true, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
++            g_fios_cpu_pool_local_owner = previous;
++            return previous;
++        }
++    }
++    return 0;
++}
++
+ static void *ds4_worker_main(void *arg) {
+     const uint32_t tid = (uint32_t)(uintptr_t)arg;
+     uint32_t seen_generation = 0;
+@@ -2140,7 +2160,16 @@ static void *ds4_worker_main(void *arg) {
  /* Create the persistent CPU worker pool.  Decode reuses these threads instead
   * of creating pthreads in the token loop. */
  static void ds4_threads_init(void) {
 +    if (__atomic_load_n(&g_fios_cpu_pool_uncertain, __ATOMIC_ACQUIRE))
 +        ds4_die("CPU pool retirement is uncertain");
      if (g_pool.initialized) return;
++    const uint64_t owner = ds4_threads_owner_token();
++    if (!owner) {
++        __atomic_store_n(&g_fios_cpu_pool_uncertain, 1, __ATOMIC_RELEASE);
++        ds4_die("CPU pool owner identities exhausted");
++    }
++    g_fios_cpu_pool_owner = owner;
 +    g_fios_cpu_pool_joined = 0;
  
      pthread_once(&iq2xxs_signed_grid_once, iq2xxs_signed_grid_init);
  
-@@ -2176,23 +2182,49 @@ static void ds4_threads_init(void) {
+@@ -2176,23 +2205,52 @@ static void ds4_threads_init(void) {
      }
  }
  
@@ -39,6 +65,7 @@ index 633a3cf..a043523 100644
 +static int ds4_threads_work_busy(void) {
 +    if (__atomic_load_n(&g_fios_cpu_pool_uncertain, __ATOMIC_ACQUIRE)) return 1;
 +    if (!g_pool.initialized) return 0;
++    if (!g_fios_cpu_pool_local_owner || g_fios_cpu_pool_local_owner != g_fios_cpu_pool_owner) return 1;
 +    if (pthread_mutex_lock(&g_pool.mutex) != 0) return 1;
 +    const int busy = g_pool.active || g_pool.shutdown;
 +    if (pthread_mutex_unlock(&g_pool.mutex) != 0) return 1;
@@ -50,6 +77,7 @@ index 633a3cf..a043523 100644
 +static int ds4_threads_shutdown_checked(void) {
 +    if (__atomic_load_n(&g_fios_cpu_pool_uncertain, __ATOMIC_ACQUIRE)) return 0;
 +    if (!g_pool.initialized) return 1;
++    if (!g_fios_cpu_pool_local_owner || g_fios_cpu_pool_local_owner != g_fios_cpu_pool_owner) return 0;
  
      pthread_mutex_lock(&g_pool.mutex);
 +    if (g_pool.active) {
@@ -83,11 +111,12 @@ index 633a3cf..a043523 100644
 -    pthread_cond_destroy(&g_pool.work_cond);
 -    pthread_mutex_destroy(&g_pool.mutex);
      memset(&g_pool, 0, sizeof(g_pool));
++    g_fios_cpu_pool_owner = 0;
 +    return 1;
  }
  
  /* Run a row-parallel CPU kernel, falling back to serial execution for small
-@@ -2200,12 +2232,26 @@ static void ds4_threads_shutdown(void) {
+@@ -2200,12 +2258,26 @@ static void ds4_threads_shutdown(void) {
  static void ds4_parallel_for_min_rows(uint64_t n_rows, ds4_parallel_fn fn, void *ctx, uint64_t min_parallel_rows) {
      ds4_threads_init();
  
@@ -116,7 +145,7 @@ index 633a3cf..a043523 100644
      g_pool.fn = fn;
      g_pool.ctx = ctx;
      g_pool.n_rows = n_rows;
-@@ -2228,6 +2274,7 @@ static void ds4_parallel_for_min_rows(uint64_t n_rows, ds4_parallel_fn fn, void
+@@ -2228,6 +2300,7 @@ static void ds4_parallel_for_min_rows(uint64_t n_rows, ds4_parallel_fn fn, void
      while (g_pool.done < g_pool.n_workers) {
          pthread_cond_wait(&g_pool.done_cond, &g_pool.mutex);
      }
@@ -124,7 +153,7 @@ index 633a3cf..a043523 100644
      pthread_mutex_unlock(&g_pool.mutex);
  }
  
-@@ -19894,7 +19941,7 @@ typedef struct {
+@@ -19894,7 +19967,7 @@ typedef struct {
      uint64_t size;
  } metal_graph_stream_pagein_range;
  
@@ -133,7 +162,7 @@ index 633a3cf..a043523 100644
      pthread_t thread;
      const ds4_model *model;
      metal_graph_stream_pagein_range *ranges;
-@@ -19916,6 +19963,13 @@ typedef struct {
+@@ -19916,6 +19989,13 @@ typedef struct {
      bool started;
      bool ok;
      uint8_t sink;
@@ -147,7 +176,7 @@ index 633a3cf..a043523 100644
  } metal_graph_stream_pagein_job;
  
  typedef struct metal_graph_stream_pagein_worker {
-@@ -20789,6 +20843,136 @@ static void *metal_graph_stream_pagein_worker_main(void *arg) {
+@@ -20789,6 +20869,136 @@ static void *metal_graph_stream_pagein_worker_main(void *arg) {
      return NULL;
  }
  
@@ -284,7 +313,7 @@ index 633a3cf..a043523 100644
  static uint32_t metal_graph_stream_prefill_layer_pagein_threads(void) {
      const char *env = glm_graph_env_value(
              "DS4_ROCM_STREAMING_PREFILL_LAYER_PREPARE_THREADS",
-@@ -21004,74 +21188,43 @@ static bool metal_graph_stream_prefill_selected_pagein_start(
+@@ -21004,74 +21214,43 @@ static bool metal_graph_stream_prefill_selected_pagein_start(
      job->ranges = ranges;
      job->n_ranges = n_ranges;
      job->n_threads = metal_graph_stream_prefill_selected_prepare_threads(madvise_only);
@@ -381,7 +410,7 @@ index 633a3cf..a043523 100644
              job->sink ^= job->workers[t].sink;
          }
      }
-@@ -21101,11 +21254,7 @@ static bool metal_graph_stream_prefill_selected_pagein_join(
+@@ -21101,11 +21280,7 @@ static bool metal_graph_stream_prefill_selected_pagein_join(
                  "ds4: Metal streaming prefill selected page-in join failed: %s\n",
                  strerror(rc));
      }
@@ -394,7 +423,7 @@ index 633a3cf..a043523 100644
  }
  
  static bool metal_graph_stream_prefill_layer_pagein_start(
-@@ -21218,74 +21367,43 @@ static bool metal_graph_stream_prefill_layer_pagein_start(
+@@ -21218,74 +21393,43 @@ static bool metal_graph_stream_prefill_layer_pagein_start(
      job->ranges = ranges;
      job->n_ranges = n_ranges;
      job->n_threads = n_threads;
@@ -491,7 +520,7 @@ index 633a3cf..a043523 100644
              job->sink ^= job->workers[t].sink;
          }
      }
-@@ -21318,11 +21436,7 @@ static bool metal_graph_stream_prefill_layer_pagein_join(
+@@ -21318,11 +21462,7 @@ static bool metal_graph_stream_prefill_layer_pagein_join(
                  "ds4: Metal streaming prefill layer page-in join failed: %s\n",
                  strerror(rc));
      }
@@ -504,7 +533,7 @@ index 633a3cf..a043523 100644
  }
  
  typedef struct {
-@@ -23501,6 +23615,15 @@ static bool g_metal_graph_selected_async_load_has_job = false;
+@@ -23501,6 +23641,15 @@ static bool g_metal_graph_selected_async_load_has_job = false;
  static bool g_metal_graph_selected_async_load_done = false;
  static metal_graph_selected_async_load g_metal_graph_selected_async_load_job;
  
@@ -520,7 +549,7 @@ index 633a3cf..a043523 100644
  static void metal_graph_selected_async_load_run(
          metal_graph_selected_async_load *job) {
      job->ok = false;
-@@ -42215,6 +42338,7 @@ typedef enum {
+@@ -42215,6 +42364,7 @@ typedef enum {
  } ds4_vision_kind;
  
  struct ds4_engine {
@@ -528,7 +557,7 @@ index 633a3cf..a043523 100644
      char *model_path;
      uint64_t ds41_session_bytes;
      ds4_model model;
-@@ -59886,6 +60010,7 @@ typedef struct {
+@@ -59886,6 +60036,7 @@ typedef struct {
  } ds4_vision_identity;
  
  struct ds4_session {
@@ -536,7 +565,7 @@ index 633a3cf..a043523 100644
      ds4_engine *engine;
      ds4_dist_session *distributed;
      uint64_t tp_session_id;
-@@ -72190,10 +72315,22 @@ fail:
+@@ -72190,10 +72341,22 @@ fail:
  #endif
  }
  
@@ -561,7 +590,7 @@ index 633a3cf..a043523 100644
      ds4_tp_detach_slab(e->tp.ctx);
  #ifdef __APPLE__
      g_tp_block_ctx = NULL;
-@@ -72218,6 +72355,11 @@ void ds4_engine_tp_unbind(ds4_engine *e) {
+@@ -72218,6 +72381,11 @@ void ds4_engine_tp_unbind(ds4_engine *e) {
  #else
      (void)e;
  #endif
@@ -573,7 +602,7 @@ index 633a3cf..a043523 100644
  }
  
  bool ds4_engine_is_glm_dsa(ds4_engine *e) {
-@@ -72230,13 +72372,24 @@ bool ds4_engine_is_deepseek41(ds4_engine *e) {
+@@ -72230,13 +72398,24 @@ bool ds4_engine_is_deepseek41(ds4_engine *e) {
      return DS4_MODEL_FAMILY == DS4_MODEL_FAMILY_DEEPSEEK41;
  }
  
@@ -602,7 +631,7 @@ index 633a3cf..a043523 100644
      if (e->mtp_model.map) model_close(&e->mtp_model);
      if (e->vision_model.map) model_close(&e->vision_model);
      model_close(&e->model);
-@@ -72253,6 +72406,11 @@ void ds4_engine_close(ds4_engine *e) {
+@@ -72253,6 +72432,11 @@ void ds4_engine_close(ds4_engine *e) {
      free(e->directional_steering_file);
      free(e->model_path);
      free(e);
@@ -614,7 +643,7 @@ index 633a3cf..a043523 100644
  }
  
  #ifndef DS4_NO_GPU
-@@ -72814,24 +72972,34 @@ int ds4_session_create(ds4_session **out, ds4_engine *e, int ctx_size) {
+@@ -72814,24 +72998,34 @@ int ds4_session_create(ds4_session **out, ds4_engine *e, int ctx_size) {
  #endif
  }
  
@@ -659,7 +688,7 @@ index 633a3cf..a043523 100644
  #ifndef DS4_NO_GPU
      ds4_session_print_dspark_stats(s);
  #endif
-@@ -72882,6 +73050,11 @@ void ds4_session_free(ds4_session *s) {
+@@ -72882,6 +73076,11 @@ void ds4_session_free(ds4_session *s) {
      free(s->dspark_conf_features);
  #endif
      free(s);
