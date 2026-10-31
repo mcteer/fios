@@ -29,6 +29,13 @@ struct NativeControlDiagnostics {
               let sampledAt=value.nativeSampledAt,fresh(sampledAt,now:now) else {return nil}
         return NativeCaptureMetadata(instance:value.instance,sequence:sequence,sampledAt:sampledAt)
     }
+    func ingressSample(now:Int64)->PlatformNativeIngressSample? {
+        guard configured,let value,let receivedAt,fresh(receivedAt,now:now),
+              value.nativeSampledAt.map({fresh($0,now:now)}) ?? true else {return nil}
+        return PlatformNativeIngressSample(receivedAt:receivedAt,sourceSampledAt:value.nativeSampledAt,
+            owners:value.owners,ingress:value.ingress,preparing:value.preparing,active:value.active,
+            responding:value.responding,modelIdentities:value.modelIdentities,closed:value.closed,trackerUncertain:value.uncertain)
+    }
     func summary(now:Int64)->[String:Any] {
         var output:[String:Any]=["version":1,"scope":"native_ingress_tracker","authoritative":false,
             "state":configured ? (unavailable ? "unavailable":"waiting"):"unconfigured",

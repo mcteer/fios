@@ -44,6 +44,14 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test --package-pa
 node scripts/check-platform-observability.mjs --isolated
 ```
 
+A separate ordinary native-control/OTel check uses a genuine reviewed source capsule:
+
+```sh
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer node scripts/check-platform-native-observability.mjs --isolated --capsule /ABS/PRIVATE_REVIEW_CAPSULE --sha256 REVIEWED_CAPSULE_RECEIPT_SHA256
+```
+
+It builds a copied actual package with a test-only native client bridge, runs an empty private source server and checks receipt/source clocks, expiry and normal observation refresh in genuine SDK metrics. It issues no model request and grants no native/installation authority. Core small-model receipts still do not establish Studio acceptance.
+
 ## 2. Mock-first implementation validation
 
 ```sh

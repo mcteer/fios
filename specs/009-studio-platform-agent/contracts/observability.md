@@ -28,6 +28,19 @@ Cleanup gauges share the controller’s current operator-status observation. Rec
 
 A failed journal query omits the entire workload sample; no additional SQLite instance is opened. Missing or expired samples produce no points. Known zero counts remain zero. These gauges describe retained local records, not live worker/model counts or native completion. They never release a reservation or alter independent inference uncertainty. No job/model/owner IDs or content are included.
 
+Native-control diagnostics use the existing accepted reply cache and the same manager cycle. Gauges under `fios.platform.native.ingress.` expose only partial request-tracker metadata:
+
+| Metric suffix | Unit | Meaning |
+| --- | --- | --- |
+| `owners`, `unparsed`, `preparing`, `active`, `responding` | `{owner}` | Tracked ownership records/phases, not GPU execution or concurrent model requests |
+| `model_identities` | `{identity}` | Count of model identities represented by tracked ownership, not resident models; identifiers are never emitted |
+| `closed` | `1` | The source tracker’s ingress fence flag, not complete native admission authority |
+| `tracker_uncertain` | `1` | That tracker’s uncertainty flag, independent of retained inference-record uncertainty |
+| `receipt.time` | `s` | Original accepted reply receipt time |
+| `source.time` | `s` | Original native capture time, omitted for legacy receipt-only replies |
+
+Every point has fixed `fios.scope=native_ingress_tracker` and `fios.sample.clock=source_and_receipt|receipt_only`. Source and receipt ages remain independent; either expired known clock omits the sample. Missing/unconfigured/unavailable diagnostics omit points rather than inventing zero. These observations never become a `NativeSnapshot`, clear independent uncertainty or authorize model/service work. A zero count is simply a fresh diagnostic count in this partial source scope. No native polling is added by telemetry.
+
 No Collector, Prometheus, exporter transport, listener or background export timer is configured or deployed. Metrics are available as actual SDK `MetricData` through `collectMetrics()`; the initializer accepts a standard SDK `MetricReader` and `LogRecordProcessor` implementations for later backend integration. Without such configuration, OTel logs are not delivered externally and cumulative metrics remain in process. The existing audit file supplies durable local event history. Restart resets in-process metrics. This is instrumentation readiness, not end-to-end observability delivery.
 
 A later, separately scoped deployment can select an OTel Collector and Prometheus-compatible backend. It must explicitly configure export, collection and retention; this change does not promise backend availability or create new services. No telemetry is used for service actuation, admission or native idle decisions.

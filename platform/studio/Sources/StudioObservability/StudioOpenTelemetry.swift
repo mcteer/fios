@@ -10,6 +10,7 @@ private final class ResourceMetrics:@unchecked Sendable {
     var gpuAt:Int64?
     var workload:PlatformWorkloadSample?
     var services:[PlatformServiceSample]=[]
+    var nativeIngress:PlatformNativeIngressSample?
     func update(_ value:ResourceSample) {lock.lock();sample=value;lock.unlock()}
     func updateGPU(_ value:GPUSample?,sampledAt:Int64?) {lock.lock();gpu=value;gpuAt=sampledAt;lock.unlock()}
     func currentGPU()->(sample:GPUSample,sampledAt:Int64)? {
@@ -28,6 +29,14 @@ private final class ResourceMetrics:@unchecked Sendable {
         lock.lock();defer {lock.unlock()}
         let now=HostResources.nowMilliseconds()
         return services.filter{(-1000...5000).contains(now-$0.sampledAt)}
+    }
+    func updateNativeIngress(_ value:PlatformNativeIngressSample?) {lock.lock();nativeIngress=value;lock.unlock()}
+    func currentNativeIngress()->PlatformNativeIngressSample? {
+        lock.lock();defer {lock.unlock()}
+        let now=HostResources.nowMilliseconds()
+        func fresh(_ time:Int64)->Bool {(0...WireScalar.maximumTimestamp).contains(time) && (-1000...5000).contains(now-time)}
+        guard let nativeIngress,fresh(nativeIngress.receivedAt),nativeIngress.sourceSampledAt.map(fresh) ?? true else {return nil}
+        return nativeIngress
     }
     func current()->ResourceSample? {
         lock.lock();defer {lock.unlock()}
@@ -146,6 +155,26 @@ public final class StudioOpenTelemetry:PlatformTelemetry,@unchecked Sendable {
                     "fios.service.desired":.string(sample.desired.rawValue),"fios.service.observed":.string(sample.observed.rawValue)])
             }
         }
+        let nativeMetrics:[(String,String,(PlatformNativeIngressSample)->Double?)]=[
+            ("owners","{owner}",{Double($0.owners)}),
+            ("unparsed","{owner}",{Double($0.ingress)}),
+            ("preparing","{owner}",{Double($0.preparing)}),
+            ("active","{owner}",{Double($0.active)}),
+            ("responding","{owner}",{Double($0.responding)}),
+            ("model_identities","{identity}",{Double($0.modelIdentities)}),
+            ("closed","1",{$0.closed ? 1:0}),
+            ("tracker_uncertain","1",{$0.trackerUncertain ? 1:0}),
+            ("receipt.time","s",{Double($0.receivedAt)/1000}),
+            ("source.time","s",{$0.sourceSampledAt.map{Double($0)/1000}})
+        ]
+        for (name,unit,value) in nativeMetrics {
+            _=meter.gaugeBuilder(name:"fios.platform.native.ingress."+name).setUnit(unit).buildWithCallback { observation in
+                if let sample=state.currentNativeIngress(),let number=value(sample) {
+                    observation.record(value:number,attributes:["fios.scope":.string("native_ingress_tracker"),
+                        "fios.sample.clock":.string(sample.sourceSampledAt==nil ? "receipt_only":"source_and_receipt")])
+                }
+            }
+        }
         _=meter.gaugeBuilder(name:"fios.platform.resource.sample.time").setUnit("s").buildWithCallback { observation in
             if let sample=state.current() {observation.record(value:Double(sample.sampledAt)/1000)}
         }
@@ -158,6 +187,7 @@ public final class StudioOpenTelemetry:PlatformTelemetry,@unchecked Sendable {
     public func gpu(_ sample:GPUSample?,sampledAt:Int64?) {state.updateGPU(sample,sampledAt:sampledAt)}
     public func workload(_ sample:PlatformWorkloadSample?) {state.updateWorkload(sample)}
     public func services(_ samples:[PlatformServiceSample]) {state.updateServices(samples)}
+    public func nativeIngress(_ sample:PlatformNativeIngressSample?) {state.updateNativeIngress(sample)}
     public func collectMetrics()->[MetricData] {reader.collect()}
     deinit {_ = reader.shutdown()}
 }

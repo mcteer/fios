@@ -12,6 +12,7 @@ public protocol PlatformTelemetry:Sendable {
     func gpu(_ sample:GPUSample?,sampledAt:Int64?)
     func workload(_ sample:PlatformWorkloadSample?)
     func services(_ samples:[PlatformServiceSample])
+    func nativeIngress(_ sample:PlatformNativeIngressSample?)
 }
 
 public struct NoopPlatformTelemetry:PlatformTelemetry {
@@ -35,6 +36,7 @@ public struct PlatformServiceSample:Sendable {
 
 public extension PlatformTelemetry {
     func services(_ samples:[PlatformServiceSample]) {}
+    func nativeIngress(_ sample:PlatformNativeIngressSample?) {}
 }
 
 enum ServiceTelemetry {
@@ -48,4 +50,18 @@ enum ServiceTelemetry {
             }
         }catch {return []}
     }
+}
+
+// Partial request-tracker diagnostics, never a NativeSnapshot or idle proof.
+public struct PlatformNativeIngressSample:Sendable {
+    public let receivedAt:Int64
+    public let sourceSampledAt:Int64?
+    public let owners:Int
+    public let ingress:Int
+    public let preparing:Int
+    public let active:Int
+    public let responding:Int
+    public let modelIdentities:Int
+    public let closed:Bool
+    public let trackerUncertain:Bool
 }

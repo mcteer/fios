@@ -165,4 +165,33 @@ final class StudioOpenTelemetryTests:XCTestCase {
         XCTAssertFalse(telemetry.collectMetrics().contains{$0.name=="fios.platform.service.state" && !$0.data.points.isEmpty})
     }
 
+    func testNativeIngressMetricsPreserveReceiptAndSourceTimes() throws {
+        let telemetry=StudioOpenTelemetry(),now=HostResources.nowMilliseconds()
+        var diagnostics=NativeControlDiagnostics(configured:true)
+        var reply=NativeIngressStatus(operation:.observe,status:.ok,instance:String(repeating:"a",count:32),
+            pauseSequence:0,owners:1,ingress:0,preparing:0,active:1,responding:0,modelIdentities:1,closed:false,uncertain:false)
+        reply.nativeSampleSequence=42;reply.nativeSampledAt=now-50
+        diagnostics.completed(reply,receivedAt:now)
+        let sample=try XCTUnwrap(diagnostics.ingressSample(now:now))
+        telemetry.nativeIngress(sample)
+        let metrics=telemetry.collectMetrics()
+        let owners=try XCTUnwrap(metrics.first{$0.name=="fios.platform.native.ingress.owners"})
+        let point=try XCTUnwrap((owners.data.points as? [DoublePointData])?.first)
+        XCTAssertEqual(owners.unit,"{owner}");XCTAssertEqual(point.value,1)
+        XCTAssertEqual(point.attributes["fios.sample.clock"],.string("source_and_receipt"))
+        let receipt=try XCTUnwrap(metrics.first{$0.name=="fios.platform.native.ingress.receipt.time"})
+        XCTAssertEqual((receipt.data.points as! [DoublePointData]).first!.value,Double(now)/1000)
+        let source=try XCTUnwrap(metrics.first{$0.name=="fios.platform.native.ingress.source.time"})
+        XCTAssertEqual((source.data.points as! [DoublePointData]).first!.value,Double(now-50)/1000)
+        reply.nativeSampledAt=now-6000;diagnostics.completed(reply,receivedAt:now)
+        telemetry.nativeIngress(diagnostics.ingressSample(now:now))
+        XCTAssertFalse(telemetry.collectMetrics().contains{$0.name=="fios.platform.native.ingress.owners" && !$0.data.points.isEmpty})
+        reply.nativeSampledAt=nil;reply.nativeSampleSequence=nil;diagnostics.completed(reply,receivedAt:now)
+        telemetry.nativeIngress(diagnostics.ingressSample(now:now))
+        let legacy=telemetry.collectMetrics()
+        let legacyOwners=try XCTUnwrap(legacy.first{$0.name=="fios.platform.native.ingress.owners"})
+        XCTAssertEqual((legacyOwners.data.points as! [DoublePointData]).first!.attributes["fios.sample.clock"],.string("receipt_only"))
+        XCTAssertFalse(legacy.contains{$0.name=="fios.platform.native.ingress.source.time" && !$0.data.points.isEmpty})
+    }
+
 }

@@ -141,6 +141,7 @@ public enum ManagerRuntime {
                 telemetry.workload(WorkloadTelemetry.sample(journal:journal,artifactBytes:artifactUsage.bytes,
                     artifactJobs:artifactUsage.jobs,now:timestamp(),cleanupPending:cleanup.pending,cleanupWaitMilliseconds:cleanup.wait))
                 telemetry.services(ServiceTelemetry.sample(journal:journal,observations:serviceObservations,recovery:serviceRecovery,now:timestamp()))
+                telemetry.nativeIngress(nativeDiagnostics.ingressSample(now:timestamp()))
                 let body:[String:Any] = ["version":1,"epoch":epoch,"pid":getpid(),"progress":now]
                 try JSONSerialization.data(withJSONObject:body,options:[.sortedKeys]).write(to:progress,options:.atomic)
                 lastHeartbeat=now
