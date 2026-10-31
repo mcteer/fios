@@ -15,7 +15,7 @@ import CryptoKit
         let applications:[ManagedService:VerifiedExecutable]=[.mlx:image,.orbstack:image]
         if args[1]=="server" {
             let scenario=args[3]
-            guard ["success","validation","console","running","error","wrong-process","shutdown","clock","expired"].contains(scenario) else {throw ControlError.invalid_request}
+            guard ["functional","success","validation","console","running","error","wrong-process","shutdown","clock","expired"].contains(scenario) else {throw ControlError.invalid_request}
             if !FileManager.default.fileExists(atPath:directory.appendingPathComponent("calls").path) {
                 try AtomicState.write(Data("0".utf8),to:directory.appendingPathComponent("calls"))
             }
@@ -38,6 +38,7 @@ import CryptoKit
                     try? await Task.sleep(nanoseconds:10_000_000)
                     if scenario=="error" {completion(nil,false)}
                     else if scenario=="wrong-process" {completion(getppid(),true)}
+                    else if scenario=="functional" {completion(getpid(),true)}
                     else {completion(getpid(),true);completion(nil,false)} // Duplicate completion must be inert.
                 }
             })

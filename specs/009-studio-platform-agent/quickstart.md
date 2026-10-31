@@ -10,6 +10,14 @@ node scripts/check-platform-native-status.mjs --isolated --capsule /ABS/PRIVATE_
 
 Append `--protocol-version 3` for a source capsule declaring timestamped replies. This starts only a disposable empty-model loopback source server and manager, then exercises normal running/maintenance/running ingress intent. It retains private status receipts, never invokes inference, and does not establish normalized all-client activity authority.
 
+Ordinary service recovery status can be checked with real private manager/session/CLI processes and a counter-only application callback:
+
+```sh
+node scripts/check-platform-service-recovery-status.mjs --isolated
+```
+
+It runs only the single-completion functional scenario, reports pending/spacing-wait/available budget states and exits its own processes. It launches no native application and does not supply installed lifecycle acceptance.
+
 ## 1. Gates and prerequisites
 
 1. Review the accepted [governance-proposal.md](governance-proposal.md), constitution2.1.0 and ADR0003. No repeated implementation approval is needed; the16/16 specification checklist alone was never operational permission.
