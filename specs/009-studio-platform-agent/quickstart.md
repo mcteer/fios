@@ -28,6 +28,14 @@ The64MiB probe reads kernel memory and existing cap/inventory metadata, retains 
 
 Small-model source experiments in this guide run only on `fios-core` (24GiB M4-family Mac Mini). The Studios host larger models only. Core receipts never substitute for Studio sizing or acceptance; see [compatibility](compatibility.md). The fixed Gemma plan/check/run tool records and checks its core host profile.
 
+For an existing disposable sandbox image, ordinary workspace configuration can be checked against the local OrbStack runtime:
+
+```sh
+node scripts/check-platform-workspace-runtime.mjs --isolated --image sha256:ACTUAL_CACHED_SANDBOX_IMAGE_ID
+```
+
+This compiles the actual Core argument generator and runs two short containers with128MiB/default and256MiB/selected workspaces. It uses the image’s existing framed-task runner to check configured/visible capacity and a small file write/read, then removes only its own stopped containers. It does not exhaust memory/filesystems, run a model, pull an image or enroll the candidate. Private ownership/source receipts are retained. Visible capacity is not proof of behavior at the filesystem limit or complete T036 acceptance.
+
 ## 1. Gates and prerequisites
 
 1. Review the accepted [governance-proposal.md](governance-proposal.md), constitution2.1.0 and ADR0003. No repeated implementation approval is needed; the16/16 specification checklist alone was never operational permission.
