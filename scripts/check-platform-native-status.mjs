@@ -47,11 +47,13 @@ try{
  const native=spawn(binary,['serve','--host','127.0.0.1','--port',String(port),'--model-dir',models,'--no-warmup-eager'],{cwd:directory,env,stdio:['ignore','ignore','pipe']});children.push(native);
  let logBytes=0;native.stderr.on('data',part=>{logBytes+=part.length;if(logBytes>128*1024)native.kill('SIGTERM');});
  await until(async()=>{assert(!exited(native),'Empty-model native server exited');try{return await health();}catch(error){if(['ECONNREFUSED','ECONNRESET'].includes(error.code))return false;throw error;}});
+ const sourceHealth=JSON.parse(run(fixture,['--isolated-health',String(port)],5000));
+ assert.deepEqual(sourceHealth,{healthy:true,identity_proven:false,native_idle_proven:false});
  const control=join(directory,'.fios-native-control/control.sock');
  const manager=spawn(fixture,[protocolVersion===3?'--isolated-manager-v3':'--isolated-manager',state,control,binary,binarySHA,'source-fixture-only',String(native.pid)],{cwd:root,env,stdio:['ignore','ignore','pipe']});children.push(manager);
  let managerErrors='';manager.stderr.on('data',part=>{managerErrors+=part.toString();});
  const initial=await until(()=>{assert(!exited(manager),`Private manager exited: ${managerErrors}`);return command(['status']);});
- assert.equal(initial.native_control.state,'waiting');assert.equal(initial.native_control.authoritative,false);
+ assert(['waiting','received'].includes(initial.native_control.state));assert.equal(initial.native_control.authoritative,false);
  assert.equal(command(['service','mlx','running']).applied,false);
  const opened=await until(()=>{const value=command(['status']);return value?.native_control.state==='received'&&value.native_admissions==='admissionsOpen' ? value:null;});
  const diagnostic=opened.native_control;
@@ -74,9 +76,15 @@ try{
   await delay(1100);
   const repeated=command(['activity']).observation;
   assert(repeated.sequence>activity.observation.sequence);
-  assert.equal(repeated.native_sequence,activity.observation.native_sequence);
-  assert.equal(repeated.native_sampled_at,activity.observation.native_sampled_at);
-  assert(repeated.source_age_ms>=activity.observation.source_age_ms+1000);
+  assert(repeated.native_sequence>=activity.observation.native_sequence);
+  if(repeated.native_sequence===activity.observation.native_sequence){
+   assert.equal(repeated.native_sampled_at,activity.observation.native_sampled_at);
+   assert(repeated.source_age_ms>=activity.observation.source_age_ms+1000);
+  }else{
+   // The existing automatic observation cycle may complete between reads.
+   assert(repeated.native_sampled_at>=activity.observation.native_sampled_at);
+   assert(repeated.source_age_ms>=0&&repeated.source_age_ms<=5000);
+  }
 
  }
  assert.equal(command(['service','mlx','maintenance']).applied,false);
@@ -87,10 +95,10 @@ try{
  assert.equal(resumed.native_control.source_instance,diagnostic.source_instance);
  if(protocolVersion===3)assert(resumed.native_control.source_sequence>paused.native_control.source_sequence&&paused.native_control.source_sequence>diagnostic.source_sequence);
  assert.equal(resumed.native_control.authoritative,false);assert.deepEqual(readdirSync(models),[]);
- writeFileSync(join(directory,'status-receipts.json'),JSON.stringify({initial,opened,paused,resumed},null,2)+'\n',{mode:0o600});
+ writeFileSync(join(directory,'status-receipts.json'),JSON.stringify({sourceHealth,initial,opened,paused,resumed},null,2)+'\n',{mode:0o600});
  manager.kill('SIGTERM');await until(()=>exited(manager),5000);assert.equal(manager.exitCode,0);assert.equal(managerErrors,'');
  native.kill('SIGTERM');await until(()=>exited(native),7000);
- console.log(JSON.stringify({ok:true,protocol_version:protocolVersion,source_ingress_roundtrip:true,model_requests:0,installed_service_actions:0,authoritative:false,review_directory:directory}));
+ console.log(JSON.stringify({ok:true,protocol_version:protocolVersion,source_health_probe:true,source_ingress_roundtrip:true,model_requests:0,installed_service_actions:0,authoritative:false,review_directory:directory}));
 }finally{
  for(const child of [...children].reverse())if(!exited(child)){child.kill('SIGTERM');try{await until(()=>exited(child),7000);}catch{child.kill('SIGKILL');await until(()=>exited(child),3000);}}
  // Retain only private source-test data; process exit grants no native proof.

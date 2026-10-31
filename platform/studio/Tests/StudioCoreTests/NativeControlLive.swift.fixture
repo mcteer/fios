@@ -8,6 +8,11 @@ struct NativeControlLive {
     }
     static func run() throws {
         let args=Array(CommandLine.arguments.dropFirst())
+        if args.count==2,args[0]=="--isolated-health",let port=Int(args[1]) {
+            guard try ServiceHealthProbe(port:port).probe()==ServiceHealthState.healthy else {throw NativeControlError.invalid}
+            print("{\"healthy\":true,\"identity_proven\":false,\"native_idle_proven\":false}")
+            return
+        }
         if args.count==7,["--isolated-manager","--isolated-manager-v3"].contains(args[0]) {
             guard args[1].hasPrefix("/tmp/") || args[1].hasPrefix("/private/tmp/"),let pid=Int32(args[6]),pid>1 else {throw NativeControlError.invalid}
             let peer=NativeControlPeer(pid:pid,start:try WorkerResources.startIdentifier(pid:pid),executable:try VerifiedExecutable(path:args[3],sha256:args[4]))
