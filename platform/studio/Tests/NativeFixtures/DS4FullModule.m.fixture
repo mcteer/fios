@@ -5,6 +5,16 @@ extern int ds4_engine_close_checked(struct ds4_engine *);
 struct ds4_session;
 extern int ds4_session_free_checked(struct ds4_session *);
 #define FIOS_REQUIRE(value,marker) do {if(!(value)){fprintf(stderr,"%s\n",marker);return 77;}}while(0)
+// Finite owned release of a genuine shared event; no injected driver status.
+static void *release_fixture_event(void *opaque) {
+    @autoreleasepool {
+        id<MTLSharedEvent> event=(__bridge_transfer id<MTLSharedEvent>)opaque;
+        struct timespec remaining={3,0};
+        while (nanosleep(&remaining,&remaining)!=0 && errno==EINTR) {}
+        event.signaledValue=1;
+    }
+    return NULL;
+}
 int main(void){@autoreleasepool{
     FIOS_REQUIRE(!g_initialized&&!g_device&&g_model_fd<0,"MODULE_WAS_NOT_COLD");
     FIOS_REQUIRE(ds4_engine_close_checked(NULL)&&ds4_session_free_checked(NULL)&&!g_initialized&&!g_device,"PUBLIC_NULL_CLOSE_INITIALIZED_BACKEND");
@@ -59,6 +69,33 @@ int main(void){@autoreleasepool{
     FIOS_REQUIRE(ds4_gpu_prepare_release() && !g_batch_cb && ![g_pending_cbs count] && !g_fios_pending_uncertain,
         "ORDINARY_BOUNDED_BUFFER_CLEANUP_REFUSED");
     puts("PASS: cleanup-only shared Metal wait budget, genuine completed/unsubmitted objects and ordinary empty source batch/pending retirement");
+    // An actual source batch waits on a real shared event. Parent timeout
+    // must retain its exact buffer and uncertainty even after actual completion.
+    id<MTLSharedEvent> event=[g_device newSharedEvent];
+    FIOS_REQUIRE(event && ds4_gpu_begin_commands() && g_batch_cb,"DELAYED_SOURCE_BATCH_MISSING");
+    id<MTLCommandBuffer> delayed=g_batch_cb;
+    [delayed encodeWaitForEvent:event value:1];
+    pthread_t release_thread;
+    void *retained_event=(__bridge_retained void *)event;
+    if (pthread_create(&release_thread,NULL,release_fixture_event,retained_event)!=0) {
+        (void)(__bridge_transfer id<MTLSharedEvent>)retained_event;
+        FIOS_REQUIRE(0,"EVENT_RELEASE_THREAD_MISSING");
+    }
+    FIOS_REQUIRE(fios_native_join_clock(&release_began),"PARENT_RELEASE_CLOCK_MISSING");
+    const int delayed_result=ds4_gpu_prepare_release();
+    FIOS_REQUIRE(fios_native_join_clock(&release_finished) && release_finished>=release_began,
+        "PARENT_RELEASE_CLOCK_FAILED");
+    const int retained=!delayed_result && g_fios_pending_uncertain && g_batch_cb==delayed;
+    const int bounded=release_finished-release_began>=1000000000ULL &&
+        release_finished-release_began<2000000000ULL;
+    // Drain only this genuine known buffer after its finite event release.
+    // This does not clear any source state or stand in for parent terminality.
+    [delayed waitUntilCompleted];
+    FIOS_REQUIRE(pthread_join(release_thread,NULL)==0 && delayed.status==MTLCommandBufferStatusCompleted,
+        "OWN_EVENT_BUFFER_DID_NOT_COMPLETE");
+    FIOS_REQUIRE(retained && bounded && !ds4_gpu_prepare_release() &&
+        g_fios_pending_uncertain && g_batch_cb==delayed,"PARENT_TIMEOUT_CUSTODY_OR_UNCERTAINTY_LOST");
+    puts("PASS: actual shared-event-delayed source batch times out boundedly; original buffer and independent uncertainty remain after genuine later completion");
     FIOS_REQUIRE(g_model_fd<0,"UNEXPECTED_MODEL_FILE");
     // No raw whole-device cleanup is credited as completion. Initializer and
     // checked known producer are the only tested operations; parent/device,
