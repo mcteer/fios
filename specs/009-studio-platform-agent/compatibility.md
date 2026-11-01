@@ -15,6 +15,15 @@ The handover must preserve reviewed configuration and prevent competing GUI
 launches, with separately reviewed installation/rollback; source implementation
 continues independently.
 
+The inspected pinned upstream `ServerManager.start` calls its name/port-based
+`killOrphanedServers` before launching the bundled child. A native startup lock
+alone cannot prevent that GUI controller from first disrupting an agent-owned
+server. Disabling GUI autostart alone is therefore insufficient for handover:
+the reviewed installation must also address manual GUI lifecycle interference.
+Do not enable managed ownership while the old GUI can still perform those
+actions. This is an installation compatibility requirement, not permission to
+patch/re-sign the installed GUI or change its settings now.
+
 **Current scope (2026-10-31):** Native hardening and security-adjacent investigation are stopped at the operator’s request. The source matrices and receipts below are historical evidence, not instructions to resume that work. Ordinary functional implementation, native integration and correctness checks continue; installed activation and disruptive acceptance remain separately gated.
 
 ## Host/model roles clarified2026-10-31

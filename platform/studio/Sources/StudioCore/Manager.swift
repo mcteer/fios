@@ -10,7 +10,7 @@ public enum ManagerRuntime {
     }
     // No production issuer yet: only reviewed native enrollment may supply
     // this internal client. Never construct it from operator/model payloads.
-    static func run(directory:URL,nativeControl:NativeControlClient?,serviceObservations:ServiceObservationCache?=nil,serviceHealth:MLXServiceHealthCollector?=nil,serviceHealthReadiness:@Sendable()->(Bool,Bool)={ (false,false) },orbstackHealth:ServiceHealthCollector?=nil,orbstackHealthReadiness:@Sendable()->(Bool,Bool)={ (false,false) },serviceControl:SessionControlClient?=nil,drainObservations:ServiceDrainObservationCache?=nil,execution:ManagerExecutionPorts?=nil,telemetry:any PlatformTelemetry=NoopPlatformTelemetry()) throws {
+    static func run(directory:URL,nativeControl:NativeControlClient?,serviceObservations:ServiceObservationCache?=nil,serviceHealth:MLXServiceHealthCollector?=nil,serviceHealthReadiness:@Sendable()->(Bool,Bool)={ (false,false) },orbstackHealth:ServiceHealthCollector?=nil,orbstackHealthReadiness:@Sendable()->(Bool,Bool)={ (false,false) },serviceControl:(any ServiceRecoverySending)?=nil,drainObservations:ServiceDrainObservationCache?=nil,execution:ManagerExecutionPorts?=nil,telemetry:any PlatformTelemetry=NoopPlatformTelemetry()) throws {
         guard geteuid() != 0 else { throw ControlError.unauthorized }
         guard serviceHealth == nil || serviceHealth?.service == .mlx,
               orbstackHealth == nil || orbstackHealth?.service == .orbstack else {throw ServiceError.invalid}

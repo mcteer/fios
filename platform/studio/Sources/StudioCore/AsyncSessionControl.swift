@@ -1,5 +1,15 @@
 import Foundation
 
+// Internal code-only boundary. Public manager startup has no issuer. A native
+// server transport can replace the MLX GUI path without changing durable IDs,
+// recovery budgets or the one-exchange off-loop queue.
+protocol ServiceRecoverySending:Sendable {
+    var applicationHashes:[ManagedService:String] {get}
+    func accepts(_ command:ServiceLaunchCommand)->Bool
+    func request(_ request:ServiceRecoveryRequest)throws->SessionLaunchResult
+}
+extension SessionControlClient:ServiceRecoverySending {}
+
 enum SessionTransportFailure:Error,Sendable {case unavailable}
 struct SessionRecoveryResult:Sendable {
     let request:ServiceRecoveryRequest
@@ -9,11 +19,11 @@ struct SessionRecoveryResult:Sendable {
 // One finite connection/hash exchange off the manager heartbeat. No automatic
 // retry, fallback, queue growth or absent-service/terminal inference on error.
 final class AsyncSessionControl:@unchecked Sendable {
-    private let client:SessionControlClient
+    private let client:any ServiceRecoverySending
     private let lock=NSLock()
     private var busy=false
     private var result:SessionRecoveryResult?
-    init(client:SessionControlClient) {self.client=client}
+    init(client:any ServiceRecoverySending) {self.client=client}
     var available:Bool {
         lock.lock();defer {lock.unlock()};return !busy && result==nil
     }

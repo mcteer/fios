@@ -43,16 +43,22 @@ extension MLXServingProcessRuntime {
         let recovery=try ServiceRecoveryController(journal:journal,approvedHashes:pins)
         let profile=try ServiceLaunchProfile.digest(pins),gate=ServingRuntimeGate()
         let runtime=try MLXServingProcessRuntime.fixture(executable:executable,home:root.path,profile:profile,gate:gate)
+        let transport=try NativeServingRecoveryTransport(runtime:runtime,approvedHashes:pins)
+        let queue=AsyncSessionControl(client:transport)
+        func exchange(_ request:ServiceRecoveryRequest)throws->SessionLaunchResult {
+            try queue.submit(request)
+            let end=ProcessInfo.processInfo.systemUptime+3
+            while ProcessInfo.processInfo.systemUptime<end {
+                if let response=queue.poll() {return try response.value.get()}
+                Thread.sleep(forTimeInterval:0.005)
+            }
+            throw RuntimeError.deadline
+        }
         func absent(_ now:Int64)->ServiceObservation {
             ServiceObservation(identity:nil,responding:false,sessionReady:true,credentialsReady:true,nativeIdle:nil,runtimeUnmanaged:nil,sampledAt:now)
         }
         func next(_ now:Int64)throws->ServiceRecoveryRequest {
             guard let result=try recovery.next(service:.mlx,desired:.running,observation:absent(now),now:now,tick:now),result.operation == .launch else {throw RuntimeError.invalid};return result
-        }
-        func result()throws->SessionLaunchResult {
-            let end=ProcessInfo.processInfo.systemUptime+5
-            while ProcessInfo.processInfo.systemUptime<end {if let value=runtime.poll(){return value.result};Thread.sleep(forTimeInterval:0.005)}
-            throw RuntimeError.deadline
         }
         func retired()throws {
             let end=ProcessInfo.processInfo.systemUptime+3
@@ -60,9 +66,12 @@ extension MLXServingProcessRuntime {
             throw RuntimeError.deadline
         }
         let cancelled=try next(1000)
-        try runtime.begin(cancelled.command,deadline:ProcessInfo.processInfo.systemUptime+5)
-        guard gate.entered.wait(timeout:.now()+2) == .success,runtime.cancelValidation(id:cancelled.command.id),
-              try result() == .notSent,runtime.validationPending else {throw RuntimeError.invalid}
+        guard try exchange(cancelled) == .uncertain else {throw RuntimeError.invalid}
+        try recovery.receive(cancelled,result:.uncertain)
+        guard gate.entered.wait(timeout:.now()+2) == .success,
+              let revocation=try recovery.next(service:.mlx,desired:.maintenance,observation:absent(1001),now:1001,tick:1001),
+              revocation.operation == .cancel,revocation.command.id==cancelled.command.id,
+              try exchange(revocation) == .notSent,runtime.validationPending else {throw RuntimeError.invalid}
         let blocked=ServiceLaunchCommand(service:.mlx,id:UUID().uuidString.lowercased(),expectedSHA256:executable.sha256,profileHash:profile)
         do {try runtime.begin(blocked,deadline:ProcessInfo.processInfo.systemUptime+5);throw JournalError.conflict}catch RuntimeError.capacity {}
         try recovery.receive(cancelled,result:.notSent);gate.release.signal()
@@ -71,9 +80,26 @@ extension MLXServingProcessRuntime {
         guard !runtime.validationPending,runtime.lookup(id:cancelled.command.id) == .notSent else {throw RuntimeError.invalid}
         var identities:[ServiceIdentity]=[]
         for now:Int64 in [11000,21000] {
-            let request=try next(now);try runtime.begin(request.command,deadline:ProcessInfo.processInfo.systemUptime+5)
-            let outcome=try result()
+            let request=try next(now)
+            // Exercise the same off-loop transport used by ManagerRuntime,
+            // preserving the durable controller's original operation ID.
+            guard try exchange(request) == .uncertain else {throw RuntimeError.invalid}
+            try recovery.receive(request,result:.uncertain)
+            var outcome:SessionLaunchResult = .uncertain
+            let end=ProcessInfo.processInfo.systemUptime+5
+            while outcome == .uncertain,ProcessInfo.processInfo.systemUptime<end {
+                guard let lookup=try recovery.next(service:.mlx,desired:.running,observation:absent(now),now:now,tick:now),
+                      lookup.operation == .lookup,lookup.command.id==request.command.id else {throw RuntimeError.invalid}
+                // Reconstructed in-memory transport has no receipt for the
+                // original child. It must not adopt, replay or infer not-sent.
+                let cold=try MLXServingProcessRuntime.fixture(executable:executable,home:root.path,profile:profile,gate:ServingRuntimeGate())
+                let coldTransport=try NativeServingRecoveryTransport(runtime:cold,approvedHashes:pins)
+                guard try coldTransport.request(lookup) == .uncertain else {throw RuntimeError.invalid}
+                outcome=try exchange(lookup)
+                if outcome == .uncertain {Thread.sleep(forTimeInterval:0.005)}
+            }
             guard case .started(let identity)=outcome else {throw RuntimeError.invalid}
+            guard try transport.request(request)==outcome else {throw RuntimeError.invalid} // Native ID replay cannot spawn again.
             identities.append(identity);try recovery.receive(request,result:outcome)
             do {try runtime.begin(blocked,deadline:ProcessInfo.processInfo.systemUptime+5);throw JournalError.conflict}catch RuntimeError.capacity {}
             guard !runtime.retireKnownExited(),try journal.uncertainCount()==1 else {throw RuntimeError.invalid}
@@ -82,5 +108,6 @@ extension MLXServingProcessRuntime {
         }
         guard identities.count==2,identities[0] != identities[1] else {throw RuntimeError.invalid}
         print("PASS: actual private serving-role process launch/identity/local reap/relaunch, retained validation cancellation slot, no duplicate child and independent native uncertainty retained")
+        print("PASS: native server transport through actual manager recovery queue, original durable operation lookup and no GUI fallback")
     }
 }

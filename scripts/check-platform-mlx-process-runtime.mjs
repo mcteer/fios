@@ -14,13 +14,17 @@ function run(program,args,timeout=120000){const r=spawnSync(program,args,{encodi
 run('/usr/bin/clang',[c,'-O2','-o',helper],30000);
 const core=join(root,'platform/studio/Sources/StudioCore'),name='MLXServingProcessRuntime.swift';
 const implementation=readFileSync(join(core,name)),fixture=readFileSync(join(root,'platform/studio/Tests/NativeFixtures/MLXServingProcessRuntime.swift.fixture'));
+const integrationNames=['NativeServingRecoveryTransport.swift','AsyncSessionControl.swift','Manager.swift'];
+const integration=Object.fromEntries(integrationNames.map(n=>[n,readFileSync(join(core,n))]));
 const unit=join(directory,'RuntimeFixture.swift');writeFileSync(unit,Buffer.concat([implementation,Buffer.from('\n'),fixture]));
 for(const mode of ['debug','release']){
  const binary=join(directory,mode),state=join(directory,mode+'-state');
  run('swiftc',['-parse-as-library','-swift-version','6','-warnings-as-errors',...(mode==='release'?['-O']:[]),'-I',join(root,'platform/studio/Sources/CSQLite'),...readdirSync(core).filter(n=>n.endsWith('.swift')&&n!==name).sort().map(n=>join(core,n)),unit,'-o',binary]);
  const output=run(binary,[helper,hash(readFileSync(helper)),state],30000);writeFileSync(join(directory,mode+'.log'),output,{mode:0o600});
  assert(output.includes('PASS: actual private serving-role process launch/identity/local reap/relaunch'));
+ assert(output.includes('PASS: native server transport through actual manager recovery queue'));
 }
 assert(implementation.equals(readFileSync(join(core,name))));
-const receipt={ok:true,directory,provenance_scope:'declared_runtime_and_fixture_only',modes:['debug','release'],source_sha256:hash(implementation),fixture_sha256:hash(fixture),actual_private_child_starts:4,native_mlx_actions:0,native_inference:false,native_authority:false,installed:false};
+for(const [n,bytes] of Object.entries(integration))assert(bytes.equals(readFileSync(join(core,n))));
+const receipt={ok:true,directory,provenance_scope:'declared_runtime_integration_and_fixture_only',modes:['debug','release'],source_sha256:hash(implementation),integration_sha256:Object.fromEntries(Object.entries(integration).map(([n,b])=>[n,hash(b)])),fixture_sha256:hash(fixture),actual_private_child_starts:4,native_mlx_actions:0,native_inference:false,native_authority:false,installed:false};
 writeFileSync(join(directory,'receipt.json'),JSON.stringify(receipt)+'\n',{mode:0o600});console.log(JSON.stringify(receipt));

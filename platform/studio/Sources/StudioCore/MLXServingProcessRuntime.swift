@@ -75,6 +75,16 @@ final class MLXServingProcessRuntime:@unchecked Sendable {
         lock.lock();defer {lock.unlock()}
         return records[id] ?? .uncertain
     }
+    func accepts(_ command:ServiceLaunchCommand)->Bool {
+        command.service == .mlx && WireScalar.uuid(command.id) && command.expectedSHA256==executable.sha256 && command.profileHash==profileHash
+    }
+    // A correlated controller lookup may consume the notification, never the
+    // immutable receipt. Missing history remains uncertain across reconstruction.
+    func acknowledgeResult(id:String)->SessionLaunchResult {
+        lock.lock();defer {lock.unlock()}
+        if delivery?.0==id {delivery=nil}
+        return records[id] ?? .uncertain
+    }
     var validationPending:Bool {
         lock.lock();defer {lock.unlock()};return busy
     }
