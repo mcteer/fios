@@ -1152,7 +1152,7 @@ index 3c0328d..5895ea7 100644
  int ds4_gpu_tp_gate_encode(uint32_t layer, uint32_t gate);
  void ds4_gpu_tp_set_batch_exchange(ds4_gpu_tp_batch_exchange_fn fn);
 diff --git a/ds4_metal.m b/ds4_metal.m
-index 0d75369..71f8d92 100644
+index 0d75369..7505111 100644
 --- a/ds4_metal.m
 +++ b/ds4_metal.m
 @@ -15,6 +15,7 @@
@@ -1968,21 +1968,49 @@ index 0d75369..71f8d92 100644
          if (ds4_gpu_stream_expert_timing_summary_enabled() &&
              getenv("DS4_METAL_MEMORY_REPORT") == NULL) {
              ds4_gpu_print_memory_report("at cleanup");
-@@ -13424,6 +13730,13 @@ static int ds4_gpu_stream_expert_pread_into(
+@@ -13424,6 +13730,41 @@ static int ds4_gpu_stream_expert_pread_into(
  static ds4_gpu_stream_expert_pread_task *g_stream_expert_pread_pool_tasks;
  static int g_stream_expert_pread_pool_initialized;
  static int g_stream_expert_pread_pool_stopping;
 +// Source candidate only: caller already owns backend lifecycle serialization.
 +// A one-way pool gate and exact joins are NOT GPU/all-client terminal proof.
 +static atomic_int g_fios_pread_pool_sealed;
-+static int g_fios_pread_pool_uncertain;
++static atomic_int g_fios_pread_pool_uncertain;
++static atomic_uint g_fios_pread_pool_created;
 +static uint32_t g_fios_pread_pool_joined;
 +static fios_native_join_ticket *g_fios_pread_pool_joins[18];
 +
++
++// The actual successfully created vector, never configured/uncreated handles.
++static int ds4_gpu_fios_pread_pool_join_created(uint32_t count,uint64_t began) {
++    if (count>18 || count!=atomic_load_explicit(&g_fios_pread_pool_created,memory_order_acquire)) {
++        g_fios_pread_pool_uncertain=1;return 0;
++    }
++    // One shared observation budget; pending/error tickets and the exact pool
++    // remain rooted. Physical late joins never unseal or refund uncertainty.
++    for (uint32_t i=0;i<count;++i) {
++        if (g_fios_pread_pool_joins[i]) {g_fios_pread_pool_uncertain=1;return 0;}
++        uint64_t now;
++        if (!fios_native_join_clock(&now) || now<began || now-began>=1000000000ULL) {
++            g_fios_pread_pool_uncertain=1;return 0;
++        }
++        fios_native_join_ticket *ticket=fios_native_join_start(g_stream_expert_pread_pool_threads[i]);
++        g_fios_pread_pool_joins[i]=ticket;
++        int joined=-1;
++        if (!ticket || !fios_native_join_wait_since(ticket,began,1000,&joined)) {
++            g_fios_pread_pool_uncertain=1;return 0;
++        }
++        if (joined!=0) {g_fios_pread_pool_uncertain=1;continue;} // Retain this ticket; other original targets still have the same budget.
++        g_fios_pread_pool_joined |= 1u<<i;
++        g_fios_pread_pool_joins[i]=NULL;
++        fios_native_join_release(ticket);
++    }
++    return !g_fios_pread_pool_uncertain;
++}
  
  static int ds4_gpu_stream_expert_pread_pool_enabled(void) {
      const char *env = getenv("DS4_METAL_STREAMING_EXPERT_PREAD_POOL");
-@@ -13484,6 +13797,7 @@ static int ds4_gpu_stream_expert_pread_pool_enabled(void) {
+@@ -13484,11 +13825,12 @@ static int ds4_gpu_stream_expert_pread_pool_enabled(void) {
  }
  
  static int ds4_gpu_stream_expert_pread_pool_init(uint32_t n_threads) {
@@ -1990,35 +2018,73 @@ index 0d75369..71f8d92 100644
      if (g_stream_expert_pread_pool_initialized) return 1;
      if (!ds4_gpu_stream_expert_pread_pool_enabled() || n_threads <= 1) return 0;
      if (n_threads > 18) n_threads = 18;
-@@ -13511,15 +13825,23 @@ static int ds4_gpu_stream_expert_pread_pool_init(uint32_t n_threads) {
+ 
+-    pthread_mutex_lock(&g_stream_expert_pread_pool_mutex);
++    if (pthread_mutex_trylock(&g_stream_expert_pread_pool_mutex)!=0) return 0; // No worker/state mutation on publication contention.
+     g_stream_expert_pread_pool_thread_count = n_threads;
+     g_stream_expert_pread_pool_stopping = 0;
+     g_stream_expert_pread_pool_generation = 0;
+@@ -13497,8 +13839,11 @@ static int ds4_gpu_stream_expert_pread_pool_init(uint32_t n_threads) {
+     g_stream_expert_pread_pool_next_task = 0;
+     g_stream_expert_pread_pool_active_workers = 0;
+     g_stream_expert_pread_pool_remaining_workers = 0;
+-    pthread_mutex_unlock(&g_stream_expert_pread_pool_mutex);
++    if (pthread_mutex_unlock(&g_stream_expert_pread_pool_mutex)!=0) {
++        g_fios_pread_pool_uncertain=1;atomic_store(&g_fios_pread_pool_sealed,1);return 0;
++    }
+ 
++    atomic_store_explicit(&g_fios_pread_pool_created,0,memory_order_release);
+     uint32_t started = 0;
+     for (uint32_t i = 0; i < n_threads; i++) {
+         const int rc = pthread_create(&g_stream_expert_pread_pool_threads[i],
+@@ -13509,21 +13854,34 @@ static int ds4_gpu_stream_expert_pread_pool_init(uint32_t n_threads) {
+             fprintf(stderr,
+                     "ds4: Metal streaming expert pread pool thread creation failed: %s\n",
                      strerror(rc));
-             pthread_mutex_lock(&g_stream_expert_pread_pool_mutex);
-             g_stream_expert_pread_pool_stopping = 1;
+-            pthread_mutex_lock(&g_stream_expert_pread_pool_mutex);
+-            g_stream_expert_pread_pool_stopping = 1;
 -            g_stream_expert_pread_pool_generation++;
-+            g_stream_expert_pread_pool_thread_count = started;
-+            g_stream_expert_pread_pool_initialized = started != 0;
-+            atomic_store_explicit(&g_fios_pread_pool_sealed, 1, memory_order_release);
-             pthread_cond_broadcast(&g_stream_expert_pread_pool_start_cond);
-             pthread_mutex_unlock(&g_stream_expert_pread_pool_mutex);
-             for (uint32_t j = 0; j < started; j++) {
+-            pthread_cond_broadcast(&g_stream_expert_pread_pool_start_cond);
+-            pthread_mutex_unlock(&g_stream_expert_pread_pool_mutex);
+-            for (uint32_t j = 0; j < started; j++) {
 -                (void)pthread_join(g_stream_expert_pread_pool_threads[j], NULL);
-+                const int partial_join_rc = pthread_join(g_stream_expert_pread_pool_threads[j], NULL);
-+                pthread_mutex_lock(&g_stream_expert_pread_pool_mutex);
-+                if (partial_join_rc == 0) g_fios_pread_pool_joined |= (1u << j);
-+                if (partial_join_rc != 0) g_fios_pread_pool_uncertain = 1;
-+                pthread_mutex_unlock(&g_stream_expert_pread_pool_mutex);
-             }
-             pthread_mutex_lock(&g_stream_expert_pread_pool_mutex);
+-            }
+-            pthread_mutex_lock(&g_stream_expert_pread_pool_mutex);
 -            g_stream_expert_pread_pool_thread_count = 0;
 -            g_stream_expert_pread_pool_stopping = 0;
-+            if (!g_fios_pread_pool_uncertain) {
-+                g_stream_expert_pread_pool_thread_count = 0;
-+                g_stream_expert_pread_pool_initialized = 0;
+-            pthread_mutex_unlock(&g_stream_expert_pread_pool_mutex);
++            // Retain the exact published created count even if metadata
++            // acquisition fails. No unknown join can discard original workers.
++            atomic_store_explicit(&g_fios_pread_pool_sealed,1,memory_order_release);
++            uint64_t began;
++            if (!fios_native_join_clock(&began) || !fios_native_join_lock(&g_stream_expert_pread_pool_mutex,1000)) {
++                g_fios_pread_pool_uncertain=1;return 0;
 +            }
-             pthread_mutex_unlock(&g_stream_expert_pread_pool_mutex);
++            g_stream_expert_pread_pool_stopping=1;
++            g_stream_expert_pread_pool_thread_count=started;
++            g_stream_expert_pread_pool_initialized=started!=0;
++            const int notified=pthread_cond_broadcast(&g_stream_expert_pread_pool_start_cond);
++            const int released=pthread_mutex_unlock(&g_stream_expert_pread_pool_mutex);
++            if (notified!=0 || released!=0 || !ds4_gpu_fios_pread_pool_join_created(started,began)) {
++                g_fios_pread_pool_uncertain=1;return 0;
++            }
++            if (!fios_native_join_lock(&g_stream_expert_pread_pool_mutex,1000)) {
++                g_fios_pread_pool_uncertain=1;return 0;
++            }
++            if (!g_fios_pread_pool_uncertain && g_fios_pread_pool_joined==((1u<<started)-1u)) {
++                g_stream_expert_pread_pool_thread_count=0;
++                g_stream_expert_pread_pool_initialized=0;
++                atomic_store_explicit(&g_fios_pread_pool_created,0,memory_order_release);
++            } else g_fios_pread_pool_uncertain=1;
++            if (pthread_mutex_unlock(&g_stream_expert_pread_pool_mutex)!=0) g_fios_pread_pool_uncertain=1;
              return 0;
          }
-@@ -13559,6 +13881,12 @@ static int ds4_gpu_stream_expert_pread_pool_begin(
+         started++;
++        atomic_store_explicit(&g_fios_pread_pool_created,started,memory_order_release);
+     }
+ 
+     g_stream_expert_pread_pool_initialized = 1;
+@@ -13559,6 +13917,12 @@ static int ds4_gpu_stream_expert_pread_pool_begin(
          return 0;
      }
  
@@ -2031,7 +2097,7 @@ index 0d75369..71f8d92 100644
      g_stream_expert_pread_pool_tasks = tasks;
      g_stream_expert_pread_pool_n_tasks = n_tasks;
      g_stream_expert_pread_pool_next_task = 0;
-@@ -13592,7 +13920,96 @@ static int ds4_gpu_stream_expert_pread_pool_dispatch(
+@@ -13592,7 +13956,79 @@ static int ds4_gpu_stream_expert_pread_pool_dispatch(
      return ds4_gpu_stream_expert_pread_pool_wait();
  }
  
@@ -2067,25 +2133,7 @@ index 0d75369..71f8d92 100644
 +    const int released=pthread_mutex_unlock(&g_stream_expert_pread_pool_mutex);
 +    if (notified!=0 || released!=0) {g_fios_pread_pool_uncertain=1;return 0;}
 +
-+    // One shared observation budget; pending/error tickets and the exact pool
-+    // remain rooted. Physical late joins never unseal or refund uncertainty.
-+    for (uint32_t i=0;i<count;++i) {
-+        if (g_fios_pread_pool_joins[i]) {g_fios_pread_pool_uncertain=1;return 0;}
-+        uint64_t now;
-+        if (!fios_native_join_clock(&now) || now<began || now-began>=1000000000ULL) {
-+            g_fios_pread_pool_uncertain=1;return 0;
-+        }
-+        fios_native_join_ticket *ticket=fios_native_join_start(g_stream_expert_pread_pool_threads[i]);
-+        g_fios_pread_pool_joins[i]=ticket;
-+        int joined=-1;
-+        if (!ticket || !fios_native_join_wait_since(ticket,began,1000,&joined)) {
-+            g_fios_pread_pool_uncertain=1;return 0;
-+        }
-+        if (joined!=0) {g_fios_pread_pool_uncertain=1;continue;} // Retain this ticket; other original targets still have the same budget.
-+        g_fios_pread_pool_joined |= 1u<<i;
-+        g_fios_pread_pool_joins[i]=NULL;
-+        fios_native_join_release(ticket);
-+    }
++    if (!ds4_gpu_fios_pread_pool_join_created(count,began)) return 0;
 +    if (!fios_native_join_lock(&g_stream_expert_pread_pool_mutex,1000)) {
 +        g_fios_pread_pool_uncertain=1;return 0;
 +    }
@@ -2096,6 +2144,7 @@ index 0d75369..71f8d92 100644
 +    }
 +    g_stream_expert_pread_pool_thread_count=0;
 +    g_stream_expert_pread_pool_initialized=0;
++    atomic_store_explicit(&g_fios_pread_pool_created,0,memory_order_release);
 +    if (pthread_mutex_unlock(&g_stream_expert_pread_pool_mutex)!=0) {
 +        g_fios_pread_pool_uncertain=1;return 0;
 +    }
@@ -2128,7 +2177,7 @@ index 0d75369..71f8d92 100644
      if (!g_stream_expert_pread_pool_initialized) return;
  
      pthread_mutex_lock(&g_stream_expert_pread_pool_mutex);
-@@ -13626,6 +14043,12 @@ static int ds4_gpu_stream_expert_pread_tasks(
+@@ -13626,6 +14062,12 @@ static int ds4_gpu_stream_expert_pread_tasks(
      if (total_bytes) *total_bytes = 0;
      if (wall_ms) *wall_ms = 0.0;
      if (!tasks || n_tasks == 0) return 1;
@@ -2141,7 +2190,7 @@ index 0d75369..71f8d92 100644
  
      const uint32_t n_workers =
          ds4_gpu_stream_expert_pread_thread_count(n_tasks);
-@@ -13642,30 +14065,21 @@ static int ds4_gpu_stream_expert_pread_tasks(
+@@ -13642,30 +14084,21 @@ static int ds4_gpu_stream_expert_pread_tasks(
      } else if (!ds4_gpu_stream_expert_pread_pool_dispatch(tasks,
                                                            n_tasks,
                                                            n_workers)) {
