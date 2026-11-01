@@ -182,3 +182,23 @@ this bootstrap only prepares a client which authenticates the actual socket
 peer and complete response tuple independently on every exchange. Discovery
 alone cannot grant model readiness, prove absence or substitute for native
 activity/freshness validation.
+
+## MLX serving-process role (operator clarification2026-11-01)
+
+The current GUI bootstrap adapter is not the completed MLX lifecycle adapter.
+MLXCore is the GUI; the native server is the distinct
+`/Applications/MLX-Serve.app/Contents/MacOS/mlx-serve` executable. The new
+`MLXServingProcessProfile` fixes these separate roles and hashes for read-only
+monitor construction. Its MLX health collector targets the serving executable.
+A separately verified GUI companion can remain alive while the server is
+reported absent within the reviewed process scope; an unreviewed related helper
+still makes absence unknown. This is scoped metadata, not a global no-start
+lease, native idle or authorization to launch/restart.
+
+Serving-process start/restart must use a reviewed preserved launch profile and
+explicit controller ownership. It must not race the GUI's own child controller,
+change autostart/configuration implicitly, kill by process name, or restart a
+healthy loading/active server merely because it is not yet metadata-ready.
+The current GUI launch-only enrollment does not supply that native process
+actuation authority. Installation/ownership handover and native acceptance stay
+separately gated; source engineering continues.

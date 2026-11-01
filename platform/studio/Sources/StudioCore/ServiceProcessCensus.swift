@@ -60,6 +60,7 @@ struct KernelServiceProcessCensus:ServiceProcessCensusReading {
 // enrollment preconditions, not facts established by a current path hash.
 final class ServiceProcessCensus:@unchecked Sendable {
     private let executable:VerifiedExecutable
+    private let companion:VerifiedExecutable?
     private let roots:Set<String>
     private let uid:uid_t
     private let reviewDigest:String
@@ -71,18 +72,23 @@ final class ServiceProcessCensus:@unchecked Sendable {
     private var previous:Int64 = -1
     private var fenced=false
     private var diagnostic="unknown"
-    init(executable:VerifiedExecutable,relatedRoots:Set<String>,reviewDigest:String,uid:uid_t,
+    init(executable:VerifiedExecutable,relatedRoots:Set<String>,reviewDigest:String,uid:uid_t,companion:VerifiedExecutable?=nil,
          source:any ServiceProcessCensusReading=KernelServiceProcessCensus(),
          now:@escaping @Sendable()->Int64=HostResources.nowMilliseconds,
          uptime:@escaping @Sendable()->TimeInterval={ProcessInfo.processInfo.systemUptime})throws {
         guard uid>0,uid==geteuid(),getuid()==geteuid(),WireScalar.sha256(reviewDigest),(1...8).contains(relatedRoots.count),
               relatedRoots.allSatisfy({$0.hasPrefix("/") && $0 != "/" && !$0.hasSuffix("/") && !$0.contains("//") && !$0.contains("\0") && !$0.split(separator:"/").contains(where:{$0=="." || $0==".."})}),
               relatedRoots.contains(where:{executable.path.hasPrefix($0+"/")}) else {throw ServiceError.invalid}
+        if let companion {
+            guard companion.path != executable.path,
+                  relatedRoots.contains(where:{companion.path.hasPrefix($0+"/")}) else {throw ServiceError.invalid}
+            try companion.verify()
+        }
         var before=stat(),after=stat()
         guard lstat(executable.path,&before)==0 else {throw ServiceError.invalid}
         try executable.verify()
         guard lstat(executable.path,&after)==0,Self.same(before,after) else {throw ServiceError.invalid}
-        self.executable=executable;roots=relatedRoots;self.uid=uid;self.reviewDigest=reviewDigest;image=after;self.source=source;self.now=now;self.uptime=uptime
+        self.executable=executable;self.companion=companion;roots=relatedRoots;self.uid=uid;self.reviewDigest=reviewDigest;image=after;self.source=source;self.now=now;self.uptime=uptime
     }
     private static func same(_ a:stat,_ b:stat)->Bool {
         a.st_dev==b.st_dev && a.st_ino==b.st_ino && a.st_mode==b.st_mode && a.st_uid==b.st_uid && a.st_nlink==b.st_nlink && b.st_nlink==1 &&
@@ -113,6 +119,7 @@ final class ServiceProcessCensus:@unchecked Sendable {
             let boot=try HostBoot.identity(),first=try source.pids(uid:uid)
             guard (1..<32768).contains(first.count),Set(first).count==first.count,first.contains(getpid()),first.allSatisfy({$0>1}) else {return .unknown}
             var matches:[ServiceProcessEntry]=[],related=false
+            var companionEntry:ServiceProcessEntry?
             diagnostic="inspection"
             for pid in first {
                 guard uptime()-began<1 else {return .unknown}
@@ -124,6 +131,12 @@ final class ServiceProcessCensus:@unchecked Sendable {
                     guard entry.realUID==uid,entry.savedUID==uid else {diagnostic="candidate_principal";return .unknown}
                     matches.append(entry)
                 }
+                else if let companion,entry.path==companion.path {
+                    guard companionEntry==nil,entry.realUID==uid,entry.savedUID==uid else {return .unknown}
+                    let known=try source.verify(entry,executable:companion,uid:uid,deadline:began+1)
+                    guard known.valid,known.pid==entry.pid,known.start==entry.start,known.sha256==companion.sha256 else {return .unknown}
+                    companionEntry=entry
+                }
                 else if roots.contains(where:{entry.path==$0 || entry.path.hasPrefix($0+"/")}) {related=true}
             }
             diagnostic="second_enumeration"
@@ -133,6 +146,12 @@ final class ServiceProcessCensus:@unchecked Sendable {
             let completed=now()
             guard completed>=previous,completed-stamp<=1000 else {fenced=true;return .unknown}
             previous=completed
+            if matches.isEmpty,let companion,let entry=companionEntry {
+                // A reviewed GUI is a distinct role, not the serving process.
+                // Recheck it across enumeration before reporting scoped absence.
+                let known=try source.verify(entry,executable:companion,uid:uid,deadline:began+1)
+                guard known.valid,known.pid==entry.pid,known.start==entry.start,known.sha256==companion.sha256 else {return .unknown}
+            }
             if matches.isEmpty {diagnostic=related ? "unreviewed_related_process":"scoped_absence";return related ? .unknown:.absent}
             guard matches.count==1 else {diagnostic="multiple_candidates";return .unknown}
             diagnostic="candidate_verification"

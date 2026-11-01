@@ -14,7 +14,8 @@ final class ServiceHealthCollector:@unchecked Sendable {
     private let now:()->Int64
     private let uptime:()->TimeInterval
 
-    convenience init(census:ServiceProcessCensus,probe:ServiceHealthProbe) {
+    convenience init(mlxServing profile:MLXServingProcessProfile,probe:ServiceHealthProbe)throws {
+        let census=try profile.makeCensus()
         self.init(service:.mlx,presence:census.capture,health:probe.probe,
                   now:HostResources.nowMilliseconds,uptime:{ProcessInfo.processInfo.systemUptime})
     }

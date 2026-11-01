@@ -55,6 +55,15 @@ func runServiceProcessCensusTests() throws {
     let related=ServiceCensusFixture();related.first=[getpid(),Int32.max]
     related.entries[Int32.max]=ServiceProcessEntry(pid:Int32.max,uid:geteuid(),realUID:getuid(),savedUID:geteuid(),start:2,path:helper.path)
     guard try policy(related).capture().presence == .unknown else {fatalError("Unreviewed related helper became absence")}
+    let application=try VerifiedExecutable(path:helper.path,sha256:hash)
+    let guiAware=try ServiceProcessCensus(executable:executable,relatedRoots:[root.path],reviewDigest:review,uid:geteuid(),
+        companion:application,source:related,now:{related.time},uptime:{related.tick})
+    guard guiAware.capture().presence == .absent else {fatalError("Reviewed GUI presence hid missing serving process")}
+    let servingProfile=try MLXServingProcessProfile(serverSHA256:hash,applicationSHA256:hash,reviewDigest:review,uid:geteuid())
+    guard servingProfile.server.path=="/Applications/MLX-Serve.app/Contents/MacOS/mlx-serve",
+          servingProfile.application.path=="/Applications/MLX-Serve.app/Contents/MacOS/MLXCore" else {
+        fatalError("MLX monitoring target confused the GUI and serving process")
+    }
     fixture.time=9999
     guard census.capture().presence == .unknown else {fatalError("Census clock rollback accepted")}
     fixture.time=10001
@@ -63,22 +72,29 @@ func runServiceProcessCensusTests() throws {
     // Other same-UID CI processes may start/exit between kernel lists. Each
     // such sample must stay unknown. Observe again within a finite fixture
     // window; never turn churn into absence or relax the production checks.
-    func stableCapture()->ServiceProcessSample {
+    func stableCapture(_ reader:ServiceProcessCensus)->ServiceProcessSample {
         let deadline=ProcessInfo.processInfo.systemUptime+2
-        var value=native.capture()
+        var value=reader.capture()
         while value.presence == .unknown,["inspection","second_enumeration"].contains(value.diagnostic),
               ProcessInfo.processInfo.systemUptime<deadline {
             Thread.sleep(forTimeInterval:0.025)
-            value=native.capture()
+            value=reader.capture()
         }
         return value
     }
-    func start()->(Process,Pipe,Pipe) {
+    func start(_ target:URL)->(Process,Pipe,Pipe) {
         let process=Process(),input=Pipe(),output=Pipe()
-        process.executableURL=binary;process.arguments=[];process.standardInput=input;process.standardOutput=output;process.standardError=FileHandle.nullDevice
+        process.executableURL=target;process.arguments=[];process.standardInput=input;process.standardOutput=output;process.standardError=FileHandle.nullDevice
         return (process,input,output)
     }
-    let (process,input,output)=start();try process.run()
+    let (gui,guiInput,guiOutput)=start(helper);try gui.run()
+    defer {if gui.isRunning {gui.terminate()};gui.waitUntilExit()}
+    guiOutput.fileHandleForWriting.closeFile()
+    var guiReady=pollfd(fd:guiOutput.fileHandleForReading.fileDescriptor,events:Int16(POLLIN),revents:0)
+    guard poll(&guiReady,1,2000)>0,try guiOutput.fileHandleForReading.read(upToCount:6)==Data("READY\n".utf8) else {fatalError("GUI-role sentinel did not start")}
+    let nativeWithGUI=try ServiceProcessCensus(executable:executable,relatedRoots:[root.path],reviewDigest:review,uid:geteuid(),companion:application)
+    guard stableCapture(nativeWithGUI).presence == .absent,gui.isRunning else {fatalError("Live reviewed GUI was mistaken for the serving process")}
+    let (process,input,output)=start(binary);try process.run()
     defer {if process.isRunning {process.terminate()};process.waitUntilExit()}
     output.fileHandleForWriting.closeFile()
     var ready=pollfd(fd:output.fileHandleForReading.fileDescriptor,events:Int16(POLLIN),revents:0)
@@ -92,13 +108,16 @@ func runServiceProcessCensusTests() throws {
     do {
         _=try ServiceIdentity.verified(peer:NativeControlPeer(pid:process.processIdentifier,start:WorkerResources.startIdentifier(pid:process.processIdentifier),executable:executable),expectedUID:geteuid(),deadline:ProcessInfo.processInfo.systemUptime+1)
     } catch {fatalError("Owned sentinel direct identity check failed: \(error)")}
-    let observed=stableCapture()
+    let observed=stableCapture(nativeWithGUI)
     guard case .present(let identity)=observed.presence,identity.pid==process.processIdentifier,identity.start==(try WorkerResources.startIdentifier(pid:process.processIdentifier)) else {fatalError("Live service identity was not verified: \(observed.diagnostic)")}
     guard process.isRunning else {fatalError("Census signalled sentinel")}
     process.terminate();process.waitUntilExit() // Only the fixture owner signals its child.
     try? input.fileHandleForWriting.close();try? output.fileHandleForReading.close()
-    let after=stableCapture()
+    let after=stableCapture(nativeWithGUI)
     guard after.presence == .absent else {fatalError("Reaped service remained present or inspection incomplete")}
+    guard gui.isRunning else {fatalError("Serving-process observation stopped its GUI companion")}
+    gui.terminate();gui.waitUntilExit()
+    try? guiInput.fileHandleForWriting.close();try? guiOutput.fileHandleForReading.close()
     try FileManager.default.removeItem(at:binary)
     try FileManager.default.copyItem(atPath:original,toPath:binary.path)
     guard native.capture().presence == .unknown else {fatalError("Replaced reviewed image retained census authority")}
