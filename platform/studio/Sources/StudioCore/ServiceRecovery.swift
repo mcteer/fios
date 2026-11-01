@@ -9,9 +9,14 @@ enum ServiceLaunchProfile {
     static func nativeDigest(base:String,arguments:[String],environment:[String:String],workingDirectory:String,reviewedConfigurationSHA256:String?=nil)throws->String {
         guard WireScalar.sha256(base),reviewedConfigurationSHA256.map(WireScalar.sha256) ?? true else {throw ServiceError.invalid}
         var args=arguments
-        for index in args.indices {
-            if index>0,arguments[index-1]=="--api-key" {args[index]="<credential-slot>"}
-            else if args[index].hasPrefix("--api-key=") {args[index]="--api-key=<credential-slot>"}
+        var index=0
+        while index<arguments.count {
+            if arguments[index]=="--api-key",index+1<arguments.count {
+                args[index+1]="<credential-slot>";index+=2
+            } else {
+                if arguments[index].hasPrefix("--api-key=") {args[index]="--api-key=<credential-slot>"}
+                index+=1
+            }
         }
         var values=environment
         if values["FIOS_MLX_SERVING_API_KEY"] != nil {values["FIOS_MLX_SERVING_API_KEY"]="<credential-slot>"}

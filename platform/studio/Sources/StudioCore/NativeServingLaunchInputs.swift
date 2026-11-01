@@ -17,7 +17,7 @@ struct NativeServingLaunchInputs:Sendable {
             if argument=="--api-key" || argument=="--api-key-env" {
                 guard index+1<arguments.count else {throw RuntimeError.invalid}
                 let value=arguments[index+1]
-                guard !value.isEmpty,!value.hasPrefix("--"),!value.contains("\0") else {throw RuntimeError.invalid}
+                guard !value.isEmpty,!value.contains("\0") else {throw RuntimeError.invalid}
                 if argument=="--api-key-env" {
                     guard value=="FIOS_MLX_SERVING_API_KEY",let secret=environment[value],
                           !secret.isEmpty,!secret.contains("\0") else {throw RuntimeError.invalid}

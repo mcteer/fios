@@ -89,3 +89,9 @@ through a held directory descriptor with exact-file identity checks; unrelated
 progress writes do not invalidate directory identity. This factory is still
 unwired from public startup and grants no native reservation or capacity. Its
 positive installed-manager/supervisor branches remain unexecuted.
+
+Argument-channel credential values are consumed literally, including a leading
+`--`, as in the pinned native parser. Fingerprint redaction consumes that value
+once and never interprets it as another option. Rotation therefore cannot redact
+a following configuration field or change the journal profile. This changes no
+credential value, source, interface login or live server configuration.

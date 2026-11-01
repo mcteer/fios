@@ -66,6 +66,12 @@ func runServiceRecoveryTests() throws {
     guard try decodeLaunch(argumentDocument).resolvingCredential("fixture-argument-key").arguments == ["--serve"]+binding+["--api-key","fixture-argument-key","--model","fixture/Exact"] else {fatalError("Argument credential slot not preserved")}
     let argumentDecoded=try decodeLaunch(argumentDocument),argumentResolved=try argumentDecoded.resolvingCredential("fixture-argument-key")
     guard try argumentDecoded.recoveryProfileHash(base:base,reviewedConfigurationSHA256:hash) == ServiceLaunchProfile.nativeDigest(base:base,arguments:argumentResolved.arguments,environment:argumentResolved.environment,workingDirectory:argumentResolved.workingDirectory,reviewedConfigurationSHA256:hash) else {fatalError("Argument-mode manager profile requires credential value")}
+    let argumentFingerprint=try argumentDecoded.recoveryProfileHash(base:base,reviewedConfigurationSHA256:hash)
+    for key in ["fixture-key","--api-key","--host","--api-key=literal"] {
+        let inputs=try argumentDecoded.resolvingCredential(key)
+        guard inputs.arguments == ["--serve"]+binding+["--api-key",key,"--model","fixture/Exact"],
+              try ServiceLaunchProfile.nativeDigest(base:base,arguments:inputs.arguments,environment:inputs.environment,workingDirectory:inputs.workingDirectory,reviewedConfigurationSHA256:hash)==argumentFingerprint else {fatalError("Literal credential rotation changed native configuration or became a journal verifier")}
+    }
     for (key,value):(String,Any) in [("host","fios-core.lab"),("uid",true),("version",2),("supervisor_sha256","missing"),
           ("state_path","/tmp/../state"),("working_directory","/tmp/../"),("arguments",["--serve","--api-key","literal-key"]),
           ("environment",["HOME":"/Users/fixture","PATH":"/usr/bin:/bin","LANG":"C","LC_ALL":"C","FIOS_MLX_SERVING_API_KEY":"literal-key"]),
