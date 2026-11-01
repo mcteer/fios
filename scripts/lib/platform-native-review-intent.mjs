@@ -5,6 +5,7 @@ import {createHash} from 'node:crypto';
 // An optional source dependency must declare the selected format before any
 // model effect. This is a refusal prerequisite, never an admission grant.
 export function nativeReviewModelInputs(inputs){
+ assert(inputs?.provider_source_fixture!==true,'Provider source fixture is model-free');
  const dependency=inputs?.mlx_source_dependency;
  if(dependency!==undefined&&dependency!==null){
   assert(dependency.source_fixture_only===true&&dependency.native_authority===false&&dependency.features?.safetensors===true,'Source SDK lacks required Safetensors support');
@@ -71,7 +72,7 @@ export function nativeReviewHTTPFailure(status, body) {
  const result={http_status:status};
  if(body?.error?.message==='This model is serving without its vision tower (--no-vision, no vision weights, or on the Neural Engine); image/video content is not supported')result.modality_error='vision_unavailable';
  if(typeof body?.error?.message==='string')result.error_message_sha256=createHash('sha256').update(body.error.message).digest('hex');
- const types=['model_load_failed','model_not_found','invalid_request_error','forbidden','model_busy','native_tracking_unavailable','native_instance_changed','internal_error','shutting_down','gpu_context_lost'];
+ const types=['model_load_failed','model_not_found','invalid_request_error','forbidden','model_busy','native_tracking_unavailable','native_instance_changed','native_target_not_local','native_target_not_found','internal_error','shutting_down','gpu_context_lost'];
  if(types.includes(body?.error?.type))result.error_type=body.error.type;
  const names=['FileNotFound','AccessDenied','PermissionDenied','OutOfMemory','NoDevice','DeviceNotFound','UnsupportedArchitecture','UnsupportedModel','InsufficientMemory','LifetimeUnavailable','GpuContextLost'];
  const match=/^(?:Failed to load model|Model load failed): ([A-Za-z]+)$/.exec(body?.error?.message ?? '');

@@ -36,6 +36,8 @@ test('operator/model/endpoint overrides cannot expand the fixed native review ca
 
 test('source model preparation refuses a declared SDK without selected-format support',()=>{
  nativeReviewModelInputs({});
+ assert.throws(()=>nativeReviewModelInputs({provider_source_fixture:true}),/model-free/);
+ nativeReviewModelInputs({provider_source_fixture:false});
  nativeReviewModelInputs({mlx_source_dependency:{source_fixture_only:true,native_authority:false,features:{safetensors:true}}});
  for(const dependency of [{},{source_fixture_only:true,native_authority:false},{source_fixture_only:true,native_authority:false,features:{safetensors:false}},{source_fixture_only:true,native_authority:true,features:{safetensors:true}},{source_fixture_only:true,native_authority:false,features:{safetensors:'true'}}])assert.throws(()=>nativeReviewModelInputs({mlx_source_dependency:dependency}));
 });

@@ -70,8 +70,12 @@ try{
  const current=await request('/v1/chat/completions',{method:'POST',instance:second.instance});
  const legacy=await request('/v1/chat/completions',{method:'POST'});
  assert([400,404,503].includes(legacy.status));
- assert.equal(current.status,legacy.status,'The current instance must reach ordinary input validation');
- assert.equal(current.value.error?.type,legacy.value.error?.type);
+ if(capsule.receipt.declared_inputs.native_bound_local_target_guard_version===1){
+  assert.equal(current.status,404);assert.equal(current.value.error?.type,'native_target_not_found');
+ }else{
+  assert.equal(current.status,legacy.status,'The current instance must reach ordinary input validation');
+  assert.equal(current.value.error?.type,legacy.value.error?.type);
+ }
  assert.deepEqual((await request('/v1/models')).value.data,[]);observe(second.entry);
  await stop(second.entry);active=null;assert(performance.now()<deadline);
  const outcome={ok:true,source_fixture_only:true,capsule_sha256:args[4],distinct_actual_instances:true,same_loopback_endpoint:true,stale_instance_status:409,current_instance_status:current.status,legacy_status:legacy.status,
