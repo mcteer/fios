@@ -22,6 +22,14 @@ Version1 has exactly these fields:
 
 The complete document is at most32KiB. Unknown/duplicate keys, coercions,
 unsupported versions/hosts, malformed identities and unbounded inputs refuse.
+The preserved argument list must contain exactly one two-token `--host <IP>`
+and `--port <decimal>` pair. Addresses are explicit IPv4/IPv6 literals, not a
+DNS lookup; ports are canonical decimal1..65535. Missing/duplicate/equals forms
+refuse rather than inferring the native CLI's `0.0.0.0:11234` defaults. Explicit
+wildcard values remain reviewable configuration; parsing one does not approve
+new exposure. Installation must independently prove it preserves the existing
+reviewed listener. Arguments remain byte-preserved, with no address substitution.
+
 Only `PATH`, `HOME`, `LANG`, `LC_ALL`, `DYLD_LIBRARY_PATH` and `MLX_METAL_PATH`
 are environment keys. PATH and locale retain the fixed runtime values; HOME
 must satisfy the existing sanitized command environment. No model, path,

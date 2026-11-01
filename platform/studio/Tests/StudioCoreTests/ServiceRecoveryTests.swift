@@ -5,7 +5,8 @@ func runServiceRecoveryTests() throws {
     defer {try? FileManager.default.removeItem(at:directory)}
     let hash=String(repeating:"a",count:64),pins:[ManagedService:String]=[.mlx:hash,.orbstack:hash]
     let base=try ServiceLaunchProfile.digest(pins)
-    let nativeArgs=["--serve","--api-key-env","FIOS_MLX_SERVING_API_KEY","--model","fixture/Exact"]
+    let binding=["--host","127.0.0.1","--port","11234"]
+    let nativeArgs=["--serve"]+binding+["--api-key-env","FIOS_MLX_SERVING_API_KEY","--model","fixture/Exact"]
     let nativeEnv=["HOME":"/Users/fixture","FIOS_MLX_SERVING_API_KEY":"fixture-secret-a"]
     let fingerprint=try ServiceLaunchProfile.nativeDigest(base:base,arguments:nativeArgs,environment:nativeEnv,workingDirectory:"/")
     var rotated=nativeEnv;rotated["FIOS_MLX_SERVING_API_KEY"]="fixture-secret-b"
@@ -15,15 +16,32 @@ func runServiceRecoveryTests() throws {
     // The actual pinned parser leaves missing/empty environment credentials
     // open. Native launch configuration must fail before any process effect.
     _=try NativeServingLaunchInputs(arguments:nativeArgs,environment:nativeEnv,workingDirectory:"/")
-    _=try NativeServingLaunchInputs(arguments:["--serve","--api-key","fixture-key"],environment:[:],workingDirectory:"/")
+    _=try NativeServingLaunchInputs(arguments:["--serve"]+binding+["--api-key","fixture-key"],environment:[:],workingDirectory:"/")
     for args in [["--serve"],["--serve","--api-key-env"],["--serve","--api-key",""],
                  ["--serve","--api-key-env","OTHER"],["--serve","--api-key=fixture"],
                  ["--serve","--api-key-env","FIOS_MLX_SERVING_API_KEY","--api-key","fixture"]] {
-        do {_=try NativeServingLaunchInputs(arguments:args,environment:nativeEnv,workingDirectory:"/");fatalError("Invalid native credential channel accepted")}
+        do {_=try NativeServingLaunchInputs(arguments:args+binding,environment:nativeEnv,workingDirectory:"/");fatalError("Invalid native credential channel accepted")}
         catch RuntimeError.invalid {}
     }
     for env:[String:String] in [[:],["FIOS_MLX_SERVING_API_KEY":""]] {
         do {_=try NativeServingLaunchInputs(arguments:nativeArgs,environment:env,workingDirectory:"/");fatalError("Missing native credential accepted")}
+        catch RuntimeError.invalid {}
+    }
+    for host in ["127.0.0.1","::1","0.0.0.0","::","192.0.2.10"] {
+        let arguments=["--serve","--host",host,"--port","11234","--api-key","fixture-key"]
+        guard try NativeServingLaunchInputs(arguments:arguments,environment:[:],workingDirectory:"/").arguments==arguments else {fatalError("Explicit reviewed binding changed")}
+    }
+    for arguments in [["--serve","--api-key","fixture-key"],
+                      ["--serve","--host","127.0.0.1","--api-key","fixture-key"],
+                      ["--serve","--port","11234","--api-key","fixture-key"],
+                      nativeArgs+["--host","::1"],nativeArgs+["--port","11235"],
+                      ["--serve","--host","localhost","--port","11234","--api-key","fixture-key"],
+                      ["--serve","--host=127.0.0.1","--port","11234","--api-key","fixture-key"]] {
+        do {_=try NativeServingLaunchInputs(arguments:arguments,environment:nativeEnv,workingDirectory:"/");fatalError("Missing/ambiguous binding accepted")}
+        catch RuntimeError.invalid {}
+    }
+    for port in ["0","65536","-1","+11234","011234","11234.0"] {
+        do {_=try NativeServingLaunchInputs(arguments:["--serve","--host","127.0.0.1","--port",port,"--api-key","fixture-key"],environment:[:],workingDirectory:"/");fatalError("Invalid reviewed port accepted")}
         catch RuntimeError.invalid {}
     }
     let launchDocument:[String:Any]=[
@@ -42,8 +60,8 @@ func runServiceRecoveryTests() throws {
           resolved.workingDirectory=="/",decoded.host=="fios-edge-a.lab" else {fatalError("Reviewed launch inputs changed")}
     var argumentDocument=launchDocument
     argumentDocument["credential_channel"]="argument"
-    argumentDocument["arguments"]=["--serve","--api-key",NativeServingLaunchDocument.credentialSlot,"--model","fixture/Exact"]
-    guard try decodeLaunch(argumentDocument).resolvingCredential("fixture-argument-key").arguments[2]=="fixture-argument-key" else {fatalError("Argument credential slot not preserved")}
+    argumentDocument["arguments"]=["--serve"]+binding+["--api-key",NativeServingLaunchDocument.credentialSlot,"--model","fixture/Exact"]
+    guard try decodeLaunch(argumentDocument).resolvingCredential("fixture-argument-key").arguments == ["--serve"]+binding+["--api-key","fixture-argument-key","--model","fixture/Exact"] else {fatalError("Argument credential slot not preserved")}
     for (key,value):(String,Any) in [("host","fios-core.lab"),("uid",true),("version",2),
           ("state_path","/tmp/../state"),("working_directory","/tmp/../"),("arguments",["--serve","--api-key","literal-key"]),
           ("environment",["HOME":"/Users/fixture","PATH":"/usr/bin:/bin","LANG":"C","LC_ALL":"C","FIOS_MLX_SERVING_API_KEY":"literal-key"]),
@@ -52,7 +70,7 @@ func runServiceRecoveryTests() throws {
         do {_=try decodeLaunch(invalid);fatalError("Invalid reviewed launch document accepted")}
         catch RuntimeError.invalid {}
     }
-    var literalArgument=argumentDocument;literalArgument["arguments"]=["--serve","--api-key","literal-key"]
+    var literalArgument=argumentDocument;literalArgument["arguments"]=["--serve"]+binding+["--api-key","literal-key"]
     do {_=try decodeLaunch(literalArgument);fatalError("Literal argument credential entered durable profile")}
     catch RuntimeError.invalid {}
     for secret in ["",String(repeating:"x",count:4097),"invalid\0key"] {

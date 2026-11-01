@@ -129,3 +129,9 @@ now refuses missing/empty/duplicate channels and unsupported equals forms before
 process dispatch. Private model-free process constructors remain isolated test
 fixtures. This validates launch data; it is neither a protected profile loader
 nor an authority producer and makes no interface authentication change.
+
+Reviewed native inputs now require explicit literal bind-address and canonical
+port arguments before construction. The agent cannot choose the native CLI's
+wildcard/default listener by omission. This changes no live binding and does not
+approve an explicit new LAN/public listener; preserved installed configuration
+and handover still require independent review.
