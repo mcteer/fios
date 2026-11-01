@@ -10,6 +10,23 @@ struct ServingStopCommand:Sendable {
 // This describes only the owned local process, never native/device terminality.
 enum ServingStopResult:Equatable,Sendable {case notSent,localExited,uncertain}
 
+// Code-issued intent only, not native authority. There is no installed issuer.
+// The private helper fixture can construct it in this file; future native
+// issuance must retain the separate lifecycle reservation before doing so.
+final class ServingStopIntent:@unchecked Sendable {
+    let id:String
+    let receipt:ServiceRecordedLaunch
+    let desired:ServiceDesired
+    private let lock=NSLock()
+    private var consumed=false
+    fileprivate init(receipt:ServiceRecordedLaunch,desired:ServiceDesired) {
+        id=UUID().uuidString.lowercased();self.receipt=receipt;self.desired=desired
+    }
+    func consumeReservation()->Bool {
+        lock.lock();defer {lock.unlock()};guard !consumed else {return false};consumed=true;return true
+    }
+}
+
 // Physical, code-only process start/observation primitive. This is not a
 // service-intent interpreter or a native authority issuer. The installed
 // factory/controller must retain and revalidate its reviewed native start
@@ -137,12 +154,18 @@ final class MLXServingProcessRuntime:@unchecked Sendable {
     // lifecycle reservation through the operation. Its callback is read-only
     // validation of that retained reservation, never an actuator/acquirer.
     // No production issuer exists.
-    func beginStop(id:String,deadline:TimeInterval)throws {
+    func acceptsStopReceipt(_ receipt:ServiceRecordedLaunch)->Bool {
+        receipt.service == .mlx && receipt.profileHash==profileHash && receipt.identity.valid &&
+        receipt.identity.sha256==executable.sha256 && WireScalar.uuid(receipt.id) && WireScalar.uuid(receipt.boot)
+    }
+    func beginStop(id:String,matching receipt:ServiceRecordedLaunch,deadline:TimeInterval)throws {
         let now=ProcessInfo.processInfo.systemUptime
-        guard WireScalar.uuid(id),deadline.isFinite,deadline>now,deadline-now<=10 else {throw RuntimeError.invalid}
+        guard WireScalar.uuid(id),deadline.isFinite,deadline>now,deadline-now<=10,acceptsStopReceipt(receipt),
+              receipt.boot == (try HostBoot.identity()) else {throw RuntimeError.invalid}
         lock.lock()
         guard !busy,delivery==nil,stopDelivery==nil,phase == .running,
               let child=process,let identity,let launchID=activeID,id != launchID,
+              identity==receipt.identity,launchID==receipt.id,
               stopRecords.count<256,stopRecords[id]==nil,records[id]==nil else {lock.unlock();throw RuntimeError.capacity}
         let command=ServingStopCommand(id:id,launchID:launchID,identity:identity,profileHash:profileHash)
         activeStopID=id;revoked=false;busy=true;phase = .validatingStop
@@ -165,6 +188,19 @@ final class MLXServingProcessRuntime:@unchecked Sendable {
     }
     func lookupStop(id:String)->ServingStopResult {
         lock.lock();defer {lock.unlock()};return stopRecords[id] ?? .uncertain
+    }
+    func acknowledgeStopResult(id:String)->ServingStopResult {
+        lock.lock();defer {lock.unlock()}
+        if stopDelivery?.0==id {stopDelivery=nil}
+        return stopRecords[id] ?? .uncertain
+    }
+    // Used only after beginStop rejected before entering a new operation.
+    // Seal the ID so that the same rejected request cannot materialize later.
+    func rejectedStopResult(id:String)->ServingStopResult {
+        lock.lock();defer {lock.unlock()}
+        if let known=stopRecords[id] {return known}
+        guard activeStopID != id,records[id]==nil,stopRecords.count<256,WireScalar.uuid(id) else {return .uncertain}
+        stopRecords[id] = .notSent;return .notSent
     }
     private func finishStop(_ id:String,_ result:ServingStopResult,phase next:Phase) {
         lock.lock();defer {lock.unlock()}

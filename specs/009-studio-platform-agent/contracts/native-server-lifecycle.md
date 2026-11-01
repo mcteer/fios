@@ -52,19 +52,19 @@ explicit force operation retains its separate affected-scope confirmation.
 Do not use PID-only signals, sampled GPU idle or a successful HTTP health probe
 as native terminality. Never adopt or kill an unrelated/manual server.
 
-The source recovery journal's version2 record retains the last correlated
+The source recovery journal's version3 record retains the last correlated
 started acknowledgement per fixed service: operation ID, PID, canonical
 decimal-string kernel start, image hash and original boot, under the same
 reviewed profile. Clear the pending launch and persist this record in one
 durable write. Version1 input has no such evidence; reading it cannot invent a
-receipt. Reboot, later not-sent replies and manager reconstruction must not
+receipt. Version1/2 input cannot invent a pending stop. Reboot, later not-sent replies and manager reconstruction must not
 reinterpret historical evidence as current ownership. Live identity, protected
 profile/namespace and native lifecycle authority must still be established
 before adoption or disruption. The record alone never clears native inference
 uncertainty or unlocks another launch.
 
 Stopped-state backup/restore retains the complete recovery file. Older binaries
-which cannot read version2 must refuse it; do not remove the file, drop the
+which cannot read version3 must refuse it; do not remove the file, drop the
 receipt or restore older ownership state merely to make a downgrade start.
 Installed upgrade/rollback review must retain a compatible known-good binary
 and reconcile current work. Development source migration is not permission for
@@ -83,8 +83,13 @@ revalidates that reservation. Pre-dispatch revocation keeps the real validator
 slot until return. After dispatch, errors/timeouts stay uncertain; there is no
 force/retry fallback. Identity and deadline are checked at the owned-child
 signal edge; local exit is reported separately from native/device completion.
-The durable stop-operation/controller bridge and control of a server surviving
-manager death remain unfinished. A historical PID cannot be adopted into POSIX
+The source controller now persists an original-identity-bound pending stop
+before dispatch, with a separate bounded attempt budget. Its one-use intent
+has no installed producer. Restoration can only look up or revoke the original
+ID; a cold actuator's missing history remains unknown and cannot unblock a new
+launch. A failed acknowledgement write retains the pending record. The bridge
+is code-only and not wired into the running manager's installed lifecycle.
+Control of a server surviving manager death remains unfinished. A historical PID cannot be adopted into POSIX
 child custody after reparenting; recovered control needs its own reviewed
 identity-bound native mechanism. Private helper stop/relaunch tests supply none
 of that installed authority.

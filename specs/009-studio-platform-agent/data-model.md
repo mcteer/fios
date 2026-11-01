@@ -21,16 +21,30 @@ Manager UUID epoch and increasing sequence; monotonic startup/progress; watchdog
 
 Private metadata writer locks are distinct fixed `supervisor.lock`, `session.lock` and manager/SQLite locks. Supervisor/session share descriptor-pinned private0700 directory + same-UID single-link regular0600/no-follow/nonblocking/CLOEXEC lock validation, named-inode/directory checks and kernel flock; a link/FIFO/set-ID/permissive file cannot be treated as a singleton. Lock contents are not authority. Watchdog restart budget keeps its existing exact `boot`/`starts` JSON shape (no new format silently introduced), ≤4096 bytes, canonical boot UUID, ≤3 bounded integer strictly increasing monotonic start times. Validate histories even from another boot before reset; malformed/unknown/duplicate or unsafe file metadata refuses unchanged **before manager start**. File reads are bounded/no-follow/nonblocking with regular-file/UID/link/mode and identity-time brackets. A legitimate kernel boot change may reset only this restart policy; never native uncertainty or ownership.
 
-The separate private `service-recovery.json` now writes version2 (≤4096 bytes).
+The separate private `service-recovery.json` now writes version3 (≤4096 bytes).
 It retains the existing exact profile/boot/clock fence and per-service restart
 budget/pending UUID, plus optional `lastStarted` with exact keys `id`, `pid`,
 `start` (canonical positive UInt64 decimal string), `sha256` and original `boot`.
 The correlated started acknowledgement and pending-ID retirement share one
-atomic durable write. Version1 state remains readable without fabricating a
-receipt; future writes use version2. Receipt identity is historical metadata,
+atomic durable write. Version1/2 state remains readable without fabricating a
+receipt or stop operation; future writes use version3. Receipt identity is historical metadata,
 not live process ownership, native completion or actuation authority. It is
 retained across reboot and later not-sent operations. Stopped backups preserve
 the entire file; incompatible downgrade must refuse rather than erase/drop it.
+
+Version3 adds per-service bounded `stops` attempt timestamps and optional
+`stopPending` with exact keys `id`, `receipt` (the original launch receipt) and
+`desired` (`running|stopped`, never maintenance). Only MLX may hold this record;
+launch-pending and stop-pending cannot coexist, and the stored receipt must
+equal its historical last-started identity. Stop attempts are bounded to3/10min
+with10s spacing, separately from start attempts. A code-issued one-use intent
+and current durable desired state are required to reserve; no installed intent
+issuer exists. Persistence precedes returning a dispatch request. After
+reconstruction, only original-ID lookup or revocation is possible. Missing
+actuator history stays unknown, and unresolved stop state blocks new launch
+even after local process exit. A correlated not-sent/local-exit acknowledgement
+retires only this service operation after durable write; native inference
+claims and historical launch receipt remain unchanged.
 
 ## ResourceObservation / Reservation
 

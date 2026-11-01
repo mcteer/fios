@@ -22,6 +22,7 @@ func runServiceRecoveryTests() throws {
     let legacyFile=directory.appendingPathComponent("service-recovery.json")
     var legacy=try JSONSerialization.jsonObject(with:Data(contentsOf:legacyFile)) as! [String:Any]
     legacy["version"]=1
+    legacy["entries"]=(legacy["entries"] as! [[String:Any]]).map {entry in var old=entry;old.removeValue(forKey:"stops");return old}
     try AtomicState.write(JSONSerialization.data(withJSONObject:legacy),to:legacyFile)
     // New controller restores durable intent while the same single writer is
     // held. Fresh absence and elapsed time cannot retire unknown dispatch.
@@ -85,8 +86,14 @@ func runServiceRecoveryTests() throws {
     guard try recovery.plan(service:.orbstack,desired:.running,observation:absent(800000),now:800000,tick:800000)==nil else {fatalError("Restart erased clock fence")}
     do {_ = try ServiceRecoveryController(journal:journal,approvedHashes:[.mlx:String(repeating:"b",count:64),.orbstack:hash]);fatalError("Changed installed identity adopted prior launch state")}catch ServiceError.invalid {}
     let file=directory.appendingPathComponent("service-recovery.json"),original=try Data(contentsOf:file)
+    var previous=try JSONSerialization.jsonObject(with:original) as! [String:Any]
+    previous["version"]=2
+    previous["entries"]=(previous["entries"] as! [[String:Any]]).map {entry in var old=entry;old.removeValue(forKey:"stops");return old}
+    try AtomicState.write(JSONSerialization.data(withJSONObject:previous),to:file)
+    let previousController=try ServiceRecoveryController(journal:journal,approvedHashes:pins)
+    guard previousController.recordedLaunch(.orbstack)==acknowledged,!previousController.isStopPending() else {fatalError("Version2 launch history was lost or invented a stop")}
     let text=String(decoding:original,as:UTF8.self)
-    let malformed=[text.replacingOccurrences(of:"\"version\":2",with:"\"version\":2.0"),String(text.dropLast())+",\"future_launch_authority\":true}",text.replacingOccurrences(of:"\"start\":\"1\"",with:"\"start\":\"01\"")]
+    let malformed=[text.replacingOccurrences(of:"\"version\":3",with:"\"version\":3.0"),String(text.dropLast())+",\"future_launch_authority\":true}",text.replacingOccurrences(of:"\"start\":\"1\"",with:"\"start\":\"01\"")]
     for value in malformed {
         try AtomicState.write(Data(value.utf8),to:file)
         do {_ = try ServiceRecoveryController(journal:journal,approvedHashes:pins);fatalError("Malformed/future recovery state adopted")}catch ServiceError.invalid {}

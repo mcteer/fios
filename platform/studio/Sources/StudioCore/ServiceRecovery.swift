@@ -45,12 +45,28 @@ final class ServiceRecoveryRequest:@unchecked Sendable {
     }
 }
 
+enum ServingStopOperation:Equatable,Sendable {case stop,lookup,cancel}
+final class ServingStopRequest:@unchecked Sendable {
+    let operation:ServingStopOperation
+    let id:String
+    let receipt:ServiceRecordedLaunch
+    private let lock=NSLock()
+    private var consumed=false
+    fileprivate init(operation:ServingStopOperation,id:String,receipt:ServiceRecordedLaunch) {
+        self.operation=operation;self.id=id;self.receipt=receipt
+    }
+    func consumeTransport()->Bool {
+        guard operation == .stop else {return true}
+        lock.lock();defer {lock.unlock()};guard !consumed else {return false};consumed=true;return true
+    }
+}
+
 // Serialized by the journal's one manager owner. Planning durably reserves a
 // launch BEFORE returning a command. It never executes anything itself and is
 // not an IPC decoder/production enrollment issuer. Transport timeout, fresh
 // absence, elapsed time and restart cannot prove an old launch was not sent.
 final class ServiceRecoveryController {
-    private struct Receipt:Codable {
+    private struct Receipt:Codable,Equatable {
         let id:String
         let pid:Int32
         let start:String
@@ -61,11 +77,18 @@ final class ServiceRecoveryController {
             UInt64(start).map {$0>0 && String($0)==start} == true
         }
     }
+    private struct PendingStop:Codable {
+        let id:String
+        let receipt:Receipt
+        let desired:ServiceDesired
+    }
     private struct Entry:Codable {
         let service:ManagedService
         var starts:[Int64]=[]
         var pending:String?
         var lastStarted:Receipt?
+        var stops:[Int64]?=[]
+        var stopPending:PendingStop?
     }
     private struct State:Codable {
         var version:Int
@@ -90,20 +113,21 @@ final class ServiceRecoveryController {
         let boot=try HostBoot.identity()
         if var loaded=try Self.read(file) {
             guard loaded.profile==profile,loaded.entries.allSatisfy({entry in entry.lastStarted.map {$0.sha256==approvedHashes[entry.service]} ?? true}) else {throw ServiceError.invalid}
-            loaded.version=2
+            loaded.version=3
+            for index in loaded.entries.indices {if loaded.entries[index].stops==nil {loaded.entries[index].stops=[]}}
             if loaded.boot != boot {
                 // A new OS boot can reset only the local start-rate clock.
                 // A queued/unknown old launch remains fenced, never refunded.
-                if loaded.entries.contains(where:{$0.pending != nil}) {loaded.fenced=true}
+                if loaded.entries.contains(where:{$0.pending != nil || $0.stopPending != nil}) {loaded.fenced=true}
                 else {
-                    for index in loaded.entries.indices {loaded.entries[index].starts=[]}
+                    for index in loaded.entries.indices {loaded.entries[index].starts=[];loaded.entries[index].stops=[]}
                     loaded.previousTick=0
                 }
                 loaded.boot=boot
             }
             state=loaded
         } else {
-            state=State(version:2,profile:profile,boot:boot,previousWall:0,previousTick:0,fenced:false,
+            state=State(version:3,profile:profile,boot:boot,previousWall:0,previousTick:0,fenced:false,
                 entries:ManagedService.allCases.map {Entry(service:$0)})
         }
     }
@@ -127,28 +151,44 @@ final class ServiceRecoveryController {
             try StrictJSON.validate(data,maximum:4096)
             guard let root=try JSONSerialization.jsonObject(with:data) as? [String:Any],
                   Set(root.keys)==Set(["version","profile","boot","previousWall","previousTick","fenced","entries"]),
-                  let version=WireScalar.integer(root["version"],maximum:2),(1...2).contains(version),
+                  let version=WireScalar.integer(root["version"],maximum:3),(1...3).contains(version),
                   WireScalar.integer(root["previousWall"]) != nil,WireScalar.integer(root["previousTick"]) != nil,
                   let flag=root["fenced"] as? NSNumber,CFGetTypeID(flag)==CFBooleanGetTypeID(),
                   let entries=root["entries"] as? [[String:Any]],entries.count==2,
                   entries.allSatisfy({entry in
-                      guard Set(entry.keys).isSubset(of:version==1 ? ["service","starts","pending"]:["service","starts","pending","lastStarted"]),Set(["service","starts"]).isSubset(of:Set(entry.keys)),
+                      let allowed:Set<String>=version==1 ? ["service","starts","pending"]:version==2 ? ["service","starts","pending","lastStarted"]:["service","starts","pending","lastStarted","stops","stopPending"]
+                      guard Set(entry.keys).isSubset(of:allowed),Set(["service","starts"]).isSubset(of:Set(entry.keys)),
                             let starts=entry["starts"] as? [Any] else {return false}
-                      if let receipt=entry["lastStarted"] {
-                          guard let fields=receipt as? [String:Any],Set(fields.keys)==Set(["id","pid","start","sha256","boot"]),
+                      func validReceipt(_ object:Any)->Bool {
+                          guard let fields=object as? [String:Any],Set(fields.keys)==Set(["id","pid","start","sha256","boot"]),
                                 let pid=WireScalar.integer(fields["pid"],maximum:Int64(Int32.max)),pid>1 else {return false}
+                          return true
+                      }
+                      if let receipt=entry["lastStarted"] {
+                          guard validReceipt(receipt) else {return false}
+                      }
+                      if version==3 {
+                          guard let stops=entry["stops"] as? [Any],stops.allSatisfy({WireScalar.integer($0) != nil}) else {return false}
+                      }
+                      if let pending=entry["stopPending"] {
+                          guard let fields=pending as? [String:Any],Set(fields.keys)==Set(["id","receipt","desired"]),
+                                let receipt=fields["receipt"],validReceipt(receipt) else {return false}
                       }
                       return starts.allSatisfy {WireScalar.integer($0) != nil}
                   }) else {throw ServiceError.invalid}
             let value=try JSONDecoder().decode(State.self,from:data)
-            guard (1...2).contains(value.version),WireScalar.sha256(value.profile),WireScalar.uuid(value.boot),
+            guard (1...3).contains(value.version),WireScalar.sha256(value.profile),WireScalar.uuid(value.boot),
                   (0...WireScalar.maximumTimestamp).contains(value.previousWall),
                   (0...WireScalar.maximumTimestamp).contains(value.previousTick),
                   Set(value.entries.map(\.service))==Set(ManagedService.allCases),
                   value.entries.allSatisfy({entry in
                       entry.starts.count<=3 && entry.starts==entry.starts.sorted() &&
                       entry.starts.allSatisfy {(0...value.previousTick).contains($0)} &&
-                      (entry.pending.map(WireScalar.uuid) ?? true) && (entry.lastStarted?.valid ?? true)
+                      (entry.pending.map(WireScalar.uuid) ?? true) && (entry.lastStarted?.valid ?? true) &&
+                      (entry.stops.map {$0.count<=3 && $0==$0.sorted() && $0.allSatisfy {(0...value.previousTick).contains($0)}} ?? (value.version<3)) &&
+                      (entry.stopPending.map {stop in entry.service == .mlx && entry.pending==nil &&
+                          WireScalar.uuid(stop.id) && stop.receipt.valid && stop.receipt==entry.lastStarted &&
+                          stop.id != stop.receipt.id && stop.desired != .maintenance} ?? true)
                   }) else {throw ServiceError.invalid}
             return value
         } catch {throw ServiceError.invalid}
@@ -168,6 +208,40 @@ final class ServiceRecoveryController {
               receipt.valid,let start=UInt64(receipt.start) else {return nil}
         return ServiceRecordedLaunch(service:service,id:receipt.id,identity:ServiceIdentity(pid:receipt.pid,start:start,sha256:receipt.sha256),boot:receipt.boot,profileHash:state.profile)
     }
+    func isStopPending()->Bool {state.entries.first(where:{$0.service == .mlx})?.stopPending != nil}
+
+    // Durable intent only. The opaque code-issued intent has no installed
+    // producer, and the physical runtime independently validates native authority.
+    func planStop(_ intent:ServingStopIntent,now:Int64,tick:Int64)throws->ServingStopRequest? {
+        guard try observeClock(now:now,tick:tick),intent.desired != .maintenance,
+              try owner.desired(service:"mlx")==intent.desired.rawValue,
+              intent.receipt==recordedLaunch(.mlx),intent.receipt.boot==state.boot,
+              let index=state.entries.firstIndex(where:{$0.service == .mlx}),state.entries[index].pending==nil,
+              state.entries[index].stopPending==nil else {return nil}
+        let attempts=(state.entries[index].stops ?? []).filter {tick-$0<600000}
+        guard attempts.count<3,attempts.last.map({tick-$0>=10000}) ?? true,intent.consumeReservation(),
+              let receipt=state.entries[index].lastStarted else {return nil}
+        state.entries[index].stops=attempts+[tick]
+        state.entries[index].stopPending=PendingStop(id:intent.id,receipt:receipt,desired:intent.desired)
+        try persist() // Retain the live pending ID even after an uncertain write.
+        return ServingStopRequest(operation:.stop,id:intent.id,receipt:intent.receipt)
+    }
+    func nextStop(now:Int64,tick:Int64)throws->ServingStopRequest? {
+        guard let pending=state.entries.first(where:{$0.service == .mlx})?.stopPending,
+              let receipt=recordedLaunch(.mlx) else {return nil}
+        _=try observeClock(now:now,tick:tick)
+        let desired=try owner.desired(service:"mlx")
+        return ServingStopRequest(operation:desired==pending.desired.rawValue ? .lookup:.cancel,id:pending.id,receipt:receipt)
+    }
+    func receiveStop(_ request:ServingStopRequest,result:ServingStopResult)throws {
+        guard let index=state.entries.firstIndex(where:{$0.service == .mlx}),
+              state.entries[index].stopPending?.id==request.id,recordedLaunch(.mlx)==request.receipt else {throw ServiceError.invalid}
+        guard result != .uncertain else {return}
+        var candidate=state
+        candidate.entries[index].stopPending=nil
+        try persist(candidate)
+        state=candidate // No native inference claims or launch receipts changed.
+    }
 
     // Read-only local restart-budget diagnostics. Available budget does not
     // establish service absence/session readiness or authorize a launch.
@@ -179,7 +253,7 @@ final class ServiceRecoveryController {
         guard (0...WireScalar.maximumTimestamp).contains(tick),tick>=state.previousTick else {return result}
         let starts=entry.starts.filter{tick-$0<600000}
         result["starts_in_window"]=starts.count
-        if entry.pending != nil {result["budget_state"]="pending";return result}
+        if entry.pending != nil || entry.stopPending != nil {result["budget_state"]="pending";return result}
         let spacing=starts.last.map{max(0,10000-(tick-$0))} ?? 0
         let window=starts.count>=3 ? max(0,600000-(tick-starts[0])):0
         let wait=max(spacing,window)
@@ -221,7 +295,7 @@ final class ServiceRecoveryController {
         guard try observeClock(now:now,tick:tick),desired == .running,let observation else {return nil}
         if let identity=observation.identity,identity.sha256 != pins[service] {throw ServiceError.invalid}
         guard try ServicePolicy().action(service:service,desired:desired,observation:observation,now:now) == .launch,
-              let index=state.entries.firstIndex(where:{$0.service==service}),state.entries[index].pending==nil else {return nil}
+              let index=state.entries.firstIndex(where:{$0.service==service}),state.entries[index].pending==nil,state.entries[index].stopPending==nil else {return nil}
         state.entries[index].starts=state.entries[index].starts.filter {tick-$0<600_000}
         guard state.entries[index].starts.count<3,
               state.entries[index].starts.last.map({tick-$0>=10_000}) ?? true else {return nil}

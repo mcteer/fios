@@ -29,6 +29,12 @@ private final class ServingStopGate:@unchecked Sendable {
 // Same-file extension reaches only the private fixture initializer/child. No
 // installed factory or native app is invoked; the actual helper has no models.
 extension MLXServingProcessRuntime {
+    fileprivate func fixtureStopIntent(_ receipt:ServiceRecordedLaunch)throws->ServingStopIntent {
+        lock.lock();defer {lock.unlock()}
+        guard executable.path.hasPrefix("/private/tmp/fios-009-serving-runtime-"),phase == .running,
+              receipt.service == .mlx,receipt.id==activeID,receipt.identity==identity,receipt.profileHash==profileHash else {throw RuntimeError.invalid}
+        return ServingStopIntent(receipt:receipt,desired:.stopped)
+    }
     fileprivate func fixtureObservation(now:Int64)->ServiceObservation? {
         lock.lock();let currentPhase=phase,child=process,value=identity;lock.unlock()
         if currentPhase == .idle {
@@ -125,12 +131,45 @@ extension MLXServingProcessRuntime {
         let old=UUID().uuidString.lowercased()
         try journal.claim(job:old,attempt:0,model:"fixture/independent");try journal.markUncertain(job:old,attempt:0)
         let pins:[ManagedService:String]=[.mlx:executable.sha256,.orbstack:executable.sha256]
-        let recovery=try ServiceRecoveryController(journal:journal,approvedHashes:pins)
+        var recovery=try ServiceRecoveryController(journal:journal,approvedHashes:pins)
         let profile=try ServiceLaunchProfile.digest(pins),gate=ServingRuntimeGate(),stopGate=ServingStopGate()
         let runtime=try MLXServingProcessRuntime.fixture(executable:executable,home:root.path,profile:profile,gate:gate,stopGate:stopGate)
         let transport=try NativeServingRecoveryTransport(runtime:runtime,approvedHashes:pins)
         let recordedProbe=try RecordedServiceProcessProbe(service:.mlx,executable:executable,profileHash:profile)
         let queue=AsyncSessionControl(client:transport)
+        let stopQueue=AsyncServingStop(runtime:runtime)
+        func stopExchange(_ request:ServingStopRequest,through selected:AsyncServingStop?=nil)throws->ServingStopResult {
+            let subject=selected ?? stopQueue
+            try subject.submit(request)
+            let end=ProcessInfo.processInfo.systemUptime+3
+            while ProcessInfo.processInfo.systemUptime<end {
+                if let response=subject.poll() {guard response.request.id==request.id else {throw RuntimeError.invalid};return try response.value.get()}
+                Thread.sleep(forTimeInterval:0.005)
+            }
+            throw RuntimeError.deadline
+        }
+        func reserveStop(_ recorded:ServiceRecordedLaunch,at tick:Int64)throws->ServingStopRequest {
+            try journal.setDesired(service:"mlx",desired:"stopped")
+            let intent=try runtime.fixtureStopIntent(recorded)
+            guard let request=try recovery.planStop(intent,now:tick,tick:tick),recovery.isStopPending() else {throw RuntimeError.invalid}
+            return request
+        }
+        func completeStop(_ request:ServingStopRequest,at tick:Int64)throws->ServingStopResult {
+            guard try stopExchange(request) == .uncertain else {throw RuntimeError.invalid}
+            // Reconstruct only the controller while retaining its one Journal
+            // owner and original actuator. Restored intent can look up, not replay.
+            recovery=try ServiceRecoveryController(journal:journal,approvedHashes:pins)
+            let end=ProcessInfo.processInfo.systemUptime+5
+            while ProcessInfo.processInfo.systemUptime<end {
+                guard let lookup=try recovery.nextStop(now:tick,tick:tick),lookup.operation == .lookup,lookup.id==request.id else {throw RuntimeError.invalid}
+                let cold=try MLXServingProcessRuntime.fixture(executable:executable,home:root.path,profile:profile,gate:ServingRuntimeGate())
+                guard try stopExchange(lookup,through:AsyncServingStop(runtime:cold)) == .uncertain else {throw RuntimeError.invalid}
+                let result=try stopExchange(lookup)
+                if result != .uncertain {try recovery.receiveStop(lookup,result:result);return result}
+                Thread.sleep(forTimeInterval:0.005)
+            }
+            throw RuntimeError.deadline
+        }
         func exchange(_ request:ServiceRecoveryRequest,through selected:AsyncSessionControl?=nil)throws->SessionLaunchResult {
             let subject=selected ?? queue
             try subject.submit(request)
@@ -146,15 +185,6 @@ extension MLXServingProcessRuntime {
         }
         func next(_ now:Int64)throws->ServiceRecoveryRequest {
             guard let result=try recovery.next(service:.mlx,desired:.running,observation:absent(now),now:now,tick:now),result.operation == .launch else {throw RuntimeError.invalid};return result
-        }
-        func stopResult(_ id:String,from selected:MLXServingProcessRuntime?=nil)throws->ServingStopResult {
-            let subject=selected ?? runtime
-            let end=ProcessInfo.processInfo.systemUptime+5
-            while ProcessInfo.processInfo.systemUptime<end {
-                if let result=subject.pollStop() {guard result.id==id else {throw RuntimeError.invalid};return result.result}
-                Thread.sleep(forTimeInterval:0.005)
-            }
-            throw RuntimeError.deadline
         }
         func workerReturned(_ selected:MLXServingProcessRuntime?=nil)throws {
             let subject=selected ?? runtime
@@ -215,40 +245,53 @@ extension MLXServingProcessRuntime {
             do {try runtime.begin(blocked,deadline:ProcessInfo.processInfo.systemUptime+5);throw JournalError.conflict}catch RuntimeError.capacity {}
             guard !runtime.retireKnownExited(),try journal.uncertainCount()==1 else {throw RuntimeError.invalid}
             if now==11000 {
-                let cancelledStop=UUID().uuidString.lowercased()
-                try runtime.beginStop(id:cancelledStop,deadline:ProcessInfo.processInfo.systemUptime+5)
-                guard stopGate.entered.wait(timeout:.now()+2) == .success,runtime.cancelStopValidation(id:cancelledStop),
-                      try stopResult(cancelledStop) == .notSent,runtime.validationPending,
+                let cancelledStop=try reserveStop(recorded,at:11000)
+                guard try stopExchange(cancelledStop) == .uncertain,stopGate.entered.wait(timeout:.now()+2) == .success else {throw RuntimeError.invalid}
+                recovery=try ServiceRecoveryController(journal:journal,approvedHashes:pins)
+                try journal.setDesired(service:"mlx",desired:"maintenance")
+                guard let revoke=try recovery.nextStop(now:11000,tick:11000),revoke.operation == .cancel,revoke.id==cancelledStop.id,
+                      try stopExchange(revoke) == .notSent,runtime.validationPending,
                       recordedProbe.capture(recorded).state == .current(identity) else {throw RuntimeError.invalid}
-                do {try runtime.beginStop(id:UUID().uuidString.lowercased(),deadline:ProcessInfo.processInfo.systemUptime+5);throw JournalError.conflict}catch RuntimeError.capacity {}
+                do {
+                    let target=journal.directory.appendingPathComponent("service-recovery.json"),saved=journal.directory.appendingPathComponent("retained-stop-ack.json")
+                    try FileManager.default.moveItem(at:target,to:saved)
+                    try FileManager.default.createDirectory(at:target,withIntermediateDirectories:false,attributes:[.posixPermissions:0o700])
+                    defer {try? FileManager.default.removeItem(at:target);try? FileManager.default.moveItem(at:saved,to:target)}
+                    do {try recovery.receiveStop(revoke,result:.notSent);throw RuntimeError.identity}catch JournalError.storage {}
+                    guard recovery.isStopPending(),runtime.validationPending,try journal.uncertainCount()==1 else {throw RuntimeError.invalid}
+                }
+                try recovery.receiveStop(revoke,result:.notSent)
+                guard !recovery.isStopPending() else {throw RuntimeError.invalid}
+                do {try runtime.beginStop(id:UUID().uuidString.lowercased(),matching:recorded,deadline:ProcessInfo.processInfo.systemUptime+5);throw JournalError.conflict}catch RuntimeError.capacity {}
                 stopGate.release.signal();try workerReturned()
-                guard runtime.lookupStop(id:cancelledStop) == .notSent,recordedProbe.capture(recorded).state == .current(identity) else {throw RuntimeError.invalid}
+                guard runtime.lookupStop(id:cancelledStop.id) == .notSent,recordedProbe.capture(recorded).state == .current(identity) else {throw RuntimeError.invalid}
             } else {
                 stopGate.denyNext()
-                let denied=UUID().uuidString.lowercased()
-                try runtime.beginStop(id:denied,deadline:ProcessInfo.processInfo.systemUptime+5)
-                guard try stopResult(denied) == .notSent else {throw RuntimeError.invalid}
+                let denied=try reserveStop(recorded,at:610000)
+                guard try completeStop(denied,at:610000) == .notSent else {throw RuntimeError.invalid}
                 try workerReturned()
                 guard recordedProbe.capture(recorded).state == .current(identity) else {throw RuntimeError.invalid}
             }
-            let stopped=UUID().uuidString.lowercased()
-            try runtime.beginStop(id:stopped,deadline:ProcessInfo.processInfo.systemUptime+5)
-            guard try stopResult(stopped) == .localExited else {throw RuntimeError.invalid}
+            let stopped=try reserveStop(recorded,at:now==11000 ? 21000:620000)
+            guard try completeStop(stopped,at:now==11000 ? 21000:620000) == .localExited else {throw RuntimeError.invalid}
             try workerReturned()
-            guard runtime.lookupStop(id:stopped) == .localExited,!runtime.cancelStopValidation(id:stopped) else {throw RuntimeError.invalid}
+            guard runtime.lookupStop(id:stopped.id) == .localExited,!runtime.cancelStopValidation(id:stopped.id),!recovery.isStopPending() else {throw RuntimeError.invalid}
+            do {try stopQueue.submit(stopped);throw JournalError.conflict}catch RuntimeError.invalid {}
             guard runtime.lookup(id:request.command.id)==outcome,recordedProbe.capture(recorded).state == .exited,
                   unrelated.isRunning,try WorkerResources.startIdentifier(pid:unrelated.processIdentifier)==unrelatedStart,
                   try journal.uncertainCount()==1 else {throw RuntimeError.invalid}
+            try journal.setDesired(service:"mlx",desired:"running")
         }
         guard identities.count==2,identities[0] != identities[1],gate.validations==3,stopGate.validations==4 else {throw RuntimeError.invalid}
         let heldJournal=try Journal(directory:root.appendingPathComponent("timeout-state"))
         let heldClaim=UUID().uuidString.lowercased()
         try heldJournal.claim(job:heldClaim,attempt:0,model:"fixture/independent-timeout");try heldJournal.markUncertain(job:heldClaim,attempt:0)
-        let heldRecovery=try ServiceRecoveryController(journal:heldJournal,approvedHashes:pins)
+        var heldRecovery=try ServiceRecoveryController(journal:heldJournal,approvedHashes:pins)
         let heldStartGate=ServingRuntimeGate(),heldStopGate=ServingStopGate()
         heldStartGate.release.signal();heldStopGate.release.signal()
         let held=try MLXServingProcessRuntime.fixture(executable:executable,home:root.path,profile:profile,gate:heldStartGate,stopGate:heldStopGate,ignoreTerm:true)
         let heldQueue=AsyncSessionControl(client:try NativeServingRecoveryTransport(runtime:held,approvedHashes:pins))
+        let heldStopQueue=AsyncServingStop(runtime:held)
         guard let heldRequest=try heldRecovery.next(service:.mlx,desired:.running,observation:absent(1000),now:1000,tick:1000),
               try exchange(heldRequest,through:heldQueue) == .uncertain else {throw RuntimeError.invalid}
         var heldOutcome:SessionLaunchResult = .uncertain
@@ -265,22 +308,36 @@ extension MLXServingProcessRuntime {
         let readinessEnd=ProcessInfo.processInfo.systemUptime+2
         while !FileManager.default.fileExists(atPath:readyPath),ProcessInfo.processInfo.systemUptime<readinessEnd {Thread.sleep(forTimeInterval:0.005)}
         guard FileManager.default.fileExists(atPath:readyPath) else {throw RuntimeError.deadline}
-        let timedStop=UUID().uuidString.lowercased()
-        try held.beginStop(id:timedStop,deadline:ProcessInfo.processInfo.systemUptime+5)
-        guard try stopResult(timedStop,from:held) == .uncertain else {throw RuntimeError.invalid}
+        try heldJournal.setDesired(service:"mlx",desired:"stopped")
+        guard let timedStop=try heldRecovery.planStop(held.fixtureStopIntent(heldReceipt),now:1000,tick:1000),
+              try stopExchange(timedStop,through:heldStopQueue) == .uncertain else {throw RuntimeError.invalid}
+        let timedEnd=ProcessInfo.processInfo.systemUptime+3
+        while held.validationPending,ProcessInfo.processInfo.systemUptime<timedEnd {Thread.sleep(forTimeInterval:0.005)}
+        guard let timedLookup=try heldRecovery.nextStop(now:1000,tick:1000),timedLookup.id==timedStop.id,
+              try stopExchange(timedLookup,through:heldStopQueue) == .uncertain else {throw RuntimeError.invalid}
+        try heldRecovery.receiveStop(timedLookup,result:.uncertain)
         try workerReturned(held)
         guard case .current=recordedProbe.capture(heldReceipt).state else {throw RuntimeError.invalid}
         do {try held.begin(blocked,deadline:ProcessInfo.processInfo.systemUptime+5);throw JournalError.conflict}catch RuntimeError.capacity {}
-        do {try held.beginStop(id:UUID().uuidString.lowercased(),deadline:ProcessInfo.processInfo.systemUptime+5);throw JournalError.conflict}catch RuntimeError.capacity {}
+        do {try held.beginStop(id:UUID().uuidString.lowercased(),matching:heldReceipt,deadline:ProcessInfo.processInfo.systemUptime+5);throw JournalError.conflict}catch RuntimeError.capacity {}
         guard !held.retireKnownExited(),try heldJournal.uncertainCount()==1 else {throw RuntimeError.invalid}
         try held.waitForFixtureExpiry() // The private helper's own five-second alarm, no force kill.
-        guard recordedProbe.capture(heldReceipt).state == .exited,held.lookupStop(id:timedStop) == .uncertain,
+        heldRecovery=try ServiceRecoveryController(journal:heldJournal,approvedHashes:pins)
+        try heldJournal.setDesired(service:"mlx",desired:"running")
+        guard recordedProbe.capture(heldReceipt).state == .exited,held.lookupStop(id:timedStop.id) == .uncertain,
               !held.retireKnownExited(),try heldJournal.uncertainCount()==1,
-              unrelated.isRunning,heldStopGate.validations==1 else {throw RuntimeError.invalid}
+              unrelated.isRunning,heldStopGate.validations==1,heldRecovery.isStopPending(),
+              try heldRecovery.plan(service:.mlx,desired:.running,observation:absent(20000),now:20000,tick:20000)==nil,
+              let afterExpiry=try heldRecovery.nextStop(now:20000,tick:20000),afterExpiry.operation == .cancel,afterExpiry.id==timedStop.id,
+              try stopExchange(afterExpiry,through:heldStopQueue) == .uncertain else {throw RuntimeError.invalid}
+        let coldHeld=try MLXServingProcessRuntime.fixture(executable:executable,home:root.path,profile:profile,gate:ServingRuntimeGate())
+        guard try stopExchange(afterExpiry,through:AsyncServingStop(runtime:coldHeld)) == .uncertain,heldRecovery.isStopPending() else {throw RuntimeError.invalid}
         print("PASS: actual private serving-role process launch/identity/local reap/relaunch, retained validation cancellation slot, no duplicate child and independent native uncertainty retained")
         print("PASS: native server transport through actual manager recovery queue, original durable operation lookup and no GUI fallback")
         print("PASS: POSIX owned-child reap preserves a separate live Foundation child; no global reap or process-name cleanup")
         print("PASS: guarded private serving stop, pre-signal revocation with retained slot, denied permit leaves child alive, exact local reap and fresh-start reservation; native uncertainty retained")
         print("PASS: ignored SIGTERM retains stop uncertainty/capacity with no replacement or force fallback, including after private helper self-expiry and exact reap")
+        print("PASS: durable stop reservation before dispatch, controller reconstruction preserves original lookup/revocation ID, uncertain stop blocks launch after self-expiry")
+        print("PASS: missing actuator stop history stays unknown, consumed dispatch cannot replay and failed durable acknowledgement retains pending stop")
     }
 }
