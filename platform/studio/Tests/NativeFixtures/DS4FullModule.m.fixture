@@ -20,6 +20,8 @@ int main(int argc,char **argv){@autoreleasepool{
     const int pending_case=argc==2 && strcmp(argv[1],"--pending-delay")==0;
     const int ordinary_cleanup=argc==2 && strcmp(argv[1],"--ordinary-cleanup")==0;
     FIOS_REQUIRE(!g_initialized&&!g_device&&g_model_fd<0,"MODULE_WAS_NOT_COLD");
+    FIOS_REQUIRE(ds4_gpu_source_uncertainty()==0 && !g_initialized && !g_device && !g_queue,
+        "SOURCE_UNCERTAINTY_READ_INITIALIZED_BACKEND");
     FIOS_REQUIRE(ds4_engine_close_checked(NULL)&&ds4_session_free_checked(NULL)&&!g_initialized&&!g_device,"PUBLIC_NULL_CLOSE_INITIALIZED_BACKEND");
     FIOS_REQUIRE(!ds4_gpu_wait_command_buffer(nil,"fixture absent buffer"),"FIO_DS4_ABSENT_BUFFER_ACKNOWLEDGED");
     FIOS_REQUIRE(!ds4_gpu_fios_keepalive_try_stop()&&!g_initialized&&!g_device,"STOP_INITIALIZED_A_COLD_BACKEND");
@@ -80,6 +82,8 @@ int main(int argc,char **argv){@autoreleasepool{
         ds4_gpu_cleanup();
         FIOS_REQUIRE(!g_initialized && !g_device && !g_fios_pending_uncertain,
             "ORDINARY_EMPTY_PARENT_REPEAT_CHANGED_STATE");
+        FIOS_REQUIRE(ds4_gpu_source_uncertainty()==0 && !g_initialized && !g_device,
+            "COLD_SOURCE_READ_AFTER_CLEANUP_CHANGED_STATE");
         puts("PASS: actual empty parent cleanup and repeat release initialized module resources without model work");
         return 0;
     }
@@ -103,6 +107,8 @@ int main(int argc,char **argv){@autoreleasepool{
     }
     FIOS_REQUIRE(fios_native_join_clock(&release_began),"PARENT_RELEASE_CLOCK_MISSING");
     const int delayed_result=ds4_gpu_prepare_release();
+    FIOS_REQUIRE(ds4_gpu_source_uncertainty() & DS4_GPU_SOURCE_UNCERTAIN_PENDING,
+        "SOURCE_READ_LOST_PARENT_TIMEOUT_UNCERTAINTY");
     FIOS_REQUIRE(fios_native_join_clock(&release_finished) && release_finished>=release_began,
         "PARENT_RELEASE_CLOCK_FAILED");
     const int retained=!delayed_result && g_fios_pending_uncertain &&
@@ -126,6 +132,9 @@ int main(int argc,char **argv){@autoreleasepool{
         g_library==retained_library && g_fios_pending_uncertain &&
         (pending_case ? !g_batch_cb && [g_pending_cbs count]==1 && [g_pending_cbs containsObject:delayed]:g_batch_cb==delayed),
         "PARENT_CLEANUP_CLEARED_INDEPENDENT_UNCERTAINTY");
+    FIOS_REQUIRE(ds4_gpu_source_uncertainty() & DS4_GPU_SOURCE_UNCERTAIN_PENDING,
+        "SOURCE_READ_CLEARED_AFTER_LATER_COMPLETION_OR_CLEANUP");
+    puts("PASS: readonly source uncertainty preserves genuine parent timeout after later completion and cleanup refusal, without cold initialization");
     puts(pending_case ?
         "PASS: actual shared-event-delayed committed pending buffer times out boundedly; original vector and independent uncertainty remain after genuine later completion":
         "PASS: actual shared-event-delayed source batch times out boundedly; original buffer and independent uncertainty remain after genuine later completion");

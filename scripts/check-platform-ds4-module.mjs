@@ -46,17 +46,21 @@ try{
  for(const name of objects)assert(receipt.objects[name]);
  run(compiler,['-isysroot',sdk,'-std=gnu11','-fobjc-arc','-O3','-ffast-math','-g','-mcpu=native','-UNDEBUG',unit,...objects.map(name=>path.join(source,name)),'-lm','-pthread','-framework','Foundation','-framework','Metal','-o',binary]);
  // Actual source initializer/full original shader library, no model/session.
- const result=spawnSync(binary,[],{env,cwd:source,encoding:'utf8',timeout:120000,maxBuffer:4<<20});
+ const program=functionalOnly?'/usr/bin/sandbox-exec':binary;
+ const executionPrefix=functionalOnly?['-p','(version 1)(allow default)(deny network*)',binary]:[];
+ const result=spawnSync(program,executionPrefix,{env,cwd:source,encoding:'utf8',timeout:120000,maxBuffer:4<<20});
  writeFileSync(path.join(directory,'stdout.log'),result.stdout??'',{mode:0o600});writeFileSync(path.join(directory,'stderr.log'),result.stderr??'',{mode:0o600});
  assert(!result.error&&!result.signal,'Full-module fixture deadline/crash is not acceptance');assert.equal(result.status,0,result.stderr);
  assert(result.stdout.includes('PASS: complete genuine DS4 module/full original shader initializer'));
+ if(functionalOnly)assert(result.stdout.includes('PASS: readonly source uncertainty preserves genuine parent timeout'));
  if(functionalOnly){
-  const pending=spawnSync(binary,['--pending-delay'],{env,cwd:source,encoding:'utf8',timeout:120000,maxBuffer:4<<20});
+  const pending=spawnSync(program,[...executionPrefix,'--pending-delay'],{env,cwd:source,encoding:'utf8',timeout:120000,maxBuffer:4<<20});
   writeFileSync(path.join(directory,'stdout-pending.log'),pending.stdout??'',{mode:0o600});
   writeFileSync(path.join(directory,'stderr-pending.log'),pending.stderr??'',{mode:0o600});
   assert(!pending.error&&!pending.signal,'Pending-buffer fixture deadline/crash is not acceptance');assert.equal(pending.status,0,pending.stderr);
   assert(pending.stdout.includes('PASS: actual shared-event-delayed committed pending buffer times out boundedly'));
-  const cleanup=spawnSync(binary,['--ordinary-cleanup'],{env,cwd:source,encoding:'utf8',timeout:120000,maxBuffer:4<<20});
+  assert(pending.stdout.includes('PASS: readonly source uncertainty preserves genuine parent timeout'));
+  const cleanup=spawnSync(program,[...executionPrefix,'--ordinary-cleanup'],{env,cwd:source,encoding:'utf8',timeout:120000,maxBuffer:4<<20});
   writeFileSync(path.join(directory,'stdout-cleanup.log'),cleanup.stdout??'',{mode:0o600});
   writeFileSync(path.join(directory,'stderr-cleanup.log'),cleanup.stderr??'',{mode:0o600});
   assert(!cleanup.error&&!cleanup.signal,'Ordinary parent cleanup deadline/crash is not acceptance');assert.equal(cleanup.status,0,cleanup.stderr);
@@ -148,7 +152,7 @@ try{
  const outcome={scope:'full_ds4_initializer_reviewed_local_participants_only',build_receipt_sha256:args[4],fixture_sha256:sha(fixture),metadata_fixture_sha256:sha(metadataFixture),binary_sha256:sha(readFileSync(binary)),original_full_shader_library:true,sequence_fixture_sha256:sha(sequence),sequence_binary_sha256:sha(readFileSync(sequenceBinary)),fault_shim_sha256:sha(faultHeader),pending_fixture_sha256:sha(pending),pending_binary_sha256:sha(readFileSync(faultBinary)),injected_wait_failure_after_real_completion:true,batch_cleanup_failure_retained:true,keepalive_cleanup_failure_retained:true,foreign_cleanup_failure_retained:true,local_tp_service:true,tiny_tp_gpu_producer:true,local_callback:true,distributed_exchange:false,model_opened:false,native_inference:false,installed:false,native_authority:false,all_backend_terminality:false,directory};
  writeFileSync(path.join(directory,'result.json'),JSON.stringify(outcome)+'\n',{mode:0o400});console.log(JSON.stringify(outcome));
  }else{
-  const outcome={scope:'ordinary_full_ds4_initializer_and_local_participants',functional_only:true,ordinary_processes:3,ordinary_delayed_parent_cases:2,ordinary_empty_parent_cleanup:true,uncertain_parent_cleanup_retained:true,ordinary_local_tp_lifecycles:6,distributed_exchange:false,build_receipt_sha256:args[4],fixture_sha256:sha(fixture),metadata_fixture_sha256:sha(metadataFixture),binary_sha256:sha(readFileSync(binary)),original_full_shader_library:true,source_rewritten:false,fault_injection:false,counter_tests:false,model_opened:false,native_inference:false,installed:false,native_authority:false,all_backend_terminality:false,directory};
+  const outcome={scope:'ordinary_full_ds4_initializer_and_local_participants',readonly_source_uncertainty:'partial_flags_only',ip_networking:'denied',functional_only:true,ordinary_processes:3,ordinary_delayed_parent_cases:2,ordinary_empty_parent_cleanup:true,uncertain_parent_cleanup_retained:true,ordinary_local_tp_lifecycles:6,distributed_exchange:false,build_receipt_sha256:args[4],fixture_sha256:sha(fixture),metadata_fixture_sha256:sha(metadataFixture),binary_sha256:sha(readFileSync(binary)),original_full_shader_library:true,source_rewritten:false,fault_injection:false,counter_tests:false,model_opened:false,native_inference:false,installed:false,native_authority:false,all_backend_terminality:false,directory};
   writeFileSync(path.join(directory,'result.json'),JSON.stringify(outcome)+'\n',{mode:0o400});console.log(JSON.stringify(outcome));
  }
 }catch(error){console.error('Full-module fixture state retained:',directory);throw error;}

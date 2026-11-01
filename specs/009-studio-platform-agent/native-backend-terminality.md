@@ -569,3 +569,25 @@ and architecture getter checks pass; genuine GPU errors and all-backend/Studio
 acceptance remain open. The historical mutation/fault/counter campaigns are not
 run. Exact final receipts and enclosing build status are in validation.md;
 whole tasks remain38/55.
+
+
+## Readonly DS4 Metal source fences — 2026-11-01
+
+The reviewed DS4 source now exposes a non-initializing atomic mask for the
+existing pending-buffer, TP service, TP GPU, ordinary keepalive and pread-pool
+uncertainty flags. It has no reset, cleanup, wait or backend-init operation.
+Zero is not idle/coverage/terminal proof, and these independent loads are not
+an atomic all-participant snapshot. Other actors/model/context/distributed
+state remain outside this limited getter.
+
+The genuine complete Metal module proves a cold read does not create a device,
+queue or backend. Actual shared-event-delayed batch and committed pending-buffer
+cleanup time out within the existing bound; the public pending flag remains set
+after actual later completion, joining the owned release thread and refused
+parent cleanup. Ordinary empty cleanup stays cold on repeat reads. The three
+functional processes and six local TP lifecycles use no model/distributed
+exchange, source rewriting, injected driver error or counter-boundary campaign.
+Their IP networking is denied. Fresh154-input build and enclosing native
+provider-source build pass; exact source/artifact scopes are in validation.md.
+Other flag-positive errors and full native/Studio acceptance remain open;
+whole-task completion remains38/55.
