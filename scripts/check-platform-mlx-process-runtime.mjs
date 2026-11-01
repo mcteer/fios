@@ -22,7 +22,7 @@ const unit=join(directory,'RuntimeFixture.swift');writeFileSync(unit,Buffer.conc
 for(const mode of ['debug','release']){
  const binary=join(directory,mode),state=join(directory,mode+'-state');
  run('swiftc',['-parse-as-library','-swift-version','6','-warnings-as-errors',...(mode==='release'?['-O']:[]),'-I',join(root,'platform/studio/Sources/CSQLite'),...readdirSync(core).filter(n=>n.endsWith('.swift')&&n!==name).sort().map(n=>join(core,n)),unit,'-o',binary]);
- const output=run(binary,[helper,hash(readFileSync(helper)),state],30000);writeFileSync(join(directory,mode+'.log'),output,{mode:0o600});
+ const output=run(binary,[helper,hash(readFileSync(helper)),state,hash(readFileSync(binary))],30000);writeFileSync(join(directory,mode+'.log'),output,{mode:0o600});
  assert(output.includes('PASS: actual private serving-role process launch/identity/local reap/relaunch'));
  assert(output.includes('PASS: native server transport through actual manager recovery queue'));
  assert(output.includes('PASS: POSIX owned-child reap preserves a separate live Foundation child'));
@@ -30,6 +30,7 @@ for(const mode of ['debug','release']){
  assert(output.includes('PASS: ignored SIGTERM retains stop uncertainty/capacity'));
  assert(output.includes('PASS: durable stop reservation before dispatch'));
  assert(output.includes('PASS: missing actuator stop history stays unknown'));
+ assert(output.includes('PASS: distinct native/session profiles preserve authenticated OrbStack Unix RPC'));
  const managerState=mkdtempSync('/private/tmp/f9-mlx-manager-');
  const policy='(version 1)(allow default)(deny network*)(allow network* (local unix-socket) (remote unix-socket))';
  const managerLog=openSync(join(managerState,'manager.log'),'wx',0o600);
@@ -57,5 +58,5 @@ for(const mode of ['debug','release']){
 }
 assert(implementation.equals(readFileSync(join(core,name))));
 for(const [n,bytes] of Object.entries(integration))assert(bytes.equals(readFileSync(join(core,n))));
-const receipt={ok:true,directory,provenance_scope:'declared_runtime_integration_and_fixture_only',modes:['debug','release'],source_sha256:hash(implementation),integration_sha256:Object.fromEntries(Object.entries(integration).map(([n,b])=>[n,hash(b)])),fixture_sha256:hash(fixture),helper_source_sha256:hash(helperSource),actual_private_child_starts:10,actual_owned_serving_child_starts:8,actual_unrelated_private_children:2,actual_guarded_private_stops:4,guarded_private_stop_timeouts:2,self_expiring_private_helpers:2,pre_signal_revocations:2,denied_stop_validations:2,fresh_start_validations_per_queue_scenario:3,durable_stop_reservation:true,restored_stop_dispatch:false,missing_stop_history:'unknown',actual_manager_processes:2,manager_readiness:'synthetic',native_mlx_actions:0,native_inference:false,native_authority:false,installed:false};
+const receipt={ok:true,directory,provenance_scope:'declared_runtime_integration_and_fixture_only',modes:['debug','release'],source_sha256:hash(implementation),integration_sha256:Object.fromEntries(Object.entries(integration).map(([n,b])=>[n,hash(b)])),fixture_sha256:hash(fixture),helper_source_sha256:hash(helperSource),actual_private_child_starts:12,actual_owned_serving_child_starts:10,actual_unrelated_private_children:2,actual_guarded_private_stops:4,guarded_private_stop_timeouts:2,self_expiring_private_helpers:2,pre_signal_revocations:2,denied_stop_validations:2,fresh_start_validations_per_queue_scenario:3,durable_stop_reservation:true,restored_stop_dispatch:false,missing_stop_history:'unknown',distinct_native_session_profiles:true,actual_counter_only_orbstack_session_calls:2,mlx_gui_calls:0,actual_manager_processes:2,manager_readiness:'synthetic',native_mlx_actions:0,native_inference:false,native_authority:false,installed:false};
 writeFileSync(join(directory,'receipt.json'),JSON.stringify(receipt)+'\n',{mode:0o600});console.log(JSON.stringify(receipt));

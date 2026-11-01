@@ -15,6 +15,14 @@ runtime requires its own protected profile/reservation/controller integration;
 see [native server lifecycle](native-server-lifecycle.md). No installation or
 handover follows automatically from this source change.
 
+Native combined service profiles bind the native MLX image; existing session
+profiles retain their GUI image identity. The source native transport therefore
+does not equate those complete profile digests. It pins the exact common
+OrbStack image and delegates only fixed OrbStack operation/ID through the
+session client's own already verified profile/instance. Replies remain bound
+to that session realm and exact OrbStack image before the native controller
+accepts its correlated acknowledgement. MLX never enters that delegation.
+
 The trusted constructor receives the immutable reviewed manager executable and
 the exact approved executable path/hash for each fixed service. No path, argv,
 environment, endpoint or role can arrive in a request. A future production

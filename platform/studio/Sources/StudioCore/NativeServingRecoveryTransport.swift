@@ -13,8 +13,10 @@ struct NativeServingRecoveryTransport:ServiceRecoverySending {
         let probe=ServiceLaunchCommand(service:.mlx,id:UUID().uuidString.lowercased(),expectedSHA256:approvedHashes[.mlx]!,profileHash:profile)
         guard runtime.accepts(probe) else {throw ServiceError.invalid}
         if let session {
-            let orb=ServiceLaunchCommand(service:.orbstack,id:probe.id,expectedSHA256:approvedHashes[.orbstack]!,profileHash:profile)
-            guard session.applicationHashes==approvedHashes,session.accepts(orb) else {throw ServiceError.invalid}
+            // Session enrollment still names its legacy GUI images. Native
+            // MLX uses a different combined profile; only the fixed OrbStack
+            // delegation crosses into that independently verified session realm.
+            guard session.applicationHashes[.orbstack]==approvedHashes[.orbstack] else {throw ServiceError.invalid}
         }
         self.runtime=runtime;self.session=session;applicationHashes=approvedHashes;self.profile=profile
     }
@@ -25,7 +27,7 @@ struct NativeServingRecoveryTransport:ServiceRecoverySending {
         guard accepts(request.command) else {throw ControlError.unauthorized}
         if request.command.service == .orbstack {
             guard let session else {throw SessionTransportFailure.unavailable}
-            return try session.request(request)
+            return try session.request(operation:request.operation,service:.orbstack,id:request.command.id)
         }
         switch request.operation {
         case .launch:

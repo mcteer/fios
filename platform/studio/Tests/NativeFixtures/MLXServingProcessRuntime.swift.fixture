@@ -125,8 +125,9 @@ extension MLXServingProcessRuntime {
             guard reaped else {throw RuntimeError.deadline}
             return
         }
-        guard args.count==4 else {throw RuntimeError.invalid}
+        guard args.count==5 else {throw RuntimeError.invalid}
         let executable=try VerifiedExecutable(path:args[1],sha256:args[2]),root=URL(fileURLWithPath:args[3])
+        let fixtureImage=try VerifiedExecutable(path:args[0],sha256:args[4])
         let journal=try Journal(directory:root.appendingPathComponent("state"))
         let old=UUID().uuidString.lowercased()
         try journal.claim(job:old,attempt:0,model:"fixture/independent");try journal.markUncertain(job:old,attempt:0)
@@ -332,6 +333,54 @@ extension MLXServingProcessRuntime {
               try stopExchange(afterExpiry,through:heldStopQueue) == .uncertain else {throw RuntimeError.invalid}
         let coldHeld=try MLXServingProcessRuntime.fixture(executable:executable,home:root.path,profile:profile,gate:ServingRuntimeGate())
         guard try stopExchange(afterExpiry,through:AsyncServingStop(runtime:coldHeld)) == .uncertain,heldRecovery.isStopPending() else {throw RuntimeError.invalid}
+        // Actual Unix RPC keeps the legacy session realm separate from the
+        // native server realm. The fake application port permits only OrbStack.
+        let legacyPins:[ManagedService:String]=[.mlx:fixtureImage.sha256,.orbstack:fixtureImage.sha256]
+        let mixedPins:[ManagedService:String]=[.mlx:executable.sha256,.orbstack:fixtureImage.sha256]
+        let mixedProfile=try ServiceLaunchProfile.digest(mixedPins)
+        guard mixedProfile != (try ServiceLaunchProfile.digest(legacyPins)) else {throw RuntimeError.invalid}
+        let sessionDirectory=root.appendingPathComponent("mixed-session")
+        try FileManager.default.createDirectory(at:sessionDirectory,withIntermediateDirectories:false,attributes:[.posixPermissions:0o700])
+        let session=try SessionControlServer(directory:sessionDirectory,manager:fixtureImage,approvedApplications:[.mlx:fixtureImage,.orbstack:fixtureImage])
+        guard let legacyClient=try SessionControlClient.discover(directory:sessionDirectory,helper:fixtureImage,approvedHashes:legacyPins) else {throw RuntimeError.invalid}
+        let mixedGate=ServingRuntimeGate();mixedGate.release.signal()
+        let mixedRuntime=try MLXServingProcessRuntime.fixture(executable:executable,home:root.path,profile:mixedProfile,gate:mixedGate)
+        let mixedTransport=try NativeServingRecoveryTransport(runtime:mixedRuntime,approvedHashes:mixedPins,session:legacyClient)
+        let mixedQueue=AsyncSessionControl(client:mixedTransport)
+        let mixedJournal=try Journal(directory:root.appendingPathComponent("mixed-state"))
+        let mixedRecovery=try ServiceRecoveryController(journal:mixedJournal,approvedHashes:mixedPins)
+        var sessionCalls=0
+        func mixedExchange(_ request:ServiceRecoveryRequest)throws->SessionLaunchResult {
+            try mixedQueue.submit(request)
+            let end=ProcessInfo.processInfo.systemUptime+3
+            while ProcessInfo.processInfo.systemUptime<end {
+                try session.poll(consoleReady:true,now:HostResources.nowMilliseconds()) {service,_ in
+                    guard service == .orbstack else {throw RuntimeError.invalid}
+                    sessionCalls+=1
+                    return .started(ServiceIdentity(pid:getpid(),start:try WorkerResources.startIdentifier(pid:getpid()),sha256:fixtureImage.sha256))
+                }
+                if let response=mixedQueue.poll() {return try response.value.get()}
+                Thread.sleep(forTimeInterval:0.005)
+            }
+            throw RuntimeError.deadline
+        }
+        guard let orb=try mixedRecovery.next(service:.orbstack,desired:.running,observation:absent(1000),now:1000,tick:1000) else {throw RuntimeError.invalid}
+        let orbResult=try mixedExchange(orb)
+        guard case .started(let orbIdentity)=orbResult,orbIdentity.sha256==fixtureImage.sha256,sessionCalls==1,mixedGate.validations==0 else {throw RuntimeError.invalid}
+        try mixedRecovery.receive(orb,result:orbResult)
+        guard let native=try mixedRecovery.next(service:.mlx,desired:.running,observation:absent(1000),now:1000,tick:1000),
+              try mixedExchange(native) == .uncertain else {throw RuntimeError.invalid}
+        var nativeResult:SessionLaunchResult = .uncertain
+        let nativeEnd=ProcessInfo.processInfo.systemUptime+3
+        while nativeResult == .uncertain,ProcessInfo.processInfo.systemUptime<nativeEnd {
+            guard let lookup=try mixedRecovery.next(service:.mlx,desired:.running,observation:absent(1000),now:1000,tick:1000),lookup.operation == .lookup else {throw RuntimeError.invalid}
+            nativeResult=try mixedExchange(lookup)
+            if nativeResult == .uncertain {Thread.sleep(forTimeInterval:0.005)}
+        }
+        guard case .started(let nativeIdentity)=nativeResult,nativeIdentity.sha256==executable.sha256,sessionCalls==1,mixedGate.validations==1 else {throw RuntimeError.invalid}
+        try mixedRecovery.receive(native,result:nativeResult);try workerReturned(mixedRuntime)
+        try mixedRuntime.endFixtureChild();try mixedRuntime.waitForFixtureExpiry()
+        guard mixedRuntime.retireKnownExited(),try journal.uncertainCount()==1,try heldJournal.uncertainCount()==1 else {throw RuntimeError.invalid}
         print("PASS: actual private serving-role process launch/identity/local reap/relaunch, retained validation cancellation slot, no duplicate child and independent native uncertainty retained")
         print("PASS: native server transport through actual manager recovery queue, original durable operation lookup and no GUI fallback")
         print("PASS: POSIX owned-child reap preserves a separate live Foundation child; no global reap or process-name cleanup")
@@ -339,5 +388,6 @@ extension MLXServingProcessRuntime {
         print("PASS: ignored SIGTERM retains stop uncertainty/capacity with no replacement or force fallback, including after private helper self-expiry and exact reap")
         print("PASS: durable stop reservation before dispatch, controller reconstruction preserves original lookup/revocation ID, uncertain stop blocks launch after self-expiry")
         print("PASS: missing actuator stop history stays unknown, consumed dispatch cannot replay and failed durable acknowledgement retains pending stop")
+        print("PASS: distinct native/session profiles preserve authenticated OrbStack Unix RPC and native-only MLX child launch with zero MLX GUI calls")
     }
 }
