@@ -5,6 +5,6 @@ import Foundation
 // already prepared intent backed by a separately retained native reservation,
 // never acquire a lease, hash a file or perform IPC on the manager heartbeat.
 struct ServingLifecyclePorts:Sendable {
-    let runtime:MLXServingProcessRuntime
+    let runtime:any ServingProcessControlling
     let intent:@Sendable(ServiceRecordedLaunch,ServiceDesired)->ServingStopIntent?
 }

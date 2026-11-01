@@ -32,7 +32,7 @@ final class ServingStopIntent:@unchecked Sendable {
 // factory/controller must retain and revalidate its reviewed native start
 // reservation; no production issuer is wired. Never call this on the manager
 // heartbeat. A source fixture supplies only its private, model-free process.
-final class MLXServingProcessRuntime:@unchecked Sendable {
+final class MLXServingProcessRuntime:ServingProcessControlling,@unchecked Sendable {
     private enum Phase {case idle,validating,spawning,running,validatingStop,stopping,uncertain}
     private let executable:VerifiedExecutable
     private let arguments:[String]
@@ -54,6 +54,7 @@ final class MLXServingProcessRuntime:@unchecked Sendable {
     private var delivery:(String,SessionLaunchResult)?
     private var activeStopID:String?
     private var stopRecords:[String:ServingStopResult]=[:]
+    private var stopReceipts:[String:ServiceRecordedLaunch]=[:]
     private var stopDelivery:(String,ServingStopResult)?
 
     // Only protected installed metadata supplies native launch configuration.
@@ -189,8 +190,9 @@ final class MLXServingProcessRuntime:@unchecked Sendable {
         guard !busy,delivery==nil,stopDelivery==nil,phase == .running,
               let child=process,let identity,let launchID=activeID,id != launchID,
               identity==receipt.identity,launchID==receipt.id,
-              stopRecords.count<256,stopRecords[id]==nil,records[id]==nil else {lock.unlock();throw RuntimeError.capacity}
+              stopReceipts.count<256,stopReceipts[id]==nil,stopRecords[id]==nil,records[id]==nil else {lock.unlock();throw RuntimeError.capacity}
         let command=ServingStopCommand(id:id,launchID:launchID,identity:identity,profileHash:profileHash)
+        stopReceipts[id]=receipt
         activeStopID=id;revoked=false;busy=true;phase = .validatingStop
         lock.unlock()
         Thread.detachNewThread { [self] in
@@ -198,9 +200,9 @@ final class MLXServingProcessRuntime:@unchecked Sendable {
             lock.lock();busy=false;lock.unlock()
         }
     }
-    @discardableResult func cancelStopValidation(id:String)->Bool {
+    @discardableResult func cancelStopValidation(id:String,matching receipt:ServiceRecordedLaunch)->Bool {
         lock.lock();defer {lock.unlock()}
-        guard activeStopID==id,phase == .validatingStop,!revoked else {return false}
+        guard stopReceipts[id]==receipt,activeStopID==id,phase == .validatingStop,!revoked else {return false}
         revoked=true;stopRecords[id] = .notSent;stopDelivery=(id,.notSent)
         return true // Retain the real validator slot until its worker returns.
     }
@@ -212,18 +214,21 @@ final class MLXServingProcessRuntime:@unchecked Sendable {
     func lookupStop(id:String)->ServingStopResult {
         lock.lock();defer {lock.unlock()};return stopRecords[id] ?? .uncertain
     }
-    func acknowledgeStopResult(id:String)->ServingStopResult {
+    func acknowledgeStopResult(id:String,matching receipt:ServiceRecordedLaunch)->ServingStopResult {
         lock.lock();defer {lock.unlock()}
+        guard stopReceipts[id]==receipt else {return .uncertain}
         if stopDelivery?.0==id {stopDelivery=nil}
         return stopRecords[id] ?? .uncertain
     }
     // Used only after beginStop rejected before entering a new operation.
     // Seal the ID so that the same rejected request cannot materialize later.
-    func rejectedStopResult(id:String)->ServingStopResult {
+    func rejectedStopResult(id:String,matching receipt:ServiceRecordedLaunch)->ServingStopResult {
+        guard acceptsStopReceipt(receipt),WireScalar.uuid(id),id != receipt.id else {return .uncertain}
         lock.lock();defer {lock.unlock()}
+        if let original=stopReceipts[id],original != receipt {return .uncertain}
         if let known=stopRecords[id] {return known}
-        guard activeStopID != id,records[id]==nil,stopRecords.count<256,WireScalar.uuid(id) else {return .uncertain}
-        stopRecords[id] = .notSent;return .notSent
+        guard activeStopID != id,records[id]==nil,stopReceipts.count<256 else {return .uncertain}
+        stopReceipts[id]=receipt;stopRecords[id] = .notSent;return .notSent
     }
     private func finishStop(_ id:String,_ result:ServingStopResult,phase next:Phase) {
         lock.lock();defer {lock.unlock()}

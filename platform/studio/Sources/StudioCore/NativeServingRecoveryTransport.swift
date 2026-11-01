@@ -6,10 +6,10 @@ import Foundation
 struct NativeServingRecoveryTransport:ServiceRecoverySending {
     let applicationHashes:[ManagedService:String]
     private let profile:String
-    private let runtime:MLXServingProcessRuntime
+    private let runtime:any ServingProcessControlling
     private let session:SessionControlClient?
     var recoveryProfileHash:String {profile}
-    init(runtime:MLXServingProcessRuntime,approvedHashes:[ManagedService:String],session:SessionControlClient?=nil)throws {
+    init(runtime:any ServingProcessControlling,approvedHashes:[ManagedService:String],session:SessionControlClient?=nil)throws {
         let base=try ServiceLaunchProfile.digest(approvedHashes),profile=runtime.recoveryProfileHash
         guard runtime.acceptsBaseProfile(base,expectedSHA256:approvedHashes[.mlx]!) else {throw ServiceError.invalid}
         let probe=ServiceLaunchCommand(service:.mlx,id:UUID().uuidString.lowercased(),expectedSHA256:approvedHashes[.mlx]!,profileHash:profile)
@@ -25,7 +25,7 @@ struct NativeServingRecoveryTransport:ServiceRecoverySending {
     func accepts(_ command:ServiceLaunchCommand)->Bool {
         WireScalar.uuid(command.id) && command.profileHash==profile && command.expectedSHA256==applicationHashes[command.service]
     }
-    func owns(_ candidate:MLXServingProcessRuntime)->Bool {runtime === candidate}
+    func owns(_ candidate:any ServingProcessControlling)->Bool {runtime === candidate}
     func request(_ request:ServiceRecoveryRequest)throws->SessionLaunchResult {
         guard accepts(request.command) else {throw ControlError.unauthorized}
         if request.command.service == .orbstack {

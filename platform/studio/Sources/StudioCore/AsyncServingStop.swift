@@ -8,11 +8,11 @@ struct ServingStopResponse:Sendable {
 // packet decoder. A restored pending operation can only look up or revoke its
 // original ID. The native runtime remains the separate authority checkpoint.
 final class AsyncServingStop:@unchecked Sendable {
-    private let runtime:MLXServingProcessRuntime
+    private let runtime:any ServingProcessControlling
     private let lock=NSLock()
     private var busy=false
     private var result:ServingStopResponse?
-    init(runtime:MLXServingProcessRuntime) {self.runtime=runtime}
+    init(runtime:any ServingProcessControlling) {self.runtime=runtime}
     var available:Bool {lock.lock();defer {lock.unlock()};return !busy && result==nil}
     func submit(_ request:ServingStopRequest)throws {
         lock.lock()
@@ -27,11 +27,11 @@ final class AsyncServingStop:@unchecked Sendable {
                     do {
                         try runtime.beginStop(id:request.id,matching:request.receipt,deadline:ProcessInfo.processInfo.systemUptime+10)
                         value = .success(.uncertain)
-                    } catch RuntimeError.capacity {value = .success(runtime.rejectedStopResult(id:request.id))}
-                case .lookup:value = .success(runtime.acknowledgeStopResult(id:request.id))
+                    } catch RuntimeError.capacity {value = .success(runtime.rejectedStopResult(id:request.id,matching:request.receipt))}
+                case .lookup:value = .success(runtime.acknowledgeStopResult(id:request.id,matching:request.receipt))
                 case .cancel:
-                    _=runtime.cancelStopValidation(id:request.id)
-                    value = .success(runtime.acknowledgeStopResult(id:request.id))
+                    _=runtime.cancelStopValidation(id:request.id,matching:request.receipt)
+                    value = .success(runtime.acknowledgeStopResult(id:request.id,matching:request.receipt))
                 }
             } catch {value = .failure(.unavailable)}
             lock.lock();result=ServingStopResponse(request:request,value:value);busy=false;lock.unlock()

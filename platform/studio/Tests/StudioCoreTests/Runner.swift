@@ -18,6 +18,7 @@ struct PolicyTestRunner {
             ("read-only native observation",runNativeReadOnlyObservationTests),
             ("service recovery status",runServiceRecoveryStatusTests),
             ("service recovery",runServiceRecoveryTests),
+            ("serving custody",runServingCustodyTests),
             ("service reconciliation",runServiceReconciliationTests),
             ("async session control",runAsyncSessionControlTests),
             ("session endpoint",runSessionEndpointTests),

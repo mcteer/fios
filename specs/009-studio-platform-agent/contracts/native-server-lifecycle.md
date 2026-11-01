@@ -6,7 +6,10 @@ implementation is incomplete; no installed lifecycle acceptance is claimed.
 
 ## Ownership and configuration
 
-The trusted manager owns the exact reviewed native `mlx-serve` child. OrbStack
+The trusted agent owns the exact reviewed native `mlx-serve` child. The existing
+supervisor is the intended physical custodian across manager restarts; the manager
+retains durable policy and uses fixed authenticated local control. This source
+composition is still incomplete; see [custody contract](native-serving-custody.md). OrbStack
 continues to use its supported session lifecycle. Native server ownership does
 not require the GUI to remain running; an open GUI is neither server readiness
 nor permission to launch. Do not implement lifecycle through GUI scripting,

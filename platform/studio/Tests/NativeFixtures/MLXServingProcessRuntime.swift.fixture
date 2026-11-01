@@ -322,7 +322,16 @@ extension MLXServingProcessRuntime {
             let stopped=try reserveStop(recorded,at:now==11000 ? 21000:620000)
             guard try completeStop(stopped,at:now==11000 ? 21000:620000) == .localExited else {throw RuntimeError.invalid}
             try workerReturned()
-            guard runtime.lookupStop(id:stopped.id) == .localExited,!runtime.cancelStopValidation(id:stopped.id),!recovery.isStopPending() else {throw RuntimeError.invalid}
+            guard runtime.lookupStop(id:stopped.id) == .localExited,!runtime.cancelStopValidation(id:stopped.id,matching:recorded),!recovery.isStopPending() else {throw RuntimeError.invalid}
+            let differentReceipt=ServiceRecordedLaunch(service:.mlx,id:UUID().uuidString.lowercased(),identity:recorded.identity,boot:recorded.boot,profileHash:recorded.profileHash)
+            do {try runtime.beginStop(id:stopped.id,matching:differentReceipt,deadline:ProcessInfo.processInfo.systemUptime+5);throw JournalError.conflict}catch RuntimeError.capacity {}
+            guard runtime.rejectedStopResult(id:stopped.id,matching:differentReceipt) == .uncertain,
+                  runtime.acknowledgeStopResult(id:stopped.id,matching:differentReceipt) == .uncertain,
+                  !runtime.cancelStopValidation(id:stopped.id,matching:differentReceipt),
+                  runtime.acknowledgeStopResult(id:stopped.id,matching:recorded) == .localExited else {
+                FileHandle.standardError.write(Data("STOP_RECEIPT_CORRELATION_LOST\n".utf8));throw RuntimeError.invalid
+            }
+            print("PASS: native stop result/cancellation bind original launch receipt")
             do {try stopQueue.submit(stopped);throw JournalError.conflict}catch RuntimeError.invalid {}
             guard runtime.lookup(id:request.command.id)==outcome,recordedProbe.capture(recorded).state == .exited,
                   unrelated.isRunning,try WorkerResources.startIdentifier(pid:unrelated.processIdentifier)==unrelatedStart,

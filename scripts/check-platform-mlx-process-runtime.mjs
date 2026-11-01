@@ -16,7 +16,7 @@ function run(program,args,timeout=120000){const r=spawnSync(program,args,{encodi
 run('/usr/bin/clang',[c,'-O2','-o',helper],30000);
 const core=join(root,'platform/studio/Sources/StudioCore'),name='MLXServingProcessRuntime.swift';
 const implementation=readFileSync(join(core,name)),fixture=readFileSync(join(root,'platform/studio/Tests/NativeFixtures/MLXServingProcessRuntime.swift.fixture'));
-const integrationNames=['NativeServingReviewedConfiguration.swift','NativeServingLaunchDocument.swift','NativeServingLaunchInputs.swift','SessionControl.swift','NativeServingRecoveryTransport.swift','AsyncSessionControl.swift','AsyncServingStop.swift','ServingLifecyclePorts.swift','Manager.swift','ServiceRecovery.swift','RecordedServiceProcessProbe.swift','ServingOwnedProcess.swift'];
+const integrationNames=['ServingCustodyGate.swift','ServingProcessControlling.swift','ServingCustodyCodec.swift','NativeServingReviewedConfiguration.swift','NativeServingLaunchDocument.swift','NativeServingLaunchInputs.swift','SessionControl.swift','NativeServingRecoveryTransport.swift','AsyncSessionControl.swift','AsyncServingStop.swift','ServingLifecyclePorts.swift','Manager.swift','ServiceRecovery.swift','RecordedServiceProcessProbe.swift','ServingOwnedProcess.swift'];
 const integration=Object.fromEntries(integrationNames.map(n=>[n,readFileSync(join(core,n))]));
 const unit=join(directory,'RuntimeFixture.swift');writeFileSync(unit,Buffer.concat([implementation,Buffer.from('\n'),fixture]));
 for(const mode of ['debug','release']){
@@ -34,6 +34,7 @@ for(const mode of ['debug','release']){
  assert(output.includes('PASS: unexpected owned-child exit retires local custody off-loop before replacement'));
  assert(output.includes('PASS: explicit native working directory preserves relative-path behavior'));
  assert(output.includes('PASS: changed native launch configuration refuses old pending history unchanged'));
+ assert(output.includes('PASS: native stop result/cancellation bind original launch receipt'));
  const managerState=mkdtempSync('/private/tmp/f9-mlx-manager-');
  const policy='(version 1)(allow default)(deny network*)(allow network* (local unix-socket) (remote unix-socket))';
  const managerLog=openSync(join(managerState,'manager.log'),'wx',0o600);
