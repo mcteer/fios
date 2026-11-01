@@ -15,7 +15,7 @@ final class AsyncServiceHealth:@unchecked Sendable {
         guard !busy,result==nil else {lock.unlock();return}
         busy=true;lock.unlock()
         Thread.detachNewThread { [self] in
-            let observation=collector.capture(sessionReady:sessionReady,credentialsReady:credentialsReady)
+            let observation=autoreleasepool {collector.capture(sessionReady:sessionReady,credentialsReady:credentialsReady)}
             lock.lock();result=Result(observation:observation);busy=false;lock.unlock()
         }
     }
