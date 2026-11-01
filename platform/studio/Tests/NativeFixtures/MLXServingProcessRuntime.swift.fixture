@@ -677,7 +677,7 @@ extension ServingRuntimeFixture {
             }
         }
         try prepareJournal() // Its one writer closes before ManagerRuntime opens it.
-        let observations=ServiceObservationCache(),executable=try VerifiedExecutable(path:helperPath,sha256:helperHash)
+        let observations=ServiceObservationCache(),health=FixtureServingHealth(),executable=try VerifiedExecutable(path:helperPath,sha256:helperHash)
         Thread.detachNewThread {
             while true {
                 if FileManager.default.fileExists(atPath:directory.appendingPathComponent("fixture-exit-request").path) {
@@ -699,11 +699,15 @@ extension ServingRuntimeFixture {
                         observation=ServiceObservation(identity:identity,responding:true,sessionReady:true,credentialsReady:true,nativeIdle:nil,runtimeUnmanaged:nil,sampledAt:at,health:.healthy)
                     }
                 }
-                observations.publish(observation,for:.mlx);Thread.sleep(forTimeInterval:0.025)
+                let projected=health.project(observation,
+                    loading:FileManager.default.fileExists(atPath:directory.appendingPathComponent("fixture-loading").path),
+                    unavailable:FileManager.default.fileExists(atPath:directory.appendingPathComponent("fixture-unavailable").path))
+                observations.publish(projected,for:.mlx);Thread.sleep(forTimeInterval:0.025)
             }
         }
         let lifecycle=ServingLifecyclePorts(runtime:remote,intent:{receipt,desired in
-            guard desired == .stopped,receipt.profileHash==profile,receipt.identity.sha256==helperHash else {return nil}
+            guard (desired == .stopped || (desired == .running && health.failed(receipt.identity))),
+                  receipt.profileHash==profile,receipt.identity.sha256==helperHash else {return nil}
             return ServingStopIntent(receipt:receipt,desired:desired) // Private C helper fixture only.
         })
         try ManagerRuntime.run(directory:directory,nativeControl:nil,serviceObservations:observations,
@@ -751,7 +755,7 @@ extension ServingRuntimeFixture {
         })
         stop.stop();guard producer.wait(timeout:.now()+2) == .success else {throw RuntimeError.deadline}
         let journal=try Journal(directory:directory)
-        guard startGate.validations==1,stopGate.validations==1,!runtime.fixtureRetainsChild,try journal.uncertainCount()==1 else {throw RuntimeError.invalid}
-        try AtomicState.write(JSONSerialization.data(withJSONObject:["start_validations":1,"stop_validations":1,"uncertain":1,"native_authority":false]),to:directory.appendingPathComponent("custody-supervisor-receipt.json"))
+        guard startGate.validations==2,stopGate.validations==2,!runtime.fixtureRetainsChild,try journal.uncertainCount()==1 else {throw RuntimeError.invalid}
+        try AtomicState.write(JSONSerialization.data(withJSONObject:["start_validations":2,"stop_validations":2,"uncertain":1,"native_authority":false]),to:directory.appendingPathComponent("custody-supervisor-receipt.json"))
     }
 }
