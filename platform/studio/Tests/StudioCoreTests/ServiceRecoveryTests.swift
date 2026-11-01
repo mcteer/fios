@@ -26,6 +26,38 @@ func runServiceRecoveryTests() throws {
         do {_=try NativeServingLaunchInputs(arguments:nativeArgs,environment:env,workingDirectory:"/");fatalError("Missing native credential accepted")}
         catch RuntimeError.invalid {}
     }
+    let launchDocument:[String:Any]=[
+        "version":1,"purpose":"reviewed_native_serving_launch","host":"fios-edge-a.lab","uid":501,
+        "review_sha256":hash,"manager_sha256":hash,"server_sha256":hash,"application_sha256":hash,
+        "revision":UUID().uuidString.lowercased(),"working_directory":"/",
+        "arguments":nativeArgs,"environment":["HOME":"/Users/fixture","PATH":"/usr/bin:/bin","LANG":"C","LC_ALL":"C"],
+        "credential_channel":"environment"]
+    func decodeLaunch(_ document:[String:Any])throws->NativeServingLaunchDocument {
+        try NativeServingLaunchDocument(JSONSerialization.data(withJSONObject:document,options:[.sortedKeys]))
+    }
+    let decoded=try decodeLaunch(launchDocument)
+    let resolved=try decoded.resolvingCredential("fixture-resolved-key")
+    guard resolved.arguments==nativeArgs,resolved.environment["FIOS_MLX_SERVING_API_KEY"]=="fixture-resolved-key",
+          resolved.workingDirectory=="/",decoded.host=="fios-edge-a.lab" else {fatalError("Reviewed launch inputs changed")}
+    var argumentDocument=launchDocument
+    argumentDocument["credential_channel"]="argument"
+    argumentDocument["arguments"]=["--serve","--api-key",NativeServingLaunchDocument.credentialSlot,"--model","fixture/Exact"]
+    guard try decodeLaunch(argumentDocument).resolvingCredential("fixture-argument-key").arguments[2]=="fixture-argument-key" else {fatalError("Argument credential slot not preserved")}
+    for (key,value):(String,Any) in [("host","fios-core.lab"),("uid",true),("version",2),
+          ("working_directory","/tmp/../"),("arguments",["--serve","--api-key","literal-key"]),
+          ("environment",["HOME":"/Users/fixture","PATH":"/usr/bin:/bin","LANG":"C","LC_ALL":"C","FIOS_MLX_SERVING_API_KEY":"literal-key"]),
+          ("extra","unknown"),("credential_channel","keychain")] {
+        var invalid=launchDocument;invalid[key]=value
+        do {_=try decodeLaunch(invalid);fatalError("Invalid reviewed launch document accepted")}
+        catch RuntimeError.invalid {}
+    }
+    var literalArgument=argumentDocument;literalArgument["arguments"]=["--serve","--api-key","literal-key"]
+    do {_=try decodeLaunch(literalArgument);fatalError("Literal argument credential entered durable profile")}
+    catch RuntimeError.invalid {}
+    for secret in ["",String(repeating:"x",count:4097),"invalid\0key"] {
+        do {_=try decoded.resolvingCredential(secret);fatalError("Invalid credential resolution accepted")}
+        catch RuntimeError.invalid {}
+    }
     let journal=try Journal(directory:directory)
     func absent(_ now:Int64,session:Bool=true,credentials:Bool=true)->ServiceObservation {
         ServiceObservation(identity:nil,responding:false,sessionReady:session,credentialsReady:credentials,
