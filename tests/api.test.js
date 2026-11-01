@@ -6,12 +6,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { mockMlx } from "./mock-mlx.js";
 
-test("authenticated API: discovery, attachments, streaming, errors, stop, persistence and deletion", async () => {
+test("password-free session API: discovery, attachments, streaming, errors, stop, persistence and deletion", async () => {
   const mock = await mockMlx(),
     dir = mkdtempSync(join(tmpdir(), "fios-test-"));
   const port = 3337,
-    origin = `http://127.0.0.1:${port}`,
-    password = "test-workspace-password";
+    origin = `http://127.0.0.1:${port}`;
   let child,
     cookie = "";
   const start = async () => {
@@ -22,7 +21,6 @@ test("authenticated API: discovery, attachments, streaming, errors, stop, persis
         HOST: "127.0.0.1",
         DB_PATH: join(dir, "test.sqlite"),
         MLX_BASE_URL: mock.url,
-        FIOS_PASSWORD: password,
         SESSION_SECRET: "test-secret-".repeat(5),
       },
       stdio: "pipe",
@@ -60,22 +58,12 @@ test("authenticated API: discovery, attachments, streaming, errors, stop, persis
   try {
     await start();
     assert.equal((await request("/chats")).status, 401);
-    assert.equal(
-      (
-        await request("/login", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ password: "incorrect" }),
-        })
-      ).status,
-      401,
-    );
-    const login = await request("/login", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ password }),
-    });
+    const login = await request("/session");
+    assert.deepEqual(await login.json(), { authenticated: true });
     assert.equal(login.status, 200);
+    const compatibility = await request("/login", { method: "POST" });
+    assert.equal(compatibility.status, 200);
+    assert.deepEqual(await compatibility.json(), { authenticated: true });
     cookie = login.headers.get("set-cookie").split(";")[0];
     assert.match(login.headers.get("set-cookie"), /HttpOnly/);
     assert.equal(

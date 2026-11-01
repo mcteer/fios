@@ -1,10 +1,9 @@
 import express from "express";
 import multer from "multer";
-import { rateLimit } from "express-rate-limit";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { openStore } from "./store.js";
-import { equal, signSession, validSession, buildContext } from "./lib.js";
+import { signSession, validSession, buildContext } from "./lib.js";
 import { parseAttachment } from "./attachments.js";
 import { AgentClient } from "../src/agent/client.js";
 import { discover } from "../src/agent/availability.js";
@@ -34,11 +33,8 @@ const agentError = (error) => {
 };
 
 const secret = process.env.SESSION_SECRET;
-const password = process.env.FIOS_PASSWORD;
-if (!secret || secret.length < 32 || !password || password.length < 12)
-  throw new Error(
-    "Run scripts/setup.sh: SESSION_SECRET (32+ chars) and FIOS_PASSWORD (12+ chars) are required.",
-  );
+if (!secret || secret.length < 32)
+  throw new Error("Run scripts/setup.sh: SESSION_SECRET (32+ chars) is required.");
 const base = (
   process.env.MLX_BASE_URL || "http://host.docker.internal:11234/v1"
 ).replace(/\/$/, "");
@@ -84,38 +80,20 @@ const token = (req) =>
     .find((x) => x.startsWith(cookieName + "="))
     ?.slice(cookieName.length + 1);
 const authenticated = (req) => validSession(token(req), secret);
-app.get("/api/session", (req, res) =>
-  res.json({ authenticated: authenticated(req) }),
-);
-app.post(
-  "/api/login",
-  rateLimit({
-    windowMs: 15 * 60000,
-    limit: 15,
-    standardHeaders: "draft-8",
-    legacyHeaders: false,
-    handler: (req, res) =>
-      res
-        .status(429)
-        .json({ error: "Too many attempts. Try again in 15 minutes." }),
-  }),
-  (req, res) => {
-    if (!equal(req.body?.password, password))
-      return res
-        .status(401)
-        .json({ error: "That access password is not correct." });
-    res
-      .cookie(cookieName, signSession(secret), cookieOptions)
-      .json({ ok: true });
-  },
-);
+// The local workspace opens without a password. Initialize the existing
+// same-site browser session before loading workspace data.
+const initializeSession = (req, res) => {
+  if (!authenticated(req)) res.cookie(cookieName, signSession(secret), cookieOptions);
+  res.json({ authenticated: true });
+};
+app.get("/api/session", initializeSession);
+// Existing deployed verification clients may still use this route. Password
+// values are ignored; it performs the same password-free initialization.
+app.post("/api/login", initializeSession);
 app.use("/api", (req, res, next) =>
   authenticated(req)
     ? next()
-    : res.status(401).json({ error: "Sign in to continue." }),
-);
-app.post("/api/logout", (req, res) =>
-  res.clearCookie(cookieName, { path: "/" }).json({ ok: true }),
+    : res.status(401).json({ error: "Initialize the workspace session to continue." }),
 );
 let cachedModels = [];
 async function modelCatalog(signal) {
