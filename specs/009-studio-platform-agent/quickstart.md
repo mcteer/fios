@@ -441,3 +441,12 @@ studioctl --state /ABS/REVIEWED_SCHEMA8_BACKUP migrate-state-eight --sha256 REVI
 ```
 
 `migrate-state-seven` similarly targets schema9. Both preserve unknown old native lineage and publish a durable maintenance hold. Retain the original backup and matching old artifact for rollback; never start the old binary on the evolved database. `check-platform-upgrade.mjs --migrate-eight` exercises an isolated old8/new9/old8 artifact flow; the default same-schema mode requires two schema9 artifacts. None of these data operations installs/activates the Studio agent or supplies native admission authority.
+
+Stopped-state backup now holds the fixed supervisor → serving-custody → manager
+writer locks for its entire journal/export snapshot. A retained custody module
+refuses backup even when the manager is stopped; no controller/custodian may
+open while that fence is held. Restore creates fresh empty custody/other writer
+locks and does not copy `serving-custody.json`, which is volatile peer metadata,
+not a portable capability. These fences do not prove native inference/device
+terminality, adopt an orphan, authorize installed updates or clear uncertainty.
+Retain independent native reconciliation and reviewed installation/rollback gates.

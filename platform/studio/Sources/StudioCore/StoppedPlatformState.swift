@@ -16,6 +16,7 @@ final class StoppedPlatformState {
     let directory:URL
     private let fd:Int32
     private let supervisorFD:Int32
+    private let custodyFD:Int32
     init(directory:URL)throws {
         guard directory.isFileURL else {throw JournalError.invalid}
         self.directory=directory.standardizedFileURL
@@ -34,11 +35,20 @@ final class StoppedPlatformState {
         defer {if !retained {flock(supervisor,LOCK_UN);close(supervisor)}}
         guard fstat(supervisor,&value)==0,value.st_mode&S_IFMT==S_IFREG,value.st_nlink==1,value.st_uid==geteuid(),value.st_mode&0o077==0 else {throw JournalError.invalid}
         guard flock(supervisor,LOCK_EX|LOCK_NB)==0 else {throw JournalError.locked}
+        // A retained custody module can outlive its manager/control loop.
+        // Fixed order matches supervisor → custody → manager construction.
+        // These are metadata writer fences, never native terminality proofs.
+        let custody=open(directory.appendingPathComponent("serving-custody.lock").path,O_RDWR|O_CREAT|O_NOFOLLOW|O_CLOEXEC,0o600)
+        guard custody>=0 else {throw JournalError.invalid}
+        defer {if !retained {flock(custody,LOCK_UN);close(custody)}}
+        guard fstat(custody,&value)==0,value.st_mode&S_IFMT==S_IFREG,value.st_nlink==1,
+              value.st_uid==geteuid(),value.st_mode&0o7777==0o600 else {throw JournalError.invalid}
+        guard flock(custody,LOCK_EX|LOCK_NB)==0 else {throw JournalError.locked}
         let lock=open(directory.appendingPathComponent("manager.lock").path,O_RDWR|O_NOFOLLOW|O_CLOEXEC)
         guard lock>=0 else {throw JournalError.invalid}
         guard fstat(lock,&value)==0,value.st_mode&S_IFMT==S_IFREG,value.st_nlink==1,value.st_uid==geteuid(),value.st_mode&0o077==0 else {close(lock);throw JournalError.invalid}
         guard flock(lock,LOCK_EX|LOCK_NB)==0 else {close(lock);throw JournalError.locked}
-        fd=lock;supervisorFD=supervisor;retained=true
+        fd=lock;custodyFD=custody;supervisorFD=supervisor;retained=true
     }
-    deinit {flock(fd,LOCK_UN);close(fd);flock(supervisorFD,LOCK_UN);close(supervisorFD)}
+    deinit {flock(fd,LOCK_UN);close(fd);flock(custodyFD,LOCK_UN);close(custodyFD);flock(supervisorFD,LOCK_UN);close(supervisorFD)}
 }

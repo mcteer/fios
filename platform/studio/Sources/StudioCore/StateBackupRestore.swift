@@ -39,7 +39,7 @@ extension StoppedStateBackup {
         // Fresh working-state locks are not copied from a backup. Create them
         // only after verifying the private copy, so a stopped restored state
         // can be backed up again without first starting any controller/store.
-        let lockPaths=[temporary.appendingPathComponent("manager.lock"),temporary.appendingPathComponent("supervisor.lock"),temporary.appendingPathComponent("artifacts/store.lock")]
+        let lockPaths=[temporary.appendingPathComponent("manager.lock"),temporary.appendingPathComponent("supervisor.lock"),temporary.appendingPathComponent("serving-custody.lock"),temporary.appendingPathComponent("artifacts/store.lock")]
         for path in lockPaths {
             let fd=open(path.path,O_RDWR|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC,0o600)
             guard fd>=0 else {throw JournalError.conflict}
@@ -58,7 +58,7 @@ extension StoppedStateBackup {
         }
         let artifactDirectory=temporary.appendingPathComponent("artifacts")
         let artifactNames=try FileManager.default.contentsOfDirectory(atPath:artifactDirectory.path)
-        let files=(["state.sqlite","backup.json","manager.lock","supervisor.lock"]+recovery).map {temporary.appendingPathComponent($0)}+artifactNames.map {artifactDirectory.appendingPathComponent($0)}
+        let files=(["state.sqlite","backup.json","manager.lock","supervisor.lock","serving-custody.lock"]+recovery).map {temporary.appendingPathComponent($0)}+artifactNames.map {artifactDirectory.appendingPathComponent($0)}
         for file in files {
             let fd=open(file.path,O_RDONLY|O_NOFOLLOW|O_CLOEXEC)
             guard fd>=0 else {throw JournalError.storage}

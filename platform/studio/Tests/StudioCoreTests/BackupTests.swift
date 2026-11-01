@@ -22,6 +22,15 @@ func runBackupTests() throws {
         do {_=try StoppedJournalBackup.create(directory:state,destination:backup);fatalError("Backup accepted a live supervisor capable of restarting the manager")}catch JournalError.locked {}
     }
     do {
+        let custody=try PrivateWriterLock(directory:state,kind:.servingCustody)
+        defer {custody.release()}
+        var refused=false
+        do {_=try StoppedJournalBackup.create(directory:state,destination:backup)}catch JournalError.locked {refused=true}
+        guard refused else {
+            FileHandle.standardError.write(Data("CUSTODY_BACKUP_FENCE_MISSING\n".utf8));throw RuntimeError.invalid
+        }
+    }
+    do {
         let stopped=try StoppedPlatformState(directory:state)
         let contender=open(state.appendingPathComponent("supervisor.lock").path,O_RDWR|O_NOFOLLOW|O_CLOEXEC)
         guard contender>=0 else {throw JournalError.storage}
@@ -29,6 +38,7 @@ func runBackupTests() throws {
         try withExtendedLifetime(stopped) {
             guard flock(contender,LOCK_EX|LOCK_NB) != 0 else {fatalError("Supervisor could restart while offline writer fence was held")}
             do {_=try Journal(directory:state);fatalError("Manager opened state during offline writer fence")}catch JournalError.locked {}
+            do {_=try PrivateWriterLock(directory:state,kind:.servingCustody);fatalError("Custody module opened during offline writer fence")}catch ControlError.busy {}
         }
     }
     let receipt=try StoppedJournalBackup.create(directory:state,destination:backup)
@@ -88,6 +98,7 @@ func runBackupTests() throws {
     try FileManager.default.linkItem(at:state.appendingPathComponent("artifacts/"+artifact+".blob"),to:link)
     do {_=try StoppedArtifactBackup.create(directory:state,destination:root.appendingPathComponent("linked-copy"));fatalError("Linked export accepted")} catch JournalError.invalid {}
     try FileManager.default.removeItem(at:link)
+    try AtomicState.write(Data("VOLATILE_CUSTODY_FIXTURE".utf8),to:state.appendingPathComponent("serving-custody.json"))
     let bundle=root.appendingPathComponent("state-bundle")
     let bundleReceipt=try StoppedStateBackup.create(directory:state,destination:bundle)
     guard bundleReceipt.artifacts==1,bundleReceipt.sha256.count==64 else {fatalError("No full state snapshot receipt")}
@@ -118,6 +129,10 @@ func runBackupTests() throws {
     }
     let restoredState=root.appendingPathComponent("restored-state")
     _=try StoppedStateBackup.restore(directory:bundle,expectedSHA256:bundleReceipt.sha256,destination:restoredState)
+    var custodyLock=stat()
+    guard lstat(restoredState.appendingPathComponent("serving-custody.lock").path,&custodyLock)==0,
+          custodyLock.st_mode&S_IFMT==S_IFREG,custodyLock.st_mode&0o7777==0o600,
+          !FileManager.default.fileExists(atPath:restoredState.appendingPathComponent("serving-custody.json").path) else {fatalError("Restore copied a custody descriptor or omitted its fresh writer fence")}
     // A published working directory has fresh local lock identities. The
     // original receipt still identifies its sealed input, not this namespace.
     do {_=try StoppedStateBackup.verify(directory:restoredState,expectedSHA256:bundleReceipt.sha256);fatalError("Working state was accepted as a sealed backup")}
@@ -134,5 +149,5 @@ func runBackupTests() throws {
         _=try stream.next(now:1001)
         guard case .chunk(0,let encoded)=try stream.next(now:1001),Data(base64Encoded:encoded)==payload else {fatalError("Bundle lost explicit export")}
     }
-    print("PASS: supervisor+manager-fenced stopped-only bounded platform-marked SQLite backup, immutable receipt/no overwrite and independent uncertainty preserved on restore; no Fios database access")
+    print("PASS: supervisor+custody+manager-fenced stopped-only bounded platform-marked SQLite backup, immutable receipt/no overwrite and independent uncertainty preserved on restore; no Fios database access")
 }

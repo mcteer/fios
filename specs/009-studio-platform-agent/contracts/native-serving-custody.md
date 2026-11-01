@@ -105,3 +105,12 @@ verifies the actual pinned supervisor. Static descriptor data is neither
 current ownership nor native terminality; every exchange still authenticates
 the peer, and lifecycle reservations remain independent. Public startup is
 still closed, and positive installed-factory acceptance remains open.
+
+Stopped-state backup now holds the fixed supervisor → serving-custody → manager
+writer locks for its entire journal/export snapshot. A retained custody module
+refuses backup even when the manager is stopped; no controller/custodian may
+open while that fence is held. Restore creates fresh empty custody/other writer
+locks and does not copy `serving-custody.json`, which is volatile peer metadata,
+not a portable capability. These fences do not prove native inference/device
+terminality, adopt an orphan, authorize installed updates or clear uncertainty.
+Retain independent native reconciliation and reviewed installation/rollback gates.

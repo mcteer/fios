@@ -194,3 +194,12 @@ node scripts/install-platform.mjs plan-uninstall --release /ABSOLUTE/RELEASE_DIR
 This read-only plan orders current status review, an operator stop of supervisor/manager, a stopped-state backup, enrollment-removal review and retention of state/exports/credentials/release artifacts. Its two proposed CLI commands are `status` and `backup-state`; execute them at their numbered steps, with the manual stop between them. Planning executes neither command and creates no backup. The existing backup CLI checks stopped writers when actually run.
 
 The result remains `blocked`: installed enrollment removal is not implemented, no privileged command is issued, and no uninstall or data deletion occurs. This makes the data-preservation workflow reviewable without claiming T049’s installation/uninstall execution is complete.
+
+Stopped-state backup now holds the fixed supervisor → serving-custody → manager
+writer locks for its entire journal/export snapshot. A retained custody module
+refuses backup even when the manager is stopped; no controller/custodian may
+open while that fence is held. Restore creates fresh empty custody/other writer
+locks and does not copy `serving-custody.json`, which is volatile peer metadata,
+not a portable capability. These fences do not prove native inference/device
+terminality, adopt an orphan, authorize installed updates or clear uncertainty.
+Retain independent native reconciliation and reviewed installation/rollback gates.
