@@ -447,6 +447,23 @@ public final class Journal {
             guard sqlite3_changes(db)==1 else {throw JournalError.conflict}
         }
     }
+    // At most32 unresolved requests; legacy unbound scopes and reserved work
+    // cannot issue a native lookup. This is a manager-local readonly selector.
+    func lineageRequests()throws->[NativeLineageRequest] {
+        let rows=try statement("SELECT job,attempt FROM inference ORDER BY job,attempt")
+        defer {sqlite3_finalize(rows)}
+        var result:[NativeLineageRequest]=[],count=0
+        while true {
+            let code=sqlite3_step(rows)
+            if code==SQLITE_DONE {return result}
+            guard code==SQLITE_ROW,count<Self.maximumUnresolvedInference,sqlite3_column_type(rows,1)==SQLITE_INTEGER else {throw JournalError.invalid}
+            let job=try storedString(rows,0),attempt=Int(sqlite3_column_int64(rows,1))
+            try validate(job:job,attempt:attempt);count+=1
+            guard let record=try inferenceScope(job:job,attempt:attempt),[.dispatched,.uncertain].contains(record.state),
+                  (try? NativeControlWire.instanceBytes(record.scope.nativeEpoch)) != nil else {continue}
+            result.append(NativeLineageRequest(job:job,attempt:attempt,scope:record.scope))
+        }
+    }
     // Readonly native lineage updates persist before becoming visible to the
     // caller. This records correlation only; it never resolves an inference.
     func observeLineage(job:String,attempt:Int,scope:InferenceScope,peer:NativeControlPeer,

@@ -26,6 +26,7 @@ public enum ManagerRuntime {
         var serviceCursor=0,serviceTransportUnavailable=false
         var nativeMaintenance=NativeMaintenanceCoordinator(journal:journal)
         let nativeQueue=activeNativeControl.map {AsyncNativeControl(client:$0)}
+        let nativeLineage=activeNativeControl.map {NativeLineagePoller(journal:journal,source:$0)}
         let nativeCoverage:NativeCoverage = nativeQueue == nil ? .unsupported:.unknown
         var nativeDiagnostics=NativeControlDiagnostics(configured:nativeQueue != nil)
         func enqueueNative(_ command:NativeMaintenanceCommand) {
@@ -105,6 +106,7 @@ public enum ManagerRuntime {
                 case .failure: nativeMaintenance.failed(id:result.id);nativeDiagnostics.failed()
                 }
             }
+            try nativeLineage?.drain(now:timestamp())
             try workerRecovery.poll(now:Int64(now*1000),admission:&admission,failedLaunches:tasks.failedLaunches)
             try drainer?.pollAll(now:timestamp(),uptime:Int64(now*1000))
             resourceSample=applyingVM(to:resourceSample,now:timestamp())
@@ -114,6 +116,7 @@ public enum ManagerRuntime {
             if now - lastHeartbeat >= 2 {
                 sequence+=1;sampledAt=timestamp()
                 if nativeQueue != nil,let command=nativeMaintenance.beginObservation() {enqueueNative(command)}
+                try nativeLineage?.beginNext()
                 if let serviceRecovery,let serviceQueue,serviceQueue.available {
                     let services=ManagedService.allCases
                     for offset in 0..<services.count {

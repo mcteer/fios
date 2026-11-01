@@ -4,7 +4,7 @@
 // No installed service, model request, RDMA or adversarial exercise.
 import assert from 'node:assert/strict';
 import {spawn,spawnSync} from 'node:child_process';
-import {mkdtempSync,mkdirSync,readdirSync,readFileSync,copyFileSync,writeFileSync} from 'node:fs';
+import {mkdtempSync,mkdirSync,readdirSync,readFileSync,copyFileSync,writeFileSync,existsSync} from 'node:fs';
 import {createServer} from 'node:net';
 import {request} from 'node:http';
 import {join,resolve} from 'node:path';
@@ -12,6 +12,7 @@ import {setTimeout as delay} from 'node:timers/promises';
 import {verifyNativeReview} from './lib/platform-native-review.mjs';
 const args=process.argv.slice(2);
 let protocolVersion=2;
+const withLineage=args.at(-1)==='--lineage';if(withLineage)args.pop();
 if(args.length===7){assert.equal(args[5],'--protocol-version');assert.equal(args[6],'3');protocolVersion=3;args.splice(5,2);}
 assert(args.length===5&&args[0]==='--isolated'&&args[1]==='--capsule'&&args[3]==='--sha256');
 assert.equal(process.platform,'darwin');assert.notEqual(process.getuid(),0);
@@ -50,6 +51,9 @@ try{
  const sourceHealth=JSON.parse(run(fixture,['--isolated-health',String(port)],5000));
  assert.deepEqual(sourceHealth,{healthy:true,identity_proven:false,native_idle_proven:false});
  const control=join(directory,'.fios-native-control/control.sock');
+ await until(()=>existsSync(control));
+ const lineageSeed=withLineage?JSON.parse(run(fixture,['--isolated-seed-lineage',state,control,binary,binarySHA,'source-fixture-only',String(native.pid)],5000)):null;
+ if(withLineage)assert.deepEqual(lineageSeed,{seeded_unit_scope:true,model_requests:0,native_authority:false});
  const manager=spawn(fixture,[protocolVersion===3?'--isolated-manager-v3':'--isolated-manager',state,control,binary,binarySHA,'source-fixture-only',String(native.pid)],{cwd:root,env,stdio:['ignore','ignore','pipe']});children.push(manager);
  let managerErrors='';manager.stderr.on('data',part=>{managerErrors+=part.toString();});
  const initial=await until(()=>{assert(!exited(manager),`Private manager exited: ${managerErrors}`);return command(['status']);});
@@ -68,6 +72,7 @@ try{
  assert.equal(opened.native_activity,'unknown');
  const activity=command(['activity']);assert.equal(activity.coverage,'unknown');
  assert.equal(activity.observation.coverage,'unknown');assert.equal(activity.observation.outstanding_owners,null);
+ if(withLineage){assert.equal(activity.observation.local_ownership.unresolved_count,1);assert.equal(activity.observation.local_ownership.blocked,true);}
  if(protocolVersion===3){
   assert.equal(activity.observation.native_epoch,diagnostic.source_instance);
   assert.equal(activity.observation.native_sequence,diagnostic.source_sequence);
@@ -97,8 +102,10 @@ try{
  assert.equal(resumed.native_control.authoritative,false);assert.deepEqual(readdirSync(models),[]);
  writeFileSync(join(directory,'status-receipts.json'),JSON.stringify({sourceHealth,initial,opened,paused,resumed},null,2)+'\n',{mode:0o600});
  manager.kill('SIGTERM');await until(()=>exited(manager),5000);assert.equal(manager.exitCode,0);assert.equal(managerErrors,'');
+ const lineageReceipt=withLineage?JSON.parse(run(fixture,['--isolated-check-lineage',state,diagnostic.source_instance],5000)):null;
+ if(withLineage){assert.equal(lineageReceipt.persisted_source_sample,true);assert.equal(lineageReceipt.unresolved_uncertainty_retained,true);writeFileSync(join(directory,'lineage-receipt.json'),JSON.stringify(lineageReceipt)+'\n',{mode:0o600});}
  native.kill('SIGTERM');await until(()=>exited(native),7000);
- console.log(JSON.stringify({ok:true,protocol_version:protocolVersion,source_health_probe:true,source_ingress_roundtrip:true,model_requests:0,installed_service_actions:0,authoritative:false,review_directory:directory}));
+ console.log(JSON.stringify({ok:true,protocol_version:protocolVersion,source_health_probe:true,source_ingress_roundtrip:true,automatic_lineage_checkpoint:withLineage,model_requests:0,installed_service_actions:0,authoritative:false,review_directory:directory}));
 }finally{
  for(const child of [...children].reverse())if(!exited(child)){child.kill('SIGTERM');try{await until(()=>exited(child),7000);}catch{child.kill('SIGKILL');await until(()=>exited(child),3000);}}
  // Retain only private source-test data; process exit grants no native proof.
