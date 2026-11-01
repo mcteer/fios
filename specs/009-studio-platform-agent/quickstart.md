@@ -70,7 +70,7 @@ Ordinary service recovery status can be checked with real private manager/sessio
 node scripts/check-platform-service-recovery-status.mjs --isolated
 ```
 
-It runs only the single-completion functional scenario, reports pending/spacing-wait/available budget states and exits its own processes. It launches no native application and does not supply installed lifecycle acceptance.
+It uses single-completion counter-only application ports for normal startup and maintenance during held validation. It verifies pending/spacing-wait/available budgets, scoped pre-dispatch revocation with the real validator slot retained, maintenance preserved across manager restart, and exactly one later launch after explicit running intent; it exits its own processes. It launches no native application and does not supply installed lifecycle acceptance.
 
 For an already-running local runtime, a one-shot VM observation can use an explicitly selected cached image without pulling or changing settings:
 

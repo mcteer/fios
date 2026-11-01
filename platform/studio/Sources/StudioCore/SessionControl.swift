@@ -1,7 +1,7 @@
 import Foundation
 import Darwin
 
-enum SessionClientOperation:String,Sendable {case launch,lookup}
+enum SessionClientOperation:String,Sendable {case launch,lookup,cancel}
 
 enum SessionReply {
     static func encode(id:String,service:ManagedService,instance:String,profile:String,result:SessionLaunchResult)throws->Data {
@@ -80,7 +80,7 @@ final class SessionControlServer {
     func claimDispatch(id:String,service:ManagedService)->Bool {
         gate.claimDispatch(id:id,service:service,now:HostResources.nowMilliseconds())
     }
-    func poll(consoleReady:Bool,now:Int64,launch:(ManagedService,String)throws->SessionLaunchResult)throws {
+    func poll(consoleReady:Bool,now:Int64,revoke:(ManagedService,String)throws->Bool={_,_ in false},launch:(ManagedService,String)throws->SessionLaunchResult)throws {
         guard let listener else {throw ControlError.internal_error}
         for _ in 0..<16 {
             guard let fd=try listener.acceptPeer() else {break}
@@ -96,7 +96,7 @@ final class SessionControlServer {
             do {
                 if let data=try connection.pending.read(now:ProcessInfo.processInfo.systemUptime) {
                     let request=try SessionLaunchRequest(data)
-                    let result=try gate.handle(data,peer:connection.peer,uid:connection.uid,consoleReady:consoleReady,now:now,launch:launch)
+                    let result=try gate.handle(data,peer:connection.peer,uid:connection.uid,consoleReady:consoleReady,now:now,revoke:revoke,launch:launch)
                     try connection.pending.respond(SessionReply.encode(id:request.id,service:request.service,instance:gate.instance,profile:gate.profile,result:result),now:ProcessInfo.processInfo.systemUptime)
                 }
                 try connection.pending.flush(now:ProcessInfo.processInfo.systemUptime)

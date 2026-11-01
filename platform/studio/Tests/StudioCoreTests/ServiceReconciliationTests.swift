@@ -17,7 +17,7 @@ func runServiceReconciliationTests()throws {
     guard String(decoding:persisted,as:UTF8.self).contains(first.command.id) else {fatalError("Transport command escaped before durable intent")}
     recovery=try ServiceRecoveryController(journal:journal,approvedHashes:pins)
     guard let lookup=try recovery.next(service:.mlx,desired:.stopped,observation:nil,now:700000,tick:700000),
-          lookup.operation == .lookup,lookup.command.id==first.command.id,
+          lookup.operation == .cancel,lookup.command.id==first.command.id,
           lookup.command.profileHash==first.command.profileHash else {fatalError("Restart/age/operator stop reissued or lost pending launch")}
     for result:SessionLaunchResult in [.uncertain,.busy,.wrongInstance] {try recovery.receive(lookup,result:result)}
     guard try Data(contentsOf:directory.appendingPathComponent("service-recovery.json"))==persisted else {fatalError("Unknown transport outcome retired durable ownership")}
@@ -35,5 +35,5 @@ func runServiceReconciliationTests()throws {
     try recovery.receive(fenced,result:.notSent)
     recovery=try ServiceRecoveryController(journal:journal,approvedHashes:pins)
     guard try recovery.next(service:.mlx,desired:.running,observation:absent(800000),now:800000,tick:800000)==nil else {fatalError("Lookup acknowledgement erased the persistent launch clock fence")}
-    print("PASS: typed once-only launch versus safe lookup, durable-before-transport, stopped/restarted/aged/fenced reconciliation, correlated receipts and independent native uncertainty retention")
+    print("PASS: typed once-only launch versus scoped lookup/revocation, durable-before-transport, stopped/restarted/aged/fenced reconciliation, correlated receipts and independent native uncertainty retention")
 }

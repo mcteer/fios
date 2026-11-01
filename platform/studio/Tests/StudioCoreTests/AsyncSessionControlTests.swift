@@ -26,10 +26,12 @@ func runAsyncSessionControlTests()throws {
     guard first.request.command.id==request.command.id else {fatalError("Sender lost receipt correlation")}
     switch first.value {case .failure(.unavailable):break;case .success:fatalError("Missing transport became non-dispatch proof")}
     do {try queue.submit(request);fatalError("Consumed launch token was retried after transport failure")}catch RuntimeError.invalid {}
-    guard let lookup=try recovery.next(service:.mlx,desired:.stopped,observation:nil,now:2000,tick:2000),lookup.operation == .lookup else {fatalError("Transport failure refunded a dispatch")}
+    guard let running=try recovery.next(service:.mlx,desired:.running,observation:nil,now:2000,tick:2000),
+          running.operation == .lookup,running.command.id==request.command.id else {fatalError("Running reconciliation replayed launch")}
+    guard let lookup=try recovery.next(service:.mlx,desired:.stopped,observation:nil,now:2000,tick:2000),lookup.operation == .cancel else {fatalError("Transport failure refunded a dispatch")}
     try queue.submit(lookup)
     let second=try result()
-    guard second.request.operation == .lookup,second.request.command.id==request.command.id else {fatalError("Reconciliation was promoted back to launch")}
+    guard second.request.operation == .cancel,second.request.command.id==request.command.id else {fatalError("Reconciliation was promoted back to launch")}
     switch second.value {case .failure(.unavailable):break;case .success:fatalError("Missing lookup transport manufactured a proof")}
-    print("PASS: one off-loop session exchange/result, finite unavailable transport, correlated receipt, one-use launch token and lookup-only recovery without native actions")
+    print("PASS: one off-loop session exchange/result, finite unavailable transport, correlated receipt, one-use launch token and scoped launch revocation without native actions")
 }

@@ -73,10 +73,17 @@ struct SessionDriverPorts:Sendable {
             check.cancelled=true;checking=check
             server.acknowledgeNotSent(id:check.id,service:check.service)
         }
-        try server.poll(consoleReady:consoleReady,now:now) {service,id in self.begin(service:service,id:id)}
+        try server.poll(consoleReady:consoleReady,now:now,revoke:{service,id in self.revokeValidation(service:service,id:id)}) {service,id in self.begin(service:service,id:id)}
     }
     public func shutdown() {stopped=true;checking=nil} // Never quits native apps.
 
+    private func revokeValidation(service:ManagedService,id:String)->Bool {
+        guard !stopped,var check=checking,check.service==service,check.id==id,!check.cancelled else {return false}
+        // Retain the actual validator slot until its completion. Its serialized
+        // continuation can no longer claim application dispatch after this seal.
+        check.cancelled=true;checking=check
+        return true
+    }
     private func begin(service:ManagedService,id:String)->SessionLaunchResult {
         guard !stopped,checking==nil,let executable=applications[service] else {return .notSent}
         let deadline=ProcessInfo.processInfo.systemUptime+10

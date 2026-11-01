@@ -33,7 +33,7 @@ struct SessionLaunchRequest {
               Set(value.keys)==Set(["version","id","operation","service","instance","profile"]),
               WireScalar.integer(value["version"],maximum:1)==1,
               let id=value["id"] as? String,WireScalar.uuid(id),
-              let operation=value["operation"] as? String,["launch","lookup"].contains(operation),
+              let operation=value["operation"] as? String,["launch","lookup","cancel"].contains(operation),
               let raw=value["service"] as? String,let service=ManagedService(rawValue:raw),
               let instance=value["instance"] as? String,WireScalar.uuid(instance),
               let profile=value["profile"] as? String,WireScalar.sha256(profile) else {throw ControlError.invalid_request}
@@ -65,7 +65,7 @@ final class SessionLaunchGate {
     }
 
     func handle(_ data:Data,peer:NativeControlPeer,uid:uid_t,consoleReady:Bool,now:Int64,
-                launch:(ManagedService,String)throws->SessionLaunchResult)throws->SessionLaunchResult {
+                revoke:(ManagedService,String)throws->Bool={_,_ in false},launch:(ManagedService,String)throws->SessionLaunchResult)throws->SessionLaunchResult {
         guard uid>0,uid==geteuid(),getuid()==geteuid() else {throw ControlError.unauthorized}
         let request=try SessionLaunchRequest(data)
         // Socket integration must obtain UID/PID from kernel peer credentials,
@@ -81,10 +81,17 @@ final class SessionLaunchGate {
         guard observeClock(now) else {return .uncertain}
         if let existing=entries[request.id] {
             guard existing.service==request.service else {throw ControlError.invalid_request}
+            if request.operation=="cancel",existing.result == .uncertain,!existing.dispatched,
+               try revoke(request.service,request.id) {
+                // The actual driver sealed its still-read-only continuation.
+                // A dispatched/unknown operation cannot become not-sent here.
+                entries[request.id]?.result = .notSent
+                return .notSent
+            }
             return existing.result
         }
         // Missing cache state cannot prove an old helper did not dispatch.
-        if request.operation=="lookup" {return .uncertain}
+        if request.operation != "launch" {return .uncertain}
         guard entries.count<256,!entries.values.contains(where:{$0.service==request.service && $0.result == .uncertain}) else {return .busy}
         if !consoleReady {
             entries[request.id]=Entry(service:request.service,result:.notSent)

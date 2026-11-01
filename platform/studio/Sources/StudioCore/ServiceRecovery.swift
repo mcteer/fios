@@ -29,7 +29,7 @@ final class ServiceRecoveryRequest:@unchecked Sendable {
     // Only a new controller reservation can create a launch object. Retaining
     // or copying its reference cannot turn transport failure into a retry.
     func consumeTransport()->Bool {
-        guard operation == .launch else {return true} // Lookups have no effect.
+        guard operation == .launch else {return true} // Lookups and revocations never grant a launch.
         lock.lock();defer {lock.unlock()}
         guard !consumed else {return false};consumed=true;return true
     }
@@ -165,12 +165,13 @@ final class ServiceRecoveryController {
         return !state.fenced
     }
     // Reconciliation never replays an effect. It remains useful with stopped,
-    // maintenance, missing observations or a clock fence: a lookup cannot
-    // launch, and missing helper history remains uncertain.
+    // maintenance, missing observations or a clock fence. Non-running intent
+    // requests revocation of still-read-only validation; dispatched/missing
+    // helper history remains uncertain and never becomes a new launch.
     func next(service:ManagedService,desired:ServiceDesired,observation:ServiceObservation?,now:Int64,tick:Int64)throws->ServiceRecoveryRequest? {
         if let id=state.entries.first(where:{$0.service==service})?.pending {
             _=try observeClock(now:now,tick:tick)
-            return ServiceRecoveryRequest(operation:.lookup,command:ServiceLaunchCommand(service:service,id:id,expectedSHA256:pins[service]!,profileHash:state.profile))
+            return ServiceRecoveryRequest(operation:desired == .running ? .lookup:.cancel,command:ServiceLaunchCommand(service:service,id:id,expectedSHA256:pins[service]!,profileHash:state.profile))
         }
         return try plan(service:service,desired:desired,observation:observation,now:now,tick:tick).map {ServiceRecoveryRequest(operation:.launch,command:$0)}
     }

@@ -21,8 +21,8 @@ one JSON value and EOF. Requests are at most1024 bytes, replies2048 bytes, with
 a finite2s exchange and at most16 concurrent clients. Duplicate/unknown keys,
 trailing bytes, malformed scalars and incomplete streams refuse before action.
 
-A request has exactly `version:1`, canonical UUID `id`, `operation` (`launch` or
-`lookup`), fixed `service` (`mlx` or `orbstack`), helper UUID `instance` and SHA256
+A request has exactly `version:1`, canonical UUID `id`, `operation` (`launch`, `lookup` or
+`cancel`), fixed `service` (`mlx` or `orbstack`), helper UUID `instance` and SHA256
 `profile`. A reply binds version/id/service/instance/profile and a fixed status:
 `not_sent`, `uncertain`, `wrong_instance`, `busy` or `started`. Only `started`
 adds PID, canonical decimal-string process-start identity and approved SHA256.
@@ -36,6 +36,21 @@ local completion for an existing uncertain request may record `started`, after
 independently verifying current UID, kernel path/start and approved executable
 hash. That completion is not a wire operation; it cannot rewrite `not_sent`,
 resolve another service/request/helper generation or bypass a clock fence.
+
+A correlated `cancel` asks the actual driver to seal a still-read-only
+validation continuation. Only an existing uncertain, not-yet-dispatched ID can
+be acknowledged `not_sent`, and only after that local revocation succeeds.
+The real validator retains its resource slot until completion; its later
+continuation cannot claim dispatch. A dispatched operation stays uncertain or
+retains its known started result. Missing history stays uncertain. Cancellation
+never calls the application API or stops an existing app.
+
+For a retained launch ID, the manager sends `lookup` while desired state is
+running and `cancel` after maintenance/stopped intent commits. Both retain the
+original ID/profile and cannot create a new launch. Only the correlated helper
+acknowledgement retires the durable service record; native inference uncertainty
+is independent. Already dispatched startup may still finish, so durable desired
+state and these replies do not claim completed service stop.
 
 The manager must persist its launch intent before sending and retain it across
 timeout/helper restart/cache loss. A fresh presence/absence sample or elapsed

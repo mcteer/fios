@@ -53,6 +53,18 @@ func runSessionOperationTests() throws {
     guard try proofGate.handle(lookup,peer:peer,uid:geteuid(),consoleReady:true,now:1002,launch:{_,_ in proofCalls+=1;return .uncertain}) == .started(identity),proofCalls==2 else {fatalError("Acknowledged lookup replayed a launch")}
     let unknown=try packet(UUID().uuidString.lowercased(),instance:proofGate.instance,profile:proofGate.profile,extra:["operation":"lookup"])
     guard try proofGate.handle(unknown,peer:peer,uid:geteuid(),consoleReady:true,now:1003,launch:{_,_ in proofCalls+=1;return .notSent}) == .uncertain,proofCalls==2 else {fatalError("Missing helper history became non-dispatch proof")}
+    let completedCancel=try packet(completedID,instance:proofGate.instance,profile:proofGate.profile,extra:["operation":"cancel"])
+    guard try proofGate.handle(completedCancel,peer:peer,uid:geteuid(),consoleReady:true,now:1003,
+        revoke:{_,_ in fatalError("Started application entered pre-dispatch revocation")},
+        launch:{_,_ in fatalError("Revocation launched an application")}) == .started(identity) else {
+        fatalError("Revocation rewrote an already-started result")
+    }
+    let missingCancel=try packet(UUID().uuidString.lowercased(),instance:proofGate.instance,profile:proofGate.profile,extra:["operation":"cancel"])
+    guard try proofGate.handle(missingCancel,peer:peer,uid:geteuid(),consoleReady:true,now:1003,
+        revoke:{_,_ in fatalError("Missing history entered revocation")},
+        launch:{_,_ in fatalError("Missing-history revocation launched")}) == .uncertain else {
+        fatalError("Missing-history revocation manufactured non-dispatch proof")
+    }
     // Delayed native completions can resolve only the original outstanding
     // request. A timeout, new helper or unrelated presence cannot mint it.
     let delayed=try SessionLaunchGate(manager:manager,approvedApplications:[.mlx:manager,.orbstack:manager])
@@ -61,6 +73,12 @@ func runSessionOperationTests() throws {
     guard try delayed.handle(delayedPacket,peer:peer,uid:geteuid(),consoleReady:true,now:1000,launch:{_,_ in .uncertain}) == .uncertain else {fatalError("Delayed launch was acknowledged early")}
     guard delayed.claimDispatch(id:delayedID,service:.mlx,now:1000),!delayed.claimDispatch(id:delayedID,service:.mlx,now:1000),
           !delayed.acknowledgeNotSent(id:delayedID,service:.mlx) else {fatalError("Native dispatch permit replayed or became non-dispatch")}
+    let dispatchedCancel=try packet(delayedID,instance:delayed.instance,profile:delayed.profile,extra:["operation":"cancel"])
+    guard try delayed.handle(dispatchedCancel,peer:peer,uid:geteuid(),consoleReady:true,now:1000,
+        revoke:{_,_ in fatalError("Dispatched operation entered validation revocation")},
+        launch:{_,_ in fatalError("Dispatched revocation launched")}) == .uncertain else {
+        fatalError("Dispatched operation became not-sent through revocation")
+    }
     guard try !delayed.acknowledgeStarted(id:UUID().uuidString.lowercased(),service:.mlx,identity:identity),
           try !delayed.acknowledgeStarted(id:delayedID,service:.orbstack,identity:identity),
           try !delayed.acknowledgeStarted(id:delayedID,service:.mlx,identity:ServiceIdentity(pid:peer.pid,start:peer.start+1,sha256:hash)),

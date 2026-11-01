@@ -25,6 +25,7 @@ import CryptoKit
                     guard ProcessInfo.processInfo.systemUptime<command.deadline+2 else {throw RuntimeError.deadline}
                     Thread.sleep(forTimeInterval:0.005)
                 }
+                try AtomicState.write(Data("returned".utf8),to:directory.appendingPathComponent("validation-returned"))
                 if scenario=="validation" {throw ControlError.unauthorized}
             },consoleReady:{
                 try! AtomicState.write(Data("observed".utf8),to:directory.appendingPathComponent("validation-observed"))
@@ -88,7 +89,7 @@ import CryptoKit
             let recovery=try ServiceRecoveryController(journal:journal,approvedHashes:[.mlx:hash,.orbstack:hash])
             let initial=args[3]=="dispatch",now:Int64=initial ? 1000:2000
             let absent=ServiceObservation(identity:nil,responding:false,sessionReady:true,credentialsReady:true,nativeIdle:nil,runtimeUnmanaged:nil,sampledAt:now)
-            guard let request=try recovery.next(service:.mlx,desired:initial ? .running:.stopped,observation:initial ? absent:nil,now:now,tick:now) else {
+            guard let request=try recovery.next(service:.mlx,desired:.running,observation:initial ? absent:nil,now:now,tick:now) else {
                 guard try journal.uncertainCount()==1 else {throw JournalError.invalid};print("none");return
             }
             let queue=AsyncSessionControl(client:client);try queue.submit(request)
