@@ -16,7 +16,7 @@ function run(program,args,timeout=120000){const r=spawnSync(program,args,{encodi
 run('/usr/bin/clang',[c,'-O2','-o',helper],30000);
 const core=join(root,'platform/studio/Sources/StudioCore'),name='MLXServingProcessRuntime.swift';
 const implementation=readFileSync(join(core,name)),fixture=readFileSync(join(root,'platform/studio/Tests/NativeFixtures/MLXServingProcessRuntime.swift.fixture'));
-const integrationNames=['NativeServingRecoveryTransport.swift','AsyncSessionControl.swift','AsyncServingStop.swift','Manager.swift','ServiceRecovery.swift','RecordedServiceProcessProbe.swift','ServingOwnedProcess.swift'];
+const integrationNames=['NativeServingRecoveryTransport.swift','AsyncSessionControl.swift','AsyncServingStop.swift','ServingLifecyclePorts.swift','Manager.swift','ServiceRecovery.swift','RecordedServiceProcessProbe.swift','ServingOwnedProcess.swift'];
 const integration=Object.fromEntries(integrationNames.map(n=>[n,readFileSync(join(core,n))]));
 const unit=join(directory,'RuntimeFixture.swift');writeFileSync(unit,Buffer.concat([implementation,Buffer.from('\n'),fixture]));
 for(const mode of ['debug','release']){
@@ -50,13 +50,19 @@ for(const mode of ['debug','release']){
   const maintenance=JSON.parse(run(binary,['control',managerState,'maintenance'],3000));assert.equal(maintenance.applied,false);
   const maintained=await until(()=>{const s=status();return s?.desired==='maintenance'?s:null;});
   assert.equal(maintained.recovery.starts_in_window,1);
+  const stopIntent=JSON.parse(run(binary,['control',managerState,'stopped'],3000));assert.equal(stopIntent.applied,false);
+  const stopped=await until(()=>{assert(!exited());const s=status();return s?.observed==='stopped'&&!s.stop_pending&&!s.launch_pending?s:null;});
+  assert.equal(stopped.desired,'stopped');assert.equal(stopped.recovery.starts_in_window,1);
+  const resumeIntent=JSON.parse(run(binary,['control',managerState,'running'],3000));assert.equal(resumeIntent.applied,false);
+  const resumed=await until(()=>{assert(!exited());const s=status();return s?.observed==='ready'&&!s.stop_pending&&!s.launch_pending?s:null;},12000);
+  assert.equal(resumed.desired,'running');assert.equal(resumed.recovery.starts_in_window,2);
   manager.kill('SIGTERM');await until(exited,4000);assert.equal(manager.exitCode,0);
-  writeFileSync(join(directory,mode+'-manager.json'),JSON.stringify({pending,ready,maintained,state:managerState,identity:'actual_private_helper',readiness:'synthetic',native_authority:false})+'\n',{mode:0o600});
+  writeFileSync(join(directory,mode+'-manager.json'),JSON.stringify({pending,ready,maintained,stopped,resumed,state:managerState,identity:'actual_private_helper',readiness:'synthetic',native_authority:false})+'\n',{mode:0o600});
  }catch(error){console.error('RETAINED private native manager fixture:',managerState);throw error;}finally {
   if(!exited()){manager.kill('SIGTERM');try{await until(exited,3000);}catch{manager.kill('SIGKILL');await until(exited,3000);}}
  }
 }
 assert(implementation.equals(readFileSync(join(core,name))));
 for(const [n,bytes] of Object.entries(integration))assert(bytes.equals(readFileSync(join(core,n))));
-const receipt={ok:true,directory,provenance_scope:'declared_runtime_integration_and_fixture_only',modes:['debug','release'],source_sha256:hash(implementation),integration_sha256:Object.fromEntries(Object.entries(integration).map(([n,b])=>[n,hash(b)])),fixture_sha256:hash(fixture),helper_source_sha256:hash(helperSource),actual_private_child_starts:12,actual_owned_serving_child_starts:10,actual_unrelated_private_children:2,actual_guarded_private_stops:4,guarded_private_stop_timeouts:2,self_expiring_private_helpers:2,pre_signal_revocations:2,denied_stop_validations:2,fresh_start_validations_per_queue_scenario:3,durable_stop_reservation:true,restored_stop_dispatch:false,missing_stop_history:'unknown',distinct_native_session_profiles:true,actual_counter_only_orbstack_session_calls:2,mlx_gui_calls:0,actual_manager_processes:2,manager_readiness:'synthetic',native_mlx_actions:0,native_inference:false,native_authority:false,installed:false};
+const receipt={ok:true,directory,provenance_scope:'declared_runtime_integration_and_fixture_only',modes:['debug','release'],source_sha256:hash(implementation),integration_sha256:Object.fromEntries(Object.entries(integration).map(([n,b])=>[n,hash(b)])),fixture_sha256:hash(fixture),helper_source_sha256:hash(helperSource),actual_private_child_starts:14,actual_owned_serving_child_starts:12,actual_unrelated_private_children:2,actual_guarded_private_stops:6,guarded_private_stop_timeouts:2,self_expiring_private_helpers:2,pre_signal_revocations:2,denied_stop_validations:2,fresh_start_validations_per_queue_scenario:3,durable_stop_reservation:true,restored_stop_dispatch:false,missing_stop_history:'unknown',distinct_native_session_profiles:true,actual_counter_only_orbstack_session_calls:2,mlx_gui_calls:0,actual_manager_processes:2,actual_manager_stop_resume_cycles:2,manager_readiness:'synthetic',native_mlx_actions:0,native_inference:false,native_authority:false,installed:false};
 writeFileSync(join(directory,'receipt.json'),JSON.stringify(receipt)+'\n',{mode:0o600});console.log(JSON.stringify(receipt));

@@ -23,6 +23,7 @@ struct NativeServingRecoveryTransport:ServiceRecoverySending {
     func accepts(_ command:ServiceLaunchCommand)->Bool {
         WireScalar.uuid(command.id) && command.profileHash==profile && command.expectedSHA256==applicationHashes[command.service]
     }
+    func owns(_ candidate:MLXServingProcessRuntime)->Bool {runtime === candidate}
     func request(_ request:ServiceRecoveryRequest)throws->SessionLaunchResult {
         guard accepts(request.command) else {throw ControlError.unauthorized}
         if request.command.service == .orbstack {

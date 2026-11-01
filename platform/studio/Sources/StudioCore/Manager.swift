@@ -10,7 +10,7 @@ public enum ManagerRuntime {
     }
     // No production issuer yet: only reviewed native enrollment may supply
     // this internal client. Never construct it from operator/model payloads.
-    static func run(directory:URL,nativeControl:NativeControlClient?,serviceObservations:ServiceObservationCache?=nil,serviceHealth:MLXServiceHealthCollector?=nil,serviceHealthReadiness:@Sendable()->(Bool,Bool)={ (false,false) },orbstackHealth:ServiceHealthCollector?=nil,orbstackHealthReadiness:@Sendable()->(Bool,Bool)={ (false,false) },serviceControl:(any ServiceRecoverySending)?=nil,drainObservations:ServiceDrainObservationCache?=nil,execution:ManagerExecutionPorts?=nil,telemetry:any PlatformTelemetry=NoopPlatformTelemetry()) throws {
+    static func run(directory:URL,nativeControl:NativeControlClient?,serviceObservations:ServiceObservationCache?=nil,serviceHealth:MLXServiceHealthCollector?=nil,serviceHealthReadiness:@Sendable()->(Bool,Bool)={ (false,false) },orbstackHealth:ServiceHealthCollector?=nil,orbstackHealthReadiness:@Sendable()->(Bool,Bool)={ (false,false) },serviceControl:(any ServiceRecoverySending)?=nil,servingLifecycle:ServingLifecyclePorts?=nil,drainObservations:ServiceDrainObservationCache?=nil,execution:ManagerExecutionPorts?=nil,telemetry:any PlatformTelemetry=NoopPlatformTelemetry()) throws {
         guard geteuid() != 0 else { throw ControlError.unauthorized }
         guard serviceHealth == nil || serviceHealth?.service == .mlx,
               orbstackHealth == nil || orbstackHealth?.service == .orbstack else {throw ServiceError.invalid}
@@ -20,6 +20,10 @@ public enum ManagerRuntime {
         let migrationHeld=journal.migrationHeld
         let activeExecution=migrationHeld ? nil:execution
         let activeServiceControl=migrationHeld ? nil:serviceControl
+        let activeServingLifecycle=migrationHeld ? nil:servingLifecycle
+        if let activeServingLifecycle {
+            guard let native=activeServiceControl as? NativeServingRecoveryTransport,native.owns(activeServingLifecycle.runtime) else {throw ServiceError.invalid}
+        }
         let activeNativeControl=migrationHeld ? nil:nativeControl
         // Trusted code-only injection. The public entry point has no issuer;
         // missing observations never become absence or a launch permission.
@@ -28,6 +32,7 @@ public enum ManagerRuntime {
         let orbstackHealthQueue=orbstackHealth.map {AsyncServiceHealth(collector:$0)}
         let serviceRecovery=try activeServiceControl.map {try ServiceRecoveryController(journal:journal,approvedHashes:$0.applicationHashes)}
         let serviceQueue=activeServiceControl.map {AsyncSessionControl(client:$0)}
+        let servingStopQueue=activeServingLifecycle.map {AsyncServingStop(runtime:$0.runtime)}
         var serviceCursor=0,serviceTransportUnavailable=false
         var nativeMaintenance=NativeMaintenanceCoordinator(journal:journal)
         let nativeQueue=activeNativeControl.map {AsyncNativeControl(client:$0)}
@@ -102,6 +107,14 @@ public enum ManagerRuntime {
                 case .failure:serviceTransportUnavailable=true // Preserve pending intent.
                 }
             }
+            if let result=servingStopQueue?.poll(),let serviceRecovery {
+                switch result.value {
+                case .success(let value):
+                    try serviceRecovery.receiveStop(result.request,result:value)
+                    serviceTransportUnavailable=false
+                case .failure:serviceTransportUnavailable=true // Preserve the original pending stop.
+                }
+            }
             if let result=nativeQueue?.poll() {
                 switch result.value {
                 case .success(let value):
@@ -132,6 +145,23 @@ public enum ManagerRuntime {
                 }
                 if nativeQueue != nil,let command=nativeMaintenance.beginObservation() {enqueueNative(command)}
                 try nativeLineage?.beginNext()
+                if let serviceRecovery,let servingStopQueue,servingStopQueue.available,let activeServingLifecycle {
+                    let tick=Int64(now*1000)
+                    if let request=try serviceRecovery.nextStop(now:sampledAt,tick:tick) {
+                        try servingStopQueue.submit(request)
+                    } else if let receipt=serviceRecovery.recordedLaunch(.mlx),
+                              let desired=ServiceDesired(rawValue:try journal.desired(service:"mlx")) {
+                        let observation=serviceObservations?.snapshot(for:.mlx)
+                        let failed=observation.map {value in value.identity==receipt.identity && !value.responding &&
+                            value.sessionReady && value.credentialsReady && value.health == .unavailable && value.sampledAt>=0 &&
+                            (-1000...5000).contains(sampledAt-value.sampledAt)} ?? false
+                        if desired == .stopped || (desired == .running && failed),
+                           let intent=activeServingLifecycle.intent(receipt,desired),
+                           let request=try serviceRecovery.planStop(intent,now:sampledAt,tick:tick) {
+                            try servingStopQueue.submit(request)
+                        }
+                    }
+                }
                 if let serviceRecovery,let serviceQueue,serviceQueue.available {
                     let services=ManagedService.allCases
                     for offset in 0..<services.count {
@@ -206,6 +236,7 @@ public enum ManagerRuntime {
                             // No production observation issuer is enrolled. A
                             // failed/missing adapter remains unknown, not absent.
                             var details=ServiceStatusPolicy.summary(desired:typed,observation:serviceObservations?.snapshot(for:service),launchPending:serviceRecovery?.isPending(service) ?? false,now:requestedAt)
+                            details["stop_pending"]=service == .mlx && (serviceRecovery?.isStopPending() ?? false)
                             if let recovery=serviceRecovery {details["recovery"]=recovery.summary(service:service,tick:Int64(ProcessInfo.processInfo.systemUptime*1000))}
                             if let progress=drainer?.status(service:service) {details["drain"]=ServiceDrainController.summary(progress)}
                             serviceStates[service.rawValue]=details

@@ -88,7 +88,14 @@ before dispatch, with a separate bounded attempt budget. Its one-use intent
 has no installed producer. Restoration can only look up or revoke the original
 ID; a cold actuator's missing history remains unknown and cannot unblock a new
 launch. A failed acknowledgement write retains the pending record. The bridge
-is code-only and not wired into the running manager's installed lifecycle.
+is wired into the manager only through internal code-only lifecycle ports
+bound to its exact native start runtime. Migration holds disable these ports.
+The producer must be nonblocking and consume separately prepared retained
+native authority; it cannot do filesystem/hash/IPC work on the heartbeat.
+Stopped intent can request a stop; running recovery needs fresh unavailable
+health for the exact identity, ready session/credentials and no loading state.
+Status reports `stop_pending`, not completed actuation. The public entry point
+has no installed producer, so none of this activates installed lifecycle.
 Control of a server surviving manager death remains unfinished. A historical PID cannot be adopted into POSIX
 child custody after reparenting; recovered control needs its own reviewed
 identity-bound native mechanism. Private helper stop/relaunch tests supply none

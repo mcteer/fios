@@ -29,6 +29,7 @@ private final class ServingStopGate:@unchecked Sendable {
 // Same-file extension reaches only the private fixture initializer/child. No
 // installed factory or native app is invoked; the actual helper has no models.
 extension MLXServingProcessRuntime {
+    fileprivate var fixtureRetainsChild:Bool {lock.lock();defer {lock.unlock()};return process != nil}
     fileprivate func fixtureStopIntent(_ receipt:ServiceRecordedLaunch)throws->ServingStopIntent {
         lock.lock();defer {lock.unlock()}
         guard executable.path.hasPrefix("/private/tmp/fios-009-serving-runtime-"),phase == .running,
@@ -100,8 +101,13 @@ extension MLXServingProcessRuntime {
             let gate=ServingRuntimeGate(trace:{event in
                 try? Data(String(HostResources.nowMilliseconds()).utf8).write(to:root.appendingPathComponent(event),options:.atomic)
             }),profile=try ServiceLaunchProfile.digest(pins)
-            let runtime=try MLXServingProcessRuntime.fixture(executable:executable,home:root.path,profile:profile,gate:gate)
+            let managerStopGate=ServingStopGate();managerStopGate.release.signal()
+            let runtime=try MLXServingProcessRuntime.fixture(executable:executable,home:root.path,profile:profile,gate:gate,stopGate:managerStopGate)
             let transport=try NativeServingRecoveryTransport(runtime:runtime,approvedHashes:pins),cache=ServiceObservationCache()
+            let lifecycle=ServingLifecyclePorts(runtime:runtime,intent:{receipt,desired in
+                guard desired == .stopped else {return nil}
+                return try? runtime.fixtureStopIntent(receipt) // Private CPU helper only, not native authority.
+            })
             Thread.detachNewThread {
                 var released=false
                 while true {
@@ -115,14 +121,16 @@ extension MLXServingProcessRuntime {
                     Thread.sleep(forTimeInterval:0.025)
                 }
             }
-            try ManagerRuntime.run(directory:root,nativeControl:nil,serviceObservations:cache,serviceControl:transport)
+            try ManagerRuntime.run(directory:root,nativeControl:nil,serviceObservations:cache,serviceControl:transport,servingLifecycle:lifecycle)
             // Only the fixture owner retires its exact private helper. This is
             // not a manager lifecycle permit or production shutdown behavior.
-            try runtime.endFixtureChild()
-            let end=ProcessInfo.processInfo.systemUptime+2
-            var reaped=false
-            while !reaped,ProcessInfo.processInfo.systemUptime<end {reaped=runtime.retireKnownExited();if !reaped {Thread.sleep(forTimeInterval:0.005)}}
-            guard reaped else {throw RuntimeError.deadline}
+            if runtime.fixtureRetainsChild {
+                try runtime.endFixtureChild()
+                let end=ProcessInfo.processInfo.systemUptime+2
+                var reaped=false
+                while !reaped,ProcessInfo.processInfo.systemUptime<end {reaped=runtime.retireKnownExited();if !reaped {Thread.sleep(forTimeInterval:0.005)}}
+                guard reaped else {throw RuntimeError.deadline}
+            }
             return
         }
         guard args.count==5 else {throw RuntimeError.invalid}
