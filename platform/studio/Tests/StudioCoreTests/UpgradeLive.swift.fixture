@@ -5,17 +5,17 @@ import CryptoKit
 @main struct UpgradeFixture {
     static func main()throws {
         let args=CommandLine.arguments
-        guard args.count==3,["seed","seed-seven","check","check-seven","future"].contains(args[1]),args[2].hasPrefix("/tmp/fios009-upgrade-") else {throw JournalError.invalid}
+        guard args.count==3,["seed","seed-seven","seed-eight","check","check-legacy","future"].contains(args[1]),args[2].hasPrefix("/tmp/fios009-upgrade-") else {throw JournalError.invalid}
         let directory=URL(fileURLWithPath:args[2]),owner=String(repeating:"a",count:64)
         let payload=Data("UPGRADE_EXPLICIT_EXPORT_FIXTURE".utf8)
         if args[1]=="future" {
             var database:OpaquePointer?
             guard sqlite3_open_v2(directory.appendingPathComponent("state.sqlite").path,&database,SQLITE_OPEN_READWRITE,nil)==SQLITE_OK else {throw JournalError.storage}
             defer {sqlite3_close(database)}
-            guard sqlite3_exec(database,"PRAGMA user_version=9",nil,nil,nil)==SQLITE_OK else {throw JournalError.storage}
+            guard sqlite3_exec(database,"PRAGMA user_version=10",nil,nil,nil)==SQLITE_OK else {throw JournalError.storage}
             return
         }
-        if ["seed","seed-seven"].contains(args[1]) {
+        if ["seed","seed-seven","seed-eight"].contains(args[1]) {
             do {
                 let journal=try Journal(directory:directory)
                 let job=UUID().uuidString.lowercased()
@@ -23,15 +23,16 @@ import CryptoKit
                 let store=try ArtifactStore(directory:directory.appendingPathComponent("artifacts"),availableBytes:{100<<30})
                 _=try store.publish(job:job,ownerHash:owner,data:payload,now:HostResources.nowMilliseconds())
             }
-            if args[1]=="seed-seven" {
+            if ["seed-seven","seed-eight"].contains(args[1]) {
                 var database:OpaquePointer?
                 guard sqlite3_open_v2(directory.appendingPathComponent("state.sqlite").path,&database,SQLITE_OPEN_READWRITE,nil)==SQLITE_OK else {throw JournalError.storage}
                 defer {sqlite3_close(database)}
-                guard sqlite3_exec(database,"DROP TABLE inference_scopes; PRAGMA user_version=7",nil,nil,nil)==SQLITE_OK else {throw JournalError.storage}
+                let sql=args[1]=="seed-seven" ? "DROP TABLE native_lineages; DROP TABLE inference_scopes; PRAGMA user_version=7":"DROP TABLE native_lineages; PRAGMA user_version=8"
+                guard sqlite3_exec(database,sql,nil,nil,nil)==SQLITE_OK else {throw JournalError.storage}
             }
             return
         }
-        if args[1]=="check-seven" {
+        if args[1]=="check-legacy" {
             var database:OpaquePointer?,row:OpaquePointer?
             guard sqlite3_open_v2(directory.appendingPathComponent("state.sqlite").path,&database,SQLITE_OPEN_READONLY,nil)==SQLITE_OK else {throw JournalError.storage}
             defer {sqlite3_finalize(row);sqlite3_close(database)}

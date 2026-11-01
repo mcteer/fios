@@ -374,3 +374,15 @@ node scripts/check-platform-sandbox-removal.mjs --isolated --base sha256:EXACT_R
 ```
 
 This explicit one-shot command checks the existing Running OrbStack instance and pinned local CLI, builds a finite no-model hold image without network/pulls, and uses the actual Swift adapter with512MiB/1CPU/64PID/network-none/readonly/cap-drop/no-new-privileges limits. It verifies running/malformed refusal in separate fake-CLI tests, actual daemon plain-rm running refusal, a TERM-ignoring owned process receiving10s stop grace, then plain full-ID removal and a successful exact-ID absence query within60s. It also rejects default zero from an actually unstarted container and verifies a separate fixed fast invocation's genuine zero exit using bounded completion timestamps. A lost CLI stop reply is retained as uncertain until fresh owned-state/absence observations. The source/compiler/binary receipt covers declared runtime/fixture inputs only. The private image stays unapproved; failure retains exact identity/state without automatic cleanup. No native model/service/VM activation or installed acceptance follows.
+
+## Native lineage journal compatibility
+
+Current development packages use FIS9/schema9. Per-request native lineage checkpoints preserve original correlation, replay boundaries and sticky refusal across restart and stopped backup/restore; they never restore a live observation or resolve inference ownership. Ordinary startup refuses schema7/8 unchanged.
+
+Use the matching reviewed old CLI to create its stopped backup. Then review the backup receipt and use only the current CLI’s explicit new-copy operation:
+
+```sh
+studioctl --state /ABS/REVIEWED_SCHEMA8_BACKUP migrate-state-eight --sha256 REVIEWED_BACKUP_SHA --to /ABS/NEW_PRIVATE_STATE
+```
+
+`migrate-state-seven` similarly targets schema9. Both preserve unknown old native lineage and publish a durable maintenance hold. Retain the original backup and matching old artifact for rollback; never start the old binary on the evolved database. `check-platform-upgrade.mjs --migrate-eight` exercises an isolated old8/new9/old8 artifact flow; the default same-schema mode requires two schema9 artifacts. None of these data operations installs/activates the Studio agent or supplies native admission authority.

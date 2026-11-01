@@ -23,13 +23,19 @@ public final class Journal {
     private let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
 
     public convenience init(directory:URL) throws {
-        try self.init(directory:directory,migrateSeven:false)
+        try self.init(directory:directory,migrateFrom:nil)
     }
     // Only an unpublished, verified backup copy may enter this path. Ordinary
     // startup never repairs/migrates a legacy schema.
     static func migrateSevenCopy(directory:URL) throws {
         guard directory.lastPathComponent.hasPrefix(".fios-restore-") else {throw JournalError.invalid}
-        let migrated=try Journal(directory:directory,migrateSeven:true)
+        let migrated=try Journal(directory:directory,migrateFrom:7)
+        try migrated.validateCurrentSchema()
+        try migrated.validateOwnershipRecords()
+    }
+    static func migrateEightCopy(directory:URL) throws {
+        guard directory.lastPathComponent.hasPrefix(".fios-restore-") else {throw JournalError.invalid}
+        let migrated=try Journal(directory:directory,migrateFrom:8)
         try migrated.validateCurrentSchema()
         try migrated.validateOwnershipRecords()
     }
@@ -37,7 +43,7 @@ public final class Journal {
         var info=stat()
         return lstat(directory.appendingPathComponent("migration-hold.json").path,&info)==0 || errno != ENOENT
     }
-    private init(directory:URL,migrateSeven:Bool) throws {
+    private init(directory:URL,migrateFrom:Int?) throws {
         self.directory=directory
         guard directory.isFileURL else { throw JournalError.invalid }
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true,
@@ -83,22 +89,22 @@ public final class Journal {
             let version = try scalar("PRAGMA user_version")
             let application=try scalar("PRAGMA application_id")
             if created {
-                guard !migrateSeven,version==0,application==0 else {throw JournalError.invalid}
+                guard migrateFrom==nil,version==0,application==0 else {throw JournalError.invalid}
             } else {
                 // A marker/version alone is not permission to repair/adopt an
                 // unknown layout. Inspect/recover only a bounded private copy
                 // before touching the original with SQLite. Older layouts need
                 // an explicit reviewed migration.
-                guard version==(migrateSeven ? 7:8),application==0x46495339 else {throw JournalError.invalid}
-                try validateCurrentSchema(schema:migrateSeven ? 7:8)
-                try validateOwnershipRecords(legacy:migrateSeven)
+                guard version==(migrateFrom ?? 9),application==0x46495339 else {throw JournalError.invalid}
+                try validateCurrentSchema(schema:migrateFrom ?? 9)
+                try validateOwnershipRecords(legacy:migrateFrom==7,lineage:migrateFrom==nil)
                 guard sqlite3_close(db)==SQLITE_OK else {throw JournalError.storage}
                 db=nil;jobsCache=nil;sandboxesCache=nil
                 guard sqlite3_open_v2(file,&db,SQLITE_OPEN_READWRITE|SQLITE_OPEN_FULLMUTEX,nil)==SQLITE_OK else {throw JournalError.storage}
                 sqlite3_busy_timeout(db,1000)
-                guard try scalar("PRAGMA user_version")==(migrateSeven ? 7:8),try scalar("PRAGMA application_id")==0x46495339 else {throw JournalError.invalid}
-                try validateCurrentSchema(schema:migrateSeven ? 7:8)
-                try validateOwnershipRecords(legacy:migrateSeven)
+                guard try scalar("PRAGMA user_version")==(migrateFrom ?? 9),try scalar("PRAGMA application_id")==0x46495339 else {throw JournalError.invalid}
+                try validateCurrentSchema(schema:migrateFrom ?? 9)
+                try validateOwnershipRecords(legacy:migrateFrom==7,lineage:migrateFrom==nil)
             }
             // Write the platform marker before a new database enters WAL, so
             // offline backup can identify even its first uncheckpointed boot.
@@ -107,6 +113,7 @@ public final class Journal {
             try execute("PRAGMA synchronous=FULL")
             try execute("CREATE TABLE IF NOT EXISTS inference(job TEXT NOT NULL, attempt INTEGER NOT NULL CHECK(attempt BETWEEN 0 AND 3), model TEXT NOT NULL, uncertain INTEGER NOT NULL CHECK(uncertain IN(0,1)), PRIMARY KEY(job,attempt))")
             try execute("CREATE TABLE IF NOT EXISTS inference_scopes(job TEXT NOT NULL,attempt INTEGER NOT NULL CHECK(attempt BETWEEN 0 AND 3),payload TEXT NOT NULL,state TEXT NOT NULL CHECK(state IN('reserved','dispatched','uncertain','complete','not_sent')),PRIMARY KEY(job,attempt))")
+            try execute("CREATE TABLE IF NOT EXISTS native_lineages(job TEXT NOT NULL,attempt INTEGER NOT NULL CHECK(attempt BETWEEN 0 AND 3),payload TEXT NOT NULL,PRIMARY KEY(job,attempt))")
             try execute("CREATE TABLE IF NOT EXISTS services(service TEXT PRIMARY KEY CHECK(service IN('mlx','orbstack')),desired TEXT NOT NULL CHECK(desired IN('running','maintenance','stopped')))")
             try execute("CREATE TABLE IF NOT EXISTS jobs(id TEXT PRIMARY KEY,idempotency TEXT NOT NULL UNIQUE,payload TEXT NOT NULL)")
             try execute("CREATE TABLE IF NOT EXISTS request_history(job TEXT NOT NULL,attempt INTEGER NOT NULL,model TEXT NOT NULL,PRIMARY KEY(job,attempt))")
@@ -121,15 +128,15 @@ public final class Journal {
             for record in try workerGrants() {
                 try execute("INSERT OR IGNORE INTO worker_launches VALUES(?,?,?,?,0)",[record.job,String(record.attempt),UUID().uuidString.lowercased(),record.grant.boot])
             }
-            if migrateSeven {
+            if migrateFrom==7 {
                 // Preserve exactly the old unresolved rows; missing old scope
                 // never becomes fabricated native identity or terminal proof.
                 try transaction {
                     try execute("INSERT INTO inference_scopes(job,attempt,payload,state) SELECT h.job,h.attempt,'null',CASE WHEN EXISTS(SELECT 1 FROM inference i WHERE i.job=h.job AND i.attempt=h.attempt) THEN 'uncertain' ELSE 'complete' END FROM request_history h")
                     try execute("UPDATE inference SET uncertain=1")
-                    try execute("PRAGMA user_version=8")
+                    try execute("PRAGMA user_version=9")
                 }
-            }else {try execute("PRAGMA user_version=8")}
+            }else {try execute("PRAGMA user_version=9")}
             try recoverJobs()
             // Restart never proves native completion.
             try transaction {
@@ -166,16 +173,17 @@ public final class Journal {
         // The marker is written before WAL on first creation, so legitimate
         // platform state never needs adoption of an unmarked main database.
         return Array(header.prefix(16)) == Array("SQLite format 3\0".utf8) &&
-            word(68) == 0x46495339 && word(60) <= 8
+            word(68) == 0x46495339 && word(60) <= 9
     }
 
-    private func validateCurrentSchema(schema:Int=8) throws {
-        // Exact reviewed v8 SQL, normalized only for whitespace. Preserve case
+    private func validateCurrentSchema(schema:Int=9) throws {
+        // Exact reviewed v9 SQL, normalized only for whitespace. Preserve case
         // in quoted CHECK values; do not silently weaken constraints, rebuild
         // indexes or discard future tables/columns/ownership during startup.
         var expected:[String:String]=[
             "inference":"CREATE TABLE inference(job TEXT NOT NULL, attempt INTEGER NOT NULL CHECK(attempt BETWEEN 0 AND 3), model TEXT NOT NULL, uncertain INTEGER NOT NULL CHECK(uncertain IN(0,1)), PRIMARY KEY(job,attempt))",
             "inference_scopes":"CREATE TABLE inference_scopes(job TEXT NOT NULL,attempt INTEGER NOT NULL CHECK(attempt BETWEEN 0 AND 3),payload TEXT NOT NULL,state TEXT NOT NULL CHECK(state IN('reserved','dispatched','uncertain','complete','not_sent')),PRIMARY KEY(job,attempt))",
+            "native_lineages":"CREATE TABLE native_lineages(job TEXT NOT NULL,attempt INTEGER NOT NULL CHECK(attempt BETWEEN 0 AND 3),payload TEXT NOT NULL,PRIMARY KEY(job,attempt))",
             "services":"CREATE TABLE services(service TEXT PRIMARY KEY CHECK(service IN('mlx','orbstack')),desired TEXT NOT NULL CHECK(desired IN('running','maintenance','stopped')))",
             "jobs":"CREATE TABLE jobs(id TEXT PRIMARY KEY,idempotency TEXT NOT NULL UNIQUE,payload TEXT NOT NULL)",
             "request_history":"CREATE TABLE request_history(job TEXT NOT NULL,attempt INTEGER NOT NULL,model TEXT NOT NULL, request_id TEXT,PRIMARY KEY(job,attempt))",
@@ -185,6 +193,7 @@ public final class Journal {
             "worker_launches":"CREATE TABLE worker_launches(job TEXT NOT NULL,attempt INTEGER NOT NULL,nonce TEXT NOT NULL,boot TEXT NOT NULL,reaped INTEGER NOT NULL CHECK(reaped IN(0,1)),PRIMARY KEY(job,attempt))"
         ]
         if schema==7 {expected.removeValue(forKey:"inference_scopes")}
+        if schema<9 {expected.removeValue(forKey:"native_lineages")}
         func normalized(_ value:String)->String {
             var result="",quote:Character?
             for character in value {
@@ -226,7 +235,7 @@ public final class Journal {
         guard !data.contains(0),let value=String(data:data,encoding:.utf8) else {throw JournalError.invalid}
         return value
     }
-    private func validateOwnershipRecords(legacy:Bool=false) throws {
+    private func validateOwnershipRecords(legacy:Bool=false,lineage:Bool=true) throws {
         _=try jobs();_=try sandboxRecords()
         guard try scalar("SELECT count(*) FROM inference i WHERE NOT EXISTS(SELECT 1 FROM request_history h WHERE h.job=i.job AND h.attempt=i.attempt AND h.model=i.model)")==0 else {throw JournalError.invalid}
         // Every persisted identity participates in recovery, including history
@@ -254,6 +263,7 @@ public final class Journal {
             }
         }
         if !legacy {try validateInferenceScopes()}
+        if lineage {try validateNativeLineages()}
         let launches=try statement("SELECT job,attempt,nonce,boot,reaped FROM worker_launches")
         defer {sqlite3_finalize(launches)}
         var launchesCount=0
@@ -437,6 +447,46 @@ public final class Journal {
             guard sqlite3_changes(db)==1 else {throw JournalError.conflict}
         }
     }
+    // Readonly native lineage updates persist before becoming visible to the
+    // caller. This records correlation only; it never resolves an inference.
+    func observeLineage(job:String,attempt:Int,scope:InferenceScope,peer:NativeControlPeer,
+                        sample:NativeRequestLineageSample?,now:Int64)throws->NativeRequestLineageObservation {
+        guard let record=try inferenceScope(job:job,attempt:attempt),
+              [.dispatched,.uncertain].contains(record.state),
+              try record.scope.encoded()==scope.encoded() else {throw JournalError.conflict}
+        let saved=try lineageCheckpoint(job:job,attempt:attempt)
+        var consumer=try NativeRequestLineageConsumer(scope:scope,job:job,attempt:attempt,peer:peer,checkpoint:saved)
+        let observation=consumer.accept(sample,now:now)
+        let payload=String(decoding:try consumer.checkpoint(scope:scope),as:UTF8.self)
+        try execute("INSERT INTO native_lineages(job,attempt,payload) VALUES(?,?,?) ON CONFLICT(job,attempt) DO UPDATE SET payload=excluded.payload",[job,String(attempt),payload])
+        return observation
+    }
+    private func lineageCheckpoint(job:String,attempt:Int)throws->Data? {
+        try validate(job:job,attempt:attempt)
+        let row=try statement("SELECT payload FROM native_lineages WHERE job=? AND attempt=?",[job,String(attempt)])
+        defer {sqlite3_finalize(row)}
+        let code=sqlite3_step(row)
+        if code==SQLITE_DONE {return nil}
+        guard code==SQLITE_ROW else {throw JournalError.invalid}
+        let data=try storedBytes(row,0,maximum:16384)
+        guard sqlite3_step(row)==SQLITE_DONE else {throw JournalError.invalid}
+        return data
+    }
+    private func validateNativeLineages()throws {
+        let rows=try statement("SELECT job,attempt,payload FROM native_lineages")
+        defer {sqlite3_finalize(rows)}
+        var count=0
+        while true {
+            let code=sqlite3_step(rows)
+            if code==SQLITE_DONE {break}
+            guard code==SQLITE_ROW,count<1024,sqlite3_column_type(rows,1)==SQLITE_INTEGER else {throw JournalError.invalid}
+            let job=try storedString(rows,0),attempt=Int(sqlite3_column_int64(rows,1))
+            guard let record=try inferenceScope(job:job,attempt:attempt),record.state != .reserved else {throw JournalError.invalid}
+            let data=try storedBytes(rows,2,maximum:16384)
+            try NativeRequestLineageConsumer.validateCheckpoint(data,scope:record.scope,job:job,attempt:attempt)
+            count+=1
+        }
+    }
     func jobs() throws -> [DurableJob] {
         if let jobsCache {return jobsCache}
         let stmt=try statement("SELECT id,idempotency,payload FROM jobs ORDER BY id");defer { sqlite3_finalize(stmt) }
@@ -590,6 +640,7 @@ public final class Journal {
                 // has independent lifetime and is never expired by a clock.
                 try execute("DELETE FROM worker_grants WHERE job=? AND reaped=1",[job.id])
                 try execute("DELETE FROM worker_launches WHERE job=? AND reaped=1",[job.id])
+                try execute("DELETE FROM native_lineages WHERE job=?",[job.id])
                 try execute("DELETE FROM inference_scopes WHERE job=? AND state IN('complete','not_sent')",[job.id])
                 try execute("DELETE FROM request_history WHERE job=?",[job.id])
                 try execute("DELETE FROM sandboxes WHERE job=?",[job.id])

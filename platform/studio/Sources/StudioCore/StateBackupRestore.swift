@@ -5,13 +5,16 @@ extension StoppedStateBackup {
     // Restore into a NEW private state directory only. No in-place rollback,
     // launchd/native action, enrollment, source deletion or task replay.
     public static func restore(directory:URL,expectedSHA256:String,destination:URL)throws->StateBackupReceipt {
-        try restore(directory:directory,expectedSHA256:expectedSHA256,destination:destination,migrateSeven:false)
+        try restore(directory:directory,expectedSHA256:expectedSHA256,destination:destination,migrateFrom:nil)
     }
     public static func migrateSeven(directory:URL,expectedSHA256:String,destination:URL)throws->StateBackupReceipt {
-        try restore(directory:directory,expectedSHA256:expectedSHA256,destination:destination,migrateSeven:true)
+        try restore(directory:directory,expectedSHA256:expectedSHA256,destination:destination,migrateFrom:7)
     }
-    private static func restore(directory:URL,expectedSHA256:String,destination:URL,migrateSeven:Bool)throws->StateBackupReceipt {
-        let receipt=try verify(directory:directory,expectedSHA256:expectedSHA256,journalSchema:migrateSeven ? 7:8)
+    public static func migrateEight(directory:URL,expectedSHA256:String,destination:URL)throws->StateBackupReceipt {
+        try restore(directory:directory,expectedSHA256:expectedSHA256,destination:destination,migrateFrom:8)
+    }
+    private static func restore(directory:URL,expectedSHA256:String,destination:URL,migrateFrom:Int?)throws->StateBackupReceipt {
+        let receipt=try verify(directory:directory,expectedSHA256:expectedSHA256,journalSchema:migrateFrom ?? 9)
         guard destination.isFileURL else {throw JournalError.invalid}
         let parent=destination.deletingLastPathComponent()
         let sourcePath=directory.resolvingSymlinksInPath().standardizedFileURL.path
@@ -32,7 +35,7 @@ extension StoppedStateBackup {
         }
         // Verify the copied tree, not just the previously observed source. A
         // changed/linked/extra file cannot become a published restoration.
-        _=try verify(directory:temporary,expectedSHA256:expectedSHA256,journalSchema:migrateSeven ? 7:8)
+        _=try verify(directory:temporary,expectedSHA256:expectedSHA256,journalSchema:migrateFrom ?? 9)
         // Fresh working-state locks are not copied from a backup. Create them
         // only after verifying the private copy, so a stopped restored state
         // can be backed up again without first starting any controller/store.
@@ -42,13 +45,16 @@ extension StoppedStateBackup {
             guard fd>=0 else {throw JournalError.conflict}
             close(fd)
         }
-        if migrateSeven {
-            let hold=try JSONSerialization.data(withJSONObject:["version":1,"from_schema":7,"to_schema":8,"input_backup_sha256":expectedSHA256,"reason":"legacy_native_scope_unknown","admission":"maintenance"],options:[.sortedKeys])
-            let path=temporary.appendingPathComponent("migration-hold.json")
-            try hold.write(to:path,options:.withoutOverwriting)
-            try FileManager.default.setAttributes([.posixPermissions:0o600],ofItemAtPath:path.path)
-            try Journal.migrateSevenCopy(directory:temporary)
-            recovery.append("migration-hold.json")
+        if let migrateFrom {
+            if try migrationHoldPayload(directory:temporary)==nil {
+                let hold=try JSONSerialization.data(withJSONObject:["version":1,"from_schema":migrateFrom,"to_schema":9,"input_backup_sha256":expectedSHA256,"reason":migrateFrom==7 ? "legacy_native_scope_unknown":"legacy_native_lineage_unknown","admission":"maintenance"],options:[.sortedKeys])
+                let path=temporary.appendingPathComponent("migration-hold.json")
+                try hold.write(to:path,options:.withoutOverwriting)
+                try FileManager.default.setAttributes([.posixPermissions:0o600],ofItemAtPath:path.path)
+                recovery.append("migration-hold.json")
+            }
+            if migrateFrom==7 {try Journal.migrateSevenCopy(directory:temporary)}
+            else {try Journal.migrateEightCopy(directory:temporary)}
         }
         let artifactDirectory=temporary.appendingPathComponent("artifacts")
         let artifactNames=try FileManager.default.contentsOfDirectory(atPath:artifactDirectory.path)

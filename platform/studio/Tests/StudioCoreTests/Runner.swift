@@ -30,6 +30,8 @@ struct PolicyTestRunner {
             ("native control",runNativeControlTests),
             ("native request lineage",runNativeRequestLineageTests),
             ("native lineage consumer",runNativeLineageConsumerTests),
+            ("durable native lineage",runDurableLineageTests),
+            ("native lineage schema migration",runLineageMigrationTests),
             ("scalars",runScalarTests),
             ("enums",runEnumTests),
             ("shared kernel VM",runSharedKernelVMTests),

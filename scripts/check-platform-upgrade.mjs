@@ -8,11 +8,13 @@ import {validatePlatformRelease} from './lib/platform-release.mjs';
 
 const args=process.argv.slice(2);
 const migrateSeven=args.length===10&&args[9]==='--migrate-seven';
-if((args.length!==9&&!migrateSeven)||args[0]!=='--isolated'||args[1]!=='--old'||args[3]!=='--old-sha256'||args[5]!=='--new'||args[7]!=='--new-sha256'||!args[2].startsWith('/')||!args[6].startsWith('/'))throw Error('Usage: node scripts/check-platform-upgrade.mjs --isolated --old ABS --old-sha256 REVIEWED_SHA --new ABS --new-sha256 REVIEWED_SHA [--migrate-seven]');
+const migrateEight=args.length===10&&args[9]==='--migrate-eight';
+const migrating=migrateSeven||migrateEight,oldSchema=migrateSeven?7:migrateEight?8:9;
+if((args.length!==9&&!migrating)||args[0]!=='--isolated'||args[1]!=='--old'||args[3]!=='--old-sha256'||args[5]!=='--new'||args[7]!=='--new-sha256'||!args[2].startsWith('/')||!args[6].startsWith('/'))throw Error('Usage: node scripts/check-platform-upgrade.mjs --isolated --old ABS --old-sha256 REVIEWED_SHA --new ABS --new-sha256 REVIEWED_SHA [--migrate-seven|--migrate-eight]');
 assert.notEqual(args[4],args[8],'Recovery rehearsal requires distinct reviewed artifacts');
 const oldRelease=resolve(args[2]),newRelease=resolve(args[6]);
 for(const [path,digest] of [[oldRelease,args[4]],[newRelease,args[8]]]) {
-  assert.ok(path.startsWith('/'));const verified=validatePlatformRelease(path,digest,{journalSchema:migrateSeven&&path===oldRelease?7:8});
+  assert.ok(path.startsWith('/'));const verified=validatePlatformRelease(path,digest,{journalSchema:path===oldRelease?oldSchema:9});
   assert.equal(verified.activation,false);assert.equal(verified.manifest.package_complete,false);
 }
 const root=resolve(import.meta.dirname,'..');
@@ -27,12 +29,12 @@ function run(program,argv,timeout=5000) {
 }
 const cli=(release,directory,argv)=>JSON.parse(run(join(release,'bin/studioctl'),['--state',directory,...argv]));
 function rollbackProposal(bundle,backupSHA256,destination) {
-  const value=JSON.parse(run(process.execPath,[join(root,'scripts/install-platform.mjs'),migrateSeven?'plan-rollback-seven':'plan-rollback',
+  const value=JSON.parse(run(process.execPath,[join(root,'scripts/install-platform.mjs'),migrateSeven?'plan-rollback-seven':migrateEight?'plan-rollback-eight':'plan-rollback',
     '--release',newRelease,'--sha256',args[8],'--host','fios-edge-a.lab','--previous',oldRelease,'--previous-sha256',args[4],
     '--backup',bundle,'--backup-sha256',backupSHA256,'--to',destination]));
   assert.equal(value.changes_made,false);assert.equal(value.activation,false);assert.deepEqual(value.privileged_commands,[]);
   assert.equal(value.current_manifest_sha256,args[8]);assert.equal(value.previous_manifest_sha256,args[4]);
-  assert.equal(value.previous_journal_schema,migrateSeven?7:8);assert.equal(existsSync(destination),false);
+  assert.equal(value.previous_journal_schema,oldSchema);assert.equal(existsSync(destination),false);
   assert.equal(value.proposed_commands.length,2);
   for(const command of value.proposed_commands){assert.equal(command.program,join(oldRelease,'bin/studioctl'));assert.equal(command.execution,'operator_only');}
   return value.proposed_commands;
@@ -56,7 +58,7 @@ async function cycle(release,directory,legacy=false) {
       if(result.status===0)status=JSON.parse(result.stdout);else await delay(50);
     }
     assert.equal(status?.ok,true);assert.equal(status.sandbox_admission,'disabled');
-    if(migrateSeven&&!legacy)assert.equal(status.migration_maintenance,true);
+    if(migrating&&!legacy)assert.equal(status.migration_maintenance,true);
     const observation=cli(release,directory,['activity']).observation;
     assert.equal(observation.coverage,'unsupported');
     const exported=cli(newRelease,directory,['export']);
@@ -65,39 +67,39 @@ async function cycle(release,directory,legacy=false) {
     const live=spawnSync(join(release,'bin/studioctl'),['--state',directory,'backup-state','--to',join(scratch,'live-backup-must-not-exist')],{stdio:'ignore',timeout:2000});
     assert.equal(live.status,1,'Backup accepted a live artifact manager');
   }finally {await stop(child);}
-  assert.equal(JSON.parse(run(helper,[legacy?'check-seven':'check',directory])).uncertain,1);
+  assert.equal(JSON.parse(run(helper,[legacy?'check-legacy':'check',directory])).uncertain,1);
 }
 try {
   const source=join(scratch,'UpgradeLive.swift');
   writeFileSync(source,fixture);
   const found=run('/usr/bin/find',[join(root,'platform/studio/Sources/StudioCore'),'-name','*.swift']).split('\n').sort();
   run('/usr/bin/env',['swiftc','-O','-swift-version','6','-warnings-as-errors','-I',join(root,'platform/studio/Sources/CSQLite'),...found,source,'-o',helper],120000);
-  run(helper,[migrateSeven?'seed-seven':'seed',state]);
-  await cycle(oldRelease,state,migrateSeven);
+  run(helper,[migrateSeven?'seed-seven':migrateEight?'seed-eight':'seed',state]);
+  await cycle(oldRelease,state,migrating);
   const bundle=join(scratch,'bundle');const backup=cli(oldRelease,state,['backup-state','--to',bundle]);
   assert.match(backup.sha256,/^[a-f0-9]{64}$/);
   let restored;
-  if(migrateSeven) {
+  if(migrating) {
     const original=readFileSync(join(state,'state.sqlite'));
     const refused=spawnSync(join(newRelease,'bin/studio-manager'),['--state',state],{stdio:'ignore',timeout:3000});
     assert.equal(refused.status,1);assert.deepEqual(readFileSync(join(state,'state.sqlite')),original,'New startup changed legacy source');
     const migrated=join(scratch,'migrated');
-    const result=cli(newRelease,bundle,['migrate-state-seven','--sha256',backup.sha256,'--to',migrated]);
-    assert.equal(result.maintenance,true);assert.equal(result.started,false);assert.equal(result.from_schema,7);assert.equal(result.to_schema,8);
+    const result=cli(newRelease,bundle,[migrateSeven?'migrate-state-seven':'migrate-state-eight','--sha256',backup.sha256,'--to',migrated]);
+    assert.equal(result.maintenance,true);assert.equal(result.started,false);assert.equal(result.from_schema,oldSchema);assert.equal(result.to_schema,9);
     await cycle(newRelease,migrated);
     const evolved=readFileSync(join(migrated,'state.sqlite'));
     const oldRefused=spawnSync(join(oldRelease,'bin/studio-manager'),['--state',migrated],{stdio:'ignore',timeout:3000});
-    assert.equal(oldRefused.status,1);assert.deepEqual(readFileSync(join(migrated,'state.sqlite')),evolved,'Old startup downgraded schema8');
+    assert.equal(oldRefused.status,1);assert.deepEqual(readFileSync(join(migrated,'state.sqlite')),evolved,'Old startup downgraded schema9');
     const heldBundle=join(scratch,'held-bundle'),held=cli(newRelease,migrated,['backup-state','--to',heldBundle]);
     restored=join(scratch,'restored');
     cli(newRelease,heldBundle,['restore-state','--sha256',held.sha256,'--to',restored]);
     await cycle(newRelease,restored);
-    const rollback=join(scratch,'rollback-seven');
+    const rollback=join(scratch,'rollback-legacy');
     const proposal=rollbackProposal(bundle,backup.sha256,rollback);
     // This disposable fixture explicitly executes only the two reviewed old
     // CLI data operations. No installer/lifecycle/root command is emitted.
     for(const command of proposal)JSON.parse(run(command.program,command.arguments));
-    console.log('PASS: current installer rollback proposal verified and executed with retained old7 artifact/original backup; fresh-directory restore only');
+    console.log(`PASS: current installer rollback proposal verified and executed with retained old${oldSchema} artifact/original backup; fresh-directory restore only`);
     await cycle(oldRelease,rollback,true);await cycle(oldRelease,state,true);
     assert.equal(createHash('sha256').update(readFileSync(join(bundle,'backup.json'))).digest('hex'),backup.sha256);
   }else {
@@ -117,8 +119,8 @@ try {
     const refused=spawnSync(join(release,'bin/studioctl'),['--state',future,'backup-state','--to',join(scratch,'future-backup-must-not-exist')],{stdio:'ignore',timeout:2000});
     assert.equal(refused.status,1);assert.equal(digest(),before);
   }
-  if(migrateSeven)console.log('PASS: reviewed schema7 old artifact→stopped backup→explicit held schema8 migration/rebackup/restore→old7 rollback from retained original; incompatible startup refused unchanged, uncertainty/export/budget retained; source fixture only, no installed/native acceptance');
-  else console.log('PASS: verified old/new/old development artifacts, same-schema8 ownership/export preservation, stopped old backup→new verify/restore→old startup, future9 refusal without database mutation; disposable local state ONLY, no installed rollback/schema migration/native acceptance');
+  if(migrating)console.log(`PASS: reviewed schema${oldSchema} old artifact→stopped backup→explicit held schema9 migration/rebackup/restore→old rollback from retained original; incompatible startup refused unchanged, uncertainty/export/budget retained; source fixture only, no installed/native acceptance`);
+  else console.log('PASS: verified old/new/old development artifacts, same-schema9 ownership/export preservation, stopped old backup→new verify/restore→old startup, future10 refusal without database mutation; disposable local state ONLY, no installed rollback/schema migration/native acceptance');
   succeeded=true;
 }finally {
   for(const child of children)await stop(child);

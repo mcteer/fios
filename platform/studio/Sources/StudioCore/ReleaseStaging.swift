@@ -88,7 +88,7 @@ public enum PlatformReleaseStaging {
     private static func artifacts(_ bytes:Data)throws->[Artifact] {
         try StrictJSON.validate(bytes,maximum:65536)
         guard let v=try JSONSerialization.jsonObject(with:bytes) as? [String:Any],WireScalar.integer(v["schema"],maximum:1)==1,
-              WireScalar.integer(v["journal_schema"],maximum:8)==8,v["approval"] as? String=="development_observation_only",
+              WireScalar.integer(v["journal_schema"],maximum:9)==9,v["approval"] as? String=="development_observation_only",
               let complete=v["package_complete"] as? NSNumber,CFGetTypeID(complete)==CFBooleanGetTypeID(),!complete.boolValue,
               let activation=v["activation"] as? [String:Any],Set(activation.keys)==Set(["managed_inference","sandbox_tasks","native_lifecycle","launchd_installation"]),
               activation.values.allSatisfy({if let flag=$0 as? NSNumber {return CFGetTypeID(flag)==CFBooleanGetTypeID() && !flag.boolValue};return false}),

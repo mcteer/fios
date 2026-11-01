@@ -19,7 +19,7 @@ func runReleaseStagingTests()throws {
         try bytes.write(to:file);try FileManager.default.setAttributes([.posixPermissions:mode],ofItemAtPath:file.path)
         artifacts.append(["path":name,"bytes":bytes.count,"mode":mode,"sha256":SHA256.hash(data:bytes).map {String(format:"%02x",$0)}.joined()])
     }
-    let data=try JSONSerialization.data(withJSONObject:["schema":1,"journal_schema":8,"approval":"development_observation_only","package_complete":false,
+    let data=try JSONSerialization.data(withJSONObject:["schema":1,"journal_schema":9,"approval":"development_observation_only","package_complete":false,
         "activation":["managed_inference":false,"sandbox_tasks":false,"native_lifecycle":false,"launchd_installation":false],"artifacts":artifacts],options:[.sortedKeys])
     let receipt=source.appendingPathComponent("release.json")
     try data.write(to:receipt);try FileManager.default.setAttributes([.posixPermissions:0o600],ofItemAtPath:receipt.path)

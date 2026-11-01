@@ -56,3 +56,9 @@ A readonly adapter fixture and contract give008 host/model/endpoint-bound activi
 ## Required tests
 
 Idle; ready-but-preparing before scheduler enqueue; direct/tunnelled/manager requests; queued/prefill/streaming/slow-reader response; overlapping same-model completion; busy different-model race; external arrival between snapshot and dispatch; cancellation with compute continuing; manager/native restart; delayed/replayed/mismatched/overflowed observations; multi-resident contradiction; unsupported modality; source outage; old uncertain row surviving a successful new request; idle replacement and busy-conflict admission races. Both Studios need separately authorized evidence, not just mocks.
+
+### Durable native lineage checkpoint (schema9)
+
+The separate journal stores the original native root and peer identity plus the consumer’s last sequence/source time, wall-clock history and sticky refusal state. `observeLineage` accepts only the original exact scope of an unresolved dispatched/uncertain request, persists the checkpoint before returning a read-only live observation, and never changes inference outcome. Missing lineage remains unknown. Restart restores correlation/replay/refusal state while unresolved inference remains uncertain; no cached sample becomes live merely by decoding a checkpoint. Native PID/start and root tokens retain their full UInt64 width as canonical decimal strings. A newer request completing cannot delete an older checkpoint or uncertainty.
+
+Schema7/8 startup remains closed. Their explicit stopped-backup copy migrations publish schema9 with a durable maintenance hold; original backups remain available for matching old-artifact rollback. There is no installed native issuer, automatic per-request polling enrollment or native terminal/quiescence reconciliation authority in this checkpoint. T021 remains incomplete.

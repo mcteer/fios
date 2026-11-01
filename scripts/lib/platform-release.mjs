@@ -11,9 +11,9 @@ const fail=()=>{throw Error('Invalid or unsupported platform release');};
 function exact(value,keys){
   if(!value||typeof value!=='object'||Array.isArray(value)||Object.keys(value).sort().join('\0')!==[...keys].sort().join('\0'))fail();
 }
-export function validatePlatformManifest(value,{template=false,journalSchema=8}={}){
+export function validatePlatformManifest(value,{template=false,journalSchema=9}={}){
   exact(value,['schema','approval','architecture','toolchain','sqlite','journal_schema','journal_application_id','python','native_inventory','approved_sandbox_images','activation',...(template?[]:['source_revision','source_tree_sha256','artifacts','package_complete'])]);
-  if(![7,8].includes(journalSchema))fail();
+  if(![7,8,9].includes(journalSchema))fail();
   if(value.schema!==1||value.approval!=='development_observation_only'||value.architecture!=='arm64'||value.journal_schema!==journalSchema||value.journal_application_id!=='FIS9')fail();
   exact(value.toolchain,['swift','swift_build','sdk','minimum_macos']);
   exact(value.sqlite,['provider','version']);
@@ -46,7 +46,7 @@ export function decodePlatformManifest(bytes,options){
   if(!bytes.equals(Buffer.from(JSON.stringify(value,null,2)+'\n')))fail();
   return validatePlatformManifest(value,options);
 }
-export function validatePlatformRelease(directory,expectedManifestSHA256,{journalSchema=8}={}){
+export function validatePlatformRelease(directory,expectedManifestSHA256,{journalSchema=9}={}){
   if(!digest(expectedManifestSHA256)||!directory.startsWith('/'))fail();
   const root=resolve(directory),uid=process.getuid();
   const same=(a,b)=>['dev','ino','mode','uid','nlink','size','mtimeNs','ctimeNs'].every(key=>a[key]===b[key]);

@@ -4,10 +4,10 @@ import CryptoKit
 
 extension StoppedStateBackup {
     public static func verify(directory:URL,expectedSHA256:String)throws->StateBackupReceipt {
-        try verify(directory:directory,expectedSHA256:expectedSHA256,journalSchema:8)
+        try verify(directory:directory,expectedSHA256:expectedSHA256,journalSchema:9)
     }
     static func verify(directory:URL,expectedSHA256:String,journalSchema:Int)throws->StateBackupReceipt {
-        guard [7,8].contains(journalSchema) else {throw JournalError.invalid}
+        guard [7,8,9].contains(journalSchema) else {throw JournalError.invalid}
         struct Manifest:Decodable {
             let version:Int;let scope:String;let host_hash:String;let owner_uid:UInt32;let journal_schema:Int;let journal_application_id:String
             let journal_bytes:Int64;let journal_sha256:String;let artifact_index_sha256:String;let artifact_files:[ArtifactBackupFile]

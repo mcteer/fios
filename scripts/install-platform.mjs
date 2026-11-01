@@ -15,6 +15,7 @@ Commands:
   plan-restore         --backup ABS_BACKUP --backup-sha256 REVIEWED_BACKUP_SHA256 --to ABS_NEW_STATE
   plan-rollback        --previous ABS_PREVIOUS_RELEASE --previous-sha256 REVIEWED_PREVIOUS_SHA256 --backup ABS_BACKUP --backup-sha256 REVIEWED_BACKUP_SHA256 --to ABS_NEW_STATE
   plan-rollback-seven  Same options as plan-rollback; reviews a previous schema7 release only.
+  plan-rollback-eight  Same options as plan-rollback; reviews a previous schema8 release only.
 
 HOST: fios-edge-a.lab or fios-edge-b.lab
 Reviews, stages or verifies private configuration/state data. Executes no installation or service action.
@@ -24,7 +25,7 @@ if(args.length===1&&['--help','-h'].includes(args[0])){
   console.log(usage);
 }else{
 try{
-  const sizes={'plan':7,'plan-config':9,'stage-config':11,'verify-config':11,'plan-backup':11,'plan-uninstall':11,'plan-restore':13,'plan-rollback':17,'plan-rollback-seven':17};
+  const sizes={'plan':7,'plan-config':9,'stage-config':11,'verify-config':11,'plan-backup':11,'plan-uninstall':11,'plan-restore':13,'plan-rollback':17,'plan-rollback-seven':17,'plan-rollback-eight':17};
   if(args.length!==sizes[args[0]]||args[1]!=='--release'||args[3]!=='--sha256'||args[5]!=='--host')throw Error('arguments');
   const verified=validatePlatformRelease(args[2],args[4]);
   if(!verified.manifest.native_inventory.hosts.includes(args[6]))throw Error('host');
@@ -37,9 +38,9 @@ try{
   }else if(args[0]==='plan-config'){
     if(args[7]!=='--state')throw Error('arguments');
     console.log(JSON.stringify(platformConfigurationPlan({release:args[2],verified,host:args[6],state:args[8]}),null,2));
-  }else if(['plan-rollback','plan-rollback-seven'].includes(args[0])){
+  }else if(['plan-rollback','plan-rollback-seven','plan-rollback-eight'].includes(args[0])){
     if(args[7]!=='--previous'||args[9]!=='--previous-sha256'||args[11]!=='--backup'||args[13]!=='--backup-sha256'||args[15]!=='--to')throw Error('arguments');
-    const previous=validatePlatformRelease(args[8],args[10],{journalSchema:args[0]==='plan-rollback-seven'?7:8});
+    const previous=validatePlatformRelease(args[8],args[10],{journalSchema:args[0]==='plan-rollback-seven'?7:args[0]==='plan-rollback-eight'?8:9});
     console.log(JSON.stringify(platformRollbackStatePlan({release:args[2],current:verified,previousRelease:args[8],previous,
       host:args[6],backup:args[12],backupSHA256:args[14],destination:args[16]}),null,2));
   }else if(args[0]!=='plan'){

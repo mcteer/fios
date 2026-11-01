@@ -2,7 +2,7 @@ import Foundation
 import StudioCore
 
 let arguments=CommandLine.arguments
-let usage="Usage: studioctl --state ABSOLUTE_PRIVATE_DIRECTORY status|activity|resources|supervisor|task|export; service mlx|orbstack status|running|maintenance|stopped|drain|force prepare|force confirm TOKEN SCOPE_DIGEST; backup|backup-state --to ABSOLUTE_NEW_PATH; verify-backup --sha256 REVIEWED_DIGEST; restore-state|migrate-state-seven --sha256 REVIEWED_DIGEST --to ABSOLUTE_NEW_DIRECTORY\n       studioctl plan-memory --ram-gib POSITIVE_GIB\n       studioctl stage-release --from ABSOLUTE_REVIEWED_RELEASE --sha256 REVIEWED_MANIFEST_SHA --to ABSOLUTE_NEW_DIRECTORY\n"
+let usage="Usage: studioctl --state ABSOLUTE_PRIVATE_DIRECTORY status|activity|resources|supervisor|task|export; service mlx|orbstack status|running|maintenance|stopped|drain|force prepare|force confirm TOKEN SCOPE_DIGEST; backup|backup-state --to ABSOLUTE_NEW_PATH; verify-backup --sha256 REVIEWED_DIGEST; restore-state|migrate-state-seven|migrate-state-eight --sha256 REVIEWED_DIGEST --to ABSOLUTE_NEW_DIRECTORY\n       studioctl plan-memory --ram-gib POSITIVE_GIB\n       studioctl stage-release --from ABSOLUTE_REVIEWED_RELEASE --sha256 REVIEWED_MANIFEST_SHA --to ABSOLUTE_NEW_DIRECTORY\n"
 if arguments.count==2 && ["--help","-h"].contains(arguments[1]) {
     FileHandle.standardOutput.write(Data(usage.utf8))
     exit(0)
@@ -41,7 +41,7 @@ if arguments.count==8,arguments[1]=="stage-release",arguments[2]=="--from",argum
 }
 let offlineBackup=arguments.count==6 && ["backup","backup-state"].contains(arguments[3]) && arguments[4]=="--to" && arguments[5].hasPrefix("/")
 let verifyBackup=arguments.count==6 && arguments[3]=="verify-backup" && arguments[4]=="--sha256"
-let restoreBackup=arguments.count==8 && ["restore-state","migrate-state-seven"].contains(arguments[3]) && arguments[4]=="--sha256" && arguments[6]=="--to" && arguments[7].hasPrefix("/")
+let restoreBackup=arguments.count==8 && ["restore-state","migrate-state-seven","migrate-state-eight"].contains(arguments[3]) && arguments[4]=="--sha256" && arguments[6]=="--to" && arguments[7].hasPrefix("/")
 let ordinary=arguments.count==4 && ["status","activity","resources","supervisor","task","export"].contains(arguments[3])
 let serviceCommand=OperatorServiceCommand(arguments:Array(arguments.dropFirst(3)))
 if (!offlineBackup && !ordinary && !verifyBackup && !restoreBackup && serviceCommand == nil) || arguments[1] != "--state" || !arguments[2].hasPrefix("/") {
@@ -59,11 +59,14 @@ do {
     let directory=URL(fileURLWithPath:arguments[2])
     let result:[String:Any]
     if restoreBackup {
-        let migrating=arguments[3]=="migrate-state-seven"
+        let migration=arguments[3]=="migrate-state-seven" ? 7:arguments[3]=="migrate-state-eight" ? 8:nil
         let target=URL(fileURLWithPath:arguments[7])
-        let receipt=try migrating ? StoppedStateBackup.migrateSeven(directory:directory,expectedSHA256:arguments[5],destination:target):StoppedStateBackup.restore(directory:directory,expectedSHA256:arguments[5],destination:target)
-        if migrating {
-            result=["ok":true,"from_schema":7,"to_schema":8,"input_backup_sha256":receipt.sha256,"maintenance":true,"started":false]
+        let receipt:StateBackupReceipt
+        if migration==7 {receipt=try StoppedStateBackup.migrateSeven(directory:directory,expectedSHA256:arguments[5],destination:target)}
+        else if migration==8 {receipt=try StoppedStateBackup.migrateEight(directory:directory,expectedSHA256:arguments[5],destination:target)}
+        else {receipt=try StoppedStateBackup.restore(directory:directory,expectedSHA256:arguments[5],destination:target)}
+        if let migration {
+            result=["ok":true,"from_schema":migration,"to_schema":9,"input_backup_sha256":receipt.sha256,"maintenance":true,"started":false]
         }else {
             result=["ok":true,"scope":receipt.scope,"bytes":receipt.bytes,"artifacts":receipt.artifacts,"sha256":receipt.sha256,"started":false]
         }

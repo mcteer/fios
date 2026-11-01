@@ -30,7 +30,7 @@ enum MigrationTests {
         let database=backup.appendingPathComponent("state.sqlite")
         var db:OpaquePointer?
         guard sqlite3_open(database.path,&db)==SQLITE_OK else {throw JournalError.storage}
-        let code=sqlite3_exec(db,"PRAGMA journal_mode=DELETE; DROP TABLE inference_scopes; PRAGMA user_version=7",nil,nil,nil)
+        let code=sqlite3_exec(db,"PRAGMA journal_mode=DELETE; DROP TABLE native_lineages; DROP TABLE inference_scopes; PRAGMA user_version=7",nil,nil,nil)
         let closed=sqlite3_close(db)
         guard code==SQLITE_OK,closed==SQLITE_OK else {throw JournalError.storage}
         let bytes=try Data(contentsOf:database)

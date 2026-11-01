@@ -1,4 +1,6 @@
 import Foundation
+import CryptoKit
+import CoreFoundation
 
 // Live lineage metadata only. Neither Codable nor a terminal/admission proof.
 // Native rootSequence is a full-width token, never an interoperable JSON number.
@@ -63,9 +65,10 @@ enum NativeRequestLineageWire {
 
 enum NativeRequestLineageObservation {case unknown,live(NativeRequestLineage)}
 
-// Serialized per-request readonly consumer. This volatile view is NOT a
-// durable receipt or journal reconciliation issuer; restart cannot refund or
-// release original inference ownership. There is no absent/complete state.
+// Serialized per-request readonly consumer. A journal checkpoint preserves
+// original correlation and refusal/replay state, never a live observation or
+// terminal receipt. Restart cannot refund/release inference ownership. There
+// is no absent/complete state.
 struct NativeRequestLineageConsumer:Sendable {
     private let peer:NativeControlPeer
     private let instance:String
@@ -75,11 +78,37 @@ struct NativeRequestLineageConsumer:Sendable {
     private var sequence:UInt64=0
     private(set) var rootSequence:UInt64?
     private(set) var fenced=false
-    init(scope:InferenceScope,job:String,attempt:Int,peer:NativeControlPeer)throws {
+    init(scope:InferenceScope,job:String,attempt:Int,peer:NativeControlPeer,checkpoint:Data?=nil)throws {
         try scope.validate();_=try NativeControlWire.instanceBytes(scope.nativeEpoch)
         guard peer.pid>1,peer.start>0 else {throw NativeControlError.invalid}
-        self.peer=peer;instance=scope.nativeEpoch
+        instance=scope.nativeEpoch
         correlationID=try scope.nativeRequestCorrelationID(job:job,attempt:attempt)
+        if let checkpoint {
+            let saved=try NativeLineageCheckpoint.decode(checkpoint)
+            guard saved.scopeSHA256 == (try Self.scopeDigest(scope)),saved.instance==instance,saved.correlationID==correlationID else {throw JournalError.conflict}
+            let original=try saved.peer()
+            self.peer=original
+            previousNow=saved.previousNow;sampledAt=saved.sampledAt;sequence=saved.sequence
+            rootSequence=UInt64(saved.root).flatMap {$0==0 ? nil:$0}
+            fenced=saved.fenced || original.pid != peer.pid || original.start != peer.start ||
+                !original.executable.path.utf8.elementsEqual(peer.executable.path.utf8) || original.executable.sha256 != peer.executable.sha256
+        } else {self.peer=peer}
+    }
+    static func validateCheckpoint(_ data:Data,scope:InferenceScope,job:String,attempt:Int)throws {
+        let saved=try NativeLineageCheckpoint.decode(data)
+        _=try NativeRequestLineageConsumer(scope:scope,job:job,attempt:attempt,peer:saved.peer(),checkpoint:data)
+    }
+    private static func scopeDigest(_ scope:InferenceScope)throws->String {
+        SHA256.hash(data:try scope.encoded()).map {String(format:"%02x",$0)}.joined()
+    }
+    func checkpoint(scope:InferenceScope)throws->Data {
+        let saved=NativeLineageCheckpoint(version:1,scopeSHA256:try Self.scopeDigest(scope),instance:instance,correlationID:correlationID,
+            pid:peer.pid,start:String(peer.start),path:peer.executable.path,sha256:peer.executable.sha256,root:String(rootSequence ?? 0),
+            sequence:sequence,sampledAt:sampledAt,previousNow:previousNow,fenced:fenced)
+        let encoder=JSONEncoder();encoder.outputFormatting=[.sortedKeys]
+        let data=try encoder.encode(saved)
+        _=try NativeLineageCheckpoint.decode(data)
+        return data
     }
     mutating func accept(_ sample:NativeRequestLineageSample?,now:Int64)->NativeRequestLineageObservation {
         guard !fenced else {return .unknown}
@@ -104,5 +133,46 @@ struct NativeRequestLineageConsumer:Sendable {
         // permission to adopt a later request that reused the opaque ID.
         guard value.found,!value.uncertain else {return .unknown}
         return .live(value)
+    }
+}
+
+// Durable correlation metadata only. Full-width native tokens use canonical
+// decimal strings. Restoring these bytes never restores a live observation,
+// clears uncertainty or grants native admission/terminal authority.
+private struct NativeLineageCheckpoint:Codable {
+    let version:Int
+    let scopeSHA256:String
+    let instance:String
+    let correlationID:String
+    let pid:Int32
+    let start:String
+    let path:String
+    let sha256:String
+    let root:String
+    let sequence:UInt64
+    let sampledAt:Int64
+    let previousNow:Int64
+    let fenced:Bool
+    func peer()throws->NativeControlPeer {
+        guard pid>1,let token=UInt64(start),token>0,String(token)==start else {throw JournalError.invalid}
+        return NativeControlPeer(pid:pid,start:token,executable:try VerifiedExecutable(path:path,sha256:sha256))
+    }
+    static func decode(_ data:Data)throws->Self {
+        try StrictJSON.validate(data,maximum:16384)
+        guard let object=try JSONSerialization.jsonObject(with:data) as? [String:Any],
+              Set(object.keys)==Set(["version","scopeSHA256","instance","correlationID","pid","start","path","sha256","root","sequence","sampledAt","previousNow","fenced"]),
+              WireScalar.integer(object["version"],maximum:1)==1,WireScalar.integer(object["pid"],maximum:Int64(Int32.max)) != nil,
+              WireScalar.integer(object["sequence"]) != nil,
+              // The initial no-sample sentinel is private persistent metadata.
+              ["sampledAt","previousNow"].allSatisfy({key in
+                  if let n=object[key] as? NSNumber,CFGetTypeID(n) != CFBooleanGetTypeID(),["c","s","i","l","q"].contains(String(cString:n.objCType)),n.int64Value == -1 {return true}
+                  return WireScalar.integer(object[key]) != nil
+              }) else {throw JournalError.invalid}
+        let value=try JSONDecoder().decode(Self.self,from:data)
+        _=try value.peer();_=try NativeControlWire.instanceBytes(value.instance)
+        guard WireScalar.sha256(value.scopeSHA256),WireScalar.sha256(value.correlationID),
+              let root=UInt64(value.root),String(root)==value.root,
+              (value.sequence==0 ? value.sampledAt == -1 && root==0:value.sampledAt>=0 && value.previousNow>=0) else {throw JournalError.invalid}
+        return value
     }
 }
