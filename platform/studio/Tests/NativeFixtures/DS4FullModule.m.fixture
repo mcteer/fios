@@ -16,6 +16,10 @@ int main(void){@autoreleasepool{
     FIOS_REQUIRE(completed != nil,"GENUINE_COMMAND_BUFFER_MISSING");
     [completed commit];
     FIOS_REQUIRE(ds4_gpu_wait_command_buffer(completed,"fixture actual buffer") && completed.status == MTLCommandBufferStatusCompleted,"GENUINE_COMPLETED_BUFFER_REFUSED");
+    uint64_t release_began=0;
+    FIOS_REQUIRE(fios_native_join_clock(&release_began),"RELEASE_CLOCK_MISSING");
+    FIOS_REQUIRE(ds4_gpu_fios_wait_release_buffer(completed,release_began) &&
+        !ds4_gpu_fios_wait_release_buffer(nil,release_began),"RELEASE_COMPLETION_STATUS_MISMATCH");
     FIOS_REQUIRE(ds4_gpu_warm_command_queue(),"GENUINE_MODULE_WARM_FAILED");
     FIOS_REQUIRE(atomic_load(&g_queue_keepalive_running),"GENUINE_PRODUCER_DID_NOT_START");
     FIOS_REQUIRE(ds4_gpu_fios_keepalive_try_stop(),"GENUINE_MODULE_PRODUCER_STOP_REFUSED");
@@ -39,6 +43,22 @@ int main(void){@autoreleasepool{
         FIOS_REQUIRE(ds4_gpu_tp_shutdown_checked(),"ORDINARY_TP_IDLE_REPEAT_REFUSED");
     }
     puts("PASS: actual idle TP service and finite tiny producer start and join normally, without model/exchange/distributed work");
+    // Genuine never-submitted Metal object: observe the bounded wait only.
+    // It is not inserted into the source's committed/pending ownership set.
+    id<MTLCommandBuffer> unsubmitted=[g_queue commandBuffer];
+    FIOS_REQUIRE(unsubmitted && unsubmitted.status==MTLCommandBufferStatusNotEnqueued &&
+        fios_native_join_clock(&release_began),"UNSUBMITTED_BUFFER_MISSING");
+    FIOS_REQUIRE(!ds4_gpu_fios_wait_release_buffer(unsubmitted,release_began),"UNSUBMITTED_BUFFER_ACKNOWLEDGED");
+    uint64_t release_finished=0;
+    FIOS_REQUIRE(fios_native_join_clock(&release_finished) && release_finished>=release_began &&
+        release_finished-release_began>=1000000000ULL && release_finished-release_began<2000000000ULL,
+        "CLEANUP_BUFFER_WAIT_NOT_BOUNDED");
+    // One actual empty source batch plus its completed pending buffer.
+    FIOS_REQUIRE(g_pending_cbs && ds4_gpu_begin_commands() && g_batch_cb,"EMPTY_SOURCE_BATCH_MISSING");
+    [g_pending_cbs addObject:completed];
+    FIOS_REQUIRE(ds4_gpu_prepare_release() && !g_batch_cb && ![g_pending_cbs count] && !g_fios_pending_uncertain,
+        "ORDINARY_BOUNDED_BUFFER_CLEANUP_REFUSED");
+    puts("PASS: cleanup-only shared Metal wait budget, genuine completed/unsubmitted objects and ordinary empty source batch/pending retirement");
     FIOS_REQUIRE(g_model_fd<0,"UNEXPECTED_MODEL_FILE");
     // No raw whole-device cleanup is credited as completion. Initializer and
     // checked known producer are the only tested operations; parent/device,
