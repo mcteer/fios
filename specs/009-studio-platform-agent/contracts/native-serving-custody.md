@@ -9,7 +9,7 @@ and public startup wiring remain gated and incomplete.
 
 The current source includes the fixed command/reply codec, custody gate,
 local/remote runtime interface and private Unix server/client. Supervisor
-composition and separate-process custody acceptance are still being implemented. No installed custody socket, native
+composition and installed custody acceptance are still being implemented. No installed custody socket, native
 process action or supervisor activation follows from these source types.
 
 ## Fixed control data
@@ -74,3 +74,10 @@ before sending and after the response. Socket/identity errors remain unknown.
 The local client cannot retire a child or mint non-dispatch; only the custodian's
 original owned-child/runtime history may supply those local outcomes. Descriptor
 metadata stays historical on teardown and grants no native authority.
+
+A separate finite fixture now exercises genuine Unix peer identities across
+actual client-process death and replacement: the parent retains one original
+private C child; the replacement restores the durable launch receipt, looks it
+up and stops that same child, while the independent uncertain journal count
+remains1. It does not execute the actual supervisor loop, installed manager
+profile or native MLX server. Those acceptance claims remain separate.

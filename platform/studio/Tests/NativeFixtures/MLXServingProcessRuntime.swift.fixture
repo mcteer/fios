@@ -115,6 +115,7 @@ extension MLXServingProcessRuntime {
 @main struct ServingRuntimeFixture {
     static func main()throws {
         let args=CommandLine.arguments
+        if args.count>1,args[1]=="custody-client" {try custodyClient(args);return}
         if args.count==4,args[1]=="control" {
             guard let command=OperatorServiceCommand(arguments:["service","mlx",args[3]]) else {throw RuntimeError.invalid}
             let directory=URL(fileURLWithPath:args[2])
@@ -482,6 +483,7 @@ extension MLXServingProcessRuntime {
         guard try String(contentsOf:cwdProof,encoding:.utf8)==cwdDirectory.path,FileManager.default.currentDirectoryPath != cwdDirectory.path else {throw RuntimeError.invalid}
         try cwdRuntime.endFixtureChild();try cwdRuntime.waitForFixtureExpiry()
         guard cwdRuntime.retireKnownExited() else {throw RuntimeError.invalid}
+        try custodyProcessScenario(root:root,executable:executable,fixtureImage:fixtureImage)
         print("PASS: actual private serving-role process launch/identity/local reap/relaunch, retained validation cancellation slot, no duplicate child and independent native uncertainty retained")
         print("PASS: native server transport through actual manager recovery queue, original durable operation lookup and no GUI fallback")
         print("PASS: POSIX owned-child reap preserves a separate live Foundation child; no global reap or process-name cleanup")
@@ -493,5 +495,132 @@ extension MLXServingProcessRuntime {
         print("PASS: unexpected owned-child exit retires local custody off-loop before replacement, fresh start validation required and native uncertainty retained")
         print("PASS: explicit native working directory preserves relative-path behavior without changing manager cwd or inheriting it")
         print("PASS: changed native launch configuration refuses old pending history unchanged with identical executable images")
+    }
+}
+
+extension ServingRuntimeFixture {
+    static func custodyClient(_ args:[String])throws {
+        guard args.count==7,["start","stop"].contains(args[3]),
+              args[2].hasPrefix("/private/tmp/fios-009-serving-runtime-"),
+              args[5].hasPrefix("/private/tmp/fios-009-serving-runtime-") else {throw RuntimeError.invalid}
+        signal(SIGTERM,SIG_DFL);signal(SIGALRM,SIG_DFL);alarm(12)
+        // Foundation canonicalizes argv[0] through /tmp; bind the actual
+        // kernel executable path instead of weakening the peer comparison.
+        var pathBytes=[CChar](repeating:0,count:4*Int(MAXPATHLEN))
+        guard proc_pidpath(getpid(),&pathBytes,UInt32(pathBytes.count))>0,
+              let path=String(bytes:pathBytes.prefix(while:{$0 != 0}).map {UInt8(bitPattern:$0)},encoding:.utf8),
+              path.hasPrefix("/private/tmp/fios-009-serving-runtime-") else {throw RuntimeError.invalid}
+        let directory=URL(fileURLWithPath:args[2]),image=try VerifiedExecutable(path:path,sha256:args[4])
+        let pins:[ManagedService:String]=[.mlx:args[6],.orbstack:args[6]],base=try ServiceLaunchProfile.digest(pins)
+        let environment=["PATH":"/usr/bin:/bin","LANG":"C","LC_ALL":"C","HOME":directory.path]
+        let profile=try ServiceLaunchProfile.nativeDigest(base:base,arguments:[],environment:environment,workingDirectory:directory.path)
+        let bytes=try Data(contentsOf:directory.appendingPathComponent("serving-custody.json"))
+        try StrictJSON.validate(bytes,maximum:2048)
+        guard let descriptor=try JSONSerialization.jsonObject(with:bytes) as? [String:Any],
+              Set(descriptor.keys)==Set(["version","purpose","pid","uid","process_start","boot","instance","profile"]),
+              WireScalar.integer(descriptor["version"],maximum:1)==1,descriptor["purpose"] as? String=="native_serving_custody",
+              let pid=WireScalar.integer(descriptor["pid"],maximum:Int64(Int32.max)),pid>1,
+              WireScalar.integer(descriptor["uid"],maximum:Int64(UInt32.max))==Int64(geteuid()),
+              let text=descriptor["process_start"] as? String,let start=UInt64(text),start>0,String(start)==text,
+              descriptor["boot"] as? String == (try HostBoot.identity()),descriptor["profile"] as? String==profile,
+              let instance=descriptor["instance"] as? String else {throw RuntimeError.invalid}
+        let remote=try ServingCustodyClient(directory:directory,peer:NativeControlPeer(pid:Int32(pid),start:start,executable:image),instance:instance,profile:profile,baseProfileHash:base,imageSHA256:args[6])
+        let journal=try Journal(directory:directory),recovery=try ServiceRecoveryController(journal:journal,approvedHashes:pins,recoveryProfileHash:profile)
+        if args[3]=="start" {
+            let old=UUID().uuidString.lowercased()
+            try journal.claim(job:old,attempt:0,model:"fixture/custody-independent");try journal.markUncertain(job:old,attempt:0)
+            try journal.setDesired(service:"mlx",desired:"running")
+            let queue=AsyncSessionControl(client:try NativeServingRecoveryTransport(runtime:remote,approvedHashes:pins))
+            func exchange(_ request:ServiceRecoveryRequest)throws->SessionLaunchResult {
+                try queue.submit(request)
+                let end=ProcessInfo.processInfo.systemUptime+4
+                while ProcessInfo.processInfo.systemUptime<end {
+                    if let response=queue.poll() {return try response.value.get()}
+                    Thread.sleep(forTimeInterval:0.002)
+                }
+                throw RuntimeError.deadline
+            }
+            let absent=ServiceObservation(identity:nil,responding:false,sessionReady:true,credentialsReady:true,nativeIdle:nil,runtimeUnmanaged:nil,sampledAt:1000)
+            guard let launch=try recovery.next(service:.mlx,desired:.running,observation:absent,now:1000,tick:1000) else {throw RuntimeError.invalid}
+            let first=try exchange(launch);try recovery.receive(launch,result:first)
+            let end=ProcessInfo.processInfo.systemUptime+5
+            while recovery.recordedLaunch(.mlx)==nil,ProcessInfo.processInfo.systemUptime<end {
+                guard let lookup=try recovery.next(service:.mlx,desired:.running,observation:nil,now:1000,tick:1000),lookup.operation == .lookup,lookup.command.id==launch.command.id else {throw RuntimeError.invalid}
+                try recovery.receive(lookup,result:exchange(lookup));Thread.sleep(forTimeInterval:0.002)
+            }
+            guard let recorded=recovery.recordedLaunch(.mlx),try journal.uncertainCount()==1 else {throw RuntimeError.invalid}
+            try AtomicState.write(JSONSerialization.data(withJSONObject:["id":recorded.id,"pid":recorded.identity.pid,"start":String(recorded.identity.start),"uncertain":1],options:[.sortedKeys]),to:directory.appendingPathComponent("custody-started.json"))
+            // The parent terminates only this finite private client after its
+            // durable acknowledgement. The serving child belongs to parent.
+            while true {Thread.sleep(forTimeInterval:0.05)}
+        }
+        guard let recorded=recovery.recordedLaunch(.mlx),try journal.uncertainCount()==1,
+              remote.acknowledgeResult(id:recorded.id) == .started(recorded.identity) else {throw RuntimeError.invalid}
+        try journal.setDesired(service:"mlx",desired:"stopped")
+        // Same-file fixture issuance only: its server accepts solely the
+        // fixed private C helper, never an installed native image/authority.
+        let intent=ServingStopIntent(receipt:recorded,desired:.stopped)
+        guard let request=try recovery.planStop(intent,now:2000,tick:2000) else {throw RuntimeError.invalid}
+        let queue=AsyncServingStop(runtime:remote)
+        func exchange(_ request:ServingStopRequest)throws->ServingStopResult {
+            try queue.submit(request)
+            let end=ProcessInfo.processInfo.systemUptime+4
+            while ProcessInfo.processInfo.systemUptime<end {
+                if let response=queue.poll() {return try response.value.get()}
+                Thread.sleep(forTimeInterval:0.002)
+            }
+            throw RuntimeError.deadline
+        }
+        let first=try exchange(request);try recovery.receiveStop(request,result:first)
+        let end=ProcessInfo.processInfo.systemUptime+5
+        while recovery.isStopPending(),ProcessInfo.processInfo.systemUptime<end {
+            guard let lookup=try recovery.nextStop(now:2000,tick:2000),lookup.operation == .lookup,lookup.id==request.id else {throw RuntimeError.invalid}
+            try recovery.receiveStop(lookup,result:exchange(lookup));Thread.sleep(forTimeInterval:0.002)
+        }
+        guard !recovery.isStopPending(),try journal.uncertainCount()==1 else {throw RuntimeError.invalid}
+        try AtomicState.write(JSONSerialization.data(withJSONObject:["id":recorded.id,"pid":recorded.identity.pid,"start":String(recorded.identity.start),"uncertain":1],options:[.sortedKeys]),to:directory.appendingPathComponent("custody-stopped.json"))
+    }
+
+    static func custodyProcessScenario(root:URL,executable:VerifiedExecutable,fixtureImage:VerifiedExecutable)throws {
+        let directory=root.appendingPathComponent("custody")
+        try FileManager.default.createDirectory(at:directory,withIntermediateDirectories:false,attributes:[.posixPermissions:0o700])
+        let pins:[ManagedService:String]=[.mlx:executable.sha256,.orbstack:executable.sha256],base=try ServiceLaunchProfile.digest(pins)
+        let startGate=ServingRuntimeGate(),stopGate=ServingStopGate();startGate.release.signal();stopGate.release.signal()
+        let runtime=try MLXServingProcessRuntime.fixture(executable:executable,home:directory.path,profile:base,gate:startGate,stopGate:stopGate)
+        defer {if runtime.fixtureRetainsChild {try? runtime.endFixtureChild()}}
+        let server=try ServingCustodyServer(directory:directory,runtime:runtime,manager:fixtureImage,imageSHA256:executable.sha256)
+        func launch(_ mode:String)throws->Process {
+            let child=Process();child.executableURL=URL(fileURLWithPath:fixtureImage.path)
+            child.arguments=["custody-client",directory.path,mode,fixtureImage.sha256,executable.path,executable.sha256]
+            child.environment=["PATH":"/usr/bin:/bin","LANG":"C"]
+            let log=directory.appendingPathComponent("custody-client-"+mode+".log")
+            guard FileManager.default.createFile(atPath:log.path,contents:nil,attributes:[.posixPermissions:0o600]) else {throw RuntimeError.invalid}
+            let errors=try FileHandle(forWritingTo:log);defer {try? errors.close()}
+            child.standardInput=FileHandle.nullDevice;child.standardOutput=FileHandle.nullDevice;child.standardError=errors
+            try child.run()
+            try server.bindManager(NativeControlPeer(pid:child.processIdentifier,start:WorkerResources.startIdentifier(pid:child.processIdentifier),executable:fixtureImage))
+            return child
+        }
+        func until(_ condition:()throws->Bool)throws {
+            let end=ProcessInfo.processInfo.systemUptime+6
+            while ProcessInfo.processInfo.systemUptime<end {
+                try server.poll();if try condition() {return};Thread.sleep(forTimeInterval:0.002)
+            }
+            throw RuntimeError.deadline
+        }
+        let first=try launch("start")
+        defer {if first.isRunning {first.terminate();first.waitUntilExit()}}
+        let started=directory.appendingPathComponent("custody-started.json")
+        try until {guard first.isRunning else {throw RuntimeError.invalid};return FileManager.default.fileExists(atPath:started.path)}
+        guard let identity=runtime.fixtureObservation(now:HostResources.nowMilliseconds())?.identity,startGate.validations==1 else {throw RuntimeError.invalid}
+        first.terminate();try until {!first.isRunning};first.waitUntilExit();try server.bindManager(nil)
+        guard runtime.fixtureObservation(now:HostResources.nowMilliseconds())?.identity==identity else {throw RuntimeError.invalid}
+        let second=try launch("stop")
+        defer {if second.isRunning {second.terminate();second.waitUntilExit()}}
+        try until {!second.isRunning};second.waitUntilExit()
+        guard second.terminationReason == .exit,second.terminationStatus==0,
+              !runtime.fixtureRetainsChild,startGate.validations==1,stopGate.validations==1,
+              try Data(contentsOf:started)==Data(contentsOf:directory.appendingPathComponent("custody-stopped.json")) else {throw RuntimeError.invalid}
+        print("PASS: private serving child survives actual client death; replacement process reconciles original durable launch and stops the same owned child over Unix custody; native uncertainty retained")
     }
 }
