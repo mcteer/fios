@@ -15,7 +15,9 @@ static void *release_fixture_event(void *opaque) {
     }
     return NULL;
 }
-int main(void){@autoreleasepool{
+int main(int argc,char **argv){@autoreleasepool{
+    FIOS_REQUIRE(argc==1 || (argc==2 && strcmp(argv[1],"--pending-delay")==0),"UNKNOWN_FIXTURE_MODE");
+    const int pending_case=argc==2;
     FIOS_REQUIRE(!g_initialized&&!g_device&&g_model_fd<0,"MODULE_WAS_NOT_COLD");
     FIOS_REQUIRE(ds4_engine_close_checked(NULL)&&ds4_session_free_checked(NULL)&&!g_initialized&&!g_device,"PUBLIC_NULL_CLOSE_INITIALIZED_BACKEND");
     FIOS_REQUIRE(!ds4_gpu_wait_command_buffer(nil,"fixture absent buffer"),"FIO_DS4_ABSENT_BUFFER_ACKNOWLEDGED");
@@ -72,8 +74,10 @@ int main(void){@autoreleasepool{
     // An actual source batch waits on a real shared event. Parent timeout
     // must retain its exact buffer and uncertainty even after actual completion.
     id<MTLSharedEvent> event=[g_device newSharedEvent];
-    FIOS_REQUIRE(event && ds4_gpu_begin_commands() && g_batch_cb,"DELAYED_SOURCE_BATCH_MISSING");
-    id<MTLCommandBuffer> delayed=g_batch_cb;
+    FIOS_REQUIRE(event,"DELAYED_EVENT_MISSING");
+    if (!pending_case) FIOS_REQUIRE(ds4_gpu_begin_commands() && g_batch_cb,"DELAYED_SOURCE_BATCH_MISSING");
+    id<MTLCommandBuffer> delayed=pending_case ? ds4_gpu_new_command_buffer():g_batch_cb;
+    FIOS_REQUIRE(delayed,"DELAYED_SOURCE_BUFFER_MISSING");
     [delayed encodeWaitForEvent:event value:1];
     pthread_t release_thread;
     void *retained_event=(__bridge_retained void *)event;
@@ -81,11 +85,16 @@ int main(void){@autoreleasepool{
         (void)(__bridge_transfer id<MTLSharedEvent>)retained_event;
         FIOS_REQUIRE(0,"EVENT_RELEASE_THREAD_MISSING");
     }
+    if (pending_case) {
+        [delayed commit];
+        [g_pending_cbs addObject:delayed]; // Genuine source-created committed buffer.
+    }
     FIOS_REQUIRE(fios_native_join_clock(&release_began),"PARENT_RELEASE_CLOCK_MISSING");
     const int delayed_result=ds4_gpu_prepare_release();
     FIOS_REQUIRE(fios_native_join_clock(&release_finished) && release_finished>=release_began,
         "PARENT_RELEASE_CLOCK_FAILED");
-    const int retained=!delayed_result && g_fios_pending_uncertain && g_batch_cb==delayed;
+    const int retained=!delayed_result && g_fios_pending_uncertain &&
+        (pending_case ? !g_batch_cb && [g_pending_cbs count]==1 && [g_pending_cbs containsObject:delayed]:g_batch_cb==delayed);
     const int bounded=release_finished-release_began>=1000000000ULL &&
         release_finished-release_began<2000000000ULL;
     // Drain only this genuine known buffer after its finite event release.
@@ -94,8 +103,12 @@ int main(void){@autoreleasepool{
     FIOS_REQUIRE(pthread_join(release_thread,NULL)==0 && delayed.status==MTLCommandBufferStatusCompleted,
         "OWN_EVENT_BUFFER_DID_NOT_COMPLETE");
     FIOS_REQUIRE(retained && bounded && !ds4_gpu_prepare_release() &&
-        g_fios_pending_uncertain && g_batch_cb==delayed,"PARENT_TIMEOUT_CUSTODY_OR_UNCERTAINTY_LOST");
-    puts("PASS: actual shared-event-delayed source batch times out boundedly; original buffer and independent uncertainty remain after genuine later completion");
+        g_fios_pending_uncertain &&
+        (pending_case ? !g_batch_cb && [g_pending_cbs count]==1 && [g_pending_cbs containsObject:delayed]:g_batch_cb==delayed),
+        "PARENT_TIMEOUT_CUSTODY_OR_UNCERTAINTY_LOST");
+    puts(pending_case ?
+        "PASS: actual shared-event-delayed committed pending buffer times out boundedly; original vector and independent uncertainty remain after genuine later completion":
+        "PASS: actual shared-event-delayed source batch times out boundedly; original buffer and independent uncertainty remain after genuine later completion");
     FIOS_REQUIRE(g_model_fd<0,"UNEXPECTED_MODEL_FILE");
     // No raw whole-device cleanup is credited as completion. Initializer and
     // checked known producer are the only tested operations; parent/device,
