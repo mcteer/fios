@@ -471,3 +471,17 @@ The native enclosing fixture's existing `--functional-build-only` mode performs
 the required full rebuild for this added public SDK API without the historical
 root/HTTP campaigns. These are private source artifacts, not installation,
 all-client/backend terminal proof or authority to clear uncertainty.
+
+
+### Ordinary MIMO source-fence development
+
+`node scripts/check-platform-mimo-source-fence.mjs --isolated --source /ABS/PRIVATE_NATIVE --mimo-source /ABS/REVIEWED_MIMO --zig /ABS/PINNED_ZIG`
+builds a dedicated executable through the genuine host/plugin SDK graph, with
+no scripted-fault switch. It runs only the idle warm-engine control/lifetime
+sequence in Debug and ReleaseSafe under denied IP networking, requires its
+completion marker and observes zero backend dispatches. Builds use two slots
+and five-minute per-command limits; each executable has a ten-second bound.
+The source candidate and genuine runtime library hashes are checked before and
+after. Only exact nonce-bound generated text is removed; private outputs and
+unrelated resources remain. This does not exercise a real model/GPU failure,
+issue native proof or clear independent inference uncertainty.

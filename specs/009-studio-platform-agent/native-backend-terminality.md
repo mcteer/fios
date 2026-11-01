@@ -548,3 +548,24 @@ provider-source build and packaged readonly CLI checks. The existing binary
 protocol still reports partial owner-stream synchronization only. No all-backend
 issuer, installed lifecycle, native inference uncertainty release or whole-task
 completion follows; see the exact receipt scopes in validation.md.
+
+
+## MIMO warm uncertainty beyond an engine lifetime — 2026-11-01
+
+The reviewed source candidate now adds a one-way atomic source fence outside
+the generic warm-engine object. Existing local control uncertainty and real
+backend failure recording set it. Cleanup, explicit resume and construction of
+a newer healthy engine never reset it. The architecture exposes a readonly
+getter; false is not idle, actor absence, all-client coverage or terminal proof.
+The local pause/resume/cleanup semantics remain unchanged. This is process-module
+metadata, not per-request reconciliation or a native admission/lifecycle issuer.
+
+A separate ordinary executable uses the actual warm-engine thread/control code,
+real host/plugin SDK graph and an idle CPU backend, with no SDK object or backend
+dispatch. Normal pause/resume stays clean; a real conflicting cleanup request
+while its lifetime lease is held records uncertainty. Positive local cleanup
+and a newer healthy engine retain the source fence. Debug/ReleaseSafe lifecycle
+and architecture getter checks pass; genuine GPU errors and all-backend/Studio
+acceptance remain open. The historical mutation/fault/counter campaigns are not
+run. Exact final receipts and enclosing build status are in validation.md;
+whole tasks remain38/55.
