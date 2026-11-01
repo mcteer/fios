@@ -54,3 +54,18 @@ Exclusive GUI-to-agent handover, native namespace/start reservations and retaine
 native drain authority remain required. A decoded document, credential value or
 configuration fingerprint supplies none of those permissions. This contract
 changes no interface login or network binding and authorizes no installation.
+
+The code-only native runtime constructor now takes this opaque protected
+configuration, resolves its credential in memory and requires both start/stop
+reservation validators. A bare process-profile constructor is private to the
+same-file fixtures. Construction does not invoke a validator or start a child;
+public startup still has no native configuration or authority producer.
+
+Recovery correlation additionally includes the SHA256 of the exact credential-free
+reviewed document bytes, under the version2 launch-input fingerprint domain.
+Host/account/state/revision/review/image changes therefore cannot consume old
+history even when argument values are unchanged. Credential rotation leaves
+that fingerprint stable. Private helper fixtures retain the original unreviewed
+version1 fingerprint domain; they supply no installed configuration proof.
+Recovery file version3 is unchanged. Incompatible profile history refuses
+unchanged and must not be deleted or dropped to permit an upgrade.

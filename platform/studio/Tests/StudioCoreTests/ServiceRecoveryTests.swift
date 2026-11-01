@@ -59,6 +59,10 @@ func runServiceRecoveryTests() throws {
         do {_=try decoded.resolvingCredential(secret);fatalError("Invalid credential resolution accepted")}
         catch RuntimeError.invalid {}
     }
+    let reviewedFingerprint=try ServiceLaunchProfile.nativeDigest(base:base,arguments:nativeArgs,environment:nativeEnv,workingDirectory:"/",reviewedConfigurationSHA256:hash)
+    guard reviewedFingerprint != fingerprint,
+          reviewedFingerprint != (try ServiceLaunchProfile.nativeDigest(base:base,arguments:nativeArgs,environment:nativeEnv,workingDirectory:"/",reviewedConfigurationSHA256:String(repeating:"b",count:64))),
+          reviewedFingerprint == (try ServiceLaunchProfile.nativeDigest(base:base,arguments:nativeArgs,environment:rotated,workingDirectory:"/",reviewedConfigurationSHA256:hash)) else {fatalError("Reviewed configuration identity not bound or credential entered fingerprint")}
     let journal=try Journal(directory:directory)
     func absent(_ now:Int64,session:Bool=true,credentials:Bool=true)->ServiceObservation {
         ServiceObservation(identity:nil,responding:false,sessionReady:session,credentialsReady:credentials,

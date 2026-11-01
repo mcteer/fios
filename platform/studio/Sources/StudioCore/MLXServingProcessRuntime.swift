@@ -56,7 +56,20 @@ final class MLXServingProcessRuntime:@unchecked Sendable {
     private var stopRecords:[String:ServingStopResult]=[:]
     private var stopDelivery:(String,ServingStopResult)?
 
-    convenience init(profile:MLXServingProcessProfile,arguments:[String],environment:[String:String],workingDirectory:String,serviceProfileHash:String,
+    // Only protected installed metadata supplies native launch configuration.
+    // Both independent retained-reservation validators remain mandatory. This
+    // constructor neither obtains native authority nor starts the child.
+    convenience init(configuration:NativeServingReviewedConfiguration,credential:String,serviceProfileHash:String,
+                     validateReservation:@escaping @Sendable(ServiceLaunchCommand)throws->Void,
+                     validateStopReservation:@escaping @Sendable(ServingStopCommand)throws->Void)throws {
+        let inputs=try configuration.document.resolvingCredential(credential)
+        try self.init(executable:configuration.processProfile.server,arguments:inputs.arguments,environment:inputs.environment,
+            workingDirectory:inputs.workingDirectory,serviceProfileHash:serviceProfileHash,reviewedConfigurationSHA256:configuration.policySHA256,
+            validateReservation:validateReservation,validateStopReservation:validateStopReservation)
+    }
+    // Same-file validation fixture only; ordinary code cannot substitute a bare
+    // process profile for protected reviewed launch metadata.
+    private convenience init(profile:MLXServingProcessProfile,arguments:[String],environment:[String:String],workingDirectory:String,serviceProfileHash:String,
                      validateReservation:@escaping @Sendable(ServiceLaunchCommand)throws->Void,
                      validateStopReservation:@escaping @Sendable(ServingStopCommand)throws->Void)throws {
         // The caller supplies a separately reviewed preserved launch profile;
@@ -65,7 +78,7 @@ final class MLXServingProcessRuntime:@unchecked Sendable {
         let inputs=try NativeServingLaunchInputs(arguments:arguments,environment:environment,workingDirectory:workingDirectory)
         try self.init(executable:profile.server,arguments:inputs.arguments,environment:inputs.environment,workingDirectory:inputs.workingDirectory,serviceProfileHash:serviceProfileHash,validateReservation:validateReservation,validateStopReservation:validateStopReservation)
     }
-    private init(executable:VerifiedExecutable,arguments:[String],environment:[String:String],workingDirectory:String,serviceProfileHash:String,
+    private init(executable:VerifiedExecutable,arguments:[String],environment:[String:String],workingDirectory:String,serviceProfileHash:String,reviewedConfigurationSHA256:String?=nil,
                  validateReservation:@escaping @Sendable(ServiceLaunchCommand)throws->Void,
                  validateStopReservation:@escaping @Sendable(ServingStopCommand)throws->Void)throws {
         guard WireScalar.sha256(serviceProfileHash),arguments.count<=128,
@@ -81,7 +94,7 @@ final class MLXServingProcessRuntime:@unchecked Sendable {
               workingDirectory.utf8.count+executable.path.utf8.count+1+arguments.reduce(0,{$0+$1.utf8.count+1})+environment.reduce(0,{$0+$1.key.utf8.count+$1.value.utf8.count+2})<=65536 else {throw RuntimeError.invalid}
         self.executable=executable;self.arguments=arguments;self.environment=environment;self.workingDirectory=workingDirectory
         baseProfileHash=serviceProfileHash
-        profileHash=try ServiceLaunchProfile.nativeDigest(base:serviceProfileHash,arguments:arguments,environment:environment,workingDirectory:workingDirectory)
+        profileHash=try ServiceLaunchProfile.nativeDigest(base:serviceProfileHash,arguments:arguments,environment:environment,workingDirectory:workingDirectory,reviewedConfigurationSHA256:reviewedConfigurationSHA256)
         self.validateReservation=validateReservation;self.validateStopReservation=validateStopReservation
     }
     func begin(_ command:ServiceLaunchCommand,deadline:TimeInterval)throws {

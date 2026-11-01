@@ -1,5 +1,6 @@
 import Foundation
 import Darwin
+import CryptoKit
 
 // Protected configuration metadata only, not native activity/dependency
 // attestation, exclusive ownership, a credential reader or lifecycle authority.
@@ -8,9 +9,10 @@ struct NativeServingReviewedConfiguration {
     static let policyPath="/Library/Application Support/Fios/Studio/native-serving-launch.json"
     static let managerPath="/Library/Application Support/Fios/Studio/bin/studio-manager"
     let document:NativeServingLaunchDocument
+    let policySHA256:String
     let processProfile:MLXServingProcessProfile
-    private init(document:NativeServingLaunchDocument,processProfile:MLXServingProcessProfile) {
-        self.document=document;self.processProfile=processProfile
+    private init(document:NativeServingLaunchDocument,policySHA256:String,processProfile:MLXServingProcessProfile) {
+        self.document=document;self.policySHA256=policySHA256;self.processProfile=processProfile
     }
     static func load(directory:URL)throws->NativeServingReviewedConfiguration? {
         var image=[CChar](repeating:0,count:4*Int(MAXPATHLEN))
@@ -22,7 +24,8 @@ struct NativeServingReviewedConfiguration {
         if lstat(policyPath,&entry) != 0 {
             guard errno==ENOENT else {throw ControlError.unauthorized};return nil
         }
-        let document=try NativeServingLaunchDocument(RootPolicyFile.read(path:policyPath,maximum:32768))
+        let bytes=try RootPolicyFile.read(path:policyPath,maximum:32768)
+        let document=try NativeServingLaunchDocument(bytes)
         guard document.uid==geteuid(),getuid()==geteuid(),
               document.host==ProcessInfo.processInfo.hostName,document.statePath==directory.path else {throw ControlError.unauthorized}
         let manager=try VerifiedExecutable(path:managerPath,sha256:document.managerSHA256)
@@ -37,6 +40,6 @@ struct NativeServingReviewedConfiguration {
         // Current immutable tree + two image pins are not mapped-code or
         // framework provenance. Native enrollment must separately establish
         // dependencies, GUI handover, namespace and retained reservations.
-        return NativeServingReviewedConfiguration(document:document,processProfile:profile)
+        return NativeServingReviewedConfiguration(document:document,policySHA256:SHA256.hash(data:bytes).map {String(format:"%02x",$0)}.joined(),processProfile:profile)
     }
 }

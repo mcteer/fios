@@ -6,8 +6,8 @@ import CryptoKit
 enum ServiceLaunchProfile {
     // Configuration binding, never native authority. Credentials retain their
     // named slot/channel but their values must not become journal verifiers.
-    static func nativeDigest(base:String,arguments:[String],environment:[String:String],workingDirectory:String)throws->String {
-        guard WireScalar.sha256(base) else {throw ServiceError.invalid}
+    static func nativeDigest(base:String,arguments:[String],environment:[String:String],workingDirectory:String,reviewedConfigurationSHA256:String?=nil)throws->String {
+        guard WireScalar.sha256(base),reviewedConfigurationSHA256.map(WireScalar.sha256) ?? true else {throw ServiceError.invalid}
         var args=arguments
         for index in args.indices {
             if index>0,arguments[index-1]=="--api-key" {args[index]="<credential-slot>"}
@@ -15,8 +15,14 @@ enum ServiceLaunchProfile {
         }
         var values=environment
         if values["FIOS_MLX_SERVING_API_KEY"] != nil {values["FIOS_MLX_SERVING_API_KEY"]="<credential-slot>"}
-        let bytes=try JSONSerialization.data(withJSONObject:["version":1,"base":base,"arguments":args,"environment":values,"working_directory":workingDirectory],options:[.sortedKeys,.withoutEscapingSlashes])
-        return SHA256.hash(data:Data("fios-native-launch-inputs-v1\n".utf8)+bytes).map {String(format:"%02x",$0)}.joined()
+        var object:[String:Any]=["version":1,"base":base,"arguments":args,"environment":values,"working_directory":workingDirectory]
+        var domain="fios-native-launch-inputs-v1\n"
+        if let reviewedConfigurationSHA256 {
+            object["version"]=2;object["reviewed_configuration_sha256"]=reviewedConfigurationSHA256
+            domain="fios-native-launch-inputs-v2\n"
+        }
+        let bytes=try JSONSerialization.data(withJSONObject:object,options:[.sortedKeys,.withoutEscapingSlashes])
+        return SHA256.hash(data:Data(domain.utf8)+bytes).map {String(format:"%02x",$0)}.joined()
     }
     static func digest(_ hashes:[ManagedService:String])throws->String {
         guard Set(hashes.keys)==Set(ManagedService.allCases),hashes.values.allSatisfy(WireScalar.sha256) else {throw ServiceError.invalid}

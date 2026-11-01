@@ -80,3 +80,10 @@ Native service recovery uses a configuration-bound profile: canonical launch
 arguments, environment and cwd plus executable-image profile. API-key values are
 redacted to their named slot before hashing. A mismatch refuses stored recovery
 history unchanged; neither the digest nor a credential rotation grants authority.
+
+Protected native configuration uses the version2 launch-input fingerprint domain,
+which additionally binds the exact credential-free reviewed document SHA256.
+That document includes host/account/state/review/revision and separate image pins.
+The recovery-file version remains3; mismatched profile history refuses unchanged.
+Private helper configuration remains in its version1 fingerprint domain and is
+not installed provenance or native authority.
