@@ -200,9 +200,16 @@ final class StudioOpenTelemetryTests:XCTestCase {
         try journal.claim(job:id,attempt:0,model:"fixture/model",requestID:UUID().uuidString.lowercased())
         _=try journal.planWorkerLaunch(job:id,attempt:0)
         try journal.markUncertain(job:id,attempt:0)
+        // Retained records outlive local workers; their ledger capacity is
+        // independent of live job/worker slots. These are metadata fixtures.
+        for _ in 0..<2 {
+            let retained=UUID().uuidString.lowercased()
+            try journal.claim(job:retained,attempt:0,model:"fixture/model",requestID:UUID().uuidString.lowercased())
+            try journal.markUncertain(job:retained,attempt:0)
+        }
         let sample=try XCTUnwrap(WorkloadTelemetry.sample(journal:journal,artifactBytes:2048,artifactJobs:1,now:now))
-        XCTAssertEqual(sample.jobs[.running],1);XCTAssertEqual(sample.unresolvedRecords,1)
-        XCTAssertEqual(sample.uncertainRecords,1);XCTAssertEqual(sample.workerReservations,1)
+        XCTAssertEqual(sample.jobs[.running],1);XCTAssertEqual(sample.unresolvedRecords,3)
+        XCTAssertEqual(sample.uncertainRecords,3);XCTAssertEqual(sample.workerReservations,1)
         let telemetry=StudioOpenTelemetry();telemetry.workload(sample)
         let metrics=telemetry.collectMetrics()
         let jobs=try XCTUnwrap(metrics.first{$0.name=="fios.platform.jobs"})
@@ -210,7 +217,9 @@ final class StudioOpenTelemetryTests:XCTestCase {
         XCTAssertEqual(points.count,JobState.allCases.count)
         XCTAssertEqual(points.first{$0.attributes["fios.job.state"] == .string("running")}?.value,1)
         let unresolved=try XCTUnwrap(metrics.first{$0.name=="fios.platform.inference.unresolved_records"})
-        XCTAssertEqual((unresolved.data.points as! [DoublePointData]).first!.value,1)
+        XCTAssertEqual((unresolved.data.points as! [DoublePointData]).first!.value,3)
+        let uncertain=try XCTUnwrap(metrics.first{$0.name=="fios.platform.inference.uncertain_records"})
+        XCTAssertEqual((uncertain.data.points as! [DoublePointData]).first!.value,3)
         let bytes=try XCTUnwrap(metrics.first{$0.name=="fios.platform.artifacts.size"})
         XCTAssertEqual(bytes.unit,"By");XCTAssertEqual((bytes.data.points as! [DoublePointData]).first!.value,2048)
         telemetry.workload(nil)
