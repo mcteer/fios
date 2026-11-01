@@ -537,3 +537,14 @@ A new cumulative source candidate adds fios_hold_source_components(expected_epoc
 This reserves only the already-instrumented MLX source participants. It is not a device synchronization, model/context/MIMO/DS4/distributed reservation, all-client coverage, terminal proof or lifecycle issuer; it is not yet wired into the native supervisor/manager runtime. The source SDK default remains disabled outside explicit source fixtures. Native enclosing builds must retain their independent full rebuild/header/producer checks.
 
 Missing-interface red `/tmp/fios-009-mlx-component-hold-interface-red.log` is an actual link failure for the new symbol against the prior genuine source library, not an old-path runtime witness. The separate ordinary driver check-platform-mlx-component-hold.mjs performs a fresh pinned source build and runs no historical mutation/fault/counter campaign. Actual CPU scheduler work is held by its own future, then completes normally: busy refusal leaves all gates open, queued work still runs, a genuinely advanced epoch refuses, a successful hold closes all three metadata gates, wrong-creator/stale release refuses, and exact release permits later real CPU work. Debug/optimized fixtures and a real CPU scalar safetensors roundtrip pass. These callbacks are not model work, GPU-dispatch or hardware/backend error acceptance. Receipt/provenance limits are recorded in validation.md;38/55 whole tasks remain complete.
+
+
+The private owner-probe composition now retains the tracked component hold after
+its real owned-stream synchronization, behind the original bridge pause token.
+Exact explicit creator release unwinds the source gates and bridge together;
+refused subsequent probes keep the first hold. Actual Debug/optimized CPU
+composition/default-mode regressions pass, followed by a full enclosing
+provider-source build and packaged readonly CLI checks. The existing binary
+protocol still reports partial owner-stream synchronization only. No all-backend
+issuer, installed lifecycle, native inference uncertainty release or whole-task
+completion follows; see the exact receipt scopes in validation.md.

@@ -147,3 +147,28 @@ The native process instance reported by this control boundary can be carried as 
 The capsule declares `native_bound_local_target_guard_version:1` as a source-format prerequisite, independently of runtime evidence. Journal-correlation requires the instance, exact-local and decoded-JSON format markers. A provider-enabled `--provider-source-fixture` build is allowed only with `--functional-build-only`; its receipt declares `provider_source_fixture:true` and `mas_build:false`, and model-review planning refuses it. The ordinary build retains `mas_build:true`. The local-dispatch fixture uses only an owned static mock provider, private loopback endpoints, empty model storage and an endpoint-restricted sandbox; it proves dispatch behavior without real inference or installed authority.
 
 Bound JSON target format1 (`native_bound_target_json_version:1`) reads only the decoded top-level JSON `model` string, retains the parsed allocation through response handling and enforces the existing1024-byte model identity limit. Nested metadata cannot select the target; valid JSON escapes select the same identifier. Non-object/non-string or duplicate-field JSON returns400 `invalid_request_error`; an absent or unregistered target remains404. This format marker does not establish native admission authority.
+
+
+## Optional tracked MLX component hold in the private source probe
+
+The explicit atomic-component SDK candidate can register immutable compiled
+acquire/release hooks before backend startup. Other SDK variants keep the
+existing bridge-only behavior. No wire packet, model output or installed
+configuration can register/replace these hooks.
+
+The native owner probe first synchronizes its original bridge-owned streams,
+then seals the already-tracked MLX stream-creation, host-queue and Metal-buffer
+components. Sealing earlier would prevent synchronization from enqueueing its
+own completion work. The original bridge token retains the additional source
+ticket and release hooks. Explicit same-creator bridge release preflights its
+irreversible epoch before releasing source gates, and clears neither record
+until positive source release. Refused/repeated probes and foreign/stale release
+retain the original gates. No timeout, age or local process reap releases them.
+
+This remains partial source exclusion. It does not cover model/context/MIMO/
+DS4/distributed participants, issue all-client/native terminality, clear native
+uncertainty or activate installed lifecycle. The source-component metadata
+retains coverage unknown/authority false. Existing binary protocol and its
+partial owner-stream result are unchanged. The enclosing builder enables this
+composition only for the verified cumulative atomic-component source patch;
+older SDKs do not silently substitute an implementation.

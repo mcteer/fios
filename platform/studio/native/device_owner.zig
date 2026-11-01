@@ -15,7 +15,8 @@ pub fn synchronize(owner: u64) Reading {
     return .{ .outcome = switch (status) { 1 => .wrong_owner, 2 => .streams_changed, else => .failed } };
 }
 // Optional partial bridge-creation metadata hold. These hooks do NOT reserve
-// raw MLX, model/context lifetime, other backends or all native transitions.
+// model/context lifetime, other backends or all native transitions. An explicit
+// source SDK composition can attach its tracked component gates after sync.
 pub const RegistryHooks = struct {
     acquire: *const fn (u64) ?u64,
     release: *const fn (u64, u64) bool,

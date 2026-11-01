@@ -5,6 +5,7 @@
 #include <array>
 #include <limits>
 #include <mutex>
+#include <atomic>
 #include "mlx/stream.h"
 #include "mlx/c/private/stream.h"
 
@@ -21,8 +22,12 @@ struct Registry {
     uint64_t next_hold = 0;
     uint64_t hold = 0;
     uint64_t hold_owner = 0;
+    uint64_t source_hold = 0;
+    const fios_mlx_source_hold_hooks* source_hooks = nullptr;
     bool uncertain = false;
 } registry;
+// Constant initialization: optional source constructors run before main.
+std::atomic<const fios_mlx_source_hold_hooks*> configured_source_hold{nullptr};
 struct Local {
     uint64_t owner = 0;
     std::vector<mlx::core::Stream> streams;
@@ -169,7 +174,16 @@ extern "C" int fios_mlx_release_owned_registry(uint64_t owner, uint64_t ticket) 
     if (!owner || fios_mlx_current_thread() != owner) return FIOS_MLX_WRONG_OWNER;
     std::lock_guard guard(registry.mutex);
     if (!ticket || registry.hold != ticket || !local.owner || registry.hold_owner != local.owner) return FIOS_MLX_INVALID;
+    if ((registry.source_hold != 0) != (registry.source_hooks != nullptr)) return FIOS_MLX_UNSUPPORTED_OR_FAILED;
+    // Preflight the bridge's irreversible epoch before releasing source gates.
     if (!bump()) return FIOS_MLX_UNSUPPORTED_OR_FAILED;
+    if (registry.source_hooks) {
+        try {
+            if (registry.source_hooks->release(registry.source_hold) != 0) return FIOS_MLX_UNSUPPORTED_OR_FAILED;
+        } catch (...) {registry.uncertain = true;return FIOS_MLX_UNSUPPORTED_OR_FAILED;}
+    }
+    registry.source_hold = 0;
+    registry.source_hooks = nullptr;
     registry.hold = 0;
     registry.hold_owner = 0;
     return 0;
@@ -209,6 +223,16 @@ extern "C" int fios_mlx_owner_barrier(uint64_t owner, fios_mlx_barrier_result* r
         {
             std::lock_guard guard(registry.mutex);
             if (registry.uncertain || registry.pending || registry.epoch != epoch) return FIOS_MLX_STREAMS_CHANGED;
+            if (const auto hooks = configured_source_hold.load(std::memory_order_acquire)) {
+                // Stream synchronization may enqueue real CPU/GPU completion
+                // work. Only seal the tracked source gates after it returns.
+                if (!registry.hold || registry.hold_owner != local.owner || registry.source_hold || !bump())
+                    return FIOS_MLX_UNSUPPORTED_OR_FAILED;
+                const auto ticket = hooks->acquire();
+                if (!ticket) return FIOS_MLX_UNSUPPORTED_OR_FAILED;
+                registry.source_hold = ticket;
+                registry.source_hooks = hooks;
+            }
         }
         // ONLY this owner's streams at this point. Other owners may still be
         // live/retired/unresolved; no aggregate terminal receipt is produced.
@@ -218,8 +242,12 @@ extern "C" int fios_mlx_owner_barrier(uint64_t owner, fios_mlx_barrier_result* r
 
 // Optional project renderer, not a declaration/substitution of an SDK API.
 // Constant initialization is independent of C++ constructor order.
-#include <atomic>
 namespace { std::atomic<fios_mlx_source_renderer> source_renderer{nullptr}; }
+extern "C" int fios_mlx_register_source_hold(const fios_mlx_source_hold_hooks* hooks) {
+    if (!hooks || !hooks->acquire || !hooks->release) return 1;
+    const fios_mlx_source_hold_hooks* expected=nullptr;
+    return configured_source_hold.compare_exchange_strong(expected,hooks,std::memory_order_release,std::memory_order_relaxed)?0:1;
+}
 extern "C" int fios_mlx_register_source_renderer(fios_mlx_source_renderer renderer) {
     if (!renderer) return 1;
     fios_mlx_source_renderer expected=nullptr;

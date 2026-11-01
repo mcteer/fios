@@ -3,10 +3,22 @@
 #include <cstdlib>
 extern "C" int fios_private_mlx_source_components_json(char*,size_t);
 namespace {
+#ifdef FIOS_SOURCE_COMPONENT_HOLD
+uint64_t acquire_source_components() {
+    return mlx::core::fios_hold_source_components(mlx::core::fios_host_queue_state().epoch);
+}
+int release_source_components(uint64_t ticket) {
+    return mlx::core::fios_release_metal_buffers(ticket)?0:1;
+}
+const fios_mlx_source_hold_hooks source_hold_hooks{acquire_source_components,release_source_components};
+#endif
 __attribute__((constructor)) void enable_private_mlx_source_participants() {
     // Pure metadata enablement before main/MLX initialization. Late adoption
     // refuses the experiment; no library/default/installed fallback is allowed.
     if (!mlx::core::fios_enable_stream_custody_fixture() || fios_mlx_register_source_renderer(fios_private_mlx_source_components_json)!=0) std::_Exit(78);
+#ifdef FIOS_SOURCE_COMPONENT_HOLD
+    if (fios_mlx_register_source_hold(&source_hold_hooks)!=0) std::_Exit(78);
+#endif
 }
 }
 

@@ -450,3 +450,24 @@ locks and does not copy `serving-custody.json`, which is volatile peer metadata,
 not a portable capability. These fences do not prove native inference/device
 terminality, adopt an orphan, authorize installed updates or clear uncertainty.
 Retain independent native reconciliation and reviewed installation/rollback gates.
+
+
+### Ordinary tracked MLX source hold development
+
+The separate `scripts/check-platform-mlx-component-hold.mjs --isolated` command
+builds the verified atomic-component source candidate using its required
+absolute source/CMake/JSON/fmt/Metal-header/developer inputs (`--source`,
+`--cmake`, `--json-source`, `--fmt-source`, `--metal-cpp-zip`, `--developer-dir`).
+It uses two compiler slots, a finite15-minute build bound and20-second fixture
+bounds, retaining its private SDK review. Only ordinary CPU scheduler work and
+a scalar safetensors roundtrip run; no model/native server or historical mutation,
+fault or counter campaign runs.
+
+`check-platform-mlx-component-bridge.mjs --isolated` consumes that exact SDK
+review with `--sdk`, `--sha256`, `--source`, plus the pinned `--mlxc-source`,
+`--mlxc-library` and `--developer-dir`. It compiles/runs Debug/optimized composed
+and default bridge cases with20-second runtime bounds and denied IP networking.
+The native enclosing fixture's existing `--functional-build-only` mode performs
+the required full rebuild for this added public SDK API without the historical
+root/HTTP campaigns. These are private source artifacts, not installation,
+all-client/backend terminal proof or authority to clear uncertainty.

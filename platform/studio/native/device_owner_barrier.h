@@ -45,11 +45,23 @@ int fios_mlx_owner_barrier(uint64_t owner_thread, struct fios_mlx_barrier_result
 // stream-creation wrappers while held, without retaining a mutex across I/O.
 // NOT a reservation of raw MLX APIs, default-handle clones, device encoders,
 // model/context lifetime, other backend actors or native lifecycle authority.
+// An explicit source shim may additionally seal its tracked SDK components
+// after owner synchronization; that optional hold shares this release token.
 // Returns0 for a granted hold (NOT synchronization); output is0 on failure.
 // Exact creator-local non-reusable owner and one-use ticket release only.
 // No timeout, thread exit or failed probe refunds/reopens this hold.
 int fios_mlx_hold_owned_registry(uint64_t owner_thread, uint64_t* out_ticket);
 int fios_mlx_release_owned_registry(uint64_t owner_thread, uint64_t ticket);
+// Trusted compiled source shim only. The immutable hooks and their functions
+// must have static lifetime. Registration is once-only before backend startup;
+// no wire setter, replacement or installed issuer. Optional source component
+// gates are acquired AFTER owned-stream synchronization, and retained with
+// the bridge hold until its same-creator release. Still not native terminality.
+struct fios_mlx_source_hold_hooks {
+    uint64_t (*acquire)(void);
+    int (*release)(uint64_t ticket); // zero only for positive exact release
+};
+int fios_mlx_register_source_hold(const struct fios_mlx_source_hold_hooks* hooks);
 // Optional private source-component metadata only. Zero means unavailable,
 // never an empty/idle/terminal result. No backend initialization or holds.
 typedef int (*fios_mlx_source_renderer)(char*, size_t);
