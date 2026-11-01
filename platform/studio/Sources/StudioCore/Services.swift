@@ -21,6 +21,8 @@ struct ServiceObservation:Sendable {
     let nativeIdle:Bool?
     let runtimeUnmanaged:Bool?
     let sampledAt:Int64
+    // Retained metadata state only; it grants no lifecycle/native authority.
+    var health:ServiceHealthState? = nil
 }
 enum ServiceAction:Equatable {
     case observe, launch, quit(ServiceIdentity), forceQuit(ServiceIdentity)

@@ -46,7 +46,7 @@ final class ServiceHealthCollector:@unchecked Sendable {
         guard finished-original<=5000 else {return nil}
         return ServiceObservation(identity:identity,responding:state == .healthy,
             sessionReady:sessionReady,credentialsReady:credentialsReady && state != .waitingCredentials,
-            nativeIdle:nil,runtimeUnmanaged:nil,sampledAt:original)
+            nativeIdle:nil,runtimeUnmanaged:nil,sampledAt:original,health:state)
     }
 }
 

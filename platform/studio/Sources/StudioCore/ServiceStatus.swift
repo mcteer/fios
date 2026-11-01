@@ -35,6 +35,7 @@ enum ServiceStatusPolicy {
             guard identity.valid else {return .unknown}
             if !observation.credentialsReady {return .waiting_credentials}
             if observation.responding {return .ready}
+            if observation.health == .loading {return .starting}
             return launchPending ? .starting:.degraded
         }
         // Identity=nil is the adapter's proven absence, NOT a failed probe.

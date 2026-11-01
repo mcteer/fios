@@ -18,14 +18,14 @@ import Darwin
             case "waiting_credentials":sample=ServiceObservation(identity:nil,responding:false,sessionReady:true,credentialsReady:false,nativeIdle:nil,runtimeUnmanaged:nil,sampledAt:now)
             case "stopped":sample=ServiceObservation(identity:nil,responding:false,sessionReady:true,credentialsReady:true,nativeIdle:nil,runtimeUnmanaged:nil,sampledAt:now)
             case "ready":sample=ServiceObservation(identity:identity,responding:true,sessionReady:true,credentialsReady:true,nativeIdle:nil,runtimeUnmanaged:nil,sampledAt:now)
-            case "mixed":sample=nil
+            case "mixed","loading":sample=nil
             case "degraded":sample=ServiceObservation(identity:identity,responding:false,sessionReady:true,credentialsReady:true,nativeIdle:nil,runtimeUnmanaged:nil,sampledAt:now)
             default:throw ServiceError.invalid
             }
-            if ["ready","degraded","mixed"].contains(args[2]) {
+            if ["ready","degraded","mixed","loading"].contains(args[2]) {
                 let process=ServiceProcessSample(presence:.present(identity),sampledAt:now,
                     reviewDigest:String(repeating:"b",count:64),uid:geteuid(),diagnostic:"fixture_present")
-                let state:ServiceHealthState=(args[2]=="ready" || (args[2]=="mixed" && service == .mlx)) ? .healthy:.unavailable
+                let state:ServiceHealthState=args[2]=="loading" ? (service == .mlx ? .loading:.healthy):(args[2]=="ready" || (args[2]=="mixed" && service == .mlx)) ? .healthy:.unavailable
                 let collector=ServiceHealthCollector(service:service,presence:{process},health:{state},now:{now},uptime:{1})
                 if service == .mlx {mlxHealth=collector}else {orbstackHealth=collector}
                 sample=nil // Actual manager background collection publishes it.

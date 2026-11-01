@@ -31,6 +31,16 @@ func runServiceHealthTests() throws {
     let loading=MLXServiceHealthCollector(presence:{sample},health:{.loading},now:{1000},uptime:{1})
     guard let pending=loading.capture(sessionReady:true,credentialsReady:true),!pending.responding,
           pending.credentialsReady else {fatalError("Loading became readiness or lost known credentials")}
+    guard let pending=loading.capture(sessionReady:true,credentialsReady:true),
+          ServiceStatusPolicy.observed(desired:.running,observation:pending,launchPending:false,now:1000) == .starting else {
+        fatalError("Ordinary loading health was reported as degraded")
+    }
+    guard let pending=loading.capture(sessionReady:true,credentialsReady:true),pending.health == .loading,
+          pending.nativeIdle==nil,pending.runtimeUnmanaged==nil,
+          ServiceStatusPolicy.observed(desired:.running,observation:pending,launchPending:false,now:6001) == .unknown,
+          try ServicePolicy().action(service:.mlx,desired:.running,observation:pending,now:1000) == .waitForIdle else {
+        fatalError("Loading health changed freshness or native lifecycle authority")
+    }
     let absent=ServiceProcessSample(presence:.absent,sampledAt:1000,reviewDigest:review,uid:501,diagnostic:"scoped_absence")
     let missing=MLXServiceHealthCollector(presence:{absent},health:{fatalError("Scoped absence invoked health")},now:{1000},uptime:{1})
     guard missing.capture(sessionReady:true,credentialsReady:true)==nil else {fatalError("Scoped absence became launch authority")}
