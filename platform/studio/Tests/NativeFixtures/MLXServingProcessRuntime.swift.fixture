@@ -99,6 +99,7 @@ extension MLXServingProcessRuntime {
         let profile=try ServiceLaunchProfile.digest(pins),gate=ServingRuntimeGate()
         let runtime=try MLXServingProcessRuntime.fixture(executable:executable,home:root.path,profile:profile,gate:gate)
         let transport=try NativeServingRecoveryTransport(runtime:runtime,approvedHashes:pins)
+        let recordedProbe=try RecordedServiceProcessProbe(service:.mlx,executable:executable,profileHash:profile)
         let queue=AsyncSessionControl(client:transport)
         func exchange(_ request:ServiceRecoveryRequest)throws->SessionLaunchResult {
             try queue.submit(request)
@@ -158,11 +159,15 @@ extension MLXServingProcessRuntime {
             identities.append(identity);try recovery.receive(request,result:outcome)
             let reconstructed=try ServiceRecoveryController(journal:journal,approvedHashes:pins)
             guard let recorded=reconstructed.recordedLaunch(.mlx),recorded.id==request.command.id,recorded.identity==identity,
-                  !reconstructed.isPending(.mlx),try journal.uncertainCount()==1 else {throw RuntimeError.invalid}
+                  !reconstructed.isPending(.mlx),recordedProbe.capture(recorded).state == .current(identity),
+                  try journal.uncertainCount()==1 else {throw RuntimeError.invalid}
+            let crossService=ServiceRecordedLaunch(service:.orbstack,id:recorded.id,identity:identity,boot:recorded.boot,profileHash:profile)
+            guard recordedProbe.capture(recorded).receipt==recorded,recordedProbe.capture(crossService).state == .unknown else {throw RuntimeError.invalid}
             do {try runtime.begin(blocked,deadline:ProcessInfo.processInfo.systemUptime+5);throw JournalError.conflict}catch RuntimeError.capacity {}
             guard !runtime.retireKnownExited(),try journal.uncertainCount()==1 else {throw RuntimeError.invalid}
             try runtime.endFixtureChild();try retired()
-            guard runtime.lookup(id:request.command.id)==outcome,try journal.uncertainCount()==1 else {throw RuntimeError.invalid}
+            guard runtime.lookup(id:request.command.id)==outcome,recordedProbe.capture(recorded).state == .exited,
+                  try journal.uncertainCount()==1 else {throw RuntimeError.invalid}
         }
         guard identities.count==2,identities[0] != identities[1] else {throw RuntimeError.invalid}
         print("PASS: actual private serving-role process launch/identity/local reap/relaunch, retained validation cancellation slot, no duplicate child and independent native uncertainty retained")
