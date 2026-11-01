@@ -43,5 +43,22 @@ func runServiceHealthTests() throws {
     let earlier=ServiceProcessSample(presence:.present(identity),sampledAt:900,reviewDigest:review,uid:501,diagnostic:"verified_present")
     let old=MLXServiceHealthCollector(presence:{earlier},health:{.healthy},now:{1000},uptime:{1})
     guard old.capture(sessionReady:true,credentialsReady:true)?.sampledAt==900 else {fatalError("Collection refreshed original process sample")}
+    let entered=DispatchSemaphore(value:0),release=DispatchSemaphore(value:0)
+    let background=AsyncServiceHealth(collector:MLXServiceHealthCollector(presence:{sample},health:{
+        entered.signal()
+        guard release.wait(timeout:.now()+2) == .success else {return .unavailable}
+        return .healthy
+    },now:{1000},uptime:{1}))
+    background.begin(sessionReady:true,credentialsReady:true)
+    guard entered.wait(timeout:.now()+1) == .success,background.poll()==nil else {fatalError("Background health did not retain its active slot")}
+    background.begin(sessionReady:true,credentialsReady:false) // No second exchange.
+    release.signal()
+    let end=ProcessInfo.processInfo.systemUptime+2
+    var collected:AsyncServiceHealth.Result?
+    while collected==nil,ProcessInfo.processInfo.systemUptime<end {
+        collected=background.poll();if collected==nil {Thread.sleep(forTimeInterval:0.005)}
+    }
+    guard collected?.observation?.responding==true,collected?.observation?.credentialsReady==true,
+          background.poll()==nil,entered.wait(timeout:.now()+0.02) == .timedOut else {fatalError("Background health lost/replaced/duplicated its one result")}
     print("PASS: fixed no-inference health wire, loading/auth separation, redirects/ambiguous/oversized response and target refusal")
 }

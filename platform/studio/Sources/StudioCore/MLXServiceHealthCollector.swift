@@ -4,13 +4,16 @@ import Foundation
 // two finite census calls bracket the fixed MLX no-inference health probe.
 // Matching observations do not prove ownership of the HTTP listening socket. A
 // scoped absence is deliberately not promoted into a recovery permission.
-struct MLXServiceHealthCollector {
+// Trusted read-only adapters are transferred together to one collection slot.
+// Serialize calls even if an internal fixture retains the collector reference.
+final class MLXServiceHealthCollector:@unchecked Sendable {
+    private let lock=NSLock()
     private let presence:()->ServiceProcessSample
     private let health:()->ServiceHealthState
     private let now:()->Int64
     private let uptime:()->TimeInterval
 
-    init(census:ServiceProcessCensus,probe:ServiceHealthProbe) {
+    convenience init(census:ServiceProcessCensus,probe:ServiceHealthProbe) {
         self.init(presence:census.capture,health:probe.probe,
                   now:HostResources.nowMilliseconds,uptime:{ProcessInfo.processInfo.systemUptime})
     }
@@ -20,6 +23,7 @@ struct MLXServiceHealthCollector {
         self.presence=presence;self.health=health;self.now=now;self.uptime=uptime
     }
     func capture(sessionReady:Bool,credentialsReady:Bool)->ServiceObservation? {
+        lock.lock();defer {lock.unlock()}
         let began=uptime(),collectedAt=now()
         guard began.isFinite,began>=0,(0...ActivityPolicy.maximumTimestamp).contains(collectedAt) else {return nil}
         let before=presence()

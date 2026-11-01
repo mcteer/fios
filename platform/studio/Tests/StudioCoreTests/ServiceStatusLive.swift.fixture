@@ -8,6 +8,7 @@ import Darwin
         let args=CommandLine.arguments
         guard args.count==3,geteuid()>0 else {throw ServiceError.invalid}
         let cache=ServiceObservationCache(),now=HostResources.nowMilliseconds()
+        var mlxHealth:MLXServiceHealthCollector?
         for service in ManagedService.allCases {
             let identity=ServiceIdentity(pid:42,start:1,sha256:String(repeating:"a",count:64))
             var sample:ServiceObservation?
@@ -25,10 +26,11 @@ import Darwin
                     reviewDigest:String(repeating:"b",count:64),uid:geteuid(),diagnostic:"fixture_present")
                 let state:ServiceHealthState=args[2]=="ready" ? .healthy:.unavailable
                 let collector=MLXServiceHealthCollector(presence:{process},health:{state},now:{now},uptime:{1})
-                sample=collector.capture(sessionReady:true,credentialsReady:true)
+                mlxHealth=collector
+                sample=nil // Actual manager background collection publishes it.
             }
             cache.publish(sample,for:service)
         }
-        try ManagerRuntime.run(directory:URL(fileURLWithPath:args[1]),nativeControl:nil,serviceObservations:cache)
+        try ManagerRuntime.run(directory:URL(fileURLWithPath:args[1]),nativeControl:nil,serviceObservations:cache,serviceHealth:mlxHealth,serviceHealthReadiness:{(true,true)})
     }
 }
