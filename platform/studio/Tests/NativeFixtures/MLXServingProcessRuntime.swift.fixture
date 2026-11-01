@@ -40,7 +40,7 @@ extension MLXServingProcessRuntime {
         // has no listener, model, native activity source or admission authority.
         return ServiceObservation(identity:value,responding:true,sessionReady:true,credentialsReady:true,nativeIdle:nil,runtimeUnmanaged:nil,sampledAt:now,health:.healthy)
     }
-    fileprivate static func fixture(executable:VerifiedExecutable,home:String,profile:String,gate:ServingRuntimeGate,stopGate:ServingStopGate?=nil)throws->MLXServingProcessRuntime {
+    fileprivate static func fixture(executable:VerifiedExecutable,home:String,profile:String,gate:ServingRuntimeGate,stopGate:ServingStopGate?=nil,ignoreTerm:Bool=false)throws->MLXServingProcessRuntime {
         guard executable.path.hasPrefix("/private/tmp/fios-009-serving-runtime-") else {throw RuntimeError.invalid}
         let base=["PATH":"/usr/bin:/bin","LANG":"C","LC_ALL":"C","HOME":home]
         let validateStop:@Sendable(ServingStopCommand)throws->Void={command in
@@ -59,13 +59,23 @@ extension MLXServingProcessRuntime {
             _=try MLXServingProcessRuntime(profile:fixed,arguments:["pull","serve"],environment:base,serviceProfileHash:profile,validateReservation:gate.validate,validateStopReservation:validateStop)
             throw JournalError.conflict
         }catch RuntimeError.invalid {}
-        return try MLXServingProcessRuntime(executable:executable,arguments:[],environment:["PATH":"/usr/bin:/bin","LANG":"C","LC_ALL":"C","HOME":home],serviceProfileHash:profile,validateReservation:gate.validate,validateStopReservation:validateStop)
+        return try MLXServingProcessRuntime(executable:executable,arguments:ignoreTerm ? ["ignore-term"]:[],environment:["PATH":"/usr/bin:/bin","LANG":"C","LC_ALL":"C","HOME":home],serviceProfileHash:profile,validateReservation:gate.validate,validateStopReservation:validateStop)
     }
     fileprivate func endFixtureChild()throws {
         lock.lock();let child=process,value=identity;lock.unlock()
         guard let child,let value,executable.path.hasPrefix("/private/tmp/fios-009-serving-runtime-") else {throw RuntimeError.invalid}
         _=try ServiceIdentity.verified(peer:NativeControlPeer(pid:value.pid,start:value.start,executable:executable),expectedUID:geteuid(),deadline:ProcessInfo.processInfo.systemUptime+1)
         try child.terminate(expected:value,deadline:ProcessInfo.processInfo.systemUptime+1) // Only this fixture's positively owned child.
+    }
+    fileprivate func waitForFixtureExpiry()throws {
+        lock.lock();let child=process;lock.unlock()
+        guard let child,executable.path.hasPrefix("/private/tmp/fios-009-serving-runtime-") else {throw RuntimeError.invalid}
+        let end=ProcessInfo.processInfo.systemUptime+7
+        while ProcessInfo.processInfo.systemUptime<end {
+            if !child.isRunning {return} // Exact direct-child wait; no runtime reset.
+            Thread.sleep(forTimeInterval:0.01)
+        }
+        throw RuntimeError.deadline
     }
 }
 @main struct ServingRuntimeFixture {
@@ -121,11 +131,12 @@ extension MLXServingProcessRuntime {
         let transport=try NativeServingRecoveryTransport(runtime:runtime,approvedHashes:pins)
         let recordedProbe=try RecordedServiceProcessProbe(service:.mlx,executable:executable,profileHash:profile)
         let queue=AsyncSessionControl(client:transport)
-        func exchange(_ request:ServiceRecoveryRequest)throws->SessionLaunchResult {
-            try queue.submit(request)
+        func exchange(_ request:ServiceRecoveryRequest,through selected:AsyncSessionControl?=nil)throws->SessionLaunchResult {
+            let subject=selected ?? queue
+            try subject.submit(request)
             let end=ProcessInfo.processInfo.systemUptime+3
             while ProcessInfo.processInfo.systemUptime<end {
-                if let response=queue.poll() {return try response.value.get()}
+                if let response=subject.poll() {return try response.value.get()}
                 Thread.sleep(forTimeInterval:0.005)
             }
             throw RuntimeError.deadline
@@ -136,18 +147,20 @@ extension MLXServingProcessRuntime {
         func next(_ now:Int64)throws->ServiceRecoveryRequest {
             guard let result=try recovery.next(service:.mlx,desired:.running,observation:absent(now),now:now,tick:now),result.operation == .launch else {throw RuntimeError.invalid};return result
         }
-        func stopResult(_ id:String)throws->ServingStopResult {
+        func stopResult(_ id:String,from selected:MLXServingProcessRuntime?=nil)throws->ServingStopResult {
+            let subject=selected ?? runtime
             let end=ProcessInfo.processInfo.systemUptime+5
             while ProcessInfo.processInfo.systemUptime<end {
-                if let result=runtime.pollStop() {guard result.id==id else {throw RuntimeError.invalid};return result.result}
+                if let result=subject.pollStop() {guard result.id==id else {throw RuntimeError.invalid};return result.result}
                 Thread.sleep(forTimeInterval:0.005)
             }
             throw RuntimeError.deadline
         }
-        func workerReturned()throws {
+        func workerReturned(_ selected:MLXServingProcessRuntime?=nil)throws {
+            let subject=selected ?? runtime
             let end=ProcessInfo.processInfo.systemUptime+2
-            while runtime.validationPending,ProcessInfo.processInfo.systemUptime<end {Thread.sleep(forTimeInterval:0.005)}
-            guard !runtime.validationPending else {throw RuntimeError.deadline}
+            while subject.validationPending,ProcessInfo.processInfo.systemUptime<end {Thread.sleep(forTimeInterval:0.005)}
+            guard !subject.validationPending else {throw RuntimeError.deadline}
         }
         let cancelled=try next(1000)
         guard try exchange(cancelled) == .uncertain else {throw RuntimeError.invalid}
@@ -228,9 +241,46 @@ extension MLXServingProcessRuntime {
                   try journal.uncertainCount()==1 else {throw RuntimeError.invalid}
         }
         guard identities.count==2,identities[0] != identities[1],gate.validations==3,stopGate.validations==4 else {throw RuntimeError.invalid}
+        let heldJournal=try Journal(directory:root.appendingPathComponent("timeout-state"))
+        let heldClaim=UUID().uuidString.lowercased()
+        try heldJournal.claim(job:heldClaim,attempt:0,model:"fixture/independent-timeout");try heldJournal.markUncertain(job:heldClaim,attempt:0)
+        let heldRecovery=try ServiceRecoveryController(journal:heldJournal,approvedHashes:pins)
+        let heldStartGate=ServingRuntimeGate(),heldStopGate=ServingStopGate()
+        heldStartGate.release.signal();heldStopGate.release.signal()
+        let held=try MLXServingProcessRuntime.fixture(executable:executable,home:root.path,profile:profile,gate:heldStartGate,stopGate:heldStopGate,ignoreTerm:true)
+        let heldQueue=AsyncSessionControl(client:try NativeServingRecoveryTransport(runtime:held,approvedHashes:pins))
+        guard let heldRequest=try heldRecovery.next(service:.mlx,desired:.running,observation:absent(1000),now:1000,tick:1000),
+              try exchange(heldRequest,through:heldQueue) == .uncertain else {throw RuntimeError.invalid}
+        var heldOutcome:SessionLaunchResult = .uncertain
+        let heldEnd=ProcessInfo.processInfo.systemUptime+3
+        while heldOutcome == .uncertain,ProcessInfo.processInfo.systemUptime<heldEnd {
+            guard let lookup=try heldRecovery.next(service:.mlx,desired:.running,observation:absent(1000),now:1000,tick:1000),lookup.operation == .lookup else {throw RuntimeError.invalid}
+            heldOutcome=try exchange(lookup,through:heldQueue)
+            if heldOutcome == .uncertain {Thread.sleep(forTimeInterval:0.005)}
+        }
+        guard case .started=heldOutcome else {throw RuntimeError.invalid}
+        try heldRecovery.receive(heldRequest,result:heldOutcome);try workerReturned(held)
+        guard let heldReceipt=heldRecovery.recordedLaunch(.mlx) else {throw RuntimeError.invalid}
+        let readyPath=root.appendingPathComponent("ignore-term-ready").path
+        let readinessEnd=ProcessInfo.processInfo.systemUptime+2
+        while !FileManager.default.fileExists(atPath:readyPath),ProcessInfo.processInfo.systemUptime<readinessEnd {Thread.sleep(forTimeInterval:0.005)}
+        guard FileManager.default.fileExists(atPath:readyPath) else {throw RuntimeError.deadline}
+        let timedStop=UUID().uuidString.lowercased()
+        try held.beginStop(id:timedStop,deadline:ProcessInfo.processInfo.systemUptime+5)
+        guard try stopResult(timedStop,from:held) == .uncertain else {throw RuntimeError.invalid}
+        try workerReturned(held)
+        guard case .current=recordedProbe.capture(heldReceipt).state else {throw RuntimeError.invalid}
+        do {try held.begin(blocked,deadline:ProcessInfo.processInfo.systemUptime+5);throw JournalError.conflict}catch RuntimeError.capacity {}
+        do {try held.beginStop(id:UUID().uuidString.lowercased(),deadline:ProcessInfo.processInfo.systemUptime+5);throw JournalError.conflict}catch RuntimeError.capacity {}
+        guard !held.retireKnownExited(),try heldJournal.uncertainCount()==1 else {throw RuntimeError.invalid}
+        try held.waitForFixtureExpiry() // The private helper's own five-second alarm, no force kill.
+        guard recordedProbe.capture(heldReceipt).state == .exited,held.lookupStop(id:timedStop) == .uncertain,
+              !held.retireKnownExited(),try heldJournal.uncertainCount()==1,
+              unrelated.isRunning,heldStopGate.validations==1 else {throw RuntimeError.invalid}
         print("PASS: actual private serving-role process launch/identity/local reap/relaunch, retained validation cancellation slot, no duplicate child and independent native uncertainty retained")
         print("PASS: native server transport through actual manager recovery queue, original durable operation lookup and no GUI fallback")
         print("PASS: POSIX owned-child reap preserves a separate live Foundation child; no global reap or process-name cleanup")
         print("PASS: guarded private serving stop, pre-signal revocation with retained slot, denied permit leaves child alive, exact local reap and fresh-start reservation; native uncertainty retained")
+        print("PASS: ignored SIGTERM retains stop uncertainty/capacity with no replacement or force fallback, including after private helper self-expiry and exact reap")
     }
 }

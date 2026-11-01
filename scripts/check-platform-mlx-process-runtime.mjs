@@ -10,8 +10,9 @@ assert.deepEqual(process.argv.slice(2),['--isolated']);assert.equal(process.plat
 const root=resolve(import.meta.dirname,'..'),directory=mkdtempSync('/private/tmp/fios-009-serving-runtime-');
 const hash=b=>createHash('sha256').update(b).digest('hex');
 const helper=join(directory,'serving-helper'),c=join(directory,'helper.c');
-writeFileSync(c,'#include <unistd.h>\n#include <signal.h>\nint main(void){alarm(30);for(;;)pause();}\n',{mode:0o600});
-function run(program,args,timeout=120000){const r=spawnSync(program,args,{encoding:'utf8',timeout,maxBuffer:2<<20});assert(!r.error&&!r.signal);assert.equal(r.status,0,r.stderr);return r.stdout;}
+const helperSource='#include <unistd.h>\n#include <signal.h>\n#include <string.h>\n#include <stdlib.h>\n#include <stdio.h>\n#include <fcntl.h>\nint main(int n,char**v){signal(SIGALRM,SIG_DFL);if(n==2&&strcmp(v[1],"ignore-term")==0){signal(SIGTERM,SIG_IGN);alarm(5);char p[8192];const char*h=getenv("HOME");if(!h||snprintf(p,sizeof(p),"%s/ignore-term-ready",h)>=(int)sizeof(p))return 70;int f=open(p,O_WRONLY|O_CREAT|O_EXCL,0600);if(f<0)return 71;close(f);}else{alarm(30);}for(;;)pause();}\n';
+writeFileSync(c,helperSource,{mode:0o600});
+function run(program,args,timeout=120000){const r=spawnSync(program,args,{encoding:'utf8',timeout,maxBuffer:2<<20});assert(!r.error&&!r.signal,JSON.stringify({error:r.error?.code,signal:r.signal,diagnostic:r.stderr?.slice(0,2000)}));assert.equal(r.status,0,r.stderr);return r.stdout;}
 run('/usr/bin/clang',[c,'-O2','-o',helper],30000);
 const core=join(root,'platform/studio/Sources/StudioCore'),name='MLXServingProcessRuntime.swift';
 const implementation=readFileSync(join(core,name)),fixture=readFileSync(join(root,'platform/studio/Tests/NativeFixtures/MLXServingProcessRuntime.swift.fixture'));
@@ -26,6 +27,7 @@ for(const mode of ['debug','release']){
  assert(output.includes('PASS: native server transport through actual manager recovery queue'));
  assert(output.includes('PASS: POSIX owned-child reap preserves a separate live Foundation child'));
  assert(output.includes('PASS: guarded private serving stop, pre-signal revocation with retained slot'));
+ assert(output.includes('PASS: ignored SIGTERM retains stop uncertainty/capacity'));
  const managerState=mkdtempSync('/private/tmp/f9-mlx-manager-');
  const policy='(version 1)(allow default)(deny network*)(allow network* (local unix-socket) (remote unix-socket))';
  const managerLog=openSync(join(managerState,'manager.log'),'wx',0o600);
@@ -53,5 +55,5 @@ for(const mode of ['debug','release']){
 }
 assert(implementation.equals(readFileSync(join(core,name))));
 for(const [n,bytes] of Object.entries(integration))assert(bytes.equals(readFileSync(join(core,n))));
-const receipt={ok:true,directory,provenance_scope:'declared_runtime_integration_and_fixture_only',modes:['debug','release'],source_sha256:hash(implementation),integration_sha256:Object.fromEntries(Object.entries(integration).map(([n,b])=>[n,hash(b)])),fixture_sha256:hash(fixture),actual_private_child_starts:8,actual_owned_serving_child_starts:6,actual_unrelated_private_children:2,actual_guarded_private_stops:4,pre_signal_revocations:2,denied_stop_validations:2,fresh_start_validations_per_queue_scenario:3,actual_manager_processes:2,manager_readiness:'synthetic',native_mlx_actions:0,native_inference:false,native_authority:false,installed:false};
+const receipt={ok:true,directory,provenance_scope:'declared_runtime_integration_and_fixture_only',modes:['debug','release'],source_sha256:hash(implementation),integration_sha256:Object.fromEntries(Object.entries(integration).map(([n,b])=>[n,hash(b)])),fixture_sha256:hash(fixture),helper_source_sha256:hash(helperSource),actual_private_child_starts:10,actual_owned_serving_child_starts:8,actual_unrelated_private_children:2,actual_guarded_private_stops:4,guarded_private_stop_timeouts:2,self_expiring_private_helpers:2,pre_signal_revocations:2,denied_stop_validations:2,fresh_start_validations_per_queue_scenario:3,actual_manager_processes:2,manager_readiness:'synthetic',native_mlx_actions:0,native_inference:false,native_authority:false,installed:false};
 writeFileSync(join(directory,'receipt.json'),JSON.stringify(receipt)+'\n',{mode:0o600});console.log(JSON.stringify(receipt));
