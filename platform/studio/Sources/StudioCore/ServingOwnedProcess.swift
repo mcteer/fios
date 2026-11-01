@@ -66,12 +66,15 @@ final class ServingOwnedProcess:@unchecked Sendable {
         uncertain=true;return false
     }
     var isRunning:Bool {lock.lock();defer {lock.unlock()};return !reapLocked()}
-    func terminate(expected:ServiceIdentity)throws {
+    func terminate(expected:ServiceIdentity,deadline:TimeInterval)throws {
         lock.lock();defer {lock.unlock()}
-        guard expected.valid,expected.pid==pid,expected.sha256==executable.sha256 else {throw RuntimeError.identity}
+        let now=ProcessInfo.processInfo.systemUptime
+        guard expected.valid,expected.pid==pid,expected.sha256==executable.sha256,
+              deadline.isFinite,deadline>now,deadline-now<=10 else {throw RuntimeError.identity}
         if reapLocked() {return}
         guard entered,pid>1,!uncertain else {throw RuntimeError.identity}
-        _=try ServiceIdentity.verified(peer:NativeControlPeer(pid:pid,start:expected.start,executable:executable),expectedUID:geteuid(),deadline:ProcessInfo.processInfo.systemUptime+1)
+        _=try ServiceIdentity.verified(peer:NativeControlPeer(pid:pid,start:expected.start,executable:executable),expectedUID:geteuid(),deadline:min(deadline,ProcessInfo.processInfo.systemUptime+1))
+        guard ProcessInfo.processInfo.systemUptime<deadline else {throw RuntimeError.deadline}
         // A child which exits now remains our unreaped zombie. No other method
         // can release that PID while this lock is held. This is local custody,
         // not the independent native lifecycle reservation required by callers.

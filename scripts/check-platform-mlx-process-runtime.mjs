@@ -25,6 +25,7 @@ for(const mode of ['debug','release']){
  assert(output.includes('PASS: actual private serving-role process launch/identity/local reap/relaunch'));
  assert(output.includes('PASS: native server transport through actual manager recovery queue'));
  assert(output.includes('PASS: POSIX owned-child reap preserves a separate live Foundation child'));
+ assert(output.includes('PASS: guarded private serving stop, pre-signal revocation with retained slot'));
  const managerState=mkdtempSync('/private/tmp/f9-mlx-manager-');
  const policy='(version 1)(allow default)(deny network*)(allow network* (local unix-socket) (remote unix-socket))';
  const managerLog=openSync(join(managerState,'manager.log'),'wx',0o600);
@@ -52,5 +53,5 @@ for(const mode of ['debug','release']){
 }
 assert(implementation.equals(readFileSync(join(core,name))));
 for(const [n,bytes] of Object.entries(integration))assert(bytes.equals(readFileSync(join(core,n))));
-const receipt={ok:true,directory,provenance_scope:'declared_runtime_integration_and_fixture_only',modes:['debug','release'],source_sha256:hash(implementation),integration_sha256:Object.fromEntries(Object.entries(integration).map(([n,b])=>[n,hash(b)])),fixture_sha256:hash(fixture),actual_private_child_starts:8,actual_owned_serving_child_starts:6,actual_unrelated_private_children:2,actual_manager_processes:2,manager_readiness:'synthetic',native_mlx_actions:0,native_inference:false,native_authority:false,installed:false};
+const receipt={ok:true,directory,provenance_scope:'declared_runtime_integration_and_fixture_only',modes:['debug','release'],source_sha256:hash(implementation),integration_sha256:Object.fromEntries(Object.entries(integration).map(([n,b])=>[n,hash(b)])),fixture_sha256:hash(fixture),actual_private_child_starts:8,actual_owned_serving_child_starts:6,actual_unrelated_private_children:2,actual_guarded_private_stops:4,pre_signal_revocations:2,denied_stop_validations:2,fresh_start_validations_per_queue_scenario:3,actual_manager_processes:2,manager_readiness:'synthetic',native_mlx_actions:0,native_inference:false,native_authority:false,installed:false};
 writeFileSync(join(directory,'receipt.json'),JSON.stringify(receipt)+'\n',{mode:0o600});console.log(JSON.stringify(receipt));

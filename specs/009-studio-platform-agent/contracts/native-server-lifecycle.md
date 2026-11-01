@@ -77,6 +77,18 @@ restart budget and durable operation IDs across process/session restarts.
 
 ## Acceptance still required
 
+The source owned-child stop primitive is not the installed controller. It
+requires a separate retained native lifecycle reservation, whose callback only
+revalidates that reservation. Pre-dispatch revocation keeps the real validator
+slot until return. After dispatch, errors/timeouts stay uncertain; there is no
+force/retry fallback. Identity and deadline are checked at the owned-child
+signal edge; local exit is reported separately from native/device completion.
+The durable stop-operation/controller bridge and control of a server surviving
+manager death remain unfinished. A historical PID cannot be adopted into POSIX
+child custody after reparenting; recovered control needs its own reviewed
+identity-bound native mechanism. Private helper stop/relaunch tests supply none
+of that installed authority.
+
 Source/private-process fixtures must cover exit with GUI alive, no duplicate
 launch, readiness loss versus loading, cancellation, manager restart, exhausted
 budgets and retained native uncertainty. Separately reviewed installation must

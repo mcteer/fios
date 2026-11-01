@@ -1,16 +1,29 @@
 private final class ServingRuntimeGate:@unchecked Sendable {
     let entered=DispatchSemaphore(value:0),release=DispatchSemaphore(value:0)
     private let lock=NSLock()
-    private var first=true
+    private var first=true,count=0
+    var validations:Int {lock.lock();defer {lock.unlock()};return count}
     private let trace:@Sendable(String)->Void
     init(trace:@escaping @Sendable(String)->Void={_ in}) {self.trace=trace}
     func validate(_ command:ServiceLaunchCommand)throws {
-        lock.lock();let held=first;first=false;lock.unlock()
+        lock.lock();let held=first;first=false;count+=1;lock.unlock()
         if held {
             trace("validation-entered");entered.signal()
             guard release.wait(timeout:.now()+5) == .success else {trace("validation-timeout");throw RuntimeError.deadline}
             trace("validation-released")
         }
+    }
+}
+private final class ServingStopGate:@unchecked Sendable {
+    let entered=DispatchSemaphore(value:0),release=DispatchSemaphore(value:0)
+    private let lock=NSLock()
+    private var first=true,deny=false,count=0
+    var validations:Int {lock.lock();defer {lock.unlock()};return count}
+    func denyNext() {lock.lock();deny=true;lock.unlock()}
+    func validate(_ command:ServingStopCommand)throws {
+        lock.lock();let held=first,denied=deny;first=false;deny=false;count+=1;lock.unlock()
+        if held {entered.signal();guard release.wait(timeout:.now()+5) == .success else {throw RuntimeError.deadline}}
+        if denied {throw RuntimeError.invalid}
     }
 }
 // Same-file extension reaches only the private fixture initializer/child. No
@@ -27,25 +40,32 @@ extension MLXServingProcessRuntime {
         // has no listener, model, native activity source or admission authority.
         return ServiceObservation(identity:value,responding:true,sessionReady:true,credentialsReady:true,nativeIdle:nil,runtimeUnmanaged:nil,sampledAt:now,health:.healthy)
     }
-    fileprivate static func fixture(executable:VerifiedExecutable,home:String,profile:String,gate:ServingRuntimeGate)throws->MLXServingProcessRuntime {
+    fileprivate static func fixture(executable:VerifiedExecutable,home:String,profile:String,gate:ServingRuntimeGate,stopGate:ServingStopGate?=nil)throws->MLXServingProcessRuntime {
         guard executable.path.hasPrefix("/private/tmp/fios-009-serving-runtime-") else {throw RuntimeError.invalid}
         let base=["PATH":"/usr/bin:/bin","LANG":"C","LC_ALL":"C","HOME":home]
+        let validateStop:@Sendable(ServingStopCommand)throws->Void={command in
+            // This constructor can authorize only this model-free private
+            // helper. It supplies no installed/native quiescence authority.
+            guard let stopGate,command.identity.sha256==executable.sha256,command.profileHash==profile,
+                  WireScalar.uuid(command.launchID),WireScalar.uuid(command.id) else {throw RuntimeError.invalid}
+            try stopGate.validate(command)
+        }
         do {
-            _=try MLXServingProcessRuntime(executable:executable,arguments:Array(repeating:String(repeating:"x",count:4096),count:20),environment:base,serviceProfileHash:profile,validateReservation:gate.validate)
+            _=try MLXServingProcessRuntime(executable:executable,arguments:Array(repeating:String(repeating:"x",count:4096),count:20),environment:base,serviceProfileHash:profile,validateReservation:gate.validate,validateStopReservation:validateStop)
             throw JournalError.conflict
         }catch RuntimeError.invalid {}
         let fixed=try MLXServingProcessProfile(serverSHA256:executable.sha256,applicationSHA256:executable.sha256,reviewDigest:profile,uid:geteuid())
         do {
-            _=try MLXServingProcessRuntime(profile:fixed,arguments:["pull","serve"],environment:base,serviceProfileHash:profile,validateReservation:gate.validate)
+            _=try MLXServingProcessRuntime(profile:fixed,arguments:["pull","serve"],environment:base,serviceProfileHash:profile,validateReservation:gate.validate,validateStopReservation:validateStop)
             throw JournalError.conflict
         }catch RuntimeError.invalid {}
-        return try MLXServingProcessRuntime(executable:executable,arguments:[],environment:["PATH":"/usr/bin:/bin","LANG":"C","LC_ALL":"C","HOME":home],serviceProfileHash:profile,validateReservation:gate.validate)
+        return try MLXServingProcessRuntime(executable:executable,arguments:[],environment:["PATH":"/usr/bin:/bin","LANG":"C","LC_ALL":"C","HOME":home],serviceProfileHash:profile,validateReservation:gate.validate,validateStopReservation:validateStop)
     }
     fileprivate func endFixtureChild()throws {
         lock.lock();let child=process,value=identity;lock.unlock()
         guard let child,let value,executable.path.hasPrefix("/private/tmp/fios-009-serving-runtime-") else {throw RuntimeError.invalid}
         _=try ServiceIdentity.verified(peer:NativeControlPeer(pid:value.pid,start:value.start,executable:executable),expectedUID:geteuid(),deadline:ProcessInfo.processInfo.systemUptime+1)
-        try child.terminate(expected:value) // Only this isolated fixture's positively owned child.
+        try child.terminate(expected:value,deadline:ProcessInfo.processInfo.systemUptime+1) // Only this fixture's positively owned child.
     }
 }
 @main struct ServingRuntimeFixture {
@@ -96,8 +116,8 @@ extension MLXServingProcessRuntime {
         try journal.claim(job:old,attempt:0,model:"fixture/independent");try journal.markUncertain(job:old,attempt:0)
         let pins:[ManagedService:String]=[.mlx:executable.sha256,.orbstack:executable.sha256]
         let recovery=try ServiceRecoveryController(journal:journal,approvedHashes:pins)
-        let profile=try ServiceLaunchProfile.digest(pins),gate=ServingRuntimeGate()
-        let runtime=try MLXServingProcessRuntime.fixture(executable:executable,home:root.path,profile:profile,gate:gate)
+        let profile=try ServiceLaunchProfile.digest(pins),gate=ServingRuntimeGate(),stopGate=ServingStopGate()
+        let runtime=try MLXServingProcessRuntime.fixture(executable:executable,home:root.path,profile:profile,gate:gate,stopGate:stopGate)
         let transport=try NativeServingRecoveryTransport(runtime:runtime,approvedHashes:pins)
         let recordedProbe=try RecordedServiceProcessProbe(service:.mlx,executable:executable,profileHash:profile)
         let queue=AsyncSessionControl(client:transport)
@@ -116,10 +136,18 @@ extension MLXServingProcessRuntime {
         func next(_ now:Int64)throws->ServiceRecoveryRequest {
             guard let result=try recovery.next(service:.mlx,desired:.running,observation:absent(now),now:now,tick:now),result.operation == .launch else {throw RuntimeError.invalid};return result
         }
-        func retired()throws {
-            let end=ProcessInfo.processInfo.systemUptime+3
-            while ProcessInfo.processInfo.systemUptime<end {if runtime.retireKnownExited(){return};Thread.sleep(forTimeInterval:0.005)}
+        func stopResult(_ id:String)throws->ServingStopResult {
+            let end=ProcessInfo.processInfo.systemUptime+5
+            while ProcessInfo.processInfo.systemUptime<end {
+                if let result=runtime.pollStop() {guard result.id==id else {throw RuntimeError.invalid};return result.result}
+                Thread.sleep(forTimeInterval:0.005)
+            }
             throw RuntimeError.deadline
+        }
+        func workerReturned()throws {
+            let end=ProcessInfo.processInfo.systemUptime+2
+            while runtime.validationPending,ProcessInfo.processInfo.systemUptime<end {Thread.sleep(forTimeInterval:0.005)}
+            guard !runtime.validationPending else {throw RuntimeError.deadline}
         }
         let cancelled=try next(1000)
         guard try exchange(cancelled) == .uncertain else {throw RuntimeError.invalid}
@@ -162,6 +190,7 @@ extension MLXServingProcessRuntime {
                 if outcome == .uncertain {Thread.sleep(forTimeInterval:0.005)}
             }
             guard case .started(let identity)=outcome else {throw RuntimeError.invalid}
+            try workerReturned()
             guard try transport.request(request)==outcome else {throw RuntimeError.invalid} // Native ID replay cannot spawn again.
             identities.append(identity);try recovery.receive(request,result:outcome)
             let reconstructed=try ServiceRecoveryController(journal:journal,approvedHashes:pins)
@@ -172,14 +201,36 @@ extension MLXServingProcessRuntime {
             guard recordedProbe.capture(recorded).receipt==recorded,recordedProbe.capture(crossService).state == .unknown else {throw RuntimeError.invalid}
             do {try runtime.begin(blocked,deadline:ProcessInfo.processInfo.systemUptime+5);throw JournalError.conflict}catch RuntimeError.capacity {}
             guard !runtime.retireKnownExited(),try journal.uncertainCount()==1 else {throw RuntimeError.invalid}
-            try runtime.endFixtureChild();try retired()
+            if now==11000 {
+                let cancelledStop=UUID().uuidString.lowercased()
+                try runtime.beginStop(id:cancelledStop,deadline:ProcessInfo.processInfo.systemUptime+5)
+                guard stopGate.entered.wait(timeout:.now()+2) == .success,runtime.cancelStopValidation(id:cancelledStop),
+                      try stopResult(cancelledStop) == .notSent,runtime.validationPending,
+                      recordedProbe.capture(recorded).state == .current(identity) else {throw RuntimeError.invalid}
+                do {try runtime.beginStop(id:UUID().uuidString.lowercased(),deadline:ProcessInfo.processInfo.systemUptime+5);throw JournalError.conflict}catch RuntimeError.capacity {}
+                stopGate.release.signal();try workerReturned()
+                guard runtime.lookupStop(id:cancelledStop) == .notSent,recordedProbe.capture(recorded).state == .current(identity) else {throw RuntimeError.invalid}
+            } else {
+                stopGate.denyNext()
+                let denied=UUID().uuidString.lowercased()
+                try runtime.beginStop(id:denied,deadline:ProcessInfo.processInfo.systemUptime+5)
+                guard try stopResult(denied) == .notSent else {throw RuntimeError.invalid}
+                try workerReturned()
+                guard recordedProbe.capture(recorded).state == .current(identity) else {throw RuntimeError.invalid}
+            }
+            let stopped=UUID().uuidString.lowercased()
+            try runtime.beginStop(id:stopped,deadline:ProcessInfo.processInfo.systemUptime+5)
+            guard try stopResult(stopped) == .localExited else {throw RuntimeError.invalid}
+            try workerReturned()
+            guard runtime.lookupStop(id:stopped) == .localExited,!runtime.cancelStopValidation(id:stopped) else {throw RuntimeError.invalid}
             guard runtime.lookup(id:request.command.id)==outcome,recordedProbe.capture(recorded).state == .exited,
                   unrelated.isRunning,try WorkerResources.startIdentifier(pid:unrelated.processIdentifier)==unrelatedStart,
                   try journal.uncertainCount()==1 else {throw RuntimeError.invalid}
         }
-        guard identities.count==2,identities[0] != identities[1] else {throw RuntimeError.invalid}
+        guard identities.count==2,identities[0] != identities[1],gate.validations==3,stopGate.validations==4 else {throw RuntimeError.invalid}
         print("PASS: actual private serving-role process launch/identity/local reap/relaunch, retained validation cancellation slot, no duplicate child and independent native uncertainty retained")
         print("PASS: native server transport through actual manager recovery queue, original durable operation lookup and no GUI fallback")
         print("PASS: POSIX owned-child reap preserves a separate live Foundation child; no global reap or process-name cleanup")
+        print("PASS: guarded private serving stop, pre-signal revocation with retained slot, denied permit leaves child alive, exact local reap and fresh-start reservation; native uncertainty retained")
     }
 }

@@ -1,18 +1,28 @@
 import Foundation
 import Darwin
 
+struct ServingStopCommand:Sendable {
+    let id:String
+    let launchID:String
+    let identity:ServiceIdentity
+    let profileHash:String
+}
+// This describes only the owned local process, never native/device terminality.
+enum ServingStopResult:Equatable,Sendable {case notSent,localExited,uncertain}
+
 // Physical, code-only process start/observation primitive. This is not a
 // service-intent interpreter or a native authority issuer. The installed
 // factory/controller must retain and revalidate its reviewed native start
 // reservation; no production issuer is wired. Never call this on the manager
 // heartbeat. A source fixture supplies only its private, model-free process.
 final class MLXServingProcessRuntime:@unchecked Sendable {
-    private enum Phase {case idle,validating,spawning,running,uncertain}
+    private enum Phase {case idle,validating,spawning,running,validatingStop,stopping,uncertain}
     private let executable:VerifiedExecutable
     private let arguments:[String]
     private let environment:[String:String]
     private let profileHash:String
     private let validateReservation:@Sendable(ServiceLaunchCommand)throws->Void
+    private let validateStopReservation:@Sendable(ServingStopCommand)throws->Void
     private let lock=NSLock()
     private var phase:Phase = .idle
     private var busy=false
@@ -22,16 +32,21 @@ final class MLXServingProcessRuntime:@unchecked Sendable {
     private var identity:ServiceIdentity?
     private var records:[String:SessionLaunchResult]=[:]
     private var delivery:(String,SessionLaunchResult)?
+    private var activeStopID:String?
+    private var stopRecords:[String:ServingStopResult]=[:]
+    private var stopDelivery:(String,ServingStopResult)?
 
     convenience init(profile:MLXServingProcessProfile,arguments:[String],environment:[String:String],serviceProfileHash:String,
-                     validateReservation:@escaping @Sendable(ServiceLaunchCommand)throws->Void)throws {
+                     validateReservation:@escaping @Sendable(ServiceLaunchCommand)throws->Void,
+                     validateStopReservation:@escaping @Sendable(ServingStopCommand)throws->Void)throws {
         // The caller supplies a separately reviewed preserved launch profile;
         // task/operator IPC cannot supply argv or environment values here.
         guard arguments.first=="serve" || (arguments.first?.hasPrefix("--")==true && arguments.contains("--serve")) else {throw RuntimeError.invalid}
-        try self.init(executable:profile.server,arguments:arguments,environment:environment,serviceProfileHash:serviceProfileHash,validateReservation:validateReservation)
+        try self.init(executable:profile.server,arguments:arguments,environment:environment,serviceProfileHash:serviceProfileHash,validateReservation:validateReservation,validateStopReservation:validateStopReservation)
     }
     private init(executable:VerifiedExecutable,arguments:[String],environment:[String:String],serviceProfileHash:String,
-                 validateReservation:@escaping @Sendable(ServiceLaunchCommand)throws->Void)throws {
+                 validateReservation:@escaping @Sendable(ServiceLaunchCommand)throws->Void,
+                 validateStopReservation:@escaping @Sendable(ServingStopCommand)throws->Void)throws {
         guard WireScalar.sha256(serviceProfileHash),arguments.count<=128,
               arguments.allSatisfy({!$0.contains("\0") && $0.utf8.count<=4096}),
               environment.count<=16,environment.allSatisfy({key,value in
@@ -41,14 +56,14 @@ final class MLXServingProcessRuntime:@unchecked Sendable {
         guard let home=environment["HOME"],(try? CommandEnvironment.sanitized(["HOME":home])) != nil,
               arguments.reduce(0,{$0+$1.utf8.count+1})+environment.reduce(0,{$0+$1.key.utf8.count+$1.value.utf8.count+2})<=65536 else {throw RuntimeError.invalid}
         self.executable=executable;self.arguments=arguments;self.environment=environment
-        profileHash=serviceProfileHash;self.validateReservation=validateReservation
+        profileHash=serviceProfileHash;self.validateReservation=validateReservation;self.validateStopReservation=validateStopReservation
     }
     func begin(_ command:ServiceLaunchCommand,deadline:TimeInterval)throws {
         let now=ProcessInfo.processInfo.systemUptime
         guard command.service == .mlx,WireScalar.uuid(command.id),command.expectedSHA256==executable.sha256,
               command.profileHash==profileHash,deadline.isFinite,deadline>now,deadline-now<=10 else {throw RuntimeError.invalid}
         lock.lock()
-        guard !busy,delivery==nil,phase == .idle,process==nil,records.count<256,records[command.id]==nil else {lock.unlock();throw RuntimeError.capacity}
+        guard !busy,delivery==nil,stopDelivery==nil,phase == .idle,process==nil,records.count<256,records[command.id]==nil,stopRecords[command.id]==nil else {lock.unlock();throw RuntimeError.capacity}
         busy=true;revoked=false;activeID=command.id;phase = .validating
         lock.unlock()
         Thread.detachNewThread { [self] in
@@ -116,6 +131,71 @@ final class MLXServingProcessRuntime:@unchecked Sendable {
             finish(command.id,.started(observed),phase:.running)
         } catch {finish(command.id,.uncertain,phase:.uncertain)}
     }
+
+    // Internal code-only entry, with no caller-selected PID/path/force. The
+    // installed issuer must retain its identity-bound admission-closed native
+    // lifecycle reservation through the operation. Its callback is read-only
+    // validation of that retained reservation, never an actuator/acquirer.
+    // No production issuer exists.
+    func beginStop(id:String,deadline:TimeInterval)throws {
+        let now=ProcessInfo.processInfo.systemUptime
+        guard WireScalar.uuid(id),deadline.isFinite,deadline>now,deadline-now<=10 else {throw RuntimeError.invalid}
+        lock.lock()
+        guard !busy,delivery==nil,stopDelivery==nil,phase == .running,
+              let child=process,let identity,let launchID=activeID,id != launchID,
+              stopRecords.count<256,stopRecords[id]==nil,records[id]==nil else {lock.unlock();throw RuntimeError.capacity}
+        let command=ServingStopCommand(id:id,launchID:launchID,identity:identity,profileHash:profileHash)
+        activeStopID=id;revoked=false;busy=true;phase = .validatingStop
+        lock.unlock()
+        Thread.detachNewThread { [self] in
+            autoreleasepool {stop(command,child:child,deadline:deadline)}
+            lock.lock();busy=false;lock.unlock()
+        }
+    }
+    @discardableResult func cancelStopValidation(id:String)->Bool {
+        lock.lock();defer {lock.unlock()}
+        guard activeStopID==id,phase == .validatingStop,!revoked else {return false}
+        revoked=true;stopRecords[id] = .notSent;stopDelivery=(id,.notSent)
+        return true // Retain the real validator slot until its worker returns.
+    }
+    func pollStop()->(id:String,result:ServingStopResult)? {
+        lock.lock();defer {lock.unlock()}
+        guard let found=stopDelivery else {return nil};stopDelivery=nil
+        return (found.0,found.1)
+    }
+    func lookupStop(id:String)->ServingStopResult {
+        lock.lock();defer {lock.unlock()};return stopRecords[id] ?? .uncertain
+    }
+    private func finishStop(_ id:String,_ result:ServingStopResult,phase next:Phase) {
+        lock.lock();defer {lock.unlock()}
+        if stopRecords[id]==nil {stopRecords[id]=result;stopDelivery=(id,result)}
+        phase=next;activeStopID=nil
+        if result == .localExited {process=nil;identity=nil;activeID=nil}
+    }
+    private func stop(_ command:ServingStopCommand,child:ServingOwnedProcess,deadline:TimeInterval) {
+        do {
+            let peer=NativeControlPeer(pid:command.identity.pid,start:command.identity.start,executable:executable)
+            guard try ServiceIdentity.verified(peer:peer,expectedUID:geteuid(),deadline:ProcessInfo.processInfo.systemUptime+1)==command.identity else {throw RuntimeError.identity}
+            try validateStopReservation(command)
+        } catch {finishStop(command.id,.notSent,phase:.running);return}
+        lock.lock()
+        guard !revoked,phase == .validatingStop,activeStopID==command.id,activeID==command.launchID,
+              process === child,identity==command.identity,ProcessInfo.processInfo.systemUptime<deadline else {
+            lock.unlock();finishStop(command.id,.notSent,phase:.running);return
+        }
+        phase = .stopping
+        lock.unlock()
+        do {try child.terminate(expected:command.identity,deadline:deadline)}
+        catch {finishStop(command.id,.uncertain,phase:.uncertain);return}
+        let end=min(deadline,ProcessInfo.processInfo.systemUptime+2)
+        while ProcessInfo.processInfo.systemUptime<end {
+            if !child.isRunning {finishStop(command.id,.localExited,phase:.idle);return}
+            Thread.sleep(forTimeInterval:0.005)
+        }
+        // No SIGKILL/retry/reset: the child and native reservation may remain
+        // live. A timeout cannot release capacity or independent native claims.
+        finishStop(command.id,.uncertain,phase:.uncertain)
+    }
     // Local capacity observation only. The caller's journal/native inference
     // claims and its next start reservation remain independent and unchanged.
     @discardableResult func retireKnownExited()->Bool {
@@ -128,6 +208,6 @@ final class MLXServingProcessRuntime:@unchecked Sendable {
         self.process=nil;self.identity=nil;activeID=nil;phase = .idle
         return true
     }
-    // Intentionally no deinit signal, PID-only stop, automatic restart or
-    // uncertainty reset. Disruptive control needs its separate native permit.
+    // No deinit signal, PID-only stop, automatic restart or uncertainty reset.
+    // A fresh start always revalidates its independent native reservation.
 }
