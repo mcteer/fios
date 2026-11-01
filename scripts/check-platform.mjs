@@ -104,7 +104,7 @@ try {
         process.argv[3]==='--mutate-launch-hold'?{file:'ModelBroker.swift',check:'for key in held where try journal.workerLaunchReaped(job:key.job,attempt:key.attempt)',replacement:'for key in held'}:
         process.argv[3]==='--mutate-manager-epoch'?{file:'ManagerExecution.swift',check:'value.managerEpoch==managerEpoch,',replacement:''}:
         process.argv[3]==='--mutate-activity-coverage'?{file:'NativeActivityCoherence.swift',check:'sourceCoverage == .all_clients && coverage == .all_clients',replacement:'coverage == .all_clients'}:
-        process.argv[3]==='--mutate-inference-scope'?{file:'Journal.swift',check:'try record.scope.encoded()==scope.encoded()',replacement:'true'}:
+        process.argv[3]==='--mutate-inference-scope'?{file:'Journal.swift',check:'outcome != .complete || record.state != .reserved,\n              try record.scope.encoded()==scope.encoded()',replacement:'outcome != .complete || record.state != .reserved,\n              true'}:
         process.argv[3]==='--mutate-lineage-root'?{file:'NativeRequestLineage.swift',check:'if let original=rootSequence,original != value.rootSequence',replacement:'if let original=rootSequence,original == 0'}:
         process.argv[3]==='--mutate-lineage-unknown'?{file:'NativeRequestLineage.swift',check:'uncertain && rootSequence==0 && references==0 && owners==0',replacement:'rootSequence==0 && references==0 && owners==0'}:
         process.argv[3]==='--mutate-service-census'?{file:'ServiceProcessCensus.swift',check:'Set(second)==Set(first),',replacement:''}:
