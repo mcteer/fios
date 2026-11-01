@@ -15,6 +15,17 @@ The handover must preserve reviewed configuration and prevent competing GUI
 launches, with separately reviewed installation/rollback; source implementation
 continues independently.
 
+Read-only cwd inventory at2026-11-01T19:31:18.496734Z found `/` for both
+MLXCore and the native server on both Studios, with the same PID/UID/executable
+metadata as the earlier snapshot. Receipt:
+`/tmp/fios-009-serving-cwd-inventory.json`. Collection used only fixed process
+metadata and cwd-only `lsof`, with before/after metadata comparison; it read no
+arguments, environment, credentials or model data and performed no service
+action. This is a historical cwd input for handover review, not process-start/
+image attestation, current/native ownership, absence, readiness or admission
+authority. The reviewed profile must retain an explicit cwd; do not assume
+launchd/manager defaults reproduce it.
+
 The inspected pinned upstream `ServerManager.start` calls its name/port-based
 `killOrphanedServers` before launching the bundled child. A native startup lock
 alone cannot prevent that GUI controller from first disrupting an agent-owned
