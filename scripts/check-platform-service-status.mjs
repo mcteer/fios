@@ -26,18 +26,19 @@ const status=(state,args=['status'])=>{
  const result=spawnSync(cli,['--state',state,...args],{cwd:root,encoding:'utf8',timeout:3000});
  return result.status===0 ? JSON.parse(result.stdout):null;
 };
+const expected=(mode,service)=>mode==='mixed' ? (service==='mlx'?'ready':'degraded'):mode;
 let child;
 try{
- for(const mode of ['unknown','waiting_session','waiting_credentials','stopped','ready','degraded']){
+ for(const mode of ['unknown','waiting_session','waiting_credentials','stopped','ready','degraded','mixed']){
   const state=join(directory,mode);
   child=spawn('/usr/bin/sandbox-exec',['-f',profile,binary,state,mode],{cwd:root,env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C',HOME:'/var/empty'},stdio:'ignore'});
-  await until(()=>{assert(!exited(child),'Status manager exited early');const observed=status(state);return observed&&['mlx','orbstack'].every(service=>observed.services[service].observed===mode);});
+  await until(()=>{assert(!exited(child),'Status manager exited early');const observed=status(state);return observed&&['mlx','orbstack'].every(service=>observed.services[service].observed===expected(mode,service));});
   const combined=status(state);
   assert.equal(combined.runtime_cleanup.scope,'owned_runtime_cleanup');
   assert.equal(combined.runtime_cleanup.pending_sandboxes,0);assert.equal(combined.runtime_cleanup.waiting_over_60s,false);
   for(const service of ['mlx','orbstack']){
    const selected=status(state,['service',service,'status']);
-   assert.equal(selected.observed,mode);assert.equal(selected.desired,'running');assert.equal(selected.launch_pending,false);
+   assert.equal(selected.observed,expected(mode,service));assert.equal(selected.desired,'running');assert.equal(selected.launch_pending,false);
    assert.equal(selected.observed,combined.services[service].observed);
    if(mode==='unknown'){assert.equal(selected.sampled_at,null);assert.equal(selected.age_ms,null);}
    else{assert(Number.isSafeInteger(selected.sampled_at));assert(selected.age_ms>=0&&selected.age_ms<=5000);}
@@ -57,7 +58,7 @@ try{
   assert.equal(status(state,['service','orbstack','status']).desired,'running');
   child.kill('SIGTERM');await until(()=>exited(child));assert.equal(child.exitCode,0);child=null;
  }
- console.log(JSON.stringify({ok:true,states:6,service_views:12,aged_service_views:2,native_actions:0,review_directory:directory}));
+ console.log(JSON.stringify({ok:true,states:7,service_views:14,aged_service_views:2,native_actions:0,review_directory:directory}));
 }finally{
  if(child&&!exited(child)){child.kill('SIGTERM');try{await until(()=>exited(child),3000);}catch{child.kill('SIGKILL');await until(()=>exited(child),3000);}}
  // Retain the private development states; no database cleanup or native work.

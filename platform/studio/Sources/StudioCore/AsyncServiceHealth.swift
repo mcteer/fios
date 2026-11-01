@@ -5,11 +5,11 @@ import Foundation
 // Only the serialized manager consumes results and updates its status cache.
 final class AsyncServiceHealth:@unchecked Sendable {
     struct Result {let observation:ServiceObservation?}
-    private let collector:MLXServiceHealthCollector
+    private let collector:ServiceHealthCollector
     private let lock=NSLock()
     private var busy=false
     private var result:Result?
-    init(collector:MLXServiceHealthCollector) {self.collector=collector}
+    init(collector:ServiceHealthCollector) {self.collector=collector}
     func begin(sessionReady:Bool,credentialsReady:Bool) {
         lock.lock()
         guard !busy,result==nil else {lock.unlock();return}

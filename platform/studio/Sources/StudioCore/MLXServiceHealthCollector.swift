@@ -1,12 +1,12 @@
 import Foundation
 
 // Read-only, present-process status composition. Run off the manager loop:
-// two finite census calls bracket the fixed MLX no-inference health probe.
+// two finite census calls bracket a fixed no-inference health probe.
 // Matching observations do not prove ownership of the HTTP listening socket. A
 // scoped absence is deliberately not promoted into a recovery permission.
 // Trusted read-only adapters are transferred together to one collection slot.
 // Serialize calls even if an internal fixture retains the collector reference.
-final class MLXServiceHealthCollector:@unchecked Sendable {
+final class ServiceHealthCollector:@unchecked Sendable {
     private let lock=NSLock()
     private let presence:()->ServiceProcessSample
     private let health:()->ServiceHealthState
@@ -14,6 +14,10 @@ final class MLXServiceHealthCollector:@unchecked Sendable {
     private let uptime:()->TimeInterval
 
     convenience init(census:ServiceProcessCensus,probe:ServiceHealthProbe) {
+        self.init(presence:census.capture,health:probe.probe,
+                  now:HostResources.nowMilliseconds,uptime:{ProcessInfo.processInfo.systemUptime})
+    }
+    convenience init(census:ServiceProcessCensus,probe:OrbStackHealthProbe) {
         self.init(presence:census.capture,health:probe.probe,
                   now:HostResources.nowMilliseconds,uptime:{ProcessInfo.processInfo.systemUptime})
     }
@@ -44,3 +48,6 @@ final class MLXServiceHealthCollector:@unchecked Sendable {
             nativeIdle:nil,runtimeUnmanaged:nil,sampledAt:original)
     }
 }
+
+// Preserve the existing internal MLX composition label.
+typealias MLXServiceHealthCollector = ServiceHealthCollector

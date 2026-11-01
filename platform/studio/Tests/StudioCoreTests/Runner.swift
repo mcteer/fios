@@ -25,6 +25,7 @@ struct PolicyTestRunner {
             ("service identity",runServiceIdentityTests),
             ("service process census",runServiceProcessCensusTests),
             ("service health",runServiceHealthTests),
+            ("OrbStack health",runOrbStackHealthTests),
             ("async native control",runAsyncNativeControlTests),
             ("native maintenance",runNativeMaintenanceTests),
             ("native control",runNativeControlTests),
