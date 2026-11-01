@@ -71,7 +71,7 @@ export function nativeReviewHTTPFailure(status, body) {
  const result={http_status:status};
  if(body?.error?.message==='This model is serving without its vision tower (--no-vision, no vision weights, or on the Neural Engine); image/video content is not supported')result.modality_error='vision_unavailable';
  if(typeof body?.error?.message==='string')result.error_message_sha256=createHash('sha256').update(body.error.message).digest('hex');
- const types=['model_load_failed','model_not_found','invalid_request_error','forbidden','model_busy','native_tracking_unavailable','internal_error','shutting_down','gpu_context_lost'];
+ const types=['model_load_failed','model_not_found','invalid_request_error','forbidden','model_busy','native_tracking_unavailable','native_instance_changed','internal_error','shutting_down','gpu_context_lost'];
  if(types.includes(body?.error?.type))result.error_type=body.error.type;
  const names=['FileNotFound','AccessDenied','PermissionDenied','OutOfMemory','NoDevice','DeviceNotFound','UnsupportedArchitecture','UnsupportedModel','InsufficientMemory','LifetimeUnavailable','GpuContextLost'];
  const match=/^(?:Failed to load model|Model load failed): ([A-Za-z]+)$/.exec(body?.error?.message ?? '');

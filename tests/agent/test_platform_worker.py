@@ -51,6 +51,7 @@ class PlatformWorkerTests(unittest.IsolatedAsyncioTestCase):
         async def handler(request):
             if request.method=='GET':
                 self.assertNotIn('x-fios-request-id',request.headers)
+                self.assertNotIn('x-fios-native-instance',request.headers)
                 return httpx2.Response(200,json={'status':'ok'} if request.url.path=='/health' else {'data':[{'id':'test/model'}]})
             sent.append(json.loads(request.content))
             headers.append(request.headers)
@@ -67,6 +68,7 @@ class PlatformWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(sent),1)
         self.assertEqual(sent[0]['model'],'test/model')
         self.assertEqual(headers[0]['x-fios-request-id'],'29fc52e328d588a1afee500c96d67ccc1045a873a328efccec3dc9ddfaef2cf5')
+        self.assertEqual(headers[0]['x-fios-native-instance'],guard_environment()['FIOS_PLATFORM_NATIVE_EPOCH'])
         self.assertNotIn('tools',sent[0])
         self.assertEqual(events[-1]['status'],'complete')
         self.assertEqual(sum(e['type']=='dispatched' for e in events),1)

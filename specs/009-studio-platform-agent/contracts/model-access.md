@@ -31,6 +31,14 @@ Immediately before the actual POST, the child independently reads the manager's 
 
 The guard await is followed by another cancellation/permission-expiry check; a pre-send notification is not proof of actual POST. Missing enrollment fails closed. Activity remains advisory: accepted native in-use protection must close snapshot→dispatch races; neither socket authentication nor these child checks satisfy G2 by themselves.
 
+## Native process-instance precondition
+
+The independent guard returns the exact native epoch from its validated immutable profile. After the final expiry/cancellation check, the private worker adds `X-Fios-Native-Instance` only to its one model POST, alongside the opaque request correlation ID. Discovery GETs carry neither field, and an existing value is refused. The worker does not reread its environment to select a different epoch after the guard await.
+
+Reviewed native source format1 compares the expected16-byte process instance before correlation association/model acquisition/dispatch. A stale instance returns a bounded409 `native_instance_changed`; an unavailable source identity refuses. The current instance preserves ordinary request handling. Legacy clients without the optional header retain existing behavior, so approved platform composition must independently require a reviewed target/worker that supports this precondition. A package-declared format field alone grants no installation or native authority.
+
+This binds target process identity only. Authentication, native in-use/non-preemptive admission and terminal reconciliation remain independent. A stale-target response never becomes a native not-sent/quiescence proof, clears older uncertainty, refreshes the permission or causes automatic replay. Complete snapshot-to-dispatch model protection and G2 remain open.
+
 ## Model input has no control authority
 
 Tool registrations are absent in this entry point. Generated text can be returned as task data but cannot invoke service operations, launch jobs, alter model/network policy, discover credentials or select another endpoint. Sandboxed code may act on returned text only inside its existing isolated resources; it has no management capability. Any future tool-enabled platform behavior requires a separate spec/permission review.

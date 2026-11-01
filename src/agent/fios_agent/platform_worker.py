@@ -63,16 +63,19 @@ class PlatformTransport(httpx2.AsyncBaseTransport):
             if self.token.cancelled or int(time.time()*1000)>=self.command.expires_at:
                 raise StreamFailure('invalid_request')
             try:
-                await check_native_guard(self.command)
+                native_epoch = await check_native_guard(self.command)
             except NativeGuardError:
                 raise StreamFailure('model_unavailable') from None
             # The independent read-only guard is an await boundary too. A
             # revoked/expired permission cannot dispatch after it returns.
             if self.token.cancelled or int(time.time()*1000)>=self.command.expires_at:
                 raise StreamFailure('invalid_request')
-            if 'x-fios-request-id' in request.headers:
+            if not isinstance(native_epoch,str) or not native_epoch:
+                raise StreamFailure('model_unavailable')
+            if 'x-fios-request-id' in request.headers or 'x-fios-native-instance' in request.headers:
                 raise StreamFailure('invalid_request')
             request.headers['x-fios-request-id']=request_correlation_id(self.command)
+            request.headers['x-fios-native-instance']=native_epoch
             self.actual_posts+=1
         return await self.inner.handle_async_request(request)
 

@@ -153,5 +153,6 @@ async def check_native_guard(command):
         profile = GuardProfile.from_environment()
         value = await query_observation(profile, command)
         validate_observation(value, profile, command, int(time.time() * 1000))
+        return profile.native_epoch
     except (ValueError, TypeError, KeyError, UnicodeError):
         raise NativeGuardError() from None
