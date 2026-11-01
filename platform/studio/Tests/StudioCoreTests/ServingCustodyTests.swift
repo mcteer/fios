@@ -104,6 +104,17 @@ func runServingCustodyTests()throws {
     defer {server=nil;try? FileManager.default.removeItem(at:directory)}
     let socketRuntime=CustodyRuntimeFixture(profile:profile,image:hash,identity:receipt.identity)
     server=try ServingCustodyServer(directory:directory,runtime:socketRuntime,manager:executable,imageSHA256:hash)
+    let boot=try HostBoot.identity()
+    guard let descriptor=try ServingCustodyDescriptor.read(directory:directory,expectedUID:geteuid(),expectedProfile:profile,boot:boot),
+          descriptor.pid==getpid(),descriptor.start==peer.start,descriptor.instance==server!.instance else {fatalError("Private custody descriptor lost actual creator identity")}
+    let descriptorFields:[String:Any]=["version":1,"purpose":"native_serving_custody","pid":getpid(),"uid":geteuid(),
+        "process_start":String(UInt64.max),"boot":boot,"instance":server!.instance,"profile":profile]
+    guard try ServingCustodyDescriptor(JSONSerialization.data(withJSONObject:descriptorFields),expectedUID:geteuid(),expectedProfile:profile,boot:boot).start==UInt64.max else {fatalError("Custody descriptor truncated kernel start")}
+    for (key,value):(String,Any) in [("boot",UUID().uuidString.lowercased()),("uid",true),("pid",1),("process_start","01"),("profile",hash),("role","supervisor")] {
+        var fields=descriptorFields;fields[key]=value
+        do {_=try ServingCustodyDescriptor(JSONSerialization.data(withJSONObject:fields),expectedUID:geteuid(),expectedProfile:profile,boot:boot);fatalError("Incompatible descriptor accepted")}
+        catch ControlError.unauthorized {}
+    }
     try server!.bindManager(peer)
     func client()throws->ServingCustodyClient {
         try ServingCustodyClient(directory:directory,peer:peer,instance:server!.instance,profile:profile,baseProfileHash:hash,imageSHA256:hash)

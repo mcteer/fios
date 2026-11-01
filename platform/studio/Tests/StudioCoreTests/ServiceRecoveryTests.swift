@@ -46,7 +46,7 @@ func runServiceRecoveryTests() throws {
     }
     let launchDocument:[String:Any]=[
         "version":1,"purpose":"reviewed_native_serving_launch","host":"fios-edge-a.lab","uid":501,
-        "review_sha256":hash,"manager_sha256":hash,"server_sha256":hash,"application_sha256":hash,
+        "review_sha256":hash,"manager_sha256":hash,"supervisor_sha256":hash,"server_sha256":hash,"application_sha256":hash,
         "revision":UUID().uuidString.lowercased(),"state_path":"/Users/fixture/state","working_directory":"/",
         "arguments":nativeArgs,"environment":["HOME":"/Users/fixture","PATH":"/usr/bin:/bin","LANG":"C","LC_ALL":"C"],
         "credential_channel":"environment"]
@@ -54,15 +54,19 @@ func runServiceRecoveryTests() throws {
         try NativeServingLaunchDocument(JSONSerialization.data(withJSONObject:document,options:[.sortedKeys]))
     }
     guard try NativeServingReviewedConfiguration.load(directory:directory)==nil else {fatalError("Development binary loaded installed native configuration")}
+    guard try NativeServingReviewedConfiguration.load(directory:directory,role:.supervisor)==nil else {fatalError("Development binary acquired supervisor configuration")}
     let decoded=try decodeLaunch(launchDocument)
     let resolved=try decoded.resolvingCredential("fixture-resolved-key")
     guard resolved.arguments==nativeArgs,resolved.environment["FIOS_MLX_SERVING_API_KEY"]=="fixture-resolved-key",
           resolved.workingDirectory=="/",decoded.host=="fios-edge-a.lab" else {fatalError("Reviewed launch inputs changed")}
+    guard try decoded.recoveryProfileHash(base:base,reviewedConfigurationSHA256:hash) == ServiceLaunchProfile.nativeDigest(base:base,arguments:resolved.arguments,environment:resolved.environment,workingDirectory:resolved.workingDirectory,reviewedConfigurationSHA256:hash) else {fatalError("Credential-free manager profile differs from native runtime inputs")}
     var argumentDocument=launchDocument
     argumentDocument["credential_channel"]="argument"
     argumentDocument["arguments"]=["--serve"]+binding+["--api-key",NativeServingLaunchDocument.credentialSlot,"--model","fixture/Exact"]
     guard try decodeLaunch(argumentDocument).resolvingCredential("fixture-argument-key").arguments == ["--serve"]+binding+["--api-key","fixture-argument-key","--model","fixture/Exact"] else {fatalError("Argument credential slot not preserved")}
-    for (key,value):(String,Any) in [("host","fios-core.lab"),("uid",true),("version",2),
+    let argumentDecoded=try decodeLaunch(argumentDocument),argumentResolved=try argumentDecoded.resolvingCredential("fixture-argument-key")
+    guard try argumentDecoded.recoveryProfileHash(base:base,reviewedConfigurationSHA256:hash) == ServiceLaunchProfile.nativeDigest(base:base,arguments:argumentResolved.arguments,environment:argumentResolved.environment,workingDirectory:argumentResolved.workingDirectory,reviewedConfigurationSHA256:hash) else {fatalError("Argument-mode manager profile requires credential value")}
+    for (key,value):(String,Any) in [("host","fios-core.lab"),("uid",true),("version",2),("supervisor_sha256","missing"),
           ("state_path","/tmp/../state"),("working_directory","/tmp/../"),("arguments",["--serve","--api-key","literal-key"]),
           ("environment",["HOME":"/Users/fixture","PATH":"/usr/bin:/bin","LANG":"C","LC_ALL":"C","FIOS_MLX_SERVING_API_KEY":"literal-key"]),
           ("extra","unknown"),("credential_channel","keychain")] {

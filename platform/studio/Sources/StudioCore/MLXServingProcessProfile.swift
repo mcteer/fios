@@ -5,7 +5,7 @@ import Darwin
 // absence/start lease, native activity claim or lifecycle authority issuer.
 // A future installed factory must obtain both hashes/review from protected
 // reviewed policy; task/operator payloads cannot choose paths or commands.
-struct MLXServingProcessProfile {
+struct MLXServingProcessProfile:Sendable {
     static let bundle="/Applications/MLX-Serve.app"
     let server:VerifiedExecutable
     let application:VerifiedExecutable

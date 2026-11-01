@@ -12,7 +12,7 @@ Version1 has exactly these fields:
 | `version`, `purpose` | `1`, `reviewed_native_serving_launch` |
 | `host`, `uid` | Approved Studio name and nonroot service account |
 | `review_sha256` | Separately reviewed configuration evidence identity |
-| `manager_sha256` | Exact manager executable identity |
+| `manager_sha256`, `supervisor_sha256` | Separate exact manager and supervisor executable identities |
 | `server_sha256`, `application_sha256` | Separate native server and GUI executable identities |
 | `revision`, `state_path` | Canonical UUID revision and exact private manager state directory |
 | `working_directory` | Explicit absolute normalized cwd, including `/` |
@@ -45,11 +45,12 @@ environment authentication. The constructor refuses literal argument credentials
 missing/empty resolution, conflicting channels and unsupported equals forms.
 
 `NativeServingReviewedConfiguration.load` reads only the fixed installed
-`/Library/Application Support/Fios/Studio/native-serving-launch.json` from the
-fixed installed manager image. Development images return no configuration
-before reading installed metadata. Root-protected file/tree checks, exact
-host/UID/state binding and manager kernel/image identity precede returning the
-document and fixed separate server/GUI process profile. It verifies the two
+`/Library/Application Support/Fios/Studio/native-serving-launch.json`. Its code-only
+role selects the fixed installed manager or supervisor image; a packet cannot
+select that role. Development/wrong-role images return no configuration before
+reading installed metadata. Root-protected file/tree checks, exact host/UID/state
+binding, both manager/supervisor image pins and the caller's kernel/image identity
+precede returning the document and fixed separate server/GUI process profile. It verifies the two
 current executable pins without starting a service or reading credentials.
 
 This is protected configuration metadata, not complete native enrollment.
@@ -63,8 +64,8 @@ native drain authority remain required. A decoded document, credential value or
 configuration fingerprint supplies none of those permissions. This contract
 changes no interface login or network binding and authorizes no installation.
 
-The code-only native runtime constructor now takes this opaque protected
-configuration, resolves its credential in memory and requires both start/stop
+The code-only native runtime constructor now takes only supervisor-role opaque
+protected configuration, resolves its credential in memory and requires both start/stop
 reservation validators. A bare process-profile constructor is private to the
 same-file fixtures. Construction does not invoke a validator or start a child;
 public startup still has no native configuration or authority producer.
@@ -77,3 +78,14 @@ that fingerprint stable. Private helper fixtures retain the original unreviewed
 version1 fingerprint domain; they supply no installed configuration proof.
 Recovery file version3 is unchanged. Incompatible profile history refuses
 unchanged and must not be deleted or dropped to permit an upgrade.
+
+The manager role can derive the expected version2 control profile using a
+synthetic credential slot, without reading the serving key. Its code-only
+`makeCustodyClient` reads the fixed private descriptor under the reviewed state
+directory, checks boot/profile/UID/canonical identity and independently verifies
+the pinned supervisor kernel/image before returning a fixed transport. Missing
+metadata returns no client; invalid metadata refuses. The descriptor is read
+through a held directory descriptor with exact-file identity checks; unrelated
+progress writes do not invalidate directory identity. This factory is still
+unwired from public startup and grants no native reservation or capacity. Its
+positive installed-manager/supervisor branches remain unexecuted.

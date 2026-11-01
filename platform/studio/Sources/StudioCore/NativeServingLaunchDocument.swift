@@ -3,12 +3,13 @@ import Darwin
 
 // Decoded reviewed configuration is metadata only. No factory here loads a
 // policy, reads a credential, issues a reservation or starts a process.
-struct NativeServingLaunchDocument {
+struct NativeServingLaunchDocument:Sendable {
     static let credentialSlot="<fios-serving-credential>"
     let host:String
     let uid:uid_t
     let reviewSHA256:String
     let managerSHA256:String
+    let supervisorSHA256:String
     let serverSHA256:String
     let applicationSHA256:String
     let revision:String
@@ -21,13 +22,14 @@ struct NativeServingLaunchDocument {
         do {
             try StrictJSON.validate(bytes,maximum:32768)
             guard let value=try JSONSerialization.jsonObject(with:bytes) as? [String:Any],
-                  Set(value.keys)==Set(["version","purpose","host","uid","review_sha256","manager_sha256","server_sha256","application_sha256","revision","state_path","working_directory","arguments","environment","credential_channel"]),
+                  Set(value.keys)==Set(["version","purpose","host","uid","review_sha256","manager_sha256","supervisor_sha256","server_sha256","application_sha256","revision","state_path","working_directory","arguments","environment","credential_channel"]),
                   WireScalar.integer(value["version"],maximum:1)==1,
                   value["purpose"] as? String=="reviewed_native_serving_launch",
                   let host=value["host"] as? String,["fios-edge-a.lab","fios-edge-b.lab"].contains(host),
                   let uid=WireScalar.integer(value["uid"],maximum:Int64(UInt32.max)),uid>0,
                   let review=value["review_sha256"] as? String,WireScalar.sha256(review),
                   let manager=value["manager_sha256"] as? String,WireScalar.sha256(manager),
+                  let supervisor=value["supervisor_sha256"] as? String,WireScalar.sha256(supervisor),
                   let server=value["server_sha256"] as? String,WireScalar.sha256(server),
                   let application=value["application_sha256"] as? String,WireScalar.sha256(application),
                   let revision=value["revision"] as? String,WireScalar.uuid(revision),
@@ -57,10 +59,17 @@ struct NativeServingLaunchDocument {
             var validationEnv=env
             if !argumentCredential {validationEnv["FIOS_MLX_SERVING_API_KEY"]="profile-validation"}
             _=try NativeServingLaunchInputs(arguments:args,environment:validationEnv,workingDirectory:cwd)
-            self.host=host;self.uid=uid_t(uid);reviewSHA256=review;managerSHA256=manager
+            self.host=host;self.uid=uid_t(uid);reviewSHA256=review;managerSHA256=manager;supervisorSHA256=supervisor
             serverSHA256=server;applicationSHA256=application;self.revision=revision
             statePath=state;workingDirectory=cwd;arguments=args;environment=env;self.argumentCredential=argumentCredential
         } catch {throw RuntimeError.invalid}
+    }
+    // Correlation only: the manager can derive the expected profile without
+    // reading the native serving key. Named credential values are excluded.
+    func recoveryProfileHash(base:String,reviewedConfigurationSHA256:String)throws->String {
+        let inputs=try resolvingCredential("profile-correlation-only")
+        return try ServiceLaunchProfile.nativeDigest(base:base,arguments:inputs.arguments,environment:inputs.environment,
+            workingDirectory:inputs.workingDirectory,reviewedConfigurationSHA256:reviewedConfigurationSHA256)
     }
     func resolvingCredential(_ secret:String)throws->NativeServingLaunchInputs {
         guard !secret.isEmpty,!secret.contains("\0"),secret.utf8.count<=4096 else {throw RuntimeError.invalid}

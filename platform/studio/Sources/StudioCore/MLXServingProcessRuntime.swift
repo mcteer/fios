@@ -63,6 +63,7 @@ final class MLXServingProcessRuntime:ServingProcessControlling,@unchecked Sendab
     convenience init(configuration:NativeServingReviewedConfiguration,credential:String,serviceProfileHash:String,
                      validateReservation:@escaping @Sendable(ServiceLaunchCommand)throws->Void,
                      validateStopReservation:@escaping @Sendable(ServingStopCommand)throws->Void)throws {
+        guard configuration.role == .supervisor else {throw ControlError.unauthorized}
         let inputs=try configuration.document.resolvingCredential(credential)
         try self.init(executable:configuration.processProfile.server,arguments:inputs.arguments,environment:inputs.environment,
             workingDirectory:inputs.workingDirectory,serviceProfileHash:serviceProfileHash,reviewedConfigurationSHA256:configuration.policySHA256,

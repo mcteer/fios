@@ -96,3 +96,12 @@ Both API readiness and native permits remain private-helper fixtures, and the
 independent uncertain journal count remains1 after managers stop. This is source
 composition evidence, not installed images, production profile/credential/native
 lease issuance, whole-supervisor orphan recovery or Studio acceptance.
+
+Protected configuration now distinguishes manager and supervisor entry roles
+and pins both images. Only the supervisor-role configuration can construct the
+native child runtime. The manager's source-only client factory derives its
+expected profile without the serving secret, reads the fixed descriptor and
+verifies the actual pinned supervisor. Static descriptor data is neither
+current ownership nor native terminality; every exchange still authenticates
+the peer, and lifecycle reservations remain independent. Public startup is
+still closed, and positive installed-factory acceptance remains open.

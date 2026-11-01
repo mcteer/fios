@@ -4,7 +4,7 @@ import Darwin
 // Reviewed launch data only. Construction neither enrolls configuration nor
 // reserves native work. No wire decoder or installed factory is exposed here.
 // Keep credential resolution in memory, outside durable recovery metadata.
-struct NativeServingLaunchInputs {
+struct NativeServingLaunchInputs:Sendable {
     let arguments:[String]
     let environment:[String:String]
     let workingDirectory:String
