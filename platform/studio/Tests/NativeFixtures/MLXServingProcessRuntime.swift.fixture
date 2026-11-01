@@ -2,14 +2,31 @@ private final class ServingRuntimeGate:@unchecked Sendable {
     let entered=DispatchSemaphore(value:0),release=DispatchSemaphore(value:0)
     private let lock=NSLock()
     private var first=true
+    private let trace:@Sendable(String)->Void
+    init(trace:@escaping @Sendable(String)->Void={_ in}) {self.trace=trace}
     func validate(_ command:ServiceLaunchCommand)throws {
         lock.lock();let held=first;first=false;lock.unlock()
-        if held {entered.signal();guard release.wait(timeout:.now()+5) == .success else {throw RuntimeError.deadline}}
+        if held {
+            trace("validation-entered");entered.signal()
+            guard release.wait(timeout:.now()+5) == .success else {trace("validation-timeout");throw RuntimeError.deadline}
+            trace("validation-released")
+        }
     }
 }
 // Same-file extension reaches only the private fixture initializer/child. No
 // installed factory or native app is invoked; the actual helper has no models.
 extension MLXServingProcessRuntime {
+    fileprivate func fixtureObservation(now:Int64)->ServiceObservation? {
+        lock.lock();let currentPhase=phase,child=process,value=identity;lock.unlock()
+        if currentPhase == .idle {
+            return ServiceObservation(identity:nil,responding:false,sessionReady:true,credentialsReady:true,nativeIdle:nil,runtimeUnmanaged:nil,sampledAt:now)
+        }
+        guard currentPhase == .running,let child,let value,child.isRunning,
+              (try? ServiceIdentity.verified(peer:NativeControlPeer(pid:value.pid,start:value.start,executable:executable),expectedUID:geteuid(),deadline:ProcessInfo.processInfo.systemUptime+0.5))==value else {return nil}
+        // Identity is real; API readiness is explicitly synthetic. The helper
+        // has no listener, model, native activity source or admission authority.
+        return ServiceObservation(identity:value,responding:true,sessionReady:true,credentialsReady:true,nativeIdle:nil,runtimeUnmanaged:nil,sampledAt:now,health:.healthy)
+    }
     fileprivate static func fixture(executable:VerifiedExecutable,home:String,profile:String,gate:ServingRuntimeGate)throws->MLXServingProcessRuntime {
         guard executable.path.hasPrefix("/private/tmp/fios-009-serving-runtime-") else {throw RuntimeError.invalid}
         let base=["PATH":"/usr/bin:/bin","LANG":"C","LC_ALL":"C","HOME":home]
@@ -34,6 +51,44 @@ extension MLXServingProcessRuntime {
 @main struct ServingRuntimeFixture {
     static func main()throws {
         let args=CommandLine.arguments
+        if args.count==4,args[1]=="control" {
+            guard let command=OperatorServiceCommand(arguments:["service","mlx",args[3]]) else {throw RuntimeError.invalid}
+            let directory=URL(fileURLWithPath:args[2])
+            let response=try ControlClient.request(path:directory.appendingPathComponent(command.socketName).path,operation:command.operation,payload:command.payload)
+            let result=try command.renderResponse(response)
+            print(String(decoding:try JSONSerialization.data(withJSONObject:result,options:[.sortedKeys]),as:UTF8.self));return
+        }
+        if args.count==5,args[1]=="manager" {
+            let root=URL(fileURLWithPath:args[4]),executable=try VerifiedExecutable(path:args[2],sha256:args[3])
+            let pins:[ManagedService:String]=[.mlx:executable.sha256,.orbstack:executable.sha256]
+            let gate=ServingRuntimeGate(trace:{event in
+                try? Data(String(HostResources.nowMilliseconds()).utf8).write(to:root.appendingPathComponent(event),options:.atomic)
+            }),profile=try ServiceLaunchProfile.digest(pins)
+            let runtime=try MLXServingProcessRuntime.fixture(executable:executable,home:root.path,profile:profile,gate:gate)
+            let transport=try NativeServingRecoveryTransport(runtime:runtime,approvedHashes:pins),cache=ServiceObservationCache()
+            Thread.detachNewThread {
+                var released=false
+                while true {
+                    let now=HostResources.nowMilliseconds()
+                    cache.publish(runtime.fixtureObservation(now:now),for:.mlx)
+                    if !released,FileManager.default.fileExists(atPath:root.appendingPathComponent("release-validation").path) {
+                        released=true
+                        try? Data(String(now).utf8).write(to:root.appendingPathComponent("release-observed"),options:.atomic)
+                        gate.release.signal()
+                    }
+                    Thread.sleep(forTimeInterval:0.025)
+                }
+            }
+            try ManagerRuntime.run(directory:root,nativeControl:nil,serviceObservations:cache,serviceControl:transport)
+            // Only the fixture owner retires its exact private helper. This is
+            // not a manager lifecycle permit or production shutdown behavior.
+            try runtime.endFixtureChild()
+            let end=ProcessInfo.processInfo.systemUptime+2
+            var reaped=false
+            while !reaped,ProcessInfo.processInfo.systemUptime<end {reaped=runtime.retireKnownExited();if !reaped {Thread.sleep(forTimeInterval:0.005)}}
+            guard reaped else {throw RuntimeError.deadline}
+            return
+        }
         guard args.count==4 else {throw RuntimeError.invalid}
         let executable=try VerifiedExecutable(path:args[1],sha256:args[2]),root=URL(fileURLWithPath:args[3])
         let journal=try Journal(directory:root.appendingPathComponent("state"))

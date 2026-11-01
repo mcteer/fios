@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 // Finite actual owned-process lifecycle only; no native MLX app/model/runtime.
 import assert from 'node:assert/strict';
-import {spawnSync} from 'node:child_process';
-import {mkdtempSync,readFileSync,writeFileSync,readdirSync} from 'node:fs';
+import {spawn,spawnSync} from 'node:child_process';
+import {setTimeout as delay} from 'node:timers/promises';
+import {mkdtempSync,readFileSync,writeFileSync,readdirSync,openSync,closeSync} from 'node:fs';
 import {resolve,join} from 'node:path';
 import {createHash} from 'node:crypto';
 assert.deepEqual(process.argv.slice(2),['--isolated']);assert.equal(process.platform,'darwin');assert(process.getuid()>0);
@@ -23,8 +24,32 @@ for(const mode of ['debug','release']){
  const output=run(binary,[helper,hash(readFileSync(helper)),state],30000);writeFileSync(join(directory,mode+'.log'),output,{mode:0o600});
  assert(output.includes('PASS: actual private serving-role process launch/identity/local reap/relaunch'));
  assert(output.includes('PASS: native server transport through actual manager recovery queue'));
+ const managerState=mkdtempSync('/private/tmp/f9-mlx-manager-');
+ const policy='(version 1)(allow default)(deny network*)(allow network* (local unix-socket) (remote unix-socket))';
+ const managerLog=openSync(join(managerState,'manager.log'),'wx',0o600);
+ const manager=spawn('/usr/bin/sandbox-exec',['-p',policy,binary,'manager',helper,hash(readFileSync(helper)),managerState],{stdio:['ignore',managerLog,managerLog]});closeSync(managerLog);
+ const exited=()=>manager.exitCode!==null||manager.signalCode!==null;
+ async function until(check,timeout=6000){const end=performance.now()+timeout;while(performance.now()<end){const value=check();if(value)return value;await delay(20);}throw Error('Private native manager fixture deadline');}
+ function status(){const r=spawnSync(binary,['control',managerState,'status'],{encoding:'utf8',timeout:2500});const s=r.status===0?JSON.parse(r.stdout):null;if(s)writeFileSync(join(managerState,'last-status.json'),JSON.stringify(s)+'\n',{mode:0o600});return s;}
+ try {
+  const pending=await until(()=>{assert(!exited());const s=status();return s?.launch_pending?s:null;});
+  // The fixture intentionally publishes unknown during validating/spawning.
+  // Pending intent cannot manufacture a current absence/presence observation.
+  assert(['starting','unknown'].includes(pending.observed));
+  assert.equal(pending.recovery.starts_in_window,1);
+  writeFileSync(join(managerState,'release-validation'),'release',{mode:0o600});
+  const ready=await until(()=>{assert(!exited());const s=status();return s?.observed==='ready'&&!s.launch_pending?s:null;});
+  assert.equal(ready.recovery.starts_in_window,1);
+  const maintenance=JSON.parse(run(binary,['control',managerState,'maintenance'],3000));assert.equal(maintenance.applied,false);
+  const maintained=await until(()=>{const s=status();return s?.desired==='maintenance'?s:null;});
+  assert.equal(maintained.recovery.starts_in_window,1);
+  manager.kill('SIGTERM');await until(exited,4000);assert.equal(manager.exitCode,0);
+  writeFileSync(join(directory,mode+'-manager.json'),JSON.stringify({pending,ready,maintained,state:managerState,identity:'actual_private_helper',readiness:'synthetic',native_authority:false})+'\n',{mode:0o600});
+ }catch(error){console.error('RETAINED private native manager fixture:',managerState);throw error;}finally {
+  if(!exited()){manager.kill('SIGTERM');try{await until(exited,3000);}catch{manager.kill('SIGKILL');await until(exited,3000);}}
+ }
 }
 assert(implementation.equals(readFileSync(join(core,name))));
 for(const [n,bytes] of Object.entries(integration))assert(bytes.equals(readFileSync(join(core,n))));
-const receipt={ok:true,directory,provenance_scope:'declared_runtime_integration_and_fixture_only',modes:['debug','release'],source_sha256:hash(implementation),integration_sha256:Object.fromEntries(Object.entries(integration).map(([n,b])=>[n,hash(b)])),fixture_sha256:hash(fixture),actual_private_child_starts:4,native_mlx_actions:0,native_inference:false,native_authority:false,installed:false};
+const receipt={ok:true,directory,provenance_scope:'declared_runtime_integration_and_fixture_only',modes:['debug','release'],source_sha256:hash(implementation),integration_sha256:Object.fromEntries(Object.entries(integration).map(([n,b])=>[n,hash(b)])),fixture_sha256:hash(fixture),actual_private_child_starts:6,actual_manager_processes:2,manager_readiness:'synthetic',native_mlx_actions:0,native_inference:false,native_authority:false,installed:false};
 writeFileSync(join(directory,'receipt.json'),JSON.stringify(receipt)+'\n',{mode:0o600});console.log(JSON.stringify(receipt));
