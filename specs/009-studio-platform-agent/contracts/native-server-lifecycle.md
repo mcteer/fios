@@ -13,7 +13,7 @@ nor permission to launch. Do not implement lifecycle through GUI scripting,
 name/port-based process killing or a general shell command.
 
 Installation must review a single handover from the existing GUI controller:
-preserve its exact serving arguments, listener binding, credential source,
+preserve its exact serving arguments, explicit working directory, listener binding, credential source,
 model/cache paths and required framework environment; prevent GUI autostart or
 manual GUI lifecycle from racing the agent. The installation plan must explain
 the effects and reversal before any installed change. Do not copy raw process

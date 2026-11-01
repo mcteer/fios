@@ -70,7 +70,7 @@ extension MLXServingProcessRuntime {
         // has no listener, model, native activity source or admission authority.
         return ServiceObservation(identity:value,responding:true,sessionReady:true,credentialsReady:true,nativeIdle:nil,runtimeUnmanaged:nil,sampledAt:now,health:.healthy)
     }
-    fileprivate static func fixture(executable:VerifiedExecutable,home:String,profile:String,gate:ServingRuntimeGate,stopGate:ServingStopGate?=nil,ignoreTerm:Bool=false,exitOnce:Bool=false)throws->MLXServingProcessRuntime {
+    fileprivate static func fixture(executable:VerifiedExecutable,home:String,profile:String,gate:ServingRuntimeGate,stopGate:ServingStopGate?=nil,ignoreTerm:Bool=false,exitOnce:Bool=false,cwdProof:Bool=false,workingDirectory:String?=nil)throws->MLXServingProcessRuntime {
         guard executable.path.hasPrefix("/private/tmp/fios-009-serving-runtime-") else {throw RuntimeError.invalid}
         let base=["PATH":"/usr/bin:/bin","LANG":"C","LC_ALL":"C","HOME":home]
         let validateStop:@Sendable(ServingStopCommand)throws->Void={command in
@@ -81,16 +81,16 @@ extension MLXServingProcessRuntime {
             try stopGate.validate(command)
         }
         do {
-            _=try MLXServingProcessRuntime(executable:executable,arguments:Array(repeating:String(repeating:"x",count:4096),count:20),environment:base,serviceProfileHash:profile,validateReservation:gate.validate,validateStopReservation:validateStop)
+            _=try MLXServingProcessRuntime(executable:executable,arguments:Array(repeating:String(repeating:"x",count:4096),count:20),environment:base,workingDirectory:home,serviceProfileHash:profile,validateReservation:gate.validate,validateStopReservation:validateStop)
             throw JournalError.conflict
         }catch RuntimeError.invalid {}
         let fixed=try MLXServingProcessProfile(serverSHA256:executable.sha256,applicationSHA256:executable.sha256,reviewDigest:profile,uid:geteuid())
         do {
-            _=try MLXServingProcessRuntime(profile:fixed,arguments:["pull","serve"],environment:base,serviceProfileHash:profile,validateReservation:gate.validate,validateStopReservation:validateStop)
+            _=try MLXServingProcessRuntime(profile:fixed,arguments:["pull","serve"],environment:base,workingDirectory:home,serviceProfileHash:profile,validateReservation:gate.validate,validateStopReservation:validateStop)
             throw JournalError.conflict
         }catch RuntimeError.invalid {}
-        guard !ignoreTerm || !exitOnce else {throw RuntimeError.invalid}
-        return try MLXServingProcessRuntime(executable:executable,arguments:ignoreTerm ? ["ignore-term"]:exitOnce ? ["exit-once"]:[],environment:["PATH":"/usr/bin:/bin","LANG":"C","LC_ALL":"C","HOME":home],serviceProfileHash:profile,validateReservation:gate.validate,validateStopReservation:validateStop)
+        guard [ignoreTerm,exitOnce,cwdProof].filter({$0}).count<=1 else {throw RuntimeError.invalid}
+        return try MLXServingProcessRuntime(executable:executable,arguments:ignoreTerm ? ["ignore-term"]:exitOnce ? ["exit-once"]:cwdProof ? ["cwd-proof"]:[],environment:["PATH":"/usr/bin:/bin","LANG":"C","LC_ALL":"C","HOME":home],workingDirectory:workingDirectory ?? home,serviceProfileHash:profile,validateReservation:gate.validate,validateStopReservation:validateStop)
     }
     fileprivate func endFixtureChild()throws {
         lock.lock();let child=process,value=identity;lock.unlock()
@@ -439,6 +439,29 @@ extension MLXServingProcessRuntime {
         try mixedRecovery.receive(native,result:nativeResult);try workerReturned(mixedRuntime)
         try mixedRuntime.endFixtureChild();try mixedRuntime.waitForFixtureExpiry()
         guard mixedRuntime.retireKnownExited(),try journal.uncertainCount()==1,try heldJournal.uncertainCount()==1 else {throw RuntimeError.invalid}
+        let cwdDirectory=root.appendingPathComponent("cwd-child")
+        try FileManager.default.createDirectory(at:cwdDirectory,withIntermediateDirectories:false,attributes:[.posixPermissions:0o700])
+        let cwdGate=ServingRuntimeGate();cwdGate.release.signal()
+        let cwdRuntime=try MLXServingProcessRuntime.fixture(executable:executable,home:root.path,profile:profile,gate:cwdGate,cwdProof:true,workingDirectory:cwdDirectory.path)
+        let cwdQueue=AsyncSessionControl(client:try NativeServingRecoveryTransport(runtime:cwdRuntime,approvedHashes:pins))
+        let cwdJournal=try Journal(directory:root.appendingPathComponent("cwd-state"))
+        let cwdRecovery=try ServiceRecoveryController(journal:cwdJournal,approvedHashes:pins)
+        guard let cwdRequest=try cwdRecovery.next(service:.mlx,desired:.running,observation:absent(1000),now:1000,tick:1000),
+              try exchange(cwdRequest,through:cwdQueue) == .uncertain else {throw RuntimeError.invalid}
+        var cwdOutcome:SessionLaunchResult = .uncertain
+        let cwdEnd=ProcessInfo.processInfo.systemUptime+3
+        while cwdOutcome == .uncertain,ProcessInfo.processInfo.systemUptime<cwdEnd {
+            guard let lookup=try cwdRecovery.next(service:.mlx,desired:.running,observation:absent(1000),now:1000,tick:1000) else {throw RuntimeError.invalid}
+            cwdOutcome=try exchange(lookup,through:cwdQueue)
+            if cwdOutcome == .uncertain {Thread.sleep(forTimeInterval:0.005)}
+        }
+        guard case .started=cwdOutcome else {throw RuntimeError.invalid}
+        try cwdRecovery.receive(cwdRequest,result:cwdOutcome);try workerReturned(cwdRuntime)
+        let cwdProof=cwdDirectory.appendingPathComponent("cwd-proof"),cwdProofEnd=ProcessInfo.processInfo.systemUptime+1
+        while !FileManager.default.fileExists(atPath:cwdProof.path),ProcessInfo.processInfo.systemUptime<cwdProofEnd {Thread.sleep(forTimeInterval:0.005)}
+        guard try String(contentsOf:cwdProof,encoding:.utf8)==cwdDirectory.path,FileManager.default.currentDirectoryPath != cwdDirectory.path else {throw RuntimeError.invalid}
+        try cwdRuntime.endFixtureChild();try cwdRuntime.waitForFixtureExpiry()
+        guard cwdRuntime.retireKnownExited() else {throw RuntimeError.invalid}
         print("PASS: actual private serving-role process launch/identity/local reap/relaunch, retained validation cancellation slot, no duplicate child and independent native uncertainty retained")
         print("PASS: native server transport through actual manager recovery queue, original durable operation lookup and no GUI fallback")
         print("PASS: POSIX owned-child reap preserves a separate live Foundation child; no global reap or process-name cleanup")
@@ -448,5 +471,6 @@ extension MLXServingProcessRuntime {
         print("PASS: missing actuator stop history stays unknown, consumed dispatch cannot replay and failed durable acknowledgement retains pending stop")
         print("PASS: distinct native/session profiles preserve authenticated OrbStack Unix RPC and native-only MLX child launch with zero MLX GUI calls")
         print("PASS: unexpected owned-child exit retires local custody off-loop before replacement, fresh start validation required and native uncertainty retained")
+        print("PASS: explicit native working directory preserves relative-path behavior without changing manager cwd or inheriting it")
     }
 }

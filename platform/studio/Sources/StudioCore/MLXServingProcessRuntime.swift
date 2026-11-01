@@ -37,6 +37,7 @@ final class MLXServingProcessRuntime:@unchecked Sendable {
     private let executable:VerifiedExecutable
     private let arguments:[String]
     private let environment:[String:String]
+    private let workingDirectory:String
     private let profileHash:String
     private let validateReservation:@Sendable(ServiceLaunchCommand)throws->Void
     private let validateStopReservation:@Sendable(ServingStopCommand)throws->Void
@@ -53,26 +54,29 @@ final class MLXServingProcessRuntime:@unchecked Sendable {
     private var stopRecords:[String:ServingStopResult]=[:]
     private var stopDelivery:(String,ServingStopResult)?
 
-    convenience init(profile:MLXServingProcessProfile,arguments:[String],environment:[String:String],serviceProfileHash:String,
+    convenience init(profile:MLXServingProcessProfile,arguments:[String],environment:[String:String],workingDirectory:String,serviceProfileHash:String,
                      validateReservation:@escaping @Sendable(ServiceLaunchCommand)throws->Void,
                      validateStopReservation:@escaping @Sendable(ServingStopCommand)throws->Void)throws {
         // The caller supplies a separately reviewed preserved launch profile;
-        // task/operator IPC cannot supply argv or environment values here.
+        // task/operator IPC cannot supply argv, environment or working directory.
         guard arguments.first=="serve" || (arguments.first?.hasPrefix("--")==true && arguments.contains("--serve")) else {throw RuntimeError.invalid}
-        try self.init(executable:profile.server,arguments:arguments,environment:environment,serviceProfileHash:serviceProfileHash,validateReservation:validateReservation,validateStopReservation:validateStopReservation)
+        try self.init(executable:profile.server,arguments:arguments,environment:environment,workingDirectory:workingDirectory,serviceProfileHash:serviceProfileHash,validateReservation:validateReservation,validateStopReservation:validateStopReservation)
     }
-    private init(executable:VerifiedExecutable,arguments:[String],environment:[String:String],serviceProfileHash:String,
+    private init(executable:VerifiedExecutable,arguments:[String],environment:[String:String],workingDirectory:String,serviceProfileHash:String,
                  validateReservation:@escaping @Sendable(ServiceLaunchCommand)throws->Void,
                  validateStopReservation:@escaping @Sendable(ServingStopCommand)throws->Void)throws {
         guard WireScalar.sha256(serviceProfileHash),arguments.count<=128,
+              workingDirectory.hasPrefix("/"),workingDirectory.utf8.count<Int(MAXPATHLEN),!workingDirectory.contains("\0"),
+              !workingDirectory.contains("//"),(workingDirectory=="/" || !workingDirectory.hasSuffix("/")),
+              !workingDirectory.split(separator:"/").contains(where:{$0=="." || $0==".."}),
               arguments.allSatisfy({!$0.contains("\0") && $0.utf8.count<=4096}),
               environment.count<=16,environment.allSatisfy({key,value in
                   ["PATH","HOME","LANG","LC_ALL","DYLD_LIBRARY_PATH","MLX_METAL_PATH","FIOS_MLX_SERVING_API_KEY"].contains(key) &&
                   !value.contains("\0") && value.utf8.count<=4096
               }),environment["PATH"]=="/usr/bin:/bin",environment["LANG"]=="C",environment["LC_ALL"]=="C" else {throw RuntimeError.invalid}
         guard let home=environment["HOME"],(try? CommandEnvironment.sanitized(["HOME":home])) != nil,
-              arguments.reduce(0,{$0+$1.utf8.count+1})+environment.reduce(0,{$0+$1.key.utf8.count+$1.value.utf8.count+2})<=65536 else {throw RuntimeError.invalid}
-        self.executable=executable;self.arguments=arguments;self.environment=environment
+              workingDirectory.utf8.count+executable.path.utf8.count+1+arguments.reduce(0,{$0+$1.utf8.count+1})+environment.reduce(0,{$0+$1.key.utf8.count+$1.value.utf8.count+2})<=65536 else {throw RuntimeError.invalid}
+        self.executable=executable;self.arguments=arguments;self.environment=environment;self.workingDirectory=workingDirectory
         profileHash=serviceProfileHash;self.validateReservation=validateReservation;self.validateStopReservation=validateStopReservation
     }
     func begin(_ command:ServiceLaunchCommand,deadline:TimeInterval)throws {
@@ -134,7 +138,7 @@ final class MLXServingProcessRuntime:@unchecked Sendable {
         guard !revoked,activeID==command.id,phase == .validating,ProcessInfo.processInfo.systemUptime<deadline else {
             lock.unlock();finish(command.id,.notSent,phase:.idle);return
         }
-        let child=ServingOwnedProcess(executable:executable,arguments:arguments,environment:environment)
+        let child=ServingOwnedProcess(executable:executable,arguments:arguments,environment:environment,workingDirectory:workingDirectory)
         // Retain before the possibly blocking spawn call. Once entered, failure,
         // timeout or local reaping cannot manufacture a non-dispatch receipt.
         process=child;phase = .spawning

@@ -9,20 +9,24 @@ final class ServingOwnedProcess:@unchecked Sendable {
     private let executable:VerifiedExecutable
     private let arguments:[String]
     private let environment:[String:String]
+    private let workingDirectory:String
     private let lock=NSLock()
     private var entered=false
     private var pid:Int32 = -1
     private var exited=false
     private var uncertain=false
-    init(executable:VerifiedExecutable,arguments:[String],environment:[String:String]) {
-        self.executable=executable;self.arguments=arguments;self.environment=environment
+    init(executable:VerifiedExecutable,arguments:[String],environment:[String:String],workingDirectory:String) {
+        self.executable=executable;self.arguments=arguments;self.environment=environment;self.workingDirectory=workingDirectory
     }
     var processIdentifier:Int32 {lock.lock();defer {lock.unlock()};return pid}
     func run()throws {
         lock.lock();defer {lock.unlock()}
         guard !entered,arguments.count<=128,environment.count<=16,
+              workingDirectory.hasPrefix("/"),workingDirectory.utf8.count<Int(MAXPATHLEN),!workingDirectory.contains("\0"),
+              !workingDirectory.contains("//"),(workingDirectory=="/" || !workingDirectory.hasSuffix("/")),
+              !workingDirectory.split(separator:"/").contains(where:{$0=="." || $0==".."}),
               (arguments+Array(environment.values)+Array(environment.keys)).allSatisfy({!$0.contains("\0") && $0.utf8.count<=4096}),
-              arguments.reduce(executable.path.utf8.count+1,{$0+$1.utf8.count+1})+environment.reduce(0,{$0+$1.key.utf8.count+$1.value.utf8.count+2})<=65536 else {throw RuntimeError.invalid}
+              workingDirectory.utf8.count+arguments.reduce(executable.path.utf8.count+1,{$0+$1.utf8.count+1})+environment.reduce(0,{$0+$1.key.utf8.count+$1.value.utf8.count+2})<=65536 else {throw RuntimeError.invalid}
         var actions:posix_spawn_file_actions_t?,attributes:posix_spawnattr_t?
         guard posix_spawn_file_actions_init(&actions)==0 else {throw RuntimeError.invalid}
         defer {posix_spawn_file_actions_destroy(&actions)}
@@ -32,7 +36,11 @@ final class ServingOwnedProcess:@unchecked Sendable {
         sigemptyset(&mask);sigemptyset(&defaults)
         for number in [SIGTERM,SIGINT,SIGHUP,SIGPIPE,SIGCHLD] {sigaddset(&defaults,number)}
         let flags=Int16(POSIX_SPAWN_CLOEXEC_DEFAULT|POSIX_SPAWN_SETSIGMASK|POSIX_SPAWN_SETSIGDEF)
+        let directoryAction:Int32
+        if #available(macOS 26.0,*) {directoryAction=posix_spawn_file_actions_addchdir(&actions,workingDirectory)}
+        else {directoryAction=posix_spawn_file_actions_addchdir_np(&actions,workingDirectory)}
         guard posix_spawnattr_setflags(&attributes,flags)==0,
+              directoryAction==0,
               posix_spawnattr_setsigmask(&attributes,&mask)==0,posix_spawnattr_setsigdefault(&attributes,&defaults)==0,
               posix_spawn_file_actions_addopen(&actions,STDIN_FILENO,"/dev/null",O_RDONLY,0)==0,
               posix_spawn_file_actions_addopen(&actions,STDOUT_FILENO,"/dev/null",O_WRONLY,0)==0,
