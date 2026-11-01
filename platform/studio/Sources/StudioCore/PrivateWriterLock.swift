@@ -5,6 +5,7 @@ import Darwin
 enum PrivateWriterKind:String {
     case supervisor="supervisor.lock"
     case session="session.lock"
+    case servingCustody="serving-custody.lock"
 }
 final class PrivateWriterLock {
     private var descriptor:Int32 = -1

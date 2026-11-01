@@ -29,6 +29,13 @@ private final class CustodyRuntimeFixture:ServingProcessControlling,@unchecked S
     func cancelStopValidation(id:String,matching receipt:ServiceRecordedLaunch)->Bool {false}
 }
 
+private final class CustodyExchangeBox:@unchecked Sendable {
+    private let lock=NSLock()
+    private var value:Result<ServingCustodyValue,Error>?
+    func publish(_ value:Result<ServingCustodyValue,Error>) {lock.lock();self.value=value;lock.unlock()}
+    func poll()->Result<ServingCustodyValue,Error>? {lock.lock();defer {lock.unlock()};return value}
+}
+
 func runServingCustodyTests()throws {
     let hash=String(repeating:"a",count:64),profile=String(repeating:"b",count:64),instance=UUID().uuidString.lowercased()
     let receipt=ServiceRecordedLaunch(service:.mlx,id:UUID().uuidString.lowercased(),identity:ServiceIdentity(pid:200,start:UInt64.max,sha256:hash),boot:UUID().uuidString.lowercased(),profileHash:profile)
@@ -91,5 +98,43 @@ func runServingCustodyTests()throws {
     catch ControlError.invalid_request {}
     let cold=try ServingCustodyGate(runtime:fake,manager:executable,imageSHA256:hash);try cold.bindManager(peer)
     guard try cold.handle(packet(.lookupStop,id:stopped.id,instance:cold.instance,receipt:receipt),peer:peer,uid:geteuid()) == .stop(.uncertain),fake.stops==1 else {fatalError("Cold custody cache fabricated history")}
+    let directory=URL(fileURLWithPath:"/private/tmp/f9-custody-"+UUID().uuidString.lowercased())
+    try FileManager.default.createDirectory(at:directory,withIntermediateDirectories:false,attributes:[.posixPermissions:0o700])
+    var server:ServingCustodyServer?
+    defer {server=nil;try? FileManager.default.removeItem(at:directory)}
+    let socketRuntime=CustodyRuntimeFixture(profile:profile,image:hash,identity:receipt.identity)
+    server=try ServingCustodyServer(directory:directory,runtime:socketRuntime,manager:executable,imageSHA256:hash)
+    try server!.bindManager(peer)
+    func client()throws->ServingCustodyClient {
+        try ServingCustodyClient(directory:directory,peer:peer,instance:server!.instance,profile:profile,baseProfileHash:hash,imageSHA256:hash)
+    }
+    func exchange(_ operation:@escaping @Sendable()throws->ServingCustodyValue)throws->ServingCustodyValue {
+        let box=CustodyExchangeBox()
+        Thread.detachNewThread {
+            var result:Result<ServingCustodyValue,Error>!
+            autoreleasepool {result=Result {try operation()}}
+            box.publish(result)
+        }
+        let end=ProcessInfo.processInfo.systemUptime+3
+        while ProcessInfo.processInfo.systemUptime<end {
+            try server!.poll()
+            if let value=box.poll() {return try value.get()}
+            Thread.sleep(forTimeInterval:0.002)
+        }
+        throw RuntimeError.deadline
+    }
+    let remote=try client(),command=ServiceLaunchCommand(service:.mlx,id:UUID().uuidString.lowercased(),expectedSHA256:hash,profileHash:profile)
+    _=try exchange {try remote.begin(command,deadline:ProcessInfo.processInfo.systemUptime+5);return .launch(.uncertain)}
+    guard try exchange({.launch(remote.acknowledgeResult(id:command.id))}) == .launch(.started(receipt.identity)),socketRuntime.starts==1 else {fatalError("Private custody exchange lost original outcome")}
+    let replacement=try client()
+    _=try exchange {try replacement.begin(command,deadline:ProcessInfo.processInfo.systemUptime+5);return .launch(.uncertain)}
+    guard socketRuntime.starts==1 else {fatalError("Replacement client replayed launch")}
+    do {_=try ServingCustodyServer(directory:directory,runtime:socketRuntime,manager:executable,imageSHA256:hash);fatalError("Second custody writer replaced live socket")}
+    catch ControlError.busy {}
+    try server!.bindManager(nil)
+    guard try exchange({.launch(replacement.acknowledgeResult(id:command.id))}) == .launch(.uncertain) else {fatalError("Unbound manager retained wire authority")}
+    try server!.bindManager(peer)
+    guard try exchange({.launch(replacement.acknowledgeResult(id:command.id))}) == .launch(.started(receipt.identity)),socketRuntime.starts==1 else {fatalError("Rebound manager lost original custody")}
+    print("PASS: actual private Unix custody exchange and writer exclusivity with reconstructed client; synthetic child outcomes, no native/service action")
     print("PASS: fixed custody frames, original receipt correlation, once-only dispatch, manager rebind and validation revocation; synthetic custody only")
 }

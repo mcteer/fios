@@ -7,9 +7,9 @@ physical child custodian across manager restarts; the manager retains durable
 service intent, native reservation policy and journal ownership. Installation
 and public startup wiring remain gated and incomplete.
 
-The current source includes the fixed command/reply codec, custody gate and
-local/remote runtime interface. The private Unix server/client and supervisor
-composition are still being implemented. No installed custody socket, native
+The current source includes the fixed command/reply codec, custody gate,
+local/remote runtime interface and private Unix server/client. Supervisor
+composition and separate-process custody acceptance are still being implemented. No installed custody socket, native
 process action or supervisor activation follows from these source types.
 
 ## Fixed control data
@@ -64,3 +64,13 @@ custody results. They test fixed fields, receipt correlation, once-only dispatch
 manager unbind/rebind and pre-dispatch revocation without any native/service action.
 These are not actual supervisor/manager restart, installed enrollment, global
 absence, all-client activity or Studio lifecycle acceptance.
+
+The source Unix server has its own fixed private writer lock within the existing
+supervisor state directory. It accepts at most16 finite connections, one retained
+off-loop identity/action exchange and no unbounded request queue. Framing/flush
+remain nonblocking on the supervisor loop. Each direction requires exactly one
+frame and EOF; the client verifies the pinned custodian kernel/image identity
+before sending and after the response. Socket/identity errors remain unknown.
+The local client cannot retire a child or mint non-dispatch; only the custodian's
+original owned-child/runtime history may supply those local outcomes. Descriptor
+metadata stays historical on teardown and grants no native authority.
