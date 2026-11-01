@@ -10,7 +10,7 @@ import Darwin
         let cache=ServiceObservationCache(),now=HostResources.nowMilliseconds()
         for service in ManagedService.allCases {
             let identity=ServiceIdentity(pid:42,start:1,sha256:String(repeating:"a",count:64))
-            let sample:ServiceObservation?
+            var sample:ServiceObservation?
             switch args[2] {
             case "unknown":sample=nil
             case "waiting_session":sample=ServiceObservation(identity:nil,responding:false,sessionReady:false,credentialsReady:true,nativeIdle:nil,runtimeUnmanaged:nil,sampledAt:now)
@@ -19,6 +19,13 @@ import Darwin
             case "ready":sample=ServiceObservation(identity:identity,responding:true,sessionReady:true,credentialsReady:true,nativeIdle:nil,runtimeUnmanaged:nil,sampledAt:now)
             case "degraded":sample=ServiceObservation(identity:identity,responding:false,sessionReady:true,credentialsReady:true,nativeIdle:nil,runtimeUnmanaged:nil,sampledAt:now)
             default:throw ServiceError.invalid
+            }
+            if service == .mlx,["ready","degraded"].contains(args[2]) {
+                let process=ServiceProcessSample(presence:.present(identity),sampledAt:now,
+                    reviewDigest:String(repeating:"b",count:64),uid:geteuid(),diagnostic:"fixture_present")
+                let state:ServiceHealthState=args[2]=="ready" ? .healthy:.unavailable
+                let collector=MLXServiceHealthCollector(presence:{process},health:{state},now:{now},uptime:{1})
+                sample=collector.capture(sessionReady:true,credentialsReady:true)
             }
             cache.publish(sample,for:service)
         }
