@@ -7,17 +7,27 @@ static int selected_thread_present(uint64_t identifier) {
     thread_act_array_t threads = NULL;
     mach_msg_type_number_t count = 0;
     if (task_threads(mach_task_self(), &threads, &count) != KERN_SUCCESS) return -1;
-    int found = 0;
+    int found = 0, unknown = 0;
     for (mach_msg_type_number_t i = 0; i < count; ++i) {
         thread_identifier_info_data_t info;
         mach_msg_type_number_t length = THREAD_IDENTIFIER_INFO_COUNT;
         if (thread_info(threads[i], THREAD_IDENTIFIER_INFO, (thread_info_t)&info, &length) != KERN_SUCCESS)
-            found = -1;
-        else if (found >= 0 && info.thread_id == identifier) found = 1;
+            unknown = 1;
+        else if (info.thread_id == identifier) found = 1;
         mach_port_deallocate(mach_task_self(), threads[i]);
     }
     if (vm_deallocate(mach_task_self(), (vm_address_t)threads, count * sizeof(thread_t)) != KERN_SUCCESS) return -1;
-    return found;
+    // An observed exact match proves presence even if an unrelated terminating
+    // thread was unreadable. Absence still needs every observation to succeed.
+    return found ? 1 : (unknown ? -1 : 0);
+}
+typedef struct { bool token_issued, reused, retired; } selected_lifecycle_result;
+static void *selected_other_lifecycle_caller(void *context) {
+    selected_lifecycle_result *result = context;
+    result->token_issued = ds4_threads_owner_token() != 0;
+    result->reused = metal_graph_selected_async_load_ensure_worker();
+    result->retired = metal_graph_selected_async_load_shutdown_checked();
+    return NULL;
 }
 int main(void) {
     for (unsigned cycle = 0; cycle < 2; ++cycle) {
@@ -29,8 +39,25 @@ int main(void) {
         REQUIRE(pthread_threadid_np(NULL, &caller_identifier) == 0, "Caller thread identifier unavailable");
         fprintf(stderr,"Ordinary lifecycle cycle %u: caller=%llu worker=%llu\n",cycle,
                 (unsigned long long)caller_identifier,(unsigned long long)identifier);
-        REQUIRE(selected_thread_present(identifier) == 1, "Started selected worker not observed");
+        int observed = selected_thread_present(identifier);
+        REQUIRE(observed >= 0, "Started selected worker observation unavailable");
+        REQUIRE(observed == 1, "Started selected worker not observed");
         REQUIRE(metal_graph_selected_async_load_idle(), "Unused selected worker unexpectedly busy");
+        selected_lifecycle_result result = {0};
+        pthread_t other;
+        REQUIRE(pthread_create(&other, NULL, selected_other_lifecycle_caller, &result) == 0,
+                "Second lifecycle caller could not start");
+        REQUIRE(pthread_join(other, NULL) == 0, "Second lifecycle caller did not return");
+        REQUIRE(result.token_issued, "Second lifecycle caller has no thread-lifetime identity");
+        REQUIRE(!result.retired, "Mismatched lifecycle caller retired the selected worker");
+        REQUIRE(!result.reused, "Mismatched lifecycle caller adopted the selected worker");
+        REQUIRE(g_metal_graph_selected_async_load_thread_started &&
+                !g_fios_selected_shutdown_requested && !g_fios_selected_shutdown_uncertain,
+                "Mismatched lifecycle caller changed worker custody");
+        observed = selected_thread_present(identifier);
+        REQUIRE(observed >= 0, "Creator's selected worker observation unavailable");
+        REQUIRE(observed == 1, "Creator's selected worker was lost");
+        REQUIRE(metal_graph_selected_async_load_ensure_worker(), "Creator could not reuse its worker");
         REQUIRE(metal_graph_selected_async_load_shutdown_checked(), "Ordinary selected worker shutdown failed");
         REQUIRE(!g_metal_graph_selected_async_load_thread_started, "Stopped selected worker remained published");
         int present = -1;
@@ -44,6 +71,6 @@ int main(void) {
         REQUIRE(present == 0, "Selected worker survived its checked shutdown");
         REQUIRE(metal_graph_selected_async_load_idle(), "Stopped selected worker did not return idle");
     }
-    puts("PASS: two ordinary selected-worker startup/join cycles; exact observed threads absent afterward");
+    puts("PASS: two ordinary selected-worker cycles; mismatched caller retains creator custody; exact threads absent after creator join");
     return 0;
 }

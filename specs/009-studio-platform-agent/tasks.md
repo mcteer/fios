@@ -24,6 +24,8 @@
 
 Ordinary source continuation: the selected-loader helper now has a checked idle stop/join path wired into checked engine close. Two real idle-thread start/join cycles pass with exact kernel thread absence; no model/GPU object or fault-injection case is used. This local retirement does not complete T002 or native acceptance.
 
+The selected-loader worker now also binds its creator's non-reusable thread-lifetime token. Mismatched lifecycle reuse/shutdown refuses without changing worker custody or uncertainty; successful creator join alone clears that local owner. The ordinary complete-C-module fixture checks two real worker cycles and a second lifecycle caller. This remains a local correctness increment, not all-writer admission, parent/model completion or another whole task.
+
 ## Phase 2: Shared foundations — blocks all stories
 
 - [x] T004 Add failing schema/role/state/limit fixtures in `tests/fixtures/platform/contracts.json` and `platform/studio/Tests/StudioCoreTests/ContractTests.swift`; test duplicate keys/unknown versions/oversize frames, schema boundaries and fake-clock behavior before T005–T010; complete shared role/state/limit/clock table coverage refreshed after initial failing-first scalar/enum foundations (FR-006/007/009/015/016/018).

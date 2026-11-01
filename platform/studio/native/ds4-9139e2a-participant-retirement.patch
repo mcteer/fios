@@ -1,5 +1,5 @@
 diff --git a/ds4.c b/ds4.c
-index 633a3cf..8623e53 100644
+index 633a3cf..7abc1ed 100644
 --- a/ds4.c
 +++ b/ds4.c
 @@ -2088,15 +2088,35 @@ typedef struct {
@@ -542,13 +542,14 @@ index 633a3cf..8623e53 100644
      bool                      active;
      bool                      ok;
      /* Selected ids remain usable for a synchronous retry if the service
-@@ -23499,8 +23641,27 @@ static pthread_t g_metal_graph_selected_async_load_thread;
+@@ -23499,8 +23641,28 @@ static pthread_t g_metal_graph_selected_async_load_thread;
  static bool g_metal_graph_selected_async_load_thread_started = false;
  static bool g_metal_graph_selected_async_load_has_job = false;
  static bool g_metal_graph_selected_async_load_done = false;
 +static bool g_fios_selected_result_finishing = false;
 +static bool g_fios_selected_enqueue_starting = false;
 +static bool g_fios_selected_shutdown_requested = false; // mailbox mutex
++static uint64_t g_fios_selected_worker_owner = 0; // mailbox mutex; thread-lifetime token
 +static int g_fios_selected_shutdown_uncertain = 0; // atomic, never reset
 +static uint64_t g_fios_selected_next_ticket = 1; // mailbox mutex; never recycled
  static metal_graph_selected_async_load g_metal_graph_selected_async_load_job;
@@ -570,7 +571,7 @@ index 633a3cf..8623e53 100644
  static void metal_graph_selected_async_load_run(
          metal_graph_selected_async_load *job) {
      job->ok = false;
-@@ -23574,10 +23735,15 @@ static void *metal_graph_selected_async_load_worker_main(void *arg) {
+@@ -23574,10 +23736,15 @@ static void *metal_graph_selected_async_load_worker_main(void *arg) {
  #endif
      for (;;) {
          pthread_mutex_lock(&g_metal_graph_selected_async_load_mutex);
@@ -587,11 +588,13 @@ index 633a3cf..8623e53 100644
          metal_graph_selected_async_load job =
              g_metal_graph_selected_async_load_job;
          pthread_mutex_unlock(&g_metal_graph_selected_async_load_mutex);
-@@ -23595,7 +23761,13 @@ static void *metal_graph_selected_async_load_worker_main(void *arg) {
+@@ -23595,10 +23762,19 @@ static void *metal_graph_selected_async_load_worker_main(void *arg) {
  }
  
  static bool metal_graph_selected_async_load_ensure_worker(void) {
 +    if (__atomic_load_n(&g_fios_selected_shutdown_uncertain, __ATOMIC_ACQUIRE)) return false;
++    const uint64_t owner = ds4_threads_owner_token();
++    if (!owner) return false;
      pthread_mutex_lock(&g_metal_graph_selected_async_load_mutex);
 +    if (g_fios_selected_shutdown_requested ||
 +        __atomic_load_n(&g_fios_selected_shutdown_uncertain, __ATOMIC_ACQUIRE)) {
@@ -599,9 +602,20 @@ index 633a3cf..8623e53 100644
 +        return false;
 +    }
      if (g_metal_graph_selected_async_load_thread_started) {
++        const bool owned = g_fios_selected_worker_owner == owner;
          pthread_mutex_unlock(&g_metal_graph_selected_async_load_mutex);
-         return true;
-@@ -23616,6 +23788,50 @@ static bool metal_graph_selected_async_load_ensure_worker(void) {
+-        return true;
++        return owned;
+     }
+     const int rc = pthread_create(&g_metal_graph_selected_async_load_thread,
+                                   NULL,
+@@ -23611,11 +23787,64 @@ static bool metal_graph_selected_async_load_ensure_worker(void) {
+                 strerror(rc));
+         return false;
+     }
++    g_fios_selected_worker_owner = owner;
+     g_metal_graph_selected_async_load_thread_started = true;
+     pthread_mutex_unlock(&g_metal_graph_selected_async_load_mutex);
      return true;
  }
  
@@ -625,6 +639,13 @@ index 633a3cf..8623e53 100644
 +        pthread_mutex_unlock(&g_metal_graph_selected_async_load_mutex);
 +        return true;
 +    }
++    // A caller mismatch is ordinary refusal, not native uncertainty.
++    // Never adopt another lifecycle owner through a reusable pthread handle.
++    if (!g_fios_cpu_pool_local_owner ||
++        g_fios_selected_worker_owner != g_fios_cpu_pool_local_owner) {
++        pthread_mutex_unlock(&g_metal_graph_selected_async_load_mutex);
++        return false;
++    }
 +    g_fios_selected_shutdown_requested = true;
 +    const int notified = pthread_cond_broadcast(&g_metal_graph_selected_async_load_cond);
 +    const int unlocked = pthread_mutex_unlock(&g_metal_graph_selected_async_load_mutex);
@@ -638,6 +659,7 @@ index 633a3cf..8623e53 100644
 +        return false;
 +    }
 +    g_metal_graph_selected_async_load_thread_started = false;
++    g_fios_selected_worker_owner = 0;
 +    memset(&g_metal_graph_selected_async_load_job, 0,
 +           sizeof(g_metal_graph_selected_async_load_job));
 +    // Keep the non-reusable ticket issuer across ordinary worker lifecycles.
@@ -652,7 +674,7 @@ index 633a3cf..8623e53 100644
  static DS4_MAYBE_UNUSED bool metal_graph_selected_async_load_start_tensor(
          metal_graph_selected_async_load *job,
          ds4_gpu_tensor                  *router_selected,
-@@ -23626,8 +23842,32 @@ static DS4_MAYBE_UNUSED bool metal_graph_selected_async_load_start_tensor(
+@@ -23626,8 +23855,32 @@ static DS4_MAYBE_UNUSED bool metal_graph_selected_async_load_start_tensor(
          uint64_t                         gate_expert_bytes,
          uint64_t                         down_expert_bytes) {
      if (!job || !router_selected || event_value == 0) return false;
@@ -686,7 +708,7 @@ index 633a3cf..8623e53 100644
      job->router_selected = router_selected;
      job->model = model;
      job->layer = layer;
-@@ -23638,16 +23878,18 @@ static DS4_MAYBE_UNUSED bool metal_graph_selected_async_load_start_tensor(
+@@ -23638,16 +23891,18 @@ static DS4_MAYBE_UNUSED bool metal_graph_selected_async_load_start_tensor(
  
      pthread_mutex_lock(&g_metal_graph_selected_async_load_mutex);
      if (g_metal_graph_selected_async_load_has_job ||
@@ -707,7 +729,7 @@ index 633a3cf..8623e53 100644
      return true;
  }
  
-@@ -23675,17 +23917,32 @@ static bool metal_graph_selected_async_load_finish(
+@@ -23675,17 +23930,32 @@ static bool metal_graph_selected_async_load_finish(
          metal_graph_selected_async_load *job) {
      if (!job || !job->active) return false;
      pthread_mutex_lock(&g_metal_graph_selected_async_load_mutex);
@@ -743,7 +765,7 @@ index 633a3cf..8623e53 100644
  }
  
  #ifdef DS4_ROCM_BUILD
-@@ -42215,6 +42472,7 @@ typedef enum {
+@@ -42215,6 +42485,7 @@ typedef enum {
  } ds4_vision_kind;
  
  struct ds4_engine {
@@ -751,7 +773,7 @@ index 633a3cf..8623e53 100644
      char *model_path;
      uint64_t ds41_session_bytes;
      ds4_model model;
-@@ -59886,6 +60144,7 @@ typedef struct {
+@@ -59886,6 +60157,7 @@ typedef struct {
  } ds4_vision_identity;
  
  struct ds4_session {
@@ -759,7 +781,7 @@ index 633a3cf..8623e53 100644
      ds4_engine *engine;
      ds4_dist_session *distributed;
      uint64_t tp_session_id;
-@@ -72190,10 +72449,22 @@ fail:
+@@ -72190,10 +72462,22 @@ fail:
  #endif
  }
  
@@ -784,7 +806,7 @@ index 633a3cf..8623e53 100644
      ds4_tp_detach_slab(e->tp.ctx);
  #ifdef __APPLE__
      g_tp_block_ctx = NULL;
-@@ -72218,6 +72489,11 @@ void ds4_engine_tp_unbind(ds4_engine *e) {
+@@ -72218,6 +72502,11 @@ void ds4_engine_tp_unbind(ds4_engine *e) {
  #else
      (void)e;
  #endif
@@ -796,7 +818,7 @@ index 633a3cf..8623e53 100644
  }
  
  bool ds4_engine_is_glm_dsa(ds4_engine *e) {
-@@ -72230,13 +72506,27 @@ bool ds4_engine_is_deepseek41(ds4_engine *e) {
+@@ -72230,13 +72519,27 @@ bool ds4_engine_is_deepseek41(ds4_engine *e) {
      return DS4_MODEL_FAMILY == DS4_MODEL_FAMILY_DEEPSEEK41;
  }
  
@@ -828,7 +850,7 @@ index 633a3cf..8623e53 100644
      if (e->mtp_model.map) model_close(&e->mtp_model);
      if (e->vision_model.map) model_close(&e->vision_model);
      model_close(&e->model);
-@@ -72253,6 +72543,11 @@ void ds4_engine_close(ds4_engine *e) {
+@@ -72253,6 +72556,11 @@ void ds4_engine_close(ds4_engine *e) {
      free(e->directional_steering_file);
      free(e->model_path);
      free(e);
@@ -840,7 +862,7 @@ index 633a3cf..8623e53 100644
  }
  
  #ifndef DS4_NO_GPU
-@@ -72814,24 +73109,34 @@ int ds4_session_create(ds4_session **out, ds4_engine *e, int ctx_size) {
+@@ -72814,24 +73122,34 @@ int ds4_session_create(ds4_session **out, ds4_engine *e, int ctx_size) {
  #endif
  }
  
@@ -885,7 +907,7 @@ index 633a3cf..8623e53 100644
  #ifndef DS4_NO_GPU
      ds4_session_print_dspark_stats(s);
  #endif
-@@ -72882,6 +73187,11 @@ void ds4_session_free(ds4_session *s) {
+@@ -72882,6 +73200,11 @@ void ds4_session_free(ds4_session *s) {
      free(s->dspark_conf_features);
  #endif
      free(s);
