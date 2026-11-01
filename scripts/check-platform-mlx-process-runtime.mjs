@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import {spawn,spawnSync} from 'node:child_process';
 import {setTimeout as delay} from 'node:timers/promises';
-import {mkdtempSync,readFileSync,writeFileSync,readdirSync,openSync,closeSync} from 'node:fs';
+import {mkdtempSync,readFileSync,writeFileSync,readdirSync,openSync,closeSync,unlinkSync} from 'node:fs';
 import {resolve,join} from 'node:path';
 import {createHash} from 'node:crypto';
 assert.deepEqual(process.argv.slice(2),['--isolated']);assert.equal(process.platform,'darwin');assert(process.getuid()>0);
@@ -57,13 +57,20 @@ for(const mode of ['debug','release']){
   const resumeIntent=JSON.parse(run(binary,['control',managerState,'running'],3000));assert.equal(resumeIntent.applied,false);
   const resumed=await until(()=>{assert(!exited());const s=status();return s?.observed==='ready'&&!s.stop_pending&&!s.launch_pending?s:null;},12000);
   assert.equal(resumed.desired,'running');assert.equal(resumed.recovery.starts_in_window,2);
+  writeFileSync(join(managerState,'fixture-loading'),'loading',{mode:0o600});
+  const loading=await until(()=>{const s=status();return s?.observed==='starting'&&!s.stop_pending&&!s.launch_pending?s:null;});
+  await delay(4200);assert.equal(status().recovery.starts_in_window,2);assert.equal(status().stop_pending,false);
+  unlinkSync(join(managerState,'fixture-loading'));await until(()=>status()?.observed==='ready');
+  writeFileSync(join(managerState,'fixture-unavailable'),'unavailable original process',{mode:0o600});
+  const recovered=await until(()=>{assert(!exited());const s=status();return s?.observed==='ready'&&!s.stop_pending&&!s.launch_pending&&s.recovery.starts_in_window===3?s:null;},16000);
+  assert.equal(recovered.desired,'running');
   manager.kill('SIGTERM');await until(exited,4000);assert.equal(manager.exitCode,0);
-  writeFileSync(join(directory,mode+'-manager.json'),JSON.stringify({pending,ready,maintained,stopped,resumed,state:managerState,identity:'actual_private_helper',readiness:'synthetic',native_authority:false})+'\n',{mode:0o600});
+  writeFileSync(join(directory,mode+'-manager.json'),JSON.stringify({pending,ready,maintained,stopped,resumed,loading,recovered,state:managerState,identity:'actual_private_helper',readiness:'synthetic',native_authority:false})+'\n',{mode:0o600});
  }catch(error){console.error('RETAINED private native manager fixture:',managerState);throw error;}finally {
   if(!exited()){manager.kill('SIGTERM');try{await until(exited,3000);}catch{manager.kill('SIGKILL');await until(exited,3000);}}
  }
 }
 assert(implementation.equals(readFileSync(join(core,name))));
 for(const [n,bytes] of Object.entries(integration))assert(bytes.equals(readFileSync(join(core,n))));
-const receipt={ok:true,directory,provenance_scope:'declared_runtime_integration_and_fixture_only',modes:['debug','release'],source_sha256:hash(implementation),integration_sha256:Object.fromEntries(Object.entries(integration).map(([n,b])=>[n,hash(b)])),fixture_sha256:hash(fixture),helper_source_sha256:hash(helperSource),actual_private_child_starts:18,actual_owned_serving_child_starts:16,actual_unrelated_private_children:2,actual_guarded_private_stops:6,guarded_private_stop_timeouts:2,self_expiring_private_helpers:2,pre_signal_revocations:2,denied_stop_validations:2,fresh_start_validations_per_queue_scenario:5,unexpected_exit_recoveries:2,durable_stop_reservation:true,restored_stop_dispatch:false,missing_stop_history:'unknown',distinct_native_session_profiles:true,actual_counter_only_orbstack_session_calls:2,mlx_gui_calls:0,actual_manager_processes:2,actual_manager_stop_resume_cycles:2,manager_readiness:'synthetic',native_mlx_actions:0,native_inference:false,native_authority:false,installed:false};
+const receipt={ok:true,directory,provenance_scope:'declared_runtime_integration_and_fixture_only',modes:['debug','release'],source_sha256:hash(implementation),integration_sha256:Object.fromEntries(Object.entries(integration).map(([n,b])=>[n,hash(b)])),fixture_sha256:hash(fixture),helper_source_sha256:hash(helperSource),actual_private_child_starts:20,actual_owned_serving_child_starts:18,actual_unrelated_private_children:2,actual_guarded_private_stops:8,guarded_private_stop_timeouts:2,self_expiring_private_helpers:2,pre_signal_revocations:2,denied_stop_validations:2,fresh_start_validations_per_queue_scenario:5,unexpected_exit_recoveries:2,durable_stop_reservation:true,restored_stop_dispatch:false,missing_stop_history:'unknown',distinct_native_session_profiles:true,actual_counter_only_orbstack_session_calls:2,mlx_gui_calls:0,actual_manager_processes:2,actual_manager_stop_resume_cycles:2,actual_manager_unavailable_recoveries:2,loading_without_restart_checks:2,manager_readiness:'synthetic',native_mlx_actions:0,native_inference:false,native_authority:false,installed:false};
 writeFileSync(join(directory,'receipt.json'),JSON.stringify(receipt)+'\n',{mode:0o600});console.log(JSON.stringify(receipt));

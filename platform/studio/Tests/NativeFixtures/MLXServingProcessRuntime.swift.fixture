@@ -26,15 +26,33 @@ private final class ServingStopGate:@unchecked Sendable {
         if denied {throw RuntimeError.invalid}
     }
 }
+private final class FixtureServingHealth:@unchecked Sendable {
+    private let lock=NSLock()
+    private var failedIdentity:ServiceIdentity?
+    func failed(_ identity:ServiceIdentity)->Bool {lock.lock();defer {lock.unlock()};return failedIdentity==identity}
+    func project(_ observation:ServiceObservation?,loading:Bool,unavailable:Bool)->ServiceObservation? {
+        lock.lock();defer {lock.unlock()}
+        if !unavailable {failedIdentity=nil}
+        guard let value=observation else {return nil}
+        if unavailable,failedIdentity==nil,let identity=value.identity {failedIdentity=identity}
+        let state:ServiceHealthState?
+        if loading {state = .loading}
+        else if unavailable,let identity=value.identity,identity==failedIdentity {state = .unavailable}
+        else {state=nil}
+        guard let state else {return value}
+        // Synthetic API metadata only, never native idle/terminality authority.
+        return ServiceObservation(identity:value.identity,responding:false,sessionReady:value.sessionReady,credentialsReady:value.credentialsReady,nativeIdle:value.nativeIdle,runtimeUnmanaged:value.runtimeUnmanaged,sampledAt:value.sampledAt,health:state)
+    }
+}
 // Same-file extension reaches only the private fixture initializer/child. No
 // installed factory or native app is invoked; the actual helper has no models.
 extension MLXServingProcessRuntime {
     fileprivate var fixtureRetainsChild:Bool {lock.lock();defer {lock.unlock()};return process != nil}
-    fileprivate func fixtureStopIntent(_ receipt:ServiceRecordedLaunch)throws->ServingStopIntent {
+    fileprivate func fixtureStopIntent(_ receipt:ServiceRecordedLaunch,desired:ServiceDesired = .stopped)throws->ServingStopIntent {
         lock.lock();defer {lock.unlock()}
         guard executable.path.hasPrefix("/private/tmp/fios-009-serving-runtime-"),phase == .running,
-              receipt.service == .mlx,receipt.id==activeID,receipt.identity==identity,receipt.profileHash==profileHash else {throw RuntimeError.invalid}
-        return ServingStopIntent(receipt:receipt,desired:.stopped)
+              receipt.service == .mlx,receipt.id==activeID,receipt.identity==identity,receipt.profileHash==profileHash,desired != .maintenance else {throw RuntimeError.invalid}
+        return ServingStopIntent(receipt:receipt,desired:desired)
     }
     fileprivate func fixtureObservation(now:Int64)->ServiceObservation? {
         lock.lock();let currentPhase=phase,child=process,value=identity;lock.unlock()
@@ -104,15 +122,19 @@ extension MLXServingProcessRuntime {
             let managerStopGate=ServingStopGate();managerStopGate.release.signal()
             let runtime=try MLXServingProcessRuntime.fixture(executable:executable,home:root.path,profile:profile,gate:gate,stopGate:managerStopGate)
             let transport=try NativeServingRecoveryTransport(runtime:runtime,approvedHashes:pins),cache=ServiceObservationCache()
+            let health=FixtureServingHealth()
             let lifecycle=ServingLifecyclePorts(runtime:runtime,intent:{receipt,desired in
-                guard desired == .stopped else {return nil}
-                return try? runtime.fixtureStopIntent(receipt) // Private CPU helper only, not native authority.
+                guard desired == .stopped || (desired == .running && health.failed(receipt.identity)) else {return nil}
+                return try? runtime.fixtureStopIntent(receipt,desired:desired) // Private CPU helper only, not native authority.
             })
             Thread.detachNewThread {
                 var released=false
                 while true {
                     let now=HostResources.nowMilliseconds()
-                    cache.publish(runtime.fixtureObservation(now:now),for:.mlx)
+                    let observation=health.project(runtime.fixtureObservation(now:now),
+                        loading:FileManager.default.fileExists(atPath:root.appendingPathComponent("fixture-loading").path),
+                        unavailable:FileManager.default.fileExists(atPath:root.appendingPathComponent("fixture-unavailable").path))
+                    cache.publish(observation,for:.mlx)
                     if !released,FileManager.default.fileExists(atPath:root.appendingPathComponent("release-validation").path) {
                         released=true
                         try? Data(String(now).utf8).write(to:root.appendingPathComponent("release-observed"),options:.atomic)
