@@ -35,7 +35,8 @@ assert.equal(result.status,0,`Ordinary lifecycle failed; retain ${directory}`);
 assert.deepEqual(verifyDs4SourceBuild(config),selected);assert.equal(readFileSync(path.join(source,'ds4.c'),'utf8'),original);
 assert.equal(readFileSync(fixtureFile,'utf8'),fixture);
 const outcome={ok:true,directory,build_receipt_sha256:args[4],fixture_sha256:hash(fixture),binary_sha256:hash(readFileSync(binary)),
- ordinary_idle_worker_cycles:2,observed_thread_retirement:true,lifecycle_owner_mismatch_refused:true,source_rewritten:false,model_jobs:0,gpu_objects:0,
+ ordinary_idle_worker_cycles:6,sequential_lifecycle_creators:3,post_join_creator_cleared:true,repeated_idle_shutdown:true,
+ observed_thread_retirement:true,lifecycle_owner_mismatch_refused:true,source_rewritten:false,model_jobs:0,gpu_objects:0,
  fault_injection:false,native_inference:false,native_authority:false,parent_engine_teardown_tested:false};
 writeFileSync(path.join(directory,'receipt.json'),JSON.stringify(outcome,null,2)+'\n',{mode:0o600});
 console.log(result.stdout.trim());console.log(JSON.stringify(outcome));

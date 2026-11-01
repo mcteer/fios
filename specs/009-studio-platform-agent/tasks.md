@@ -5,6 +5,8 @@
 **Tests**: Required by FR-018. Write and record failing-first tests before each corresponding implementation; source-only native integration/testing is authorized (user reaffirmed2026-10-27), so do not ask again for that scope. The user granted blanket real-inference approval on2026-10-30; discover an appropriately small exact local model and execute bounded tests without another permission/model-ID request. Installation/restarts and disruptive native acceptance remain separate operational scopes. Passing mocks never complete live acceptance.
 **Format**: `- [ ] Tnnn [P?] [USn?] description with path`. `[P]` means disjoint files with prerequisites complete, not permission to run before gates.
 
+Ordinary continuation: six genuine idle worker cycles across three sequential creator threads now pass, including repeated shutdown, cleared post-join ownership and distinct creator lifetimes. This extends local correctness evidence only;38/55 tasks remain complete.
+
 **Current scope (2026-10-31):** Cybersecurity/pen-testing work and adversarial exercises are excluded at the operator’s request. Continue ordinary functional implementation, native integration and correctness checks; do not treat this restriction as a request to stop work. Installation/activation approvals remain separate.
 
 ## Phase 1: Setup and explicit entry gates

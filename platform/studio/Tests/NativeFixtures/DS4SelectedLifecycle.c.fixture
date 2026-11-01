@@ -29,7 +29,7 @@ static void *selected_other_lifecycle_caller(void *context) {
     result->retired = metal_graph_selected_async_load_shutdown_checked();
     return NULL;
 }
-int main(void) {
+static int selected_creator_cycles(void) {
     for (unsigned cycle = 0; cycle < 2; ++cycle) {
         REQUIRE(metal_graph_selected_async_load_ensure_worker(), "Ordinary selected worker startup failed");
         uint64_t identifier = 0;
@@ -60,6 +60,8 @@ int main(void) {
         REQUIRE(metal_graph_selected_async_load_ensure_worker(), "Creator could not reuse its worker");
         REQUIRE(metal_graph_selected_async_load_shutdown_checked(), "Ordinary selected worker shutdown failed");
         REQUIRE(!g_metal_graph_selected_async_load_thread_started, "Stopped selected worker remained published");
+        REQUIRE(g_fios_selected_worker_owner == 0, "Joined worker retained its creator identity");
+        REQUIRE(metal_graph_selected_async_load_shutdown_checked(), "Repeated idle shutdown failed");
         int present = -1;
         for (unsigned n = 0; n < 1000; ++n) {
             present = selected_thread_present(identifier);
@@ -71,6 +73,33 @@ int main(void) {
         REQUIRE(present == 0, "Selected worker survived its checked shutdown");
         REQUIRE(metal_graph_selected_async_load_idle(), "Stopped selected worker did not return idle");
     }
-    puts("PASS: two ordinary selected-worker cycles; mismatched caller retains creator custody; exact threads absent after creator join");
+    return 0;
+}
+typedef struct { uint64_t owner; int status; } selected_creator_result;
+static void *selected_sequential_creator(void *context) {
+    selected_creator_result *result = context;
+    result->owner = ds4_threads_owner_token();
+    result->status = selected_creator_cycles();
+    return NULL;
+}
+int main(void) {
+    REQUIRE(selected_creator_cycles() == 0, "Initial creator lifecycle failed");
+    const uint64_t initial_owner = ds4_threads_owner_token();
+    uint64_t previous_owner = initial_owner;
+    // Normal serialized ownership transfer after complete shutdown. Each new
+    // creator exits before the next starts; no abandoned worker is adopted.
+    for (unsigned generation = 0; generation < 2; ++generation) {
+        selected_creator_result result = {0};
+        pthread_t creator;
+        REQUIRE(pthread_create(&creator, NULL, selected_sequential_creator, &result) == 0,
+                "Sequential creator could not start");
+        REQUIRE(pthread_join(creator, NULL) == 0, "Sequential creator did not return");
+        REQUIRE(result.owner && result.owner != initial_owner && result.owner != previous_owner,
+                "Sequential creator reused a thread-lifetime identity");
+        REQUIRE(result.status == 0, "Sequential creator lifecycle failed");
+        previous_owner = result.owner;
+    }
+    REQUIRE(metal_graph_selected_async_load_shutdown_checked(), "Final idle shutdown failed");
+    puts("PASS: six ordinary selected-worker cycles across three sequential creators; mismatched caller retains custody; repeated shutdown succeeds; exact threads absent after creator join");
     return 0;
 }

@@ -20,7 +20,7 @@ Ordinary idle native helper lifecycle can be checked against a fresh reviewed DS
 node scripts/check-platform-ds4-selected-lifecycle.mjs --isolated --build /ABS/FRESH_DS4_BUILD/candidate.json --sha256 EXACT_BUILD_RECEIPT_SHA --developer-dir /Applications/Xcode.app/Contents/Developer
 ```
 
-It runs two normal idle start/join cycles with genuine pthreads and positive kernel thread-absence observations, using the actual complete C module. A second ordinary lifecycle caller receives refusal to reuse or retire the creator's worker; the creator can still reuse and join it afterward. It creates no model job or GPU object and injects no failures. This is local worker ownership/retirement only; parent/model/device/all-client acceptance remains separate.
+It runs six normal idle start/join cycles across three sequential creator threads with genuine pthreads and positive kernel thread-absence observations, using the actual complete C module. A second ordinary lifecycle caller receives refusal to reuse or retire the creator's worker; the creator can still reuse and join it afterward. After complete joins, later creators can start their own workers and repeated idle shutdown succeeds. It creates no model job or GPU object and injects no failures. This is local worker ownership/retirement only; parent/model/device/all-client acceptance remains separate.
 
 Ordinary service recovery status can be checked with real private manager/session/CLI processes and a counter-only application callback:
 
