@@ -292,6 +292,27 @@ extension MLXServingProcessRuntime {
             try journal.setDesired(service:"mlx",desired:"running")
         }
         guard identities.count==2,identities[0] != identities[1],gate.validations==3,stopGate.validations==4 else {throw RuntimeError.invalid}
+        func anotherStart(at tick:Int64)throws->ServiceIdentity {
+            let request=try next(tick)
+            guard try exchange(request) == .uncertain else {throw RuntimeError.invalid}
+            let end=ProcessInfo.processInfo.systemUptime+3
+            while ProcessInfo.processInfo.systemUptime<end {
+                guard let lookup=try recovery.next(service:.mlx,desired:.running,observation:absent(tick),now:tick,tick:tick),lookup.operation == .lookup else {throw RuntimeError.invalid}
+                let result=try exchange(lookup)
+                if case .started(let identity)=result {
+                    try recovery.receive(lookup,result:result);try workerReturned();return identity
+                }
+                Thread.sleep(forTimeInterval:0.005)
+            }
+            throw RuntimeError.deadline
+        }
+        let unexpected=try anotherStart(at:1300000)
+        try runtime.endFixtureChild();try runtime.waitForFixtureExpiry() // Outside the service stop controller.
+        guard let unexpectedReceipt=recovery.recordedLaunch(.mlx),recordedProbe.capture(unexpectedReceipt).state == .exited else {throw RuntimeError.invalid}
+        let replacement=try anotherStart(at:1310000) // Transport must retire only the positively exited owned child.
+        guard unexpected != replacement,gate.validations==5,try journal.uncertainCount()==1 else {throw RuntimeError.invalid}
+        try runtime.endFixtureChild();try runtime.waitForFixtureExpiry()
+        guard runtime.retireKnownExited(),try journal.uncertainCount()==1 else {throw RuntimeError.invalid}
         let heldJournal=try Journal(directory:root.appendingPathComponent("timeout-state"))
         let heldClaim=UUID().uuidString.lowercased()
         try heldJournal.claim(job:heldClaim,attempt:0,model:"fixture/independent-timeout");try heldJournal.markUncertain(job:heldClaim,attempt:0)
@@ -397,5 +418,6 @@ extension MLXServingProcessRuntime {
         print("PASS: durable stop reservation before dispatch, controller reconstruction preserves original lookup/revocation ID, uncertain stop blocks launch after self-expiry")
         print("PASS: missing actuator stop history stays unknown, consumed dispatch cannot replay and failed durable acknowledgement retains pending stop")
         print("PASS: distinct native/session profiles preserve authenticated OrbStack Unix RPC and native-only MLX child launch with zero MLX GUI calls")
+        print("PASS: unexpected owned-child exit retires local custody off-loop before replacement, fresh start validation required and native uncertainty retained")
     }
 }

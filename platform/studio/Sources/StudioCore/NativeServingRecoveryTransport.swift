@@ -32,6 +32,10 @@ struct NativeServingRecoveryTransport:ServiceRecoverySending {
         }
         switch request.operation {
         case .launch:
+            // Exact owned-child exit can release local process custody only.
+            // This runs off-loop, cannot retire an uncertain generation, and
+            // begin still revalidates the independent native start reservation.
+            _=runtime.retireKnownExited()
             do {try runtime.begin(request.command,deadline:ProcessInfo.processInfo.systemUptime+10)}
             catch RuntimeError.capacity {
                 // This may be a repeated ID while the original spawn is still
