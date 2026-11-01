@@ -17,7 +17,7 @@ struct VerifiedVMInventory:NativeVMInventoryReading {
         let began=ProcessInfo.processInfo.systemUptime,sampledAt=HostResources.nowMilliseconds()
         let environment=["HOME":home]
         let status=try executable.run(arguments:["status"],timeout:1,maximumOutput:64,environment:environment)
-        guard status.status==0 else {throw RuntimeError.launch}
+        guard VerifiedVMRunningProbe.isRunning(status) else {throw RuntimeError.launch}
         let config=try executable.run(arguments:["config","get","memory_mib"],timeout:1,maximumOutput:64,environment:environment)
         guard config.status==0,let text=String(data:config.output,encoding:.utf8)?.trimmingCharacters(in:.whitespacesAndNewlines),
               !text.isEmpty,text.utf8.count<=8,text.first != "0",text.utf8.allSatisfy({(48...57).contains($0)}),

@@ -67,6 +67,11 @@ try {
   const vmStatusBuild=spawnSync('swiftc',['-parse-as-library','-swift-version','6','-warnings-as-errors','-O',vmStatusSource,'-o',vmStatusBinary],{cwd:root,stdio:'inherit',timeout:30000});
   if(vmStatusBuild.error)throw vmStatusBuild.error;
   if(vmStatusBuild.status!==0)throw Error('Finite VM status fixture build failed');
+  const vmInventorySource=join(directory,'VMInventoryCLI.swift'),vmInventoryBinary=join(directory,'vm-inventory-cli');
+  copyFileSync(resolve(root,'platform/studio/Tests/StudioCoreTests/VMInventoryCLI.swift.fixture'),vmInventorySource);
+  const vmInventoryBuild=spawnSync('swiftc',['-parse-as-library','-swift-version','6','-warnings-as-errors','-O',vmInventorySource,'-o',vmInventoryBinary],{cwd:root,stdio:'inherit',timeout:30000});
+  if(vmInventoryBuild.error)throw vmInventoryBuild.error;
+  if(vmInventoryBuild.status!==0)throw Error('Finite VM inventory fixture build failed');
   const rssSource=join(directory,'WorkerRSSSentinel.swift'),rssBinary=join(directory,'worker-rss-sentinel');
   copyFileSync(resolve(root,'platform/studio/Tests/StudioCoreTests/WorkerRSSSentinel.swift.fixture'),rssSource);
   const rssBuild=spawnSync('swiftc',['-parse-as-library','-swift-version','6','-warnings-as-errors','-O',rssSource,'-o',rssBinary],{cwd:root,stdio:'inherit',timeout:30000});
@@ -125,7 +130,7 @@ try {
   ]) {
     // Compilation has its own finite hosted-runner allowance. Runtime tests
     // retain120s; no model, IPC, native-command or cleanup deadline is raised.
-    const result = spawnSync(command, args, { cwd: root, stdio: 'inherit', timeout: command==='swiftc'?300_000:120_000, env: { ...process.env, FIOS_PLATFORM_MOCK_PORT: String(port), FIOS_PLATFORM_SETID_FIXTURE: setidFixture, FIOS_PLATFORM_LOCK_SETID_FIXTURE: setidLock, FIOS_PLATFORM_CENSUS_FIXTURE:censusBinary, FIOS_PLATFORM_ENDPOINT_FIXTURE:endpointBinary, FIOS_PLATFORM_VM_STATUS_FIXTURE:vmStatusBinary, FIOS_PLATFORM_RSS_FIXTURE:rssBinary, FIOS_PLATFORM_SANDBOX_REMOVAL_FIXTURE:removalBinary } });
+    const result = spawnSync(command, args, { cwd: root, stdio: 'inherit', timeout: command==='swiftc'?300_000:120_000, env: { ...process.env, FIOS_PLATFORM_MOCK_PORT: String(port), FIOS_PLATFORM_SETID_FIXTURE: setidFixture, FIOS_PLATFORM_LOCK_SETID_FIXTURE: setidLock, FIOS_PLATFORM_CENSUS_FIXTURE:censusBinary, FIOS_PLATFORM_ENDPOINT_FIXTURE:endpointBinary, FIOS_PLATFORM_VM_STATUS_FIXTURE:vmStatusBinary, FIOS_PLATFORM_VM_INVENTORY_FIXTURE:vmInventoryBinary, FIOS_PLATFORM_RSS_FIXTURE:rssBinary, FIOS_PLATFORM_SANDBOX_REMOVAL_FIXTURE:removalBinary } });
     if (result.error) throw result.error;
     if (result.status !== 0) throw new Error(`Platform policy validation failed (${result.status ?? result.signal})`);
   }
