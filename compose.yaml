@@ -12,7 +12,7 @@ services:
     ports:
       - "127.0.0.1:3000:3000"
     environment:
-      FIOS_PASSWORD: ${FIOS_PASSWORD:?Run scripts/setup.sh}
+      FIOS_PASSWORD: ${FIOS_PASSWORD:-}
       SESSION_SECRET: ${SESSION_SECRET:?Run scripts/setup.sh}
       MLX_BASE_URL: ${MLX_BASE_URL:-http://host.docker.internal:11234/v1}
       MLX_API_KEY: ${MLX_API_KEY:-}
@@ -99,7 +99,7 @@ services:
     user: "0:0"
     environment:
       FIOS_WEB_SEARCH: ${FIOS_WEB_SEARCH:-auto}
-      FIOS_PASSWORD: ${FIOS_PASSWORD:?Run scripts/setup.sh}
+      FIOS_PASSWORD: ${FIOS_PASSWORD:-}
       SESSION_SECRET: ${SESSION_SECRET:?Run scripts/setup.sh}
       MLX_BASE_URL: ${MLX_BASE_URL:-http://host.docker.internal:11234/v1}
       MLX_API_KEY: ${MLX_API_KEY:-}

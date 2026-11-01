@@ -20,9 +20,7 @@ import {
   Code2,
   FileText,
   Image as ImageIcon,
-  ArrowRight,
   RefreshCw,
-  LogOut,
   LockKeyhole,
   AlertCircle,
   LoaderCircle,
@@ -277,78 +275,6 @@ function FileChip({ file, remove }) {
     </div>
   );
 }
-function Login({ onLogin }) {
-  const [password, setPassword] = useState(""),
-    [error, setError] = useState(""),
-    [busy, setBusy] = useState(false);
-  return (
-    <main className="login-page">
-      <div className="login-card">
-        <Brand />
-        <div className="eyebrow">
-          <LockKeyhole size={13} /> YOUR PRIVATE WORKSPACE
-        </div>
-        <h1>
-          A little space
-          <br />
-          for big ideas.
-        </h1>
-        <p>
-          Thoughtful conversations. Better code.
-          <br />
-          Powered by your models, on your Macs.
-        </p>
-        <form
-          onSubmit={async (e) => {
-            e.preventDefault();
-            setBusy(true);
-            setError("");
-            try {
-              await api("/login", {
-                method: "POST",
-                body: JSON.stringify({ password }),
-              });
-              onLogin();
-            } catch (e) {
-              setError(e.message);
-            } finally {
-              setBusy(false);
-            }
-          }}
-        >
-          <label htmlFor="password">Access password</label>
-          <input
-            id="password"
-            type="password"
-            autoComplete="current-password"
-            autoFocus
-            required
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            placeholder="Enter your workspace password"
-          />
-          {error && (
-            <div className="form-error" role="alert">
-              {error}
-            </div>
-          )}
-          <button className="primary-button" disabled={busy}>
-            {busy ? (
-              <LoaderCircle className="spin" size={16} />
-            ) : (
-              <>
-                Enter workspace <ArrowRight size={16} />
-              </>
-            )}
-          </button>
-        </form>
-        <small className="login-note">
-          <span className="status-dot" /> Private by design. Local by default.
-        </small>
-      </div>
-    </main>
-  );
-}
 function App() {
   const [session, setSession] = useState(null),
     [sessionError, setSessionError] = useState("");
@@ -371,10 +297,9 @@ function App() {
         <LoaderCircle className="spin" />
       </main>
     );
-  if (!session) return <Login onLogin={() => setSession(true)} />;
-  return <Workspace onLogout={() => setSession(false)} />;
+  return <Workspace />;
 }
-function Workspace({ onLogout }) {
+function Workspace() {
   const [chats, setChats] = useState([]),
     [chat, setChat] = useState(null);
   const {
@@ -717,24 +642,10 @@ function Workspace({ onLogout }) {
             </div>
             <LockKeyhole size={14} />
           </div>
-          <button
-            className="account"
-            onClick={async () => {
-              try {
-                await api("/logout", { method: "POST" });
-                onLogout();
-              } catch (e) {
-                setError(e.message);
-              }
-            }}
-            disabled={generating}
-          >
+          <div className="account">
             <span className="avatar">M</span>
-            <span>
-              My workspace<small>Private · On your Macs</small>
-            </span>
-            <LogOut size={15} />
-          </button>
+            <span>My workspace<small>Private · On your Macs</small></span>
+          </div>
         </div>
       </aside>
       <main className="main-panel">

@@ -3,10 +3,6 @@ import { test, expect } from "@playwright/test";
 async function login(page) {
   await page.clock.install();
   await page.goto("/");
-  await page
-    .getByLabel("Access password", { exact: true })
-    .fill("browser-test-password");
-  await page.getByRole("button", { name: "Enter workspace" }).click();
   await expect(
     page.getByRole("button", { name: "Choose model" }),
   ).toContainText("coding-model");

@@ -30,7 +30,6 @@ export default defineConfig({
         HOST: "127.0.0.1",
         DB_PATH: "./data/browser-test.sqlite",
         MLX_BASE_URL: "http://127.0.0.1:3322/v1",
-        FIOS_PASSWORD: "browser-test-password",
         SESSION_SECRET: "browser-test-signing-secret-which-is-long-enough",
       },
     },

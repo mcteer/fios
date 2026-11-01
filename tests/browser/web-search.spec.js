@@ -7,8 +7,6 @@ test('hostile source titles remain text and unsafe citation destinations remain 
  });
  let dialogs=0;page.on('dialog',async d=>{dialogs++;await d.dismiss();});
  await page.goto('/');
- await page.getByLabel('Access password',{exact:true}).fill('browser-test-password');
- await page.getByRole('button',{name:'Enter workspace'}).click();
  await page.getByRole('textbox',{name:'Message Fios'}).fill('Python release web evidence');
  await page.getByRole('button',{name:'Send message',exact:true}).click();
  await expect(page.getByText('Public page evidence retrieved',{exact:true})).toBeVisible();
@@ -21,8 +19,6 @@ test('hostile source titles remain text and unsafe citation destinations remain 
 for(const width of [1440,390])test(`automatic harness search sources, reset, citations and saved provenance (${width}px)`,async({page})=>{
  await page.setViewportSize({width,height:950});
  await page.goto('/');
- await page.getByLabel('Access password',{exact:true}).fill('browser-test-password');
- await page.getByRole('button',{name:'Enter workspace'}).click();
  await page.getByRole('textbox',{name:'Message Fios'}).fill('Python release web evidence');
  await page.getByRole('button',{name:'Send message',exact:true}).click();
  await expect(page.getByRole('button',{name:'Stop response'})).toHaveCount(0);

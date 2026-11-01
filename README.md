@@ -6,13 +6,7 @@ _A clear space to think._ A custom, coding-focused chat workspace for your local
 
 **http://localhost:3000**
 
-The application runs as the `fios` service in OrbStack. To see your generated access password locally:
-
-```sh
-./scripts/password.sh
-```
-
-The password and session-signing secret are in the private, Git-ignored `.env`. Do not paste them into tickets or commit them.
+The application runs as the `fios` service in OrbStack. Open the URL to enter the workspace directly; no interface password is required. The existing browser session initializes automatically. Gateway credentials and the session-signing secret stay in the private, Git-ignored `.env`.
 
 ## Features
 
@@ -48,7 +42,6 @@ Prerequisites: OrbStack in Docker mode, Docker Compose v2, Python 3 for first-ti
 # Optional: edit MLX_BASE_URL / MLX_API_KEY in .env.
 docker compose config --quiet # do not print resolved credentials
 docker compose up -d --build --wait
-./scripts/password.sh
 ```
 
 The application container runs as UID 1000, with a read-only root filesystem, no added capabilities, no Docker socket, and 1 GiB / 2 CPU limits. `readiness` is a separate nonroot metadata-only container. `searxng` is a pinned official-image derivative (AGPL-3.0-or-later),977:977/read-only,256MiB/0.5CPU, no published port/app secrets/SQLite/socket mounts. Its process-local session key and caches are disposable; access/query logs are disabled and not retained. The app reaches it on an internal-only network; SearXNG has a separate egress network. `deployer` is a separately isolated trusted management container: its root user and Docker socket give it daemon-wide deployment authority, never shared with the application or observer. It has no published ports or host checkout/config mounts. All supporting services run in the OrbStack Fios stack; do not install native macOS background helpers. SQLite and attachment blobs live in the named **`fios_fios-data`** volume. Rebuilding/recreating the container preserves them. **`docker compose down -v` deletes them.**
@@ -57,14 +50,13 @@ The application container runs as UID 1000, with a read-only root filesystem, no
 
 | Setting          | Purpose                                                       |
 | ---------------- | ------------------------------------------------------------- |
-| `FIOS_PASSWORD`  | Generated local access password, minimum 12 characters        |
 | `SESSION_SECRET` | Stable generated cookie-signing secret, minimum 32 characters |
 | `MLX_BASE_URL`   | Defaults to `http://host.docker.internal:11234/v1`            |
 | `MLX_API_KEY`    | Optional real key if MLX authentication is enabled            |
 | `FIOS_WEB_SEARCH` | `auto` (default) or `off`; only the Python agent may decide/invoke search. No provider URL override. Apply an off override to app and the trusted controller environment through reviewed Compose configuration so automatic delivery retains it. |
 | `FIOS_AGENT_PYTHON` | Local development interpreter override; defaults to `.venv/bin/python`. The image fixes `/opt/venv/bin/python`; do not use a host path in Compose. |
 
-Edit `.env`, then run `docker compose up -d` to apply environment changes. If changing the password, also rotate `SESSION_SECRET` to invalidate existing sessions. Cookies expire after seven days. Login attempts are rate-limited; logging out clears the current browser's cookie. This is a single-user workspace, not a multi-user account system.
+Edit `.env`, then run `docker compose up -d` to apply environment changes. This is a single-user localhost workspace with automatic browser sessions, not a multi-user account system. Existing `FIOS_PASSWORD` values are unused; no credential rotation or deletion is needed.
 
 ### Attachment limits
 

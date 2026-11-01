@@ -12,7 +12,6 @@ export async function agentApp({ python, database, directory, peers } = {}) {
     origin,
     cookie = "",
     output = "";
-  const password = "isolated-test-password";
   async function start() {
     child = spawn(process.execPath, ["server/index.js"], {
       env: {
@@ -24,7 +23,6 @@ export async function agentApp({ python, database, directory, peers } = {}) {
         MLX_API_KEY: "isolated-mock-key",
         MLX_PEER_URLS: JSON.stringify(peers || {"studio-a": mock.url}),
         SESSION_SECRET: "isolated-test-secret-".repeat(3),
-        FIOS_PASSWORD: password,
         ...(python ? { FIOS_AGENT_PYTHON: python } : {}),
       },
       stdio: ["ignore", "pipe", "pipe"],
@@ -47,11 +45,7 @@ export async function agentApp({ python, database, directory, peers } = {}) {
       await new Promise((r) => setTimeout(r, 30));
     }
     if (!origin) throw new Error("Test app not ready");
-    const login = await fetch(origin + "/api/login", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ password }),
-    });
+    const login = await fetch(origin + "/api/session");
     cookie = login.headers.get("set-cookie").split(";")[0];
   }
   async function stop() {
