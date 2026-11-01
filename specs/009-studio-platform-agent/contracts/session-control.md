@@ -6,6 +6,15 @@ observation-only. No policy/manifests have been installed and no real native
 application launch/quit is claimed. Installation and live acceptance remain
 separately gated.
 
+Operator decision2026-11-01: MLX server ownership belongs directly to the
+manager. The public native session driver refuses the old MLX GUI launch path;
+its application actuator is now limited to OrbStack. Existing internal
+counter-only transport fixtures can still exercise both fixed service values,
+but do not represent an installed MLX actuator. The direct serving-process
+runtime requires its own protected profile/reservation/controller integration;
+see [native server lifecycle](native-server-lifecycle.md). No installation or
+handover follows automatically from this source change.
+
 The trusted constructor receives the immutable reviewed manager executable and
 the exact approved executable path/hash for each fixed service. No path, argv,
 environment, endpoint or role can arrive in a request. A future production

@@ -1,5 +1,20 @@
 # Installed Studio compatibility — 2026-10-26
 
+## Direct server ownership decision2026-11-01
+
+The operator selected direct agent ownership of `mlx-serve`, rather than GUI
+ownership through a control adapter. See [the lifecycle contract](contracts/native-server-lifecycle.md).
+Read-only SSH process inventory at2026-11-01T16:51:52.674715Z found the native
+server parented by MLXCore on both Studios: edge-a server63833/GUI63804 and
+edge-b server2737/GUI2579, all UID501. Only PID/PPID/UID/executable metadata was
+collected; no arguments, environment, model request or native action occurred.
+Receipt: `/tmp/fios-009-serving-process-ownership-inventory.json`. These are
+historical observations, not current ownership/absence, reviewed executable
+identity or launch authority. No installed ownership handover has occurred.
+The handover must preserve reviewed configuration and prevent competing GUI
+launches, with separately reviewed installation/rollback; source implementation
+continues independently.
+
 **Current scope (2026-10-31):** Native hardening and security-adjacent investigation are stopped at the operator’s request. The source matrices and receipts below are historical evidence, not instructions to resume that work. Ordinary functional implementation, native integration and correctness checks continue; installed activation and disruptive acceptance remain separately gated.
 
 ## Host/model roles clarified2026-10-31

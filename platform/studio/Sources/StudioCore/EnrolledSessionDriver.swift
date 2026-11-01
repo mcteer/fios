@@ -122,6 +122,12 @@ struct SessionDriverPorts:Sendable {
     }
     private static func nativePorts(_ operations:SessionNativeOperations)->SessionDriverPorts {
         SessionDriverPorts(validate:{command in
+            // MLX is owned directly by the native server controller. The old
+            // GUI bootstrap cannot restore/acknowledge the serving process and
+            // must not become a competing owner during that handover. Keep the
+            // public session actuator limited to OrbStack; isolated internal
+            // ports remain available for transport fixtures only.
+            guard command.service == .orbstack else {throw ServiceError.invalid}
             try ApplicationIdentity.verify(bundle:command.bundle,executable:command.executable,identifier:command.identifier,team:command.team,deadline:command.deadline)
         },consoleReady:operations.consoleReady,alreadyRunning:{service in
             operations.alreadyRunning(SessionNativeApplication(service:service))
