@@ -59,13 +59,18 @@ extension MLXServingProcessRuntime {
         if currentPhase == .idle {
             return ServiceObservation(identity:nil,responding:false,sessionReady:true,credentialsReady:true,nativeIdle:nil,runtimeUnmanaged:nil,sampledAt:now)
         }
+        if currentPhase == .running,let child,!child.isRunning {
+            // This fixture owns its complete one-child CPU service scope.
+            // Positive wait is not global native absence/terminality authority.
+            return ServiceObservation(identity:nil,responding:false,sessionReady:true,credentialsReady:true,nativeIdle:nil,runtimeUnmanaged:nil,sampledAt:now)
+        }
         guard currentPhase == .running,let child,let value,child.isRunning,
               (try? ServiceIdentity.verified(peer:NativeControlPeer(pid:value.pid,start:value.start,executable:executable),expectedUID:geteuid(),deadline:ProcessInfo.processInfo.systemUptime+0.5))==value else {return nil}
         // Identity is real; API readiness is explicitly synthetic. The helper
         // has no listener, model, native activity source or admission authority.
         return ServiceObservation(identity:value,responding:true,sessionReady:true,credentialsReady:true,nativeIdle:nil,runtimeUnmanaged:nil,sampledAt:now,health:.healthy)
     }
-    fileprivate static func fixture(executable:VerifiedExecutable,home:String,profile:String,gate:ServingRuntimeGate,stopGate:ServingStopGate?=nil,ignoreTerm:Bool=false)throws->MLXServingProcessRuntime {
+    fileprivate static func fixture(executable:VerifiedExecutable,home:String,profile:String,gate:ServingRuntimeGate,stopGate:ServingStopGate?=nil,ignoreTerm:Bool=false,exitOnce:Bool=false)throws->MLXServingProcessRuntime {
         guard executable.path.hasPrefix("/private/tmp/fios-009-serving-runtime-") else {throw RuntimeError.invalid}
         let base=["PATH":"/usr/bin:/bin","LANG":"C","LC_ALL":"C","HOME":home]
         let validateStop:@Sendable(ServingStopCommand)throws->Void={command in
@@ -84,7 +89,8 @@ extension MLXServingProcessRuntime {
             _=try MLXServingProcessRuntime(profile:fixed,arguments:["pull","serve"],environment:base,serviceProfileHash:profile,validateReservation:gate.validate,validateStopReservation:validateStop)
             throw JournalError.conflict
         }catch RuntimeError.invalid {}
-        return try MLXServingProcessRuntime(executable:executable,arguments:ignoreTerm ? ["ignore-term"]:[],environment:["PATH":"/usr/bin:/bin","LANG":"C","LC_ALL":"C","HOME":home],serviceProfileHash:profile,validateReservation:gate.validate,validateStopReservation:validateStop)
+        guard !ignoreTerm || !exitOnce else {throw RuntimeError.invalid}
+        return try MLXServingProcessRuntime(executable:executable,arguments:ignoreTerm ? ["ignore-term"]:exitOnce ? ["exit-once"]:[],environment:["PATH":"/usr/bin:/bin","LANG":"C","LC_ALL":"C","HOME":home],serviceProfileHash:profile,validateReservation:gate.validate,validateStopReservation:validateStop)
     }
     fileprivate func endFixtureChild()throws {
         lock.lock();let child=process,value=identity;lock.unlock()
@@ -113,14 +119,15 @@ extension MLXServingProcessRuntime {
             let result=try command.renderResponse(response)
             print(String(decoding:try JSONSerialization.data(withJSONObject:result,options:[.sortedKeys]),as:UTF8.self));return
         }
-        if args.count==5,args[1]=="manager" {
+        if [5,6].contains(args.count),args[1]=="manager" {
+            guard args.count==5 || args[5]=="unexpected" else {throw RuntimeError.invalid}
             let root=URL(fileURLWithPath:args[4]),executable=try VerifiedExecutable(path:args[2],sha256:args[3])
             let pins:[ManagedService:String]=[.mlx:executable.sha256,.orbstack:executable.sha256]
             let gate=ServingRuntimeGate(trace:{event in
                 try? Data(String(HostResources.nowMilliseconds()).utf8).write(to:root.appendingPathComponent(event),options:.atomic)
             }),profile=try ServiceLaunchProfile.digest(pins)
             let managerStopGate=ServingStopGate();managerStopGate.release.signal()
-            let runtime=try MLXServingProcessRuntime.fixture(executable:executable,home:root.path,profile:profile,gate:gate,stopGate:managerStopGate)
+            let runtime=try MLXServingProcessRuntime.fixture(executable:executable,home:root.path,profile:profile,gate:gate,stopGate:managerStopGate,exitOnce:args.count==6)
             let transport=try NativeServingRecoveryTransport(runtime:runtime,approvedHashes:pins),cache=ServiceObservationCache()
             let health=FixtureServingHealth()
             let lifecycle=ServingLifecyclePorts(runtime:runtime,intent:{receipt,desired in

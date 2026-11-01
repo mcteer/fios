@@ -10,7 +10,7 @@ assert.deepEqual(process.argv.slice(2),['--isolated']);assert.equal(process.plat
 const root=resolve(import.meta.dirname,'..'),directory=mkdtempSync('/private/tmp/fios-009-serving-runtime-');
 const hash=b=>createHash('sha256').update(b).digest('hex');
 const helper=join(directory,'serving-helper'),c=join(directory,'helper.c');
-const helperSource='#include <unistd.h>\n#include <signal.h>\n#include <string.h>\n#include <stdlib.h>\n#include <stdio.h>\n#include <fcntl.h>\nint main(int n,char**v){signal(SIGALRM,SIG_DFL);if(n==2&&strcmp(v[1],"ignore-term")==0){signal(SIGTERM,SIG_IGN);alarm(5);char p[8192];const char*h=getenv("HOME");if(!h||snprintf(p,sizeof(p),"%s/ignore-term-ready",h)>=(int)sizeof(p))return 70;int f=open(p,O_WRONLY|O_CREAT|O_EXCL,0600);if(f<0)return 71;close(f);}else{alarm(30);}for(;;)pause();}\n';
+const helperSource='#include <unistd.h>\n#include <signal.h>\n#include <string.h>\n#include <stdlib.h>\n#include <stdio.h>\n#include <fcntl.h>\nint main(int n,char**v){signal(SIGALRM,SIG_DFL);if(n==2&&strcmp(v[1],"ignore-term")==0){signal(SIGTERM,SIG_IGN);alarm(5);char p[8192];const char*h=getenv("HOME");if(!h||snprintf(p,sizeof(p),"%s/ignore-term-ready",h)>=(int)sizeof(p))return 70;int f=open(p,O_WRONLY|O_CREAT|O_EXCL,0600);if(f<0)return 71;close(f);}else if(n==2&&strcmp(v[1],"exit-once")==0){char p[8192];const char*h=getenv("HOME");if(!h||snprintf(p,sizeof(p),"%s/first-exit-claimed",h)>=(int)sizeof(p))return 72;int f=open(p,O_WRONLY|O_CREAT|O_EXCL,0600);if(f>=0){close(f);alarm(3);}else{alarm(30);}}else{alarm(30);}for(;;)pause();}\n';
 writeFileSync(c,helperSource,{mode:0o600});
 function run(program,args,timeout=120000){const r=spawnSync(program,args,{encoding:'utf8',timeout,maxBuffer:2<<20});assert(!r.error&&!r.signal,JSON.stringify({error:r.error?.code,signal:r.signal,diagnostic:r.stderr?.slice(0,2000)}));assert.equal(r.status,0,r.stderr);return r.stdout;}
 run('/usr/bin/clang',[c,'-O2','-o',helper],30000);
@@ -69,8 +69,26 @@ for(const mode of ['debug','release']){
  }catch(error){console.error('RETAINED private native manager fixture:',managerState);throw error;}finally {
   if(!exited()){manager.kill('SIGTERM');try{await until(exited,3000);}catch{manager.kill('SIGKILL');await until(exited,3000);}}
  }
+ const unexpectedState=mkdtempSync('/private/tmp/f9-mlx-manager-');
+ const unexpectedLog=openSync(join(unexpectedState,'manager.log'),'wx',0o600);
+ const unexpected=spawn('/usr/bin/sandbox-exec',['-p',policy,binary,'manager',helper,hash(readFileSync(helper)),unexpectedState,'unexpected'],{stdio:['ignore',unexpectedLog,unexpectedLog]});closeSync(unexpectedLog);
+ const unexpectedExited=()=>unexpected.exitCode!==null||unexpected.signalCode!==null;
+ function unexpectedStatus(){const r=spawnSync(binary,['control',unexpectedState,'status'],{encoding:'utf8',timeout:2500});const s=r.status===0?JSON.parse(r.stdout):null;if(s)writeFileSync(join(unexpectedState,'last-status.json'),JSON.stringify(s)+'\n',{mode:0o600});return s;}
+ try {
+  await until(()=>{assert(!unexpectedExited());return unexpectedStatus()?.launch_pending;});
+  writeFileSync(join(unexpectedState,'release-validation'),'release',{mode:0o600});
+  const ready=await until(()=>{const s=unexpectedStatus();return s?.observed==='ready'&&!s.launch_pending?s:null;});assert.equal(ready.recovery.starts_in_window,1);
+  const lost=await until(()=>{assert(!unexpectedExited());const s=unexpectedStatus();return s?.observed==='stopped'&&!s.launch_pending?s:null;});
+  assert.equal(lost.desired,'running');assert.equal(lost.recovery.starts_in_window,1);assert(lost.recovery.budget_wait_ms>0);
+  const recovered=await until(()=>{assert(!unexpectedExited());const s=unexpectedStatus();return s?.observed==='ready'&&!s.launch_pending&&s.recovery.starts_in_window===2?s:null;},12000);
+  assert.equal(recovered.desired,'running');assert.equal(recovered.stop_pending,false);
+  unexpected.kill('SIGTERM');await until(unexpectedExited,4000);assert.equal(unexpected.exitCode,0);
+  writeFileSync(join(directory,mode+'-manager-unexpected.json'),JSON.stringify({ready,lost,recovered,state:unexpectedState,identity:'actual_self_expiring_private_helper',readiness:'synthetic',native_authority:false})+'\n',{mode:0o600});
+ }catch(error){console.error('RETAINED unexpected private child fixture:',unexpectedState);throw error;}finally {
+  if(!unexpectedExited()){unexpected.kill('SIGTERM');try{await until(unexpectedExited,3000);}catch{unexpected.kill('SIGKILL');await until(unexpectedExited,3000);}}
+ }
 }
 assert(implementation.equals(readFileSync(join(core,name))));
 for(const [n,bytes] of Object.entries(integration))assert(bytes.equals(readFileSync(join(core,n))));
-const receipt={ok:true,directory,provenance_scope:'declared_runtime_integration_and_fixture_only',modes:['debug','release'],source_sha256:hash(implementation),integration_sha256:Object.fromEntries(Object.entries(integration).map(([n,b])=>[n,hash(b)])),fixture_sha256:hash(fixture),helper_source_sha256:hash(helperSource),actual_private_child_starts:20,actual_owned_serving_child_starts:18,actual_unrelated_private_children:2,actual_guarded_private_stops:8,guarded_private_stop_timeouts:2,self_expiring_private_helpers:2,pre_signal_revocations:2,denied_stop_validations:2,fresh_start_validations_per_queue_scenario:5,unexpected_exit_recoveries:2,durable_stop_reservation:true,restored_stop_dispatch:false,missing_stop_history:'unknown',distinct_native_session_profiles:true,actual_counter_only_orbstack_session_calls:2,mlx_gui_calls:0,actual_manager_processes:2,actual_manager_stop_resume_cycles:2,actual_manager_unavailable_recoveries:2,loading_without_restart_checks:2,manager_readiness:'synthetic',native_mlx_actions:0,native_inference:false,native_authority:false,installed:false};
+const receipt={ok:true,directory,provenance_scope:'declared_runtime_integration_and_fixture_only',modes:['debug','release'],source_sha256:hash(implementation),integration_sha256:Object.fromEntries(Object.entries(integration).map(([n,b])=>[n,hash(b)])),fixture_sha256:hash(fixture),helper_source_sha256:hash(helperSource),actual_private_child_starts:24,actual_owned_serving_child_starts:22,actual_unrelated_private_children:2,actual_guarded_private_stops:8,guarded_private_stop_timeouts:2,self_expiring_private_helpers:4,pre_signal_revocations:2,denied_stop_validations:2,fresh_start_validations_per_queue_scenario:5,unexpected_exit_recoveries:4,durable_stop_reservation:true,restored_stop_dispatch:false,missing_stop_history:'unknown',distinct_native_session_profiles:true,actual_counter_only_orbstack_session_calls:2,mlx_gui_calls:0,actual_manager_processes:4,actual_manager_stop_resume_cycles:2,actual_manager_unavailable_recoveries:2,actual_manager_unexpected_exit_recoveries:2,loading_without_restart_checks:2,manager_readiness:'synthetic',native_mlx_actions:0,native_inference:false,native_authority:false,installed:false};
 writeFileSync(join(directory,'receipt.json'),JSON.stringify(receipt)+'\n',{mode:0o600});console.log(JSON.stringify(receipt));
