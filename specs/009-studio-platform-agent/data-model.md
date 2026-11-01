@@ -21,6 +21,17 @@ Manager UUID epoch and increasing sequence; monotonic startup/progress; watchdog
 
 Private metadata writer locks are distinct fixed `supervisor.lock`, `session.lock` and manager/SQLite locks. Supervisor/session share descriptor-pinned private0700 directory + same-UID single-link regular0600/no-follow/nonblocking/CLOEXEC lock validation, named-inode/directory checks and kernel flock; a link/FIFO/set-ID/permissive file cannot be treated as a singleton. Lock contents are not authority. Watchdog restart budget keeps its existing exact `boot`/`starts` JSON shape (no new format silently introduced), ≤4096 bytes, canonical boot UUID, ≤3 bounded integer strictly increasing monotonic start times. Validate histories even from another boot before reset; malformed/unknown/duplicate or unsafe file metadata refuses unchanged **before manager start**. File reads are bounded/no-follow/nonblocking with regular-file/UID/link/mode and identity-time brackets. A legitimate kernel boot change may reset only this restart policy; never native uncertainty or ownership.
 
+The separate private `service-recovery.json` now writes version2 (≤4096 bytes).
+It retains the existing exact profile/boot/clock fence and per-service restart
+budget/pending UUID, plus optional `lastStarted` with exact keys `id`, `pid`,
+`start` (canonical positive UInt64 decimal string), `sha256` and original `boot`.
+The correlated started acknowledgement and pending-ID retirement share one
+atomic durable write. Version1 state remains readable without fabricating a
+receipt; future writes use version2. Receipt identity is historical metadata,
+not live process ownership, native completion or actuation authority. It is
+retained across reboot and later not-sent operations. Stopped backups preserve
+the entire file; incompatible downgrade must refuse rather than erase/drop it.
+
 ## ResourceObservation / Reservation
 
 Observation: host/epoch/sequence/sample time/age, physical bytes, conservative available bytes, memory-pressure `normal|warning|critical|unknown`, CPU load percentage, verified VM capacity/remaining headroom, disk free, thermal `nominal|fair|serious|critical|unknown`, optional GPU utilization and unsupported reason. No sensor value becomes zero merely because unavailable.

@@ -17,9 +17,16 @@ func runServiceRecoveryTests() throws {
           try recovery.plan(service:.mlx,desired:.running,observation:absent(1000,credentials:false),now:1000,tick:1000)==nil else {fatalError("Recovery bypassed intent/source/session/credential gate")}
     guard let first=try recovery.plan(service:.mlx,desired:.running,observation:absent(1000),now:1000,tick:1000) else {fatalError("Proven absent service was not reserved")}
     guard try recovery.plan(service:.mlx,desired:.running,observation:absent(2000),now:2000,tick:2000)==nil else {fatalError("Pending launch replayed")}
+    // Existing version1 state has no launch-identity receipt. Preserve its
+    // unresolved operation and budget while upgrading future writes to v2.
+    let legacyFile=directory.appendingPathComponent("service-recovery.json")
+    var legacy=try JSONSerialization.jsonObject(with:Data(contentsOf:legacyFile)) as! [String:Any]
+    legacy["version"]=1
+    try AtomicState.write(JSONSerialization.data(withJSONObject:legacy),to:legacyFile)
     // New controller restores durable intent while the same single writer is
     // held. Fresh absence and elapsed time cannot retire unknown dispatch.
     recovery=try ServiceRecoveryController(journal:journal,approvedHashes:pins)
+    guard recovery.isPending(.mlx),recovery.recordedLaunch(.mlx)==nil else {fatalError("Legacy state invented a launch receipt or lost pending intent")}
     guard try recovery.plan(service:.mlx,desired:.running,observation:absent(700000),now:700000,tick:700000)==nil else {fatalError("Restart/age cleared uncertain launch")}
     do {try recovery.notSent(service:.mlx,id:UUID().uuidString.lowercased());fatalError("Foreign acknowledgement cleared intent")}catch ServiceError.invalid {}
     // Fail the real atomic rename against a private directory while retaining
@@ -53,7 +60,23 @@ func runServiceRecoveryTests() throws {
     guard try recovery.plan(service:.mlx,desired:.running,observation:absent(730000),now:730000,tick:730000)==nil else {fatalError("Controller restart reset three-start budget")}
     guard let independent=try recovery.plan(service:.orbstack,desired:.running,observation:absent(730000),now:730000,tick:730000) else {fatalError("One service consumed the other's budget")}
     do {try recovery.started(service:.orbstack,id:independent.id,identity:ServiceIdentity(pid:42,start:1,sha256:String(repeating:"b",count:64)));fatalError("Changed process identity acknowledged launch")}catch ServiceError.invalid {}
+    do {
+        let target=directory.appendingPathComponent("service-recovery.json"),saved=directory.appendingPathComponent("retained-started-recovery.json")
+        try FileManager.default.moveItem(at:target,to:saved)
+        try FileManager.default.createDirectory(at:target,withIntermediateDirectories:false,attributes:[.posixPermissions:0o700])
+        defer {
+            try? FileManager.default.removeItem(at:target)
+            try? FileManager.default.moveItem(at:saved,to:target)
+        }
+        do {try recovery.started(service:.orbstack,id:independent.id,identity:ServiceIdentity(pid:42,start:1,sha256:hash));throw RuntimeError.identity}
+        catch JournalError.storage {}
+        guard recovery.isPending(.orbstack),recovery.recordedLaunch(.orbstack)==nil else {fatalError("Failed durable started acknowledgement published a receipt or cleared pending intent")}
+    }
     try recovery.started(service:.orbstack,id:independent.id,identity:ServiceIdentity(pid:42,start:1,sha256:hash))
+    let acknowledged=recovery.recordedLaunch(.orbstack)
+    recovery=try ServiceRecoveryController(journal:journal,approvedHashes:pins)
+    guard let acknowledged,acknowledged.id==independent.id,acknowledged.identity==ServiceIdentity(pid:42,start:1,sha256:hash),
+          recovery.recordedLaunch(.orbstack)==acknowledged,!recovery.isPending(.orbstack) else {fatalError("Manager reconstruction lost correlated launch identity")}
     let present=ServiceObservation(identity:ServiceIdentity(pid:42,start:1,sha256:hash),responding:true,sessionReady:true,credentialsReady:true,nativeIdle:nil,runtimeUnmanaged:nil,sampledAt:730000)
     guard try recovery.plan(service:.orbstack,desired:.running,observation:present,now:730000,tick:730000)==nil else {fatalError("Existing verified service was launched again")}
     guard try recovery.plan(service:.orbstack,desired:.running,observation:absent(740000),now:740000,tick:729999)==nil,
@@ -63,7 +86,7 @@ func runServiceRecoveryTests() throws {
     do {_ = try ServiceRecoveryController(journal:journal,approvedHashes:[.mlx:String(repeating:"b",count:64),.orbstack:hash]);fatalError("Changed installed identity adopted prior launch state")}catch ServiceError.invalid {}
     let file=directory.appendingPathComponent("service-recovery.json"),original=try Data(contentsOf:file)
     let text=String(decoding:original,as:UTF8.self)
-    let malformed=[text.replacingOccurrences(of:"\"version\":1",with:"\"version\":1.0"),String(text.dropLast())+",\"future_launch_authority\":true}"]
+    let malformed=[text.replacingOccurrences(of:"\"version\":2",with:"\"version\":2.0"),String(text.dropLast())+",\"future_launch_authority\":true}",text.replacingOccurrences(of:"\"start\":\"1\"",with:"\"start\":\"01\"")]
     for value in malformed {
         try AtomicState.write(Data(value.utf8),to:file)
         do {_ = try ServiceRecoveryController(journal:journal,approvedHashes:pins);fatalError("Malformed/future recovery state adopted")}catch ServiceError.invalid {}

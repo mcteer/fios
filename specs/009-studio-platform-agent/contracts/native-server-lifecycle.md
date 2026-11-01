@@ -52,6 +52,24 @@ explicit force operation retains its separate affected-scope confirmation.
 Do not use PID-only signals, sampled GPU idle or a successful HTTP health probe
 as native terminality. Never adopt or kill an unrelated/manual server.
 
+The source recovery journal's version2 record retains the last correlated
+started acknowledgement per fixed service: operation ID, PID, canonical
+decimal-string kernel start, image hash and original boot, under the same
+reviewed profile. Clear the pending launch and persist this record in one
+durable write. Version1 input has no such evidence; reading it cannot invent a
+receipt. Reboot, later not-sent replies and manager reconstruction must not
+reinterpret historical evidence as current ownership. Live identity, protected
+profile/namespace and native lifecycle authority must still be established
+before adoption or disruption. The record alone never clears native inference
+uncertainty or unlocks another launch.
+
+Stopped-state backup/restore retains the complete recovery file. Older binaries
+which cannot read version2 must refuse it; do not remove the file, drop the
+receipt or restore older ownership state merely to make a downgrade start.
+Installed upgrade/rollback review must retain a compatible known-good binary
+and reconcile current work. Development source migration is not permission for
+an installed update.
+
 Maintenance prevents recovery; stopped intent is durable intent until the
 separate stop completes. Pre-dispatch cancellation seals validation; after
 dispatch, timeout and missing history remain uncertain. Preserve the existing

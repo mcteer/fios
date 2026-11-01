@@ -18,6 +18,16 @@ struct ServiceLaunchCommand:Sendable {
     let expectedSHA256:String
     let profileHash:String
 }
+// Historical correlated launch acknowledgement, not current presence, native
+// terminality, child adoption or a stop/start permit. Retain it across manager
+// reconstruction so lifecycle engineering does not lose the exact process.
+struct ServiceRecordedLaunch:Equatable,Sendable {
+    let service:ManagedService
+    let id:String
+    let identity:ServiceIdentity
+    let boot:String
+    let profileHash:String
+}
 final class ServiceRecoveryRequest:@unchecked Sendable {
     let operation:SessionClientOperation
     let command:ServiceLaunchCommand
@@ -40,13 +50,25 @@ final class ServiceRecoveryRequest:@unchecked Sendable {
 // not an IPC decoder/production enrollment issuer. Transport timeout, fresh
 // absence, elapsed time and restart cannot prove an old launch was not sent.
 final class ServiceRecoveryController {
+    private struct Receipt:Codable {
+        let id:String
+        let pid:Int32
+        let start:String
+        let sha256:String
+        let boot:String
+        var valid:Bool {
+            WireScalar.uuid(id) && pid>1 && WireScalar.sha256(sha256) && WireScalar.uuid(boot) &&
+            UInt64(start).map {$0>0 && String($0)==start} == true
+        }
+    }
     private struct Entry:Codable {
         let service:ManagedService
         var starts:[Int64]=[]
         var pending:String?
+        var lastStarted:Receipt?
     }
     private struct State:Codable {
-        let version:Int
+        var version:Int
         let profile:String
         var boot:String
         var previousWall:Int64
@@ -67,7 +89,8 @@ final class ServiceRecoveryController {
         let profile=try ServiceLaunchProfile.digest(approvedHashes)
         let boot=try HostBoot.identity()
         if var loaded=try Self.read(file) {
-            guard loaded.profile==profile else {throw ServiceError.invalid}
+            guard loaded.profile==profile,loaded.entries.allSatisfy({entry in entry.lastStarted.map {$0.sha256==approvedHashes[entry.service]} ?? true}) else {throw ServiceError.invalid}
+            loaded.version=2
             if loaded.boot != boot {
                 // A new OS boot can reset only the local start-rate clock.
                 // A queued/unknown old launch remains fenced, never refunded.
@@ -80,7 +103,7 @@ final class ServiceRecoveryController {
             }
             state=loaded
         } else {
-            state=State(version:1,profile:profile,boot:boot,previousWall:0,previousTick:0,fenced:false,
+            state=State(version:2,profile:profile,boot:boot,previousWall:0,previousTick:0,fenced:false,
                 entries:ManagedService.allCases.map {Entry(service:$0)})
         }
     }
@@ -104,24 +127,28 @@ final class ServiceRecoveryController {
             try StrictJSON.validate(data,maximum:4096)
             guard let root=try JSONSerialization.jsonObject(with:data) as? [String:Any],
                   Set(root.keys)==Set(["version","profile","boot","previousWall","previousTick","fenced","entries"]),
-                  WireScalar.integer(root["version"],maximum:1)==1,
+                  let version=WireScalar.integer(root["version"],maximum:2),(1...2).contains(version),
                   WireScalar.integer(root["previousWall"]) != nil,WireScalar.integer(root["previousTick"]) != nil,
                   let flag=root["fenced"] as? NSNumber,CFGetTypeID(flag)==CFBooleanGetTypeID(),
                   let entries=root["entries"] as? [[String:Any]],entries.count==2,
                   entries.allSatisfy({entry in
-                      guard Set(entry.keys).isSubset(of:["service","starts","pending"]),Set(["service","starts"]).isSubset(of:Set(entry.keys)),
+                      guard Set(entry.keys).isSubset(of:version==1 ? ["service","starts","pending"]:["service","starts","pending","lastStarted"]),Set(["service","starts"]).isSubset(of:Set(entry.keys)),
                             let starts=entry["starts"] as? [Any] else {return false}
+                      if let receipt=entry["lastStarted"] {
+                          guard let fields=receipt as? [String:Any],Set(fields.keys)==Set(["id","pid","start","sha256","boot"]),
+                                let pid=WireScalar.integer(fields["pid"],maximum:Int64(Int32.max)),pid>1 else {return false}
+                      }
                       return starts.allSatisfy {WireScalar.integer($0) != nil}
                   }) else {throw ServiceError.invalid}
             let value=try JSONDecoder().decode(State.self,from:data)
-            guard value.version==1,WireScalar.sha256(value.profile),WireScalar.uuid(value.boot),
+            guard (1...2).contains(value.version),WireScalar.sha256(value.profile),WireScalar.uuid(value.boot),
                   (0...WireScalar.maximumTimestamp).contains(value.previousWall),
                   (0...WireScalar.maximumTimestamp).contains(value.previousTick),
                   Set(value.entries.map(\.service))==Set(ManagedService.allCases),
                   value.entries.allSatisfy({entry in
                       entry.starts.count<=3 && entry.starts==entry.starts.sorted() &&
                       entry.starts.allSatisfy {(0...value.previousTick).contains($0)} &&
-                      (entry.pending.map(WireScalar.uuid) ?? true)
+                      (entry.pending.map(WireScalar.uuid) ?? true) && (entry.lastStarted?.valid ?? true)
                   }) else {throw ServiceError.invalid}
             return value
         } catch {throw ServiceError.invalid}
@@ -135,6 +162,11 @@ final class ServiceRecoveryController {
     private func persist()throws {try persist(state)}
     func isPending(_ service:ManagedService)->Bool {
         state.entries.first(where:{$0.service==service})?.pending != nil
+    }
+    func recordedLaunch(_ service:ManagedService)->ServiceRecordedLaunch? {
+        guard let receipt=state.entries.first(where:{$0.service==service})?.lastStarted,
+              receipt.valid,let start=UInt64(receipt.start) else {return nil}
+        return ServiceRecordedLaunch(service:service,id:receipt.id,identity:ServiceIdentity(pid:receipt.pid,start:start,sha256:receipt.sha256),boot:receipt.boot,profileHash:state.profile)
     }
 
     // Read-only local restart-budget diagnostics. Available budget does not
@@ -212,7 +244,12 @@ final class ServiceRecoveryController {
     // A mere presence sample is insufficient. The authenticated transport must
     // correlate its acknowledgement with this exact verified launched process.
     func started(service:ManagedService,id:String,identity:ServiceIdentity)throws {
-        guard identity.valid,identity.sha256==pins[service] else {throw ServiceError.invalid}
-        try notSent(service:service,id:id)
+        guard identity.valid,identity.sha256==pins[service],
+              let index=state.entries.firstIndex(where:{$0.service==service}),state.entries[index].pending==id else {throw ServiceError.invalid}
+        var candidate=state
+        candidate.entries[index].lastStarted=Receipt(id:id,pid:identity.pid,start:String(identity.start),sha256:identity.sha256,boot:state.boot)
+        candidate.entries[index].pending=nil
+        try persist(candidate)
+        state=candidate
     }
 }
