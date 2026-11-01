@@ -30,7 +30,7 @@ public enum ManagerRuntime {
         let serviceObservations=serviceObservations ?? (serviceHealth == nil && orbstackHealth == nil ? nil:ServiceObservationCache())
         let serviceHealthQueue=serviceHealth.map {AsyncServiceHealth(collector:$0)}
         let orbstackHealthQueue=orbstackHealth.map {AsyncServiceHealth(collector:$0)}
-        let serviceRecovery=try activeServiceControl.map {try ServiceRecoveryController(journal:journal,approvedHashes:$0.applicationHashes)}
+        let serviceRecovery=try activeServiceControl.map {try ServiceRecoveryController(journal:journal,approvedHashes:$0.applicationHashes,recoveryProfileHash:$0.recoveryProfileHash)}
         let serviceQueue=activeServiceControl.map {AsyncSessionControl(client:$0)}
         let servingStopQueue=activeServingLifecycle.map {AsyncServingStop(runtime:$0.runtime)}
         var serviceCursor=0,serviceTransportUnavailable=false

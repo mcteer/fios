@@ -4,6 +4,14 @@ func runServiceRecoveryTests() throws {
     let directory=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer {try? FileManager.default.removeItem(at:directory)}
     let hash=String(repeating:"a",count:64),pins:[ManagedService:String]=[.mlx:hash,.orbstack:hash]
+    let base=try ServiceLaunchProfile.digest(pins)
+    let nativeArgs=["--serve","--api-key-env","FIOS_MLX_SERVING_API_KEY","--model","fixture/Exact"]
+    let nativeEnv=["HOME":"/Users/fixture","FIOS_MLX_SERVING_API_KEY":"fixture-secret-a"]
+    let fingerprint=try ServiceLaunchProfile.nativeDigest(base:base,arguments:nativeArgs,environment:nativeEnv,workingDirectory:"/")
+    var rotated=nativeEnv;rotated["FIOS_MLX_SERVING_API_KEY"]="fixture-secret-b"
+    guard fingerprint == (try ServiceLaunchProfile.nativeDigest(base:base,arguments:nativeArgs,environment:rotated,workingDirectory:"/")),
+          fingerprint != (try ServiceLaunchProfile.nativeDigest(base:base,arguments:nativeArgs,environment:nativeEnv,workingDirectory:"/Users/fixture")),
+          fingerprint != (try ServiceLaunchProfile.nativeDigest(base:base,arguments:["--serve","--model","fixture/Other"],environment:nativeEnv,workingDirectory:"/")) else {fatalError("Native launch binding lost exact configuration or became a credential verifier")}
     let journal=try Journal(directory:directory)
     func absent(_ now:Int64,session:Bool=true,credentials:Bool=true)->ServiceObservation {
         ServiceObservation(identity:nil,responding:false,sessionReady:session,credentialsReady:credentials,

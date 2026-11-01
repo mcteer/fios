@@ -8,8 +8,10 @@ struct NativeServingRecoveryTransport:ServiceRecoverySending {
     private let profile:String
     private let runtime:MLXServingProcessRuntime
     private let session:SessionControlClient?
+    var recoveryProfileHash:String {profile}
     init(runtime:MLXServingProcessRuntime,approvedHashes:[ManagedService:String],session:SessionControlClient?=nil)throws {
-        let profile=try ServiceLaunchProfile.digest(approvedHashes)
+        let base=try ServiceLaunchProfile.digest(approvedHashes),profile=runtime.recoveryProfileHash
+        guard runtime.acceptsBaseProfile(base,expectedSHA256:approvedHashes[.mlx]!) else {throw ServiceError.invalid}
         let probe=ServiceLaunchCommand(service:.mlx,id:UUID().uuidString.lowercased(),expectedSHA256:approvedHashes[.mlx]!,profileHash:profile)
         guard runtime.accepts(probe) else {throw ServiceError.invalid}
         if let session {

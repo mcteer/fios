@@ -33,6 +33,7 @@ for(const mode of ['debug','release']){
  assert(output.includes('PASS: distinct native/session profiles preserve authenticated OrbStack Unix RPC'));
  assert(output.includes('PASS: unexpected owned-child exit retires local custody off-loop before replacement'));
  assert(output.includes('PASS: explicit native working directory preserves relative-path behavior'));
+ assert(output.includes('PASS: changed native launch configuration refuses old pending history unchanged'));
  const managerState=mkdtempSync('/private/tmp/f9-mlx-manager-');
  const policy='(version 1)(allow default)(deny network*)(allow network* (local unix-socket) (remote unix-socket))';
  const managerLog=openSync(join(managerState,'manager.log'),'wx',0o600);

@@ -4,6 +4,20 @@ import Darwin
 import CryptoKit
 
 enum ServiceLaunchProfile {
+    // Configuration binding, never native authority. Credentials retain their
+    // named slot/channel but their values must not become journal verifiers.
+    static func nativeDigest(base:String,arguments:[String],environment:[String:String],workingDirectory:String)throws->String {
+        guard WireScalar.sha256(base) else {throw ServiceError.invalid}
+        var args=arguments
+        for index in args.indices {
+            if index>0,arguments[index-1]=="--api-key" {args[index]="<credential-slot>"}
+            else if args[index].hasPrefix("--api-key=") {args[index]="--api-key=<credential-slot>"}
+        }
+        var values=environment
+        if values["FIOS_MLX_SERVING_API_KEY"] != nil {values["FIOS_MLX_SERVING_API_KEY"]="<credential-slot>"}
+        let bytes=try JSONSerialization.data(withJSONObject:["version":1,"base":base,"arguments":args,"environment":values,"working_directory":workingDirectory],options:[.sortedKeys,.withoutEscapingSlashes])
+        return SHA256.hash(data:Data("fios-native-launch-inputs-v1\n".utf8)+bytes).map {String(format:"%02x",$0)}.joined()
+    }
     static func digest(_ hashes:[ManagedService:String])throws->String {
         guard Set(hashes.keys)==Set(ManagedService.allCases),hashes.values.allSatisfy(WireScalar.sha256) else {throw ServiceError.invalid}
         let canonical=ManagedService.allCases.map {$0.rawValue+":"+hashes[$0]!}.sorted().joined(separator:"\n")
@@ -104,12 +118,13 @@ final class ServiceRecoveryController {
     private let pins:[ManagedService:String]
     private var state:State
 
-    init(journal:Journal,approvedHashes:[ManagedService:String]) throws {
+    init(journal:Journal,approvedHashes:[ManagedService:String],recoveryProfileHash:String?=nil) throws {
         guard geteuid() != 0,Set(approvedHashes.keys)==Set(ManagedService.allCases),
               approvedHashes.values.allSatisfy(WireScalar.sha256) else {throw ServiceError.invalid}
         owner=journal;pins=approvedHashes
         file=journal.directory.appendingPathComponent("service-recovery.json")
-        let profile=try ServiceLaunchProfile.digest(approvedHashes)
+        let profile=try recoveryProfileHash ?? ServiceLaunchProfile.digest(approvedHashes)
+        guard WireScalar.sha256(profile) else {throw ServiceError.invalid}
         let boot=try HostBoot.identity()
         if var loaded=try Self.read(file) {
             guard loaded.profile==profile,loaded.entries.allSatisfy({entry in entry.lastStarted.map {$0.sha256==approvedHashes[entry.service]} ?? true}) else {throw ServiceError.invalid}

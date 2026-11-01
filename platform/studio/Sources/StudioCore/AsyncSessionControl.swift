@@ -5,6 +5,7 @@ import Foundation
 // recovery budgets or the one-exchange off-loop queue.
 protocol ServiceRecoverySending:Sendable {
     var applicationHashes:[ManagedService:String] {get}
+    var recoveryProfileHash:String {get}
     func accepts(_ command:ServiceLaunchCommand)->Bool
     func request(_ request:ServiceRecoveryRequest)throws->SessionLaunchResult
 }

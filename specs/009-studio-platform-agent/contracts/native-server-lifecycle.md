@@ -108,3 +108,10 @@ prove preserved configuration, exclusive handover and rollback. Actual Studio
 acceptance must show metadata-only recovery and the authorized activity/drain
 scenarios. Core small-model results and private child relaunches cannot close
 Studio lifecycle acceptance or T027/T049/T051.
+
+Native recovery configuration correlation includes the exact fixed launch arguments,
+noncredential environment and explicit cwd in addition to executable image pins.
+API-key values are replaced with a named credential slot before hashing; changing
+that channel still changes the profile. A changed configuration refuses existing
+pending history without rewriting it. This does not enroll inputs or issue a
+native reservation. Session-only recovery keeps its independent session profile.

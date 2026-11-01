@@ -39,6 +39,8 @@ final class MLXServingProcessRuntime:@unchecked Sendable {
     private let environment:[String:String]
     private let workingDirectory:String
     private let profileHash:String
+    private let baseProfileHash:String
+    var recoveryProfileHash:String {profileHash}
     private let validateReservation:@Sendable(ServiceLaunchCommand)throws->Void
     private let validateStopReservation:@Sendable(ServingStopCommand)throws->Void
     private let lock=NSLock()
@@ -77,7 +79,9 @@ final class MLXServingProcessRuntime:@unchecked Sendable {
         guard let home=environment["HOME"],(try? CommandEnvironment.sanitized(["HOME":home])) != nil,
               workingDirectory.utf8.count+executable.path.utf8.count+1+arguments.reduce(0,{$0+$1.utf8.count+1})+environment.reduce(0,{$0+$1.key.utf8.count+$1.value.utf8.count+2})<=65536 else {throw RuntimeError.invalid}
         self.executable=executable;self.arguments=arguments;self.environment=environment;self.workingDirectory=workingDirectory
-        profileHash=serviceProfileHash;self.validateReservation=validateReservation;self.validateStopReservation=validateStopReservation
+        baseProfileHash=serviceProfileHash
+        profileHash=try ServiceLaunchProfile.nativeDigest(base:serviceProfileHash,arguments:arguments,environment:environment,workingDirectory:workingDirectory)
+        self.validateReservation=validateReservation;self.validateStopReservation=validateStopReservation
     }
     func begin(_ command:ServiceLaunchCommand,deadline:TimeInterval)throws {
         let now=ProcessInfo.processInfo.systemUptime
@@ -114,6 +118,7 @@ final class MLXServingProcessRuntime:@unchecked Sendable {
     func accepts(_ command:ServiceLaunchCommand)->Bool {
         command.service == .mlx && WireScalar.uuid(command.id) && command.expectedSHA256==executable.sha256 && command.profileHash==profileHash
     }
+    func acceptsBaseProfile(_ base:String,expectedSHA256:String)->Bool {baseProfileHash==base && executable.sha256==expectedSHA256}
     // A correlated controller lookup may consume the notification, never the
     // immutable receipt. Missing history remains uncertain across reconstruction.
     func acknowledgeResult(id:String)->SessionLaunchResult {

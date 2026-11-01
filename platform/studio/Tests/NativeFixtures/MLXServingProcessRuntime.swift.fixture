@@ -73,10 +73,13 @@ extension MLXServingProcessRuntime {
     fileprivate static func fixture(executable:VerifiedExecutable,home:String,profile:String,gate:ServingRuntimeGate,stopGate:ServingStopGate?=nil,ignoreTerm:Bool=false,exitOnce:Bool=false,cwdProof:Bool=false,workingDirectory:String?=nil)throws->MLXServingProcessRuntime {
         guard executable.path.hasPrefix("/private/tmp/fios-009-serving-runtime-") else {throw RuntimeError.invalid}
         let base=["PATH":"/usr/bin:/bin","LANG":"C","LC_ALL":"C","HOME":home]
+        let arguments=ignoreTerm ? ["ignore-term"]:exitOnce ? ["exit-once"]:cwdProof ? ["cwd-proof"]:[]
+        let directory=workingDirectory ?? home
+        let boundProfile=try ServiceLaunchProfile.nativeDigest(base:profile,arguments:arguments,environment:base,workingDirectory:directory)
         let validateStop:@Sendable(ServingStopCommand)throws->Void={command in
             // This constructor can authorize only this model-free private
             // helper. It supplies no installed/native quiescence authority.
-            guard let stopGate,command.identity.sha256==executable.sha256,command.profileHash==profile,
+            guard let stopGate,command.identity.sha256==executable.sha256,command.profileHash==boundProfile,
                   WireScalar.uuid(command.launchID),WireScalar.uuid(command.id) else {throw RuntimeError.invalid}
             try stopGate.validate(command)
         }
@@ -90,7 +93,7 @@ extension MLXServingProcessRuntime {
             throw JournalError.conflict
         }catch RuntimeError.invalid {}
         guard [ignoreTerm,exitOnce,cwdProof].filter({$0}).count<=1 else {throw RuntimeError.invalid}
-        return try MLXServingProcessRuntime(executable:executable,arguments:ignoreTerm ? ["ignore-term"]:exitOnce ? ["exit-once"]:cwdProof ? ["cwd-proof"]:[],environment:["PATH":"/usr/bin:/bin","LANG":"C","LC_ALL":"C","HOME":home],workingDirectory:workingDirectory ?? home,serviceProfileHash:profile,validateReservation:gate.validate,validateStopReservation:validateStop)
+        return try MLXServingProcessRuntime(executable:executable,arguments:arguments,environment:base,workingDirectory:directory,serviceProfileHash:profile,validateReservation:gate.validate,validateStopReservation:validateStop)
     }
     fileprivate func endFixtureChild()throws {
         lock.lock();let child=process,value=identity;lock.unlock()
@@ -169,9 +172,10 @@ extension MLXServingProcessRuntime {
         let old=UUID().uuidString.lowercased()
         try journal.claim(job:old,attempt:0,model:"fixture/independent");try journal.markUncertain(job:old,attempt:0)
         let pins:[ManagedService:String]=[.mlx:executable.sha256,.orbstack:executable.sha256]
-        var recovery=try ServiceRecoveryController(journal:journal,approvedHashes:pins)
-        let profile=try ServiceLaunchProfile.digest(pins),gate=ServingRuntimeGate(),stopGate=ServingStopGate()
-        let runtime=try MLXServingProcessRuntime.fixture(executable:executable,home:root.path,profile:profile,gate:gate,stopGate:stopGate)
+        let baseProfile=try ServiceLaunchProfile.digest(pins),gate=ServingRuntimeGate(),stopGate=ServingStopGate()
+        let runtime=try MLXServingProcessRuntime.fixture(executable:executable,home:root.path,profile:baseProfile,gate:gate,stopGate:stopGate)
+        let profile=runtime.recoveryProfileHash
+        var recovery=try ServiceRecoveryController(journal:journal,approvedHashes:pins,recoveryProfileHash:profile)
         let transport=try NativeServingRecoveryTransport(runtime:runtime,approvedHashes:pins)
         let recordedProbe=try RecordedServiceProcessProbe(service:.mlx,executable:executable,profileHash:profile)
         let queue=AsyncSessionControl(client:transport)
@@ -196,11 +200,11 @@ extension MLXServingProcessRuntime {
             guard try stopExchange(request) == .uncertain else {throw RuntimeError.invalid}
             // Reconstruct only the controller while retaining its one Journal
             // owner and original actuator. Restored intent can look up, not replay.
-            recovery=try ServiceRecoveryController(journal:journal,approvedHashes:pins)
+            recovery=try ServiceRecoveryController(journal:journal,approvedHashes:pins,recoveryProfileHash:profile)
             let end=ProcessInfo.processInfo.systemUptime+5
             while ProcessInfo.processInfo.systemUptime<end {
                 guard let lookup=try recovery.nextStop(now:tick,tick:tick),lookup.operation == .lookup,lookup.id==request.id else {throw RuntimeError.invalid}
-                let cold=try MLXServingProcessRuntime.fixture(executable:executable,home:root.path,profile:profile,gate:ServingRuntimeGate())
+                let cold=try MLXServingProcessRuntime.fixture(executable:executable,home:root.path,profile:baseProfile,gate:ServingRuntimeGate())
                 guard try stopExchange(lookup,through:AsyncServingStop(runtime:cold)) == .uncertain else {throw RuntimeError.invalid}
                 let result=try stopExchange(lookup)
                 if result != .uncertain {try recovery.receiveStop(lookup,result:result);return result}
@@ -231,6 +235,11 @@ extension MLXServingProcessRuntime {
             guard !subject.validationPending else {throw RuntimeError.deadline}
         }
         let cancelled=try next(1000)
+        let pendingFile=journal.directory.appendingPathComponent("service-recovery.json"),pendingBytes=try Data(contentsOf:pendingFile)
+        let changed=try MLXServingProcessRuntime.fixture(executable:executable,home:root.path,profile:baseProfile,gate:ServingRuntimeGate(),workingDirectory:root.appendingPathComponent("reviewed-cwd-change").path)
+        guard changed.recoveryProfileHash != profile else {throw RuntimeError.invalid}
+        do {_=try ServiceRecoveryController(journal:journal,approvedHashes:pins,recoveryProfileHash:changed.recoveryProfileHash);throw JournalError.conflict}catch ServiceError.invalid {}
+        guard try Data(contentsOf:pendingFile)==pendingBytes,recovery.isPending(.mlx),try journal.uncertainCount()==1 else {throw RuntimeError.invalid}
         guard try exchange(cancelled) == .uncertain else {throw RuntimeError.invalid}
         try recovery.receive(cancelled,result:.uncertain)
         guard gate.entered.wait(timeout:.now()+2) == .success,
@@ -264,7 +273,7 @@ extension MLXServingProcessRuntime {
                       lookup.operation == .lookup,lookup.command.id==request.command.id else {throw RuntimeError.invalid}
                 // Reconstructed in-memory transport has no receipt for the
                 // original child. It must not adopt, replay or infer not-sent.
-                let cold=try MLXServingProcessRuntime.fixture(executable:executable,home:root.path,profile:profile,gate:ServingRuntimeGate())
+                let cold=try MLXServingProcessRuntime.fixture(executable:executable,home:root.path,profile:baseProfile,gate:ServingRuntimeGate())
                 let coldTransport=try NativeServingRecoveryTransport(runtime:cold,approvedHashes:pins)
                 guard try coldTransport.request(lookup) == .uncertain else {throw RuntimeError.invalid}
                 outcome=try exchange(lookup)
@@ -274,7 +283,7 @@ extension MLXServingProcessRuntime {
             try workerReturned()
             guard try transport.request(request)==outcome else {throw RuntimeError.invalid} // Native ID replay cannot spawn again.
             identities.append(identity);try recovery.receive(request,result:outcome)
-            let reconstructed=try ServiceRecoveryController(journal:journal,approvedHashes:pins)
+            let reconstructed=try ServiceRecoveryController(journal:journal,approvedHashes:pins,recoveryProfileHash:profile)
             guard let recorded=reconstructed.recordedLaunch(.mlx),recorded.id==request.command.id,recorded.identity==identity,
                   !reconstructed.isPending(.mlx),recordedProbe.capture(recorded).state == .current(identity),
                   try journal.uncertainCount()==1 else {throw RuntimeError.invalid}
@@ -285,7 +294,7 @@ extension MLXServingProcessRuntime {
             if now==11000 {
                 let cancelledStop=try reserveStop(recorded,at:11000)
                 guard try stopExchange(cancelledStop) == .uncertain,stopGate.entered.wait(timeout:.now()+2) == .success else {throw RuntimeError.invalid}
-                recovery=try ServiceRecoveryController(journal:journal,approvedHashes:pins)
+                recovery=try ServiceRecoveryController(journal:journal,approvedHashes:pins,recoveryProfileHash:profile)
                 try journal.setDesired(service:"mlx",desired:"maintenance")
                 guard let revoke=try recovery.nextStop(now:11000,tick:11000),revoke.operation == .cancel,revoke.id==cancelledStop.id,
                       try stopExchange(revoke) == .notSent,runtime.validationPending,
@@ -345,10 +354,11 @@ extension MLXServingProcessRuntime {
         let heldJournal=try Journal(directory:root.appendingPathComponent("timeout-state"))
         let heldClaim=UUID().uuidString.lowercased()
         try heldJournal.claim(job:heldClaim,attempt:0,model:"fixture/independent-timeout");try heldJournal.markUncertain(job:heldClaim,attempt:0)
-        var heldRecovery=try ServiceRecoveryController(journal:heldJournal,approvedHashes:pins)
         let heldStartGate=ServingRuntimeGate(),heldStopGate=ServingStopGate()
         heldStartGate.release.signal();heldStopGate.release.signal()
-        let held=try MLXServingProcessRuntime.fixture(executable:executable,home:root.path,profile:profile,gate:heldStartGate,stopGate:heldStopGate,ignoreTerm:true)
+        let held=try MLXServingProcessRuntime.fixture(executable:executable,home:root.path,profile:baseProfile,gate:heldStartGate,stopGate:heldStopGate,ignoreTerm:true)
+        var heldRecovery=try ServiceRecoveryController(journal:heldJournal,approvedHashes:pins,recoveryProfileHash:held.recoveryProfileHash)
+        let heldProbe=try RecordedServiceProcessProbe(service:.mlx,executable:executable,profileHash:held.recoveryProfileHash)
         let heldQueue=AsyncSessionControl(client:try NativeServingRecoveryTransport(runtime:held,approvedHashes:pins))
         let heldStopQueue=AsyncServingStop(runtime:held)
         guard let heldRequest=try heldRecovery.next(service:.mlx,desired:.running,observation:absent(1000),now:1000,tick:1000),
@@ -376,20 +386,21 @@ extension MLXServingProcessRuntime {
               try stopExchange(timedLookup,through:heldStopQueue) == .uncertain else {throw RuntimeError.invalid}
         try heldRecovery.receiveStop(timedLookup,result:.uncertain)
         try workerReturned(held)
-        guard case .current=recordedProbe.capture(heldReceipt).state else {throw RuntimeError.invalid}
-        do {try held.begin(blocked,deadline:ProcessInfo.processInfo.systemUptime+5);throw JournalError.conflict}catch RuntimeError.capacity {}
+        guard case .current=heldProbe.capture(heldReceipt).state else {throw RuntimeError.invalid}
+        let heldBlocked=ServiceLaunchCommand(service:.mlx,id:UUID().uuidString.lowercased(),expectedSHA256:executable.sha256,profileHash:held.recoveryProfileHash)
+        do {try held.begin(heldBlocked,deadline:ProcessInfo.processInfo.systemUptime+5);throw JournalError.conflict}catch RuntimeError.capacity {}
         do {try held.beginStop(id:UUID().uuidString.lowercased(),matching:heldReceipt,deadline:ProcessInfo.processInfo.systemUptime+5);throw JournalError.conflict}catch RuntimeError.capacity {}
         guard !held.retireKnownExited(),try heldJournal.uncertainCount()==1 else {throw RuntimeError.invalid}
         try held.waitForFixtureExpiry() // The private helper's own five-second alarm, no force kill.
-        heldRecovery=try ServiceRecoveryController(journal:heldJournal,approvedHashes:pins)
+        heldRecovery=try ServiceRecoveryController(journal:heldJournal,approvedHashes:pins,recoveryProfileHash:held.recoveryProfileHash)
         try heldJournal.setDesired(service:"mlx",desired:"running")
-        guard recordedProbe.capture(heldReceipt).state == .exited,held.lookupStop(id:timedStop.id) == .uncertain,
+        guard heldProbe.capture(heldReceipt).state == .exited,held.lookupStop(id:timedStop.id) == .uncertain,
               !held.retireKnownExited(),try heldJournal.uncertainCount()==1,
               unrelated.isRunning,heldStopGate.validations==1,heldRecovery.isStopPending(),
               try heldRecovery.plan(service:.mlx,desired:.running,observation:absent(20000),now:20000,tick:20000)==nil,
               let afterExpiry=try heldRecovery.nextStop(now:20000,tick:20000),afterExpiry.operation == .cancel,afterExpiry.id==timedStop.id,
               try stopExchange(afterExpiry,through:heldStopQueue) == .uncertain else {throw RuntimeError.invalid}
-        let coldHeld=try MLXServingProcessRuntime.fixture(executable:executable,home:root.path,profile:profile,gate:ServingRuntimeGate())
+        let coldHeld=try MLXServingProcessRuntime.fixture(executable:executable,home:root.path,profile:baseProfile,gate:ServingRuntimeGate(),ignoreTerm:true)
         guard try stopExchange(afterExpiry,through:AsyncServingStop(runtime:coldHeld)) == .uncertain,heldRecovery.isStopPending() else {throw RuntimeError.invalid}
         // Actual Unix RPC keeps the legacy session realm separate from the
         // native server realm. The fake application port permits only OrbStack.
@@ -406,7 +417,7 @@ extension MLXServingProcessRuntime {
         let mixedTransport=try NativeServingRecoveryTransport(runtime:mixedRuntime,approvedHashes:mixedPins,session:legacyClient)
         let mixedQueue=AsyncSessionControl(client:mixedTransport)
         let mixedJournal=try Journal(directory:root.appendingPathComponent("mixed-state"))
-        let mixedRecovery=try ServiceRecoveryController(journal:mixedJournal,approvedHashes:mixedPins)
+        let mixedRecovery=try ServiceRecoveryController(journal:mixedJournal,approvedHashes:mixedPins,recoveryProfileHash:mixedRuntime.recoveryProfileHash)
         var sessionCalls=0
         func mixedExchange(_ request:ServiceRecoveryRequest)throws->SessionLaunchResult {
             try mixedQueue.submit(request)
@@ -442,10 +453,10 @@ extension MLXServingProcessRuntime {
         let cwdDirectory=root.appendingPathComponent("cwd-child")
         try FileManager.default.createDirectory(at:cwdDirectory,withIntermediateDirectories:false,attributes:[.posixPermissions:0o700])
         let cwdGate=ServingRuntimeGate();cwdGate.release.signal()
-        let cwdRuntime=try MLXServingProcessRuntime.fixture(executable:executable,home:root.path,profile:profile,gate:cwdGate,cwdProof:true,workingDirectory:cwdDirectory.path)
+        let cwdRuntime=try MLXServingProcessRuntime.fixture(executable:executable,home:root.path,profile:baseProfile,gate:cwdGate,cwdProof:true,workingDirectory:cwdDirectory.path)
         let cwdQueue=AsyncSessionControl(client:try NativeServingRecoveryTransport(runtime:cwdRuntime,approvedHashes:pins))
         let cwdJournal=try Journal(directory:root.appendingPathComponent("cwd-state"))
-        let cwdRecovery=try ServiceRecoveryController(journal:cwdJournal,approvedHashes:pins)
+        let cwdRecovery=try ServiceRecoveryController(journal:cwdJournal,approvedHashes:pins,recoveryProfileHash:cwdRuntime.recoveryProfileHash)
         guard let cwdRequest=try cwdRecovery.next(service:.mlx,desired:.running,observation:absent(1000),now:1000,tick:1000),
               try exchange(cwdRequest,through:cwdQueue) == .uncertain else {throw RuntimeError.invalid}
         var cwdOutcome:SessionLaunchResult = .uncertain
@@ -472,5 +483,6 @@ extension MLXServingProcessRuntime {
         print("PASS: distinct native/session profiles preserve authenticated OrbStack Unix RPC and native-only MLX child launch with zero MLX GUI calls")
         print("PASS: unexpected owned-child exit retires local custody off-loop before replacement, fresh start validation required and native uncertainty retained")
         print("PASS: explicit native working directory preserves relative-path behavior without changing manager cwd or inheriting it")
+        print("PASS: changed native launch configuration refuses old pending history unchanged with identical executable images")
     }
 }

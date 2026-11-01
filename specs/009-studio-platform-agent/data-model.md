@@ -75,3 +75,8 @@ A deterministic container name includes host enrollment + job UUID; private crea
 Artifacts are opt-in exported byte streams,≤16MiB/job, up to256 retained jobs/24h (≤4GiB aggregate); no archives extracted or arbitrary paths accepted. Store under generated job-owned names in private export storage; content hash and owner metadata in DB. Downloads require the owner/operator; lease expiry removes sandbox access, not an approved export. No artifact body in diagnostics.
 
 Events contain only safe time, host/job correlation, fixed action/state/error code and numeric counts. No prompts, code, reasoning, results, tool arguments, raw stdout/stderr, credentials or arbitrary native response body. Native diagnostics may be inspected only through a separate explicit private operator procedure, not routine logs.
+
+Native service recovery uses a configuration-bound profile: canonical launch
+arguments, environment and cwd plus executable-image profile. API-key values are
+redacted to their named slot before hashing. A mismatch refuses stored recovery
+history unchanged; neither the digest nor a credential rotation grants authority.
