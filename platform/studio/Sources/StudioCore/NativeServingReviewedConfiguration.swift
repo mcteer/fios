@@ -18,6 +18,9 @@ struct NativeServingReviewedConfiguration:Sendable {
     private init(role:NativeServingEntryRole,document:NativeServingLaunchDocument,policySHA256:String,processProfile:MLXServingProcessProfile) {
         self.role=role;self.document=document;self.policySHA256=policySHA256;self.processProfile=processProfile
     }
+    func makeHealthCollector()throws->ServiceHealthCollector {
+        try ServiceHealthCollector(mlxServing:processProfile,probe:document.makeHealthProbe())
+    }
     // An authenticated transport, never a native admission/lifecycle permit.
     // The fixed installed manager can resolve only its reviewed supervisor.
     func makeCustodyClient(approvedHashes:[ManagedService:String])throws->ServingCustodyClient? {

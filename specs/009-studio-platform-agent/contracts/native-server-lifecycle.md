@@ -135,3 +135,14 @@ port arguments before construction. The agent cannot choose the native CLI's
 wildcard/default listener by omission. This changes no live binding and does not
 approve an explicit new LAN/public listener; preserved installed configuration
 and handover still require independent review.
+
+
+The protected source configuration can construct its read-only health collector
+from the reviewed launch listener without resolving the serving credential.
+The exact reviewed port is retained. IPv4/IPv6 wildcard listeners map only to
+the corresponding local loopback family; explicit loopback uses the same family.
+Other interface bindings refuse this collector until separately enrolled rather
+than silently probing the default endpoint. This sends metadata GET /health
+only, and process identity still brackets the probe. A matching health reply
+is neither listening-socket ownership nor native lifecycle authority. Public
+startup remains closed and installed configuration/handover remain unaccepted.

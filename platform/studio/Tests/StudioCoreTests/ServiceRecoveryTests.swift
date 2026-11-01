@@ -66,6 +66,8 @@ func runServiceRecoveryTests() throws {
     guard try decodeLaunch(argumentDocument).resolvingCredential("fixture-argument-key").arguments == ["--serve"]+binding+["--api-key","fixture-argument-key","--model","fixture/Exact"] else {fatalError("Argument credential slot not preserved")}
     let argumentDecoded=try decodeLaunch(argumentDocument),argumentResolved=try argumentDecoded.resolvingCredential("fixture-argument-key")
     guard try argumentDecoded.recoveryProfileHash(base:base,reviewedConfigurationSHA256:hash) == ServiceLaunchProfile.nativeDigest(base:base,arguments:argumentResolved.arguments,environment:argumentResolved.environment,workingDirectory:argumentResolved.workingDirectory,reviewedConfigurationSHA256:hash) else {fatalError("Argument-mode manager profile requires credential value")}
+    guard try argumentDecoded.makeHealthProbe().localAddress=="127.0.0.1",
+          try decoded.makeHealthProbe().localAddress=="127.0.0.1" else {fatalError("Reviewed document health construction requires serving key")}
     let argumentFingerprint=try argumentDecoded.recoveryProfileHash(base:base,reviewedConfigurationSHA256:hash)
     for key in ["fixture-key","--api-key","--host","--api-key=literal"] {
         let inputs=try argumentDecoded.resolvingCredential(key)

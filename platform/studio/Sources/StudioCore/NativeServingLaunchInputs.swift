@@ -5,6 +5,8 @@ import Darwin
 // reserves native work. No wire decoder or installed factory is exposed here.
 // Keep credential resolution in memory, outside durable recovery metadata.
 struct NativeServingLaunchInputs:Sendable {
+    let listenerHost:String
+    let listenerPort:UInt16
     let arguments:[String]
     let environment:[String:String]
     let workingDirectory:String
@@ -12,6 +14,7 @@ struct NativeServingLaunchInputs:Sendable {
         // Upstream treats an absent/empty key environment as unauthenticated.
         // Refuse that configuration before handing it to the process primitive.
         var channels=0,index=0,hosts=0,ports=0
+        var listenerHost="",listenerPort:UInt16=0
         while index<arguments.count {
             let argument=arguments[index]
             if argument=="--api-key" || argument=="--api-key-env" {
@@ -30,10 +33,10 @@ struct NativeServingLaunchInputs:Sendable {
                     var ipv4=in_addr(),ipv6=in6_addr()
                     guard hosts==0,value.utf8.count<=64,!value.contains("\0"),
                           value.withCString({inet_pton(AF_INET,$0,&ipv4)})==1 || value.withCString({inet_pton(AF_INET6,$0,&ipv6)})==1 else {throw RuntimeError.invalid}
-                    hosts+=1
+                    listenerHost=value;hosts+=1
                 } else {
                     guard ports==0,let port=UInt16(value),port>0,String(port)==value else {throw RuntimeError.invalid}
-                    ports+=1
+                    listenerPort=port;ports+=1
                 }
                 index+=2
             } else {
@@ -45,6 +48,7 @@ struct NativeServingLaunchInputs:Sendable {
         }
         // Never infer the native CLI's wildcard/default port as preserved configuration.
         guard channels==1,hosts==1,ports==1 else {throw RuntimeError.invalid}
+        self.listenerHost=listenerHost;self.listenerPort=listenerPort
         self.arguments=arguments;self.environment=environment;self.workingDirectory=workingDirectory
     }
 }

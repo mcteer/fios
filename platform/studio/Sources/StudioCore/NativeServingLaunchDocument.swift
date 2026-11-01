@@ -64,6 +64,11 @@ struct NativeServingLaunchDocument:Sendable {
             statePath=state;workingDirectory=cwd;arguments=args;environment=env;self.argumentCredential=argumentCredential
         } catch {throw RuntimeError.invalid}
     }
+    // Read-only target construction needs no serving secret. Unsupported local
+    // bindings refuse construction instead of probing the old default port.
+    func makeHealthProbe()throws->ServiceHealthProbe {
+        try ServiceHealthProbe(reviewedInputs:resolvingCredential("health-target-only"))
+    }
     // Correlation only: the manager can derive the expected profile without
     // reading the native serving key. Named credential values are excluded.
     func recoveryProfileHash(base:String,reviewedConfigurationSHA256:String)throws->String {

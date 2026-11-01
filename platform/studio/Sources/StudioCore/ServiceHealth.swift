@@ -43,19 +43,38 @@ enum ServiceHealthWire {
 
 struct ServiceHealthProbe {
     private let port:Int
+    let localAddress:String
+    private let ipv6:Bool
     // Internal trusted enrollment/test configuration only. No IPC-selected
-    // endpoint or URL. Production route is the fixed local MLX health port;
+    // endpoint or URL. Legacy source probes use the fixed local MLX health port;
     // finite ephemeral ports exist solely for kernel-restricted source mocks.
     init(port:Int=11234) throws {
         guard port==11234 || (49152...65535).contains(port) else {throw RuntimeError.invalid}
-        self.port=port
+        self.port=port;localAddress="127.0.0.1";ipv6=false
+    }
+    // Code-supplied reviewed launch data only; never infer a default target.
+    // Wildcard listeners are probed through the matching loopback family.
+    // Other interface bindings need separate local endpoint enrollment.
+    init(reviewedInputs:NativeServingLaunchInputs)throws {
+        let host=reviewedInputs.listenerHost
+        var v4=in_addr(),v6=in6_addr()
+        if host.withCString({inet_pton(AF_INET,$0,&v4)})==1 {
+            guard v4.s_addr==inet_addr("0.0.0.0") || v4.s_addr==inet_addr("127.0.0.1") else {throw RuntimeError.invalid}
+            localAddress="127.0.0.1";ipv6=false
+        } else {
+            guard host.withCString({inet_pton(AF_INET6,$0,&v6)})==1 else {throw RuntimeError.invalid}
+            let bytes=withUnsafeBytes(of:v6) {Array($0)}
+            guard bytes.allSatisfy({$0==0}) || (bytes.dropLast().allSatisfy({$0==0}) && bytes.last==1) else {throw RuntimeError.invalid}
+            localAddress="::1";ipv6=true
+        }
+        port=Int(reviewedInputs.listenerPort)
     }
     func probe()->ServiceHealthState {
         do {return ServiceHealthWire.decode(try read())}catch{return .unavailable}
     }
     private func read() throws -> Data {
         let deadline=ProcessInfo.processInfo.systemUptime+2
-        let fd=socket(AF_INET,SOCK_STREAM,0)
+        let fd=socket(ipv6 ? AF_INET6:AF_INET,SOCK_STREAM,0)
         guard fd>=0 else {throw RuntimeError.launch};defer {Darwin.close(fd)}
         var noSigPipe:Int32=1
         guard fcntl(fd,F_SETFD,FD_CLOEXEC)==0,fcntl(fd,F_SETFL,O_NONBLOCK)==0,
@@ -72,14 +91,23 @@ struct ServiceHealthProbe {
                       item.revents&Int16(events|Int16(POLLHUP)) != 0 else {throw RuntimeError.launch};return
             }
         }
-        var address=sockaddr_in();address.sin_len=UInt8(MemoryLayout<sockaddr_in>.size)
-        address.sin_family=sa_family_t(AF_INET);address.sin_port=UInt16(port).bigEndian
-        address.sin_addr=in_addr(s_addr:inet_addr("127.0.0.1"))
-        let connected=withUnsafePointer(to:&address){$0.withMemoryRebound(to:sockaddr.self,capacity:1){connect(fd,$0,socklen_t(MemoryLayout<sockaddr_in>.size))}}
+        let connected:Int32
+        if ipv6 {
+            var address=sockaddr_in6();address.sin6_len=UInt8(MemoryLayout<sockaddr_in6>.size)
+            address.sin6_family=sa_family_t(AF_INET6);address.sin6_port=UInt16(port).bigEndian
+            guard localAddress.withCString({inet_pton(AF_INET6,$0,&address.sin6_addr)})==1 else {throw RuntimeError.invalid}
+            connected=withUnsafePointer(to:&address){$0.withMemoryRebound(to:sockaddr.self,capacity:1){connect(fd,$0,socklen_t(MemoryLayout<sockaddr_in6>.size))}}
+        } else {
+            var address=sockaddr_in();address.sin_len=UInt8(MemoryLayout<sockaddr_in>.size)
+            address.sin_family=sa_family_t(AF_INET);address.sin_port=UInt16(port).bigEndian
+            address.sin_addr=in_addr(s_addr:inet_addr(localAddress))
+            connected=withUnsafePointer(to:&address){$0.withMemoryRebound(to:sockaddr.self,capacity:1){connect(fd,$0,socklen_t(MemoryLayout<sockaddr_in>.size))}}
+        }
         if connected != 0 {guard errno==EINPROGRESS else {throw RuntimeError.launch};try ready(Int16(POLLOUT))}
         var code:Int32=0,size=socklen_t(MemoryLayout<Int32>.size)
         guard getsockopt(fd,SOL_SOCKET,SO_ERROR,&code,&size)==0,code==0 else {throw RuntimeError.launch}
-        let request=Data("GET /health HTTP/1.0\r\nHost: 127.0.0.1:\(port)\r\nAccept: application/json\r\nConnection: close\r\n\r\n".utf8)
+        let authority=ipv6 ? "[\(localAddress)]":localAddress
+        let request=Data("GET /health HTTP/1.0\r\nHost: \(authority):\(port)\r\nAccept: application/json\r\nConnection: close\r\n\r\n".utf8)
         var offset=0
         while offset<request.count {
             try ready(Int16(POLLOUT))

@@ -60,6 +60,9 @@ async def main():
                 data = await reader.readexactly(length)
                 content_type = 'application/json'
                 if method == 'GET' and route == '/health':
+                    local = writer.get_extra_info('sockname')
+                    authority = ('[::1]' if len(local) == 4 else '127.0.0.1') + ':' + str(local[1])
+                    assert fields.get('host') == authority
                     result = body({'status': 'ok'})
                 elif method == 'GET' and route == '/v1/models':
                     result = body({'data': [{'id': 'fixture/model'}]})
@@ -88,6 +91,7 @@ async def main():
         assert fixed_port.isascii() and fixed_port.isdecimal() and 49152 <= int(fixed_port) <= 65535
     api = await asyncio.start_server(http, '127.0.0.1', int(fixed_port) if fixed_port is not None else 0, limit=16385)
     port = api.sockets[0].getsockname()[1]
+    health6 = await asyncio.start_server(http, '::1', port, limit=16385)
     endpoint_hash = hashlib.sha256(('http://127.0.0.1:' + str(port) + '/v1').encode()).hexdigest()
     control = await asyncio.start_unix_server(observe, path, limit=65540)
     os.chmod(path, 0o600)
@@ -99,8 +103,10 @@ async def main():
     finally:
         transport.close()
         api.close()
+        health6.close()
         control.close()
         await api.wait_closed()
+        await health6.wait_closed()
         await control.wait_closed()
         os.unlink(path)
 

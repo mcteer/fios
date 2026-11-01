@@ -21,6 +21,22 @@ func runServiceHealthTests() throws {
         do {_ = try ServiceHealthProbe(port:port);fatalError("Unapproved health target accepted")}
         catch RuntimeError.invalid {}
     }
+    func reviewedProbe(_ host:String,_ port:String="11235")throws->ServiceHealthProbe {
+        try ServiceHealthProbe(reviewedInputs:NativeServingLaunchInputs(
+            arguments:["--serve","--api-key","--host","--host",host,"--port",port],
+            environment:[:],workingDirectory:"/"))
+    }
+    // A credential which looks like a flag must not retarget metadata traffic.
+    for host in ["0.0.0.0","127.0.0.1"] {
+        guard try reviewedProbe(host).localAddress=="127.0.0.1" else {fatalError("IPv4 reviewed listener mismatch")}
+    }
+    for host in ["::","::1","0:0:0:0:0:0:0:1"] {
+        guard try reviewedProbe(host).localAddress=="::1" else {fatalError("IPv6 reviewed listener mismatch")}
+    }
+    for host in ["192.0.2.1","127.0.0.2","2001:db8::1","::ffff:127.0.0.1"] {
+        do {_=try reviewedProbe(host);fatalError("Unenrolled interface health target accepted")}
+        catch RuntimeError.invalid {}
+    }
     let identity=ServiceIdentity(pid:2,start:1,sha256:String(repeating:"a",count:64))
     let review=String(repeating:"b",count:64)
     let sample=ServiceProcessSample(presence:.present(identity),sampledAt:1000,reviewDigest:review,uid:501,diagnostic:"verified_present")

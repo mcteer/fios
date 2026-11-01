@@ -62,6 +62,14 @@ func runPythonFactoryTests() throws {
           let port=descriptor["port"] as? Int,port==selectedPort else { throw RuntimeError.launch }
     progress("mock endpoint ready")
     guard try ServiceHealthProbe(port:port).probe() == .healthy else {fatalError("Fixed mock GET /health unavailable")}
+    // Preserve an explicit reviewed ephemeral port instead of falling back to
+    // the fixed native default. This mock accepts GET /health only.
+    let reviewedInputs=try NativeServingLaunchInputs(arguments:["--serve","--host","0.0.0.0","--port",String(port),"--api-key","--host"],environment:[:],workingDirectory:"/")
+    guard try ServiceHealthProbe(reviewedInputs:reviewedInputs).probe() == .healthy else {fatalError("Reviewed health listener/port not preserved")}
+    for host in ["::","0:0:0:0:0:0:0:1"] {
+        let inputs=try NativeServingLaunchInputs(arguments:["--serve","--host",host,"--port",String(port),"--api-key-env","FIOS_MLX_SERVING_API_KEY"],environment:["FIOS_MLX_SERVING_API_KEY":"fixture-health"],workingDirectory:"/")
+        guard try ServiceHealthProbe(reviewedInputs:inputs).probe() == .healthy else {fatalError("Reviewed IPv6 health listener/authority failed")}
+    }
     // The native mock returns healthy ONLY for GET /health. Its later exact
     // POST counts must remain unchanged: health must never issue inference.
     let base="http://127.0.0.1:\(port)/v1",hash=PythonWorkerFactory.digest(base)

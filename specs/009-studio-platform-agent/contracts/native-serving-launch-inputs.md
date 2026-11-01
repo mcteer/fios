@@ -95,3 +95,11 @@ Argument-channel credential values are consumed literally, including a leading
 once and never interprets it as another option. Rotation therefore cannot redact
 a following configuration field or change the journal profile. This changes no
 credential value, source, interface login or live server configuration.
+
+
+Source launch parsing also retains the validated listener address and port as
+nonsecret fields. A credential which equals --host remains a credential value;
+it cannot retarget health observation. The reviewed document's health factory
+uses only synthetic credential-slot validation, retaining no serving key in the
+probe. Local IPv4/IPv6 family and exact port selection precede every metadata
+request; no DNS, redirects, inference or remote endpoint fallback is added.
