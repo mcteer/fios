@@ -69,6 +69,9 @@ struct ServiceHealthProbe {
         }
         port=Int(reviewedInputs.listenerPort)
     }
+    func listenerIdentity(for process:ServiceIdentity)->ServiceListenerIdentity? {
+        ServiceListenerProbe.capture(process:process,address:localAddress,port:UInt16(port))
+    }
     func probe()->ServiceHealthState {
         do {return ServiceHealthWire.decode(try read())}catch{return .unavailable}
     }

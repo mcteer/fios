@@ -146,3 +146,15 @@ than silently probing the default endpoint. This sends metadata GET /health
 only, and process identity still brackets the probe. A matching health reply
 is neither listening-socket ownership nor native lifecycle authority. Public
 startup remains closed and installed configuration/handover remain unaccepted.
+
+
+Native source health collection additionally brackets GET /health with a bounded
+read-only kernel FD/socket association for the exact observed process PID/start.
+The same listening descriptor, kernel generation and opaque socket/PCB identity
+must remain associated with the local probe address/port across the request.
+Missing metadata, truncation, unsupported family, socket sharing, multiple local
+matches or a changed process/listener leaves the observation unknown. These
+opaque identifiers never enter status/log output. The final socket sample is
+included in the collector's total elapsed/freshness limits. This is positive
+process/listener association only, not global listener exclusivity, response
+cryptographic authentication, all-client activity or native lifecycle authority.

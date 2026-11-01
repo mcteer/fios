@@ -70,6 +70,17 @@ func runPythonFactoryTests() throws {
         let inputs=try NativeServingLaunchInputs(arguments:["--serve","--host",host,"--port",String(port),"--api-key-env","FIOS_MLX_SERVING_API_KEY"],environment:["FIOS_MLX_SERVING_API_KEY":"fixture-health"],workingDirectory:"/")
         guard try ServiceHealthProbe(reviewedInputs:inputs).probe() == .healthy else {fatalError("Reviewed IPv6 health listener/authority failed")}
     }
+    let mockIdentity=ServiceIdentity(pid:mock.processIdentifier,start:try WorkerResources.startIdentifier(pid:mock.processIdentifier),sha256:sha)
+    let localProbe=try ServiceHealthProbe(port:port)
+    guard let firstListener=localProbe.listenerIdentity(for:mockIdentity),
+          localProbe.listenerIdentity(for:mockIdentity)==firstListener else {fatalError("Original mock listener not associated with its exact process")}
+    let ipv6Inputs=try NativeServingLaunchInputs(arguments:["--serve","--host","::","--port",String(port),"--api-key","fixture-health"],environment:[:],workingDirectory:"/")
+    guard let ipv6Listener=try ServiceHealthProbe(reviewedInputs:ipv6Inputs).listenerIdentity(for:mockIdentity),
+          ipv6Listener != firstListener else {fatalError("IPv6 process listener missing or confused with IPv4")}
+    let wrongProcess=ServiceIdentity(pid:getpid(),start:try WorkerResources.startIdentifier(pid:getpid()),sha256:sha)
+    guard localProbe.listenerIdentity(for:wrongProcess)==nil else {fatalError("Another process acquired mock listener association")}
+    let wrongStart=ServiceIdentity(pid:mockIdentity.pid,start:mockIdentity.start+1,sha256:sha)
+    guard localProbe.listenerIdentity(for:wrongStart)==nil else {fatalError("Foreign process generation acquired listener")}
     // The native mock returns healthy ONLY for GET /health. Its later exact
     // POST counts must remain unchanged: health must never issue inference.
     let base="http://127.0.0.1:\(port)/v1",hash=PythonWorkerFactory.digest(base)

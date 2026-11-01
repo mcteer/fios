@@ -44,6 +44,23 @@ func runServiceHealthTests() throws {
     guard let observed=collector.capture(sessionReady:true,credentialsReady:true),
           observed.identity==identity,observed.responding,observed.sampledAt==1000,
           observed.nativeIdle==nil,observed.runtimeUnmanaged==nil else {fatalError("Composed health lost original identity or invented idle")}
+    // Synthetic metadata only; these scalars are never passed to kernel APIs.
+    let socket=ServiceListenerIdentity(process:identity,descriptor:9,generation:1,socket:1,pcb:1)
+    let changedSocket=ServiceListenerIdentity(process:identity,descriptor:9,generation:2,socket:2,pcb:2)
+    let noListener=MLXServiceHealthCollector(presence:{sample},health:{fatalError("Unbound process health queried")},listener:{_ in nil},now:{1000},uptime:{1})
+    guard noListener.capture(sessionReady:true,credentialsReady:true)==nil else {fatalError("Missing listener became process readiness")}
+    var listenerCalls=0
+    let changedListener=MLXServiceHealthCollector(presence:{sample},health:{.healthy},listener:{_ in
+        listenerCalls+=1;return listenerCalls==1 ? socket:changedSocket
+    },now:{1000},uptime:{1})
+    guard changedListener.capture(sessionReady:true,credentialsReady:true)==nil,listenerCalls==2 else {fatalError("Health crossed a listener generation change")}
+    var listenerTime:TimeInterval=1,listenerStamp:Int64=1000,slowCalls=0
+    let slowListener=MLXServiceHealthCollector(presence:{sample},health:{.healthy},listener:{_ in
+        slowCalls+=1
+        if slowCalls==2 {listenerTime=5.001;listenerStamp=5001}
+        return socket
+    },now:{listenerStamp},uptime:{listenerTime})
+    guard slowListener.capture(sessionReady:true,credentialsReady:true)==nil,slowCalls==2 else {fatalError("Final listener observation escaped total collection budget")}
     let loading=MLXServiceHealthCollector(presence:{sample},health:{.loading},now:{1000},uptime:{1})
     guard let pending=loading.capture(sessionReady:true,credentialsReady:true),!pending.responding,
           pending.credentialsReady else {fatalError("Loading became readiness or lost known credentials")}
