@@ -5,10 +5,6 @@ test("real harness accepts text/PDF/image inputs and shows reasoning only while 
   page,
 }) => {
   await page.goto("/");
-  await page
-    .getByLabel("Access password", { exact: true })
-    .fill("browser-test-password");
-  await page.getByRole("button", { name: "Enter workspace" }).click();
   await page.locator("input[type=file]").setInputFiles([
     {
       name: "notes.txt",
@@ -50,10 +46,6 @@ test("real harness reports provider failure, retains partial output, and accepts
   page,
 }) => {
   await page.goto("/");
-  await page
-    .getByLabel("Access password", { exact: true })
-    .fill("browser-test-password");
-  await page.getByRole("button", { name: "Enter workspace" }).click();
   const box = page.getByRole("textbox", { name: "Message Fios" });
   await box.fill("PARTIAL_STREAM");
   await page.getByRole("button", { name: "Send message", exact: true }).click();

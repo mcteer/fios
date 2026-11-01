@@ -2,13 +2,13 @@ import { test, expect } from "@playwright/test";
 
 test.beforeEach(async ({ page }) => {
   await page.goto("/");
-  await page
-    .getByLabel("Access password", { exact: true })
-    .fill("browser-test-password");
-  await page.getByRole("button", { name: "Enter workspace" }).click();
   await expect(
     page.getByRole("heading", { name: "How can I help you today?" }),
   ).toBeVisible();
+});
+test("fresh browser opens without a password prompt", async ({ page }) => {
+  await expect(page.locator('input[type="password"]')).toHaveCount(0);
+  await expect(page.getByRole("textbox", { name: "Message Fios" })).toBeVisible();
 });
 test("professional desktop shell, attachments, streaming code copy, history and delete", async ({
   page,

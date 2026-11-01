@@ -9,8 +9,6 @@ test('serving hosts and unavailable models are explicit; recovery preserves sele
       {id:'test/text-only',loaded:true,capabilities:['chat'],availability:'available',reason:'ok'}]
   }}));
   await page.goto('/');
-  await page.getByLabel('Access password',{exact:true}).fill('browser-test-password');
-  await page.getByRole('button',{name:'Enter workspace'}).click();
   await page.getByRole('button',{name:'Choose model'}).click();
   const option=page.locator('.model-option').filter({hasText:'coding-model'});
   await option.click();

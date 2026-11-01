@@ -1,14 +1,12 @@
-import { readFileSync } from 'node:fs';
 import { sseEvents } from '../src/stream.js';
-const env = Object.fromEntries(readFileSync(new URL('../.env',import.meta.url),'utf8').split('\n').filter(l=>l&&!l.startsWith('#')).map(l=>{const i=l.indexOf('=');return [l.slice(0,i),l.slice(i+1)];}));
 const origin = process.env.FIOS_URL || 'http://127.0.0.1:3000';
-const login=await fetch(origin+'/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:env.FIOS_PASSWORD})});
-if(!login.ok)throw new Error('Authentication failed');
+const login=await fetch(origin+'/api/session');
+if(!login.ok)throw new Error('Workspace session initialization failed');
 const cookie=login.headers.get('set-cookie').split(';')[0];
 const request=(path,options={})=>fetch(origin+'/api'+path,{...options,headers:{Cookie:cookie,...options.headers}});
 const catalog=await request('/models');
 if(!catalog.ok)throw new Error(await catalog.text());
-const {models}=await catalog.json();console.log('Authenticated gateway discovery passed: '+models.length+' chat models');
+const {models}=await catalog.json();console.log('Gateway discovery passed: '+models.length+' chat models');
 for(const m of models)console.log((m.loaded?'[loaded] ':'[on demand] ')+m.id);
 const model=process.argv[2];
 if(model){
@@ -28,7 +26,7 @@ if(model){
     if(!done||!content.trim())throw new Error('Incomplete response');
     console.log('Streamed answer:',content.trim());
     if(!content.includes('Fios connected'))throw new Error('Attachment context was not reflected in answer');
-    console.log('Authenticated attachment + streaming inference passed');
+    console.log('Attachment + streaming inference passed');
   }finally{
     const removal=await request('/chats/'+chat.id,{method:'DELETE'});
     if(!removal.ok)console.warn('Smoke chat cleanup failed; remove it in the UI.');
