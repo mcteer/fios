@@ -62,7 +62,8 @@ final class MLXServingProcessRuntime:@unchecked Sendable {
         // The caller supplies a separately reviewed preserved launch profile;
         // task/operator IPC cannot supply argv, environment or working directory.
         guard arguments.first=="serve" || (arguments.first?.hasPrefix("--")==true && arguments.contains("--serve")) else {throw RuntimeError.invalid}
-        try self.init(executable:profile.server,arguments:arguments,environment:environment,workingDirectory:workingDirectory,serviceProfileHash:serviceProfileHash,validateReservation:validateReservation,validateStopReservation:validateStopReservation)
+        let inputs=try NativeServingLaunchInputs(arguments:arguments,environment:environment,workingDirectory:workingDirectory)
+        try self.init(executable:profile.server,arguments:inputs.arguments,environment:inputs.environment,workingDirectory:inputs.workingDirectory,serviceProfileHash:serviceProfileHash,validateReservation:validateReservation,validateStopReservation:validateStopReservation)
     }
     private init(executable:VerifiedExecutable,arguments:[String],environment:[String:String],workingDirectory:String,serviceProfileHash:String,
                  validateReservation:@escaping @Sendable(ServiceLaunchCommand)throws->Void,

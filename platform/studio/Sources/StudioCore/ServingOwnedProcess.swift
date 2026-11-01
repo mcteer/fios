@@ -37,8 +37,14 @@ final class ServingOwnedProcess:@unchecked Sendable {
         for number in [SIGTERM,SIGINT,SIGHUP,SIGPIPE,SIGCHLD] {sigaddset(&defaults,number)}
         let flags=Int16(POSIX_SPAWN_CLOEXEC_DEFAULT|POSIX_SPAWN_SETSIGMASK|POSIX_SPAWN_SETSIGDEF)
         let directoryAction:Int32
+        // The pinned Swift 6.1/macOS 15 compatibility SDK has no declaration
+        // for the macOS 26 API; a runtime guard cannot hide an unknown symbol.
+        #if compiler(>=6.2)
         if #available(macOS 26.0,*) {directoryAction=posix_spawn_file_actions_addchdir(&actions,workingDirectory)}
         else {directoryAction=posix_spawn_file_actions_addchdir_np(&actions,workingDirectory)}
+        #else
+        directoryAction=posix_spawn_file_actions_addchdir_np(&actions,workingDirectory)
+        #endif
         guard posix_spawnattr_setflags(&attributes,flags)==0,
               directoryAction==0,
               posix_spawnattr_setsigmask(&attributes,&mask)==0,posix_spawnattr_setsigdefault(&attributes,&defaults)==0,

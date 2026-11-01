@@ -115,3 +115,12 @@ API-key values are replaced with a named credential slot before hashing; changin
 that channel still changes the profile. A changed configuration refuses existing
 pending history without rewriting it. This does not enroll inputs or issue a
 native reservation. Session-only recovery keeps its independent session profile.
+
+Reviewed native launch inputs must retain exactly one supported credential
+channel. The pinned server accepts two-token `--api-key <value>` or
+`--api-key-env FIOS_MLX_SERVING_API_KEY`; its empty/unset environment behavior
+would otherwise start without authentication. The code-only native constructor
+now refuses missing/empty/duplicate channels and unsupported equals forms before
+process dispatch. Private model-free process constructors remain isolated test
+fixtures. This validates launch data; it is neither a protected profile loader
+nor an authority producer and makes no interface authentication change.

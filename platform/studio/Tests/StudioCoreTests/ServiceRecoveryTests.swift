@@ -12,6 +12,20 @@ func runServiceRecoveryTests() throws {
     guard fingerprint == (try ServiceLaunchProfile.nativeDigest(base:base,arguments:nativeArgs,environment:rotated,workingDirectory:"/")),
           fingerprint != (try ServiceLaunchProfile.nativeDigest(base:base,arguments:nativeArgs,environment:nativeEnv,workingDirectory:"/Users/fixture")),
           fingerprint != (try ServiceLaunchProfile.nativeDigest(base:base,arguments:["--serve","--model","fixture/Other"],environment:nativeEnv,workingDirectory:"/")) else {fatalError("Native launch binding lost exact configuration or became a credential verifier")}
+    // The actual pinned parser leaves missing/empty environment credentials
+    // open. Native launch configuration must fail before any process effect.
+    _=try NativeServingLaunchInputs(arguments:nativeArgs,environment:nativeEnv,workingDirectory:"/")
+    _=try NativeServingLaunchInputs(arguments:["--serve","--api-key","fixture-key"],environment:[:],workingDirectory:"/")
+    for args in [["--serve"],["--serve","--api-key-env"],["--serve","--api-key",""],
+                 ["--serve","--api-key-env","OTHER"],["--serve","--api-key=fixture"],
+                 ["--serve","--api-key-env","FIOS_MLX_SERVING_API_KEY","--api-key","fixture"]] {
+        do {_=try NativeServingLaunchInputs(arguments:args,environment:nativeEnv,workingDirectory:"/");fatalError("Invalid native credential channel accepted")}
+        catch RuntimeError.invalid {}
+    }
+    for env:[String:String] in [[:],["FIOS_MLX_SERVING_API_KEY":""]] {
+        do {_=try NativeServingLaunchInputs(arguments:nativeArgs,environment:env,workingDirectory:"/");fatalError("Missing native credential accepted")}
+        catch RuntimeError.invalid {}
+    }
     let journal=try Journal(directory:directory)
     func absent(_ now:Int64,session:Bool=true,credentials:Bool=true)->ServiceObservation {
         ServiceObservation(identity:nil,responding:false,sessionReady:session,credentialsReady:credentials,
