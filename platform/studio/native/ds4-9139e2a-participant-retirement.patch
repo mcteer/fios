@@ -1152,7 +1152,7 @@ index 3c0328d..5895ea7 100644
  int ds4_gpu_tp_gate_encode(uint32_t layer, uint32_t gate);
  void ds4_gpu_tp_set_batch_exchange(ds4_gpu_tp_batch_exchange_fn fn);
 diff --git a/ds4_metal.m b/ds4_metal.m
-index 0d75369..d6da596 100644
+index 0d75369..71f8d92 100644
 --- a/ds4_metal.m
 +++ b/ds4_metal.m
 @@ -15,6 +15,7 @@
@@ -1163,7 +1163,103 @@ index 0d75369..d6da596 100644
  #include <unistd.h>
  #include <sys/mman.h>
  #include <sys/sysctl.h>
-@@ -376,6 +377,8 @@ static void ds4_gpu_timeline_attach(id<MTLCommandBuffer> cb) {
+@@ -26,6 +27,95 @@
+ #include "ds4_gpu.h"
+ #include "ds4_image.h"
+ 
++// Translation-unit-private counterpart of the C local join primitive.
++// Detached joiner custody: the caller's finite wait never cancels a target or
++// drops its join. Each side retains this private heap record until its last
++// access; publishing a join result is not native/GPU terminality authority.
++typedef struct fios_native_join_ticket {
++    pthread_t target;
++    unsigned references;
++    int complete;
++    int result;
++    bool setup_ok;
++} fios_native_join_ticket;
++
++static void fios_native_join_release(fios_native_join_ticket *ticket) {
++    if (ticket && __atomic_fetch_sub(&ticket->references,1,__ATOMIC_ACQ_REL)==1)
++        free(ticket);
++}
++
++static void *fios_native_join_main(void *context) {
++    fios_native_join_ticket *ticket=context;
++    ticket->result=pthread_join(ticket->target,NULL);
++    __atomic_store_n(&ticket->complete,1,__ATOMIC_RELEASE);
++    fios_native_join_release(ticket);
++    return NULL; // No target/parent/model access after result publication.
++}
++
++static fios_native_join_ticket *fios_native_join_start(pthread_t target) {
++    if (pthread_equal(target,pthread_self())) return NULL;
++    fios_native_join_ticket *ticket=calloc(1,sizeof(*ticket));
++    if (!ticket) return NULL;
++    ticket->target=target;
++    ticket->references=2; // Caller and detached joiner, before publication.
++    pthread_attr_t attributes;
++    if (pthread_attr_init(&attributes)!=0) {free(ticket);return NULL;}
++    const int configured=pthread_attr_setdetachstate(&attributes,PTHREAD_CREATE_DETACHED);
++    pthread_t joiner;
++    const int started=configured==0 ? pthread_create(&joiner,&attributes,fios_native_join_main,ticket):-1;
++    const int disposed=pthread_attr_destroy(&attributes);
++    if (started!=0) {free(ticket);return NULL;} // No joiner was created.
++    ticket->setup_ok=disposed==0;
++    return ticket;
++}
++
++static bool fios_native_join_clock(uint64_t *value) {
++    struct timespec now;
++    if (clock_gettime(CLOCK_MONOTONIC,&now)!=0 || now.tv_sec<0 ||
++        now.tv_nsec<0 || now.tv_nsec>=1000000000L ||
++        (uint64_t)now.tv_sec>(UINT64_MAX-(uint64_t)now.tv_nsec)/1000000000ULL)
++        return false;
++    *value=(uint64_t)now.tv_sec*1000000000ULL+(uint64_t)now.tv_nsec;
++    return true;
++}
++
++static bool fios_native_join_wait_since(fios_native_join_ticket *ticket,uint64_t began,unsigned milliseconds,int *result) {
++    if (!ticket || !result || !ticket->setup_ok || milliseconds==0 || milliseconds>1000) return false;
++    uint64_t now;
++    const uint64_t duration=(uint64_t)milliseconds*1000000ULL;
++    for (;;) {
++        if (!fios_native_join_clock(&now) || now<began || now-began>=duration) return false;
++        if (__atomic_load_n(&ticket->complete,__ATOMIC_ACQUIRE)) {
++            *result=ticket->result;
++            return true;
++        }
++        const struct timespec pause={0,1000000L};
++        (void)nanosleep(&pause,NULL);
++    }
++}
++
++static bool fios_native_join_wait(fios_native_join_ticket *ticket,unsigned milliseconds,int *result) {
++    uint64_t began;
++    if (!fios_native_join_clock(&began)) return false;
++    return fios_native_join_wait_since(ticket,began,milliseconds,result);
++}
++
++// Bounded local metadata finalization. This is not a device barrier.
++static bool fios_native_join_lock(pthread_mutex_t *mutex,unsigned milliseconds) {
++    if (!mutex || milliseconds==0 || milliseconds>1000) return false;
++    uint64_t began,now;
++    if (!fios_native_join_clock(&began)) return false;
++    const uint64_t duration=(uint64_t)milliseconds*1000000ULL;
++    for (;;) {
++        if (!fios_native_join_clock(&now) || now<began || now-began>=duration) return false;
++        const int result=pthread_mutex_trylock(mutex);
++        if (result==0) return true;
++        if (result!=EBUSY) return false;
++        const struct timespec pause={0,1000000L};
++        (void)nanosleep(&pause,NULL);
++    }
++}
++
+ /*
+  * Objective-C Metal glue for the C engine.
+  *
+@@ -376,6 +466,8 @@ static void ds4_gpu_timeline_attach(id<MTLCommandBuffer> cb) {
  
  static void ds4_gpu_parallel_ffn_reset_state(BOOL close_encoder);
  static NSMutableArray<id<MTLCommandBuffer>> *g_pending_cbs;
@@ -1172,7 +1268,7 @@ index 0d75369..d6da596 100644
  static id<MTLSharedEvent> g_selected_readback_event;
  static uint64_t g_selected_readback_event_value;
  static id<MTLComputePipelineState> g_set_rows_f32_i32_pipeline;
-@@ -829,6 +832,7 @@ static int ds4_gpu_stream_expert_cache_note_expert_size(
+@@ -829,6 +921,7 @@ static int ds4_gpu_stream_expert_cache_note_expert_size(
  static void ds4_gpu_stream_expert_cache_clear_all(int reset_stats);
  static void ds4_gpu_stream_expert_pending_load_clear(void);
  static void ds4_gpu_stream_expert_pread_pool_shutdown(void);
@@ -1180,7 +1276,7 @@ index 0d75369..d6da596 100644
  static int ds4_gpu_stream_expert_timing_summary_enabled(void);
  static int ds4_gpu_stream_expert_cache_entry_protected(
          uint32_t       layer,
-@@ -840,17 +844,16 @@ static int ds4_gpu_stream_expert_cache_entry_protected(
+@@ -840,17 +933,16 @@ static int ds4_gpu_stream_expert_cache_entry_protected(
  /* The async selected-load worker registers itself so cache paths that would
   * flush/wait on command buffers (a race against the encoding thread) fail
   * the load instead; the caller then retries on the main thread. */
@@ -1202,7 +1298,7 @@ index 0d75369..d6da596 100644
  }
  static NSUInteger g_flash_attn_mask_bytes;
  static NSUInteger g_flash_attn_zero_mask_bytes;
-@@ -1280,20 +1283,23 @@ static NSUInteger ds4_gpu_tensor_offset(const ds4_gpu_tensor *tensor) {
+@@ -1280,20 +1372,23 @@ static NSUInteger ds4_gpu_tensor_offset(const ds4_gpu_tensor *tensor) {
  }
  
  static id<MTLCommandBuffer> ds4_gpu_new_command_buffer(void);
@@ -1228,7 +1324,7 @@ index 0d75369..d6da596 100644
      if (g_batch_cb && cb == g_batch_cb) {
          g_batch_has_work = YES;
          if (g_timeline_enabled && g_timeline_batch) {
-@@ -1347,6 +1353,8 @@ static void ds4_gpu_invalidate_completion_counters(void) {
+@@ -1347,6 +1442,8 @@ static void ds4_gpu_invalidate_completion_counters(void) {
  }
  
  static int ds4_gpu_wait_command_buffer(id<MTLCommandBuffer> cb, const char *label) {
@@ -1237,7 +1333,7 @@ index 0d75369..d6da596 100644
      [cb waitUntilCompleted];
      if (getenv("DS4_METAL_CB_TIMES")) {
          static double prev_gpu_end;
-@@ -1372,7 +1380,7 @@ static int ds4_gpu_wait_command_buffer(id<MTLCommandBuffer> cb, const char *labe
+@@ -1372,7 +1469,7 @@ static int ds4_gpu_wait_command_buffer(id<MTLCommandBuffer> cb, const char *labe
                      (unsigned long long)g_gpu_busy_cbs);
          }
      }
@@ -1246,7 +1342,7 @@ index 0d75369..d6da596 100644
          fprintf(stderr, "ds4: Metal %s failed: %s\n",
                  label, [[cb.error localizedDescription] UTF8String]);
          ds4_gpu_invalidate_completion_counters();
-@@ -1382,6 +1390,7 @@ static int ds4_gpu_wait_command_buffer(id<MTLCommandBuffer> cb, const char *labe
+@@ -1382,6 +1479,7 @@ static int ds4_gpu_wait_command_buffer(id<MTLCommandBuffer> cb, const char *labe
  }
  
  static id<MTLCommandBuffer> ds4_gpu_new_command_buffer(void) {
@@ -1254,7 +1350,7 @@ index 0d75369..d6da596 100644
      static int initialized;
      static int use_unretained;
      if (!initialized) {
-@@ -1468,30 +1477,25 @@ static void ds4_gpu_model_buffer_cache_maybe_evict(const char *reason) {
+@@ -1468,30 +1566,25 @@ static void ds4_gpu_model_buffer_cache_maybe_evict(const char *reason) {
      }
  }
  
@@ -1299,7 +1395,7 @@ index 0d75369..d6da596 100644
  }
  
  static void ds4_gpu_stream_expert_cache_note_batch_committed(void) {
-@@ -1501,9 +1505,11 @@ static void ds4_gpu_stream_expert_cache_note_batch_committed(void) {
+@@ -1501,9 +1594,11 @@ static void ds4_gpu_stream_expert_cache_note_batch_committed(void) {
      g_stream_expert_cache_batch_seq = 0;
  }
  
@@ -1314,7 +1410,7 @@ index 0d75369..d6da596 100644
  }
  
  static void ds4_gpu_stream_expert_cache_note_pending_completed(void) {
-@@ -1551,14 +1557,19 @@ static int ds4_gpu_stream_expert_cache_mark_entries_inflight(
+@@ -1551,14 +1646,19 @@ static int ds4_gpu_stream_expert_cache_mark_entries_inflight(
  static int ds4_gpu_stream_expert_cache_wait_inflight(const char *label);
  
  static int ds4_gpu_wait_pending_command_buffers(const char *label) {
@@ -1336,7 +1432,7 @@ index 0d75369..d6da596 100644
  }
  
  static double g_batch_cb_created_ms;
-@@ -1595,6 +1606,7 @@ static int ds4_gpu_finish_command_buffer(id<MTLCommandBuffer> cb, int owned, con
+@@ -1595,6 +1695,7 @@ static int ds4_gpu_finish_command_buffer(id<MTLCommandBuffer> cb, int owned, con
              fprintf(stderr, "\n");
          }
      }
@@ -1344,7 +1440,7 @@ index 0d75369..d6da596 100644
      ds4_gpu_stream_expert_cache_note_owned_completed();
      if (getenv("DS4_METAL_CB_TIMES")) {
          uint64_t bytes = 0;
-@@ -9483,6 +9495,7 @@ int ds4_gpu_pack_slot_rows_f32_tensor(
+@@ -9483,6 +9584,7 @@ int ds4_gpu_pack_slot_rows_f32_tensor(
  }
  
  int ds4_gpu_begin_commands(void) {
@@ -1352,7 +1448,7 @@ index 0d75369..d6da596 100644
      if (!g_initialized && !ds4_gpu_init()) return 0;
      /* A failed concurrent FFN must never affect the next command batch. */
      ds4_gpu_parallel_ffn_reset_state(YES);
-@@ -9496,12 +9509,13 @@ int ds4_gpu_begin_commands(void) {
+@@ -9496,12 +9598,13 @@ int ds4_gpu_begin_commands(void) {
      g_batch_cb_created_ms = ds4_gpu_now_ms();
      g_batch_cb = ds4_gpu_new_command_buffer();
      g_batch_has_work = NO;
@@ -1367,7 +1463,7 @@ index 0d75369..d6da596 100644
      if (!g_initialized && !ds4_gpu_init()) return 0;
      ds4_gpu_parallel_ffn_reset_state(YES);
      if (!g_batch_cb) return 0;
-@@ -9510,6 +9524,7 @@ int ds4_gpu_flush_encoder(void) {
+@@ -9510,6 +9613,7 @@ int ds4_gpu_flush_encoder(void) {
  }
  
  int ds4_gpu_flush_commands(void) {
@@ -1375,7 +1471,7 @@ index 0d75369..d6da596 100644
      if (!g_initialized && !ds4_gpu_init()) return 0;
      ds4_gpu_parallel_ffn_reset_state(YES);
      if (!g_batch_cb) return 0;
-@@ -9524,10 +9539,10 @@ int ds4_gpu_flush_commands(void) {
+@@ -9524,10 +9628,10 @@ int ds4_gpu_flush_commands(void) {
  
      g_batch_cb = ds4_gpu_new_command_buffer();
      g_batch_has_work = NO;
@@ -1388,7 +1484,7 @@ index 0d75369..d6da596 100644
          [g_transient_buffers removeAllObjects];
          return 0;
      }
-@@ -10107,6 +10122,10 @@ static int ds4_gpu_stream_expert_cache_wait_inflight(const char *label) {
+@@ -10107,6 +10211,10 @@ static int ds4_gpu_stream_expert_cache_wait_inflight(const char *label) {
  int ds4_gpu_signal_selected_readback_ready(uint64_t *event_value) {
      if (!event_value) return 0;
      *event_value = 0;
@@ -1399,7 +1495,7 @@ index 0d75369..d6da596 100644
      if (!g_initialized && !ds4_gpu_init()) return 0;
      ds4_gpu_parallel_ffn_reset_state(YES);
      if (!g_batch_cb) return 0;
-@@ -10153,7 +10172,7 @@ int ds4_gpu_commit_and_wait_selected_readback(uint64_t event_value, const char *
+@@ -10153,7 +10261,7 @@ int ds4_gpu_commit_and_wait_selected_readback(uint64_t event_value, const char *
          [g_pending_cbs addObject:cb];
          if (!signaled) {
              fprintf(stderr, "ds4: timeout waiting for Metal shared event in %s\n", what);
@@ -1408,7 +1504,7 @@ index 0d75369..d6da596 100644
              [g_transient_buffers removeAllObjects];
              return 0;
          }
-@@ -10161,16 +10180,16 @@ int ds4_gpu_commit_and_wait_selected_readback(uint64_t event_value, const char *
+@@ -10161,16 +10269,16 @@ int ds4_gpu_commit_and_wait_selected_readback(uint64_t event_value, const char *
              fprintf(stderr, "ds4: Metal %s failed: %s\n",
                      what,
                      [[cb.error localizedDescription] UTF8String]);
@@ -1428,12 +1524,13 @@ index 0d75369..d6da596 100644
              [g_transient_buffers removeAllObjects];
              return 0;
          }
-@@ -10346,7 +10365,14 @@ void ds4_gpu_tp_set_big_exchange(ds4_gpu_tp_big_exchange_fn fn) {
+@@ -10346,7 +10454,15 @@ void ds4_gpu_tp_set_big_exchange(ds4_gpu_tp_big_exchange_fn fn) {
  static void *g_tp_exchange_ud;
  static pthread_t g_tp_thread;
  static int g_tp_thread_running;
 -static int g_tp_shutdown;
 +static atomic_int g_fios_tp_uncertain;
++static fios_native_join_ticket *g_fios_tp_joins[2];
 +#define FIOS_DS4_TP_ACTIVE_CUSTODY 1
 +static unsigned g_fios_tp_service_active; // protected by g_tp_mutex
 +static uint64_t g_fios_tp_owner;
@@ -1444,7 +1541,7 @@ index 0d75369..d6da596 100644
  static int g_tp_failed_flag;
  static pthread_mutex_t g_tp_mutex = PTHREAD_MUTEX_INITIALIZER;
  static pthread_cond_t g_tp_cond = PTHREAD_COND_INITIALIZER;
-@@ -10377,7 +10403,11 @@ void ds4_gpu_tp_set_big_exchange(ds4_gpu_tp_big_exchange_fn fn) {
+@@ -10377,7 +10493,11 @@ void ds4_gpu_tp_set_big_exchange(ds4_gpu_tp_big_exchange_fn fn) {
  /* Nonzero while a verify block runs: the GPU is genuinely busy
   * there, so the keep-alive is a pure parasite (~2.3ms per 5-row block
   * measured against the single-machine verify). */
@@ -1457,7 +1554,7 @@ index 0d75369..d6da596 100644
  
  void ds4_gpu_tp_keepalive_pause(int paused) {
      g_tp_keepalive_paused = paused;
-@@ -10524,7 +10554,10 @@ static uint32_t ds4_gpu_tp_keepalive_tgs_from_env(void) {
+@@ -10524,7 +10644,10 @@ static uint32_t ds4_gpu_tp_keepalive_tgs_from_env(void) {
      uint32_t ka_tgs = ds4_gpu_tp_keepalive_tgs_from_env();
      id<MTLComputePipelineState> pipeline =
          ds4_gpu_get_pipeline("kernel_dsv4_tp_keepalive");
@@ -1468,7 +1565,7 @@ index 0d75369..d6da596 100644
          fprintf(stderr, "ds4: TP keep-alive pipeline missing\n");
          return NULL;
      }
-@@ -10535,7 +10568,10 @@ static uint32_t ds4_gpu_tp_keepalive_tgs_from_env(void) {
+@@ -10535,7 +10658,10 @@ static uint32_t ds4_gpu_tp_keepalive_tgs_from_env(void) {
          }
          @autoreleasepool {
              id<MTLCommandBuffer> cb = [g_tp_keepalive_queue commandBuffer];
@@ -1479,7 +1576,7 @@ index 0d75369..d6da596 100644
              [enc setComputePipelineState:pipeline];
              [enc setBuffer:g_tp_keepalive_buffer offset:0 atIndex:0];
              [enc setBytes:&iters length:sizeof(iters) atIndex:1];
-@@ -10544,8 +10580,16 @@ static uint32_t ds4_gpu_tp_keepalive_tgs_from_env(void) {
+@@ -10544,8 +10670,16 @@ static uint32_t ds4_gpu_tp_keepalive_tgs_from_env(void) {
              [enc endEncoding];
              [cb commit];
              [cb waitUntilCompleted];
@@ -1496,7 +1593,7 @@ index 0d75369..d6da596 100644
      return NULL;
  }
  
-@@ -10563,6 +10607,7 @@ static uint32_t ds4_gpu_tp_keepalive_tgs_from_env(void) {
+@@ -10563,6 +10697,7 @@ static uint32_t ds4_gpu_tp_keepalive_tgs_from_env(void) {
          ds4_gpu_tp_request req = g_tp_queue[g_tp_queue_head];
          g_tp_queue_head = (g_tp_queue_head + 1) % DS4_GPU_TP_QUEUE;
          g_tp_queue_count--;
@@ -1504,7 +1601,7 @@ index 0d75369..d6da596 100644
          pthread_mutex_unlock(&g_tp_mutex);
  
          /* Wait for the GPU to reach this gate.  Tight spin: gate arrival is
-@@ -10770,6 +10815,9 @@ static uint32_t ds4_gpu_tp_keepalive_tgs_from_env(void) {
+@@ -10770,6 +10905,9 @@ static uint32_t ds4_gpu_tp_keepalive_tgs_from_env(void) {
                          (unsigned long long)g_tp_stat_poll_count);
              }
          }
@@ -1514,11 +1611,11 @@ index 0d75369..d6da596 100644
      }
      return NULL;
  }
-@@ -10778,8 +10826,11 @@ int ds4_gpu_tp_init(uint32_t rank,
+@@ -10778,8 +10916,11 @@ int ds4_gpu_tp_init(uint32_t rank,
                      ds4_gpu_tensor *slab, uint64_t gpu_flags_off,
                      uint64_t out_off, uint64_t vec_bytes,
                      ds4_gpu_tp_exchange_fn fn, void *ud) {
-+    if (g_fios_pending_uncertain || g_fios_tp_uncertain || g_tp_thread_running || rank > 1) return 0;
++    if (g_fios_pending_uncertain || g_fios_tp_uncertain || g_tp_thread_running || g_fios_tp_joins[0] || g_fios_tp_joins[1] || rank > 1) return 0;
 +    const uint64_t owner = ds4_gpu_fios_keepalive_owner();
 +    if (!owner) { g_fios_tp_uncertain = 1; g_fios_pending_uncertain = 1; return 0; }
      if (!g_initialized && !ds4_gpu_init()) return 0;
@@ -1527,7 +1624,7 @@ index 0d75369..d6da596 100644
      g_tp_split_rank = (int32_t)rank;
      g_tp_split_world = 2;
      g_tp_slab_buffer = slab ? ds4_gpu_tensor_buffer(slab) : nil;
-@@ -10849,6 +10900,7 @@ int ds4_gpu_tp_init(uint32_t rank,
+@@ -10849,6 +10990,7 @@ int ds4_gpu_tp_init(uint32_t rank,
      g_tp_failed_flag = 0;
      g_tp_queue_head = 0;
      g_tp_queue_count = 0;
@@ -1535,12 +1632,13 @@ index 0d75369..d6da596 100644
      g_tp_stat_gates = 0;
      g_tp_stat_gpu_wait_ms = 0.0;
      g_tp_stat_exchange_ms = 0.0;
-@@ -10883,17 +10935,61 @@ int ds4_gpu_tp_init(uint32_t rank,
+@@ -10883,17 +11025,70 @@ int ds4_gpu_tp_init(uint32_t rank,
      return 1;
  }
  
 -void ds4_gpu_tp_shutdown(void) {
 -    if (!g_tp_thread_running) return;
+-    pthread_mutex_lock(&g_tp_mutex);
 +int ds4_gpu_tp_local_work_busy(void) {
 +    // Read-only guard against known local readers/uncertainty. Absence here
 +    // is not all-writer/device terminality; lifecycle serialization is required.
@@ -1568,30 +1666,41 @@ index 0d75369..d6da596 100644
 +        g_fios_pending_uncertain = 1;
 +        return 0;
 +    }
-     pthread_mutex_lock(&g_tp_mutex);
++    if (pthread_mutex_trylock(&g_tp_mutex)!=0) return 0; // No stop or uncertainty mutation.
 +    if (g_tp_queue_count || g_fios_tp_service_active) {
 +        // Known busy: do not signal, join, cancel or poison admitted work.
 +        // Independent uncertainty retains its existing value.
 +        pthread_mutex_unlock(&g_tp_mutex);
 +        return 0;
 +    }
++    uint64_t began;
++    if (!fios_native_join_clock(&began)) {pthread_mutex_unlock(&g_tp_mutex);return 0;}
      g_tp_shutdown = 1;
-     pthread_cond_broadcast(&g_tp_cond);
-     pthread_mutex_unlock(&g_tp_mutex);
+-    pthread_cond_broadcast(&g_tp_cond);
+-    pthread_mutex_unlock(&g_tp_mutex);
 -    pthread_join(g_tp_thread, NULL);
-+    if (pthread_join(g_tp_thread, NULL) != 0) {
-+        g_fios_tp_uncertain = 1;
-+        g_fios_pending_uncertain = 1;
-+        return 0;
++    const int notified=pthread_cond_broadcast(&g_tp_cond);
++    const int released=pthread_mutex_unlock(&g_tp_mutex);
++    if (notified!=0 || released!=0) {g_fios_tp_uncertain=1;g_fios_pending_uncertain=1;return 0;}
++    fios_native_join_ticket *service=fios_native_join_start(g_tp_thread);
++    g_fios_tp_joins[0]=service;
++    int joined=-1;
++    if (!service || !fios_native_join_wait_since(service,began,1000,&joined) || joined!=0) {
++        g_fios_tp_uncertain=1;g_fios_pending_uncertain=1;return 0;
 +    }
++    g_fios_tp_joins[0]=NULL;
++    fios_native_join_release(service);
      g_tp_thread_running = 0;
      if (g_tp_keepalive_running) {
 -        pthread_join(g_tp_keepalive_thread, NULL);
-+        if (pthread_join(g_tp_keepalive_thread, NULL) != 0) {
-+            g_fios_tp_uncertain = 1;
-+            g_fios_pending_uncertain = 1;
-+            return 0;
++        fios_native_join_ticket *producer=fios_native_join_start(g_tp_keepalive_thread);
++        g_fios_tp_joins[1]=producer;
++        joined=-1;
++        if (!producer || !fios_native_join_wait_since(producer,began,1000,&joined) || joined!=0) {
++            g_fios_tp_uncertain=1;g_fios_pending_uncertain=1;return 0;
 +        }
++        g_fios_tp_joins[1]=NULL;
++        fios_native_join_release(producer);
          g_tp_keepalive_running = 0;
 +        if (g_fios_tp_gpu_uncertain || g_fios_tp_keepalive_pending || g_fios_tp_keepalive_pipeline) {
 +            g_fios_tp_uncertain = 1;
@@ -1601,7 +1710,7 @@ index 0d75369..d6da596 100644
          g_tp_keepalive_queue = nil;
          g_tp_keepalive_buffer = nil;
      }
-@@ -10907,6 +11003,13 @@ void ds4_gpu_tp_shutdown(void) {
+@@ -10907,6 +11102,13 @@ void ds4_gpu_tp_shutdown(void) {
      g_tp_poll_buffer = nil;
      g_tp_poll_region = NULL;
      g_tp_poll_status = NULL;
@@ -1615,7 +1724,7 @@ index 0d75369..d6da596 100644
  }
  
  void ds4_gpu_tp_suspend_expert_sharding(int suspend) {
-@@ -11325,48 +11428,111 @@ int ds4_gpu_warm_command_queue(void) {
+@@ -11325,48 +11527,117 @@ int ds4_gpu_warm_command_queue(void) {
   * queue keeps the mappings alive at no measurable cost.
   * DS4_METAL_DISABLE_QUEUE_KEEPALIVE=1 opts out. */
  static pthread_t g_queue_keepalive_thread;
@@ -1628,6 +1737,7 @@ index 0d75369..d6da596 100644
 +static _Atomic uint64_t g_fios_keepalive_next_owner = 1;
 +static _Thread_local uint64_t g_fios_keepalive_local_owner;
 +static uint64_t g_fios_keepalive_owner;
++static fios_native_join_ticket *g_fios_keepalive_join;
 +// Strong source-owned resources survive refusal; only the joined creator may
 +// consume success. This is one producer, not main/TP/all-client terminality.
 +static id<MTLCommandBuffer> g_fios_keepalive_pending;
@@ -1720,10 +1830,15 @@ index 0d75369..d6da596 100644
 +        !atomic_load(&g_queue_keepalive_running)) return 0;
 +    atomic_store(&g_fios_keepalive_sealed, 1);
 +    atomic_store(&g_queue_keepalive_stop, 1);
-+    if (pthread_join(g_queue_keepalive_thread, NULL) != 0) {
-+        atomic_store(&g_fios_keepalive_uncertain, 1);
++    fios_native_join_ticket *ticket=fios_native_join_start(g_queue_keepalive_thread);
++    g_fios_keepalive_join=ticket;
++    int joined=-1;
++    if (!ticket || !fios_native_join_wait(ticket,1000,&joined) || joined!=0) {
++        atomic_store(&g_fios_keepalive_uncertain,1);
 +        return 0;
 +    }
++    g_fios_keepalive_join=NULL;
++    fios_native_join_release(ticket);
 +    if (atomic_load(&g_fios_keepalive_uncertain) || g_fios_keepalive_pending ||
 +        g_fios_keepalive_scratch || g_fios_keepalive_pipeline) return 0;
 +    atomic_store(&g_queue_keepalive_running, 0);
@@ -1739,7 +1854,7 @@ index 0d75369..d6da596 100644
  }
  
  int ds4_gpu_tp_failed(void) {
-@@ -11423,7 +11589,7 @@ static int ds4_gpu_signal_batch_and_wait_event(const char *label) {
+@@ -11423,7 +11694,7 @@ static int ds4_gpu_signal_batch_and_wait_event(const char *label) {
          if (!signaled) {
              fprintf(stderr, "ds4: timeout waiting for Metal shared event in %s\n",
                      label ? label : "selected-id readback");
@@ -1748,7 +1863,7 @@ index 0d75369..d6da596 100644
              [g_transient_buffers removeAllObjects];
              return 0;
          }
-@@ -11431,16 +11597,16 @@ static int ds4_gpu_signal_batch_and_wait_event(const char *label) {
+@@ -11431,16 +11702,16 @@ static int ds4_gpu_signal_batch_and_wait_event(const char *label) {
              fprintf(stderr, "ds4: Metal %s failed: %s\n",
                      label ? label : "selected-id readback",
                      [[cb.error localizedDescription] UTF8String]);
@@ -1768,7 +1883,7 @@ index 0d75369..d6da596 100644
              [g_transient_buffers removeAllObjects];
              return 0;
          }
-@@ -11458,6 +11624,7 @@ static int ds4_gpu_signal_batch_and_wait_event(const char *label) {
+@@ -11458,6 +11729,7 @@ static int ds4_gpu_signal_batch_and_wait_event(const char *label) {
  }
  
  int ds4_gpu_end_commands(void) {
@@ -1776,7 +1891,7 @@ index 0d75369..d6da596 100644
      if (!g_batch_cb) {
          ds4_gpu_parallel_ffn_reset_state(YES);
          return 0;
-@@ -11517,11 +11684,13 @@ static int ds4_gpu_flash_attn_stage_profile_boundary(
+@@ -11517,11 +11789,13 @@ static int ds4_gpu_flash_attn_stage_profile_boundary(
  }
  
  int ds4_gpu_synchronize(void) {
@@ -1790,7 +1905,7 @@ index 0d75369..d6da596 100644
          [g_transient_buffers removeAllObjects];
          ds4_gpu_model_buffer_cache_maybe_evict("synchronize");
          return ok;
-@@ -11534,24 +11703,56 @@ int ds4_gpu_synchronize(void) {
+@@ -11534,24 +11808,56 @@ int ds4_gpu_synchronize(void) {
  
  static void qwen4_nax_release_scratch(void);
  
@@ -1853,7 +1968,7 @@ index 0d75369..d6da596 100644
          if (ds4_gpu_stream_expert_timing_summary_enabled() &&
              getenv("DS4_METAL_MEMORY_REPORT") == NULL) {
              ds4_gpu_print_memory_report("at cleanup");
-@@ -13424,6 +13625,12 @@ static int ds4_gpu_stream_expert_pread_into(
+@@ -13424,6 +13730,13 @@ static int ds4_gpu_stream_expert_pread_into(
  static ds4_gpu_stream_expert_pread_task *g_stream_expert_pread_pool_tasks;
  static int g_stream_expert_pread_pool_initialized;
  static int g_stream_expert_pread_pool_stopping;
@@ -1862,11 +1977,12 @@ index 0d75369..d6da596 100644
 +static atomic_int g_fios_pread_pool_sealed;
 +static int g_fios_pread_pool_uncertain;
 +static uint32_t g_fios_pread_pool_joined;
++static fios_native_join_ticket *g_fios_pread_pool_joins[18];
 +
  
  static int ds4_gpu_stream_expert_pread_pool_enabled(void) {
      const char *env = getenv("DS4_METAL_STREAMING_EXPERT_PREAD_POOL");
-@@ -13484,6 +13691,7 @@ static int ds4_gpu_stream_expert_pread_pool_enabled(void) {
+@@ -13484,6 +13797,7 @@ static int ds4_gpu_stream_expert_pread_pool_enabled(void) {
  }
  
  static int ds4_gpu_stream_expert_pread_pool_init(uint32_t n_threads) {
@@ -1874,7 +1990,7 @@ index 0d75369..d6da596 100644
      if (g_stream_expert_pread_pool_initialized) return 1;
      if (!ds4_gpu_stream_expert_pread_pool_enabled() || n_threads <= 1) return 0;
      if (n_threads > 18) n_threads = 18;
-@@ -13511,15 +13719,23 @@ static int ds4_gpu_stream_expert_pread_pool_init(uint32_t n_threads) {
+@@ -13511,15 +13825,23 @@ static int ds4_gpu_stream_expert_pread_pool_init(uint32_t n_threads) {
                      strerror(rc));
              pthread_mutex_lock(&g_stream_expert_pread_pool_mutex);
              g_stream_expert_pread_pool_stopping = 1;
@@ -1902,7 +2018,7 @@ index 0d75369..d6da596 100644
              pthread_mutex_unlock(&g_stream_expert_pread_pool_mutex);
              return 0;
          }
-@@ -13559,6 +13775,12 @@ static int ds4_gpu_stream_expert_pread_pool_begin(
+@@ -13559,6 +13881,12 @@ static int ds4_gpu_stream_expert_pread_pool_begin(
          return 0;
      }
  
@@ -1915,7 +2031,7 @@ index 0d75369..d6da596 100644
      g_stream_expert_pread_pool_tasks = tasks;
      g_stream_expert_pread_pool_n_tasks = n_tasks;
      g_stream_expert_pread_pool_next_task = 0;
-@@ -13592,7 +13814,73 @@ static int ds4_gpu_stream_expert_pread_pool_dispatch(
+@@ -13592,7 +13920,96 @@ static int ds4_gpu_stream_expert_pread_pool_dispatch(
      return ds4_gpu_stream_expert_pread_pool_wait();
  }
  
@@ -1940,27 +2056,50 @@ index 0d75369..d6da596 100644
 +        pthread_mutex_unlock(&g_stream_expert_pread_pool_mutex);
 +        return 0;
 +    }
++    uint64_t began;
++    if (!fios_native_join_clock(&began)) {
++        pthread_mutex_unlock(&g_stream_expert_pread_pool_mutex);
++        return 0; // No stop or join was requested.
++    }
 +    atomic_store_explicit(&g_fios_pread_pool_sealed, 1, memory_order_release);
 +    g_stream_expert_pread_pool_stopping = 1;
-+    pthread_cond_broadcast(&g_stream_expert_pread_pool_start_cond);
-+    pthread_mutex_unlock(&g_stream_expert_pread_pool_mutex);
++    const int notified=pthread_cond_broadcast(&g_stream_expert_pread_pool_start_cond);
++    const int released=pthread_mutex_unlock(&g_stream_expert_pread_pool_mutex);
++    if (notified!=0 || released!=0) {g_fios_pread_pool_uncertain=1;return 0;}
 +
-+    int ok = 1;
-+    for (uint32_t i = 0; i < count; ++i) {
-+        const int rc = pthread_join(g_stream_expert_pread_pool_threads[i], NULL);
-+        pthread_mutex_lock(&g_stream_expert_pread_pool_mutex);
-+        if (rc == 0) g_fios_pread_pool_joined |= (1u << i);
-+        else { g_fios_pread_pool_uncertain = 1; ok = 0; }
++    // One shared observation budget; pending/error tickets and the exact pool
++    // remain rooted. Physical late joins never unseal or refund uncertainty.
++    for (uint32_t i=0;i<count;++i) {
++        if (g_fios_pread_pool_joins[i]) {g_fios_pread_pool_uncertain=1;return 0;}
++        uint64_t now;
++        if (!fios_native_join_clock(&now) || now<began || now-began>=1000000000ULL) {
++            g_fios_pread_pool_uncertain=1;return 0;
++        }
++        fios_native_join_ticket *ticket=fios_native_join_start(g_stream_expert_pread_pool_threads[i]);
++        g_fios_pread_pool_joins[i]=ticket;
++        int joined=-1;
++        if (!ticket || !fios_native_join_wait_since(ticket,began,1000,&joined)) {
++            g_fios_pread_pool_uncertain=1;return 0;
++        }
++        if (joined!=0) {g_fios_pread_pool_uncertain=1;continue;} // Retain this ticket; other original targets still have the same budget.
++        g_fios_pread_pool_joined |= 1u<<i;
++        g_fios_pread_pool_joins[i]=NULL;
++        fios_native_join_release(ticket);
++    }
++    if (!fios_native_join_lock(&g_stream_expert_pread_pool_mutex,1000)) {
++        g_fios_pread_pool_uncertain=1;return 0;
++    }
++    if (g_fios_pread_pool_uncertain || g_fios_pread_pool_joined!=((1u<<count)-1u)) {
++        g_fios_pread_pool_uncertain=1;
 +        pthread_mutex_unlock(&g_stream_expert_pread_pool_mutex);
++        return 0;
 +    }
-+    pthread_mutex_lock(&g_stream_expert_pread_pool_mutex);
-+    // Preserve the original vector/count and sticky uncertainty on refusal.
-+    if (ok) {
-+        g_stream_expert_pread_pool_thread_count = 0;
-+        g_stream_expert_pread_pool_initialized = 0;
++    g_stream_expert_pread_pool_thread_count=0;
++    g_stream_expert_pread_pool_initialized=0;
++    if (pthread_mutex_unlock(&g_stream_expert_pread_pool_mutex)!=0) {
++        g_fios_pread_pool_uncertain=1;return 0;
 +    }
-+    pthread_mutex_unlock(&g_stream_expert_pread_pool_mutex);
-+    return ok;
++    return 1;
 +}
 +
 +// Only the lifecycle-owner cleanup path uses this gate. It does not certify
@@ -1989,7 +2128,7 @@ index 0d75369..d6da596 100644
      if (!g_stream_expert_pread_pool_initialized) return;
  
      pthread_mutex_lock(&g_stream_expert_pread_pool_mutex);
-@@ -13626,6 +13914,12 @@ static int ds4_gpu_stream_expert_pread_tasks(
+@@ -13626,6 +14043,12 @@ static int ds4_gpu_stream_expert_pread_tasks(
      if (total_bytes) *total_bytes = 0;
      if (wall_ms) *wall_ms = 0.0;
      if (!tasks || n_tasks == 0) return 1;
@@ -2002,7 +2141,7 @@ index 0d75369..d6da596 100644
  
      const uint32_t n_workers =
          ds4_gpu_stream_expert_pread_thread_count(n_tasks);
-@@ -13642,30 +13936,21 @@ static int ds4_gpu_stream_expert_pread_tasks(
+@@ -13642,30 +14065,21 @@ static int ds4_gpu_stream_expert_pread_tasks(
      } else if (!ds4_gpu_stream_expert_pread_pool_dispatch(tasks,
                                                            n_tasks,
                                                            n_workers)) {

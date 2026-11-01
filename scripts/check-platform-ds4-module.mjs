@@ -7,6 +7,7 @@ import {readFileSync,writeFileSync,lstatSync,realpathSync,mkdtempSync,mkdirSync}
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..'),args=process.argv.slice(2);
+const functionalOnly=args.at(-1)==='--functional-only';if(functionalOnly)args.pop();
 assert(process.platform==='darwin'&&process.getuid()>0&&args.length===7&&args[0]==='--isolated'&&args[1]==='--build'&&args[3]==='--sha256'&&args[5]==='--developer-dir');
 const document=realpathSync(args[2]),developer=realpathSync(args[6]);assert.equal(document,args[2]);assert.equal(developer,'/Applications/Xcode.app/Contents/Developer');
 const parent=path.dirname(document),parentInfo=lstatSync(parent),fileInfo=lstatSync(document);
@@ -37,9 +38,10 @@ try{
  assert.equal(run('/usr/bin/xcrun',['--sdk','macosx','--show-sdk-version']).trim(),'27.2');
  const compiler=realpathSync(run('/usr/bin/xcrun',['--sdk','macosx','--find','clang']).trim()),sdk=realpathSync(run('/usr/bin/xcrun',['--sdk','macosx','--show-sdk-path']).trim());
  assert.equal(sha(readFileSync(compiler)),receipt.compiler_sha256);run('/usr/bin/codesign',['--verify','--strict','--test-requirement','=anchor apple',compiler]);
+ const metadataFixtureFile=path.join(root,'platform/studio/Tests/NativeFixtures/DS4MetalMetadata.c.fixture'),metadataFixture=readFileSync(metadataFixtureFile,'utf8');
  const fixtureFile=path.join(root,'platform/studio/Tests/NativeFixtures/DS4FullModule.m.fixture'),fixture=readFileSync(fixtureFile,'utf8');
  const unit=path.join(directory,'fixture.m'),binary=path.join(directory,'fixture');
- writeFileSync(unit,'#include '+JSON.stringify(path.join(source,'ds4_metal.m'))+'\n'+fixture);
+ writeFileSync(unit,'#include '+JSON.stringify(path.join(source,'ds4_metal.m'))+'\n'+metadataFixture+'\n'+fixture);
  const objects=['ds4.o','ds4_image.o','ds4_distributed.o','ds4_tp.o','ds4_ssd.o','ds4_layer_pack.o','ds4_engram.o','ds4_gpu_args.o','ds4_help.o'];
  for(const name of objects)assert(receipt.objects[name]);
  run(compiler,['-isysroot',sdk,'-std=gnu11','-fobjc-arc','-O3','-ffast-math','-g','-mcpu=native','-UNDEBUG',unit,...objects.map(name=>path.join(source,name)),'-lm','-pthread','-framework','Foundation','-framework','Metal','-o',binary]);
@@ -48,18 +50,19 @@ try{
  writeFileSync(path.join(directory,'stdout.log'),result.stdout??'',{mode:0o600});writeFileSync(path.join(directory,'stderr.log'),result.stderr??'',{mode:0o600});
  assert(!result.error&&!result.signal,'Full-module fixture deadline/crash is not acceptance');assert.equal(result.status,0,result.stderr);
  assert(result.stdout.includes('PASS: complete genuine DS4 module/full original shader initializer'));
- verify();assert.equal(readFileSync(fixtureFile,'utf8'),fixture);assert.equal(sha(readFileSync(document)),args[4]);
+ verify();assert.equal(readFileSync(metadataFixtureFile,'utf8'),metadataFixture);assert.equal(readFileSync(fixtureFile,'utf8'),fixture);assert.equal(sha(readFileSync(document)),args[4]);
  assert.equal(git('diff','--no-ext-diff','HEAD','--','ds4.c','ds4.h','ds4_gpu.h','ds4_gpu_tp.h','ds4_metal.m','ds4_tp.c'),patch);
+ if(!functionalOnly){
  // A second executable injects a wait failure only AFTER actual completion.
  // It exercises genuine pending-list/accounting code, not a fake SDK object.
  const pendingFile=path.join(root,'platform/studio/Tests/NativeFixtures/DS4Pending.m.fixture'),pending=readFileSync(pendingFile,'utf8');
  const original=readFileSync(path.join(source,'ds4_metal.m'),'utf8');
  const edge='if (cb.status != MTLCommandBufferStatusCompleted) {\n        fprintf(stderr, "ds4: Metal %s failed: %s\\n",';
  assert.equal(original.split(edge).length,2);
- assert.equal(original.split('if (pthread_join(g_queue_keepalive_thread, NULL) != 0) {').length,2);
+ assert.equal(original.split('ticket->result=pthread_join(ticket->target,NULL);').length,2);
  const faultUnit=path.join(directory,'pending.m'),faultBinary=path.join(directory,'pending');
  const faultHeaderFile=path.join(root,'platform/studio/Tests/NativeFixtures/DS4Faults.h.fixture'),faultHeader=readFileSync(faultHeaderFile,'utf8');
- let faultSource=original.replace(edge,edge.replace('cb.status != MTLCommandBufferStatusCompleted','cb.status != MTLCommandBufferStatusCompleted || fios_private_wait_failure')).replace('if (pthread_join(g_queue_keepalive_thread, NULL) != 0) {','if (pthread_join(g_queue_keepalive_thread, NULL) != 0 || fios_private_join_failure) {').replace('const int rc = pthread_join(g_stream_expert_pread_pool_threads[i], NULL);','const int actual_rc = pthread_join(g_stream_expert_pread_pool_threads[i], NULL); const int rc = actual_rc == 0 && fios_private_pread_join_failure ? EIO : actual_rc;').replace('const int rc = pthread_create(&threads[i],','const int rc = fios_private_counted_create(&threads[i],').replace('pthread_join(g_tp_thread, NULL)','fios_private_tp_join(g_tp_thread, NULL)');
+ let faultSource=original.replace(edge,edge.replace('cb.status != MTLCommandBufferStatusCompleted','cb.status != MTLCommandBufferStatusCompleted || fios_private_wait_failure')).replace('ticket->result=pthread_join(ticket->target,NULL);','ticket->result=fios_private_tp_join(ticket->target,NULL); if (ticket->result==0 && (fios_private_join_failure || fios_private_pread_join_failure)) ticket->result=EIO;').replace('const int rc = pthread_create(&threads[i],','const int rc = fios_private_counted_create(&threads[i],');
  const tpStart=faultSource.indexOf('static void *ds4_gpu_tp_keepalive_thread('),tpEnd=faultSource.indexOf('static void *ds4_gpu_tp_service_thread(',tpStart);
  assert(tpStart>0&&tpEnd>tpStart);
  let tp=faultSource.slice(tpStart,tpEnd);assert.equal(tp.split('[cb waitUntilCompleted];').length,2);
@@ -128,6 +131,10 @@ try{
  assert(counter.stdout.includes('PASS: exhausted actual cache sequence refuses without initialization'));
  }
  verify();assert.equal(readFileSync(faultHeaderFile,'utf8'),faultHeader);assert.equal(readFileSync(sequenceFile,'utf8'),sequence);assert.equal(readFileSync(pendingFile,'utf8'),pending);assert.equal(readFileSync(fixtureFile,'utf8'),fixture);assert.equal(sha(readFileSync(document)),args[4]);assert.equal(git('diff','--no-ext-diff','HEAD','--','ds4.c','ds4.h','ds4_gpu.h','ds4_gpu_tp.h','ds4_metal.m','ds4_tp.c'),patch);
- const outcome={scope:'full_ds4_initializer_reviewed_local_participants_only',build_receipt_sha256:args[4],fixture_sha256:sha(fixture),binary_sha256:sha(readFileSync(binary)),original_full_shader_library:true,sequence_fixture_sha256:sha(sequence),sequence_binary_sha256:sha(readFileSync(sequenceBinary)),fault_shim_sha256:sha(faultHeader),pending_fixture_sha256:sha(pending),pending_binary_sha256:sha(readFileSync(faultBinary)),injected_wait_failure_after_real_completion:true,batch_cleanup_failure_retained:true,keepalive_cleanup_failure_retained:true,foreign_cleanup_failure_retained:true,local_tp_service:true,tiny_tp_gpu_producer:true,local_callback:true,distributed_exchange:false,model_opened:false,native_inference:false,installed:false,native_authority:false,all_backend_terminality:false,directory};
+ const outcome={scope:'full_ds4_initializer_reviewed_local_participants_only',build_receipt_sha256:args[4],fixture_sha256:sha(fixture),metadata_fixture_sha256:sha(metadataFixture),binary_sha256:sha(readFileSync(binary)),original_full_shader_library:true,sequence_fixture_sha256:sha(sequence),sequence_binary_sha256:sha(readFileSync(sequenceBinary)),fault_shim_sha256:sha(faultHeader),pending_fixture_sha256:sha(pending),pending_binary_sha256:sha(readFileSync(faultBinary)),injected_wait_failure_after_real_completion:true,batch_cleanup_failure_retained:true,keepalive_cleanup_failure_retained:true,foreign_cleanup_failure_retained:true,local_tp_service:true,tiny_tp_gpu_producer:true,local_callback:true,distributed_exchange:false,model_opened:false,native_inference:false,installed:false,native_authority:false,all_backend_terminality:false,directory};
  writeFileSync(path.join(directory,'result.json'),JSON.stringify(outcome)+'\n',{mode:0o400});console.log(JSON.stringify(outcome));
+ }else{
+  const outcome={scope:'ordinary_full_ds4_initializer_and_local_participants',functional_only:true,ordinary_local_tp_lifecycles:2,distributed_exchange:false,build_receipt_sha256:args[4],fixture_sha256:sha(fixture),metadata_fixture_sha256:sha(metadataFixture),binary_sha256:sha(readFileSync(binary)),original_full_shader_library:true,source_rewritten:false,fault_injection:false,counter_tests:false,model_opened:false,native_inference:false,installed:false,native_authority:false,all_backend_terminality:false,directory};
+  writeFileSync(path.join(directory,'result.json'),JSON.stringify(outcome)+'\n',{mode:0o400});console.log(JSON.stringify(outcome));
+ }
 }catch(error){console.error('Full-module fixture state retained:',directory);throw error;}

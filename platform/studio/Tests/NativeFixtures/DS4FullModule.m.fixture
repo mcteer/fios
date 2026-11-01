@@ -22,6 +22,23 @@ int main(void){@autoreleasepool{
     FIOS_REQUIRE(!atomic_load(&g_queue_keepalive_running)&&!atomic_load(&g_fios_keepalive_uncertain)&&
         atomic_load(&g_fios_keepalive_sealed)&&!g_fios_keepalive_pending&&!g_fios_keepalive_pipeline&&!g_fios_keepalive_scratch,
         "GENUINE_PRODUCER_RESOURCES_NOT_RETIRED");
+    // One normal idle local service lifecycle, then the same service with
+    // its finite1KiB/one-iteration producer. No exchange/slab/model is supplied.
+    for (unsigned producer=0;producer<2;++producer) {
+        if (producer==0) setenv("DS4_TP_NO_KEEPALIVE","1",1);
+        else {unsetenv("DS4_TP_NO_KEEPALIVE");setenv("DS4_TP_KEEPALIVE_TGS","1",1);setenv("DS4_TP_KEEPALIVE_ITERS","1",1);}
+        unsigned identity=producer+1;
+        FIOS_REQUIRE(ds4_gpu_tp_init(0,NULL,0,0,0,NULL,&identity),"ORDINARY_TP_SERVICE_DID_NOT_START");
+        FIOS_REQUIRE(g_tp_thread_running && g_tp_exchange_ud==&identity && !g_tp_queue_count,"ORDINARY_TP_SERVICE_CUSTODY_MISSING");
+        FIOS_REQUIRE(producer==0 ? !g_tp_keepalive_running : g_tp_keepalive_running && g_tp_keepalive_queue && g_tp_keepalive_buffer,"ORDINARY_TP_PRODUCER_CUSTODY_MISSING");
+        if (metadata_case(&g_tp_mutex,ds4_gpu_tp_shutdown_checked,0,"TP retirement waited for metadata publication")) return 77;
+        FIOS_REQUIRE(g_tp_thread_running && !g_tp_shutdown && !g_fios_tp_uncertain && !g_fios_pending_uncertain,"TP publication contention changed service custody");
+        FIOS_REQUIRE(ds4_gpu_tp_shutdown_checked(),"ORDINARY_TP_SERVICE_DID_NOT_RETIRE");
+        FIOS_REQUIRE(!g_tp_thread_running && !g_tp_keepalive_running && !g_tp_exchange_ud && !g_fios_tp_owner && !g_fios_tp_uncertain && !g_fios_pending_uncertain,"ORDINARY_TP_RETIREMENT_LOST_CUSTODY");
+        FIOS_REQUIRE(!g_fios_tp_keepalive_pending && !g_fios_tp_keepalive_pipeline && !g_fios_tp_gpu_uncertain,"ORDINARY_TP_RETIRED_WITH_GPU_CUSTODY");
+        FIOS_REQUIRE(ds4_gpu_tp_shutdown_checked(),"ORDINARY_TP_IDLE_REPEAT_REFUSED");
+    }
+    puts("PASS: actual idle TP service and finite tiny producer start and join normally, without model/exchange/distributed work");
     FIOS_REQUIRE(g_model_fd<0,"UNEXPECTED_MODEL_FILE");
     // No raw whole-device cleanup is credited as completion. Initializer and
     // checked known producer are the only tested operations; parent/device,

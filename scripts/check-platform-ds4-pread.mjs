@@ -30,7 +30,9 @@ assert.equal(pool.split(checkpoint).length,2);
 // Explicit private scheduling checkpoint; original pread/worker ABI is intact.
 pool=pool.replace(checkpoint,'            fixture_checkpoint();\n'+checkpoint);
 pool=pool.replaceAll('pthread_create(', 'fixture_pthread_create(').replaceAll('pthread_join(', 'fixture_pthread_join(');
-const fragment=[type[0],...['ds4_gpu_now_ms','ds4_gpu_mib','ds4_gpu_gib','ds4_gpu_stream_expert_pread_thread_limit','ds4_gpu_stream_expert_pread_into'].map(fn),pool].join('\n');
+const helperBegin=original.indexOf('// Detached joiner custody:'),helperEnd=original.indexOf('/*\n * Objective-C Metal glue',helperBegin);
+const joinHelper=composed ? (assert(helperBegin>0&&helperEnd>helperBegin),original.slice(helperBegin,helperEnd).replace('pthread_join(ticket->target,NULL)','fixture_pthread_join(ticket->target,NULL)')):'';
+const fragment=[joinHelper,type[0],...['ds4_gpu_now_ms','ds4_gpu_mib','ds4_gpu_gib','ds4_gpu_stream_expert_pread_thread_limit','ds4_gpu_stream_expert_pread_into'].map(fn),pool].join('\n');
 assert.equal(fixture.split('// FIOS_GENUINE_PREAD_SOURCE').length,2);
 const unit=fixture.replace('// FIOS_GENUINE_PREAD_SOURCE',fragment);
 const temporary=mkdtempSync('/private/tmp/fios-ds4-pread-check-'),file=path.join(temporary,'fixture.c'),binary=path.join(temporary,'fixture');

@@ -28,7 +28,15 @@ Ordinary TP/pread metadata publication can be checked separately against that sa
 node scripts/check-platform-ds4-metadata-lifecycle.mjs --isolated --build /ABS/FRESH_DS4_BUILD/candidate.json --sha256 EXACT_BUILD_RECEIPT_SHA --developer-dir /Applications/Xcode.app/Contents/Developer
 ```
 
-This appends only a private fixture to the complete unmodified Objective-C module and links the genuine reviewed C objects. It publishes real mutex metadata for250ms, requires conservative preflight refusal within100ms, and checks that the original two idle pread pthreads remain usable for normal retirement afterward. No GPU initialization, model, forged native handle or injected failure is involved. It does not bound the actual pread joins or establish device/all-client terminality.
+This appends only a private fixture to the complete unmodified Objective-C module and links the genuine reviewed C objects. It publishes real mutex metadata for250ms, requires conservative preflight refusal within100ms, and checks that the original two idle pread pthreads remain usable for normal retirement afterward. No GPU initialization, model, forged native handle or injected failure is involved. The checked ordinary pread retirement shares one1000ms join-observation budget and a separate1000ms final metadata acquisition; partial-start/raw legacy paths and device/all-client terminality remain separate.
+
+The original full Metal initializer, genuine command buffer, queue producer and ordinary idle local TP service/tiny producer can run without historical injected-failure/counter campaigns:
+
+```sh
+node scripts/check-platform-ds4-module.mjs --isolated --build /ABS/FRESH_DS4_BUILD/candidate.json --sha256 EXACT_BUILD_RECEIPT_SHA --developer-dir /Applications/Xcode.app/Contents/Developer --functional-only
+```
+
+This runs real model-free Metal work in its own finite process. The idle TP service and optional producer share a1000ms caller join-observation budget; the queue producer has its own1000ms budget. Their pending tickets and uncertainty remain retained after refusal. Metadata publication must refuse without stopping either tested TP lifecycle. The TP scenario supplies no slab, exchange callback, network or model and bounds the optional producer declaration to one1KiB threadgroup/one ALU iteration. It proves only the tested normal local participant lifecycles; device-wide/all-client/native authority remain unproven.
 
 Ordinary service recovery status can be checked with real private manager/session/CLI processes and a counter-only application callback:
 
