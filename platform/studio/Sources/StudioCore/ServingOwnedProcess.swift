@@ -79,6 +79,8 @@ final class ServingOwnedProcess:@unchecked Sendable {
         }
         uncertain=true;return false
     }
+    // Read-only local waitpid result, not a native/device terminal proof.
+    var knownExit:Bool {lock.lock();defer {lock.unlock()};return exited}
     var isRunning:Bool {lock.lock();defer {lock.unlock()};return !reapLocked()}
     func terminate(expected:ServiceIdentity,deadline:TimeInterval)throws {
         lock.lock();defer {lock.unlock()}

@@ -47,6 +47,9 @@ private final class FixtureServingHealth:@unchecked Sendable {
 // Same-file extension reaches only the private fixture initializer/child. No
 // installed factory or native app is invoked; the actual helper has no models.
 extension MLXServingProcessRuntime {
+    fileprivate var fixtureKnownChildExit:Bool {
+        lock.lock();let child=process;lock.unlock();return child?.knownExit ?? false
+    }
     fileprivate var fixtureRetainsChild:Bool {lock.lock();defer {lock.unlock()};return process != nil}
     fileprivate func fixtureStopIntent(_ receipt:ServiceRecordedLaunch,desired:ServiceDesired = .stopped)throws->ServingStopIntent {
         lock.lock();defer {lock.unlock()}
@@ -407,7 +410,17 @@ extension MLXServingProcessRuntime {
         do {try held.begin(heldBlocked,deadline:ProcessInfo.processInfo.systemUptime+5);throw JournalError.conflict}catch RuntimeError.capacity {}
         do {try held.beginStop(id:UUID().uuidString.lowercased(),matching:heldReceipt,deadline:ProcessInfo.processInfo.systemUptime+5);throw JournalError.conflict}catch RuntimeError.capacity {}
         guard !held.retireKnownExited(),try heldJournal.uncertainCount()==1 else {throw RuntimeError.invalid}
-        try held.waitForFixtureExpiry() // The private helper's own five-second alarm, no force kill.
+        // No manager binding, launch, status probe or fixture reap call: the
+        // custody monitor alone must reap its self-expiring owned child.
+        let monitor=try ServingCustodyServer(directory:heldJournal.directory,runtime:held,manager:fixtureImage,imageSHA256:executable.sha256)
+        let monitorEnd=ProcessInfo.processInfo.systemUptime+6
+        while !held.fixtureKnownChildExit,ProcessInfo.processInfo.systemUptime<monitorEnd {
+            try monitor.poll();Thread.sleep(forTimeInterval:0.005)
+        }
+        guard held.fixtureKnownChildExit else {
+            FileHandle.standardError.write(Data("CUSTODY_MONITOR_DID_NOT_REAP\n".utf8));throw RuntimeError.invalid
+        }
+        print("PASS: custody monitor reaps its original child after timeout without a manager, restart, capacity release or native uncertainty clearing")
         heldRecovery=try ServiceRecoveryController(journal:heldJournal,approvedHashes:pins,recoveryProfileHash:held.recoveryProfileHash)
         try heldJournal.setDesired(service:"mlx",desired:"running")
         guard heldProbe.capture(heldReceipt).state == .exited,held.lookupStop(id:timedStop.id) == .uncertain,

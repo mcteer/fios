@@ -51,7 +51,8 @@ public enum SupervisorRuntime {
         let termination=Termination()
         while !termination.requested {
             try autoreleasepool {
-            if !custodyFailed {
+            if custodyFailed {custody?.observeOwnedExit()}
+            else {
                 do {try custody?.poll()}
                 catch {
                     custodyFailed=true;try? custody?.bindSupervisedManager(nil)

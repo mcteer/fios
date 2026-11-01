@@ -265,7 +265,11 @@ final class MLXServingProcessRuntime:ServingProcessControlling,@unchecked Sendab
     // claims and its next start reservation remain independent and unchanged.
     @discardableResult func retireKnownExited()->Bool {
         lock.lock();defer {lock.unlock()}
-        guard !busy,phase == .running,let process,let identity,!process.isRunning else {return false}
+        guard !busy,(phase == .running || phase == .uncertain),let process else {return false}
+        let locallyExited = !process.isRunning // WNOHANG for this original child only.
+        // Reap local resources even after an uncertain operation, but keep its
+        // phase, capacity, original records and independent native uncertainty.
+        guard phase == .running,let identity,locallyExited else {return false}
         let absent:Bool
         if let current=try? WorkerResources.startIdentifier(pid:identity.pid) {absent=current != identity.start}
         else {errno=0;absent=kill(identity.pid,0)<0 && errno==ESRCH}

@@ -60,9 +60,11 @@ final class ServingCustodyServer:@unchecked Sendable {
             worker.lock();completion=Completion(id:id,reply:reply);busy=false;worker.unlock()
         }
     }
+    func observeOwnedExit() {gate.observeOwnedExit()}
     // Nonblocking framing/flush only. One retained off-loop identity/action
     // exchange; at most16 finite clients and no unbounded work queue.
     func poll()throws {
+        observeOwnedExit()
         guard let listener else {throw ControlError.internal_error}
         if let completed=takeCompletion(),let connection=clients.first(where:{$0.id==completed.id}) {
             if let reply=completed.reply {

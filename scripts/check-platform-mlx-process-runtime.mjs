@@ -36,6 +36,7 @@ for(const mode of ['debug','release']){
  assert(output.includes('PASS: changed native launch configuration refuses old pending history unchanged'));
  assert(output.includes('PASS: native stop result/cancellation bind original launch receipt'));
  assert(output.includes('PASS: private serving child survives actual client death'));
+ assert(output.includes('PASS: custody monitor reaps its original child after timeout without a manager'));
  const managerState=mkdtempSync('/private/tmp/f9-mlx-manager-');
  const policy='(version 1)(allow default)(deny network*)(allow network* (local unix-socket) (remote unix-socket))';
  const managerLog=openSync(join(managerState,'manager.log'),'wx',0o600);

@@ -37,6 +37,9 @@ final class ServingCustodyGate:@unchecked Sendable {
             else {_=runtime.cancelValidation(id:id)}
         }
     }
+    // Pure owned-child WNOHANG/kernel observation, without hashing, IPC or a
+    // current manager binding. The runtime skips all active validator workers.
+    func observeOwnedExit() {_=runtime.retireKnownExited()}
     private func matches(_ peer:NativeControlPeer)->Bool {
         guard let current=boundManager else {return false}
         return current.pid==peer.pid && current.start==peer.start && peer.executable.path==manager.path && peer.executable.sha256==manager.sha256

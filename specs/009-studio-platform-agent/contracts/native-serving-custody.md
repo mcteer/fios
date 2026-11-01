@@ -114,3 +114,10 @@ locks and does not copy `serving-custody.json`, which is volatile peer metadata,
 not a portable capability. These fences do not prove native inference/device
 terminality, adopt an orphan, authorize installed updates or clear uncertainty.
 Retain independent native reconciliation and reviewed installation/rollback gates.
+
+
+The supervisor loop observes its original owned child's local exit independently
+of manager connections, including after custody IPC degradation. A nonblocking
+specific-child reap releases kernel resources only. An uncertain operation keeps
+its phase, capacity, immutable result and durable pending record; neither a reap
+nor a service acknowledgement clears independent native inference uncertainty.
