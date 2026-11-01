@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import {spawn,spawnSync} from 'node:child_process';
 import {setTimeout as delay} from 'node:timers/promises';
-import {mkdtempSync,readFileSync,writeFileSync,readdirSync,openSync,closeSync,unlinkSync} from 'node:fs';
+import {mkdtempSync,readFileSync,writeFileSync,readdirSync,copyFileSync,mkdirSync,openSync,closeSync,unlinkSync} from 'node:fs';
 import {resolve,join} from 'node:path';
 import {createHash} from 'node:crypto';
 assert.deepEqual(process.argv.slice(2),['--isolated']);assert.equal(process.platform,'darwin');assert(process.getuid()>0);
@@ -16,7 +16,7 @@ function run(program,args,timeout=120000){const r=spawnSync(program,args,{encodi
 run('/usr/bin/clang',[c,'-O2','-o',helper],30000);
 const core=join(root,'platform/studio/Sources/StudioCore'),name='MLXServingProcessRuntime.swift';
 const implementation=readFileSync(join(core,name)),fixture=readFileSync(join(root,'platform/studio/Tests/NativeFixtures/MLXServingProcessRuntime.swift.fixture'));
-const integrationNames=['ServingCustodyServer.swift','ServingCustodyClient.swift','PrivateWriterLock.swift','PendingControl.swift','ControlIPC.swift','ServingCustodyGate.swift','ServingProcessControlling.swift','ServingCustodyCodec.swift','NativeServingReviewedConfiguration.swift','NativeServingLaunchDocument.swift','NativeServingLaunchInputs.swift','SessionControl.swift','NativeServingRecoveryTransport.swift','AsyncSessionControl.swift','AsyncServingStop.swift','ServingLifecyclePorts.swift','Manager.swift','ServiceRecovery.swift','RecordedServiceProcessProbe.swift','ServingOwnedProcess.swift'];
+const integrationNames=['Supervisor.swift','SupervisorRestartBudget.swift','Watchdog.swift','Termination.swift','ServingCustodyServer.swift','ServingCustodyClient.swift','PrivateWriterLock.swift','PendingControl.swift','ControlIPC.swift','ServingCustodyGate.swift','ServingProcessControlling.swift','ServingCustodyCodec.swift','NativeServingReviewedConfiguration.swift','NativeServingLaunchDocument.swift','NativeServingLaunchInputs.swift','SessionControl.swift','NativeServingRecoveryTransport.swift','AsyncSessionControl.swift','AsyncServingStop.swift','ServingLifecyclePorts.swift','Manager.swift','ServiceRecovery.swift','RecordedServiceProcessProbe.swift','ServingOwnedProcess.swift'];
 const integration=Object.fromEntries(integrationNames.map(n=>[n,readFileSync(join(core,n))]));
 const unit=join(directory,'RuntimeFixture.swift');writeFileSync(unit,Buffer.concat([implementation,Buffer.from('\n'),fixture]));
 for(const mode of ['debug','release']){
@@ -91,8 +91,32 @@ for(const mode of ['debug','release']){
  }catch(error){console.error('RETAINED unexpected private child fixture:',unexpectedState);throw error;}finally {
   if(!unexpectedExited()){unexpected.kill('SIGTERM');try{await until(unexpectedExited,3000);}catch{unexpected.kill('SIGKILL');await until(unexpectedExited,3000);}}
  }
+ const custodyState=mkdtempSync('/private/tmp/f9-mlx-supervisor-'),managerDirectory=join(directory,mode+'-custody-manager');
+ mkdirSync(managerDirectory,{mode:0o700});const managerImage=join(managerDirectory,'studio-manager');copyFileSync(binary,managerImage);
+ const custodyLog=openSync(join(custodyState,'fixture-supervisor.log'),'wx',0o600);
+ const custodian=spawn('/usr/bin/sandbox-exec',['-p',policy,binary,'custody-supervisor',helper,hash(readFileSync(helper)),custodyState,hash(readFileSync(binary)),managerImage],{stdio:['ignore',custodyLog,custodyLog]});closeSync(custodyLog);
+ const custodyExited=()=>custodian.exitCode!==null||custodian.signalCode!==null;
+ function custodyStatus(){const r=spawnSync(binary,['observe',custodyState],{encoding:'utf8',timeout:2500});const s=r.status===0?JSON.parse(r.stdout):null;if(s)writeFileSync(join(custodyState,'last-status.json'),JSON.stringify(s)+'\n',{mode:0o600});return s;}
+ function custodyJSON(name){try{return JSON.parse(readFileSync(join(custodyState,name),'utf8'));}catch{return null;}}
+ try {
+  const first=await until(()=>{assert(!custodyExited());const s=custodyStatus(),mlx=s?.services?.mlx;return mlx?.observed==='ready'&&!mlx.launch_pending?s:null;},9000);
+  assert.equal(first.unresolved_requests,1);assert.equal(first.services.mlx.recovery.starts_in_window,1);
+  const original=custodyJSON('fixture-native-health.json'),before=custodyJSON('progress.json');assert.equal(original.state,'present');assert(original.pid>1);assert(original.launch_id);
+  writeFileSync(join(custodyState,'fixture-exit-request'),'exit exactly one private manager',{mode:0o600,flag:'wx'});
+  const second=await until(()=>{assert(!custodyExited());const progress=custodyJSON('progress.json'),supervisor=custodyJSON('supervisor.json');if(progress?.pid===before.pid||supervisor?.starts!==2)return null;const s=custodyStatus();return s?.services?.mlx?.observed==='ready'&&!s.services.mlx.launch_pending?s:null;},9000);
+  const retained=custodyJSON('fixture-native-health.json');assert.equal(retained.pid,original.pid);assert.equal(retained.process_start,original.process_start);assert.equal(retained.launch_id,original.launch_id);
+  assert.equal(second.unresolved_requests,1);assert.equal(second.services.mlx.recovery.starts_in_window,1);assert.equal(custodyJSON('supervisor.json').state,'running');
+  const requested=JSON.parse(run(binary,['control',custodyState,'stopped'],2500));assert.equal(requested.applied,false);
+  const stopped=await until(()=>{assert(!custodyExited());const s=custodyStatus(),mlx=s?.services?.mlx;return mlx?.observed==='stopped'&&!mlx.stop_pending?s:null;},9000);
+  assert.equal(stopped.unresolved_requests,1);assert.equal(stopped.services.mlx.desired,'stopped');
+  custodian.kill('SIGTERM');await until(custodyExited,5000);assert.equal(custodian.exitCode,0);
+  assert.deepEqual(custodyJSON('custody-supervisor-receipt.json'),{start_validations:1,stop_validations:1,uncertain:1,native_authority:false});
+  writeFileSync(join(directory,mode+'-custody-supervisor.json'),JSON.stringify({first,second,stopped,original,state:custodyState,identity:'actual_private_helper',readiness:'synthetic',native_authority:false})+'\n',{mode:0o600});
+ }catch(error){console.error('RETAINED actual supervisor custody fixture:',custodyState);throw error;}finally{
+  if(!custodyExited()){custodian.kill('SIGTERM');try{await until(custodyExited,4000);}catch{custodian.kill('SIGKILL');await until(custodyExited,3000);}}
+ }
 }
 assert(implementation.equals(readFileSync(join(core,name))));
 for(const [n,bytes] of Object.entries(integration))assert(bytes.equals(readFileSync(join(core,n))));
-const receipt={ok:true,directory,provenance_scope:'declared_runtime_integration_and_fixture_only',modes:['debug','release'],source_sha256:hash(implementation),integration_sha256:Object.fromEntries(Object.entries(integration).map(([n,b])=>[n,hash(b)])),fixture_sha256:hash(fixture),helper_source_sha256:hash(helperSource),actual_private_child_starts:28,actual_owned_serving_child_starts:26,actual_unrelated_private_children:2,explicit_working_directory_checks:2,actual_guarded_private_stops:10,guarded_private_stop_timeouts:2,self_expiring_private_helpers:4,pre_signal_revocations:2,denied_stop_validations:2,fresh_start_validations_per_queue_scenario:5,unexpected_exit_recoveries:4,durable_stop_reservation:true,restored_stop_dispatch:false,missing_stop_history:'unknown',distinct_native_session_profiles:true,actual_counter_only_orbstack_session_calls:2,mlx_gui_calls:0,actual_manager_processes:4,actual_private_custody_client_processes:4,actual_private_custody_client_terminations:2,private_custody_reconnect_scenarios:2,actual_supervisor_custody_processes:0,actual_manager_stop_resume_cycles:2,actual_manager_unavailable_recoveries:2,actual_manager_unexpected_exit_recoveries:2,loading_without_restart_checks:2,manager_readiness:'synthetic',native_mlx_actions:0,native_inference:false,native_authority:false,installed:false};
+const receipt={ok:true,directory,provenance_scope:'declared_runtime_integration_and_fixture_only',modes:['debug','release'],source_sha256:hash(implementation),integration_sha256:Object.fromEntries(Object.entries(integration).map(([n,b])=>[n,hash(b)])),fixture_sha256:hash(fixture),helper_source_sha256:hash(helperSource),actual_private_child_starts:30,actual_owned_serving_child_starts:28,actual_unrelated_private_children:2,explicit_working_directory_checks:2,actual_guarded_private_stops:12,guarded_private_stop_timeouts:2,self_expiring_private_helpers:4,pre_signal_revocations:2,denied_stop_validations:2,fresh_start_validations_per_queue_scenario:5,unexpected_exit_recoveries:4,durable_stop_reservation:true,restored_stop_dispatch:false,missing_stop_history:'unknown',distinct_native_session_profiles:true,actual_counter_only_orbstack_session_calls:2,mlx_gui_calls:0,actual_manager_processes:8,actual_private_custody_client_processes:4,actual_private_custody_client_terminations:2,private_custody_reconnect_scenarios:2,actual_supervisor_custody_processes:2,actual_supervisor_manager_replacements:2,actual_manager_stop_resume_cycles:2,actual_manager_unavailable_recoveries:2,actual_manager_unexpected_exit_recoveries:2,loading_without_restart_checks:2,manager_readiness:'synthetic',native_mlx_actions:0,native_inference:false,native_authority:false,installed:false};
 writeFileSync(join(directory,'receipt.json'),JSON.stringify(receipt)+'\n',{mode:0o600});console.log(JSON.stringify(receipt));

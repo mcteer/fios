@@ -8,8 +8,8 @@ service intent, native reservation policy and journal ownership. Installation
 and public startup wiring remain gated and incomplete.
 
 The current source includes the fixed command/reply codec, custody gate,
-local/remote runtime interface and private Unix server/client. Supervisor
-composition and installed custody acceptance are still being implemented. No installed custody socket, native
+local/remote runtime interface and private Unix server/client. Internal supervisor composition is implemented through a code-only factory;
+public startup and installed custody acceptance remain gated and incomplete. No installed custody socket, native
 process action or supervisor activation follows from these source types.
 
 ## Fixed control data
@@ -81,3 +81,18 @@ private C child; the replacement restores the durable launch receipt, looks it
 up and stops that same child, while the independent uncertain journal count
 remains1. It does not execute the actual supervisor loop, installed manager
 profile or native MLX server. Those acceptance claims remain separate.
+
+The actual supervisor loop now accepts an internal code-only custody factory
+after acquiring its existing singleton. It binds only its tracked manager child,
+revokes validation before manager termination and preserves native custody across
+manager replacement. A custody IPC failure leaves a sticky degraded state while
+retaining the runtime/writer lock; a binding failure retains the already running
+manager reference for watchdog control. Public startup passes no factory.
+
+Debug/optimized finite fixtures run that actual supervisor loop and two actual
+manager lifetimes around one original C serving child. The replacement restores
+the journal, verifies the original launch over Unix RPC and stops the same child.
+Both API readiness and native permits remain private-helper fixtures, and the
+independent uncertain journal count remains1 after managers stop. This is source
+composition evidence, not installed images, production profile/credential/native
+lease issuance, whole-supervisor orphan recovery or Studio acceptance.

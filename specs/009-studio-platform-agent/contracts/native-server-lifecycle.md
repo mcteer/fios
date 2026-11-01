@@ -8,8 +8,8 @@ implementation is incomplete; no installed lifecycle acceptance is claimed.
 
 The trusted agent owns the exact reviewed native `mlx-serve` child. The existing
 supervisor is the intended physical custodian across manager restarts; the manager
-retains durable policy and uses fixed authenticated local control. This source
-composition is still incomplete; see [custody contract](native-serving-custody.md). OrbStack
+retains durable policy and uses fixed authenticated local control. Its internal source
+composition is tested, while public enrollment/activation remain incomplete; see [custody contract](native-serving-custody.md). OrbStack
 continues to use its supported session lifecycle. Native server ownership does
 not require the GUI to remain running; an open GUI is neither server readiness
 nor permission to launch. Do not implement lifecycle through GUI scripting,
@@ -99,10 +99,12 @@ Stopped intent can request a stop; running recovery needs fresh unavailable
 health for the exact identity, ready session/credentials and no loading state.
 Status reports `stop_pending`, not completed actuation. The public entry point
 has no installed producer, so none of this activates installed lifecycle.
-Control of a server surviving manager death remains unfinished. A historical PID cannot be adopted into POSIX
-child custody after reparenting; recovered control needs its own reviewed
-identity-bound native mechanism. Private helper stop/relaunch tests supply none
-of that installed authority.
+Internal supervisor custody now retains the original owned child across manager
+death and replacement through fixed authenticated local control. Public installed
+composition is still closed. A server surviving the entire supervisor/custodian's
+death cannot be adopted into POSIX child custody from a historical PID; that
+case still needs separately reviewed identity-bound native reconciliation.
+Private helper custody tests supply no installed or native terminal authority.
 
 Source/private-process fixtures must cover exit with GUI alive, no duplicate
 launch, readiness loss versus loading, cancellation, manager restart, exhausted

@@ -115,6 +115,12 @@ extension MLXServingProcessRuntime {
 @main struct ServingRuntimeFixture {
     static func main()throws {
         let args=CommandLine.arguments
+        if args.count>1,args[1]=="custody-supervisor" {try custodySupervisor(args);return}
+        if args.count==3,args[1]=="--state" {try supervisedCustodyManager(directory:URL(fileURLWithPath:args[2]));return}
+        if args.count==3,args[1]=="observe" {
+            let response=try ControlClient.request(path:URL(fileURLWithPath:args[2]).appendingPathComponent("observe.sock").path,operation:.status)
+            print(String(decoding:try JSONSerialization.data(withJSONObject:response,options:[.sortedKeys]),as:UTF8.self));return
+        }
         if args.count>1,args[1]=="custody-client" {try custodyClient(args);return}
         if args.count==4,args[1]=="control" {
             guard let command=OperatorServiceCommand(arguments:["service","mlx",args[3]]) else {throw RuntimeError.invalid}
@@ -622,5 +628,130 @@ extension ServingRuntimeFixture {
               !runtime.fixtureRetainsChild,startGate.validations==1,stopGate.validations==1,
               try Data(contentsOf:started)==Data(contentsOf:directory.appendingPathComponent("custody-stopped.json")) else {throw RuntimeError.invalid}
         print("PASS: private serving child survives actual client death; replacement process reconciles original durable launch and stops the same owned child over Unix custody; native uncertainty retained")
+    }
+}
+
+private final class CustodyFixtureStop:@unchecked Sendable {
+    private let lock=NSLock();private var stopped=false
+    var requested:Bool {lock.lock();defer {lock.unlock()};return stopped}
+    func stop() {lock.lock();stopped=true;lock.unlock()}
+}
+extension MLXServingProcessRuntime {
+    fileprivate var fixtureLaunchID:String? {lock.lock();defer {lock.unlock()};return phase == .running ? activeID:nil}
+}
+extension ServingRuntimeFixture {
+    static func supervisedCustodyManager(directory:URL)throws {
+        guard directory.path.hasPrefix("/private/tmp/f9-mlx-supervisor-") else {throw RuntimeError.invalid}
+        let bytes=try Data(contentsOf:directory.appendingPathComponent("custody-fixture.json"))
+        try StrictJSON.validate(bytes,maximum:4096)
+        guard let config=try JSONSerialization.jsonObject(with:bytes) as? [String:Any],
+              Set(config.keys)==Set(["purpose","helper_path","helper_sha256","supervisor_path","supervisor_sha256","instance","profile"]),
+              config["purpose"] as? String=="private_cpu_custody",
+              let helperPath=config["helper_path"] as? String,helperPath.hasPrefix("/private/tmp/fios-009-serving-runtime-"),
+              let helperHash=config["helper_sha256"] as? String,WireScalar.sha256(helperHash),
+              let supervisorPath=config["supervisor_path"] as? String,supervisorPath.hasPrefix("/private/tmp/fios-009-serving-runtime-"),
+              let supervisorHash=config["supervisor_sha256"] as? String,WireScalar.sha256(supervisorHash),
+              let instance=config["instance"] as? String,WireScalar.uuid(instance),
+              let profile=config["profile"] as? String,WireScalar.sha256(profile) else {throw RuntimeError.invalid}
+        let descriptorBytes=try Data(contentsOf:directory.appendingPathComponent("serving-custody.json"))
+        try StrictJSON.validate(descriptorBytes,maximum:2048)
+        guard let descriptor=try JSONSerialization.jsonObject(with:descriptorBytes) as? [String:Any],
+              let pid=WireScalar.integer(descriptor["pid"],maximum:Int64(Int32.max)),pid>1,
+              let text=descriptor["process_start"] as? String,let start=UInt64(text),start>0,String(start)==text,
+              descriptor["instance"] as? String==instance,descriptor["profile"] as? String==profile else {throw RuntimeError.invalid}
+        let pins:[ManagedService:String]=[.mlx:helperHash,.orbstack:helperHash],base=try ServiceLaunchProfile.digest(pins)
+        let remote=try ServingCustodyClient(directory:directory,peer:NativeControlPeer(pid:Int32(pid),start:start,
+            executable:VerifiedExecutable(path:supervisorPath,sha256:supervisorHash)),instance:instance,profile:profile,baseProfileHash:base,imageSHA256:helperHash)
+        func prepareJournal()throws {
+            let journal=try Journal(directory:directory),marker=directory.appendingPathComponent("custody-seeded")
+            if !FileManager.default.fileExists(atPath:marker.path) {
+                guard try journal.uncertainCount()==0 else {throw RuntimeError.invalid}
+                let job=UUID().uuidString.lowercased()
+                try journal.claim(job:job,attempt:0,model:"fixture/supervisor-independent");try journal.markUncertain(job:job,attempt:0)
+                try journal.setDesired(service:"mlx",desired:"running")
+                try AtomicState.write(Data("private fixture only".utf8),to:marker)
+            } else {guard try journal.uncertainCount()==1 else {throw RuntimeError.invalid}}
+            let recovery=try ServiceRecoveryController(journal:journal,approvedHashes:pins,recoveryProfileHash:profile)
+            if let recorded=recovery.recordedLaunch(.mlx) {
+                guard remote.acknowledgeResult(id:recorded.id) == .started(recorded.identity) else {throw RuntimeError.invalid}
+            }
+        }
+        try prepareJournal() // Its one writer closes before ManagerRuntime opens it.
+        let observations=ServiceObservationCache(),executable=try VerifiedExecutable(path:helperPath,sha256:helperHash)
+        Thread.detachNewThread {
+            while true {
+                if FileManager.default.fileExists(atPath:directory.appendingPathComponent("fixture-exit-request").path) {
+                    let fd=open(directory.appendingPathComponent("fixture-exit-consumed").path,O_WRONLY|O_CREAT|O_EXCL,0o600)
+                    if fd>=0 {close(fd);exit(0)} // This private manager exits itself; no PID signal/adoption.
+                }
+                var observation:ServiceObservation?
+                let now=HostResources.nowMilliseconds()
+                if let bytes=try? Data(contentsOf:directory.appendingPathComponent("fixture-native-health.json")),bytes.count<=2048,
+                   let value=try? JSONSerialization.jsonObject(with:bytes) as? [String:Any],
+                   value["instance"] as? String==instance,value["profile"] as? String==profile,
+                   let at=WireScalar.integer(value["sampled_at"],maximum:WireScalar.maximumTimestamp),at<=now,now-at<=5000 {
+                    if value["state"] as? String=="absent" {
+                        observation=ServiceObservation(identity:nil,responding:false,sessionReady:true,credentialsReady:true,nativeIdle:nil,runtimeUnmanaged:nil,sampledAt:at)
+                    } else if value["state"] as? String=="present",
+                              let pid=WireScalar.integer(value["pid"],maximum:Int64(Int32.max)),pid>1,
+                              let text=value["process_start"] as? String,let start=UInt64(text),start>0,String(start)==text,
+                              let identity=try? ServiceIdentity.verified(peer:NativeControlPeer(pid:Int32(pid),start:start,executable:executable),expectedUID:geteuid(),deadline:ProcessInfo.processInfo.systemUptime+0.5) {
+                        observation=ServiceObservation(identity:identity,responding:true,sessionReady:true,credentialsReady:true,nativeIdle:nil,runtimeUnmanaged:nil,sampledAt:at,health:.healthy)
+                    }
+                }
+                observations.publish(observation,for:.mlx);Thread.sleep(forTimeInterval:0.025)
+            }
+        }
+        let lifecycle=ServingLifecyclePorts(runtime:remote,intent:{receipt,desired in
+            guard desired == .stopped,receipt.profileHash==profile,receipt.identity.sha256==helperHash else {return nil}
+            return ServingStopIntent(receipt:receipt,desired:desired) // Private C helper fixture only.
+        })
+        try ManagerRuntime.run(directory:directory,nativeControl:nil,serviceObservations:observations,
+            serviceControl:NativeServingRecoveryTransport(runtime:remote,approvedHashes:pins),servingLifecycle:lifecycle)
+    }
+
+    static func custodySupervisor(_ args:[String])throws {
+        guard args.count==7,args[2].hasPrefix("/private/tmp/fios-009-serving-runtime-"),
+              args[4].hasPrefix("/private/tmp/f9-mlx-supervisor-"),args[6].hasPrefix("/private/tmp/fios-009-serving-runtime-") else {throw RuntimeError.invalid}
+        let directory=URL(fileURLWithPath:args[4]),helper=try VerifiedExecutable(path:args[2],sha256:args[3])
+        let manager=try VerifiedExecutable(path:args[6],sha256:args[5])
+        var pathBytes=[CChar](repeating:0,count:4*Int(MAXPATHLEN))
+        guard proc_pidpath(getpid(),&pathBytes,UInt32(pathBytes.count))>0,
+              let selfPath=String(bytes:pathBytes.prefix(while:{$0 != 0}).map {UInt8(bitPattern:$0)},encoding:.utf8),
+              selfPath.hasPrefix("/private/tmp/fios-009-serving-runtime-") else {throw RuntimeError.invalid}
+        let pins:[ManagedService:String]=[.mlx:helper.sha256,.orbstack:helper.sha256],base=try ServiceLaunchProfile.digest(pins)
+        let startGate=ServingRuntimeGate(),stopGate=ServingStopGate();startGate.release.signal();stopGate.release.signal()
+        let runtime=try MLXServingProcessRuntime.fixture(executable:helper,home:directory.path,profile:base,gate:startGate,stopGate:stopGate)
+        defer {if runtime.fixtureRetainsChild {try? runtime.endFixtureChild()}}
+        let stop=CustodyFixtureStop(),producer=DispatchGroup()
+        try SupervisorRuntime.run(directory:directory,manager:URL(fileURLWithPath:manager.path),custodyFactory:{
+            let server=try ServingCustodyServer(directory:directory,runtime:runtime,manager:manager,imageSHA256:helper.sha256)
+            let config:[String:Any]=["purpose":"private_cpu_custody","helper_path":helper.path,"helper_sha256":helper.sha256,
+                "supervisor_path":selfPath,"supervisor_sha256":args[5],"instance":server.instance,"profile":server.profile]
+            try AtomicState.write(JSONSerialization.data(withJSONObject:config,options:[.sortedKeys]),to:directory.appendingPathComponent("custody-fixture.json"))
+            let instance=server.instance,profile=server.profile
+            producer.enter()
+            Thread.detachNewThread {
+                defer {producer.leave()}
+                while !stop.requested {
+                    let at=HostResources.nowMilliseconds(),observed=runtime.fixtureObservation(now:at)
+                    var fields:[String:Any]=["instance":instance,"profile":profile,"sampled_at":at,"state":"unknown"]
+                    if let observed {
+                        if let identity=observed.identity {
+                            fields["state"]="present";fields["pid"]=identity.pid;fields["process_start"]=String(identity.start);if let launchID=runtime.fixtureLaunchID {fields["launch_id"]=launchID}
+                        } else {fields["state"]="absent"}
+                    }
+                    if let bytes=try? JSONSerialization.data(withJSONObject:fields,options:[.sortedKeys]) {
+                        try? AtomicState.write(bytes,to:directory.appendingPathComponent("fixture-native-health.json"))
+                    }
+                    Thread.sleep(forTimeInterval:0.025)
+                }
+            }
+            return server
+        })
+        stop.stop();guard producer.wait(timeout:.now()+2) == .success else {throw RuntimeError.deadline}
+        let journal=try Journal(directory:directory)
+        guard startGate.validations==1,stopGate.validations==1,!runtime.fixtureRetainsChild,try journal.uncertainCount()==1 else {throw RuntimeError.invalid}
+        try AtomicState.write(JSONSerialization.data(withJSONObject:["start_validations":1,"stop_validations":1,"uncertain":1,"native_authority":false]),to:directory.appendingPathComponent("custody-supervisor-receipt.json"))
     }
 }

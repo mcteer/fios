@@ -3,6 +3,11 @@ import Darwin
 
 public enum SupervisorRuntime {
     public static func run(directory:URL,manager:URL,telemetry:any PlatformTelemetry=NoopPlatformTelemetry()) throws {
+        try run(directory:directory,manager:manager,custodyFactory:nil,telemetry:telemetry)
+    }
+    // Reviewed code-only composition inside the existing supervisor process.
+    // Public startup has no native configuration/credential/reservation issuer.
+    static func run(directory:URL,manager:URL,custodyFactory:(@Sendable()throws->ServingCustodyServer)?,telemetry:any PlatformTelemetry=NoopPlatformTelemetry()) throws {
         guard geteuid() != 0 else { throw ControlError.unauthorized }
         umask(0o077)
         try FileManager.default.createDirectory(at:directory,withIntermediateDirectories:true,attributes:[.posixPermissions:0o700])
@@ -14,6 +19,9 @@ public enum SupervisorRuntime {
         // The installed companion is reviewed/root-owned. Never take a
         // command, shell string or executable choice from the control socket.
         guard manager.lastPathComponent == "studio-manager", FileManager.default.isExecutableFile(atPath:manager.path) else { throw RuntimeError.identity }
+        let custody=try custodyFactory?()
+        guard custody?.acceptsManager(at:manager) ?? true else {throw ControlError.unauthorized}
+        var custodyFailed=false
         let boot=try HostBoot.identity()
         let birth=try WorkerResources.startIdentifier(pid:getpid())
         let budgetFile=directory.appendingPathComponent("restart-budget.json")
@@ -33,6 +41,9 @@ public enum SupervisorRuntime {
                 child.waitUntilExit()
             }
         }
+        // Revoke pre-dispatch validation before terminating the manager. Native
+        // custody/results survive manager exit; no native child is signalled here.
+        defer {try? custody?.bindSupervisedManager(nil)}
         var state=PlatformSupervisorState.starting
         var publishedState:PlatformSupervisorState?
         var publishedStarts:Int?
@@ -40,6 +51,15 @@ public enum SupervisorRuntime {
         let termination=Termination()
         while !termination.requested {
             try autoreleasepool {
+            if !custodyFailed {
+                do {try custody?.poll()}
+                catch {
+                    custodyFailed=true;try? custody?.bindSupervisedManager(nil)
+                    telemetry.event(.rejected)
+                    // Retain the server/runtime and its writer lock. Failure
+                    // cannot manufacture absence or rearm a new custodian.
+                }
+            }
             let now=Int64(ProcessInfo.processInfo.systemUptime * 1000)
             var progress:Int64?
             if let child, child.isRunning {
@@ -52,7 +72,7 @@ public enum SupervisorRuntime {
                 }
             }
             let alive=child?.isRunning ?? false
-            if let child, !alive { child.waitUntilExit() }
+            if let child, !alive {child.waitUntilExit();try custody?.bindSupervisedManager(nil)}
             switch try policy.tick(now:now,managerAlive:alive,lastProgress:progress) {
             case .start:
                 try AtomicState.write(JSONEncoder().encode(SupervisorRestartBudget(boot:boot,starts:policy.startHistory)),to:budgetFile)
@@ -61,13 +81,28 @@ public enum SupervisorRuntime {
                 next.standardInput=FileHandle.nullDevice; next.standardOutput=FileHandle.nullDevice; next.standardError=FileHandle.nullDevice
                 do {try next.run();child=next;state = .running;telemetry.event(.reconciled)}
                 catch {child=nil;state = .degraded;telemetry.event(.rejected)}
-            case .terminate: child?.terminate();state = .recovering;telemetry.event(.revoked)
-            case .kill: if let child, child.isRunning {kill(child.processIdentifier,SIGKILL);telemetry.event(.revoked)}
+                if child === next,!custodyFailed {
+                    do {try custody?.bindSupervisedManager(next)}
+                    catch {
+                        custodyFailed=true;try? custody?.bindSupervisedManager(nil)
+                        state = .degraded;telemetry.event(.rejected)
+                        // Keep the already running manager reference. Binding
+                        // failure must not orphan it or bypass the watchdog.
+                    }
+                }
+            case .terminate:
+                try custody?.bindSupervisedManager(nil)
+                child?.terminate();state = .recovering;telemetry.event(.revoked)
+            case .kill:
+                try custody?.bindSupervisedManager(nil)
+                if let child,child.isRunning {kill(child.processIdentifier,SIGKILL);telemetry.event(.revoked)}
             case .degraded:
+                try custody?.bindSupervisedManager(nil)
                 if state != .degraded {telemetry.event(.rejected)}
                 state = .degraded
             case .observe: break
             }
+            if custodyFailed {state = .degraded}
             // Keep 250ms watchdog polling, but unchanged telemetry needs only
             // 1s durability (reader freshness is 5s). Publish every transition.
             if state != publishedState || policy.startHistory.count != publishedStarts || now-publishedAt >= 1000 {

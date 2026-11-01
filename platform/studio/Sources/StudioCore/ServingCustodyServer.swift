@@ -32,6 +32,18 @@ final class ServingCustodyServer:@unchecked Sendable {
         // No child signal/reap or native uncertainty reset on socket teardown.
     }
     func bindManager(_ peer:NativeControlPeer?)throws {try gate.bindManager(peer)}
+    func acceptsManager(at url:URL)->Bool {url.path==manager.path}
+    // Existing supervisor child object only; no packet can choose this PID.
+    // Kernel/image authentication still occurs independently off-loop per RPC.
+    func bindSupervisedManager(_ process:Process?)throws {
+        guard let process else {try gate.bindManager(nil);return}
+        guard process.isRunning,let start=try? WorkerResources.startIdentifier(pid:process.processIdentifier) else {try gate.bindManager(nil);return}
+        var path=[CChar](repeating:0,count:4*Int(MAXPATHLEN))
+        guard proc_pidpath(process.processIdentifier,&path,UInt32(path.count))>0,
+              String(bytes:path.prefix(while:{$0 != 0}).map {UInt8(bitPattern:$0)},encoding:.utf8)==manager.path else {throw ControlError.unauthorized}
+        try gate.bindManager(NativeControlPeer(pid:process.processIdentifier,start:start,executable:manager))
+    }
+
     private var available:Bool {worker.lock();defer {worker.unlock()};return !busy && completion==nil}
     private func takeCompletion()->Completion? {worker.lock();defer {worker.unlock()};let result=completion;completion=nil;return result}
     private func submit(_ command:ServingCustodyCommand,connection:Connection)throws {
