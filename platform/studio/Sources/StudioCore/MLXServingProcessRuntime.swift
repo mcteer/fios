@@ -18,7 +18,7 @@ final class MLXServingProcessRuntime:@unchecked Sendable {
     private var busy=false
     private var revoked=false
     private var activeID:String?
-    private var process:Process?
+    private var process:ServingOwnedProcess?
     private var identity:ServiceIdentity?
     private var records:[String:SessionLaunchResult]=[:]
     private var delivery:(String,SessionLaunchResult)?
@@ -102,9 +102,7 @@ final class MLXServingProcessRuntime:@unchecked Sendable {
         guard !revoked,activeID==command.id,phase == .validating,ProcessInfo.processInfo.systemUptime<deadline else {
             lock.unlock();finish(command.id,.notSent,phase:.idle);return
         }
-        let child=Process()
-        child.executableURL=URL(fileURLWithPath:executable.path);child.arguments=arguments;child.environment=environment
-        child.standardInput=FileHandle.nullDevice;child.standardOutput=FileHandle.nullDevice;child.standardError=FileHandle.nullDevice
+        let child=ServingOwnedProcess(executable:executable,arguments:arguments,environment:environment)
         // Retain before the possibly blocking spawn call. Once entered, failure,
         // timeout or local reaping cannot manufacture a non-dispatch receipt.
         process=child;phase = .spawning
