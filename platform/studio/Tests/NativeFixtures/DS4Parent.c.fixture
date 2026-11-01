@@ -27,6 +27,9 @@ static int ds4_threads_work_busy(void){return cpu_work_busy;}
 static int selected_idle=1,pagein_busy;
 static bool metal_graph_stream_pagein_busy(void){return pagein_busy;}
 static int metal_graph_selected_async_load_idle(void){++selected_probes;return selected_idle;}
+// Mock caller-interface plumbing only. Actual idle pthread retirement is
+// exercised independently by DS4SelectedLifecycle.c.fixture.
+static int metal_graph_selected_async_load_shutdown_checked(void){return selected_idle;}
 static int ds4_threads_shutdown_checked(void){++cpu_checked;return cpu_result;}
 static int ds4_gpu_tp_shutdown_checked(void){++checked;return checked_result;}
 static int ds4_gpu_prepare_release(void){++prepared;return prepare_result;}

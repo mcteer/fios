@@ -14,6 +14,14 @@ Append `--protocol-version 3` for a source capsule declaring timestamped replies
 
 Large-model metadata preparation has a separate [CPU-only source config/index/header check](native-acceptance-preparation.md#ordinary-source-parser-check). It uses fixed reviewed metadata hashes and genuine parser/hash/region functions, with no weight payload, table mapping, server or model request. Its receipt covers declared source inputs and header arithmetic; it grants no installed/native authority or runtime-fit proof.
 
+Ordinary idle native helper lifecycle can be checked against a fresh reviewed DS4 build:
+
+```sh
+node scripts/check-platform-ds4-selected-lifecycle.mjs --isolated --build /ABS/FRESH_DS4_BUILD/candidate.json --sha256 EXACT_BUILD_RECEIPT_SHA --developer-dir /Applications/Xcode.app/Contents/Developer
+```
+
+It runs two normal idle start/join cycles with genuine pthreads and positive kernel thread-absence observations, using the actual complete C module. It creates no model job or GPU object and runs no failure/foreign/counter cases. This is local worker retirement only; parent/model/device/all-client acceptance remains separate.
+
 Ordinary service recovery status can be checked with real private manager/session/CLI processes and a counter-only application callback:
 
 ```sh
