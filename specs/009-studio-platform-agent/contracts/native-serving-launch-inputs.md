@@ -1,8 +1,9 @@
 # Reviewed native serving launch inputs
 
 `NativeServingLaunchDocument` decodes bounded configuration metadata only. No
-public manager entry point loads it, and no loader, credential reader, native
-reservation or process actuator is issued by successful decoding.
+public manager entry point loads it. Successful decoding issues no credential
+reader, native reservation or process actuator. A separate source-only protected
+metadata loader is described below.
 
 Version1 has exactly these fields:
 
@@ -13,7 +14,7 @@ Version1 has exactly these fields:
 | `review_sha256` | Separately reviewed configuration evidence identity |
 | `manager_sha256` | Exact manager executable identity |
 | `server_sha256`, `application_sha256` | Separate native server and GUI executable identities |
-| `revision` | Canonical UUID configuration revision |
+| `revision`, `state_path` | Canonical UUID revision and exact private manager state directory |
 | `working_directory` | Explicit absolute normalized cwd, including `/` |
 | `arguments` | Ordered preserved server arguments, at most128 entries |
 | `environment` | Preserved bounded noncredential framework/home/locale inputs |
@@ -35,8 +36,20 @@ the selected channel rather than silently converting argument authentication to
 environment authentication. The constructor refuses literal argument credentials,
 missing/empty resolution, conflicting channels and unsupported equals forms.
 
-A future protected-profile loader must independently bind installed host/UID,
-manager identity, configuration review and immutable dependency provenance.
+`NativeServingReviewedConfiguration.load` reads only the fixed installed
+`/Library/Application Support/Fios/Studio/native-serving-launch.json` from the
+fixed installed manager image. Development images return no configuration
+before reading installed metadata. Root-protected file/tree checks, exact
+host/UID/state binding and manager kernel/image identity precede returning the
+document and fixed separate server/GUI process profile. It verifies the two
+current executable pins without starting a service or reading credentials.
+
+This is protected configuration metadata, not complete native enrollment.
+Current root-protected files and image pins do not attest mapped code,
+framework dependencies, immutable upgrade lifetime or exclusive handover. The
+positive installed branch remains unexecuted; no root policy is created by
+source fixtures. Native enrollment must independently bind configuration
+review and immutable dependency provenance.
 Exclusive GUI-to-agent handover, native namespace/start reservations and retained
 native drain authority remain required. A decoded document, credential value or
 configuration fingerprint supplies none of those permissions. This contract

@@ -12,6 +12,7 @@ struct NativeServingLaunchDocument {
     let serverSHA256:String
     let applicationSHA256:String
     let revision:String
+    let statePath:String
     let workingDirectory:String
     private let arguments:[String]
     private let environment:[String:String]
@@ -20,7 +21,7 @@ struct NativeServingLaunchDocument {
         do {
             try StrictJSON.validate(bytes,maximum:32768)
             guard let value=try JSONSerialization.jsonObject(with:bytes) as? [String:Any],
-                  Set(value.keys)==Set(["version","purpose","host","uid","review_sha256","manager_sha256","server_sha256","application_sha256","revision","working_directory","arguments","environment","credential_channel"]),
+                  Set(value.keys)==Set(["version","purpose","host","uid","review_sha256","manager_sha256","server_sha256","application_sha256","revision","state_path","working_directory","arguments","environment","credential_channel"]),
                   WireScalar.integer(value["version"],maximum:1)==1,
                   value["purpose"] as? String=="reviewed_native_serving_launch",
                   let host=value["host"] as? String,["fios-edge-a.lab","fios-edge-b.lab"].contains(host),
@@ -30,6 +31,9 @@ struct NativeServingLaunchDocument {
                   let server=value["server_sha256"] as? String,WireScalar.sha256(server),
                   let application=value["application_sha256"] as? String,WireScalar.sha256(application),
                   let revision=value["revision"] as? String,WireScalar.uuid(revision),
+                  let state=value["state_path"] as? String,
+                  state.hasPrefix("/"),!state.hasSuffix("/"),state.utf8.count<Int(MAXPATHLEN),
+                  !state.contains("\0"),!state.contains("//"),!state.split(separator:"/").contains(where:{$0=="." || $0==".."}),
                   let cwd=value["working_directory"] as? String,
                   cwd.hasPrefix("/"),cwd.utf8.count<Int(MAXPATHLEN),!cwd.contains("\0"),!cwd.contains("//"),
                   (cwd=="/" || !cwd.hasSuffix("/")),!cwd.split(separator:"/").contains(where:{$0=="." || $0==".."}),
@@ -55,7 +59,7 @@ struct NativeServingLaunchDocument {
             _=try NativeServingLaunchInputs(arguments:args,environment:validationEnv,workingDirectory:cwd)
             self.host=host;self.uid=uid_t(uid);reviewSHA256=review;managerSHA256=manager
             serverSHA256=server;applicationSHA256=application;self.revision=revision
-            workingDirectory=cwd;arguments=args;environment=env;self.argumentCredential=argumentCredential
+            statePath=state;workingDirectory=cwd;arguments=args;environment=env;self.argumentCredential=argumentCredential
         } catch {throw RuntimeError.invalid}
     }
     func resolvingCredential(_ secret:String)throws->NativeServingLaunchInputs {
