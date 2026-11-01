@@ -22,6 +22,14 @@ node scripts/check-platform-ds4-selected-lifecycle.mjs --isolated --build /ABS/F
 
 It runs ordinary real producer/consumer pending/join and metadata-contention checks, two genuine CPU parallel-row/start/join cycles, four factory-created empty selected/layer single/parallel page-in jobs, and six normal selected-loader start/join cycles across three sequential creator threads with genuine pthreads and positive kernel thread-absence observations, using the actual complete C module. A second ordinary lifecycle caller receives refusal to reuse or retire the creator's worker; the creator can still reuse and join it afterward. After complete joins, later creators can start their own workers and repeated idle shutdown succeeds. It creates no model job or GPU object and injects no failures. The source uses a1000ms caller join budget (shared across each CPU/page-in vector) and a separate1000ms selected-loader final metadata-lock budget; these are source wait bounds, not hard real-time/GPU quotas or all-writer completion proof. This is local worker ownership/retirement only; parent/model/device/all-client acceptance remains separate.
 
+Ordinary TP/pread metadata publication can be checked separately against that same fresh component build:
+
+```sh
+node scripts/check-platform-ds4-metadata-lifecycle.mjs --isolated --build /ABS/FRESH_DS4_BUILD/candidate.json --sha256 EXACT_BUILD_RECEIPT_SHA --developer-dir /Applications/Xcode.app/Contents/Developer
+```
+
+This appends only a private fixture to the complete unmodified Objective-C module and links the genuine reviewed C objects. It publishes real mutex metadata for250ms, requires conservative preflight refusal within100ms, and checks that the original two idle pread pthreads remain usable for normal retirement afterward. No GPU initialization, model, forged native handle or injected failure is involved. It does not bound the actual pread joins or establish device/all-client terminality.
+
 Ordinary service recovery status can be checked with real private manager/session/CLI processes and a counter-only application callback:
 
 ```sh

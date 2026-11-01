@@ -1,0 +1,43 @@
+// Complete original Metal module; ordinary metadata publication only.
+// No device initialization, native object substitute or model work.
+typedef struct { pthread_mutex_t gate; pthread_cond_t ready; int entered; pthread_mutex_t *metadata; } metadata_publication;
+static void *metadata_publisher(void *context) {
+    metadata_publication *work=context;
+    if (pthread_mutex_lock(work->metadata)!=0 || pthread_mutex_lock(&work->gate)!=0) abort();
+    work->entered=1;
+    if (pthread_cond_broadcast(&work->ready)!=0 || pthread_mutex_unlock(&work->gate)!=0) abort();
+    usleep(250000);
+    if (pthread_mutex_unlock(work->metadata)!=0) abort();
+    return NULL;
+}
+#define META_REQUIRE(value,message) do {if (!(value)) {fprintf(stderr,"%s\n",message);return 77;}} while(0)
+static int metadata_case(pthread_mutex_t *mutex,int (*probe)(void),int refused,const char *message) {
+    metadata_publication work={PTHREAD_MUTEX_INITIALIZER,PTHREAD_COND_INITIALIZER,0,mutex};
+    pthread_t publisher;
+    META_REQUIRE(pthread_create(&publisher,NULL,metadata_publisher,&work)==0,"Metadata publisher failed to start");
+    META_REQUIRE(pthread_mutex_lock(&work.gate)==0,"Metadata handoff unavailable");
+    while (!work.entered) META_REQUIRE(pthread_cond_wait(&work.ready,&work.gate)==0,"Metadata handoff failed");
+    META_REQUIRE(pthread_mutex_unlock(&work.gate)==0,"Metadata handoff release failed");
+    struct timespec before,after;
+    META_REQUIRE(clock_gettime(CLOCK_MONOTONIC,&before)==0,"Metadata clock unavailable");
+    const int result=probe();
+    META_REQUIRE(clock_gettime(CLOCK_MONOTONIC,&after)==0,"Metadata completion clock unavailable");
+    META_REQUIRE(pthread_join(publisher,NULL)==0,"Metadata publisher did not finish");
+    const double elapsed=(double)(after.tv_sec-before.tv_sec)+(double)(after.tv_nsec-before.tv_nsec)/1000000000.0;
+    META_REQUIRE(result==refused && elapsed>=0 && elapsed<0.1,message);
+    META_REQUIRE(pthread_cond_destroy(&work.ready)==0 && pthread_mutex_destroy(&work.gate)==0,"Metadata publisher remained live");
+    return 0;
+}
+int main(void) {@autoreleasepool {
+    META_REQUIRE(!g_initialized && !g_device && !g_tp_thread_running && !g_stream_expert_pread_pool_initialized,"Module was not cold");
+    if (metadata_case(&g_tp_mutex,ds4_gpu_tp_local_work_busy,1,"TP preflight waited for metadata publication")) return 77;
+    if (metadata_case(&g_stream_expert_pread_pool_mutex,ds4_gpu_fios_pread_pool_prepare_cleanup,0,"Pread cleanup preflight waited for metadata publication")) return 77;
+    META_REQUIRE(!ds4_gpu_tp_local_work_busy() && ds4_gpu_fios_pread_pool_prepare_cleanup(),"Ordinary publication poisoned cold metadata");
+    META_REQUIRE(ds4_gpu_stream_expert_pread_pool_init(2),"Ordinary pread pool did not start");
+    if (metadata_case(&g_stream_expert_pread_pool_mutex,ds4_gpu_fios_pread_pool_try_retire,0,"Pread retirement waited for metadata publication")) return 77;
+    META_REQUIRE(g_stream_expert_pread_pool_initialized && g_stream_expert_pread_pool_thread_count==2 && !atomic_load(&g_fios_pread_pool_sealed),"Publication contention changed original pool custody");
+    META_REQUIRE(ds4_gpu_fios_pread_pool_try_retire() && !g_stream_expert_pread_pool_initialized && !g_stream_expert_pread_pool_thread_count,"Original idle pread workers did not join normally");
+    META_REQUIRE(!g_initialized && !g_device && !g_fios_tp_uncertain && !g_fios_pending_uncertain && !g_fios_pread_pool_uncertain,"Metadata preflight created native work or uncertainty");
+    puts("PASS: genuine TP/pread metadata publication refuses promptly, retains cold ownership and creates no GPU/model work");
+    return 0;
+}}
