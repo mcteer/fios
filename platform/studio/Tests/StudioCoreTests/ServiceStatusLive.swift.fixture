@@ -26,7 +26,7 @@ import Darwin
                 let process=ServiceProcessSample(presence:.present(identity),sampledAt:now,
                     reviewDigest:String(repeating:"b",count:64),uid:geteuid(),diagnostic:"fixture_present")
                 let state:ServiceHealthState=(args[2]=="ready" || (args[2]=="mixed" && service == .mlx)) ? .healthy:.unavailable
-                let collector=MLXServiceHealthCollector(presence:{process},health:{state},now:{now},uptime:{1})
+                let collector=ServiceHealthCollector(service:service,presence:{process},health:{state},now:{now},uptime:{1})
                 if service == .mlx {mlxHealth=collector}else {orbstackHealth=collector}
                 sample=nil // Actual manager background collection publishes it.
             }

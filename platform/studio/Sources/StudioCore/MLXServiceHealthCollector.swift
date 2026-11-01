@@ -7,6 +7,7 @@ import Foundation
 // Trusted read-only adapters are transferred together to one collection slot.
 // Serialize calls even if an internal fixture retains the collector reference.
 final class ServiceHealthCollector:@unchecked Sendable {
+    let service:ManagedService
     private let lock=NSLock()
     private let presence:()->ServiceProcessSample
     private let health:()->ServiceHealthState
@@ -14,17 +15,17 @@ final class ServiceHealthCollector:@unchecked Sendable {
     private let uptime:()->TimeInterval
 
     convenience init(census:ServiceProcessCensus,probe:ServiceHealthProbe) {
-        self.init(presence:census.capture,health:probe.probe,
+        self.init(service:.mlx,presence:census.capture,health:probe.probe,
                   now:HostResources.nowMilliseconds,uptime:{ProcessInfo.processInfo.systemUptime})
     }
     convenience init(census:ServiceProcessCensus,probe:OrbStackHealthProbe) {
-        self.init(presence:census.capture,health:probe.probe,
+        self.init(service:.orbstack,presence:census.capture,health:probe.probe,
                   now:HostResources.nowMilliseconds,uptime:{ProcessInfo.processInfo.systemUptime})
     }
     // Internal trusted adapters for ordinary isolated source fixtures only.
-    init(presence:@escaping ()->ServiceProcessSample,health:@escaping ()->ServiceHealthState,
+    init(service:ManagedService = .mlx,presence:@escaping ()->ServiceProcessSample,health:@escaping ()->ServiceHealthState,
          now:@escaping ()->Int64,uptime:@escaping ()->TimeInterval) {
-        self.presence=presence;self.health=health;self.now=now;self.uptime=uptime
+        self.service=service;self.presence=presence;self.health=health;self.now=now;self.uptime=uptime
     }
     func capture(sessionReady:Bool,credentialsReady:Bool)->ServiceObservation? {
         lock.lock();defer {lock.unlock()}

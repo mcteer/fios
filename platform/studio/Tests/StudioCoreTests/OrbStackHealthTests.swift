@@ -33,8 +33,14 @@ func runOrbStackHealthTests()throws {
     guard probe.probe() == .unavailable,fixture.counts == (5,3) else {fatalError("Cached running observation was refreshed or reached daemon")}
     let present=ServiceProcessSample(presence:.present(ServiceIdentity(pid:42,start:1,sha256:fixture.hash)),
         sampledAt:1000,reviewDigest:fixture.hash,uid:501,diagnostic:"fixture_present")
-    let collector=ServiceHealthCollector(presence:{present},health:{.healthy},now:{1000},uptime:{1})
+    let collector=ServiceHealthCollector(service:.orbstack,presence:{present},health:{.healthy},now:{1000},uptime:{1})
     guard let observed=collector.capture(sessionReady:true,credentialsReady:true),observed.responding,
           observed.nativeIdle==nil,observed.runtimeUnmanaged==nil else {fatalError("Service health invented native/runtime work coverage")}
+    let state=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    do {
+        try ManagerRuntime.run(directory:state,nativeControl:nil,serviceHealth:collector)
+        fatalError("OrbStack evidence was accepted as MLX health")
+    } catch ServiceError.invalid {}
+    guard !FileManager.default.fileExists(atPath:state.path) else {fatalError("Wrong-service evidence created manager state")}
     print("PASS: running prerequisite before daemon metadata, unavailable/recovered daemon status, shared present-process collector and no lifecycle/work authority")
 }
