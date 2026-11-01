@@ -36,6 +36,7 @@ function identity(){
  const value=JSON.parse(result.stdout);assert(value.pid===child.pid&&value.uid===process.getuid());
  if(original)assert.equal(value.start,original.start);else original=value;return value;
 }
+function observe(){const value=identity();peak=Math.max(peak,value.resident,value.footprint);assert(peak<=256*2**20);assert(size<=128*1024);assert(performance.now()<deadline);return value;}
 function signal(value){if(ended()||!original)return;try{identity();child.kill(value);}catch{}}
 async function stop(){
  if(ended())return;const until=performance.now()+3000;signal('SIGTERM');
@@ -43,16 +44,17 @@ async function stop(){
  if(!ended())signal('SIGKILL');while(!ended()&&performance.now()<until)await delay(10);
  if(!ended()){child.unref();child.stdout.destroy();child.stderr.destroy();throw Error('Own source process not reaped; preserve uncertainty and state');}
 }
-async function request(route,{instance,post=false,model='fixture-probe@fixture'}={}){
- const response=await fetch('http://127.0.0.1:'+port+route,{method:post?'POST':'GET',redirect:'error',signal:AbortSignal.timeout(1500),headers:{Authorization:'Bearer '+key,...(instance?{'X-Fios-Native-Instance':instance}:{}),...(post?{'Content-Type':'application/json'}:{})},...(post?{body:JSON.stringify({model,messages:[],max_tokens:1})}:{})});
- return {status:response.status,value:await nativeReviewJSON(response,16384)};
+async function request(route,{instance,post=false,model='fixture-probe@fixture',rawBody}={}){
+ observe();
+ const response=await fetch('http://127.0.0.1:'+port+route,{method:post?'POST':'GET',redirect:'error',signal:AbortSignal.timeout(1500),headers:{Authorization:'Bearer '+key,...(instance?{'X-Fios-Native-Instance':instance}:{}),...(post?{'Content-Type':'application/json'}:{})},...(post?{body:rawBody??JSON.stringify({model,messages:[],max_tokens:1})}:{})});
+ const value=await nativeReviewJSON(response,16384);observe();return {status:response.status,value};
 }
 try{
  const env={PATH:'/usr/bin:/bin',HOME:home,TMPDIR:home,XDG_CACHE_HOME:path.join(home,'cache'),LANG:'C',LC_ALL:'C',FIOS_NATIVE_CONTROL:'isolated-source-fixture',FIOS_NATIVE_STARTUP:'isolated-source-fixture',FIOS_SOURCE_PROXY_KEY:key};
  child=spawn('/usr/bin/sandbox-exec',['-D','FIOS_REVIEW_ENDPOINT=localhost:'+port,'-D','FIOS_REVIEW_PROVIDER=localhost:'+providerPort,'-D','FIOS_REVIEW_STATE='+home,'-D','FIOS_REVIEW_BINARY='+capsule.binary,'-f',path.join(root,'tests/fixtures/platform/native-proxy-review.sb'),capsule.binary,'serve','--host','127.0.0.1','--port',String(port),'--model-dir',models,'--no-warmup-eager','--api-key-env','FIOS_SOURCE_PROXY_KEY','--api-key-strict'],{cwd:home,env,stdio:['ignore','pipe','pipe']});
  child.once('error',()=>{launchError=true;});for(const pipe of [child.stdout,child.stderr])pipe.on('data',part=>{size+=part.length;if(size>128*1024)signal('SIGTERM');});
  let healthy=false;while(performance.now()<deadline-5000&&!healthy){
-  assert(!ended());const value=identity();peak=Math.max(peak,value.resident,value.footprint);assert(peak<=256*2**20);
+  assert(!ended());observe();
   try{healthy=(await request('/health')).status===200;}catch{await delay(25);}
  }
  assert(healthy,'Empty source startup deadline');
@@ -61,13 +63,21 @@ try{
  const boundForwards=forwarded-baseline;
  const legacy=await request('/v1/chat/completions',{post:true}),legacyForwards=forwarded-baseline-boundForwards;
  const missing=await request('/v1/chat/completions',{instance,post:true,model:'unregistered-local-fixture'});
+ const jsonTargets=[];
+ for(const rawBody of [
+  '{"metadata":{"model":"unregistered-local-fixture"},"model":"fixture-probe@fixture","messages":[],"max_tokens":1}',
+  '{"model":"fixture-probe@\\u0066ixture","messages":[],"max_tokens":1}',
+ ]){const result=await request('/v1/chat/completions',{instance,post:true,rawBody});jsonTargets.push({status:result.status,type:result.value.error?.type});}
+ const invalidJSON=[];for(const rawBody of ['null','{"model":7}','{"model":"a","model":"b"}']){const result=await request('/v1/chat/completions',{instance,post:true,rawBody});invalidJSON.push({status:result.status,type:result.value.error?.type});}
  const defaults=[];for(const model of ['', 'mlx-serve']){const result=await request('/v1/chat/completions',{instance,post:true,model});defaults.push({model,status:result.status,type:result.value.error?.type});}
- writeFileSync(path.join(directory,'observations.json'),JSON.stringify({bound_status:bound.status,bound_type:bound.value.error?.type,bound_provider_posts:boundForwards,legacy_status:legacy.status,legacy_type:legacy.value.error?.type,legacy_provider_posts:legacyForwards,missing_status:missing.status,missing_type:missing.value.error?.type,defaults})+'\n',{mode:0o600});
+ writeFileSync(path.join(directory,'observations.json'),JSON.stringify({bound_status:bound.status,bound_type:bound.value.error?.type,bound_provider_posts:boundForwards,legacy_status:legacy.status,legacy_type:legacy.value.error?.type,legacy_provider_posts:legacyForwards,missing_status:missing.status,missing_type:missing.value.error?.type,defaults,json_targets:jsonTargets,invalid_json:invalidJSON})+'\n',{mode:0o600});
  assert.equal(legacy.status,503);assert.equal(legacy.value.error?.type,'fixture_no_inference');assert.equal(legacyForwards,1,'Positive proxy control must reach the owned metadata-only provider');
  assert.equal(bound.status,409,'A process-bound target must refuse before provider dispatch');assert.equal(bound.value.error?.type,'native_target_not_local');assert.equal(boundForwards,0);
  assert.equal(missing.status,404);assert.equal(missing.value.error?.type,'native_target_not_found');
+ for(const result of jsonTargets){assert.equal(result.status,409,'Bound target must use decoded top-level JSON model');assert.equal(result.type,'native_target_not_local');}
+ for(const result of invalidJSON){assert.equal(result.status,400);assert.equal(result.type,'invalid_request_error');}
  for(const result of defaults){assert.equal(result.status,404);assert.equal(result.type,'native_target_not_found');}
  assert.equal(forwarded-baseline,1);assert(performance.now()<deadline);await stop();
- const result={ok:true,source_fixture_only:true,capsule_sha256:args[4],bound_status:bound.status,bound_provider_posts:boundForwards,legacy_provider_posts:legacyForwards,missing_local_status:missing.status,default_target_refusals:defaults.length,model_loads:0,native_inference:false,installed_service_actions:0,native_authority:false,observed_process_bytes:peak,elapsed_ms:Math.round(performance.now()-started),directory};
+ const result={ok:true,source_fixture_only:true,capsule_sha256:args[4],bound_status:bound.status,bound_provider_posts:boundForwards,legacy_provider_posts:legacyForwards,missing_local_status:missing.status,default_target_refusals:defaults.length,json_model_targets:jsonTargets.length,invalid_json_refusals:invalidJSON.length,model_loads:0,native_inference:false,installed_service_actions:0,native_authority:false,observed_process_bytes:peak,elapsed_ms:Math.round(performance.now()-started),directory};
  writeFileSync(path.join(directory,'receipt.json'),JSON.stringify(result)+'\n',{mode:0o600});console.log(JSON.stringify(result));
 }finally{await stop();provider.closeAllConnections();await new Promise(ok=>provider.close(ok));}

@@ -98,7 +98,14 @@ export async function startNativeJournalObserver({root,plan,parent,home,native,e
   ready=await wait('ready',performance.now()+3000);
   assert(ready.job===job&&/^[a-f0-9]{64}$/.test(ready.correlation_id)&&/^[a-f0-9]{32}$/.test(ready.native_instance)&&/^[a-f0-9]{64}$/.test(ready.scope_sha256));
   return {ready,async dispatch(){assert(!events.has('dispatched'));child.stdin.write('attempt\n');await wait('dispatched',performance.now()+3000);},
-   monitor(){if(!ended())sample();if(error)throw error;},stop};
+   monitor(){
+    if(error)throw error;
+    // stop() owns bounded exit/reaping and stopped-journal inspection from
+    // before its first shutdown effect. A missing live process during that
+    // operation cannot be mistaken for an active-phase identity failure.
+    if(stopped)return;
+    assert(!ended(),'Journal observer exited before requested stop');sample();
+   },stop};
  }catch(problem){
   if(!ended()){signal('SIGTERM');const end=performance.now()+500;while(!ended()&&performance.now()<end)await delay(10);if(!ended())signal('SIGKILL');const killed=performance.now()+1000;while(!ended()&&performance.now()<killed)await delay(10);}
   if(!ended()){child.unref();child.stdin.destroy();child.stdout.destroy();child.stderr.destroy();throw Error('Journal observer startup failed with unreaped child; retain state');}

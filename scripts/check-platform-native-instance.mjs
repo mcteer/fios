@@ -70,7 +70,9 @@ try{
  const current=await request('/v1/chat/completions',{method:'POST',instance:second.instance});
  const legacy=await request('/v1/chat/completions',{method:'POST'});
  assert([400,404,503].includes(legacy.status));
- if(capsule.receipt.declared_inputs.native_bound_local_target_guard_version===1){
+ if(capsule.receipt.declared_inputs.native_bound_target_json_version===1){
+  assert.equal(current.status,400);assert.equal(current.value.error?.type,'invalid_request_error');
+ }else if(capsule.receipt.declared_inputs.native_bound_local_target_guard_version===1){
   assert.equal(current.status,404);assert.equal(current.value.error?.type,'native_target_not_found');
  }else{
   assert.equal(current.status,legacy.status,'The current instance must reach ordinary input validation');
