@@ -87,3 +87,10 @@ test('source components remain partial even when epochs agree and counters are z
  for(const change of [v=>v.components.authority=true,v=>v.components.coverage='all_clients',v=>v.components.host.active=-1,v=>v.components.metal.pending=2147483648,v=>v.components.stream.shared=0,v=>v.components.host.epoch=3,v=>v.components.extra=0]){const b=fixture();change(b);assert.throws(()=>nativeReviewComponents(b,instance));}
  assert.throws(()=>nativeReviewComponents(fixture(),'b'.repeat(32)));assert.throws(()=>nativeReviewComponents(fixture(),instance,1));
 });
+
+test('source journal correlation keeps planning/check model-free and run explicit',()=>{
+ const scenario='journal-correlation',digest='a'.repeat(64);
+ assert.deepEqual(nativeReviewIntent(['--plan','--capsule','/private/capsule','--sha256',digest,'--output','/private/plan','--scenario',scenario]),{mode:'plan',inferenceRequested:false,scenario});
+ assert.deepEqual(nativeReviewIntent(['--check','--plan','/private/plan','--sha256',digest,'--scenario',scenario]),{mode:'check',inferenceRequested:false,scenario});
+ assert.deepEqual(nativeReviewIntent(['--run','--plan','/private/plan','--sha256',digest,'--allow-native-inference','--scenario',scenario]),{mode:'run',inferenceRequested:true,scenario});
+});

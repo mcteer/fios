@@ -14,6 +14,16 @@ Append `--protocol-version 3` for a source capsule declaring timestamped replies
 
 Large-model metadata preparation has a separate [CPU-only source config/index/header check](native-acceptance-preparation.md#ordinary-source-parser-check). It uses fixed reviewed metadata hashes and genuine parser/hash/region functions, with no weight payload, table mapping, server or model request. Its receipt covers declared source inputs and header arithmetic; it grants no installed/native authority or runtime-fit proof.
 
+A fixed administrative source-request/journal correlation scenario runs only on the24GiB M4-family `fios-core`, using exact local `mlx-community/gemma-4-e4b-it-4bit`:
+
+```sh
+node scripts/check-platform-native-model.mjs --plan --capsule /ABS/PRIVATE_SOURCE_CAPSULE --sha256 EXACT_CAPSULE_RECEIPT_SHA --output /ABS/PRIVATE_PARENT/plan.json --scenario journal-correlation
+node scripts/check-platform-native-model.mjs --check --plan /ABS/PRIVATE_PARENT/plan.json --sha256 EXACT_PLAN_SHA --scenario journal-correlation
+node scripts/check-platform-native-model.mjs --run --plan /ABS/PRIVATE_PARENT/plan.json --sha256 EXACT_PLAN_SHA --allow-native-inference --scenario journal-correlation
+```
+
+Plan/check perform0 model POSTs. Run consumes its plan once: one exact-model request,512 context/two output tokens,10s request/15s work/7s cleanup,12GiB sampled native-process abort threshold plus128MiB for the observer. These are sampled process limits, not hard GPU quotas. Standing operator inference authorization applies to this finite core scenario; it grants no Studio activation. The observer is compiled from the actual Core/CSQLite sources, receives no gateway credential, and can connect only to the experiment's private Unix socket under its network-denied profile. It durably records the scope before returning the opaque request correlation ID; a MAY-dispatch record precedes the actual HTTP attempt. The existing one-slot read-only lineage poller runs at2s cadence. After the observer exits, stopped writer fences protect inspection of its original journal. Positive HTTP completion/root correlation leave the inference claim uncertain. This administrative driver does not exercise a production admission binding, platform task dispatch or Pydantic worker and grants no native authority. Its captured source/capsule hashes are declared inputs, not whole-repository/installed provenance. No generated text is logged.
+
 Ordinary idle native helper lifecycle can be checked against a fresh reviewed DS4 build:
 
 ```sh

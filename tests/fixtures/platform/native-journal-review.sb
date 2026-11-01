@@ -1,0 +1,10 @@
+(version 1)
+; Finite administrative readonly lineage observer, never a task/model grant.
+(allow default)
+(deny network*)
+(allow network-outbound (remote unix-socket (subpath (param "FIOS_JOURNAL_STATE"))))
+(deny file-write*)
+(allow file-write* (subpath (param "FIOS_JOURNAL_STATE")) (literal "/dev/null"))
+(deny process-fork)
+(deny process-exec)
+(allow process-exec (literal (param "FIOS_JOURNAL_BINARY")))
