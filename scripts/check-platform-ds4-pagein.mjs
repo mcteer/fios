@@ -23,7 +23,12 @@ const begin=original.indexOf('typedef struct {\n    uint64_t off;\n    uint64_t 
 const end=original.indexOf('\ntypedef struct {\n    metal_graph_stream_pagein_job job;',begin);assert(begin>0&&end>begin);
 assert.equal(original.slice(begin,end).split('    metal_graph_stream_pagein_job *job = arg;').length,2,'Exact private worker checkpoint required');
 const fragment=original.slice(begin,end).replaceAll('pthread_join(', 'fios_pagein_join(').replaceAll('pthread_create(', 'fios_pagein_create(').replace('    metal_graph_stream_pagein_job *job = arg;', '    metal_graph_stream_pagein_job *job = arg;\n    if(fios_pagein_hold){__atomic_store_n(&fios_pagein_entered,1,__ATOMIC_RELEASE);while(!__atomic_load_n(&fios_pagein_release,__ATOMIC_ACQUIRE))usleep(100);}');
-const actual=original.slice(0,begin)+fragment+original.slice(end);
+// The bounded join primitive is shared outside the page-in fragment. Keep
+// this historical recipe's existing post-real-join witness on that exact edge.
+const nativeJoin='ticket->result=pthread_join(ticket->target,NULL);';
+const prefix=original.slice(0,begin);
+assert.equal(prefix.split(nativeJoin).length,2);
+const actual=prefix.replace(nativeJoin,'ticket->result=fios_pagein_join(ticket->target,NULL);')+fragment+original.slice(end);
 const prelude=`#include <pthread.h>
 #include <errno.h>
 static unsigned fios_pagein_hold,fios_pagein_entered,fios_pagein_release;

@@ -83,6 +83,10 @@ static void *selected_sequential_creator(void *context) {
     return NULL;
 }
 int main(void) {
+    REQUIRE(selected_mailbox_probe_case() == 0, "Nonblocking selected-loader preflight failed");
+    REQUIRE(selected_join_wait_case() == 0, "Bounded native join custody failed");
+    REQUIRE(cpu_lifecycle_case() == 0, "Bounded CPU pool lifecycle failed");
+    REQUIRE(pagein_lifecycle_case() == 0, "Bounded page-in lifecycle failed");
     REQUIRE(selected_creator_cycles() == 0, "Initial creator lifecycle failed");
     const uint64_t initial_owner = ds4_threads_owner_token();
     uint64_t previous_owner = initial_owner;

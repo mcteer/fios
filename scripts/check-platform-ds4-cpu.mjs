@@ -17,9 +17,9 @@ const files=['ds4.c','ds4.h','ds4_gpu.h','ds4_gpu_tp.h','ds4_metal.m','ds4_tp.c'
 const patchFile=path.join(root,'platform/studio/native/ds4-9139e2a-participant-retirement.patch'),patch=readFileSync(patchFile,'utf8');
 assert.equal(git('rev-parse','HEAD').trim(),'9139e2ae58a41503968a500f36f75895c1ba63fc');
 assert.equal(git('diff','HEAD','--name-only').trim(),files.join('\n'));assert.equal(git('diff','--no-ext-diff','HEAD','--',...files),patch);
-const original=readFileSync(path.join(source,'ds4.c'),'utf8'),start=original.indexOf('typedef void (*ds4_parallel_fn)'),end=original.indexOf('static void cursor_error(',start);
+const original=readFileSync(path.join(source,'ds4.c'),'utf8'),start=original.indexOf('// Detached joiner custody:'),end=original.indexOf('static void cursor_error(',start);
 assert(start>0&&end>start);let fragment=original.slice(start,end);
-const join='pthread_join(g_pool.threads[i], NULL)';assert.equal(fragment.split(join).length,2);fragment=fragment.replace(join,'fios_join(g_pool.threads[i], NULL)');
+const join='pthread_join(ticket->target,NULL)';assert.equal(fragment.split(join).length,2);fragment=fragment.replace(join,'fios_join(ticket->target,NULL)');
 const fixtureFile=path.join(root,'platform/studio/Tests/NativeFixtures/DS4CPU.c.fixture'),fixture=readFileSync(fixtureFile,'utf8');
 const prelude=`#include <pthread.h>
 #include <stdint.h>
@@ -29,6 +29,7 @@ const prelude=`#include <pthread.h>
 #include <string.h>
 #include <unistd.h>
 #include <errno.h>
+#include <time.h>
 static int fios_join_failure;static unsigned fios_actual_joins;
 static int fios_join(pthread_t t,void **v){int rc=pthread_join(t,v);if(!rc)++fios_actual_joins;return rc==0&&fios_join_failure?EIO:rc;}
 static pthread_once_t iq2xxs_signed_grid_once=PTHREAD_ONCE_INIT;
