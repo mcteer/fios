@@ -206,6 +206,7 @@ jobs:
           node scripts/check-platform-drain.mjs --isolated
           node scripts/check-platform-service-status.mjs --isolated
           node scripts/check-platform-service-recovery-status.mjs --isolated
+          node scripts/check-platform-mlx-process-runtime.mjs --isolated
           node scripts/check-platform-session.mjs --isolated
           node scripts/check-platform-session-control.mjs --isolated
           node scripts/check-platform-session-driver.mjs --isolated

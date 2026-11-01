@@ -72,6 +72,19 @@ node scripts/check-platform-service-recovery-status.mjs --isolated
 
 It uses single-completion counter-only application ports for normal startup and maintenance during held validation. It verifies pending/spacing-wait/available budgets, scoped pre-dispatch revocation with the real validator slot retained, maintenance preserved across manager restart, and exactly one later launch after explicit running intent; it exits its own processes. It launches no native application and does not supply installed lifecycle acceptance.
 
+The concrete serving-process start component can be exercised with private,
+model-free processes, without an MLX installation or native lifecycle grant:
+
+```sh
+node scripts/check-platform-mlx-process-runtime.mjs --isolated
+```
+
+It runs Debug/optimized real private child starts and local reap/relaunch,
+pre-spawn cancellation with the worker slot retained, duplicate refusal and
+independent journal uncertainty retention. The helper has a30s fail-safe alarm.
+No real MLX process, model or installed service is touched. This component is
+not yet connected to a protected native start/stop/restart reservation issuer.
+
 For an already-running local runtime, a one-shot VM observation can use an explicitly selected cached image without pulling or changing settings:
 
 ```sh

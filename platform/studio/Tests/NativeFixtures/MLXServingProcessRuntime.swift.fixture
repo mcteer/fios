@@ -1,0 +1,86 @@
+private final class ServingRuntimeGate:@unchecked Sendable {
+    let entered=DispatchSemaphore(value:0),release=DispatchSemaphore(value:0)
+    private let lock=NSLock()
+    private var first=true
+    func validate(_ command:ServiceLaunchCommand)throws {
+        lock.lock();let held=first;first=false;lock.unlock()
+        if held {entered.signal();guard release.wait(timeout:.now()+5) == .success else {throw RuntimeError.deadline}}
+    }
+}
+// Same-file extension reaches only the private fixture initializer/child. No
+// installed factory or native app is invoked; the actual helper has no models.
+extension MLXServingProcessRuntime {
+    fileprivate static func fixture(executable:VerifiedExecutable,home:String,profile:String,gate:ServingRuntimeGate)throws->MLXServingProcessRuntime {
+        guard executable.path.hasPrefix("/private/tmp/fios-009-serving-runtime-") else {throw RuntimeError.invalid}
+        let base=["PATH":"/usr/bin:/bin","LANG":"C","LC_ALL":"C","HOME":home]
+        do {
+            _=try MLXServingProcessRuntime(executable:executable,arguments:Array(repeating:String(repeating:"x",count:4096),count:20),environment:base,serviceProfileHash:profile,validateReservation:gate.validate)
+            throw JournalError.conflict
+        }catch RuntimeError.invalid {}
+        let fixed=try MLXServingProcessProfile(serverSHA256:executable.sha256,applicationSHA256:executable.sha256,reviewDigest:profile,uid:geteuid())
+        do {
+            _=try MLXServingProcessRuntime(profile:fixed,arguments:["pull","serve"],environment:base,serviceProfileHash:profile,validateReservation:gate.validate)
+            throw JournalError.conflict
+        }catch RuntimeError.invalid {}
+        return try MLXServingProcessRuntime(executable:executable,arguments:[],environment:["PATH":"/usr/bin:/bin","LANG":"C","LC_ALL":"C","HOME":home],serviceProfileHash:profile,validateReservation:gate.validate)
+    }
+    fileprivate func endFixtureChild()throws {
+        lock.lock();let child=process,value=identity;lock.unlock()
+        guard let child,let value,executable.path.hasPrefix("/private/tmp/fios-009-serving-runtime-") else {throw RuntimeError.invalid}
+        _=try ServiceIdentity.verified(peer:NativeControlPeer(pid:value.pid,start:value.start,executable:executable),expectedUID:geteuid(),deadline:ProcessInfo.processInfo.systemUptime+1)
+        child.terminate() // Only this isolated fixture's positively owned child.
+    }
+}
+@main struct ServingRuntimeFixture {
+    static func main()throws {
+        let args=CommandLine.arguments
+        guard args.count==4 else {throw RuntimeError.invalid}
+        let executable=try VerifiedExecutable(path:args[1],sha256:args[2]),root=URL(fileURLWithPath:args[3])
+        let journal=try Journal(directory:root.appendingPathComponent("state"))
+        let old=UUID().uuidString.lowercased()
+        try journal.claim(job:old,attempt:0,model:"fixture/independent");try journal.markUncertain(job:old,attempt:0)
+        let pins:[ManagedService:String]=[.mlx:executable.sha256,.orbstack:executable.sha256]
+        let recovery=try ServiceRecoveryController(journal:journal,approvedHashes:pins)
+        let profile=try ServiceLaunchProfile.digest(pins),gate=ServingRuntimeGate()
+        let runtime=try MLXServingProcessRuntime.fixture(executable:executable,home:root.path,profile:profile,gate:gate)
+        func absent(_ now:Int64)->ServiceObservation {
+            ServiceObservation(identity:nil,responding:false,sessionReady:true,credentialsReady:true,nativeIdle:nil,runtimeUnmanaged:nil,sampledAt:now)
+        }
+        func next(_ now:Int64)throws->ServiceRecoveryRequest {
+            guard let result=try recovery.next(service:.mlx,desired:.running,observation:absent(now),now:now,tick:now),result.operation == .launch else {throw RuntimeError.invalid};return result
+        }
+        func result()throws->SessionLaunchResult {
+            let end=ProcessInfo.processInfo.systemUptime+5
+            while ProcessInfo.processInfo.systemUptime<end {if let value=runtime.poll(){return value.result};Thread.sleep(forTimeInterval:0.005)}
+            throw RuntimeError.deadline
+        }
+        func retired()throws {
+            let end=ProcessInfo.processInfo.systemUptime+3
+            while ProcessInfo.processInfo.systemUptime<end {if runtime.retireKnownExited(){return};Thread.sleep(forTimeInterval:0.005)}
+            throw RuntimeError.deadline
+        }
+        let cancelled=try next(1000)
+        try runtime.begin(cancelled.command,deadline:ProcessInfo.processInfo.systemUptime+5)
+        guard gate.entered.wait(timeout:.now()+2) == .success,runtime.cancelValidation(id:cancelled.command.id),
+              try result() == .notSent,runtime.validationPending else {throw RuntimeError.invalid}
+        let blocked=ServiceLaunchCommand(service:.mlx,id:UUID().uuidString.lowercased(),expectedSHA256:executable.sha256,profileHash:profile)
+        do {try runtime.begin(blocked,deadline:ProcessInfo.processInfo.systemUptime+5);throw JournalError.conflict}catch RuntimeError.capacity {}
+        try recovery.receive(cancelled,result:.notSent);gate.release.signal()
+        let until=ProcessInfo.processInfo.systemUptime+2
+        while runtime.validationPending,ProcessInfo.processInfo.systemUptime<until {Thread.sleep(forTimeInterval:0.005)}
+        guard !runtime.validationPending,runtime.lookup(id:cancelled.command.id) == .notSent else {throw RuntimeError.invalid}
+        var identities:[ServiceIdentity]=[]
+        for now:Int64 in [11000,21000] {
+            let request=try next(now);try runtime.begin(request.command,deadline:ProcessInfo.processInfo.systemUptime+5)
+            let outcome=try result()
+            guard case .started(let identity)=outcome else {throw RuntimeError.invalid}
+            identities.append(identity);try recovery.receive(request,result:outcome)
+            do {try runtime.begin(blocked,deadline:ProcessInfo.processInfo.systemUptime+5);throw JournalError.conflict}catch RuntimeError.capacity {}
+            guard !runtime.retireKnownExited(),try journal.uncertainCount()==1 else {throw RuntimeError.invalid}
+            try runtime.endFixtureChild();try retired()
+            guard runtime.lookup(id:request.command.id)==outcome,try journal.uncertainCount()==1 else {throw RuntimeError.invalid}
+        }
+        guard identities.count==2,identities[0] != identities[1] else {throw RuntimeError.invalid}
+        print("PASS: actual private serving-role process launch/identity/local reap/relaunch, retained validation cancellation slot, no duplicate child and independent native uncertainty retained")
+    }
+}

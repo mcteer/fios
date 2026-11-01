@@ -202,3 +202,32 @@ healthy loading/active server merely because it is not yet metadata-ready.
 The current GUI launch-only enrollment does not supply that native process
 actuation authority. Installation/ownership handover and native acceptance stay
 separately gated; source engineering continues.
+
+### Native process-start component
+
+`MLXServingProcessRuntime` supplies a concrete off-loop process start and local
+ownership primitive for that future adapter. The production constructor fixes
+the executable through `MLXServingProcessProfile`, accepts only a separately
+reviewed preserved serving argv/environment profile, and requires a code-only
+callback revalidating a retained native start reservation for the exact command.
+Neither a desired-state row nor a launch-command hash supplies that authority.
+The public manager has no installed native reservation/profile issuer yet.
+
+The component retains one validation/spawn worker through Foundation pool
+teardown and one owned child. A pre-spawn cancellation seals future dispatch
+while retaining the real worker slot. Entered spawn failure/unknown identity
+stays uncertain; cached request IDs never replay. Started means an exact verified
+PID/start/path/hash was observed, not API/model readiness. Known local exit can
+release only local child capacity; the next start needs fresh native authority
+and the controller's durable budget. It does not clear native inference claims,
+stop a process in deinit, kill by PID, or implement an automatic restart loop.
+Protected launch-profile issuance, namespace/controller handover and native
+stop/restart reservation integration remain unfinished.
+
+The ordinary `check-platform-mlx-process-runtime.mjs --isolated` fixture appends
+a same-file test extension to the unchanged component and uses only a private
+finite C helper. It checks real launches/identities/local exit/relaunch in Debug
+and optimized modes, cancellation custody, duplicate refusal and a retained
+independent journal uncertainty. Its reservation adapter is fixture-only and
+grants no native MLX authority. The receipt hashes the declared component and
+fixture, not the whole repository/native installation.
