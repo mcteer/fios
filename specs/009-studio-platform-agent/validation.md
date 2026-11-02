@@ -2046,3 +2046,66 @@ Swift primary reader9dd66da957b84f5cc3e16480e205682b2b61212abe4a0e0a015565ec1487
 The earlier98c792f platform package predates primary observation; no current
 complete platform/native release or installed provenance is claimed.38/55 whole
 tasks remain complete.
+
+
+### 2026-11-01 actual core model primary attribution and retained journal uncertainty
+
+The provider-source capsule remains model-free: actual model-plan preflight
+refuses before plan publication/model effects
+(`/tmp/fios-009-primary-model-free-plan.log`). Its guard is unchanged. A separate
+local-model MAS source variant is built with functional-build-only (without the
+provider variant), retaining all historical root/runtime/HTTP/fault/mutation
+campaigns as skipped. This is source-model engineering under standing core-only
+inference authorization, not installed activation or a production release.
+Build `/tmp/fios-009-primary-model-native-build.log`, capsule
+`/private/tmp/fios-009-primary-model-native-csnv9s/capsule`, review
+b874a5583a5216446afb454aa3c3e19118f87132df530f43f2698aac7bd5e47b,
+binary c7385ce6af4e089fb44d13fb665888fb8861e0b92db918bedeb0ba4fe6554587.
+Native companions/dependencies match the preceding primary build; only its
+reviewed model/provider compile flavor differs. No guard/capsule is relabeled.
+
+The actual Core/CSQLite observer now validates the complete typed primary view
+and exact selected model, initially and beside its2s lineage polling. It writes
+only small private source metadata; no model/gateway credential or model POST
+capability enters that observer. Stopped inspection checks the persisted primary
+record under writer fences and leaves the original claim uncertain. A real run
+requires positive exact-model attribution as well as an observed original root;
+old capsules lacking version1 refuse in plan/check/run preflight. Standalone
+observer compile passes `/tmp/fios-009-primary-journal-compile.log`.44 platform
+Node tests pass `/tmp/fios-009-primary-model-node.log`.
+
+Fresh one-use plan `/private/tmp/fios-009-primary-model-plan-DhehUv/plan.json`,
+SHA59c80536779d861e32aadfd09d080225d93ac75e9b6fe325a2997dc0b2d0f58c
+(`/tmp/fios-009-primary-model-plan.log`) binds148 selected Core/CSQLite/fixture/
+profile inputs plus runner/native/model inputs. This is declared-input provenance,
+not whole-repository/native/installed attestation. Host is fios-core, Apple M4 Pro,
+24GiB. Exact local `mlx-community/gemma-4-e4b-it-4bit` file set is5,146,800,534 bytes.
+No alternate/larger model or Studio is used. Bounds remain one POST/concurrency1,
+512 context/two output tokens,10s request/15s work/7s cleanup,12GiB sampled native
+process abort threshold and128MiB observer threshold. These are sampled limits,
+not hard GPU quotas; standing authorization supersedes another inference prompt.
+
+Zero-model check passes `/tmp/fios-009-primary-model-check.log`, retained
+`/private/tmp/f9-model-check-EzadNH`:0 POSTs, one primary sample/zero positive
+samples, no root, uncertain journal claim, observer/native reaped normally.
+Actual one-use run passes `/tmp/fios-009-primary-model-run.log`, retained
+`/private/tmp/f9-model-run-UzmRX8`: exactly1 actual POST, HTTP response complete,
+2 tokens/2 delta events,4602ms, no generated text logged. Source instance
+abf76d2523f08057b03ed1df01b37be0,4 primary samples/3 positive, preparation maximum3
+and active maximum1, last source sequence95. Those are conservative ownership
+roots including internal preparations, not3 HTTP requests or GPU concurrency.
+Stopped inspection retains original native root5 and inference state uncertain;
+process reaping/HTTP completion/zero later counts never resolve it. Native
+uncertainty remains true, coverage unknown, quiescence unproven, authorityfalse.
+Native observed peak RSS3,231,367,168/footprint4,677,815,344 bytes; observer
+RSS12,484,608/footprint4,932,112 bytes. These are observations, not resource or
+Studio acceptance guarantees. Plan is consumed once; no automatic retry occurs.
+
+Fixture05a08451a102a170034dc327c619d3bfc0b405681c5501f8d8f9c34f23a0fddc,
+runner52422a9c6e2201e8cafdd68989c566d383496a2e56e22dbb37e320a6e7ed2c3d,
+observer helper95d0db49d36e6b41078d52b5adde23bc867afcc010efd71f13fe6b04384ec62c.
+No live Preferences/GUI/Studio service/RDMA/network/install/UI/authentication,
+merge or deployment change occurs. This administrative source case does not
+exercise platform task admission/dispatch or Pydantic execution and does not
+complete all-client/modality/native terminality or Studio acceptance.38/55 whole
+tasks remain complete.

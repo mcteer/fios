@@ -8,6 +8,28 @@ import CSQLite
 @main
 struct NativeJournalSource {
     static let model="mlx-community/gemma-4-e4b-it-4bit"
+    // Private administrative observation metadata only; never native proof.
+    struct PrimaryRecord {
+        var samples=0,positive=0,preparing=0,active=0,responding=0
+        var sequence:UInt64=0
+        var diagnostic=NativePrimaryActivityDiagnostics(configured:true)
+        mutating func capture(client:NativeControlClient,instance:String,directory:URL)throws {
+            let sample=try client.primaryActivity(instance:instance,after:sequence),value=sample.activity
+            diagnostic.completed(sample,expectedInstance:instance,now:HostResources.nowMilliseconds())
+            guard diagnostic.summary(now:HostResources.nowMilliseconds())["state"] as? String=="received",
+                  value.models.count<=1,value.models.allSatisfy({WireScalar.exactModel($0.model,NativeJournalSource.model)}),
+                  let stamp=value.sampledAt,samples<32 else {throw NativeControlError.invalid}
+            samples+=1;sequence=value.sampleSequence
+            if let row=value.models.first {
+                positive+=1;preparing=max(preparing,row.preparing);active=max(active,row.active);responding=max(responding,row.responding)
+            }
+            let fields:[String:Any]=["version":1,"scope":"primary_request_ownership","coverage":"unknown","authority":false,
+                "native_instance":instance,"model":NativeJournalSource.model,"samples":samples,"positive_samples":positive,
+                "source_sequence":sequence,"source_sampled_at":stamp,"preparing_max":preparing,"active_max":active,"responding_max":responding,
+                "uncertainty_observed":diagnostic.summary(now:HostResources.nowMilliseconds())["retained_uncertainty"] as? Bool ?? true]
+            try AtomicState.write(JSONSerialization.data(withJSONObject:fields,options:[.sortedKeys]),to:directory.appendingPathComponent("source-primary-observation.json"))
+        }
+    }
     static func emit(_ value:[String:Any])throws {
         var bytes=try JSONSerialization.data(withJSONObject:value,options:[.sortedKeys]);bytes.append(10)
         FileHandle.standardOutput.write(bytes)
@@ -34,6 +56,8 @@ struct NativeJournalSource {
         try journal.claim(job:job,attempt:0,model:model,scope:scope)
         let poller=NativeLineagePoller(journal:journal,source:client)
         let correlation=try scope.nativeRequestCorrelationID(job:job,attempt:0)
+        var primary=PrimaryRecord()
+        try primary.capture(client:client,instance:native.instance,directory:journal.directory)
         let flags=fcntl(STDIN_FILENO,F_GETFL)
         guard flags>=0,fcntl(STDIN_FILENO,F_SETFL,flags|O_NONBLOCK)==0 else {throw ControlError.invalid_request}
         try emit(["event":"ready","job":job,"correlation_id":correlation,"native_instance":native.instance,
@@ -64,6 +88,7 @@ struct NativeJournalSource {
             let tick=ProcessInfo.processInfo.systemUptime
             if !stopping,attempted,tick>=nextPoll,!pending {
                 pending=try poller.beginNext();nextPoll=tick+2
+                try primary.capture(client:client,instance:native.instance,directory:journal.directory)
             }
             if !stopping {Thread.sleep(forTimeInterval:0.025)}
         }
@@ -111,7 +136,22 @@ struct NativeJournalSource {
         }
         let observed=root.flatMap(UInt64.init).map {$0>0} ?? false
         guard args[6]=="0" || observed,sqlite3_step(row)==SQLITE_DONE else {throw JournalError.invalid}
+        let primaryBytes=try Data(contentsOf:URL(fileURLWithPath:args[1]).appendingPathComponent("source-primary-observation.json"))
+        try StrictJSON.validate(primaryBytes,maximum:4096)
+        guard let primary=try JSONSerialization.jsonObject(with:primaryBytes) as? [String:Any],
+              primary["version"] as? Int==1,primary["scope"] as? String=="primary_request_ownership",
+              primary["coverage"] as? String=="unknown",primary["authority"] as? Bool==false,
+              primary["native_instance"] as? String==args[4],let observedModel=primary["model"] as? String,WireScalar.exactModel(observedModel,model),
+              let samples=WireScalar.integer(primary["samples"],maximum:32),samples>0,
+              let positive=WireScalar.integer(primary["positive_samples"],maximum:samples),
+              let sourceSequence=WireScalar.integer(primary["source_sequence"]),sourceSequence>0,
+              let sourceTime=WireScalar.integer(primary["source_sampled_at"]),sourceTime>0,
+              let preparing=WireScalar.integer(primary["preparing_max"],maximum:256),
+              let active=WireScalar.integer(primary["active_max"],maximum:256),
+              let responding=WireScalar.integer(primary["responding_max"],maximum:256),
+              primary["uncertainty_observed"] is Bool,
+              args[6]=="0" || (positive>0 && preparing+active+responding>0) else {throw JournalError.invalid}
         try emit(["source_fixture_only":true,"scope_correlated":true,"persisted_native_root":root.map {$0 as Any} ?? NSNull(),
-            "actual_request_root_observed":observed,"inference_state":"uncertain","native_quiescence":"unproven","native_authority":false])
+            "actual_request_root_observed":observed,"primary_observations":primary,"inference_state":"uncertain","native_quiescence":"unproven","native_authority":false])
     }
 }

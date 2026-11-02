@@ -88,6 +88,8 @@ export async function startNativeJournalObserver({root,plan,parent,home,native,e
    const receipt=JSON.parse(result.stdout.trim());
    assert(receipt.source_fixture_only===true&&receipt.scope_correlated===true&&receipt.inference_state==='uncertain'&&receipt.native_authority===false);
    if(expectLive)assert(receipt.actual_request_root_observed===true);
+   assert(receipt.primary_observations?.scope==='primary_request_ownership'&&receipt.primary_observations?.coverage==='unknown'&&receipt.primary_observations?.authority===false);
+   if(expectLive)assert(receipt.primary_observations.positive_samples>0);
    return {...receipt,observer_reaped:true,peak_resident:peakResident,peak_footprint:peakFootprint,production_admission_tested:false,platform_dispatch_tested:false,pydantic_worker_tested:false,proof_scope:'administrative_source_request_only'};
   })();return stopped;
  }

@@ -44,7 +44,7 @@ function fingerprint(file){const fd=openSync(file,constants.O_RDONLY|constants.O
 if(args[0]==='--plan'){
  assert(args.length===7&&args[1]==='--capsule'&&args[3]==='--sha256'&&args[5]==='--output'&&path.isAbsolute(args[2])&&path.isAbsolute(args[6]));
  const capsule=verifyNativeReview(args[2],args[4]),parent=privateParent(args[6]);
- nativeReviewModelInputs(capsule.receipt.declared_inputs);
+ nativeReviewModelInputs(capsule.receipt.declared_inputs);if(journalCorrelation)assert.equal(capsule.receipt.declared_inputs.native_primary_activity_version,1,'Source lacks primary ownership observation');
  if(journalCorrelation){assert.equal(capsule.receipt.declared_inputs.native_expected_instance_guard_version,1,'Source lacks expected-instance binding');assert.equal(capsule.receipt.declared_inputs.native_bound_local_target_guard_version,1,'Source lacks exact local target binding');assert.equal(capsule.receipt.declared_inputs.native_bound_target_json_version,1,'Source lacks decoded top-level target binding');}
  assert(realpathSync(MODEL)===MODEL);const config=json(path.join(MODEL,'config.json'),1<<20).value;assert(config.model_type==='gemma4');
  if(image)assert(config.vision_config?.model_type==='gemma4_vision'&&config.vision_soft_tokens_per_image<=280);
@@ -63,7 +63,7 @@ if(args[0]==='--plan'){
 const check=args[0]==='--check';assert((check&&args.length===5)||(!check&&args[0]==='--run'&&args.length===6&&args[5]==='--allow-native-inference'));
 assert(args[1]==='--plan'&&args[3]==='--sha256'&&path.isAbsolute(args[2]));const parent=privateParent(args[2]),document=json(args[2]);assert(sha(document.bytes)===args[4]);const plan=document.value;assert.deepEqual(plan.execution_host,executionHost);assert(!plan.synthetic_resource_fixture||check,'Synthetic observations cannot be used for inference');assert.deepEqual(plan.runner_inputs,runnerInputs());
 assert(plan.version===1&&plan.purpose==='private_gemma4_source_experiment'&&plan.scenario===scenario&&plan.model===ID&&plan.model_directory===MODEL&&plan.native_admission_authority===false&&plan.requires_explicit_inference_opt_in===true&&JSON.stringify(plan.limits)===JSON.stringify(LIMITS));
-assert(Date.now()>=plan.created-1000&&Date.now()-plan.created<=24*3600000);const capsule=verifyNativeReview(plan.capsule,plan.capsule_sha256);nativeReviewModelInputs(capsule.receipt.declared_inputs);
+assert(Date.now()>=plan.created-1000&&Date.now()-plan.created<=24*3600000);const capsule=verifyNativeReview(plan.capsule,plan.capsule_sha256);nativeReviewModelInputs(capsule.receipt.declared_inputs);if(journalCorrelation)assert.equal(capsule.receipt.declared_inputs.native_primary_activity_version,1,'Source lacks primary ownership observation');
 if(journalCorrelation){assert.equal(capsule.receipt.declared_inputs.native_expected_instance_guard_version,1,'Source lacks expected-instance binding');assert.equal(capsule.receipt.declared_inputs.native_bound_local_target_guard_version,1,'Source lacks exact local target binding');assert.equal(capsule.receipt.declared_inputs.native_bound_target_json_version,1,'Source lacks decoded top-level target binding');}
 assert(path.dirname(plan.observer)===parent&&lstatSync(plan.observer).isFile()&&!lstatSync(plan.observer).isSymbolicLink()&&sha(readFileSync(plan.observer))===plan.observer_sha256);
 const profile=path.join(root,'tests/fixtures/platform/native-model-review.sb');assert(sha(readFileSync(profile))===plan.profile_sha256);
