@@ -2,7 +2,7 @@
 // Finite ordinary shutdown with one real unfinished HTTP body, empty catalog
 // and no inference. Native source process only; never an installed service.
 import assert from 'node:assert/strict';
-import {spawn} from 'node:child_process';
+import {spawn,execFileSync} from 'node:child_process';
 import {createServer,createConnection} from 'node:net';
 import {request} from 'node:http';
 import {setTimeout as delay} from 'node:timers/promises';
@@ -14,6 +14,12 @@ const args=process.argv.slice(2);
 assert(process.platform==='darwin'&&process.getuid()>0&&args.length===5&&args[0]==='--isolated'&&args[1]==='--release'&&args[3]==='--sha256');
 const review=verifyNativeReview(args[2],args[4]),directory=mkdtempSync('/private/tmp/f9-connection-drain-'),models=join(directory,'models');
 const scriptHash=createHash('sha256').update(readFileSync(import.meta.filename)).digest('hex');
+const cachedRetention=review.receipt.declared_inputs.native_cached_source_retention_version===1;
+const observerSource=join(import.meta.dirname,'../platform/studio/Tests/NativeFixtures/ObserveProcess.c.fixture');
+const observer=join(directory,'observe-process'),observerSourceHash=createHash('sha256').update(readFileSync(observerSource)).digest('hex');
+execFileSync('/usr/bin/clang',['-x','c',observerSource,'-O2','-o',observer],{timeout:30000,stdio:'pipe',env:{PATH:'/usr/bin:/bin',HOME:directory,LANG:'C',LC_ALL:'C'}});
+const observerHash=createHash('sha256').update(readFileSync(observer)).digest('hex');
+
 mkdirSync(models,{mode:0o700});
 const listener=createServer();await new Promise((resolve,reject)=>{listener.once('error',reject);listener.listen(0,'127.0.0.1',resolve);});
 const port=listener.address().port;await new Promise(resolve=>listener.close(resolve));
@@ -22,6 +28,19 @@ const policy=`(version 1)(allow default)(deny network*)(allow network* (local un
 const log=openSync(join(directory,'native.log'),'wx',0o600);
 const child=spawn('/usr/bin/sandbox-exec',['-p',policy,review.binary,'serve','--host','127.0.0.1','--port',String(port),'--model-dir',models,'--no-warmup-eager'],{env,stdio:['ignore',log,log]});closeSync(log);
 const exited=()=>child.exitCode!==null||child.signalCode!==null;
+let original=null;
+function observeChild(){
+ const value=JSON.parse(execFileSync(observer,[String(child.pid)],{encoding:'utf8',timeout:1000,maxBuffer:1024,env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C'}}));
+ assert(value.pid===child.pid&&value.uid===process.getuid()&&/^\d+:\d+$/.test(value.start));return value;
+}
+function signalOwned(signal){
+ if(exited())return;
+ assert(original,'Missing original child identity');
+ assert.equal(createHash('sha256').update(readFileSync(observer)).digest('hex'),observerHash);
+ assert.equal(observeChild().start,original.start,'Original child changed before private signal');
+ assert(child.kill(signal));
+}
+
 async function until(check,ms=10000){const end=performance.now()+ms;while(performance.now()<end){const value=await check();if(value)return value;await delay(25);}throw Error('Finite private connection-drain deadline');}
 function get(path){return new Promise((resolve,reject)=>{
  const req=request({host:'127.0.0.1',port,path,method:'GET',agent:false,timeout:2000},res=>{
@@ -45,9 +64,10 @@ function observe(){return new Promise((resolve,reject)=>{
   resolve({owned:bytes.readUInt32BE(32),ingress:bytes.readUInt32BE(36),uncertain:bytes[57]===1,sequence:Number(capture),sampled_at:at});
  }catch(error){reject(error);}});
 });}
-let partial=null,forced=false;
+let partial=null,forced=false,expectedCachedHold=false;
 console.log(JSON.stringify({directory,model_posts:0,unfinished_get_bodies:1,private_native_children:1,installed:false}));
 try {
+ original=await until(()=>{assert(!exited());try{return observeChild();}catch{return null;}},2000);
  await until(async()=>{assert(!exited());try{return (await get('/health')).status==='ok';}catch(error){if(!['ECONNREFUSED','ECONNRESET'].includes(error.code))throw error;return false;}});
  assert.deepEqual((await get('/v1/models')).data,[]);
  await until(async()=>{const s=await observe();return s.owned===0&&!s.uncertain;});
@@ -55,7 +75,7 @@ try {
  await new Promise((resolve,reject)=>{partial.once('connect',resolve);partial.once('error',reject);});
  partial.write('GET /health HTTP/1.1\r\nHost: localhost\r\nContent-Length: 128\r\n\r\n{');
  const before=await until(async()=>{const s=await observe();return s.owned===1&&s.ingress===1&&!s.uncertain?s:null;});
- const began=performance.now();assert(child.kill('SIGTERM'));
+ const began=performance.now();signalOwned('SIGTERM');
  // Progress within the genuine body-read deadline, without finishing its
  // declared body. No counters, source rewrite or synthetic timeout is used.
  let bytesSent=1;
@@ -66,14 +86,27 @@ try {
  const retainedLog=readFileSync(join(directory,'native.log'),'utf8');
  assert(retainedLog.includes('retaining original server state'));assert(!retainedLog.includes('Shutting down gracefully'));
  const heldMs=performance.now()-began;partial.destroy();partial=null;
- await until(exited,5000);assert.equal(child.exitCode,0);assert.equal(child.signalCode,null);
- assert(readFileSync(join(directory,'native.log'),'utf8').includes('Shutting down gracefully'));
+ let afterLocalRelease=null;
+ if(cachedRetention){
+  afterLocalRelease=await until(async()=>{assert(!exited());const s=await observe();return s.owned===0&&s.ingress===0&&s.uncertain?s:null;},5000);
+  await delay(250);assert(!exited(),'Cached uncertainty was refunded after local connection release');
+  assert(!readFileSync(join(directory,'native.log'),'utf8').includes('Shutting down gracefully'));
+  expectedCachedHold=true;
+  // Finite cleanup of this exact private, model-free fixture child only.
+  // This signal/reap never supplies native terminality or clears its fence.
+  signalOwned('SIGKILL');forced=true;await until(exited,5000);assert.equal(child.signalCode,'SIGKILL');
+ }else{
+  await until(exited,5000);assert.equal(child.exitCode,0);assert.equal(child.signalCode,null);
+  assert(readFileSync(join(directory,'native.log'),'utf8').includes('Shutting down gracefully'));
+ }
+ assert.equal(createHash('sha256').update(readFileSync(observerSource)).digest('hex'),observerSourceHash);
+ assert.equal(createHash('sha256').update(readFileSync(observer)).digest('hex'),observerHash);
  assert.equal(createHash('sha256').update(readFileSync(import.meta.filename)).digest('hex'),scriptHash);
  assert.deepEqual(readdirSync(models),[]);assert.deepEqual(verifyNativeReview(args[2],args[4]),review);
- const result={ok:true,directory,review_sha256:args[4],driver_sha256:scriptHash,source_instance:instance,before,held,held_ms:Math.round(heldMs),body_bytes_sent:bytesSent,declared_body_bytes:128,local_exit_after_original_connection_release:true,model_posts:0,models:0,installed:false,native_authority:false,native_quiescence:'unproven',coverage:'unknown'};
+ const result={ok:true,directory,review_sha256:args[4],driver_sha256:scriptHash,source_instance:instance,before,held,held_ms:Math.round(heldMs),body_bytes_sent:bytesSent,declared_body_bytes:128,local_exit_after_original_connection_release:!cachedRetention,cached_uncertainty_retained_after_local_release:cachedRetention,after_local_release:afterLocalRelease,private_cleanup:forced?'verified_original_child_SIGKILL_no_terminal_proof':'graceful',original_process:{pid:original.pid,uid:original.uid,start:original.start},observer_sha256:observerHash,observer_source_sha256:observerSourceHash,model_posts:0,models:0,installed:false,native_authority:false,native_quiescence:'unproven',coverage:'unknown'};
  writeFileSync(join(directory,'receipt.json'),JSON.stringify(result)+'\n',{mode:0o600,flag:'wx'});console.log(JSON.stringify(result));
 } finally {
  partial?.destroy();
- if(!exited()){child.kill('SIGTERM');try{await until(exited,5000);}catch{forced=true;child.kill('SIGKILL');await until(exited,5000);}}
- if(forced)throw Error('Forced private cleanup is not accepted; retained output must be reviewed');
+ if(!exited()){signalOwned('SIGTERM');try{await until(exited,5000);}catch{forced=true;signalOwned('SIGKILL');await until(exited,5000);}}
+ if(forced&&!expectedCachedHold)throw Error('Forced private cleanup is not accepted; retained output must be reviewed');
 }

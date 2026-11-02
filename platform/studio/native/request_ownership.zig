@@ -108,6 +108,10 @@ pub const Retained = struct {
     pub fn release(self: Retained, io: std.Io) void {
         for (self.tokens[0..self.count]) |token| self.tracker.leave(io, token) catch { self.tracker.fence(io); };
     }
+    pub fn releaseIfCertain(self: Retained, io: std.Io) bool {
+        if (self.count == 0 or self.count > capacity) { self.tracker.fence(io); return false; }
+        return self.tracker.releaseIfCertain(io, self.tokens[0..self.count]);
+    }
 };
 pub fn retainCurrent(io: std.Io) !?Retained {
     if (current_group) |tokens| return try shared.retainTokens(io, tokens);
@@ -195,7 +199,14 @@ pub const Tracker = struct {
         // No callback runs while holding this tracker mutex.
         const known = if (probe) |read| read() else false;
         if (known) self.fence(io);
-        return known;
+        return self.knownUncertain(io);
+    }
+    // Cached source state only: no callback, allocation or capture/clock advance.
+    // A later false backend sample cannot clear an already latched source fence.
+    pub fn knownUncertain(self: *Tracker, io: std.Io) bool {
+        self.mutex.lockUncancelable(io);
+        defer self.mutex.unlock(io);
+        return !self.initialized or self.uncertain;
     }
     // Close the same mutex-protected reservation edge used by enter(). Work
     // already owning ingress is NOT cancelled. No clock/manager death resumes
@@ -557,6 +568,23 @@ pub const Tracker = struct {
             }
             if (!member) return error.ModelConflict;
         }
+    }
+    // Actor/preparation retirement only. The source-fence check and complete
+    // reference release share one lock, so a fence that wins this edge keeps
+    // every original token. Ordinary leave remains independent CPU accounting.
+    pub fn releaseIfCertain(self: *Tracker, io: std.Io, tokens: []const Token) bool {
+        self.mutex.lockUncancelable(io);
+        defer self.mutex.unlock(io);
+        if (!self.initialized or self.uncertain) return false;
+        if (tokens.len == 0 or tokens.len > capacity) { self.uncertain = true; return false; }
+        var seen: [capacity]bool = @splat(false);
+        for (tokens) |token| {
+            _ = self.checked(token) catch { self.uncertain = true; return false; };
+            if (seen[token.slot]) { self.uncertain = true; return false; }
+            seen[token.slot] = true;
+        }
+        for (tokens) |token| self.leaveLocked(token) catch { self.uncertain = true; return false; };
+        return true;
     }
     pub fn leave(self: *Tracker, io: std.Io, token: Token) !void {
         self.mutex.lockUncancelable(io);

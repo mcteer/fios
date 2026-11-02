@@ -3767,3 +3767,53 @@ native quiescence unproven and authorityfalse. No generated text, Studio model,
 resident replacement, ANE computation, platform dispatch/Pydantic acceptance,
 installed lifecycle action or native admission proof follows. No historical
 fault/mutation campaign is run. Whole tasks remain38/55.
+
+
+### 2026-11-02 preserve cached source uncertainty through actor/frame retirement (partial source checkpoint)
+
+The original retirement helper returned only the current backend getter, so an
+already-fenced original source could lose its actor references/correlation.
+The serving-frame guard likewise ignored cached source uncertainty when local
+owners and live backend flags were zero. Actual native cases compile22s, then
+fail2/4: actor owners0/fencedtrue/lineagefalse and frame retainedfalse/local0
+(`/tmp/fios-009-cached-fence-prior-native-build.log`). No backend/model handle
+is created; this is genuine metadata/lifetime behavior, not a compiler failure.
+
+`backendKnownUncertain` now retains the original source's latched uncertainty,
+including uninitialized source state. Its new cached read advances no sample
+or clock and invokes no callback. Conditional actor/preparation/group release
+checks the cached fence and releases the complete validated token group under
+one tracker lock. Ordinary local CPU `leave`/release remain independent and
+callback-free. The serving frame independently retains cached source uncertainty,
+so local owner0 or a later false getter cannot refund it.
+
+Selected actual native cases pass4/4 (safe compile21s/897MiB): healthy release,
+live negative, cached negative and a real metadata fence thread between the
+probe read and final actor retirement all preserve the expected original root.
+The actual serving-frame helper retains uncertainty with0 local owners. Full
+native executable build/link passes (`/tmp/fios-009-cached-fence-native-build.log`,
+scratch5Jpkh4). Accepted capsule
+`/private/tmp/fios-009-cached-fence-native-review/capsule`, review
+14e18e9712a274420b7e1cb90976b09be7bbffd1834a698482c856bd1b4e944d,
+binary3bdb45f273ea7379addb477b4c8a4b869e0b36043880588b9ded0adc4e77730c.
+Declared native_cached_source_retention_version1 and version2 conditional
+preparation/Llama actor retirement are partial source inputs, not full native
+provenance or admission authority. Node24/24, boundary and the three ordinary
+protocol cases in ReleaseSafe pass (`/tmp/fios-009-cached-fence-{node,boundary,protocol}.log`).
+
+The actual private unfinished-GET drain verifies the stronger cached hold:
+original ingress/root1 remains open at31,631ms after TERM, uncertaintrue. After
+that original connection closes, local owners/ingress reach0 but uncertainty
+remains true and the same server/frame stays alive. This version no longer
+exits merely because that connection retired. The updated finite driver uses
+a kernel PID/UID/start observer and cleans up only its verified original
+model-free fixture child with SIGKILL; signal/reap is explicitly **not** native
+terminal proof. Receipt:`/tmp/fios-009-cached-fence-drain.log`,
+`/private/tmp/f9-connection-drain-apDaWW/receipt.json`;0 model POSTs,0 models,
+no installed service action, coverage unknown/quiescence unproven/authorityfalse.
+Earlier connection-close→exit receipts stay attributed to their older artifacts.
+The driver hash/observer inputs are independently retained in this receipt.
+
+No new inference, loaded-backend uncertainty, installed stop/force/restart or
+all-client acceptance is attributed to this capsule. The preceding1d865 core
+cold-load result remains separate. Whole tasks remain38/55.

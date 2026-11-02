@@ -285,3 +285,22 @@ protocol cases pass Debug/ReleaseSafe; full native build and a bounded headless
 core-only exact Gemma cold-load POST pass. The original journal claim remains
 uncertain after both processes reap. Whole G2, native all-client/backend/modalities
 and installed Studio acceptance remain open; no resident/GPU-idle claim follows.
+
+
+### Cached source uncertainty and conditional retirement (partial source checkpoint)
+
+Native retirement now retains an already-latched source fence even when its
+live enrolled getter is false. Actor/preparation/group reference release
+validates the entire token set and checks that fence under the same tracker
+lock; ordinary local CPU release stays callback-free and supplies no completion
+proof. The native serving frame independently retains cached source uncertainty
+when local owner count reaches0. The actual four-case metadata suite and full
+native build pass, including an independently scheduled fence before retirement.
+
+Actual model-free unfinished-GET shutdown now holds its original frame after
+31.63s and continues holding after the original connection retires to0 local
+owners. Finite private-fixture cleanup uses verified PID/UID/start identity and
+explicit SIGKILL/reap, retaining unknown coverage/unproven terminality. That is
+no installed force/stop authority or native completion receipt. Earlier graceful
+exit-after-local-close results belong to their earlier source artifacts. G2
+and complete native/Studio lifecycle acceptance remain unfinished.

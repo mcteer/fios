@@ -693,3 +693,17 @@ known negatives, retained request owners and real model-change tickets before
 or during the barrier callback. The callback itself does no GPU work. Local
 reference/ticket release never clears independent uncertainty, and passing
 this suite does not enroll a native admission or device-terminal issuer.
+
+
+The fixed selector
+`--functional-test 'fios native actor preserves enrolled backend uncertainty'`
+now runs two named cases plus two import roots (4 total): actor original-lineage
+retention and the actual serving-frame cached-source guard. It includes a real
+metadata fence thread between probe read and retirement. This is model-free.
+For capsules declaring cached-source retention, the existing isolated native
+connection-drain command verifies continued frame hold after the timed-out
+connection retires; it uses a kernel PID/UID/start observer and cleans up only
+that exact private empty-catalog fixture child. Its explicit cleanup SIGKILL/
+reap cannot prove native completion or clear uncertainty. Older capsules retain
+their separately attributed local-close→graceful-exit expectation. Installed
+service force remains separately reviewed and is not exercised by this command.
