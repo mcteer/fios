@@ -316,3 +316,17 @@ covers explicit original IDs and ordinary aliases after a default switch;
 3/3 selected tests and full native build pass. No concurrent native failure,
 model computation or all-client/native admission proof is claimed. G2 remains
 open and earlier lifecycle/inference receipts retain their original artifacts.
+
+### Serving MiMo warm-worker cleanup scope
+
+The prior reviewed retirement patch enables the one-second original-worker
+join only when fixture controls are selected. Actual `gpu_warm.install`
+construction leaves that option off and therefore uses an unbounded join.
+The separate cumulative `mlx-stream-fcb4011-serving-join.patch` adds a bounded
+cleanup option used by the serving constructor. It shares the existing exact
+worker join/retain/closed-rearm path while leaving fixture pause and lifetime
+ticket APIs disabled. This is source-level cleanup containment only: shared
+source uncertainty remains sticky after late original-worker cleanup, per-arm
+request-origin attribution remains unfinished, and unrelated native backend
+synchronization/all-client admission contracts remain open. Previous reviewed
+patches and artifacts retain their own identities and results.

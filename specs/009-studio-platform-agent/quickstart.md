@@ -727,3 +727,14 @@ cached-source-fence processes in both build modes: healthy cleanup reaches zero
 contexts/roots; cached uncertainty retains the original descriptor and roots after
 actual callback cleanup. These are finite local reference/lifetime cases with no
 models or installed actions; they supply no all-client/device terminal authority.
+
+For the reviewed MiMo serving-join candidate, use the ordinary bounded-join
+driver with `--serving-construction --serving-join` and that candidate's exact
+private checkout. Omitting `--serving-join` selects the preserved prior patch
+for a genuine serving-constructor regression. The candidate adds bounded
+original-worker cleanup without enabling fixture pause/lifetime-ticket APIs.
+The native source build selects this fixed cumulative patch only with
+`--mimo-serving-join` plus `--functional-build-only`; arbitrary patch inputs
+remain unsupported. Run the component fixture and enclosing native build
+sequentially. No models or installed services are used; late local cleanup
+never clears native source uncertainty or supplies terminal/admission proof.

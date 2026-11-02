@@ -8,6 +8,10 @@ import {readFileSync,writeFileSync,mkdtempSync,realpathSync,lstatSync,unlinkSync
 import {resolve,join} from 'node:path';
 const root=resolve(import.meta.dirname,'..'),args=process.argv.slice(2),priorIndex=args.indexOf('--prior-ownership'),priorOwnership=priorIndex>=0;
 if(priorOwnership){assert.equal(args.lastIndexOf('--prior-ownership'),priorIndex);args.splice(priorIndex,1);}
+const servingIndex=args.indexOf('--serving-construction'),servingConstruction=servingIndex>=0;
+if(servingConstruction){assert.equal(args.lastIndexOf('--serving-construction'),servingIndex);args.splice(servingIndex,1);assert(!priorOwnership);}
+const boundedIndex=args.indexOf('--serving-join'),servingJoin=boundedIndex>=0;
+if(servingJoin){assert.equal(args.lastIndexOf('--serving-join'),boundedIndex);args.splice(boundedIndex,1);assert(servingConstruction);}
 assert(process.platform==='darwin'&&process.getuid()>0&&args.length===7&&args[0]==='--isolated'&&args[1]==='--source'&&args[3]==='--mimo-source'&&args[5]==='--zig');
 const [source,mimo,zig]=[2,4,6].map(i=>realpathSync(args[i]));
 const directory=mkdtempSync('/private/tmp/fios-009-mimo-bounded-join-'),plugin=join(directory,'plugin');
@@ -18,7 +22,7 @@ const git=(where,...argv)=>run('/usr/bin/git',['--no-replace-objects','-c','core
 for(const path of [source,mimo]){const s=lstatSync(path);assert(path.startsWith('/private/tmp/')&&s.isDirectory()&&s.uid===process.getuid()&&(s.mode&0o022)===0);}
 assert.equal(sha(zig),'1c5f706db0ed6d55451940f31dc05a6177d05696bc1fa5d853696d04c718b523');
 assert.equal(git(source,'rev-parse','HEAD').trim(),'046b647686419df06c6c7132fb1d15d76185c3e5');
-const paths=['gpu_warm','module','root','source'].map(name=>`src/arch/mimo_v2/${name}.zig`),patchFile=join(root,'platform/studio/native/mlx-stream-fcb4011-retirement.patch'),patch=readFileSync(patchFile,'utf8'),patchSHA=sha(patchFile);
+const paths=['gpu_warm','module','root','source'].map(name=>`src/arch/mimo_v2/${name}.zig`),patchFile=join(root,servingJoin?'platform/studio/native/mlx-stream-fcb4011-serving-join.patch':'platform/studio/native/mlx-stream-fcb4011-retirement.patch'),patch=readFileSync(patchFile,'utf8'),patchSHA=sha(patchFile);
 function checkCandidate(){assert.equal(git(mimo,'rev-parse','HEAD').trim(),'fcb4011347ff80eeeb19e2a1f0180e13199c7c8b');assert.equal(git(mimo,'diff','--cached','--name-only').trim(),'');assert.deepEqual(git(mimo,'diff','--name-only').trim().split('\n'),paths);assert.equal(git(mimo,'diff','--no-ext-diff','--no-textconv','--',...paths),patch);}
 checkCandidate();
 const libraries={'libmlx.dylib':'6a5ee820afed9ce9421297260b4a9fd593749052d582c65deeca428fce61c76e','libmlxc.dylib':'6b4c9224691c2857cf7d386e75c1247cc6b0a4ae17d6ec6d1b455ec177e9929f','libjaccl.dylib':'5c6f3819b3555902ba1ab3a49550643994b49860f09e323fe42dfd6121103282','mlx.metallib':'95974b7de464ec2be7833a914ca5a53d283a70789470fd84218738fc8fcea3e1'};
@@ -33,7 +37,7 @@ writeFileSync(cppFile,composed);
 const ownershipFile=join(root,'platform/studio/native/request_ownership.zig'),ownershipBytes=priorOwnership?Buffer.from(git(root,'show','caf43ef:platform/studio/native/request_ownership.zig')):readFileSync(ownershipFile);
 if(priorOwnership)assert.equal(hash(ownershipBytes),'3ca49dc67daa2307f79afc739831f0f3652efb817cec81231df98403a7ce89c5');
 writeFileSync(join(plugin,'src/fios-request-ownership.zig'),ownershipBytes,{mode:0o600,flag:'wx'});
-const fixtureFile=join(root,'platform/studio/native/mimo_bounded_join.zig.fixture'),fixture=readFileSync(fixtureFile),fixturePath=join(plugin,'src/fios-bounded-join.zig');writeFileSync(fixturePath,fixture,{mode:0o600,flag:'wx'});
+const fixtureFile=join(root,servingConstruction?'platform/studio/native/mimo_serving_join.zig.fixture':'platform/studio/native/mimo_bounded_join.zig.fixture'),fixture=readFileSync(fixtureFile),fixturePath=join(plugin,'src/fios-bounded-join.zig');writeFileSync(fixturePath,fixture,{mode:0o600,flag:'wx'});
 const original=readFileSync(join(source,'build.zig'),'utf8'),guards='    if (target.result.os.tag == .macos) {\n        if (webp_prefix) |dir| verifyCopiedDeps(b, dir) else verifyBrewDeps(b);\n        verifyMlxStage(b);\n    }\n';assert.equal(original.split(guards).length,2);
 let graph=original.replace(guards,'    // Private genuine warm retirement fixture, not staging/release attestation.\n');
 const factory=`
@@ -44,7 +48,7 @@ fn fiosBoundedJoin(b: *std.Build, target: std.Build.ResolvedTarget, optimize: st
  for ([_][]const u8{"IOKit","CoreFoundation","Foundation","Metal","IOSurface"}) |name| host.linkFramework(name,.{});
  host.addRPath(.{ .cwd_relative=${JSON.stringify(join(source,'lib/mlx/lib'))} });
  const module=mlxStreamPkg(b,host,${JSON.stringify(plugin)},"src/fios-bounded-join.zig",target,optimize,false);
- const test_exe=b.addTest(.{ .name="fios-bounded-join", .root_module=module, .filters=&.{"fios ordinary bounded original warm worker retirement"} });
+ const test_exe=b.addTest(.{ .name="fios-bounded-join", .root_module=module, .filters=&.{${JSON.stringify(servingConstruction?"fios ordinary serving warm worker retirement":"fios ordinary bounded original warm worker retirement")}} });
  b.step("fios-bounded-join","Private original-worker retirement fixture").dependOn(&b.addInstallArtifact(test_exe,.{}).step);
 }
 `;
@@ -57,11 +61,11 @@ try {
   const result=spawnSync('/usr/bin/sandbox-exec',['-p','(version 1)(allow default)(deny network*)',join(prefix,'bin/fios-bounded-join')],{env,encoding:'utf8',timeout:20000,maxBuffer:8192});
   const log=(result.stdout??'')+(result.stderr??'');writeFileSync(join(directory,mode+'-run.log'),log,{mode:0o600});
   assert(!result.error&&!result.signal);assert.equal(result.status,0,log);
-  assert(log.includes('PASS: genuine two-chunk warm work retains engine on bounded original-worker join'));assert(log.includes('All 1 tests passed.'));assert(log.includes('PASS: actual warm source timeout refuses new work'));console.log(mode+': '+log.trim());
+  assert(log.includes(servingConstruction?'PASS: genuine serving warm construction retains engine on bounded original-worker join':'PASS: genuine two-chunk warm work retains engine on bounded original-worker join'));assert(log.includes('All 1 tests passed.'));assert(log.includes('PASS: actual warm source timeout refuses new work'));console.log(mode+': '+log.trim());
  }
  checkCandidate();assert.equal(readFileSync(join(source,'build.zig'),'utf8'),original);assert.equal(sha(patchFile),patchSHA);assert(readFileSync(cppFile).equals(composed));assert(readFileSync(fixtureFile).equals(fixture));assert(readFileSync(helperFile).equals(helper));
  for(const [name,digest] of Object.entries(libraries))assert.equal(sha(join(source,'lib/mlx/lib',name)),digest);
  if(!priorOwnership)assert(readFileSync(ownershipFile).equals(ownershipBytes));
- const receipt={ok:true,directory,request_ownership_sha256:hash(ownershipBytes),prior_ownership_snapshot:priorOwnership,known_backend_refusal:true,scope:'declared_original_warm_source_with_additive_fixture_entries_and_sdk_inputs_only',patch_sha256:patchSHA,fixture_sha256:hash(fixture),helper_sha256:hash(helper),original_warm_cpp_sha256:hash(cppOriginal),composed_warm_cpp_sha256:hash(composed),declared_sources:Object.fromEntries(paths.map(p=>[p,sha(join(mimo,p))])),libraries,modes:['Debug','ReleaseSafe'],model_posts:0,work_chunks:2,source_body_rewritten:false,fault_injection:false,native_authority:false,installed:false,native_inference:false};
+ const receipt={ok:true,directory,request_ownership_sha256:hash(ownershipBytes),prior_ownership_snapshot:priorOwnership,known_backend_refusal:true,serving_construction:servingConstruction,serving_bounded_join:servingJoin,scope:'declared_original_warm_source_with_additive_fixture_entries_and_sdk_inputs_only',patch_sha256:patchSHA,fixture_sha256:hash(fixture),helper_sha256:hash(helper),original_warm_cpp_sha256:hash(cppOriginal),composed_warm_cpp_sha256:hash(composed),declared_sources:Object.fromEntries(paths.map(p=>[p,sha(join(mimo,p))])),libraries,modes:['Debug','ReleaseSafe'],model_posts:0,work_chunks:2,source_body_rewritten:false,fault_injection:false,native_authority:false,installed:false,native_inference:false};
  writeFileSync(join(directory,'receipt.json'),JSON.stringify(receipt)+'\n',{mode:0o600,flag:'wx'});console.log(JSON.stringify(receipt));
 } finally {if(readFileSync(build,'utf8')===graph)unlinkSync(build);}
