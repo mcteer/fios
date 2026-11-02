@@ -46,6 +46,25 @@ node scripts/check-platform-native-owned-server.mjs --isolated --release /ABS/PR
 
 Debug and optimized fixtures each start/monitor/locally stop/restart two sequential original empty-model children. They use a private cwd/HOME/model directory, explicit localhost port and ephemeral strict native key; no existing credentials or interface authentication are changed. Source compilation is bounded120s/mode, execution35s/mode and polls10s. Health requires actual process/listener association. There are0 model requests. Reservation callbacks are synthetic: local exit cannot establish native terminality or authorize installed recovery. Receipts bind the runtime/fixture inputs and selected capsule; they do not attest the entire compiled Core/native dependency graph.
 
+The same source binary can exercise the existing supervisor and real manager
+replacement path in private processes:
+
+```sh
+node scripts/check-platform-native-supervised-server.mjs --isolated --release /ABS/PRIVATE_SOURCE_CAPSULE --sha256 EXACT_CAPSULE_RECEIPT_SHA
+```
+
+Each Debug/optimized case starts one supervisor and two sequential managers.
+The native child survives that manager replacement with identical PID/start/
+launch receipt, then a synthetic unavailable overlay requests guarded recovery
+and explicit stopped intent retires the replacement. Healthy presence requires
+actual kernel listener identity and GET /health. Loading/failure/initial absence
+and native reservation callbacks are synthetic; this is no installed admission
+or device-terminal acceptance. Two native children per mode, private empty model
+directory, ephemeral native key, one loopback endpoint/private Unix networking,
+120s compilation and finite14s startup/replacement,18s recovery,14s stop waits
+apply. All compiled Core Swift inputs and the selected capsule are bracketed;
+this is not whole-repository/native provenance. No model POSTs occur.
+
 Ordinary process-instance binding can be checked with two sequential private empty-model source processes on the same loopback endpoint:
 
 ```sh

@@ -1881,3 +1881,60 @@ The earlier ca206 package does not contain this new client/protocol increment.
 All artifacts remain private/inactive; no live GUI Preferences, Studio service,
 installed policy, inference, UI authentication, merge or deployment was changed.
 No whole task closes:38/55 complete,17 open.
+
+
+### 2026-11-01 current private-fence platform package
+
+Source98c792f produces nine-artifact inactive package
+`/private/tmp/fios-009-private-fence-package-FaSwsa/release`,
+manifest34715baa8f5836655026aacb23339cc85cbeffffb96900f5ac6a78930676dc03,
+declared-source projection46fdea320a5649cecbe51fad4c4610218250fa1c7d615f2dc6100c764c8eefa2.
+Build `/tmp/fios-009-private-fence-package.log`, scratch
+`/private/tmp/fios-package-7TM6gW`. Actual packaged supervisor/manager smoke
+passes both temporary-path spellings (`...-package-status.log`, review
+`/private/tmp/fios-009-supervisor-package-status-p3JoHL`),0 native actions/model
+POSTs. Data-only installation plan (`...-package-plan.json`) still has
+changes_made=false/privileged_commands=[]; incomplete/native/interpreter/
+authoritative coverage/installation gates stay closed. This includes current
+Swift backend diagnostics, not a bundled native/SDK capsule or whole-repository
+provenance. Package_complete/activation remainfalse. Full npm test passes101
+Node and106 installed-package Python tests
+(`/tmp/fios-009-private-fence-all-node.log`).38/55 whole tasks remain complete.
+
+
+### 2026-11-01 actual native server through supervisor and manager replacement
+
+New finite source fixture `NativeSupervisedServer.swift.fixture` and driver
+`check-platform-native-supervised-server.mjs` compose the actual existing
+SupervisorRuntime, manager journal/recovery loop, authenticated private custody,
+MLXServingProcessRuntime and current rebuilt empty-model native executable.
+Debug/optimized pass `/tmp/fios-009-native-supervised-server.log`, receipt
+`/private/tmp/fios-009-serving-runtime-native-LQJqgY/receipt.json`, fixture
+337d280c761a963ac62030bc38ca5e5b9becbd5a540e40283e3d8b90acac830e.
+Selected native review d32b43f589446debb275f7e3c6d406dd047e410df260c0047ffd8f088bd2f3e4
+is verified unchanged before/after; all current Core Swift file bytes are
+bracketed and individually bound. This is not whole-repository/native provenance.
+
+Each mode starts one actual supervisor and two sequential managers. The first
+native child's PID/start/launch receipt survives normal self-exit/replacement
+of its manager; durable recovery history still records one start. A synthetic
+loading overlay leaves that original child running without restart. A synthetic
+unavailable overlay requests guarded stop/recovery, then the actual replacement
+passes exact kernel listener association and real GET /health. Explicit stopped
+intent retires the replacement before supervisor shutdown. Both original-target
+start and stop validators run exactly twice per mode. Source status reports
+applied:false; independent uncertain inference count stays1 through manager
+replacement, service recovery and stopped intent.
+
+Totals:4 original native child starts,2 supervisors,4 managers,2 manager
+replacements,0 model POSTs/installed operations. Private cwd/HOME/model directory,
+one ephemeral localhost listener and in-memory native key per mode; no existing
+credential, GUI Preferences or interface authentication is read/changed. Sandbox
+network access is restricted to that loopback endpoint/private Unix domain.
+Compilation120s/mode, startup/replacement14s, recovery18s, stop14s and supervisor
+shutdown5s are finite. Independent post-run inspection confirms both model
+directories remain empty. Healthy listener/GET evidence is real; initial scoped
+absence, readiness, loading/failure overlays and lifecycle reservations are
+explicitly synthetic. No global/native absence, device terminality, installed
+handover, all-client admission or complete T027/T030/T051 acceptance follows.
+38/55 whole tasks remain complete.
