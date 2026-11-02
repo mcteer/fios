@@ -30,4 +30,19 @@ func runNativeHealthConfigurationTests()throws {
         }
         guard load.poll()==nil else {fatalError("Native metadata load retried or retained a duplicate completion")}
     }
+    let orbstack=ServiceHealthCollector(service:.orbstack,presence:{ServiceProcessSample(presence:.unknown,sampledAt:nil,reviewDigest:String(repeating:"b",count:64),uid:geteuid(),diagnostic:"fixture")},health:{.unavailable},now:{1000},uptime:{1})
+    for requested in ManagedService.allCases {
+        let load=AsyncNativeHealthConfiguration(service:requested) {orbstack}
+        let end=ProcessInfo.processInfo.systemUptime+2
+        while load.isPending && ProcessInfo.processInfo.systemUptime<end {Thread.sleep(forTimeInterval:0.005)}
+        guard !load.isPending,let result=load.poll() else {fatalError("Scoped health configuration completion missing")}
+        switch result {
+        case .configured(let found):guard requested == .orbstack,found===orbstack else {fatalError("Wrong service collector configured")}
+        case .unavailable:guard requested == .mlx else {fatalError("Matching OrbStack collector refused")}
+        case .unconfigured:fatalError("Present scoped collector was lost")
+        }
+        guard load.poll()==nil else {fatalError("Scoped health configuration completion repeated")}
+    }
+    guard try OrbStackHealthConfiguration.load(directory:FileManager.default.temporaryDirectory)==nil else {fatalError("Development image acquired installed OrbStack health configuration")}
+
 }

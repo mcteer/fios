@@ -3817,3 +3817,41 @@ The driver hash/observer inputs are independently retained in this receipt.
 No new inference, loaded-backend uncertainty, installed stop/force/restart or
 all-client acceptance is attributed to this capsule. The preceding1d865 core
 cold-load result remains separate. Whole tasks remain38/55.
+
+
+### 2026-11-02 public readonly OrbStack health startup (partial source checkpoint)
+
+The existing OrbStack collector/probe previously reached only internal fixtures.
+The actual public manager status case compiles/runs, then fails with missing
+`orbstack_health_source` (`undefined` instead of `unconfigured`):
+`/tmp/fios-009-orbstack-health-prior-status.log`. This is a genuine public-loop
+wiring gap, not a compiler failure.
+
+A retained one-shot off-loop loader now composes the existing opaque reviewed
+runtime/session policies. It binds their manager/host/account/state identities,
+verifies the fixed OrbStack application and constructs the existing present-process
+census plus fixed running-status/server-version probe. It reads no serving
+credential and supplies no absence, VM-capacity, task, native-admission or
+lifecycle permission. Public source health reports loading/configured/unconfigured/
+unavailable; configured describes the collector, not service readiness. The
+shared loader checks its explicit service kind and retains its original worker.
+Development images return before installed metadata or native commands.
+
+Actual manager/CLI status passes9 states/18 service views, including both
+public configuration sources unconfigured and native admission/recovery/sandbox
+execution still disabled (`/tmp/fios-009-orbstack-health-status-fixed.log`,
+`/private/tmp/fios-009-service-status-a3Z6Ue`). The first post-change fixture
+incorrectly expected a dated sample for the new unconfigured state; its failure
+is retained at`/tmp/fios-009-orbstack-health-status.log`, then corrected to expect
+unknown/null timestamps. Ordinary ready/degraded/loading/stale cases also pass.
+
+Debug and optimized full mock suites pass, including service-kind matching,
+once-only completion and development-image enrollment refusal
+(`/tmp/fios-009-orbstack-health-mock-{debug,release}.log`). SwiftPM studio-manager
+build/link succeeds17.90s (`/tmp/fios-009-orbstack-health-manager-build.log`).
+Focused Node24/24 and boundary pass
+(`/tmp/fios-009-orbstack-health-{node,boundary}.log`). Python source is unchanged.
+No native/OrbStack daemon/service action, inference, installation, new release
+package or positive installed-policy acceptance is claimed. These source/mock
+receipts do not complete T027 or native/G2/resource enrollment. Whole tasks
+remain38/55.

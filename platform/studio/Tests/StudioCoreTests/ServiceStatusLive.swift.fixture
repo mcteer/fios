@@ -7,6 +7,10 @@ import Darwin
     static func main() throws {
         let args=CommandLine.arguments
         guard args.count==3,geteuid()>0 else {throw ServiceError.invalid}
+        if args[2] == "unconfigured" {
+            try ManagerRuntime.run(directory:URL(fileURLWithPath:args[1]))
+            return
+        }
         let cache=ServiceObservationCache(),now=HostResources.nowMilliseconds()
         var mlxHealth:ServiceHealthCollector?,orbstackHealth:ServiceHealthCollector?
         for service in ManagedService.allCases {

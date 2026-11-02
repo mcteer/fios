@@ -9,12 +9,12 @@ final class AsyncNativeHealthConfiguration:@unchecked Sendable {
     private let lock=NSLock()
     private var pending=true
     private var result:NativeHealthConfigurationOutcome?
-    init(load:@escaping @Sendable()throws->ServiceHealthCollector?) {
+    init(service:ManagedService = .mlx,load:@escaping @Sendable()throws->ServiceHealthCollector?) {
         Thread.detachNewThread { [self] in
             let outcome:NativeHealthConfigurationOutcome
             do {
                 if let collector=try load() {
-                    outcome=collector.service == .mlx ? .configured(collector):.unavailable
+                    outcome=collector.service == service ? .configured(collector):.unavailable
                 } else {outcome = .unconfigured}
             } catch {outcome = .unavailable} // Never expose raw policy/error data.
             lock.lock();result=outcome;pending=false;lock.unlock()

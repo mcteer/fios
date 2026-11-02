@@ -6,15 +6,16 @@ public enum ManagerRuntime {
     // Local developer/installed entry point. Production installation must pin
     // reviewed binaries and use a private operator-owned state directory.
     public static func run(directory:URL,telemetry:any PlatformTelemetry=NoopPlatformTelemetry()) throws {
-        try run(directory:directory,nativeControl:nil,nativeReadOnlyObservation:true,telemetry:telemetry)
+        try run(directory:directory,nativeControl:nil,nativeReadOnlyObservation:true,orbstackReadOnlyObservation:true,telemetry:telemetry)
     }
     // No production issuer yet: only reviewed native enrollment may supply
     // this internal client. Never construct it from operator/model payloads.
-    static func run(directory:URL,nativeControl:NativeControlClient?,serviceObservations:ServiceObservationCache?=nil,serviceHealth:MLXServiceHealthCollector?=nil,serviceHealthReadiness:@Sendable()->(Bool,Bool)={ (false,false) },orbstackHealth:ServiceHealthCollector?=nil,orbstackHealthReadiness:@Sendable()->(Bool,Bool)={ (false,false) },serviceControl:(any ServiceRecoverySending)?=nil,servingLifecycle:ServingLifecyclePorts?=nil,drainObservations:ServiceDrainObservationCache?=nil,execution:ManagerExecutionPorts?=nil,nativeReadOnlyObservation:Bool=false,telemetry:any PlatformTelemetry=NoopPlatformTelemetry()) throws {
+    static func run(directory:URL,nativeControl:NativeControlClient?,serviceObservations:ServiceObservationCache?=nil,serviceHealth:MLXServiceHealthCollector?=nil,serviceHealthReadiness:@Sendable()->(Bool,Bool)={ (false,false) },orbstackHealth:ServiceHealthCollector?=nil,orbstackHealthReadiness:@Sendable()->(Bool,Bool)={ (false,false) },serviceControl:(any ServiceRecoverySending)?=nil,servingLifecycle:ServingLifecyclePorts?=nil,drainObservations:ServiceDrainObservationCache?=nil,execution:ManagerExecutionPorts?=nil,nativeReadOnlyObservation:Bool=false,orbstackReadOnlyObservation:Bool=false,telemetry:any PlatformTelemetry=NoopPlatformTelemetry()) throws {
         guard geteuid() != 0 else { throw ControlError.unauthorized }
         guard serviceHealth == nil || serviceHealth?.service == .mlx,
               orbstackHealth == nil || orbstackHealth?.service == .orbstack,
-              !nativeReadOnlyObservation || serviceHealth == nil else {throw ServiceError.invalid}
+              !nativeReadOnlyObservation || serviceHealth == nil,
+              !orbstackReadOnlyObservation || orbstackHealth == nil else {throw ServiceError.invalid}
         umask(0o077)
         let journal=try Journal(directory:directory)
         try journal.recoverWorkerMetadata()
@@ -34,10 +35,14 @@ public enum ManagerRuntime {
             let configuration=try NativeServingReviewedConfiguration.load(directory:directory)
             return try configuration?.makeHealthCollector()
         }:nil
+        let orbstackHealthConfiguration=orbstackReadOnlyObservation ? AsyncNativeHealthConfiguration(service:.orbstack) {
+            try OrbStackHealthConfiguration.load(directory:directory)
+        }:nil
         var nativeHealthSource:String?=nativeHealthConfiguration == nil ? nil:"loading"
-        let serviceObservations=serviceObservations ?? (serviceHealth == nil && orbstackHealth == nil && nativeHealthConfiguration == nil ? nil:ServiceObservationCache())
+        var orbstackHealthSource:String?=orbstackHealthConfiguration == nil ? nil:"loading"
+        let serviceObservations=serviceObservations ?? (serviceHealth == nil && orbstackHealth == nil && nativeHealthConfiguration == nil && orbstackHealthConfiguration == nil ? nil:ServiceObservationCache())
         var serviceHealthQueue=serviceHealth.map {AsyncServiceHealth(collector:$0)}
-        let orbstackHealthQueue=orbstackHealth.map {AsyncServiceHealth(collector:$0)}
+        var orbstackHealthQueue=orbstackHealth.map {AsyncServiceHealth(collector:$0)}
         let serviceRecovery=try activeServiceControl.map {try ServiceRecoveryController(journal:journal,approvedHashes:$0.applicationHashes,recoveryProfileHash:$0.recoveryProfileHash)}
         let serviceQueue=activeServiceControl.map {AsyncSessionControl(client:$0)}
         let servingStopQueue=activeServingLifecycle.map {AsyncServingStop(runtime:$0.runtime)}
@@ -110,6 +115,13 @@ public enum ManagerRuntime {
                 case .configured(let collector):serviceHealthQueue=AsyncServiceHealth(collector:collector);nativeHealthSource="configured"
                 case .unconfigured:nativeHealthSource="unconfigured"
                 case .unavailable:nativeHealthSource="unavailable"
+                }
+            }
+            if let result=orbstackHealthConfiguration?.poll() {
+                switch result {
+                case .configured(let collector):orbstackHealthQueue=AsyncServiceHealth(collector:collector);orbstackHealthSource="configured"
+                case .unconfigured:orbstackHealthSource="unconfigured"
+                case .unavailable:orbstackHealthSource="unavailable"
                 }
             }
             if let result=serviceHealthQueue?.poll() {serviceObservations?.publish(result.observation,for:.mlx)}
@@ -258,6 +270,7 @@ public enum ManagerRuntime {
                         }
                         response["services"]=serviceStates
                         if let nativeHealthSource {response["native_health_source"]=nativeHealthSource}
+                        if let orbstackHealthSource {response["orbstack_health_source"]=orbstackHealthSource}
                         response["native_admissions"]=nativeQueue == nil ? "unsupported":nativeMaintenance.phase.rawValue
                         response["native_control"]=nativeDiagnostics.summary(now:requestedAt)
                         response["migration_maintenance"]=migrationHeld
