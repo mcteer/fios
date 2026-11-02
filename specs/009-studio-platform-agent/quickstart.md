@@ -751,3 +751,24 @@ the original host surface. Both current native companion files must match the
 repository exactly. The enclosing native build uses `--mimo-request-origins`
 with `--functional-build-only`; it requires the serving root's actual bridge.
 Run component and enclosing builds sequentially and freeze their inputs.
+
+The DS4 normal request-buffer candidate is separate from the preserved
+participant-retirement candidate. `check-platform-ds4-request-origins.mjs
+--isolated --source ABS_EXACT_DS4_CANDIDATE --zig ABS_PINNED_ZIG
+--developer-dir /Applications/Xcode.app/Contents/Developer` runs actual
+64-byte private Metal adapter cases with native contexts in Debug/ReleaseSafe;
+`--prior` selects only the fixed previous source patch. It does not initialize
+DS4 or execute models, normal producer paths or auxiliary workers. The helper
+adds private entries to the original source and links real upstream dependencies.
+
+Build its inactive source document with `check-platform-ds4-build.mjs --isolated
+--source ABS_EXACT_DS4_CANDIDATE --developer-dir
+/Applications/Xcode.app/Contents/Developer --request-origins`. The matching
+native source build requires that document/hash, the reviewed source SDK and
+`--ds4-request-origins --functional-build-only`; arbitrary patches and provider
+fixtures remain unsupported. Registration is a compiled callback tuple copied
+once before DS4 initialization/listening, not a lifecycle/admission permit.
+Empty future-batch placeholders own no request references; every normal
+encoding edge must prepare before use. Independent keepalive/TP worker
+contracts, real DS4/model/Studio acceptance and complete native admission remain
+open; these source/adapter receipts grant no installed runtime authority.

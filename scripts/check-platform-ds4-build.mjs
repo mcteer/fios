@@ -7,6 +7,8 @@ import {readFileSync,writeFileSync,mkdtempSync,mkdirSync,lstatSync,realpathSync,
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..'),args=process.argv.slice(2);
+const originsIndex=args.indexOf('--request-origins'),requestOrigins=originsIndex>=0;
+if(requestOrigins){assert.equal(args.lastIndexOf('--request-origins'),originsIndex);args.splice(originsIndex,1);}
 assert(process.platform==='darwin'&&process.getuid()>0&&args.length===5&&args[0]==='--isolated'&&args[1]==='--source'&&args[3]==='--developer-dir');
 const source=realpathSync(args[2]),developer=realpathSync(args[4]),info=lstatSync(source);
 assert(source.startsWith('/private/tmp/')&&info.isDirectory()&&info.uid===process.getuid()&&(info.mode&0o022)===0);
@@ -20,7 +22,7 @@ try{
  const revision='9139e2ae58a41503968a500f36f75895c1ba63fc';
  assert.equal(git(source,'rev-parse','HEAD').trim(),revision);
  assert.equal(git(source,'diff','HEAD','--name-only').trim(),'ds4.c\nds4.h\nds4_gpu.h\nds4_gpu_tp.h\nds4_metal.m\nds4_tp.c');
- const patchFile=path.join(root,'platform/studio/native/ds4-9139e2a-participant-retirement.patch'),patch=readFileSync(patchFile,'utf8');
+ const patchFile=path.join(root,requestOrigins?'platform/studio/native/ds4-9139e2a-request-origins.patch':'platform/studio/native/ds4-9139e2a-participant-retirement.patch'),patch=readFileSync(patchFile,'utf8');
  assert.equal(git(source,'diff','--no-ext-diff','HEAD','--','ds4.c','ds4.h','ds4_gpu.h','ds4_gpu_tp.h','ds4_metal.m','ds4_tp.c'),patch);
  assert.equal(run('/usr/bin/xcrun',['--sdk','macosx','--show-sdk-version']).trim(),'27.2');
  const compiler=realpathSync(run('/usr/bin/xcrun',['--sdk','macosx','--find','clang']).trim()),sdk=realpathSync(run('/usr/bin/xcrun',['--sdk','macosx','--show-sdk-path']).trim());
@@ -49,7 +51,7 @@ try{
  assert.equal(readFileSync(patchFile,'utf8'),patch);
  const artifact=path.join(checkout,'ds4-bench'),s=lstatSync(artifact);assert(s.isFile()&&s.nlink===1&&s.size>0&&s.size<64<<20);
  const objects=Object.fromEntries(readdirSync(checkout).filter(name=>name.endsWith('.o')).sort().map(name=>{const file=path.join(checkout,name),s=lstatSync(file);assert(s.isFile()&&!s.isSymbolicLink()&&s.nlink===1&&s.size>0&&s.size<64<<20);return [name,{bytes:s.size,sha256:sha(readFileSync(file))}];}));
- const receipt={version:1,purpose:'unapproved_ds4_native_source_build',activation:false,native_authority:false,executed:false,installed:false,native_inference:false,source_scope:'declared_tracked_sources_not_whole_native_provenance',revision,patch_sha256:sha(patch),compiler_sha256:sha(readFileSync(compiler)),sdk_version:'27.2',declared_sources:before,objects,artifact:{file:artifact,bytes:s.size,sha256:sha(readFileSync(artifact))}};
+ const receipt={version:1,purpose:'unapproved_ds4_native_source_build',request_buffer_origins_version:requestOrigins?1:0,activation:false,native_authority:false,executed:false,installed:false,native_inference:false,source_scope:'declared_tracked_sources_not_whole_native_provenance',revision,patch_sha256:sha(patch),compiler_sha256:sha(readFileSync(compiler)),sdk_version:'27.2',declared_sources:before,objects,artifact:{file:artifact,bytes:s.size,sha256:sha(readFileSync(artifact))}};
  const bytes=Buffer.from(JSON.stringify(receipt)+'\n');writeFileSync(path.join(directory,'candidate.json'),bytes,{mode:0o400,flag:'wx'});
  console.log(JSON.stringify({source_build_only:true,executed:false,installed:false,native_authority:false,declared_source_count:files.length,artifact:receipt.artifact,receipt_sha256:sha(bytes),directory}));
 }catch(error){console.error('Build state retained:',directory);throw error;}

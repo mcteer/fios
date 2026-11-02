@@ -36,7 +36,9 @@ export function verifyDs4SourceBuild({document,expected,root}){
  const env={PATH:'/usr/bin:/bin',HOME:directory,LANG:'C',LC_ALL:'C',GIT_CONFIG_GLOBAL:'/dev/null',GIT_CONFIG_SYSTEM:'/dev/null',GIT_CONFIG_NOSYSTEM:'1',GIT_NO_REPLACE_OBJECTS:'1'};
  const git=(...argv)=>execFileSync('/usr/bin/git',['--no-replace-objects','-c','core.fsmonitor=false','-C',source,...argv],{env,encoding:'utf8',timeout:5000,maxBuffer:8<<20});
  const files=['ds4.c','ds4.h','ds4_gpu.h','ds4_gpu_tp.h','ds4_metal.m','ds4_tp.c'];
- const patch=readFileSync(path.join(root,'platform/studio/native/ds4-9139e2a-participant-retirement.patch'),'utf8');
+ const originsVersion=receipt.request_buffer_origins_version??0;
+ assert(originsVersion===0||originsVersion===1,'Only fixed reviewed DS4 variants are supported');
+ const patch=readFileSync(path.join(root,originsVersion===1?'platform/studio/native/ds4-9139e2a-request-origins.patch':'platform/studio/native/ds4-9139e2a-participant-retirement.patch'),'utf8');
  assert.equal(receipt.patch_sha256,sha(patch));assert.equal(git('rev-parse','HEAD').trim(),receipt.revision);
  assert.equal(git('diff','HEAD','--name-only').trim(),files.join('\n'));assert.equal(git('diff','--no-ext-diff','HEAD','--',...files),patch);
  const declared=git('ls-files','-z').split('\0').filter(name=>name==='Makefile'||/\.(?:c|m|h|inc|metal)$/.test(name)).sort();
@@ -48,7 +50,7 @@ export function verifyDs4SourceBuild({document,expected,root}){
  assert.equal(path.dirname(receipt.artifact.file),source);assert.equal(realpathSync(receipt.artifact.file),receipt.artifact.file);
  const artifact=lstatSync(receipt.artifact.file);assert(artifact.isFile()&&artifact.nlink===1&&artifact.size===receipt.artifact.bytes&&artifact.size<64<<20);
  assert.equal(sha(readFileSync(receipt.artifact.file)),receipt.artifact.sha256);
- return {source,build_receipt_sha256:expected,patch_sha256:receipt.patch_sha256,declared_source_count:declared.length,
+ return {source,build_receipt_sha256:expected,patch_sha256:receipt.patch_sha256,...(originsVersion===1?{request_buffer_origins_version:1}:{}),declared_source_count:declared.length,
   scope:'selected_declared_ds4_sources_recompiled_by_native_root',native_authority:false,installed:false};
 }
 

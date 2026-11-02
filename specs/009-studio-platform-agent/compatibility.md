@@ -352,3 +352,23 @@ and lineages after late local cleanup. Component fixtures prove this finite
 private warm-queue scope only; all-client coverage, other MiMo background
 lanes, complete device/context terminality, Studio model/resource acceptance
 and native admission remain unfinished. No installed activation follows.
+
+### DS4 normal request-buffer origins
+
+`ds4-9139e2a-request-origins.patch` is a separate cumulative six-path source
+variant. Its optional one-shot pre-initialization callback enrollment copies
+the existing native seven-function context interface, rejecting adoption or
+in-progress enrollment. Normal request buffer retrieval/compute/blit/event
+encoding accumulates the full immutable context union. Normal submission seals
+that buffer and its fixed metadata-only completion handler restores native TLS
+before conditional context retirement. Abandoned attributed buffers fence and
+quarantine; completed private object cleanup cannot erase cached uncertainty.
+Empty next-batch placeholders acquire no request context before encoding.
+
+Source defaults remain unenrolled. Explicit private native composition requires
+its exact source document, the reviewed source SDK and the compile-only native
+build option; the original source variant/receipts remain independently valid.
+This does not enroll or certify independent raw keepalive buffers or TP/host
+worker handoffs. Real DS4 initialization/normal producer execution and loaded
+model/device-context acceptance remain unexecuted. The partial all-client
+ceiling remains unknown and installed/native admission remains closed.

@@ -1675,10 +1675,31 @@ index fbc9b34..80d145c 100644
  pub fn begin(_: *Model, _: []const u32, _: u32, _: u64) !u64 {
      return 0;
 diff --git a/src/ds4_ffi.zig b/src/ds4_ffi.zig
-index b743ad7..11b694b 100644
+index b743ad7..d454dac 100644
 --- a/src/ds4_ffi.zig
 +++ b/src/ds4_ffi.zig
-@@ -184,6 +184,10 @@ pub const GenerationDoneFn = ?*const fn (ud: ?*anyopaque) callconv(.C) void;
+@@ -9,6 +9,20 @@
+ 
+ const std = @import("std");
+ 
++// Optional reviewed normal-request-buffer source ABI. No registration or
++// activity authority follows from declaring these mechanical callback types.
++pub const FiosRequestOwnerHooks = extern struct {
++    capture: *const fn () callconv(.c) ?*anyopaque,
++    enter: *const fn (?*anyopaque) callconv(.c) u64,
++    leave: *const fn (u64) callconv(.c) c_int,
++    release: *const fn (?*anyopaque) callconv(.c) void,
++    merge: *const fn (?*anyopaque, ?*anyopaque) callconv(.c) ?*anyopaque,
++    covers_current: *const fn (?*anyopaque) callconv(.c) c_int,
++    uncertain: *const fn () callconv(.c) void,
++};
++pub extern "c" fn ds4_gpu_register_request_owner_hooks(hooks: *const FiosRequestOwnerHooks) c_int;
++
++
+ pub const Backend = enum(c_int) {
+     metal = 0,
+     cuda = 1,
+@@ -184,6 +198,10 @@ pub const GenerationDoneFn = ?*const fn (ud: ?*anyopaque) callconv(.C) void;
  
  pub extern fn ds4_engine_open(out: *?*Engine, opt: *const EngineOptions) c_int;
  pub extern fn ds4_engine_close(e: ?*Engine) void;
@@ -1689,7 +1710,7 @@ index b743ad7..11b694b 100644
  pub extern fn ds4_engine_summary(e: ?*Engine) void;
  pub extern fn ds4_backend_name(backend: Backend) [*:0]const u8;
  pub extern fn ds4_think_mode_enabled(mode: ThinkMode) bool;
-@@ -222,6 +226,7 @@ pub extern fn ds4_token_assistant(e: *Engine) c_int;
+@@ -222,6 +240,7 @@ pub extern fn ds4_token_assistant(e: *Engine) c_int;
  
  pub extern fn ds4_session_create(out: *?*Session, e: *Engine, ctx_size: c_int) c_int;
  pub extern fn ds4_session_free(s: ?*Session) void;
@@ -5417,7 +5438,7 @@ index 9e12566..a1b17cc 100644
 +    std.debug.print("PASS: actual ANE worker refuses missing owners and preserves independently uncertain original lineage; cancellation metadata only\n", .{});
 +}
 diff --git a/src/server.zig b/src/server.zig
-index 720b2c6..962b3b2 100644
+index 720b2c6..b4b68b6 100644
 --- a/src/server.zig
 +++ b/src/server.zig
 @@ -1,4 +1,9 @@
@@ -5470,7 +5491,7 @@ index 720b2c6..962b3b2 100644
  pub fn serve(
      io: std.Io,
      allocator: std.mem.Allocator,
-@@ -1984,6 +2022,11 @@ pub fn serve(
+@@ -1984,6 +2022,26 @@ pub fn serve(
      port: u16,
      cfg: ServerConfig,
  ) !void {
@@ -5478,11 +5499,26 @@ index 720b2c6..962b3b2 100644
 +    std.Io.random(io, &fios_instance);
 +    try fios_requests.initialize(io, fios_instance);
 +    try fios_sdk_owners.initialize(io);
++    if (comptime if (@hasDecl(@import("build_options"), "fios_ds4_request_origins")) @import("build_options").fios_ds4_request_origins else false) {
++        const source = @import("ds4_ffi.zig");
++        const hooks = source.FiosRequestOwnerHooks{
++            .capture = &fios_sdk_owners.fios_native_request_owners_capture,
++            .enter = &fios_sdk_owners.fios_native_request_owners_enter,
++            .leave = &fios_sdk_owners.fios_native_request_owners_leave,
++            .release = &fios_sdk_owners.fios_native_request_owners_release,
++            .merge = &fios_sdk_owners.fios_native_request_owners_merge,
++            .covers_current = &fios_sdk_owners.fios_native_request_owners_covers_current,
++            .uncertain = &fios_sdk_owners.fios_native_request_owners_uncertain,
++        };
++        // Immutable callback tuple before any DS4 initialization, model load
++        // or listener. This registers local accounting, never native authority.
++        if (source.ds4_gpu_register_request_owner_hooks(&hooks) != 1) return error.FiosDs4RequestOwnerEnrollment;
++    }
 +    try fios_requests.enrollBackendUncertaintyProbe(io, &fiosKnownBackendUncertain);
      server_config = cfg;
      // Before `Scheduler.init`: that call is the model load and every load-time bill inside it
      // asks for the KV width.
-@@ -2002,6 +2045,16 @@ pub fn serve(
+@@ -2002,6 +2060,16 @@ pub fn serve(
          return err;
      };
      defer server.deinit(io);
@@ -5499,7 +5535,7 @@ index 720b2c6..962b3b2 100644
      var startup: StartupResponder = .{ .server = &server, .registry = load_params.registry, .allocator = allocator, .io = io };
      if (!load_params.no_initial_load) startup.start();
      defer startup.stop();
-@@ -2014,6 +2067,8 @@ pub fn serve(
+@@ -2014,6 +2082,8 @@ pub fn serve(
      );
      defer scheduler.deinit();
      startup.stop();
@@ -5508,7 +5544,7 @@ index 720b2c6..962b3b2 100644
      global_scheduler = scheduler;
      defer global_scheduler = null;
      // The inference thread's evict-or-refuse hook (#353); the scheduler has no server import.
-@@ -2301,7 +2356,13 @@ pub fn serve(
+@@ -2301,7 +2371,13 @@ pub fn serve(
              accepted_stream.close(io);
              continue;
          };
@@ -5522,7 +5558,7 @@ index 720b2c6..962b3b2 100644
              .allocator = allocator,
              .accepted_stream = accepted_stream,
              .io = io,
-@@ -2313,6 +2374,7 @@ pub fn serve(
+@@ -2313,6 +2389,7 @@ pub fn serve(
              log.err("spawn conn thread failed: {}\n", .{err});
              _ = active_conn_threads.fetchSub(1, .acq_rel);
              accepted_stream.close(io);
@@ -5530,7 +5566,7 @@ index 720b2c6..962b3b2 100644
              allocator.destroy(args);
              continue;
          };
-@@ -2326,7 +2388,8 @@ pub fn serve(
+@@ -2326,7 +2403,8 @@ pub fn serve(
      // `scheduler.deinit` on return, which frees the slot queues that an
      // in-flight `complete()` is still touching. The inference thread is still
      // alive here (deinit joins it only after we return), so cancelled slots
@@ -5540,7 +5576,7 @@ index 720b2c6..962b3b2 100644
      // The SSD flush's deadline starts here, once. The drain keeps its own bound: cutting it short
      // saves nothing (the join below waits out the inference thread's current chunk anyway) and
      // lets a late `complete()` race the queues `deinit` frees.
-@@ -2334,15 +2397,25 @@ pub fn serve(
+@@ -2334,15 +2412,25 @@ pub fn serve(
          scheduler_mod.armShutdownDeadline(&sch.shutdown_deadline_ms, nowMsMonotonic(io), shutdown_persist_secs);
          sch.cancelAllInFlight();
      }
@@ -5572,7 +5608,7 @@ index 720b2c6..962b3b2 100644
      }
  
      deinitGlobalResponseStore();
-@@ -2355,6 +2428,7 @@ pub fn serve(
+@@ -2355,6 +2443,7 @@ pub fn serve(
  /// returns. The accepted stream is moved into a stack-allocated `Conn`
  /// inside the thread.
  const ConnThreadArgs = struct {
@@ -5580,7 +5616,7 @@ index 720b2c6..962b3b2 100644
      allocator: std.mem.Allocator,
      accepted_stream: std.Io.net.Stream,
      io: std.Io,
-@@ -2365,10 +2439,17 @@ fn handleConnectionThread(args: *ConnThreadArgs) void {
+@@ -2365,10 +2454,17 @@ fn handleConnectionThread(args: *ConnThreadArgs) void {
      // shutdown drain in `serve` only sees this thread leave once it has fully
      // returned from `complete()` and closed its socket.
      defer _ = active_conn_threads.fetchSub(1, .acq_rel);
@@ -5599,7 +5635,7 @@ index 720b2c6..962b3b2 100644
          switch (err) {
              error.WriteFailed, error.ReadFailed => {
                  // error.WriteFailed/ReadFailed collapses BrokenPipe + ConnectionResetByPeer
-@@ -2521,6 +2602,7 @@ fn readRequestWithin(allocator: std.mem.Allocator, stream: *Conn, limit_ms: i64)
+@@ -2521,6 +2617,7 @@ fn readRequestWithin(allocator: std.mem.Allocator, stream: *Conn, limit_ms: i64)
  fn handleConnection(
      allocator: std.mem.Allocator,
      stream: *Conn,
@@ -5607,7 +5643,7 @@ index 720b2c6..962b3b2 100644
  ) !void {
      // Plan 05: resolve which model this request targets. The registry was
      // set up in `serve()`; per-POST routing happens after we read the body
-@@ -2603,6 +2685,88 @@ fn handleConnection(
+@@ -2603,6 +2700,88 @@ fn handleConnection(
          }
      }
  
@@ -5696,7 +5732,7 @@ index 720b2c6..962b3b2 100644
      // ── Plan 05: routes that don't depend on a loaded model (connectivity
      //    probes + CORS preflight + listing endpoints). Handle these BEFORE
      //    `scheduler.ensureLoaded` so they don't trigger a cold load of the
-@@ -2705,7 +2869,7 @@ fn handleConnection(
+@@ -2705,7 +2884,7 @@ fn handleConnection(
          // get a 404 here even though the main dispatch path below falls
          // back to default for SDK compatibility.
          log.debug("POST /v1/load-model -> 200\n", .{});
@@ -5705,7 +5741,7 @@ index 720b2c6..962b3b2 100644
          return;
      }
      // Any method: a status route never reaches `ensureLoaded`, whatever its body names.
-@@ -2784,6 +2948,35 @@ fn handleConnection(
+@@ -2784,6 +2963,35 @@ fn handleConnection(
          &model_id_buf,
          body_model orelse queryModel(&query_model_buf, raw_path) orelse "",
      );
@@ -5741,7 +5777,7 @@ index 720b2c6..962b3b2 100644
      // ── LAN-discovered remote model (`<id>@<peer>`) → proxy the request to
      //    its host byte-for-byte, model field rewritten to the bare id.
      //    Any DIRECT client may initiate the hop (loopback app, the
-@@ -2798,16 +2991,32 @@ fn handleConnection(
+@@ -2798,16 +3006,32 @@ fn handleConnection(
      if (g_providers) |prov| if (lan_mod.splitRemoteId(requested_model_id)) |rid| if (prov.isProvider(rid.peer) and
          !isTunneledRequest(request[0..header_end_pos]) and registry.peek(requested_model_id) == null)
      {
@@ -5775,7 +5811,7 @@ index 720b2c6..962b3b2 100644
          .id => |id| requested_model_id = id,
          .unknown_path => {
              try sendErrorResponse(allocator, stream, "404 Not Found", "model_not_found", "No model is registered at that path; load it first with POST /v1/load-model", 404);
-@@ -2873,7 +3082,15 @@ fn handleConnection(
+@@ -2873,7 +3097,15 @@ fn handleConnection(
              return;
          }
      }
@@ -5792,7 +5828,7 @@ index 720b2c6..962b3b2 100644
          // Headless gen-only boot (media models resident, no default chat
          // model): /props keeps answering with the live memory counters —
          // the app's tray polls it, and a 503 here read as "0 MB".
-@@ -2881,12 +3098,16 @@ fn handleConnection(
+@@ -2881,12 +3113,16 @@ fn handleConnection(
              try handlePropsNoModel(allocator, stream);
              return;
          }
@@ -5810,7 +5846,7 @@ index 720b2c6..962b3b2 100644
  
      // A model loaded on demand freezes its own auto-context here, for the same
      // reason the `--model` primary does at startup: the number we advertise is
-@@ -7800,7 +8021,7 @@ fn handleModelsRescan(allocator: std.mem.Allocator, stream: *Conn) !void {
+@@ -7800,7 +8036,7 @@ fn handleModelsRescan(allocator: std.mem.Allocator, stream: *Conn) !void {
  /// Plan 05 Phase E: explicit cold-load. Strict on unknown ids (404 — the
  /// caller asked for a specific id, not "anything"). Routes through
  /// scheduler.ensureLoaded so eviction/back-pressure kicks in.
@@ -5819,7 +5855,7 @@ index 720b2c6..962b3b2 100644
      const scheduler = global_scheduler orelse {
          try sendErrorResponse(allocator, stream, "503 Service Unavailable", "internal_error", "Scheduler not ready", 503);
          return;
-@@ -7885,11 +8106,21 @@ fn handleLoadModelStrict(allocator: std.mem.Allocator, stream: *Conn, request_bo
+@@ -7885,11 +8121,21 @@ fn handleLoadModelStrict(allocator: std.mem.Allocator, stream: *Conn, request_bo
          .id => |id| requested_id = id,
          else => {},
      };
@@ -5843,7 +5879,7 @@ index 720b2c6..962b3b2 100644
      // Promotion happens only past ensureLoaded's error switch: a load that
      // FAILED must never steal the default from a model that answers.
      if (make_default) {
-@@ -8030,6 +8261,7 @@ fn handleTranscriptions(allocator: std.mem.Allocator, stream: *Conn, body: []con
+@@ -8030,6 +8276,7 @@ fn handleTranscriptions(allocator: std.mem.Allocator, stream: *Conn, body: []con
              try sendErrorResponse(allocator, stream, "400 Bad Request", "invalid_request_error", "diarized_json needs Nemotron 3 Diarization, which is not on disk or did not load: download " ++ DIARIZER_REPO ++ " beside the ASR model", 400);
              return;
          }).id;
@@ -5851,7 +5887,7 @@ index 720b2c6..962b3b2 100644
          diarizer = global_scheduler.?.ensureLoaded(id) catch |err| blk: {
              log.warn("  diarizer {s} did not load ({s}): one speaker\n", .{ id, @errorName(err) });
              break :blk null;
-@@ -8054,16 +8286,19 @@ fn handleTranscriptions(allocator: std.mem.Allocator, stream: *Conn, body: []con
+@@ -8054,16 +8301,19 @@ fn handleTranscriptions(allocator: std.mem.Allocator, stream: *Conn, body: []con
          defer if (timed) |*x| x.deinit(allocator);
          if (aligner) |*al| {
              if (t.text.len > 0 and al.languages & transcription_mod.languageBit(t.language orelse "") != 0) {
@@ -5881,7 +5917,7 @@ index 720b2c6..962b3b2 100644
                  if (al.lm) |alm| timed = (try alignPiece(allocator, stream, alm, pcm[start..end], t.text, t.language.?, who, start * 1000 / transcription_mod.SAMPLE_RATE)) orelse return;
              }
          }
-@@ -8179,6 +8414,7 @@ fn findCompanion(arch_hint: []const u8) ?*LoadedModel {
+@@ -8179,6 +8429,7 @@ fn findCompanion(arch_hint: []const u8) ?*LoadedModel {
  
  fn findAligner(allocator: std.mem.Allocator) !?Aligner {
      const entry = findCompanion("qwen3_forced_aligner") orelse return null;
@@ -5889,7 +5925,7 @@ index 720b2c6..962b3b2 100644
      var config = model_mod.parseConfig(global_registry.?.io, allocator, entry.path) catch return null;
      defer config.deinit(allocator);
      const fa = config.forced_aligner orelse return null;
-@@ -8584,9 +8820,9 @@ fn embeddedEngineSettings(st: PropsSettings, engine: PropsEngine, engine_mtp: bo
+@@ -8584,9 +8835,9 @@ fn embeddedEngineSettings(st: PropsSettings, engine: PropsEngine, engine_mtp: bo
      return out;
  }
  
@@ -5901,7 +5937,7 @@ index 720b2c6..962b3b2 100644
      var out = embeddedEngineSettings(mlxPropsSettings(lm), engine, engine_mtp);
      if (lm.ane != null) out.kv_quant = "off";
      return out;
-@@ -8754,7 +8990,7 @@ fn handleProps(allocator: std.mem.Allocator, stream: *Conn, lm: *LoadedModel) !v
+@@ -8754,7 +9005,7 @@ fn handleProps(allocator: std.mem.Allocator, stream: *Conn, lm: *LoadedModel) !v
      defer allocator.free(ngram_json);
      const batching_json = try batchingPropsJson(allocator, batchVerdictFor(lm));
      defer allocator.free(batching_json);
@@ -5910,7 +5946,7 @@ index 720b2c6..962b3b2 100644
      defer allocator.free(settings_json);
      const cluster_json = try @import("distributed.zig").propsJson(allocator);
      defer allocator.free(cluster_json);
-@@ -9300,7 +9536,7 @@ fn handleDetokenize(
+@@ -9300,7 +9551,7 @@ fn handleDetokenize(
  
      const ids = try allocator.alloc(u32, tokens_val.array.items.len);
      defer allocator.free(ids);
@@ -5919,7 +5955,7 @@ index 720b2c6..962b3b2 100644
          try sendErrorResponse(allocator, stream, "400 Bad Request", "invalid_request_error", "'tokens' must be integers inside the model's vocabulary", 400);
          return;
      }
-@@ -9665,9 +9901,9 @@ fn echoModelName(root: std.json.ObjectMap, fallback: []const u8) []const u8 {
+@@ -9665,9 +9916,9 @@ fn echoModelName(root: std.json.ObjectMap, fallback: []const u8) []const u8 {
  
  /// The vocabulary a request's token ids index. An embedded engine's stub config keeps the
  /// default vocab; its ids are the engine's, and an id past its vocab aborts inside llama.cpp.
@@ -5931,7 +5967,7 @@ index 720b2c6..962b3b2 100644
      return if (lm.config) |c| c.vocab_size else 0;
  }
  
-@@ -10555,7 +10791,7 @@ fn handleCompletions(
+@@ -10555,7 +10806,7 @@ fn handleCompletions(
          return;
      };
  
@@ -5940,7 +5976,7 @@ index 720b2c6..962b3b2 100644
      defer if (prompt == .ids) allocator.free(prompt.ids);
      switch (prompt) {
          .missing, .invalid => {
-@@ -13838,6 +14074,50 @@ fn findContentLength(headers: []const u8) ?usize {
+@@ -13838,6 +14089,50 @@ fn findContentLength(headers: []const u8) ?usize {
  /// Case-insensitive header lookup returning the trimmed VALUE (`Content-Type`
  /// carries the multipart boundary, so `/v1/images/edits` can't be parsed from
  /// the body alone like every other endpoint).
@@ -5991,7 +6027,7 @@ index 720b2c6..962b3b2 100644
  fn findHeaderValue(headers: []const u8, comptime name_lower: []const u8) ?[]const u8 {
      var lines = std.mem.splitSequence(u8, headers, "\r\n");
      while (lines.next()) |line| {
-@@ -14405,6 +14685,52 @@ test "resolveRequestModelId: a path names its own entry, never the default model
+@@ -14405,6 +14700,52 @@ test "resolveRequestModelId: a path names its own entry, never the default model
      try std.testing.expectEqualStrings("", resolveRequestModelId(reg, &aliases, "", "/v1/chat/completions").id);
  }
  
@@ -6044,7 +6080,7 @@ index 720b2c6..962b3b2 100644
  test "the route-existence 404 is answered BEFORE the model is resolved" {
      // A path we do not serve must cost nothing. Resolution ran first, so
      // `POST /v1/load` (the real route is /v1/load-model) with a `model` field
-@@ -14413,7 +14739,7 @@ test "the route-existence 404 is answered BEFORE the model is resolved" {
+@@ -14413,7 +14754,7 @@ test "the route-existence 404 is answered BEFORE the model is resolved" {
      // answer has to precede `ensureLoaded`, not sit in one of its error arms.
      const src = @embedFile("server.zig");
      const gate = "if (!routeExists(" ++ "path)) {";
@@ -6053,7 +6089,7 @@ index 720b2c6..962b3b2 100644
      const gate_at = std.mem.indexOf(u8, src, gate) orelse return error.GateMissing;
      const resolve_at = std.mem.indexOf(u8, src, resolve) orelse return error.ResolveMissing;
      try std.testing.expect(gate_at < resolve_at);
-@@ -14871,8 +15197,24 @@ pub const insufficient_free_memory_message =
+@@ -14871,8 +15212,24 @@ pub const insufficient_free_memory_message =
      "Not enough free memory to load model: weights + warmup headroom exceed what is currently available. " ++
      "Close other apps or models and retry (the server log names the peak estimate and available memory), or pass --skip-mem-preflight to override.";
  
@@ -6078,7 +6114,7 @@ index 720b2c6..962b3b2 100644
      switch (err) {
          error.UnknownModelId => try sendErrorResponse(allocator, stream, "404 Not Found", "model_not_found", "Unknown model id", 404),
          error.NotLoaded => try sendErrorResponse(allocator, stream, "503 Service Unavailable", "model_not_loaded", "Requested model is not currently loaded", 503),
-@@ -28214,3 +28556,21 @@ test "proxiedBody: a Windows path id is spliced back escaped, so the forwarded b
+@@ -28214,3 +28571,21 @@ test "proxiedBody: a Windows path id is spliced back escaped, so the forwarded b
      defer a.free(out);
      try std.testing.expectEqualStrings("{\"model\":\"C:\\\\m\"}", out);
  }
