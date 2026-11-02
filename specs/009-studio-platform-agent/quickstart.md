@@ -717,3 +717,13 @@ backend handle. The result must contain that one selected case plus the two
 import roots (3 total), then complete the full executable/link build. This is
 ordinary metadata compatibility, not a concurrent/loaded failure or native
 admission test; historical matrices remain skipped.
+
+SDK-owner cleanup now checks the cached native source fence atomically with
+whole-group reference retirement. It invokes no backend probe from a cleanup
+callback. The ordinary owner-context test runs in both Debug and ReleaseSafe
+through `check-platform-native.mjs`. The existing `check-platform-sdk-host-owners.mjs`
+CPU, `--metal` and `--buffer-origins` modes each run separate healthy and
+cached-source-fence processes in both build modes: healthy cleanup reaches zero
+contexts/roots; cached uncertainty retains the original descriptor and roots after
+actual callback cleanup. These are finite local reference/lifetime cases with no
+models or installed actions; they supply no all-client/device terminal authority.

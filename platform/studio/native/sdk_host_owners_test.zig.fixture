@@ -3,6 +3,7 @@
 const std = @import("std");
 const owners = @import("request_ownership.zig");
 const sdk = @import("sdk_request_ownership.zig");
+extern "c" fn getenv(name: [*:0]const u8) ?[*:0]const u8;
 extern fn fios_host_owner_fixture_start() c_int;
 extern fn fios_host_owner_fixture_wait(second: c_int) c_int;
 extern fn fios_host_owner_fixture_owner(second: c_int) c_int;
@@ -38,12 +39,19 @@ test "fios genuine SDK host callbacks retain originating native owners" {
     try std.testing.expectEqual(@as(c_int, 1), fios_host_owner_fixture_owner(1));
     try std.testing.expect(owners.shared.hasRetainedWork(io));
     try std.testing.expect(sdk.diagnostic().active_contexts > 0);
-    owners.shared.fence(io);
+    const scenario = std.mem.span(getenv("FIOS_FIXTURE_SOURCE_FENCE") orelse return error.MissingFixtureScenario);
+    const fenced = std.mem.eql(u8, scenario, "cached");
+    try std.testing.expect(fenced or std.mem.eql(u8, scenario, "healthy"));
+    if (fenced) owners.shared.fence(io);
     try std.testing.expectEqual(@as(c_int, 1), fios_host_owner_fixture_cleanup());
     cleaned = true;
-    try std.testing.expectEqual(@as(u32, 0), sdk.diagnostic().active_contexts);
-    try std.testing.expect(!sdk.diagnostic().uncertain);
-    try std.testing.expect(!owners.shared.hasRetainedWork(io));
-    try std.testing.expect(owners.shared.snapshot(io).uncertain);
-    std.debug.print("PASS: genuine SDK parent and nested CPU callbacks retain native request roots after connection release, restore TLS and release only after actual callback cleanup; no terminal authority\n", .{});
+    // CPU queue cleanup is genuine, but an independent source fence still
+    // quarantines the original descriptor/root. Local completion cannot clear it.
+    try std.testing.expectEqual(@as(u32, if (fenced) 1 else 0), sdk.diagnostic().active_contexts);
+    try std.testing.expectEqual(fenced, sdk.diagnostic().uncertain);
+    try std.testing.expectEqual(fenced, owners.shared.hasRetainedWork(io));
+    try std.testing.expectEqual(@as(usize, if (fenced) 1 else 0), owners.shared.snapshot(io).owned);
+    try std.testing.expectEqual(fenced, owners.shared.snapshot(io).uncertain);
+    std.debug.print("genuine_cleanup scenario={s} contexts={d} roots={d}\n", .{scenario, sdk.diagnostic().active_contexts, owners.shared.snapshot(io).owned});
+    std.debug.print("PASS: genuine SDK parent and nested CPU callbacks retain native request roots after connection release, restore TLS and preserve independent source uncertainty after actual callback cleanup; no terminal authority\n", .{});
 }

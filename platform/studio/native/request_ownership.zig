@@ -569,7 +569,7 @@ pub const Tracker = struct {
             if (!member) return error.ModelConflict;
         }
     }
-    // Actor/preparation retirement only. The source-fence check and complete
+    // Actor/preparation/SDK retirement only. The source-fence check and complete
     // reference release share one lock, so a fence that wins this edge keeps
     // every original token. Ordinary leave remains independent CPU accounting.
     pub fn releaseIfCertain(self: *Tracker, io: std.Io, tokens: []const Token) bool {

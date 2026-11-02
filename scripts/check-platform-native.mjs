@@ -68,6 +68,7 @@ try {
     writeFileSync(protocolTests,original.replace(check,'response[7] = @intFromBool(snapshot.uncertain and snapshot.found);'));
   }
   for (const optimize of ['Debug', 'ReleaseSafe']) {
+    run(zig, ['test', path.join(root, 'platform/studio/native/sdk_request_ownership_test.zig'), '-lc', '-O', optimize]);
     run(zig, ['test', ownershipTests, '-O', optimize]);
     run(zig, ['test', protocolTests, '-O', optimize]);
     run(zig, ['test', path.join(root, 'platform/studio/native/device_owner_test.zig'), '-O', optimize]);

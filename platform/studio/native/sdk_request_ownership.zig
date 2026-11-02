@@ -109,7 +109,10 @@ pub export fn fios_native_request_owners_release(raw: ?*anyopaque) void {
     const context: *Context = @ptrCast(@alignCast(raw orelse { fence(); return; }));
     if (state.load(.acquire) != 2) { fence(); return; }
     if (failed.load(.acquire)) return; // Quarantine original descriptor/references.
-    context.retained.release(source_io.?);
+    // Descriptor cleanup cannot retire original request references after an
+    // independently cached source fence. Check and release the whole group
+    // under the tracker's lock; do not invoke a backend probe from cleanup.
+    if (!context.retained.releaseIfCertain(source_io.?)) { fence(); return; }
     std.heap.c_allocator.destroy(context);
     _ = contexts.fetchSub(1, .acq_rel);
 }

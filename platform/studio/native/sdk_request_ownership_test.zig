@@ -66,12 +66,14 @@ test "fios SDK owner context transfers and restores original references" {
     ownership.shared.fence(io);
     sdk.fios_native_request_owners_release(child);
     try std.testing.expect(ownership.shared.hasRetainedWork(io));
-    try std.testing.expectEqual(@as(u32, 1), sdk.diagnostic().active_contexts);
+    try std.testing.expectEqual(@as(u32, 2), sdk.diagnostic().active_contexts);
+    try std.testing.expect(sdk.diagnostic().uncertain);
     try std.testing.expect(ownership.shared.snapshot(io).uncertain);
     sdk.fios_native_request_owners_release(captured);
     captured_held = false;
-    try std.testing.expect(!ownership.shared.hasRetainedWork(io));
-    try std.testing.expectEqual(@as(u32, 0), sdk.diagnostic().active_contexts);
+    try std.testing.expect(ownership.shared.hasRetainedWork(io));
+    try std.testing.expectEqual(@as(usize, 2), ownership.shared.snapshot(io).owned);
+    try std.testing.expectEqual(@as(u32, 2), sdk.diagnostic().active_contexts);
     try std.testing.expect(ownership.shared.snapshot(io).uncertain);
-    std.debug.print("PASS: actual native owner contexts retain original roots across threads and nested TLS scopes, restore prior context and preserve uncertainty\n", .{});
+    std.debug.print("PASS: actual native owner contexts retain original roots across threads and nested TLS scopes, restore prior context and quarantine both original roots under cached source uncertainty\n", .{});
 }
