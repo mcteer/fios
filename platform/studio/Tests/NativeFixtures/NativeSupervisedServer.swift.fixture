@@ -199,7 +199,8 @@ extension NativeSupervisedServerFixture {
                     let at=HostResources.nowMilliseconds(),observed=runtime.fixtureObservation(now:at)
                     var fields:[String:Any]=["instance":instance,"profile":profile,"sampled_at":at,"state":"unknown"]
                     if let observed {
-                        if let identity=observed.identity,collector.capture(sessionReady:true,credentialsReady:true)?.identity==identity,collector.capture(sessionReady:true,credentialsReady:true)?.health == .healthy {
+                        if let identity=observed.identity,let measured=collector.capture(sessionReady:true,credentialsReady:true),measured.identity==identity,measured.health == .healthy {
+                            fields["sampled_at"]=measured.sampledAt
                             fields["state"]="present";fields["pid"]=identity.pid;fields["process_start"]=String(identity.start);if let launchID=runtime.fixtureLaunchID {fields["launch_id"]=launchID}
                         } else if observed.identity==nil {fields["state"]="absent"}
                     }

@@ -1938,3 +1938,14 @@ absence, readiness, loading/failure overlays and lifecycle reservations are
 explicitly synthetic. No global/native absence, device terminality, installed
 handover, all-client admission or complete T027/T030/T051 acceptance follows.
 38/55 whole tasks remain complete.
+
+
+The final fixture retains one actual health sample's identity and original
+capture timestamp, rather than combining two successive captures. The driver
+now checks the complete Core Swift filename set as well as bytes before native
+effects/after the run, and asserts both final model directories empty in-process.
+Refreshed Debug/optimized composition passes
+`/tmp/fios-009-native-supervised-server-final.log`, receipt
+`/private/tmp/fios-009-serving-runtime-native-grVSKp/receipt.json`, fixture
+2b896d9324cd4ea156007285d2e07a1d15389a1b477b16da041ac93e9f62acf7. Same totals and synthetic/native-authority limits apply;
+38/55 whole tasks remain complete. No installed action or inference occurred.
