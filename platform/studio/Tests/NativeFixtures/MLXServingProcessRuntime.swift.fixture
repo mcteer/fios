@@ -1,3 +1,24 @@
+private final class PreparedServingInputs:@unchecked Sendable {
+    private let lock=NSLock()
+    private var calls=0,validations=0,mainCalls=0
+    let home:String
+    init(home:String) {self.home=home}
+    var counts:(Int,Int,Int) {lock.lock();defer {lock.unlock()};return (calls,validations,mainCalls)}
+    var environment:[String:String] {["PATH":"/usr/bin:/bin","HOME":home,"LANG":"C","LC_ALL":"C"]}
+    func arguments(_ key:String)->[String] {["credential-proof","--host","127.0.0.1","--port","11234","--api-key",key]}
+    func prepare()throws->NativeServingLaunchInputs {
+        lock.lock();calls+=1;let call=calls;if Thread.isMainThread {mainCalls+=1};lock.unlock()
+        if call==1 {throw NativeServingCredentialError.unavailable}
+        let bytes=try JSONSerialization.data(withJSONObject:["apiKey":"  fixture-dynamic-key\n"])
+        let key=try NativeServingGUICredential.decode(bytes)
+        return try NativeServingLaunchInputs(arguments:arguments(key)+(call==2 ? ["--model","fixture/drift"]:[]),environment:environment,workingDirectory:home)
+    }
+    func validate(_ command:ServiceLaunchCommand)throws {
+        lock.lock();defer {lock.unlock()};validations+=1
+        guard calls==3,!Thread.isMainThread else {throw RuntimeError.invalid}
+    }
+}
+
 private final class ServingRuntimeGate:@unchecked Sendable {
     let entered=DispatchSemaphore(value:0),release=DispatchSemaphore(value:0)
     private let lock=NSLock()
@@ -47,6 +68,12 @@ private final class FixtureServingHealth:@unchecked Sendable {
 // Same-file extension reaches only the private fixture initializer/child. No
 // installed factory or native app is invoked; the actual helper has no models.
 extension MLXServingProcessRuntime {
+    fileprivate static func fixturePreparedInputs(executable:VerifiedExecutable,source:PreparedServingInputs,profile:String)throws->MLXServingProcessRuntime {
+        guard executable.path.hasPrefix("/private/tmp/fios-009-serving-runtime-") else {throw RuntimeError.invalid}
+        return try MLXServingProcessRuntime(executable:executable,arguments:source.arguments("unresolved-template"),environment:source.environment,
+            workingDirectory:source.home,serviceProfileHash:profile,prepareLaunchInputs:source.prepare,
+            validateReservation:source.validate,validateStopReservation:{_ in})
+    }
     fileprivate var fixtureKnownChildExit:Bool {
         lock.lock();let child=process;lock.unlock();return child?.knownExit ?? false
     }
@@ -116,6 +143,35 @@ extension MLXServingProcessRuntime {
     }
 }
 @main struct ServingRuntimeFixture {
+    private static func preparedInputScenario(executable:VerifiedExecutable,home:URL,profile:String,journal:Journal)throws {
+        let source=PreparedServingInputs(home:home.path)
+        let runtime=try MLXServingProcessRuntime.fixturePreparedInputs(executable:executable,source:source,profile:profile)
+        guard source.counts.0==0 else {throw RuntimeError.invalid}
+        func wait(_ ready:()->Bool)throws {
+            let end=ProcessInfo.processInfo.systemUptime+3
+            while ProcessInfo.processInfo.systemUptime<end {if ready() {return};Thread.sleep(forTimeInterval:0.005)}
+            throw RuntimeError.deadline
+        }
+        let proof=home.appendingPathComponent("credential-proof")
+        for _ in 0..<2 {
+            let id=UUID().uuidString.lowercased()
+            try runtime.begin(ServiceLaunchCommand(service:.mlx,id:id,expectedSHA256:executable.sha256,profileHash:runtime.recoveryProfileHash),deadline:ProcessInfo.processInfo.systemUptime+10)
+            try wait {runtime.acknowledgeResult(id:id) == .notSent && !runtime.validationPending}
+            guard !FileManager.default.fileExists(atPath:proof.path) else {throw RuntimeError.identity}
+        }
+        let id=UUID().uuidString.lowercased()
+        try runtime.begin(ServiceLaunchCommand(service:.mlx,id:id,expectedSHA256:executable.sha256,profileHash:runtime.recoveryProfileHash),deadline:ProcessInfo.processInfo.systemUptime+10)
+        var identity:ServiceIdentity?
+        try wait {guard case .started(let value)=runtime.acknowledgeResult(id:id),!runtime.validationPending else {return false};identity=value;return true}
+        guard let identity else {throw RuntimeError.identity}
+        try wait {FileManager.default.fileExists(atPath:proof.path)}
+        guard try Data(contentsOf:proof)==Data("ok".utf8),source.counts == (3,1,0),try journal.uncertainCount()==1 else {throw RuntimeError.identity}
+        let receipt=ServiceRecordedLaunch(service:.mlx,id:id,identity:identity,boot:try HostBoot.identity(),profileHash:runtime.recoveryProfileHash),stop=UUID().uuidString.lowercased()
+        try runtime.beginStop(id:stop,matching:receipt,deadline:ProcessInfo.processInfo.systemUptime+10)
+        try wait {runtime.acknowledgeStopResult(id:stop,matching:receipt) == .localExited && !runtime.validationPending}
+        guard try journal.uncertainCount()==1 else {throw RuntimeError.identity}
+        print("PASS: launch-input preparation runs off-loop once per attempt, missing/drift inputs never spawn, native reservation revalidates after preparation and the resolved literal credential reaches one private child; independent uncertainty retained")
+    }
     static func main()throws {
         let args=CommandLine.arguments
         if args.count>1,args[1]=="custody-supervisor" {try custodySupervisor(args);return}
@@ -183,6 +239,7 @@ extension MLXServingProcessRuntime {
         try journal.claim(job:old,attempt:0,model:"fixture/independent");try journal.markUncertain(job:old,attempt:0)
         let pins:[ManagedService:String]=[.mlx:executable.sha256,.orbstack:executable.sha256]
         let baseProfile=try ServiceLaunchProfile.digest(pins),gate=ServingRuntimeGate(),stopGate=ServingStopGate()
+        try preparedInputScenario(executable:executable,home:root,profile:baseProfile,journal:journal)
         let runtime=try MLXServingProcessRuntime.fixture(executable:executable,home:root.path,profile:baseProfile,gate:gate,stopGate:stopGate)
         let profile=runtime.recoveryProfileHash
         var recovery=try ServiceRecoveryController(journal:journal,approvedHashes:pins,recoveryProfileHash:profile)

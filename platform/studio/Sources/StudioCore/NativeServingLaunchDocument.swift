@@ -18,6 +18,7 @@ struct NativeServingLaunchDocument:Sendable {
     private let arguments:[String]
     private let environment:[String:String]
     private let argumentCredential:Bool
+    var usesArgumentCredential:Bool {argumentCredential}
     init(_ bytes:Data)throws {
         do {
             try StrictJSON.validate(bytes,maximum:32768)

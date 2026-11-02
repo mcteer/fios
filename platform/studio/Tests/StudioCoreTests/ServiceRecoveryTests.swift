@@ -5,6 +5,16 @@ func runServiceRecoveryTests() throws {
     defer {try? FileManager.default.removeItem(at:directory)}
     let hash=String(repeating:"a",count:64),pins:[ManagedService:String]=[.mlx:hash,.orbstack:hash]
     let base=try ServiceLaunchProfile.digest(pins)
+    // Pinned GUI ServerOptions stores JSON Data and trims the key when
+    // constructing its two-token native argument. Synthetic values only.
+    let guiSettings=try JSONSerialization.data(withJSONObject:["apiKey":"  fixture-native-key\n","model":"fixture/Exact"])
+    guard try NativeServingGUICredential.decode(guiSettings)=="fixture-native-key" else {fatalError("Existing GUI credential semantics changed")}
+    let literalSettings=try JSONSerialization.data(withJSONObject:["apiKey":"--port"])
+    guard try NativeServingGUICredential.decode(literalSettings)=="--port" else {fatalError("Existing literal native credential was interpreted as an option")}
+    for settings:[String:Any] in [[:],["apiKey":"  "],["apiKey":42],["apiKey":"invalid\0key"]] {
+        do {_=try NativeServingGUICredential.decode(JSONSerialization.data(withJSONObject:settings));fatalError("Unavailable GUI credential became a generated/default credential")}
+        catch NativeServingCredentialError.unavailable {}
+    }
     let binding=["--host","127.0.0.1","--port","11234"]
     let nativeArgs=["--serve"]+binding+["--api-key-env","FIOS_MLX_SERVING_API_KEY","--model","fixture/Exact"]
     let nativeEnv=["HOME":"/Users/fixture","FIOS_MLX_SERVING_API_KEY":"fixture-secret-a"]

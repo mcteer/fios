@@ -38,6 +38,8 @@ final class MLXServingProcessRuntime:ServingProcessControlling,@unchecked Sendab
     private let arguments:[String]
     private let environment:[String:String]
     private let workingDirectory:String
+    private let prepareLaunchInputs:(@Sendable()throws->NativeServingLaunchInputs)?
+    private let reviewedConfigurationSHA256:String?
     private let profileHash:String
     private let baseProfileHash:String
     var recoveryProfileHash:String {profileHash}
@@ -57,6 +59,21 @@ final class MLXServingProcessRuntime:ServingProcessControlling,@unchecked Sendab
     private var stopReceipts:[String:ServiceRecordedLaunch]=[:]
     private var stopDelivery:(String,ServingStopResult)?
 
+    // Explicit source factory for the preserved GUI argument credential. It
+    // reads nothing from task/operator packets and starts no child. Native
+    // reservations and installed handover remain separate mandatory inputs.
+    convenience init(guiCredentialConfiguration configuration:NativeServingReviewedConfiguration,serviceProfileHash:String,
+                     validateReservation:@escaping @Sendable(ServiceLaunchCommand)throws->Void,
+                     validateStopReservation:@escaping @Sendable(ServingStopCommand)throws->Void)throws {
+        guard configuration.role == .supervisor,configuration.document.usesArgumentCredential else {throw NativeServingCredentialError.unsupported}
+        let template=try configuration.document.resolvingCredential(NativeServingLaunchDocument.credentialSlot)
+        try self.init(executable:configuration.processProfile.server,arguments:template.arguments,environment:template.environment,
+            workingDirectory:template.workingDirectory,serviceProfileHash:serviceProfileHash,reviewedConfigurationSHA256:configuration.policySHA256,
+            prepareLaunchInputs:{
+                let credential=try NativeServingGUICredential.read(configuration:configuration)
+                return try configuration.document.resolvingCredential(credential)
+            },validateReservation:validateReservation,validateStopReservation:validateStopReservation)
+    }
     // Only protected installed metadata supplies native launch configuration.
     // Both independent retained-reservation validators remain mandatory. This
     // constructor neither obtains native authority nor starts the child.
@@ -81,6 +98,7 @@ final class MLXServingProcessRuntime:ServingProcessControlling,@unchecked Sendab
         try self.init(executable:profile.server,arguments:inputs.arguments,environment:inputs.environment,workingDirectory:inputs.workingDirectory,serviceProfileHash:serviceProfileHash,validateReservation:validateReservation,validateStopReservation:validateStopReservation)
     }
     private init(executable:VerifiedExecutable,arguments:[String],environment:[String:String],workingDirectory:String,serviceProfileHash:String,reviewedConfigurationSHA256:String?=nil,
+                 prepareLaunchInputs:(@Sendable()throws->NativeServingLaunchInputs)?=nil,
                  validateReservation:@escaping @Sendable(ServiceLaunchCommand)throws->Void,
                  validateStopReservation:@escaping @Sendable(ServingStopCommand)throws->Void)throws {
         guard WireScalar.sha256(serviceProfileHash),arguments.count<=128,
@@ -95,6 +113,7 @@ final class MLXServingProcessRuntime:ServingProcessControlling,@unchecked Sendab
         guard let home=environment["HOME"],(try? CommandEnvironment.sanitized(["HOME":home])) != nil,
               workingDirectory.utf8.count+executable.path.utf8.count+1+arguments.reduce(0,{$0+$1.utf8.count+1})+environment.reduce(0,{$0+$1.key.utf8.count+$1.value.utf8.count+2})<=65536 else {throw RuntimeError.invalid}
         self.executable=executable;self.arguments=arguments;self.environment=environment;self.workingDirectory=workingDirectory
+        self.prepareLaunchInputs=prepareLaunchInputs;self.reviewedConfigurationSHA256=reviewedConfigurationSHA256
         baseProfileHash=serviceProfileHash
         profileHash=try ServiceLaunchProfile.nativeDigest(base:serviceProfileHash,arguments:arguments,environment:environment,workingDirectory:workingDirectory,reviewedConfigurationSHA256:reviewedConfigurationSHA256)
         self.validateReservation=validateReservation;self.validateStopReservation=validateStopReservation
@@ -151,15 +170,27 @@ final class MLXServingProcessRuntime:ServingProcessControlling,@unchecked Sendab
         phase=next
     }
     private func start(_ command:ServiceLaunchCommand,deadline:TimeInterval) {
+        var launchArguments=arguments,launchEnvironment=environment,launchDirectory=workingDirectory
         do {
             try executable.verify(deadline:deadline)
+            // Credential-source I/O stays on this retained worker. A hung
+            // source cannot block a heartbeat, free this slot or dispatch the
+            // unresolved template. Only credential values may vary.
+            if let prepareLaunchInputs {
+                let inputs=try prepareLaunchInputs()
+                guard try ServiceLaunchProfile.nativeDigest(base:baseProfileHash,arguments:inputs.arguments,environment:inputs.environment,
+                    workingDirectory:inputs.workingDirectory,reviewedConfigurationSHA256:reviewedConfigurationSHA256)==profileHash else {throw RuntimeError.invalid}
+                launchArguments=inputs.arguments;launchEnvironment=inputs.environment;launchDirectory=inputs.workingDirectory
+            }
+            // Revalidate the separately retained native reservation after all
+            // credential I/O and immediately before the existing dispatch gate.
             try validateReservation(command)
         } catch {finish(command.id,.notSent,phase:.idle);return}
         lock.lock()
         guard !revoked,activeID==command.id,phase == .validating,ProcessInfo.processInfo.systemUptime<deadline else {
             lock.unlock();finish(command.id,.notSent,phase:.idle);return
         }
-        let child=ServingOwnedProcess(executable:executable,arguments:arguments,environment:environment,workingDirectory:workingDirectory)
+        let child=ServingOwnedProcess(executable:executable,arguments:launchArguments,environment:launchEnvironment,workingDirectory:launchDirectory)
         // Retain before the possibly blocking spawn call. Once entered, failure,
         // timeout or local reaping cannot manufacture a non-dispatch receipt.
         process=child;phase = .spawning

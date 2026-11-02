@@ -103,3 +103,34 @@ it cannot retarget health observation. The reviewed document's health factory
 uses only synthetic credential-slot validation, retaining no serving key in the
 probe. Local IPv4/IPv6 family and exact port selection precede every metadata
 request; no DNS, redirects, inference or remote endpoint fallback is added.
+
+
+## Preserved GUI argument-credential source
+
+The explicit code-only `guiCredentialConfiguration` runtime constructor selects
+the pinned GUI's existing argument-key source: `serverOptions` JSON Data in
+`com.dalcu.mlx-core` for the reviewed current user. The pinned Info.plist and
+ServerOptions source establish that domain/key, JSON representation and
+whitespace/newline trimming before `--api-key VALUE`. Other GUI settings remain
+opaque and cannot replace the reviewed launch arguments. Missing/empty/invalid
+keys are unavailable, never generated/default credentials. Environment-channel
+configuration is unsupported by this specific reader; it does not infer another
+source. The existing explicit credential constructor remains separate.
+
+Only an opaque protected supervisor-role configuration with the exact host/UID
+can read the setting. Manager-role configuration refuses before Preferences
+access. The constructor itself resolves only a non-dispatched template for
+profile correlation. The actual Preferences read runs on the runtime's retained
+launch worker for each attempt. Its result must reproduce the exact reviewed
+profile after credential-value redaction; configuration drift refuses before
+spawn. The separately retained native reservation is revalidated after this I/O
+and before the existing dispatch gate. A blocked source retains the real worker
+slot; deadline/cancellation cannot dispatch the template or rearm another worker.
+No Preferences value is written, logged or sent to the manager.
+
+This is a source-only reader/factory, with no public startup activation, new
+credential store, root policy creation or installed handover. Live Preferences
+access and the installed domain/setting branch remain unexecuted and require
+reviewed native installation/acceptance. Synthetic JSON and actual private C
+children test decoding/preparation; they are not credential-source enrollment,
+whole-native provenance or native admission authority.
