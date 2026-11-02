@@ -40,7 +40,7 @@ index 0100fd9..e612db7 100644
      if (frameworks) |fw| host.addFrameworkPath(.{ .cwd_relative = fw });
      for ([_][]const u8{ "IOKit", "CoreFoundation", "Foundation", "Metal", "IOSurface" }) |f| host.linkFramework(f, .{});
 diff --git a/lib/llama_shim/llama_shim.cpp b/lib/llama_shim/llama_shim.cpp
-index 392b72b..55f83f6 100644
+index 392b72b..5ab8940 100644
 --- a/lib/llama_shim/llama_shim.cpp
 +++ b/lib/llama_shim/llama_shim.cpp
 @@ -15,6 +15,8 @@
@@ -52,12 +52,18 @@ index 392b72b..55f83f6 100644
  #include <cstdio>
  #include <cstdlib>
  #include <cstring>
-@@ -53,7 +55,22 @@ struct Row {
+@@ -53,7 +55,28 @@ struct Row {
  };
  } // namespace
  
 +// Process-local, non-reusable creator identity, not std::thread::id/PID alone.
 +// No model/wire payload selects it; exhaustion yields no terminal receipt.
++// Negative-only process-module fence. Reading this cannot initialize llama,
++// synchronize a device, or establish terminality; there is no reset API.
++static std::atomic<bool> fios_llama_source_uncertain{false};
++extern "C" int32_t mlx_llama_source_uncertainty(void) {
++    return fios_llama_source_uncertain.load(std::memory_order_acquire) ? 1 : 0;
++}
 +static std::atomic<uint64_t> fios_llama_next_owner{0};
 +static uint64_t fios_llama_owner() {
 +    static thread_local const uint64_t owner = []() -> uint64_t {
@@ -75,7 +81,7 @@ index 392b72b..55f83f6 100644
      mlx_llama_engine *e;
      struct llama_context *tgt;
      struct llama_context *dft; // MTP head, NULL without MTP
-@@ -246,6 +263,11 @@ static bool attach_mtp(mlx_llama_ctx *c, struct llama_context_params cp, int32_t
+@@ -246,6 +269,11 @@ static bool attach_mtp(mlx_llama_ctx *c, struct llama_context_params cp, int32_t
  
  extern "C" mlx_llama_ctx *mlx_llama_ctx_create(mlx_llama_engine *e, const mlx_llama_ctx_params *p,
                                                 char *err, size_t errlen) {
@@ -87,7 +93,7 @@ index 392b72b..55f83f6 100644
      const int32_t n_seq = p->n_seq > 0 ? p->n_seq : 1;
      const int32_t n_ctx = p->n_ctx > 0 ? p->n_ctx : llama_model_n_ctx_train(e->model);
  
-@@ -276,17 +298,27 @@ extern "C" mlx_llama_ctx *mlx_llama_ctx_create(mlx_llama_engine *e, const mlx_ll
+@@ -276,17 +304,27 @@ extern "C" mlx_llama_ctx *mlx_llama_ctx_create(mlx_llama_engine *e, const mlx_ll
      const bool want_mtp = p->mtp_drafts > 0 && e->has_mtp;
      if (want_mtp) cp.n_rs_seq = (uint32_t)p->mtp_drafts;
  
@@ -121,7 +127,7 @@ index 392b72b..55f83f6 100644
      c->e = e;
      c->tgt = tgt;
      c->dft = NULL;
-@@ -297,12 +329,25 @@ extern "C" mlx_llama_ctx *mlx_llama_ctx_create(mlx_llama_engine *e, const mlx_ll
+@@ -297,12 +335,25 @@ extern "C" mlx_llama_ctx *mlx_llama_ctx_create(mlx_llama_engine *e, const mlx_ll
      c->n_vocab = llama_vocab_n_tokens(e->vocab);
      c->mtp_drafts = 0;
      c->n_embd_h = 0;
@@ -143,13 +149,13 @@ index 392b72b..55f83f6 100644
 +        llama_synchronize(c->tgt);
 +        if (c->dft) llama_synchronize(c->dft);
 +        return 1;
-+    } catch (...) { c->fios_uncertain = true; return 0; }
++    } catch (...) { c->fios_uncertain = true; fios_llama_source_uncertain.store(true, std::memory_order_release); return 0; }
 +}
 +
  extern "C" void mlx_llama_ctx_free(mlx_llama_ctx *c) {
      if (!c) return;
      if (c->dbatch) llama_batch_ext_free(c->dbatch);
-@@ -312,15 +357,24 @@ extern "C" void mlx_llama_ctx_free(mlx_llama_ctx *c) {
+@@ -312,15 +363,24 @@ extern "C" void mlx_llama_ctx_free(mlx_llama_ctx *c) {
      delete c;
  }
  
@@ -176,7 +182,7 @@ index 392b72b..55f83f6 100644
      llama_memory_seq_rm(llama_get_memory(c->tgt), seq, -1, -1);
      if (c->dft) {
          llama_memory_seq_rm(llama_get_memory(c->dft), seq, -1, -1);
-@@ -338,7 +392,14 @@ static void dft_trim(mlx_llama_ctx *c, int32_t seq, llama_pos p0) {
+@@ -338,7 +398,15 @@ static void dft_trim(mlx_llama_ctx *c, int32_t seq, llama_pos p0) {
  }
  
  // A head that fails costs the drafts, never the request: decode on without it.
@@ -187,12 +193,13 @@ index 392b72b..55f83f6 100644
 +    // resetting a sequence or a later successful request cannot reopen it.
 +    if (mlx_llama_ctx_terminal(c) != 1) {
 +        c->fios_uncertain = true;
++        fios_llama_source_uncertain.store(true, std::memory_order_release);
 +        return false;
 +    }
      fprintf(stderr, "[llama] MTP head failed; decoding without drafts\n");
      llama_set_embeddings_nextn(c->tgt, false, false);
      llama_batch_ext_free(c->dbatch);
-@@ -346,6 +407,7 @@ static void drop_mtp(mlx_llama_ctx *c) {
+@@ -346,6 +414,7 @@ static void drop_mtp(mlx_llama_ctx *c) {
      c->dbatch = NULL;
      c->dft = NULL;
      c->mtp_drafts = 0;
@@ -200,7 +207,7 @@ index 392b72b..55f83f6 100644
  }
  
  // Pair each target row with the target hidden one position earlier (a
-@@ -390,7 +452,7 @@ static int32_t decode_rows(mlx_llama_ctx *c, const Row *rows, int32_t n, int32_t
+@@ -390,7 +459,7 @@ static int32_t decode_rows(mlx_llama_ctx *c, const Row *rows, int32_t n, int32_t
          c->pos[rows[i].seq] = rows[i].pos + 1;
          if (i >= out_from) c->out_idx[rows[i].seq] = i;
      }
@@ -209,7 +216,7 @@ index 392b72b..55f83f6 100644
      return 0;
  }
  
-@@ -417,6 +479,10 @@ extern "C" int32_t mlx_llama_seq_prefill(mlx_llama_ctx *c, int32_t seq, const in
+@@ -417,6 +486,10 @@ extern "C" int32_t mlx_llama_seq_prefill(mlx_llama_ctx *c, int32_t seq, const in
  
  extern "C" int32_t mlx_llama_step(mlx_llama_ctx *c, const int32_t *seqs, const int32_t *tokens, int32_t n,
                                    char *err, size_t errlen) {
@@ -220,7 +227,7 @@ index 392b72b..55f83f6 100644
      c->rows.resize((size_t)n);
      for (int32_t i = 0; i < n; i++) {
          if (!valid_seq(c, seqs[i])) {
-@@ -433,6 +499,7 @@ extern "C" int32_t mlx_llama_step(mlx_llama_ctx *c, const int32_t *seqs, const i
+@@ -433,6 +506,7 @@ extern "C" int32_t mlx_llama_step(mlx_llama_ctx *c, const int32_t *seqs, const i
  }
  
  extern "C" int32_t mlx_llama_seq_trim(mlx_llama_ctx *c, int32_t seq, int32_t n_keep) {
@@ -228,7 +235,7 @@ index 392b72b..55f83f6 100644
      if (n_keep < 0) n_keep = 0;
      if (n_keep >= c->pos[seq]) return 0; // nothing resident beyond n_keep
      // Recurrent / hybrid memory (Mamba, GDN: qwen35, qwen3next, nemotron_h) can
-@@ -455,7 +522,7 @@ extern "C" void mlx_llama_seq_reset(mlx_llama_ctx *c, int32_t seq) {
+@@ -455,7 +529,7 @@ extern "C" void mlx_llama_seq_reset(mlx_llama_ctx *c, int32_t seq) {
  }
  
  extern "C" int32_t mlx_llama_seq_pos(mlx_llama_ctx *c, int32_t seq) {
@@ -238,10 +245,10 @@ index 392b72b..55f83f6 100644
  
  static int32_t argmax_row(const float *logits, int32_t n) {
 diff --git a/lib/llama_shim/llama_shim.h b/lib/llama_shim/llama_shim.h
-index 12bd0f7..19dc43b 100644
+index 12bd0f7..f32c794 100644
 --- a/lib/llama_shim/llama_shim.h
 +++ b/lib/llama_shim/llama_shim.h
-@@ -82,12 +82,20 @@ typedef struct {
+@@ -82,12 +82,22 @@ typedef struct {
  // dropped with a log line and mlx_llama_ctx_mtp_drafts() reports 0.
  mlx_llama_ctx *mlx_llama_ctx_create(mlx_llama_engine *e, const mlx_llama_ctx_params *p, char *err, size_t errlen);
  void mlx_llama_ctx_free(mlx_llama_ctx *c);
@@ -253,6 +260,8 @@ index 12bd0f7..19dc43b 100644
 +// Partial terminal primitive on exact retained creator-owned target+MTP context.
 +// 1 synchronized,0 missing/wrong-owner/failure; NOT all-client quiescence.
 +int32_t mlx_llama_ctx_terminal(mlx_llama_ctx *c);
++// Sticky negative evidence only; no initialization or native terminal proof.
++int32_t mlx_llama_source_uncertainty(void);
  // Draft tokens per MTP round this context runs, 0 when it has no MTP context.
  int32_t mlx_llama_ctx_mtp_drafts(mlx_llama_ctx *c);
  
@@ -264,7 +273,7 @@ index 12bd0f7..19dc43b 100644
  int32_t mlx_llama_seq_prefill(mlx_llama_ctx *c, int32_t seq, const int32_t *tokens, int32_t n_tokens,
                                char *err, size_t errlen);
  
-@@ -99,6 +107,7 @@ int32_t mlx_llama_step(mlx_llama_ctx *c, const int32_t *seqs, const int32_t *tok
+@@ -99,6 +109,7 @@ int32_t mlx_llama_step(mlx_llama_ctx *c, const int32_t *seqs, const int32_t *tok
  // Keep the first n_keep tokens of `seq`, dropping the rest. 0 on success, 1 when
  // the memory could not trim partially (recurrent/hybrid state past its rollback
  // window) and the sequence was cleared instead: cold-prefill everything.
@@ -991,7 +1000,7 @@ index 82e806a..2080af0 100644
          _ = snap;
          @panic(unavailable);
 diff --git a/src/arch/llama.zig b/src/arch/llama.zig
-index 806d641..a152cde 100644
+index 806d641..1051a0c 100644
 --- a/src/arch/llama.zig
 +++ b/src/arch/llama.zig
 @@ -1,4 +1,7 @@
@@ -1002,7 +1011,17 @@ index 806d641..a152cde 100644
  // `lib/llama_shim/`. The C ABI lives in `src/llama_ffi.zig`; this module owns
  // lifetimes and error mapping. A `LlamaContext` is ONE llama_context holding
  // `n_seq` sequences (`LlamaSeq`), each with its own KV, decoded together by
-@@ -19,6 +22,7 @@ export fn mlx_llama_log(warn: bool, text: [*:0]const u8) void {
+@@ -12,6 +15,9 @@ const std = @import("std");
+ const ffi = @import("../llama_ffi.zig");
+ const log = @import("../log.zig");
+ 
++// Noninitializing negative evidence only. Zero never grants admission.
++pub fn fiosSourceUncertain() bool { return ffi.mlx_llama_source_uncertainty() != 0; }
++
+ /// The llama shim's log sink: llama.cpp's warnings and errors stay visible, the rest
+ /// (the loader's metadata dump, backend probing) is debug.
+ export fn mlx_llama_log(warn: bool, text: [*:0]const u8) void {
+@@ -19,6 +25,7 @@ export fn mlx_llama_log(warn: bool, text: [*:0]const u8) void {
  }
  
  pub const Error = error{
@@ -1010,7 +1029,7 @@ index 806d641..a152cde 100644
      EngineOpenFailed,
      SessionCreateFailed,
      SessionSyncFailed,
-@@ -54,11 +58,15 @@ pub const ContextOptions = struct {
+@@ -54,11 +61,15 @@ pub const ContextOptions = struct {
  };
  
  pub const LlamaEngine = struct {
@@ -1019,15 +1038,15 @@ index 806d641..a152cde 100644
      handle: *ffi.Engine,
      model_path_owned: [:0]u8,
 +    fios_lifetime: lifetime.Lifetime = .{},
++
  
 -    pub fn open(allocator: std.mem.Allocator, model_path: []const u8, opts: OpenOptions) Error!*LlamaEngine {
-+
 +    pub fn open(io: std.Io, allocator: std.mem.Allocator, model_path: []const u8, opts: OpenOptions) Error!*LlamaEngine {
 +        const fios_lifetime = lifetime.Lifetime.init() catch return Error.EngineOpenFailed;
          const path_z = allocator.dupeSentinel(u8, model_path, 0) catch return Error.OutOfMemory;
          errdefer allocator.free(path_z);
          const mtp_z: ?[:0]u8 = if (opts.mtp_path) |p| (allocator.dupeSentinel(u8, p, 0) catch return Error.OutOfMemory) else null;
-@@ -79,33 +87,58 @@ pub const LlamaEngine = struct {
+@@ -79,33 +90,58 @@ pub const LlamaEngine = struct {
              return Error.OutOfMemory;
          };
          wrapper.* = .{
@@ -1091,7 +1110,7 @@ index 806d641..a152cde 100644
          return ffi.mlx_llama_has_mtp(self.handle);
      }
  
-@@ -117,6 +150,8 @@ pub const LlamaEngine = struct {
+@@ -117,6 +153,8 @@ pub const LlamaEngine = struct {
          text: []const u8,
          add_special: bool,
      ) Error![]i32 {
@@ -1100,7 +1119,7 @@ index 806d641..a152cde 100644
          if (text.len == 0) return allocator.alloc(i32, 0) catch Error.OutOfMemory;
  
          // First attempt with a generous estimate; on -required, grow and retry.
-@@ -146,6 +181,8 @@ pub const LlamaEngine = struct {
+@@ -146,6 +184,8 @@ pub const LlamaEngine = struct {
      /// Single token → bytes lookup. Caller owns the returned buffer.
      /// Bytes are NOT NUL-terminated; the slice length is authoritative.
      pub fn detokenizeOne(self: *LlamaEngine, allocator: std.mem.Allocator, token_id: i32) Error![]u8 {
@@ -1109,7 +1128,7 @@ index 806d641..a152cde 100644
          var cap: i32 = 64;
          while (true) {
              const buf = allocator.alloc(u8, @intCast(cap)) catch return Error.OutOfMemory;
-@@ -161,12 +198,14 @@ pub const LlamaEngine = struct {
+@@ -161,12 +201,14 @@ pub const LlamaEngine = struct {
      }
  
      /// The model's embedded chat-template string (jinja source), or null.
@@ -1128,7 +1147,7 @@ index 806d641..a152cde 100644
      }
  
      pub const ChatTurn = struct { role: []const u8, content: []const u8 };
-@@ -180,6 +219,8 @@ pub const LlamaEngine = struct {
+@@ -180,6 +222,8 @@ pub const LlamaEngine = struct {
          turns: []const ChatTurn,
          add_assistant: bool,
      ) Error![]u8 {
@@ -1137,7 +1156,7 @@ index 806d641..a152cde 100644
          var roles = std.ArrayList([*:0]const u8).empty;
          defer roles.deinit(allocator);
          var contents = std.ArrayList([*:0]const u8).empty;
-@@ -226,6 +267,10 @@ pub const LlamaEngine = struct {
+@@ -226,6 +270,10 @@ pub const LlamaEngine = struct {
      }
  
      pub fn createContext(self: *LlamaEngine, opts: ContextOptions) Error!*LlamaContext {
@@ -1148,7 +1167,7 @@ index 806d641..a152cde 100644
          const n_seq: u32 = std.math.clamp(opts.n_seq, 1, MAX_SEQS);
          const params: ffi.CtxParams = .{
              .n_ctx = opts.ctx_size,
-@@ -235,6 +280,12 @@ pub const LlamaEngine = struct {
+@@ -235,6 +283,12 @@ pub const LlamaEngine = struct {
              .n_ubatch = @intCast(opts.ubatch),
              .mtp_drafts = @intCast(opts.mtp_drafts),
          };
@@ -1161,7 +1180,7 @@ index 806d641..a152cde 100644
          var err_buf: [256]u8 = undefined;
          err_buf[0] = 0;
          const raw = ffi.mlx_llama_ctx_create(self.handle, &params, &err_buf, err_buf.len) orelse {
-@@ -243,20 +294,11 @@ pub const LlamaEngine = struct {
+@@ -243,20 +297,11 @@ pub const LlamaEngine = struct {
              });
              return Error.SessionCreateFailed;
          };
@@ -1184,7 +1203,7 @@ index 806d641..a152cde 100644
          return ctx;
      }
  };
-@@ -292,6 +334,15 @@ pub const LlamaKvQuant = enum(u8) {
+@@ -292,6 +337,15 @@ pub const LlamaKvQuant = enum(u8) {
      }
  };
  
@@ -1200,7 +1219,7 @@ index 806d641..a152cde 100644
  /// Length of the longest common prefix of two token sequences. Pure helper so
  /// the prompt-prefix reuse logic in `LlamaSeq.sync` is unit-testable without
  /// a model. An off-by-one here would corrupt KV reuse, so it's covered directly.
-@@ -309,22 +360,57 @@ pub const LlamaContext = struct {
+@@ -309,22 +363,57 @@ pub const LlamaContext = struct {
      engine: *LlamaEngine,
      handle: *ffi.Ctx,
      seqs: []LlamaSeq,
@@ -1262,7 +1281,7 @@ index 806d641..a152cde 100644
          std.debug.assert(seqs.len == tokens.len);
          var ids_buf: [MAX_SEQS]i32 = undefined;
          const ids = ids_buf[0..seqs.len];
-@@ -362,6 +448,8 @@ pub const LlamaSeq = struct {
+@@ -362,6 +451,8 @@ pub const LlamaSeq = struct {
      busy: bool = false,
  
      pub fn pos(self: *LlamaSeq) i32 {
@@ -1271,7 +1290,7 @@ index 806d641..a152cde 100644
          return ffi.mlx_llama_seq_pos(self.ctx.handle, self.id);
      }
  
-@@ -373,13 +461,15 @@ pub const LlamaSeq = struct {
+@@ -373,13 +464,15 @@ pub const LlamaSeq = struct {
      /// exist for sampling — even when the whole prompt is already resident we
      /// back off one position.
      pub fn sync(self: *LlamaSeq, prompt_ids: []const i32) Error!i32 {
@@ -1288,7 +1307,7 @@ index 806d641..a152cde 100644
                  log.info("[llama] recurrent state cannot roll back to {d}; cold prefill\n", .{common});
                  common = 0;
              }
-@@ -401,6 +491,8 @@ pub const LlamaSeq = struct {
+@@ -401,6 +494,8 @@ pub const LlamaSeq = struct {
  
      /// Drop all resident KV (and the mirror).
      pub fn reset(self: *LlamaSeq) void {
@@ -1297,7 +1316,7 @@ index 806d641..a152cde 100644
          ffi.mlx_llama_seq_reset(self.ctx.handle, self.id);
          self.resident.clearRetainingCapacity();
      }
-@@ -410,7 +502,10 @@ pub const LlamaSeq = struct {
+@@ -410,7 +505,10 @@ pub const LlamaSeq = struct {
      /// drop the resident state and retry once cold. If the retry also fails the
      /// sequence is left clean for the next request.
      pub fn syncWithFallback(self: *LlamaSeq, prompt_ids: []const i32) Error!i32 {
@@ -1308,7 +1327,7 @@ index 806d641..a152cde 100644
              log.warn(
                  "[llama] sync failed ({s}); resetting the sequence and retrying cold\n",
                  .{@errorName(err)},
-@@ -425,12 +520,16 @@ pub const LlamaSeq = struct {
+@@ -425,12 +523,16 @@ pub const LlamaSeq = struct {
  
      /// Advance this sequence alone by one already-sampled token.
      pub fn eval(self: *LlamaSeq, token: i32) Error!void {
@@ -1325,7 +1344,7 @@ index 806d641..a152cde 100644
          const temp: f32 = if (s.temperature < 0.01) 0 else s.temperature;
          return ffi.mlx_llama_seq_sample(self.ctx.handle, self.id, temp, s.top_k, s.top_p, s.min_p, rng);
      }
-@@ -444,6 +543,8 @@ pub const LlamaSeq = struct {
+@@ -444,6 +546,8 @@ pub const LlamaSeq = struct {
      /// those the target agrees with. Returns the accepted drafts followed by the
      /// next token (sampled, not yet fed), a slice of `out`.
      pub fn specStep(self: *LlamaSeq, id_last: i32, max_drafts: u32, s: Sampling, rng: *u64, out: []i32) Error![]i32 {
@@ -1334,7 +1353,7 @@ index 806d641..a152cde 100644
          std.debug.assert(out.len > max_drafts);
          const temp: f32 = if (s.temperature < 0.01) 0 else s.temperature;
          var err_buf: [256]u8 = undefined;
-@@ -489,7 +590,7 @@ test "llama: re-sync after a long generated tail is a cold decode, never a poiso
+@@ -489,7 +593,7 @@ test "llama: re-sync after a long generated tail is a cold decode, never a poiso
      const allocator = std.testing.allocator;
      const path = testModelPath() orelse return error.SkipZigTest;
  
@@ -1343,7 +1362,7 @@ index 806d641..a152cde 100644
      defer engine.close();
  
      const prompt = try engine.tokenizeText(allocator, "Read the file store/pricing.py and", true);
-@@ -525,11 +626,11 @@ test "llama: tokenize round-trip and short greedy decode" {
+@@ -525,11 +629,11 @@ test "llama: tokenize round-trip and short greedy decode" {
      const allocator = std.testing.allocator;
      const path = testModelPath() orelse return error.SkipZigTest;
  
@@ -1358,7 +1377,7 @@ index 806d641..a152cde 100644
  
      const ids = try engine.tokenizeText(allocator, "The capital of France is", true);
      defer allocator.free(ids);
-@@ -546,15 +647,15 @@ test "llama: tokenize round-trip and short greedy decode" {
+@@ -546,15 +650,15 @@ test "llama: tokenize round-trip and short greedy decode" {
      const cached0 = try sess.sync(ids);
      try std.testing.expectEqual(@as(i32, 0), cached0); // cold sequence: nothing reused
      const first = sess.argmax();
@@ -1377,7 +1396,7 @@ index 806d641..a152cde 100644
      }
      try std.testing.expect(sess.pos() >= @as(i32, @intCast(ids.len)));
  }
-@@ -565,7 +666,7 @@ test "llama: syncWithFallback matches sync on the happy path" {
+@@ -565,7 +669,7 @@ test "llama: syncWithFallback matches sync on the happy path" {
      const allocator = std.testing.allocator;
      const path = testModelPath() orelse return error.SkipZigTest;
  
@@ -1386,7 +1405,7 @@ index 806d641..a152cde 100644
      defer engine.close();
  
      const a = try engine.tokenizeText(allocator, "Once upon a time, in a", true);
-@@ -615,7 +716,7 @@ test "llama: prefix reuse is byte-identical to cold decode" {
+@@ -615,7 +719,7 @@ test "llama: prefix reuse is byte-identical to cold decode" {
      const allocator = std.testing.allocator;
      const path = testModelPath() orelse return error.SkipZigTest;
  
@@ -1395,7 +1414,7 @@ index 806d641..a152cde 100644
      defer engine.close();
  
      const shared = try engine.tokenizeText(allocator, "The history of the Roman Empire is long and", true);
-@@ -669,7 +770,7 @@ test "llama: sequences batched in one step never read each other's KV (#547)" {
+@@ -669,7 +773,7 @@ test "llama: sequences batched in one step never read each other's KV (#547)" {
      const allocator = std.testing.allocator;
      const path = testModelPath() orelse return error.SkipZigTest;
  
@@ -1404,7 +1423,7 @@ index 806d641..a152cde 100644
      defer engine.close();
  
      const p = try engine.tokenizeText(allocator, "List three primary colors:", true);
-@@ -756,17 +857,100 @@ fn expectMtpMatchesPlain(engine: *LlamaEngine) !void {
+@@ -756,17 +860,100 @@ fn expectMtpMatchesPlain(engine: *LlamaEngine) !void {
  
  test "llama: greedy MTP rounds emit the plain greedy tokens and accept drafts (#548)" {
      const path = testModelPath() orelse return error.SkipZigTest;
@@ -1510,15 +1529,17 @@ index 806d641..a152cde 100644
 +    try std.testing.expect(context.fios_lifetime.canClose(null));
 +}
 diff --git a/src/arch/llama_stub.zig b/src/arch/llama_stub.zig
-index eb0c42a..958b1b7 100644
+index eb0c42a..ce19935 100644
 --- a/src/arch/llama_stub.zig
 +++ b/src/arch/llama_stub.zig
-@@ -7,10 +7,12 @@
- //! `build_options.ios`.
+@@ -8,9 +8,14 @@
  
  const std = @import("std");
-+pub const CloseTicket = @import("../backend_lifetime.zig").Close;
  
++// Backend absent on this build, not a native-idle assertion.
++pub fn fiosSourceUncertain() bool { return false; }
++pub const CloseTicket = @import("../backend_lifetime.zig").Close;
++
  const unavailable = "llama.cpp engine is unavailable on this build (macOS-only embedded engine)";
  
  pub const Error = error{
@@ -1526,7 +1547,7 @@ index eb0c42a..958b1b7 100644
      EngineOpenFailed,
      SessionCreateFailed,
      SessionSyncFailed,
-@@ -76,30 +78,35 @@ pub const LlamaEngine = struct {
+@@ -76,30 +81,35 @@ pub const LlamaEngine = struct {
      // offline llama path addresses it as LlamaEngine.ChatTurn.
      pub const ChatTurn = struct { role: []const u8, content: []const u8 };
  
@@ -1567,7 +1588,7 @@ index eb0c42a..958b1b7 100644
          _ = self;
          @panic(unavailable);
      }
-@@ -121,8 +128,9 @@ pub const LlamaEngine = struct {
+@@ -121,8 +131,9 @@ pub const LlamaEngine = struct {
          _ = token_id;
          @panic(unavailable);
      }
@@ -1578,7 +1599,7 @@ index eb0c42a..958b1b7 100644
          @panic(unavailable);
      }
      pub fn applyChatTemplate(
-@@ -147,6 +155,8 @@ pub const LlamaEngine = struct {
+@@ -147,6 +158,8 @@ pub const LlamaEngine = struct {
  pub const LlamaContext = struct {
      seqs: []LlamaSeq,
  
@@ -1666,16 +1687,17 @@ index b743ad7..11b694b 100644
  
  pub extern fn ds4_session_sync(s: *Session, prompt: *const Tokens, err: ?[*]u8, errlen: usize) c_int;
 diff --git a/src/llama_ffi.zig b/src/llama_ffi.zig
-index 1c9946d..6ff78b4 100644
+index 1c9946d..9ea7149 100644
 --- a/src/llama_ffi.zig
 +++ b/src/llama_ffi.zig
-@@ -69,6 +69,9 @@ pub const GgmlType = struct {
+@@ -69,6 +69,10 @@ pub const GgmlType = struct {
  
  pub extern fn mlx_llama_ctx_create(e: *Engine, p: *const CtxParams, err: ?[*]u8, errlen: usize) ?*Ctx;
  pub extern fn mlx_llama_ctx_free(c: ?*Ctx) void;
 +pub extern fn mlx_llama_ctx_try_free(c: ?*Ctx) c_int;
 +pub extern fn mlx_llama_ctx_on_owner(c: ?*Ctx) c_int;
 +pub extern fn mlx_llama_ctx_terminal(c: ?*Ctx) c_int;
++pub extern fn mlx_llama_source_uncertainty() c_int;
  pub extern fn mlx_llama_ctx_mtp_drafts(c: *Ctx) i32;
  
  pub extern fn mlx_llama_seq_prefill(c: *Ctx, seq: i32, tokens: [*]const i32, n_tokens: i32, err: ?[*]u8, errlen: usize) i32;
@@ -4782,7 +4804,7 @@ index 9e12566..7960cf9 100644
 +    std.debug.print("PASS: actual scheduler keeps protected exact model across concurrent empty/marketing default changes; model-free registry fixture only\n", .{});
 +}
 diff --git a/src/server.zig b/src/server.zig
-index 720b2c6..ced655b 100644
+index 720b2c6..1bb169e 100644
 --- a/src/server.zig
 +++ b/src/server.zig
 @@ -1,4 +1,9 @@
@@ -4795,7 +4817,7 @@ index 720b2c6..ced655b 100644
  const crt = @import("crt.zig");
  const win_io = @import("win_io.zig");
  const builtin = @import("builtin");
-@@ -1971,6 +1976,37 @@ const StartupResponder = struct {
+@@ -1971,6 +1976,39 @@ const StartupResponder = struct {
      }
  };
  
@@ -4813,13 +4835,15 @@ index 720b2c6..ced655b 100644
 +// Negative evidence only: never interpret absent/zero flags as native idle.
 +// Local frame lifetime only; a lost SDK owner context cannot be refunded by
 +// sampled queue zero, elapsed time or a subsequently successful callback.
++// Independent sticky backend uncertainty also retains the original frame;
++// retiring the final local request never acknowledges that backend state.
 +fn fiosServingStateRetained(io: std.Io) bool {
-+    return fios_requests.hasRetainedWork(io) or fios_sdk_owners.diagnostic().uncertain;
++    return fios_requests.hasRetainedWork(io) or fios_sdk_owners.diagnostic().uncertain or fiosKnownBackendUncertain();
 +}
 +
 +fn fiosKnownBackendUncertain() bool {
 +    const flags = fiosBackendFences();
-+    return fios_device.knownSourceUncertain() or
++    return fios_device.knownSourceUncertain() or arch_llama.fiosSourceUncertain() or
 +        (flags.mimo_warm_uncertain orelse false) or
 +        (flags.ds4_metal_uncertainty orelse 0) != 0 or
 +        (flags.ds4_host_uncertainty orelse 0) != 0;
@@ -4833,7 +4857,7 @@ index 720b2c6..ced655b 100644
  pub fn serve(
      io: std.Io,
      allocator: std.mem.Allocator,
-@@ -1984,6 +2020,11 @@ pub fn serve(
+@@ -1984,6 +2022,11 @@ pub fn serve(
      port: u16,
      cfg: ServerConfig,
  ) !void {
@@ -4845,7 +4869,7 @@ index 720b2c6..ced655b 100644
      server_config = cfg;
      // Before `Scheduler.init`: that call is the model load and every load-time bill inside it
      // asks for the KV width.
-@@ -2002,6 +2043,16 @@ pub fn serve(
+@@ -2002,6 +2045,16 @@ pub fn serve(
          return err;
      };
      defer server.deinit(io);
@@ -4862,7 +4886,7 @@ index 720b2c6..ced655b 100644
      var startup: StartupResponder = .{ .server = &server, .registry = load_params.registry, .allocator = allocator, .io = io };
      if (!load_params.no_initial_load) startup.start();
      defer startup.stop();
-@@ -2014,6 +2065,8 @@ pub fn serve(
+@@ -2014,6 +2067,8 @@ pub fn serve(
      );
      defer scheduler.deinit();
      startup.stop();
@@ -4871,7 +4895,7 @@ index 720b2c6..ced655b 100644
      global_scheduler = scheduler;
      defer global_scheduler = null;
      // The inference thread's evict-or-refuse hook (#353); the scheduler has no server import.
-@@ -2301,7 +2354,13 @@ pub fn serve(
+@@ -2301,7 +2356,13 @@ pub fn serve(
              accepted_stream.close(io);
              continue;
          };
@@ -4885,7 +4909,7 @@ index 720b2c6..ced655b 100644
              .allocator = allocator,
              .accepted_stream = accepted_stream,
              .io = io,
-@@ -2313,6 +2372,7 @@ pub fn serve(
+@@ -2313,6 +2374,7 @@ pub fn serve(
              log.err("spawn conn thread failed: {}\n", .{err});
              _ = active_conn_threads.fetchSub(1, .acq_rel);
              accepted_stream.close(io);
@@ -4893,7 +4917,7 @@ index 720b2c6..ced655b 100644
              allocator.destroy(args);
              continue;
          };
-@@ -2326,7 +2386,8 @@ pub fn serve(
+@@ -2326,7 +2388,8 @@ pub fn serve(
      // `scheduler.deinit` on return, which frees the slot queues that an
      // in-flight `complete()` is still touching. The inference thread is still
      // alive here (deinit joins it only after we return), so cancelled slots
@@ -4903,7 +4927,7 @@ index 720b2c6..ced655b 100644
      // The SSD flush's deadline starts here, once. The drain keeps its own bound: cutting it short
      // saves nothing (the join below waits out the inference thread's current chunk anyway) and
      // lets a late `complete()` race the queues `deinit` frees.
-@@ -2334,15 +2395,24 @@ pub fn serve(
+@@ -2334,15 +2397,25 @@ pub fn serve(
          scheduler_mod.armShutdownDeadline(&sch.shutdown_deadline_ms, nowMsMonotonic(io), shutdown_persist_secs);
          sch.cancelAllInFlight();
      }
@@ -4926,7 +4950,8 @@ index 720b2c6..ced655b 100644
 +            log.warn("shutdown: {d} connection thread(s) or retained owners still active — retaining original server state\n", .{remaining});
 +            // Keep response storage, globals, scheduler/frame and its defers
 +            // alive until original threads, retained owners and mutation
-+            // tickets have actually released them.
++            // tickets have actually released them, with no independent known backend
++            // uncertainty. There is no reset/timeout acknowledgement for it.
 +            // The external supervisor may time out; that is not an exit or
 +            // native terminal receipt. No cancellation/age clears this fence.
 +            while (active_conn_threads.load(.acquire) > 0 or fiosServingStateRetained(io)) crt.sleepMs(20);
@@ -4934,7 +4959,7 @@ index 720b2c6..ced655b 100644
      }
  
      deinitGlobalResponseStore();
-@@ -2355,6 +2425,7 @@ pub fn serve(
+@@ -2355,6 +2428,7 @@ pub fn serve(
  /// returns. The accepted stream is moved into a stack-allocated `Conn`
  /// inside the thread.
  const ConnThreadArgs = struct {
@@ -4942,7 +4967,7 @@ index 720b2c6..ced655b 100644
      allocator: std.mem.Allocator,
      accepted_stream: std.Io.net.Stream,
      io: std.Io,
-@@ -2365,10 +2436,17 @@ fn handleConnectionThread(args: *ConnThreadArgs) void {
+@@ -2365,10 +2439,17 @@ fn handleConnectionThread(args: *ConnThreadArgs) void {
      // shutdown drain in `serve` only sees this thread leave once it has fully
      // returned from `complete()` and closed its socket.
      defer _ = active_conn_threads.fetchSub(1, .acq_rel);
@@ -4961,7 +4986,7 @@ index 720b2c6..ced655b 100644
          switch (err) {
              error.WriteFailed, error.ReadFailed => {
                  // error.WriteFailed/ReadFailed collapses BrokenPipe + ConnectionResetByPeer
-@@ -2521,6 +2599,7 @@ fn readRequestWithin(allocator: std.mem.Allocator, stream: *Conn, limit_ms: i64)
+@@ -2521,6 +2602,7 @@ fn readRequestWithin(allocator: std.mem.Allocator, stream: *Conn, limit_ms: i64)
  fn handleConnection(
      allocator: std.mem.Allocator,
      stream: *Conn,
@@ -4969,7 +4994,7 @@ index 720b2c6..ced655b 100644
  ) !void {
      // Plan 05: resolve which model this request targets. The registry was
      // set up in `serve()`; per-POST routing happens after we read the body
-@@ -2603,6 +2682,86 @@ fn handleConnection(
+@@ -2603,6 +2685,86 @@ fn handleConnection(
          }
      }
  
@@ -5056,7 +5081,7 @@ index 720b2c6..ced655b 100644
      // ── Plan 05: routes that don't depend on a loaded model (connectivity
      //    probes + CORS preflight + listing endpoints). Handle these BEFORE
      //    `scheduler.ensureLoaded` so they don't trigger a cold load of the
-@@ -2705,7 +2864,7 @@ fn handleConnection(
+@@ -2705,7 +2867,7 @@ fn handleConnection(
          // get a 404 here even though the main dispatch path below falls
          // back to default for SDK compatibility.
          log.debug("POST /v1/load-model -> 200\n", .{});
@@ -5065,7 +5090,7 @@ index 720b2c6..ced655b 100644
          return;
      }
      // Any method: a status route never reaches `ensureLoaded`, whatever its body names.
-@@ -2784,6 +2943,35 @@ fn handleConnection(
+@@ -2784,6 +2946,35 @@ fn handleConnection(
          &model_id_buf,
          body_model orelse queryModel(&query_model_buf, raw_path) orelse "",
      );
@@ -5101,7 +5126,7 @@ index 720b2c6..ced655b 100644
      // ── LAN-discovered remote model (`<id>@<peer>`) → proxy the request to
      //    its host byte-for-byte, model field rewritten to the bare id.
      //    Any DIRECT client may initiate the hop (loopback app, the
-@@ -2798,16 +2986,32 @@ fn handleConnection(
+@@ -2798,16 +2989,32 @@ fn handleConnection(
      if (g_providers) |prov| if (lan_mod.splitRemoteId(requested_model_id)) |rid| if (prov.isProvider(rid.peer) and
          !isTunneledRequest(request[0..header_end_pos]) and registry.peek(requested_model_id) == null)
      {
@@ -5135,7 +5160,7 @@ index 720b2c6..ced655b 100644
          .id => |id| requested_model_id = id,
          .unknown_path => {
              try sendErrorResponse(allocator, stream, "404 Not Found", "model_not_found", "No model is registered at that path; load it first with POST /v1/load-model", 404);
-@@ -2873,7 +3077,14 @@ fn handleConnection(
+@@ -2873,7 +3080,14 @@ fn handleConnection(
              return;
          }
      }
@@ -5151,7 +5176,7 @@ index 720b2c6..ced655b 100644
          // Headless gen-only boot (media models resident, no default chat
          // model): /props keeps answering with the live memory counters —
          // the app's tray polls it, and a 503 here read as "0 MB".
-@@ -2887,6 +3098,10 @@ fn handleConnection(
+@@ -2887,6 +3101,10 @@ fn handleConnection(
      // A status read must not look like use — see `isStatusRoute`.
      const status_read = isStatusRoute(method, path);
      defer if (status_read) scheduler.releaseStatus(lm) else scheduler.release(lm);
@@ -5162,7 +5187,7 @@ index 720b2c6..ced655b 100644
  
      // A model loaded on demand freezes its own auto-context here, for the same
      // reason the `--model` primary does at startup: the number we advertise is
-@@ -7800,7 +8015,7 @@ fn handleModelsRescan(allocator: std.mem.Allocator, stream: *Conn) !void {
+@@ -7800,7 +8018,7 @@ fn handleModelsRescan(allocator: std.mem.Allocator, stream: *Conn) !void {
  /// Plan 05 Phase E: explicit cold-load. Strict on unknown ids (404 — the
  /// caller asked for a specific id, not "anything"). Routes through
  /// scheduler.ensureLoaded so eviction/back-pressure kicks in.
@@ -5171,7 +5196,7 @@ index 720b2c6..ced655b 100644
      const scheduler = global_scheduler orelse {
          try sendErrorResponse(allocator, stream, "503 Service Unavailable", "internal_error", "Scheduler not ready", 503);
          return;
-@@ -7885,11 +8100,20 @@ fn handleLoadModelStrict(allocator: std.mem.Allocator, stream: *Conn, request_bo
+@@ -7885,11 +8103,20 @@ fn handleLoadModelStrict(allocator: std.mem.Allocator, stream: *Conn, request_bo
          .id => |id| requested_id = id,
          else => {},
      };
@@ -5193,7 +5218,7 @@ index 720b2c6..ced655b 100644
      // Promotion happens only past ensureLoaded's error switch: a load that
      // FAILED must never steal the default from a model that answers.
      if (make_default) {
-@@ -8030,6 +8254,7 @@ fn handleTranscriptions(allocator: std.mem.Allocator, stream: *Conn, body: []con
+@@ -8030,6 +8257,7 @@ fn handleTranscriptions(allocator: std.mem.Allocator, stream: *Conn, body: []con
              try sendErrorResponse(allocator, stream, "400 Bad Request", "invalid_request_error", "diarized_json needs Nemotron 3 Diarization, which is not on disk or did not load: download " ++ DIARIZER_REPO ++ " beside the ASR model", 400);
              return;
          }).id;
@@ -5201,7 +5226,7 @@ index 720b2c6..ced655b 100644
          diarizer = global_scheduler.?.ensureLoaded(id) catch |err| blk: {
              log.warn("  diarizer {s} did not load ({s}): one speaker\n", .{ id, @errorName(err) });
              break :blk null;
-@@ -8054,16 +8279,19 @@ fn handleTranscriptions(allocator: std.mem.Allocator, stream: *Conn, body: []con
+@@ -8054,16 +8282,19 @@ fn handleTranscriptions(allocator: std.mem.Allocator, stream: *Conn, body: []con
          defer if (timed) |*x| x.deinit(allocator);
          if (aligner) |*al| {
              if (t.text.len > 0 and al.languages & transcription_mod.languageBit(t.language orelse "") != 0) {
@@ -5231,7 +5256,7 @@ index 720b2c6..ced655b 100644
                  if (al.lm) |alm| timed = (try alignPiece(allocator, stream, alm, pcm[start..end], t.text, t.language.?, who, start * 1000 / transcription_mod.SAMPLE_RATE)) orelse return;
              }
          }
-@@ -8179,6 +8407,7 @@ fn findCompanion(arch_hint: []const u8) ?*LoadedModel {
+@@ -8179,6 +8410,7 @@ fn findCompanion(arch_hint: []const u8) ?*LoadedModel {
  
  fn findAligner(allocator: std.mem.Allocator) !?Aligner {
      const entry = findCompanion("qwen3_forced_aligner") orelse return null;
@@ -5239,7 +5264,7 @@ index 720b2c6..ced655b 100644
      var config = model_mod.parseConfig(global_registry.?.io, allocator, entry.path) catch return null;
      defer config.deinit(allocator);
      const fa = config.forced_aligner orelse return null;
-@@ -8584,9 +8813,9 @@ fn embeddedEngineSettings(st: PropsSettings, engine: PropsEngine, engine_mtp: bo
+@@ -8584,9 +8816,9 @@ fn embeddedEngineSettings(st: PropsSettings, engine: PropsEngine, engine_mtp: bo
      return out;
  }
  
@@ -5251,7 +5276,7 @@ index 720b2c6..ced655b 100644
      var out = embeddedEngineSettings(mlxPropsSettings(lm), engine, engine_mtp);
      if (lm.ane != null) out.kv_quant = "off";
      return out;
-@@ -8754,7 +8983,7 @@ fn handleProps(allocator: std.mem.Allocator, stream: *Conn, lm: *LoadedModel) !v
+@@ -8754,7 +8986,7 @@ fn handleProps(allocator: std.mem.Allocator, stream: *Conn, lm: *LoadedModel) !v
      defer allocator.free(ngram_json);
      const batching_json = try batchingPropsJson(allocator, batchVerdictFor(lm));
      defer allocator.free(batching_json);
@@ -5260,7 +5285,7 @@ index 720b2c6..ced655b 100644
      defer allocator.free(settings_json);
      const cluster_json = try @import("distributed.zig").propsJson(allocator);
      defer allocator.free(cluster_json);
-@@ -9300,7 +9529,7 @@ fn handleDetokenize(
+@@ -9300,7 +9532,7 @@ fn handleDetokenize(
  
      const ids = try allocator.alloc(u32, tokens_val.array.items.len);
      defer allocator.free(ids);
@@ -5269,7 +5294,7 @@ index 720b2c6..ced655b 100644
          try sendErrorResponse(allocator, stream, "400 Bad Request", "invalid_request_error", "'tokens' must be integers inside the model's vocabulary", 400);
          return;
      }
-@@ -9665,9 +9894,9 @@ fn echoModelName(root: std.json.ObjectMap, fallback: []const u8) []const u8 {
+@@ -9665,9 +9897,9 @@ fn echoModelName(root: std.json.ObjectMap, fallback: []const u8) []const u8 {
  
  /// The vocabulary a request's token ids index. An embedded engine's stub config keeps the
  /// default vocab; its ids are the engine's, and an id past its vocab aborts inside llama.cpp.
@@ -5281,7 +5306,7 @@ index 720b2c6..ced655b 100644
      return if (lm.config) |c| c.vocab_size else 0;
  }
  
-@@ -10555,7 +10784,7 @@ fn handleCompletions(
+@@ -10555,7 +10787,7 @@ fn handleCompletions(
          return;
      };
  
@@ -5290,7 +5315,7 @@ index 720b2c6..ced655b 100644
      defer if (prompt == .ids) allocator.free(prompt.ids);
      switch (prompt) {
          .missing, .invalid => {
-@@ -13838,6 +14067,50 @@ fn findContentLength(headers: []const u8) ?usize {
+@@ -13838,6 +14070,50 @@ fn findContentLength(headers: []const u8) ?usize {
  /// Case-insensitive header lookup returning the trimmed VALUE (`Content-Type`
  /// carries the multipart boundary, so `/v1/images/edits` can't be parsed from
  /// the body alone like every other endpoint).
@@ -5341,7 +5366,7 @@ index 720b2c6..ced655b 100644
  fn findHeaderValue(headers: []const u8, comptime name_lower: []const u8) ?[]const u8 {
      var lines = std.mem.splitSequence(u8, headers, "\r\n");
      while (lines.next()) |line| {
-@@ -14405,6 +14678,52 @@ test "resolveRequestModelId: a path names its own entry, never the default model
+@@ -14405,6 +14681,52 @@ test "resolveRequestModelId: a path names its own entry, never the default model
      try std.testing.expectEqualStrings("", resolveRequestModelId(reg, &aliases, "", "/v1/chat/completions").id);
  }
  
@@ -5394,7 +5419,7 @@ index 720b2c6..ced655b 100644
  test "the route-existence 404 is answered BEFORE the model is resolved" {
      // A path we do not serve must cost nothing. Resolution ran first, so
      // `POST /v1/load` (the real route is /v1/load-model) with a `model` field
-@@ -14413,7 +14732,7 @@ test "the route-existence 404 is answered BEFORE the model is resolved" {
+@@ -14413,7 +14735,7 @@ test "the route-existence 404 is answered BEFORE the model is resolved" {
      // answer has to precede `ensureLoaded`, not sit in one of its error arms.
      const src = @embedFile("server.zig");
      const gate = "if (!routeExists(" ++ "path)) {";
@@ -5403,7 +5428,7 @@ index 720b2c6..ced655b 100644
      const gate_at = std.mem.indexOf(u8, src, gate) orelse return error.GateMissing;
      const resolve_at = std.mem.indexOf(u8, src, resolve) orelse return error.ResolveMissing;
      try std.testing.expect(gate_at < resolve_at);
-@@ -14871,8 +15190,24 @@ pub const insufficient_free_memory_message =
+@@ -14871,8 +15193,24 @@ pub const insufficient_free_memory_message =
      "Not enough free memory to load model: weights + warmup headroom exceed what is currently available. " ++
      "Close other apps or models and retry (the server log names the peak estimate and available memory), or pass --skip-mem-preflight to override.";
  

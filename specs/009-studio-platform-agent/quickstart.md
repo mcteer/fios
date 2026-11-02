@@ -616,3 +616,12 @@ runs only that named case plus its two implicit import-only roots under denied
 IP networking. Expected pass is3/3 plus the case's completion marker. Receipts
 list `functional_test_cases` separately; historical root/HTTP/fault matrices
 remain skipped and no full/native admission acceptance follows.
+
+For the ordinary Llama negative-fence metadata case, run
+`node scripts/check-platform-llama-source-fence.mjs --isolated --source ABS_CHECKOUT`
+against the exact private reviewed native checkout. It compiles the genuine
+shim and pinned library in Debug/optimized modes, runs with denied networking
+and a5s execution alarm, and retains private compile/run artifacts. It creates
+zero native contexts/models and runs no historical mutation/fault campaign.
+Null preflight stays unfenced; existing empty-metadata MTP retirement refusal
+sets an irreversible negative source fence. This is not GPU/model acceptance.

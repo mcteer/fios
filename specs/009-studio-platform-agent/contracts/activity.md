@@ -119,3 +119,24 @@ read the default under that same mutex. This is target/borrow consistency,
 not an all-client source ceiling, native terminal receipt or management permit.
 The ordinary concurrent-default fixture uses synthetic ready bookkeeping;
 core same-model responses remain separate from Studio acceptance.
+
+### Llama negative source fence
+
+The reviewed Llama shim retains a process-module atomic when its existing
+context synchronization or MTP retirement branch marks a context uncertain.
+The noninitializing getter joins the serving admission guard. A null preflight
+alone does not set it; resetting a sequence or constructing other metadata
+cannot clear it. It has no reset API and zero never establishes native idle.
+The existing partial backend wire frame still covers its three declared sources;
+this internal admission fence does not expand that frame's coverage.
+
+Serving-frame retention also reads the enrolled known backend fences directly.
+The last local request reference leaving cannot acknowledge independent MLX,
+MIMO, DS4 or Llama uncertainty, and shutdown elapsed time cannot clear it.
+This is memory/custody retention only; it supplies no process termination or
+device quiescence proof and no force permission.
+
+The ordinary genuine-shim fixture uses empty context metadata and no backend
+handles. It exercises the existing retirement refusal and sticky getter in
+Debug/optimized modes, not loaded target/MTP synchronization, device completion
+or an enrolled all-client contract. Installed native activation remains closed.

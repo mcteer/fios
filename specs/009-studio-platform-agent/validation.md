@@ -3039,7 +3039,7 @@ is the prior buffer-origin checkpoint; newer uncertainty/runtime changes need
 their own exact-head CI after push. CI remains mock-only.
 
 
-### 2026-11-02 protected default-model selection (in progress)
+### 2026-11-02 protected default-model selection (source checkpoint)
 
 Source review found Scheduler.ensureLoaded resolves/protects an entry, then
 passes its original empty/marketing identifier back to the registry's ready
@@ -3124,3 +3124,95 @@ prerequisites and aggregate
 ([run41466233813](https://github.com/mcteer/fios/actions/runs/41466233813)). This
 is the prior SDK/C++ checkpoint; default-target changes require new exact-head
 CI after push. No009 merge, application deployment or native activation.
+
+
+### 2026-11-02 Llama sticky source uncertainty (source checkpoint)
+
+Source review found the existing C++ context/MTP retirement uncertainty was
+context-local. A decode-time MTP refusal need not pass through the Zig explicit
+terminal wrapper, so a newly bound request could miss that independent fence.
+The shim now publishes an irreversible process-module atomic from both existing
+uncertainty branches. Its noninitializing C getter reaches the serving guard
+through the genuine wrapper; unavailable builds use their existing stub. Null
+terminal/free preflight alone does not mark module uncertainty. No reset,
+backend initialization, model operation, wire coverage or authority is added.
+
+`/tmp/fios-009-llama-source-fence.log` and private scratch
+`/private/tmp/f9-llama-source-fence-AxwVI5` pass genuine shim/pinned-library
+Debug/optimized ordinary empty-metadata tests under denied networking and a5s
+alarm. The existing MTP retirement refusal retains its context fence and now
+module fence; resets and separate metadata cannot clear it. No native context,
+target/MTP handle, GPU dispatch or model request is created. Actual loaded
+synchronization-exception coverage remains unexecuted; this fixture is not a
+backend substitute, historical mutation/fault matrix or device-terminal proof.
+
+Focused Node22/22 and inference boundary pass
+(`/tmp/fios-009-llama-fence-{node,boundary}.log`); direct current-source custody
+edge validation also passes. The enclosing native build is in progress at
+`/tmp/fios-009-llama-fence-native-build.log`. Shutdown retention and final
+readonly integration still need completion for this increment. Whole tasks
+remain38/55; installed/native activation and complete all-client acceptance
+remain open.
+
+
+The first Llama-fence enclosing build passes, including the existing selected
+ordinary concurrent-default case plus two import-only roots (3/3):
+`/tmp/fios-009-llama-fence-native-build.log`. Intermediate capsule review
+17bae2275d9d02a33bcd49d2a69e540dc9ea25f774aca3656d4a0a23d53d44a2,
+binary67ef9e7924a0040aa4034549a37f662a8ede683f902d1e8c748dd2d51332aa7d.
+It predates the additional shutdown-retention change and is not the final
+increment's integration artifact. No model requests or installed actions use it.
+
+Shutdown retention now directly includes the known noninitializing backend
+fences. Local root/reference retirement cannot clear independent uncertainty
+or release the original serving frame while one is known. This also preserves
+existing MIMO/DS4/MLX negative evidence, without treating missing/zero flags as
+idle or adding a timeout/reset/force path. Declared drain-retention version4
+and Llama-refusal version1 describe source inputs, not all-client/native proof.
+The final build is running at `/tmp/fios-009-llama-retained-native-build.log`.
+The exact updated shim fixture passes in
+`/tmp/fios-009-llama-retained-source-fence.log`, private scratch
+`/private/tmp/f9-llama-source-fence-tBOSm7`;22/22 Node, driver syntax and inference
+boundary pass (`/tmp/fios-009-llama-retained-{node,boundary}.log`). Actual loaded
+backend uncertainty during enclosing shutdown remains unexecuted, distinct
+from forthcoming ordinary open-connection retention integration.
+
+
+Final enclosing native executable and selected ordinary concurrent-default
+case pass:8/8 build steps,3/3 test roots, no historical matrix. Log
+`/tmp/fios-009-llama-retained-native-build.log`; capsule
+`/private/tmp/fios-009-llama-retained-native-review/capsule`, review SHA
+b765a709a4402dee02fe9f583ef5cc9c82aedb48d00ac8b9fe6d65632cbcce3d,
+binaryc3f133eb3b9fb375af395b8a0f968b2e2626ae5455b062ec1848db4ca1a6723a.
+Root patch665c698922a7d438874e98b456cdcb6b39ce5e2bab4058b3a3bfe48c7e451375;
+declared drain-retention4/Llama-refusal1, unchanged partial backend frame.
+These hashes identify declared source/capsule inputs, not whole native provenance.
+
+Actual readonly source HTTP/private backend/primary checks pass
+(`/tmp/fios-009-llama-retained-native-http.log`,
+`/private/tmp/f9-backend-fences-ONpTfM`). Actual manager automatic lineage,
+backend and primary refresh passes (`/tmp/fios-009-llama-retained-native-manager.log`,
+`/private/tmp/f9-native-status-IhIGUH`). Both issue0 model POSTs/installed actions.
+The ordinary actual open-body drain holds its original ingress/root and
+uncertainty at31,570ms, then exits0 only after that original connection releases
+(`/tmp/fios-009-llama-retained-native-drain.log`,
+`/private/tmp/f9-connection-drain-AQxULY`). This verifies ordinary local-owner
+retention and healthy known-fence integration, not an actual loaded backend
+uncertainty during shutdown, native quiescence, force or lifecycle authority.
+
+
+Final core-only journal regression plan
+c6d92083804acb1a1fde27a5d04e25550f627349de0e359a759bee6a84fefe90 is
+consumed. Check issues0 model POSTs (`/tmp/fios-009-llama-retained-model-check.log`,
+`/private/tmp/f9-model-check-wJuRmJ`). Run issues1 exact
+`mlx-community/gemma-4-e4b-it-4bit` POST on fios-core/M4Pro24GiB, two tokens/two
+deltas/HTTP200/complete response in4,617ms
+(`/tmp/fios-009-llama-retained-model-run.log`,
+`/private/tmp/f9-model-run-mqaWLE/result.json`). Fixed limits remain512 context,
+2 output tokens/1 POST/1 concurrent,10s request/15s work/7s cleanup,12GiB sampled
+native/128MiB observer. Native peak RSS3,240,214,528/footprint4,686,597,216;
+observer RSS12,091,392/footprint4,850,192. SDK45/45 coherent partial samples;
+primary4 samples/3 positive, original root5/sequence96. Both own processes reap,
+with the independent journal claim still uncertain, coverage unknown and native
+quiescence unproven. No generated text, Studio model/service action, platform
+job/Pydantic acceptance or native authority is claimed. Whole tasks remain38/55.

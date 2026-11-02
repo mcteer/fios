@@ -9,7 +9,7 @@ export function verifyLlamaCustody(arch,registry,shim) {
  assert.match(arch,/return allocator\.dupe\(u8, std\.mem\.sliceTo\(raw\.\?, 0\)\) catch Error\.OutOfMemory;/,'FIO_LLAMA_TEMPLATE_BORROW_ESCAPES');
  assert(shim.includes('std::atomic<bool> fios_uncertain{false};'),'FIO_LLAMA_TERMINAL_UNCERTAINTY_MISSING');
  const terminalStart=shim.indexOf('extern "C" int32_t mlx_llama_ctx_terminal('),terminalEnd=shim.indexOf('extern "C" void mlx_llama_ctx_free(',terminalStart);
- assert(shim.slice(terminalStart,terminalEnd).includes('catch (...) { c->fios_uncertain = true; return 0; }'),'FIO_LLAMA_TERMINAL_UNCERTAINTY_MISSING');
+ assert(shim.slice(terminalStart,terminalEnd).includes('catch (...) { c->fios_uncertain = true; fios_llama_source_uncertain.store(true, std::memory_order_release); return 0; }'),'FIO_LLAMA_TERMINAL_UNCERTAINTY_MISSING');
  assert.match(arch,/if \(ffi\.mlx_llama_ctx_terminal\(self\.handle\) != 1\) \{\s*self\.fios_lifetime\.fence\(\);\s*ownership\.shared\.fence\(self\.engine\.fios_io\);\s*return Error\.SessionSyncFailed;/,'FIO_LLAMA_TERMINAL_UNCERTAINTY_MISSING');
  assert.match(arch,/if \(try trimCleared\(ffi\.mlx_llama_seq_trim\(self\.ctx\.handle, self\.id, @intCast\(common\)\)\)\) \{/,'FIO_LLAMA_TRIM_REFUSAL_MISSING');
  const create=arch.indexOf('    pub fn createContext('),native=arch.indexOf('ffi.mlx_llama_ctx_create(',create);
