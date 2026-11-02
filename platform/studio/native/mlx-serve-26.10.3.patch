@@ -1981,7 +1981,7 @@ index 8f16a57..02da4d8 100644
      // A flat checkpoint whose text_config is absent keeps reading the root, and
      // a nested block that OMITS a field falls back to the root rather than
 diff --git a/src/model_registry.zig b/src/model_registry.zig
-index da1f791..8345350 100644
+index da1f791..8ee23d0 100644
 --- a/src/model_registry.zig
 +++ b/src/model_registry.zig
 @@ -18,6 +18,7 @@
@@ -2343,9 +2343,55 @@ index da1f791..8345350 100644
          const roots = if (self.discovery) |d| d.roots else &.{};
          if (roots.len == 0) return 0;
          var found = try model_discovery.discoverModelsMany(self.io, self.allocator, roots);
-@@ -1098,9 +1283,11 @@ pub const ModelRegistry = struct {
-         const entry = self.entries.get(id) orelse return error.UnknownModelId;
+@@ -1064,13 +1249,14 @@ pub const ModelRegistry = struct {
+     /// set. The returned pointer is borrowed; valid for the registry's
+     /// lifetime.
+     pub fn resolveEntry(self: *ModelRegistry, id_or_empty: []const u8) !*LoadedModel {
++        self.mutex.lockUncancelable(self.io);
++        defer self.mutex.unlock(self.io);
++
+         const id = if (id_or_empty.len == 0 or std.mem.eql(u8, id_or_empty, "mlx-serve"))
+             self.default_id
+         else
+             id_or_empty;
+         if (id.len == 0) return error.NoDefaultModel;
+-        self.mutex.lockUncancelable(self.io);
+-        defer self.mutex.unlock(self.io);
+         return self.entries.get(id) orelse error.UnknownModelId;
+     }
  
+@@ -1085,6 +1271,9 @@ pub const ModelRegistry = struct {
+     ///
+     /// Caller MUST call `release(lm)` once done with the returned pointer.
+     pub fn ensureLoaded(self: *ModelRegistry, id_or_empty: []const u8) !*LoadedModel {
++        self.mutex.lockUncancelable(self.io);
++        defer self.mutex.unlock(self.io);
++
+         const id = if (id_or_empty.len == 0 or std.mem.eql(u8, id_or_empty, "mlx-serve"))
+             self.default_id
+         else
+@@ -1092,15 +1281,28 @@ pub const ModelRegistry = struct {
+ 
+         if (id.len == 0) return error.NoDefaultModel;
+ 
+-        self.mutex.lockUncancelable(self.io);
+-        defer self.mutex.unlock(self.io);
+ 
+         const entry = self.entries.get(id) orelse return error.UnknownModelId;
++        return self.ensureResolvedLoadedLocked(entry);
++    }
+ 
++    // Preserve the already resolved/protected identity across default changes.
++    // Native-internal borrowed pointer only, never an IPC-selected handle.
++    pub fn ensureResolvedLoaded(self: *ModelRegistry, entry: *LoadedModel) !*LoadedModel {
++        self.mutex.lockUncancelable(self.io);
++        defer self.mutex.unlock(self.io);
++        const registered = self.entries.get(entry.id) orelse return error.UnknownModelId;
++        if (registered != entry) return error.UnknownModelId;
++        return self.ensureResolvedLoadedLocked(entry);
++    }
++
++    fn ensureResolvedLoadedLocked(self: *ModelRegistry, entry: *LoadedModel) !*LoadedModel {
          while (true) {
 +            if (self.fios_access_ticket != 0) return error.RegistryHeld;
              switch (entry.state) {
@@ -2355,7 +2401,7 @@ index da1f791..8345350 100644
                      return entry;
                  },
                  .loading, .evicting => {
-@@ -1113,8 +1300,138 @@ pub const ModelRegistry = struct {
+@@ -1113,8 +1315,138 @@ pub const ModelRegistry = struct {
          }
      }
  
@@ -2494,7 +2540,7 @@ index da1f791..8345350 100644
          _ = self.generation.fetchAdd(1, .monotonic);
          self.state_cond.broadcast(self.io);
      }
-@@ -1149,10 +1466,22 @@ pub const ModelRegistry = struct {
+@@ -1149,10 +1481,22 @@ pub const ModelRegistry = struct {
      /// ensureLoaded callers wait on `.evicting`. Returns immediately;
      /// caller MUST call `waitForRefcountZeroLocked` to drain readers
      /// before freeing GPU memory.
@@ -2518,7 +2564,7 @@ index da1f791..8345350 100644
      }
  
      /// Phase D: block until `entry.refcount == 0`. Caller holds `mutex`.
-@@ -1176,6 +1505,7 @@ pub const ModelRegistry = struct {
+@@ -1176,6 +1520,7 @@ pub const ModelRegistry = struct {
          entry.state = .unloaded;
          entry.error_name = null;
          self.stateChanged();
@@ -2526,7 +2572,7 @@ index da1f791..8345350 100644
      }
  
      /// Phase D: count of currently-loaded (`.ready` or `.evicting`) entries.
-@@ -1291,9 +1621,23 @@ pub const ModelRegistry = struct {
+@@ -1291,9 +1636,23 @@ pub const ModelRegistry = struct {
          self.releaseRefLocked(lm);
      }
  
@@ -2550,7 +2596,7 @@ index da1f791..8345350 100644
          std.debug.assert(prev > 0);
          // Broadcast so an evictor waiting for refcount == 0 wakes.
          if (prev == 1) self.state_cond.broadcast(self.io);
-@@ -1363,6 +1707,11 @@ pub const ModelRegistry = struct {
+@@ -1363,6 +1722,11 @@ pub const ModelRegistry = struct {
          self.releaseReservationLocked(entry); // pending estimate → actual residency
          entry.bytes_resident = bytes_resident;
          last_unload.consume(bytes_resident);
@@ -2562,7 +2608,7 @@ index da1f791..8345350 100644
          entry.state = .ready;
          entry.error_name = null;
          self.lru_clock += 1;
-@@ -1431,6 +1780,7 @@ pub const ModelRegistry = struct {
+@@ -1431,6 +1795,7 @@ pub const ModelRegistry = struct {
          std.debug.assert(entry.state == .evicting);
          entry.state = .ready;
          self.stateChanged();
@@ -2570,7 +2616,7 @@ index da1f791..8345350 100644
      }
  
      /// `live_bytes` is what the allocator holds right now (weights + KV + caches + wired
-@@ -1450,7 +1800,7 @@ pub const ModelRegistry = struct {
+@@ -1450,7 +1815,7 @@ pub const ModelRegistry = struct {
          var freed_live: u64 = 0;
          var freed_slots: u32 = 0;
          if (forced) |v| {
@@ -2579,7 +2625,7 @@ index da1f791..8345350 100644
              out[0] = v;
              n = 1;
              freed = v.bytes_resident;
-@@ -1479,7 +1829,10 @@ pub const ModelRegistry = struct {
+@@ -1479,7 +1844,10 @@ pub const ModelRegistry = struct {
                  for (out[0..n]) |v| self.unmarkEvictingLocked(v);
                  return null;
              }
@@ -2591,7 +2637,7 @@ index da1f791..8345350 100644
              freed += victim.bytes_resident;
              freed_live += liveBytesFreed(victim);
              freed_slots += @intFromBool(takesSlot(victim));
-@@ -1520,7 +1873,7 @@ pub const ModelRegistry = struct {
+@@ -1520,7 +1888,7 @@ pub const ModelRegistry = struct {
          var free = room;
          var n: usize = 0;
          while (free < need and n < out.len) : (n += 1) {
@@ -2600,7 +2646,7 @@ index da1f791..8345350 100644
              out[n] = idle[n];
              free +|= idle[n].bytes_resident;
          }
-@@ -1810,7 +2163,7 @@ test "LoadedModel: a reload frees the CPU state the previous load left behind" {
+@@ -1810,7 +2178,7 @@ test "LoadedModel: a reload frees the CPU state the previous load left behind" {
      entry.config.?.ngram_table_path = try testing.allocator.dupe(u8, "/m/ngram_table.bin");
  
      // Unload retains it by contract.
@@ -2609,7 +2655,7 @@ index da1f791..8345350 100644
      try testing.expect(entry.tokenizer != null);
      try testing.expect(entry.config != null);
  
-@@ -1822,7 +2175,7 @@ test "LoadedModel: a reload frees the CPU state the previous load left behind" {
+@@ -1822,7 +2190,7 @@ test "LoadedModel: a reload frees the CPU state the previous load left behind" {
      // Reload: `.loading` is the precondition the reader contract rests on, so
      // the test claims it the way `tryBeginLoadLocked` does.
      entry.state = .loading;
@@ -2618,7 +2664,7 @@ index da1f791..8345350 100644
      try testing.expect(entry.tokenizer == null);
      try testing.expect(entry.config == null);
      try testing.expect(entry.token_bytes == null);
-@@ -1838,8 +2191,8 @@ test "LoadedModel: releaseRetainedCpuState is safe on an entry that never loaded
+@@ -1838,8 +2206,8 @@ test "LoadedModel: releaseRetainedCpuState is safe on an entry that never loaded
      defer reg.deinit();
      const entry = try reg.registerStub("m", "/path/to/m", 1024);
      // Bar: the first load calls this too, so a never-loaded entry is a no-op.
@@ -2629,7 +2675,7 @@ index da1f791..8345350 100644
      try testing.expect(entry.tokenizer == null);
  }
  
-@@ -2041,7 +2394,7 @@ test "unloadResident resets the prefill-chunk pin but never the context pin" {
+@@ -2041,7 +2409,7 @@ test "unloadResident resets the prefill-chunk pin but never the context pin" {
      cfg.pinned_context = 8192;
      lm.config = cfg;
  
@@ -2638,7 +2684,7 @@ index da1f791..8345350 100644
      try testing.expectEqual(@as(u32, 0), cfg.pinned_prefill_chunk);
      try testing.expectEqual(@as(u32, 8192), cfg.pinned_context);
  }
-@@ -2687,3 +3040,33 @@ test "UnloadMark: models unloaded together count as one pending release" {
+@@ -2687,3 +3055,33 @@ test "UnloadMark: models unloaded together count as one pending release" {
      m.record(1_200 + UNLOAD_SETTLE_MS + 1, 5);
      try testing.expectEqual(@as(u64, 5), m.bytes);
  }
@@ -2673,7 +2719,7 @@ index da1f791..8345350 100644
 +    try std.testing.expectEqual(@as(usize, 1), registry.entries.count());
 +}
 diff --git a/src/scheduler.zig b/src/scheduler.zig
-index 9e12566..b1d4afc 100644
+index 9e12566..7960cf9 100644
 --- a/src/scheduler.zig
 +++ b/src/scheduler.zig
 @@ -32,6 +32,8 @@
@@ -3626,7 +3672,7 @@ index 9e12566..b1d4afc 100644
      /// Plan 05 Phase D: resolve `id_or_empty` ("" / "mlx-serve" → default)
      /// to a refcounted, ready `*LoadedModel`. Cold-loads on demand: if the
      /// entry is `.unloaded`, parses CPU state, picks an LRU victim if
-@@ -2072,6 +2885,15 @@ pub const Scheduler = struct {
+@@ -2072,11 +2885,20 @@ pub const Scheduler = struct {
      ///   error.LoadFailed        — inference thread reported a load failure.
      ///   error.Shutdown          — scheduler is shutting down.
      pub fn ensureLoaded(self: *Scheduler, id_or_empty: []const u8) !*LoadedModel {
@@ -3642,6 +3688,12 @@ index 9e12566..b1d4afc 100644
          // A lost GPU context fails every MLX call: nothing is loaded or served until a restart.
          if (mlx.gpuContextLost()) return error.GpuContextLost;
          // Fast path: ready entries. registry.ensureLoaded handles waiting
+         // out .loading / .evicting transitions by other callers.
+-        const fast_result = self.registry.ensureLoaded(id_or_empty);
++        const fast_result = self.registry.ensureResolvedLoaded(entry);
+         if (fast_result) |lm| return lm else |err| switch (err) {
+             error.NotLoaded => {}, // fall through to slow path
+             else => return err,
 @@ -2085,8 +2907,6 @@ pub const Scheduler = struct {
          // Slow path: cold load. Resolve the entry. Re-acquire mutex and
          // re-check state — between the fast-path call and now another
@@ -4640,6 +4692,95 @@ index 9e12566..b1d4afc 100644
      if (slot.ds4_session) |session| {
          return runDs4DecodeTick(sch, slot, session);
      }
+@@ -13042,3 +14252,88 @@ test "a refusal right after a two-model eviction waits for the memory to come ba
+     mark.record(1_100, 17 * GiB);
+     try std.testing.expect(waitForUnload(211 * GiB, 108 * GiB, mark, 1_200));
+ }
++
++// Model-free metadata fixture. The held test-only source read coordinates an
++// ordinary concurrent default setter; it is never a production probe/issuer.
++test "fios native default selection keeps the protected identity" {
++    const a = std.testing.allocator;
++    const io = std.testing.io;
++    const Gate = struct {
++        var armed: std.atomic.Value(bool) = .init(false);
++        var entered: std.atomic.Value(bool) = .init(false);
++        var released: std.atomic.Value(bool) = .init(false);
++        var timed_out: std.atomic.Value(bool) = .init(false);
++        fn read() bool {
++            if (!armed.load(.acquire)) return false;
++            entered.store(true, .release);
++            const start = std.Io.Timestamp.now(std.testing.io, .awake).nanoseconds;
++            while (!released.load(.acquire)) {
++                if (std.Io.Timestamp.now(std.testing.io, .awake).nanoseconds - start > 2_000_000_000) {
++                    timed_out.store(true, .release);
++                    return true; // Unknown/late source stays fenced.
++                }
++                std.atomic.spinLoopHint();
++            }
++            return false;
++        }
++    };
++    const Result = struct {
++        model: ?*LoadedModel = null,
++        failure: ?anyerror = null,
++        fn run(scheduler: *Scheduler, actor: fios_ownership.Token, requested: []const u8, result: *@This()) void {
++            fios_ownership.current = actor;
++            defer { fios_ownership.current = null; fios_ownership.current_group = null; }
++            result.model = scheduler.ensureLoaded(requested) catch |err| { result.failure = err; return; };
++        }
++    };
++    for ([_][]const u8{ "", "mlx-serve" }) |requested| {
++        Gate.armed.store(false, .release);
++        Gate.entered.store(false, .release);
++        Gate.released.store(false, .release);
++        Gate.timed_out.store(false, .release);
++        const registry = try ModelRegistry.init(a, io, null, 2, 0, null);
++        defer registry.deinit();
++        // Synthetic ready bookkeeping only: no config/weights/backend handles.
++        const first = try registry.registerStub("fixture/default-first", "/fixture/not-a-model-first", null);
++        const second = try registry.registerStub("fixture/default-second", "/fixture/not-a-model-second", null);
++        first.state = .ready;
++        second.state = .ready;
++        try registry.setDefault(first.id);
++        var tracker: fios_ownership.Tracker = .{ .primary_guard = true };
++        try tracker.initialize(io, @splat(23));
++        try tracker.enrollBackendUncertaintyProbe(io, &Gate.read);
++        registry.fios_request_tracker = &tracker;
++        const actor = try tracker.enter(io);
++        defer tracker.leave(io, actor) catch {};
++        try tracker.bind(io, actor, first.id);
++        var scheduler = std.mem.zeroInit(Scheduler, .{
++            .allocator = a, .io = io, .registry = registry, .queue_cap = 2,
++            .kv_quant_config = transformer_mod.KVQuantConfig.dense,
++        });
++        var result: Result = .{};
++        Gate.armed.store(true, .release);
++        const thread = try std.Thread.spawn(.{}, Result.run, .{ &scheduler, actor, requested, &result });
++        var joined = false;
++        defer if (!joined) { Gate.released.store(true, .release); thread.join(); };
++        const start = std.Io.Timestamp.now(io, .awake).nanoseconds;
++        while (!Gate.entered.load(.acquire) and std.Io.Timestamp.now(io, .awake).nanoseconds - start < 2_000_000_000) {
++            std.Io.sleep(io, .fromMilliseconds(1), .awake) catch {};
++        }
++        try std.testing.expect(Gate.entered.load(.acquire));
++        // Scheduler has selected/protected `first`, before its ready borrow.
++        // This is the normal locked metadata setter, not an eviction/load.
++        try registry.setDefault(second.id);
++        Gate.released.store(true, .release);
++        thread.join(); joined = true;
++        Gate.armed.store(false, .release);
++        try std.testing.expect(!Gate.timed_out.load(.acquire));
++        if (result.failure) |err| return err;
++        const received = result.model orelse return error.NoResolvedModel;
++        defer registry.releaseStatus(received);
++        std.debug.print("native_default_selection requested={s} protected={s} received={s}\n", .{ requested, first.id, received.id });
++        try std.testing.expect(received == first);
++        try std.testing.expectEqual(@as(u32, 1), first.refcount.load(.acquire));
++        try std.testing.expectEqual(@as(u32, 0), second.refcount.load(.acquire));
++    }
++    std.debug.print("PASS: actual scheduler keeps protected exact model across concurrent empty/marketing default changes; model-free registry fixture only\n", .{});
++}
 diff --git a/src/server.zig b/src/server.zig
 index 720b2c6..ced655b 100644
 --- a/src/server.zig

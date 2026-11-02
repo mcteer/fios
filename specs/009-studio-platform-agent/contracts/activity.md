@@ -107,3 +107,15 @@ receipt is introduced. Ordinary supported cleanup/callback-error fixtures
 retain original native ownership while healthy completion still releases it.
 The source build must use a compatible C++ runtime with the selected SDK;
 compilation or a successful normal request does not validate exception handling.
+
+
+### Protected target selection checkpoint
+
+The native scheduler carries its originally resolved registry entry through
+preparation and the ready/wait borrow. The registry verifies the exact entry
+under its mutex; an intervening default update cannot select another model
+from the old empty/marketing request identifier. resolveEntry/ensureLoaded
+read the default under that same mutex. This is target/borrow consistency,
+not an all-client source ceiling, native terminal receipt or management permit.
+The ordinary concurrent-default fixture uses synthetic ready bookkeeping;
+core same-model responses remain separate from Studio acceptance.

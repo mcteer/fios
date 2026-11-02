@@ -3037,3 +3037,90 @@ prerequisites and aggregate successful
 ([run41457538260](https://github.com/mcteer/fios/actions/runs/41457538260)). It
 is the prior buffer-origin checkpoint; newer uncertainty/runtime changes need
 their own exact-head CI after push. CI remains mock-only.
+
+
+### 2026-11-02 protected default-model selection (in progress)
+
+Source review found Scheduler.ensureLoaded resolves/protects an entry, then
+passes its original empty/marketing identifier back to the registry's ready
+lookup. An intervening ordinary setDefault can retarget that borrow. The
+actual source scheduler/registry fixture reproduces protected
+`fixture/default-first` but received `fixture/default-second`:
+`/tmp/fios-009-default-target-prior-build.log`, private build
+`/tmp/f9-linked-native-0LJi2S`. Actual native executable compile succeeds;
+ReleaseSafe test compile succeeds and the selected named case fails, with two
+implicit import-only roots passing (2 pass/1 fail,3 total). No compile/link
+error is counted as the behavioral red. The held test-only readonly source
+probe coordinates a real scheduler thread with the normal locked metadata
+setter; it is never production enrollment. Ready entries are synthetic
+registry bookkeeping without weights/config/backend handles, not two real
+residents or model/Studio acceptance. IP networking is denied.
+
+The source fix adds an exact resolved-entry borrow, preserving the original
+pointer/identity under the registry mutex without reinterpreting a mutable
+default or reserved marketing name. Empty/marketing default reads now occur
+under that same mutex in resolveEntry/ensureLoaded. Fast-path refusal/wait/
+refcount semantics remain shared. The enclosing native build/test is running:
+`/tmp/fios-009-default-target-native-build.log`. Its selected ordinary case
+covers omitted and marketing default selection; historical root/HTTP/fault
+matrices stay unexecuted. Root patch SHA currently
+4904208e31d64fa22984dd3d63685a39f26e9d490f61680e0bdecf8a14d3b751.
+No new native terminal/all-client authority or whole-task completion is claimed.
+
+
+The protected-target fix passes the exact same source case: omitted and
+marketing requests both receive the first/protected entry after the concurrent
+default update. `/tmp/fios-009-default-target-native-build.log`: full native
+exe succeeds; ReleaseSafe target plus2 import-only roots pass3/3,593ms actual
+execution (test compile40s). No historical matrices run. The build runner
+prints a generic command label beside captured test stderr; acceptance uses
+checked exit0, completion marker and3/3 summary, not that label. Capsule
+`/private/tmp/fios-009-default-target-native-review/capsule`, review SHA
+4b8a5b610ab0b45363761c659c788e04994b50c54516edca34a82372a1cdf6f5, binary
+74c1d8f315c2bbc7c0ac3b2a3617da121ca210f7ab828aabe9e378ee78dd9e00;
+resolved-model pin version1 and the selected case are declared separately
+from the skipped full historical root/HTTP matrix.
+
+Actual readonly HTTP/backend/primary observations pass
+(`/tmp/fios-009-default-target-native-http.log`,
+`/private/tmp/f9-backend-fences-rvVKqC`); actual manager automatic lineage/
+backend/primary refresh passes (`/tmp/fios-009-default-target-native-manager.log`,
+`/private/tmp/f9-native-status-zvQbF1`),0 model/installed actions. No new
+supervisor/drain receipt is claimed for this model-selection-only change; the
+preceding7fb3e2d… composition's results remain separate. Focused Node27/27 and
+inference boundary pass (`/tmp/fios-009-default-target-{node,boundary}.log`).
+
+Core journal plan adda3876837728e0bae18901feeb4221588af2a7e99a05c14bbe30239c429e98
+is consumed. Check issues0 model POSTs (`/private/tmp/f9-model-check-tFxQhw`);
+run issues1, two tokens/two deltas/complete response in4,597ms
+(`/tmp/fios-009-default-target-model-run.log`,
+`/private/tmp/f9-model-run-jdjdg0/result.json`). Same fixed core host/model and
+512-context/two-token/10s request/15s work/7s cleanup/12GiB sampled native/
+128MiB observer limits apply. Native peak RSS3,103,178,752/footprint4,686,498,936;
+observer RSS12,091,392/footprint4,850,192. SDK45/45 coherent partial samples,
+4 primary/3 positive, root5/source93; original journal claim stays uncertain
+after both own processes reap. No generated text logged, platform/Pydantic/
+Studio acceptance or native quiescence/authority follows.
+
+A separate existing fixed same-model-pair scenario uses the same exact core
+Gemma target,512 context,8-token cap/request,2 POSTs/concurrency2,90s request/
+120s work/7s cleanup and12GiB sampled native bounds. Plan
+94ab259802616a5a547bbfb4c580a0de6bdf84779b99bec84a855e00183c67a4 is consumed.
+Check issues0 POSTs (`/tmp/fios-009-default-target-pair-check.log`,
+`/private/tmp/f9-model-check-noW5GV`). Run passes with2 overlapping requests,
+HTTP200/two tokens/two deltas each, both complete in4,510ms
+(`/tmp/fios-009-default-target-pair-run.log`,
+`/private/tmp/f9-model-run-4AngDK/result.json`). Dispatch67/75ms, completion
+4501/4468ms; active request-ownership maximum2, preparation5, responding1.
+These are ownership/transport observations, not parallel GPU or terminal proof.
+SDK45/45 coherent partial samples, peak RSS3,556,278,272/footprint5,013,556,560;
+owned process reaped, independent native uncertainty/quiescence remains unknown.
+No journal/platform/Pydantic reconciliation is claimed for this separate pair
+scenario, and no generated text is logged. All model work stays on fios-core;
+no Studio model/serving/installation action occurs. Whole tasks remain38/55.
+
+Exact pushed f88429c337528cc40588ef620bee9e6ca4038d58 passes all six CI
+prerequisites and aggregate
+([run41466233813](https://github.com/mcteer/fios/actions/runs/41466233813)). This
+is the prior SDK/C++ checkpoint; default-target changes require new exact-head
+CI after push. No009 merge, application deployment or native activation.

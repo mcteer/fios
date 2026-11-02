@@ -604,3 +604,15 @@ Debug/ReleaseFast callback controls and twelve selected source/header/stub
 hashes. Earlier source capsules without it remain historical evidence and
 refuse new model plans. The native builder records this separately from
 whole-runtime provenance; it does not authorize installation/admission.
+
+
+For the ordinary protected-default selection fixture, add
+`--functional-test 'fios native default selection keeps the protected identity'`
+before the native builder's final `--functional-build-only`. This one fixed
+reviewed case coordinates actual threads around synthetic ready registry
+metadata;2s waits cover both omitted/marketing identifiers, with no weights,
+model inference or native service action. The full native graph compiles and
+runs only that named case plus its two implicit import-only roots under denied
+IP networking. Expected pass is3/3 plus the case's completion marker. Receipts
+list `functional_test_cases` separately; historical root/HTTP/fault matrices
+remain skipped and no full/native admission acceptance follows.
