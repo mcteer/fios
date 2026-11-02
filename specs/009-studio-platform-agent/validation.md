@@ -2282,7 +2282,7 @@ primary and backend observations (`...-native-manager.log`, review
 Healthy core regression separately uses a new immutable one-use model plan,
 `/private/tmp/fios-009-refusal-model-plan-sj60ok7r/plan.json`, SHA
 31f2cac29d6e32bf385aaa9cbe380b98ead81ac4405043fe2534fdc6415f77f1.
-Its declared runner inputs now include149 Core Swift sources, not whole-native/
+Its154 declared runner inputs include144 Core Swift sources, not whole-native/
 repository provenance. Empty-model check passes (`/tmp/fios-009-refusal-model-check.log`,
 `/private/tmp/f9-model-check-wSU4nE`). Actual run passes
 (`/tmp/fios-009-refusal-model-run.log`, `/private/tmp/f9-model-run-R8Mh3W`):
@@ -2297,3 +2297,76 @@ Journal remains uncertain after both local processes reap, native quiescence
 unproven/coverage unknown/authority false. Administrative source request only,
 not production admission, platform dispatch, worker competence or Studio acceptance.
 No generated text logged, no installed/Studio actions;38/55 complete.
+
+### 2026-11-01 source MLX uncertainty reaches the native refusal predicate
+
+The genuine patched MLX SDK now mirrors its three existing source-uncertainty
+assignment sites into a const-initialized lock-free atomic boolean. It is
+one-way for that process; no reset, counter input, callback, metadata lock or
+backend operation is performed by its getter. A fixed compiled source shim
+registers the readonly getter once, separately from renderer/hold registration.
+No-hook bridge reads return unavailable (-1); positive source evidence joins
+the native server's known-negative admission predicate. False/unavailable is
+never all-client capacity, idle, cleanup or terminal proof. Existing source
+component diagnostics and private wire formats are unchanged.
+
+An exact prior SDK compile rejects the new getter interface
+(`/tmp/fios-009-known-mlx-prior-interface-red.log`); this is an interface witness,
+not a runtime failure. Initial build `/tmp/fios-009-mlx-known-negative-build.log`
+failed first on incorrect dependency checkout paths and then on a fixture's
+unexported internal CPU-clear symbol. Neither is accepted runtime validation.
+The corrected fixture invokes the supported public stream-cleanup entry point
+after genuine finite CPU work; it does not inject SDK failures, mutate source
+bodies/counters or initialize models. Source patch remains the same seven paths.
+
+Final build `/tmp/fios-009-mlx-known-negative-final-build.log` passes Debug and
+optimized lifecycle/atomic cleanup observations plus genuine scalar safetensors
+roundtrip. Review `/private/tmp/fios-009-mlx-component-build-wj6eFZ/sdk/candidate.json`,
+SHA008a1ba207112d176204632bce5c5f465539acd447406abd232dc0bc963bfcf7;
+source patch f9d469fff0ad344ec3ded8f95eef2e0c23da14de9c7a65b7acd2c0fce046df39;
+fixture406162442adaea9946ff98408069114d7d34d9efd902942ef69895d196b4f7ea.
+The scope is the declared SDK patch/dependencies, not whole native/repository
+provenance or installed authority.
+
+Actual composed bridge Debug/optimized tests also pass
+(`/tmp/fios-009-known-mlx-bridge.log`, receipt
+`/private/tmp/fios-009-mlx-component-bridge-mIjcrC/receipt.json`): two composed
+processes observe healthy zero before work and sticky one after actual supported
+stream cleanup, including another thread; two default bridge processes confirm
+missing-hook unavailable. Exact owned stream/source hold and release behavior
+still passes. Native source predicate calls the same bridge getter outside the
+request tracker mutex. No model/native server/installed operation occurs in
+these component cases.
+
+The first enclosing native build compiled8/8 steps but staging refused an output
+whose parent was not private (`/tmp/fios-009-known-mlx-native-build.log`); it is
+not a completed capsule receipt. Corrected command preserves the same source
+and passes (`/tmp/fios-009-known-mlx-native-final-build.log`), capsule
+`/private/tmp/fios-009-known-mlx-native-review/capsule`, review
+5f682ff94b8bd2747e5f5d1fb48d9d2e5f9032ae38ad2ab8f56cc53224530a92,
+binary73b383dae3fe1e005d1fa1ce2bfebd3ef7e7f3b7cd7f48f2e16774c0b6808e6b.
+It declares native_known_mlx_refusal_version1/source_component_hold true, with
+functional-only build and historical matrices skipped. Actual readonly native
+HTTP/private observation passes (`...-known-mlx-native-http.log`,
+`/private/tmp/f9-backend-fences-xAXa2S`), and actual manager lineage/primary/backend
+refresh passes (`...-known-mlx-native-manager.log`,
+`/private/tmp/f9-native-status-8r3OTN`).44 Node cases and boundary pass
+(`/tmp/fios-009-known-mlx-final-node.log`, `...-known-mlx-boundary.log`).
+Core-only bounded model regression is recorded below;38/55 complete.
+
+New immutable one-use plan `/private/tmp/fios-009-known-mlx-model-plan/plan.json`,
+SHA135483596d267b82cdb92f130d1f0a0e64a19f33fde09c9f317e674762851a73,
+passes empty check (`/tmp/fios-009-known-mlx-model-check.log`,
+`/private/tmp/f9-model-check-KZYPEM`) and actual core-only source request
+(`/tmp/fios-009-known-mlx-model-run.log`, `/private/tmp/f9-model-run-VBTO07`).
+Exact mlx-community/gemma-4-e4b-it-4bit on fios-core Apple M4 Pro24GiB,
+one POST/concurrency1/context512/output2/request10s/work15s/cleanup7s,
+native sampled12GiB/observer128MiB limits. Two tokens/two deltas complete4426ms,
+43 coherent source samples/4 primary samples/3 positive, original root5/primary
+sequence94, instance445d73814ea7a33d1e29b0ad3e5eda51. Native RSS3,225,518,080/
+footprint4,665,085,000; observer RSS12,582,912/footprint5,046,824. Normal original
+work passes; after local process reaping the journal still retains uncertain,
+native quiescence unproven/coverage unknown/authority false. No generated text
+logged. This is administrative source-only functional evidence, not production
+admission/platform dispatch/worker competence or Studio acceptance;0 installed
+or Studio actions and38/55 whole tasks complete.

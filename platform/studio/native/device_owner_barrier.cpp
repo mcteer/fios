@@ -243,6 +243,16 @@ extern "C" int fios_mlx_owner_barrier(uint64_t owner, fios_mlx_barrier_result* r
 // Optional project renderer, not a declaration/substitution of an SDK API.
 // Constant initialization is independent of C++ constructor order.
 namespace { std::atomic<fios_mlx_source_renderer> source_renderer{nullptr}; }
+namespace { std::atomic<fios_mlx_source_uncertainty_probe> source_uncertainty{nullptr}; }
+extern "C" int fios_mlx_register_source_uncertainty(fios_mlx_source_uncertainty_probe probe) {
+    if (!probe) return 1;
+    fios_mlx_source_uncertainty_probe expected=nullptr;
+    return source_uncertainty.compare_exchange_strong(expected,probe,std::memory_order_release,std::memory_order_relaxed)?0:1;
+}
+extern "C" int fios_mlx_source_known_uncertainty() {
+    const auto probe=source_uncertainty.load(std::memory_order_acquire);
+    return probe ? probe() : -1;
+}
 extern "C" int fios_mlx_register_source_hold(const fios_mlx_source_hold_hooks* hooks) {
     if (!hooks || !hooks->acquire || !hooks->release) return 1;
     const fios_mlx_source_hold_hooks* expected=nullptr;

@@ -38,6 +38,7 @@ for(const [mode,optimize] of [['debug','-O0'],['optimized','-O2']]){
    proof.libraries['libmlx.dylib'],mlxcLibrary,`-Wl,-rpath,${resolve(proof.libraries['libmlx.dylib'],'..')}`,`-Wl,-rpath,${resolve(mlxcLibrary,'..')}`,'-framework','Metal','-framework','Foundation','-o',binary]);
   const log=run('/usr/bin/sandbox-exec',['-p','(version 1)(allow default)(deny network*)',binary,...(linked?[]:['--registry-hold'])],{timeout:20000,maxBuffer:4096});
   assert(log.includes(linked?'PASS: actual owned CPU synchronization seals tracked source gates afterward':'PASS: owned-wrapper registry hold blocks creation'));
+  if(linked)assert(log.includes('PASS: fixed bridge reads genuine sticky MLX source uncertainty after stream cleanup'));
   console.log(mode+(linked?' composed: ':' default bridge: ')+log.trim());
  }
 }

@@ -50,7 +50,7 @@ function compile(input,output,optimize){run('/usr/bin/clang++',['-std=c++20',opt
 for(const [mode,optimize] of [['debug','-O0'],['optimized','-O2']]){
  const output=join(directory,'fixture-'+mode);compile(fixture,output,optimize);
  const log=run('/usr/bin/sandbox-exec',['-p','(version 1)(allow default)(deny network*)',output],{timeout:20000,maxBuffer:4096});
- assert(log.includes('PASS: genuine CPU work refuses atomic source-component hold'));console.log(mode+': '+log.trim());
+ assert(log.includes('PASS: genuine CPU work refuses atomic source-component hold'));assert(log.includes('PASS: genuine stream cleanup publishes sticky atomic source uncertainty'));console.log(mode+': '+log.trim());
 }
 const loaderBinary=join(directory,'safetensors-fixture');compile(loader,loaderBinary,'-O2');
 assert(run('/usr/bin/sandbox-exec',['-p','(version 1)(allow default)(deny network*)',loaderBinary,join(directory,'scalar.safetensors')],{timeout:20000,maxBuffer:4096}).includes('PASS: genuine CPU scalar safetensors roundtrip'));

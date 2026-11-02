@@ -15,6 +15,7 @@ static void require(bool value) {
   if (!value) {std::fputs("FAIL: source component bridge composition\n",stderr);std::exit(77);}
 }
 int main() {
+  require(fios_mlx_source_known_uncertainty()==0);
   const auto owner=fios_mlx_current_thread();require(owner);
   require(fios_mlx_create_owned_cpu_stream(owner)==0);
   uint64_t ticket=0;require(fios_mlx_hold_owned_registry(owner,&ticket)==0&&ticket);
@@ -41,5 +42,14 @@ int main() {
   mx::scheduler::enqueue(mx::get_streams().front(),[&]{ran.set_value();});
   require(done.wait_for(3s)==std::future_status::ready);done.get();
   require(fios_mlx_create_owned_cpu_stream(owner)==0);
+  require(fios_mlx_source_known_uncertainty()==0);
+  // Actual ordinary stream cleanup marks the SDK source uncertain. The fixed
+  // bridge getter only reads its atomic mirror, without taking either lock.
+  mx::clear_streams();
+  require(fios_mlx_source_known_uncertainty()==1);
+  bool seen=false;
+  std::thread observer([&]{seen=fios_mlx_source_known_uncertainty()==1;});observer.join();
+  require(seen&&mx::fios_stream_custody_state().uncertain);
+  std::puts("PASS: fixed bridge reads genuine sticky MLX source uncertainty after stream cleanup");
   std::puts("PASS: actual owned CPU synchronization seals tracked source gates afterward; exact bridge resume releases them before later work; partial source only");
 }

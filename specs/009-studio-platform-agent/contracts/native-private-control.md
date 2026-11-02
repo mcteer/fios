@@ -309,3 +309,17 @@ or import a fence as a read side effect. Existing response/reference-release
 accounting remains possible and never clears uncertainty. This does not cancel
 existing work or signal a process. It is a known-negative refusal, not an atomic
 all-client/device-terminal reservation or a production authority issuer.
+
+The source MLX composition can also enroll one fixed compiled uncertainty
+getter. The SDK mirrors every existing sticky source-uncertainty assignment
+into one lock-free atomic boolean; its getter performs no metadata lock,
+initialization, backend operation, reset or quiescence probe. The bridge's
+once-only getter registration is separate from its renderer and hold hooks.
+Without the reviewed source hook it returns unavailable (-1), never healthy
+capacity. A positive getter joins the existing negative native work-edge
+predicate. Existing partial MLX diagnostics remain the observation surface;
+no new private frame or normalized all-client capability is introduced.
+False/unavailable results cannot authorize dispatch, replacement or terminality.
+Older reviewed source headers omit this optional hook rather than substituting
+an SDK declaration. The capsule's native_known_mlx_refusal_version is a declared
+source-format marker, not evidence that all backends or installed code enroll.

@@ -68,6 +68,11 @@ typedef int (*fios_mlx_source_renderer)(char*, size_t);
 // Trusted compiled private shim only; one registration, no wire setter/reset.
 int fios_mlx_register_source_renderer(fios_mlx_source_renderer renderer);
 int fios_mlx_source_components_json(char* output, size_t capacity);
+// Fixed compiled source getter, atomic/read-only/nonblocking. Missing hooks
+// return -1; zero never proves coverage, idle or native admission capacity.
+typedef int (*fios_mlx_source_uncertainty_probe)(void);
+int fios_mlx_register_source_uncertainty(fios_mlx_source_uncertainty_probe probe);
+int fios_mlx_source_known_uncertainty(void);
 #ifdef __cplusplus
 }
 #endif

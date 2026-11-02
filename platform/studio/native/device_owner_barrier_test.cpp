@@ -19,6 +19,7 @@ static void require(bool condition) {
     if (!condition) { std::cerr << "FAIL: genuine MLX owner-stream fixture check\n"; std::exit(77); }
 }
 int main(int argc, char** argv) {
+    require(fios_mlx_source_known_uncertainty()==-1);
     char absent_components[512];
     std::fill(std::begin(absent_components),std::end(absent_components),'x');
     if (fios_mlx_source_components_json(absent_components,sizeof(absent_components))!=0 || absent_components[0]!='x') return 77;

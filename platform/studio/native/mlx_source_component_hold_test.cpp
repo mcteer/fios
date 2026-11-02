@@ -27,6 +27,7 @@ static FiosHostQueueState drained() {
 }
 int main() {
   require(fios_enable_stream_custody_fixture());
+  require(!fios_known_source_uncertain());
   const auto stream=new_stream(Device::cpu);
   std::promise<void> entered,release;
   auto ready=entered.get_future();auto released=release.get_future().share();
@@ -58,5 +59,15 @@ int main() {
   require(fios_release_metal_buffers(second));
   std::promise<void> rearmed;auto done=rearmed.get_future();
   scheduler::enqueue(stream,[&]{rearmed.set_value();});wait(done);require(!drained().uncertain);
+  require(!fios_known_source_uncertain());
+  // Genuine final stream cleanup after CPU work invalidates the original tracked
+  // source. Observe its one-way mirror from a separate ordinary thread.
+  clear_streams();
+  bool seen=false;
+  std::thread observer([&]{seen=fios_known_source_uncertain();});observer.join();
+  require(seen&&fios_stream_custody_state().uncertain);
+  require(!fios_hold_source_components(fios_host_queue_state().epoch));
+  require(fios_known_source_uncertain());
+  std::puts("PASS: genuine stream cleanup publishes sticky atomic source uncertainty without a reset or backend read");
   std::puts("PASS: genuine CPU work refuses atomic source-component hold without partial gates; exact creator release and later work succeed; no all-backend authority");
 }

@@ -7,6 +7,9 @@ extern "c" fn fios_mlx_owner_barrier(owner: u64, result: *CResult) c_int;
 extern "c" fn fios_mlx_initialize_owner_defaults(owner: u64) c_int;
 pub fn initializeDefaults(owner: u64) bool { return fios_mlx_initialize_owner_defaults(owner) == 0; }
 pub fn currentThread() u64 { return fios_mlx_current_thread(); }
+extern "c" fn fios_mlx_source_known_uncertainty() c_int;
+// Negative-only source evidence, never all-client capacity or terminality.
+pub fn knownSourceUncertain() bool { return fios_mlx_source_known_uncertainty() > 0; }
 pub fn synchronize(owner: u64) Reading {
     var result: CResult = .{};
     const status = fios_mlx_owner_barrier(owner, &result);

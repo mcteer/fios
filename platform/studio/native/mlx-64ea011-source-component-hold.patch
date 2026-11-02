@@ -366,12 +366,14 @@ index 572e236..9507626 100644
    return *it->second.get();
  }
 diff --git a/mlx/stream.cpp b/mlx/stream.cpp
-index 902015c..0271aa8 100644
+index 902015c..4d6f978 100644
 --- a/mlx/stream.cpp
 +++ b/mlx/stream.cpp
-@@ -8,8 +8,11 @@
+@@ -7,9 +7,13 @@
+ #include "mlx/backend/gpu/eval.h"
  
  #include <array>
++#include <atomic>
  #include <map>
 +#include <limits>
  #include <optional>
@@ -381,7 +383,7 @@ index 902015c..0271aa8 100644
  
  namespace mlx::core {
  
-@@ -31,6 +34,97 @@ auto& all_streams() {
+@@ -31,6 +35,101 @@ auto& all_streams() {
    return streams_and_mtx;
  }
  
@@ -411,12 +413,16 @@ index 902015c..0271aa8 100644
 +  uint32_t first_uncertainty_site = 0;
 +};
 +constinit FiosRegistry fios_registry;
++// One-way negative evidence; reads never enter the registry mutex/backend.
++static_assert(std::atomic<bool>::is_always_lock_free);
++constinit std::atomic<bool> fios_known_uncertainty{false};
 +thread_local uint64_t fios_owner = 0;
 +
 +// Caller already owns the original metadata mutex. Diagnostic-only state;
 +// preserve existing sticky failure/epoch behavior, with no I/O or reset API.
 +void fios_mark_uncertain(uint32_t site) {
 +  if (!fios_registry.uncertain) fios_registry.first_uncertainty_site = site;
++  fios_known_uncertainty.store(true, std::memory_order_release);
 +  fios_registry.uncertain = true;
 +}
 +
@@ -479,10 +485,13 @@ index 902015c..0271aa8 100644
  auto& thread_local_streams() {
    static std::tuple<std::vector<ThreadLocalStream>, std::mutex> streams_and_mtx;
    return streams_and_mtx;
-@@ -38,6 +132,321 @@ auto& thread_local_streams() {
+@@ -38,6 +137,326 @@ auto& thread_local_streams() {
  
  } // namespace
  
++bool fios_known_source_uncertain() {
++  return fios_known_uncertainty.load(std::memory_order_acquire);
++}
 +uint32_t fios_first_uncertainty_site() {
 +  std::lock_guard lock(fios_registry.mutex);
 +  return fios_registry.first_uncertainty_site;
@@ -607,6 +616,7 @@ index 902015c..0271aa8 100644
 +  --fios_registry.host_pending;
 +  --fios_registry.host_active;
 +  task->done = true;
++  if (failed) fios_known_uncertainty.store(true, std::memory_order_release);
 +  fios_registry.uncertain |= failed;
 +  fios_bump();
 +}
@@ -771,6 +781,7 @@ index 902015c..0271aa8 100644
 +  if (fios_registry.next_hold == std::numeric_limits<uint64_t>::max() ||
 +      fios_registry.next_host_hold == std::numeric_limits<uint64_t>::max() ||
 +      fios_registry.next_metal_hold == std::numeric_limits<uint64_t>::max()) {
++    fios_known_uncertainty.store(true, std::memory_order_release);
 +    fios_registry.uncertain = true;return 0;
 +  }
 +  // Complete every refusal before publishing any of the three linked holds.
@@ -801,7 +812,7 @@ index 902015c..0271aa8 100644
  Stream default_stream(Device d) {
    if (!gpu::is_available() && d.type == Device::gpu) {
      throw std::invalid_argument(
-@@ -69,6 +478,7 @@ std::vector<Stream> get_streams() {
+@@ -69,6 +488,7 @@ std::vector<Stream> get_streams() {
  }
  
  Stream new_stream(Device d) {
@@ -809,7 +820,7 @@ index 902015c..0271aa8 100644
    auto& [streams, mtx] = all_streams();
    std::unique_lock lock(mtx);
    int index = streams.size();
-@@ -78,10 +488,12 @@ Stream new_stream(Device d) {
+@@ -78,10 +498,12 @@ Stream new_stream(Device d) {
    } else {
      cpu::new_stream(s);
    }
@@ -822,7 +833,7 @@ index 902015c..0271aa8 100644
    auto& [streams, mtx] = all_streams();
    std::unique_lock lock(mtx);
    int index = streams.size();
-@@ -91,6 +503,7 @@ Stream new_thread_unsafe_stream(Device d) {
+@@ -91,6 +513,7 @@ Stream new_thread_unsafe_stream(Device d) {
    } else {
      cpu::new_thread_unsafe_stream(s);
    }
@@ -831,7 +842,7 @@ index 902015c..0271aa8 100644
  }
  
 diff --git a/mlx/stream.h b/mlx/stream.h
-index 331af60..fabb34e 100644
+index 331af60..67efdb1 100644
 --- a/mlx/stream.h
 +++ b/mlx/stream.h
 @@ -2,7 +2,9 @@
@@ -844,7 +855,7 @@ index 331af60..fabb34e 100644
  #include <tuple>
  #include <vector>
  
-@@ -27,6 +29,63 @@ struct MLX_API ThreadLocalStream : public Stream {
+@@ -27,6 +29,66 @@ struct MLX_API ThreadLocalStream : public Stream {
    using Stream::Stream;
  };
  
@@ -859,6 +870,9 @@ index 331af60..fabb34e 100644
 +  bool shared;
 +};
 +#define MLX_FIOS_UNCERTAINTY_DIAGNOSTICS 1
++#define MLX_FIOS_KNOWN_UNCERTAINTY 1
++// Sticky negative evidence only; no reset, mutex, device or model operation.
++MLX_API bool fios_known_source_uncertain();
 +MLX_API uint32_t fios_first_uncertainty_site();
 +MLX_API bool fios_enable_stream_custody_fixture();
 +MLX_API uint64_t fios_current_stream_owner();
