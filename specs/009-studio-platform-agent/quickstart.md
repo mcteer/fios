@@ -14,6 +14,14 @@ Append `--protocol-version 3` for a source capsule declaring timestamped replies
 
 Large-model metadata preparation has a separate [CPU-only source config/index/header check](native-acceptance-preparation.md#ordinary-source-parser-check). It uses fixed reviewed metadata hashes and genuine parser/hash/region functions, with no weight payload, table mapping, server or model request. Its receipt covers declared source inputs and header arithmetic; it grants no installed/native authority or runtime-fit proof.
 
+The actual source server can also exercise direct owned-child lifecycle through the real Swift runtime, independently of installed service activation:
+
+```sh
+node scripts/check-platform-native-owned-server.mjs --isolated --release /ABS/PRIVATE_SOURCE_CAPSULE --sha256 EXACT_CAPSULE_RECEIPT_SHA
+```
+
+Debug and optimized fixtures each start/monitor/locally stop/restart two sequential original empty-model children. They use a private cwd/HOME/model directory, explicit localhost port and ephemeral strict native key; no existing credentials or interface authentication are changed. Source compilation is bounded120s/mode, execution35s/mode and polls10s. Health requires actual process/listener association. There are0 model requests. Reservation callbacks are synthetic: local exit cannot establish native terminality or authorize installed recovery. Receipts bind the runtime/fixture inputs and selected capsule; they do not attest the entire compiled Core/native dependency graph.
+
 Ordinary process-instance binding can be checked with two sequential private empty-model source processes on the same loopback endpoint:
 
 ```sh
