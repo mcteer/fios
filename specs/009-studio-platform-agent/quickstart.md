@@ -707,3 +707,13 @@ that exact private empty-catalog fixture child. Its explicit cleanup SIGKILL/
 reap cannot prove native completion or clear uncertainty. Older capsules retain
 their separately attributed local-close→graceful-exit expectation. Installed
 service force remains separately reviewed and is not exercised by this command.
+
+
+The fixed existing registry metadata case can be selected with
+`--functional-test 'ModelRegistry: memory-refused loads keep their identity, other failures expose their name'`
+before final `--functional-build-only`. It tests copied error names for exact
+and empty/marketing identifiers after the default changes, with no model or
+backend handle. The result must contain that one selected case plus the two
+import roots (3 total), then complete the full executable/link build. This is
+ordinary metadata compatibility, not a concurrent/loaded failure or native
+admission test; historical matrices remain skipped.

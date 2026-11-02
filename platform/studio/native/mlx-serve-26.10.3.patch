@@ -2014,7 +2014,7 @@ index 8f16a57..02da4d8 100644
      // A flat checkpoint whose text_config is absent keeps reading the root, and
      // a nested block that OMITS a field falls back to the root rather than
 diff --git a/src/model_registry.zig b/src/model_registry.zig
-index da1f791..8ee23d0 100644
+index da1f791..0701009 100644
 --- a/src/model_registry.zig
 +++ b/src/model_registry.zig
 @@ -18,6 +18,7 @@
@@ -2413,7 +2413,7 @@ index da1f791..8ee23d0 100644
          const entry = self.entries.get(id) orelse return error.UnknownModelId;
 +        return self.ensureResolvedLoadedLocked(entry);
 +    }
- 
++
 +    // Preserve the already resolved/protected identity across default changes.
 +    // Native-internal borrowed pointer only, never an IPC-selected handle.
 +    pub fn ensureResolvedLoaded(self: *ModelRegistry, entry: *LoadedModel) !*LoadedModel {
@@ -2423,7 +2423,7 @@ index da1f791..8ee23d0 100644
 +        if (registered != entry) return error.UnknownModelId;
 +        return self.ensureResolvedLoadedLocked(entry);
 +    }
-+
+ 
 +    fn ensureResolvedLoadedLocked(self: *ModelRegistry, entry: *LoadedModel) !*LoadedModel {
          while (true) {
 +            if (self.fios_access_ticket != 0) return error.RegistryHeld;
@@ -2679,6 +2679,22 @@ index da1f791..8ee23d0 100644
              out[n] = idle[n];
              free +|= idle[n].bytes_resident;
          }
+@@ -1607,13 +1975,13 @@ pub const ModelRegistry = struct {
+     /// route to the default), or null when the entry isn't in `.error_state`.
+     /// Caller frees. Feeds the HTTP "Model load failed: <name>" message (#144).
+     pub fn loadErrorNameDupe(self: *ModelRegistry, alloc: std.mem.Allocator, id_or_empty: []const u8) ?[]u8 {
++        self.mutex.lockUncancelable(self.io);
++        defer self.mutex.unlock(self.io);
+         const id = if (id_or_empty.len == 0 or std.mem.eql(u8, id_or_empty, "mlx-serve"))
+             self.default_id
+         else
+             id_or_empty;
+         if (id.len == 0) return null;
+-        self.mutex.lockUncancelable(self.io);
+-        defer self.mutex.unlock(self.io);
+         const entry = self.entries.get(id) orelse return null;
+         if (entry.state != .error_state) return null;
+         const name = entry.error_name orelse return null;
 @@ -1810,7 +2178,7 @@ test "LoadedModel: a reload frees the CPU state the previous load left behind" {
      entry.config.?.ngram_table_path = try testing.allocator.dupe(u8, "/m/ngram_table.bin");
  
@@ -2717,7 +2733,29 @@ index da1f791..8ee23d0 100644
      try testing.expectEqual(@as(u32, 0), cfg.pinned_prefill_chunk);
      try testing.expectEqual(@as(u32, 8192), cfg.pinned_context);
  }
-@@ -2687,3 +3055,33 @@ test "UnloadMark: models unloaded together count as one pending release" {
+@@ -2104,6 +2472,21 @@ test "ModelRegistry: memory-refused loads keep their identity, other failures ex
+     const name = reg.loadErrorNameDupe(testing.allocator, "krea");
+     defer if (name) |n| testing.allocator.free(n);
+     try testing.expectEqualStrings("FileNotFound", name.?);
++    // A resolved request keeps its exact failure identity when the default
++    // moves; ordinary empty/marketing aliases read the current locked default.
++    const other = try reg.registerStub("other", "/path/to/other", null);
++    reg.mutex.lockUncancelable(reg.io);
++    reg.markErrorLocked(other, "DifferentFailure");
++    reg.mutex.unlock(reg.io);
++    try reg.setDefault(other.id);
++    const bound_name = reg.loadErrorNameDupe(testing.allocator, stub.id);
++    defer if (bound_name) |n| testing.allocator.free(n);
++    try testing.expectEqualStrings("FileNotFound", bound_name.?);
++    for ([_][]const u8{ "", "mlx-serve" }) |alias| {
++        const alias_name = reg.loadErrorNameDupe(testing.allocator, alias);
++        defer if (alias_name) |n| testing.allocator.free(n);
++        try testing.expectEqualStrings("DifferentFailure", alias_name.?);
++    }
+     // Non-error entries have no name to report.
+     try testing.expectEqual(@as(?[]u8, null), reg.loadErrorNameDupe(testing.allocator, "missing"));
+ }
+@@ -2687,3 +3070,33 @@ test "UnloadMark: models unloaded together count as one pending release" {
      m.record(1_200 + UNLOAD_SETTLE_MS + 1, 5);
      try testing.expectEqual(@as(u64, 5), m.bytes);
  }
@@ -5370,7 +5408,7 @@ index 9e12566..a1b17cc 100644
 +    std.debug.print("PASS: actual ANE worker refuses missing owners and preserves independently uncertain original lineage; cancellation metadata only\n", .{});
 +}
 diff --git a/src/server.zig b/src/server.zig
-index 720b2c6..37f7a7c 100644
+index 720b2c6..962b3b2 100644
 --- a/src/server.zig
 +++ b/src/server.zig
 @@ -1,4 +1,9 @@
@@ -5728,7 +5766,7 @@ index 720b2c6..37f7a7c 100644
          .id => |id| requested_model_id = id,
          .unknown_path => {
              try sendErrorResponse(allocator, stream, "404 Not Found", "model_not_found", "No model is registered at that path; load it first with POST /v1/load-model", 404);
-@@ -2873,7 +3082,14 @@ fn handleConnection(
+@@ -2873,7 +3082,15 @@ fn handleConnection(
              return;
          }
      }
@@ -5740,11 +5778,19 @@ index 720b2c6..37f7a7c 100644
 +        try sendEnsureLoadedError(allocator, stream, scheduler, entry.id, err);
 +        return;
 +    };
-+    const lm = scheduler.ensureLoaded(if (ownership_entry) |entry| entry.id else requested_model_id) catch |err| {
++    const load_target_id = if (ownership_entry) |entry| entry.id else requested_model_id;
++    const lm = scheduler.ensureLoaded(load_target_id) catch |err| {
          // Headless gen-only boot (media models resident, no default chat
          // model): /props keeps answering with the live memory counters —
          // the app's tray polls it, and a 503 here read as "0 MB".
-@@ -2887,6 +3103,10 @@ fn handleConnection(
+@@ -2881,12 +3098,16 @@ fn handleConnection(
+             try handlePropsNoModel(allocator, stream);
+             return;
+         }
+-        try sendEnsureLoadedError(allocator, stream, scheduler, requested_model_id, err);
++        try sendEnsureLoadedError(allocator, stream, scheduler, load_target_id, err);
+         return;
+     };
      // A status read must not look like use — see `isStatusRoute`.
      const status_read = isStatusRoute(method, path);
      defer if (status_read) scheduler.releaseStatus(lm) else scheduler.release(lm);
@@ -5755,7 +5801,7 @@ index 720b2c6..37f7a7c 100644
  
      // A model loaded on demand freezes its own auto-context here, for the same
      // reason the `--model` primary does at startup: the number we advertise is
-@@ -7800,7 +8020,7 @@ fn handleModelsRescan(allocator: std.mem.Allocator, stream: *Conn) !void {
+@@ -7800,7 +8021,7 @@ fn handleModelsRescan(allocator: std.mem.Allocator, stream: *Conn) !void {
  /// Plan 05 Phase E: explicit cold-load. Strict on unknown ids (404 — the
  /// caller asked for a specific id, not "anything"). Routes through
  /// scheduler.ensureLoaded so eviction/back-pressure kicks in.
@@ -5764,18 +5810,20 @@ index 720b2c6..37f7a7c 100644
      const scheduler = global_scheduler orelse {
          try sendErrorResponse(allocator, stream, "503 Service Unavailable", "internal_error", "Scheduler not ready", 503);
          return;
-@@ -7885,11 +8105,20 @@ fn handleLoadModelStrict(allocator: std.mem.Allocator, stream: *Conn, request_bo
+@@ -7885,11 +8106,21 @@ fn handleLoadModelStrict(allocator: std.mem.Allocator, stream: *Conn, request_bo
          .id => |id| requested_id = id,
          else => {},
      };
 -    const lm = scheduler.ensureLoaded(requested_id) catch |err| {
+-        try sendEnsureLoadedError(allocator, stream, scheduler, requested_id, err);
 +    const ownership_entry = scheduler.registry.resolveEntry(requested_id) catch null;
 +    if (ownership_entry) |entry| fios_requests.bind(stream.io, ownership, entry.id) catch |err| {
 +        try sendEnsureLoadedError(allocator, stream, scheduler, entry.id, err);
 +        return;
 +    };
-+    const lm = scheduler.ensureLoaded(if (ownership_entry) |entry| entry.id else requested_id) catch |err| {
-         try sendEnsureLoadedError(allocator, stream, scheduler, requested_id, err);
++    const load_target_id = if (ownership_entry) |entry| entry.id else requested_id;
++    const lm = scheduler.ensureLoaded(load_target_id) catch |err| {
++        try sendEnsureLoadedError(allocator, stream, scheduler, load_target_id, err);
          return;
      };
      defer scheduler.release(lm);
@@ -5786,7 +5834,7 @@ index 720b2c6..37f7a7c 100644
      // Promotion happens only past ensureLoaded's error switch: a load that
      // FAILED must never steal the default from a model that answers.
      if (make_default) {
-@@ -8030,6 +8259,7 @@ fn handleTranscriptions(allocator: std.mem.Allocator, stream: *Conn, body: []con
+@@ -8030,6 +8261,7 @@ fn handleTranscriptions(allocator: std.mem.Allocator, stream: *Conn, body: []con
              try sendErrorResponse(allocator, stream, "400 Bad Request", "invalid_request_error", "diarized_json needs Nemotron 3 Diarization, which is not on disk or did not load: download " ++ DIARIZER_REPO ++ " beside the ASR model", 400);
              return;
          }).id;
@@ -5794,7 +5842,7 @@ index 720b2c6..37f7a7c 100644
          diarizer = global_scheduler.?.ensureLoaded(id) catch |err| blk: {
              log.warn("  diarizer {s} did not load ({s}): one speaker\n", .{ id, @errorName(err) });
              break :blk null;
-@@ -8054,16 +8284,19 @@ fn handleTranscriptions(allocator: std.mem.Allocator, stream: *Conn, body: []con
+@@ -8054,16 +8286,19 @@ fn handleTranscriptions(allocator: std.mem.Allocator, stream: *Conn, body: []con
          defer if (timed) |*x| x.deinit(allocator);
          if (aligner) |*al| {
              if (t.text.len > 0 and al.languages & transcription_mod.languageBit(t.language orelse "") != 0) {
@@ -5824,7 +5872,7 @@ index 720b2c6..37f7a7c 100644
                  if (al.lm) |alm| timed = (try alignPiece(allocator, stream, alm, pcm[start..end], t.text, t.language.?, who, start * 1000 / transcription_mod.SAMPLE_RATE)) orelse return;
              }
          }
-@@ -8179,6 +8412,7 @@ fn findCompanion(arch_hint: []const u8) ?*LoadedModel {
+@@ -8179,6 +8414,7 @@ fn findCompanion(arch_hint: []const u8) ?*LoadedModel {
  
  fn findAligner(allocator: std.mem.Allocator) !?Aligner {
      const entry = findCompanion("qwen3_forced_aligner") orelse return null;
@@ -5832,7 +5880,7 @@ index 720b2c6..37f7a7c 100644
      var config = model_mod.parseConfig(global_registry.?.io, allocator, entry.path) catch return null;
      defer config.deinit(allocator);
      const fa = config.forced_aligner orelse return null;
-@@ -8584,9 +8818,9 @@ fn embeddedEngineSettings(st: PropsSettings, engine: PropsEngine, engine_mtp: bo
+@@ -8584,9 +8820,9 @@ fn embeddedEngineSettings(st: PropsSettings, engine: PropsEngine, engine_mtp: bo
      return out;
  }
  
@@ -5844,7 +5892,7 @@ index 720b2c6..37f7a7c 100644
      var out = embeddedEngineSettings(mlxPropsSettings(lm), engine, engine_mtp);
      if (lm.ane != null) out.kv_quant = "off";
      return out;
-@@ -8754,7 +8988,7 @@ fn handleProps(allocator: std.mem.Allocator, stream: *Conn, lm: *LoadedModel) !v
+@@ -8754,7 +8990,7 @@ fn handleProps(allocator: std.mem.Allocator, stream: *Conn, lm: *LoadedModel) !v
      defer allocator.free(ngram_json);
      const batching_json = try batchingPropsJson(allocator, batchVerdictFor(lm));
      defer allocator.free(batching_json);
@@ -5853,7 +5901,7 @@ index 720b2c6..37f7a7c 100644
      defer allocator.free(settings_json);
      const cluster_json = try @import("distributed.zig").propsJson(allocator);
      defer allocator.free(cluster_json);
-@@ -9300,7 +9534,7 @@ fn handleDetokenize(
+@@ -9300,7 +9536,7 @@ fn handleDetokenize(
  
      const ids = try allocator.alloc(u32, tokens_val.array.items.len);
      defer allocator.free(ids);
@@ -5862,7 +5910,7 @@ index 720b2c6..37f7a7c 100644
          try sendErrorResponse(allocator, stream, "400 Bad Request", "invalid_request_error", "'tokens' must be integers inside the model's vocabulary", 400);
          return;
      }
-@@ -9665,9 +9899,9 @@ fn echoModelName(root: std.json.ObjectMap, fallback: []const u8) []const u8 {
+@@ -9665,9 +9901,9 @@ fn echoModelName(root: std.json.ObjectMap, fallback: []const u8) []const u8 {
  
  /// The vocabulary a request's token ids index. An embedded engine's stub config keeps the
  /// default vocab; its ids are the engine's, and an id past its vocab aborts inside llama.cpp.
@@ -5874,7 +5922,7 @@ index 720b2c6..37f7a7c 100644
      return if (lm.config) |c| c.vocab_size else 0;
  }
  
-@@ -10555,7 +10789,7 @@ fn handleCompletions(
+@@ -10555,7 +10791,7 @@ fn handleCompletions(
          return;
      };
  
@@ -5883,7 +5931,7 @@ index 720b2c6..37f7a7c 100644
      defer if (prompt == .ids) allocator.free(prompt.ids);
      switch (prompt) {
          .missing, .invalid => {
-@@ -13838,6 +14072,50 @@ fn findContentLength(headers: []const u8) ?usize {
+@@ -13838,6 +14074,50 @@ fn findContentLength(headers: []const u8) ?usize {
  /// Case-insensitive header lookup returning the trimmed VALUE (`Content-Type`
  /// carries the multipart boundary, so `/v1/images/edits` can't be parsed from
  /// the body alone like every other endpoint).
@@ -5934,7 +5982,7 @@ index 720b2c6..37f7a7c 100644
  fn findHeaderValue(headers: []const u8, comptime name_lower: []const u8) ?[]const u8 {
      var lines = std.mem.splitSequence(u8, headers, "\r\n");
      while (lines.next()) |line| {
-@@ -14405,6 +14683,52 @@ test "resolveRequestModelId: a path names its own entry, never the default model
+@@ -14405,6 +14685,52 @@ test "resolveRequestModelId: a path names its own entry, never the default model
      try std.testing.expectEqualStrings("", resolveRequestModelId(reg, &aliases, "", "/v1/chat/completions").id);
  }
  
@@ -5987,7 +6035,7 @@ index 720b2c6..37f7a7c 100644
  test "the route-existence 404 is answered BEFORE the model is resolved" {
      // A path we do not serve must cost nothing. Resolution ran first, so
      // `POST /v1/load` (the real route is /v1/load-model) with a `model` field
-@@ -14413,7 +14737,7 @@ test "the route-existence 404 is answered BEFORE the model is resolved" {
+@@ -14413,7 +14739,7 @@ test "the route-existence 404 is answered BEFORE the model is resolved" {
      // answer has to precede `ensureLoaded`, not sit in one of its error arms.
      const src = @embedFile("server.zig");
      const gate = "if (!routeExists(" ++ "path)) {";
@@ -5996,7 +6044,7 @@ index 720b2c6..37f7a7c 100644
      const gate_at = std.mem.indexOf(u8, src, gate) orelse return error.GateMissing;
      const resolve_at = std.mem.indexOf(u8, src, resolve) orelse return error.ResolveMissing;
      try std.testing.expect(gate_at < resolve_at);
-@@ -14871,8 +15195,24 @@ pub const insufficient_free_memory_message =
+@@ -14871,8 +15197,24 @@ pub const insufficient_free_memory_message =
      "Not enough free memory to load model: weights + warmup headroom exceed what is currently available. " ++
      "Close other apps or models and retry (the server log names the peak estimate and available memory), or pass --skip-mem-preflight to override.";
  
@@ -6021,7 +6069,7 @@ index 720b2c6..37f7a7c 100644
      switch (err) {
          error.UnknownModelId => try sendErrorResponse(allocator, stream, "404 Not Found", "model_not_found", "Unknown model id", 404),
          error.NotLoaded => try sendErrorResponse(allocator, stream, "503 Service Unavailable", "model_not_loaded", "Requested model is not currently loaded", 503),
-@@ -28214,3 +28554,21 @@ test "proxiedBody: a Windows path id is spliced back escaped, so the forwarded b
+@@ -28214,3 +28556,21 @@ test "proxiedBody: a Windows path id is spliced back escaped, so the forwarded b
      defer a.free(out);
      try std.testing.expectEqualStrings("{\"model\":\"C:\\\\m\"}", out);
  }

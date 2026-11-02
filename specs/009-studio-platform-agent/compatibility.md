@@ -304,3 +304,15 @@ explicit SIGKILL/reap, retaining unknown coverage/unproven terminality. That is
 no installed force/stop authority or native completion receipt. Earlier graceful
 exit-after-local-close results belong to their earlier source artifacts. G2
 and complete native/Studio lifecycle acceptance remain unfinished.
+
+
+### Exact error-target binding (partial source checkpoint)
+
+Native error-name lookup now acquires the registry mutex before reading the
+empty/marketing default. Both request and explicit-load failure paths reuse
+the exact target already passed to loading, so a later default change cannot
+redirect their diagnostic lookup. The existing model-free error-state case now
+covers explicit original IDs and ordinary aliases after a default switch;
+3/3 selected tests and full native build pass. No concurrent native failure,
+model computation or all-client/native admission proof is claimed. G2 remains
+open and earlier lifecycle/inference receipts retain their original artifacts.

@@ -20,11 +20,12 @@ const args=process.argv.slice(2);
 const functionalBuildOnly=args.at(-1)==='--functional-build-only';
 if(functionalBuildOnly)args.pop();
 const functionalIndex=args.indexOf('--functional-test');
+const registryErrorCase='ModelRegistry: memory-refused loads keep their identity, other failures expose their name';
 let functionalTest=null;
 if(functionalIndex>=0){
  assert(functionalBuildOnly&&args.lastIndexOf('--functional-test')===functionalIndex);
  functionalTest=args[functionalIndex+1];
- assert(['fios native default selection keeps the protected identity','fios native llama actor preserves independently uncertain owners','fios native load preparation preserves independently uncertain owners','fios native actor preserves enrolled backend uncertainty','fios native nested preparation preserves merged request origins','fios native queued preparation preserves merged request origins'].includes(functionalTest));
+ assert(['fios native default selection keeps the protected identity','fios native llama actor preserves independently uncertain owners','fios native load preparation preserves independently uncertain owners','fios native actor preserves enrolled backend uncertainty','fios native nested preparation preserves merged request origins','fios native queued preparation preserves merged request origins',registryErrorCase].includes(functionalTest));
  args.splice(functionalIndex,2);
 }
 
@@ -370,9 +371,10 @@ pub fn build(b:*std.Build) void {
    // Two import-only anonymous roots accompany the fixed selected cases.
    const total=functionalCases.length+2;
    assert.match(output,new RegExp(`${total}/${total} tests passed|All ${total} tests passed\\.`));
-   assert(output.includes(functionalTest==='fios native default selection keeps the protected identity'?'PASS: actual scheduler keeps protected exact model across concurrent empty/marketing default changes':functionalTest==='fios native llama actor preserves independently uncertain owners'?'PASS: actual actor retirement preserves uncertain original roots and releases healthy metadata owners':functionalTest==='fios native load preparation preserves independently uncertain owners'?'PASS: actual load preparation preserves uncertain original lineage and releases healthy CPU ownership':functionalTest==='fios native actor preserves enrolled backend uncertainty'?'PASS: actual actor retirement consumes its enrolled negative probe and preserves original lineage':functionalTest==='fios native nested preparation preserves merged request origins'?'PASS: actual nested preparation preserves merged origins through native SDK metadata capture':'PASS: actual queued preparation preserves merged origins across a real worker and native metadata capture'));
+   if(functionalTest!==registryErrorCase)assert(output.includes(functionalTest==='fios native default selection keeps the protected identity'?'PASS: actual scheduler keeps protected exact model across concurrent empty/marketing default changes':functionalTest==='fios native llama actor preserves independently uncertain owners'?'PASS: actual actor retirement preserves uncertain original roots and releases healthy metadata owners':functionalTest==='fios native load preparation preserves independently uncertain owners'?'PASS: actual load preparation preserves uncertain original lineage and releases healthy CPU ownership':functionalTest==='fios native actor preserves enrolled backend uncertainty'?'PASS: actual actor retirement consumes its enrolled negative probe and preserves original lineage':functionalTest==='fios native nested preparation preserves merged request origins'?'PASS: actual nested preparation preserves merged origins through native SDK metadata capture':'PASS: actual queued preparation preserves merged origins across a real worker and native metadata capture'));
    if(functionalCases.includes('fios native ANE worker retains original request owners'))assert(output.includes('PASS: actual ANE worker refuses missing owners and preserves independently uncertain original lineage; cancellation metadata only'));
    if(functionalCases.includes('fios native serving frame preserves cached source uncertainty'))assert(output.includes('PASS: actual native serving state preserves cached source uncertainty with no local owners; no backend handles'));
+   if(functionalTest===registryErrorCase)testLog+='PASS: selected existing upstream registry error-name metadata case; no backend handles.\n';
    testLog+=output;
   }
 

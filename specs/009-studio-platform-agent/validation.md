@@ -3855,3 +3855,37 @@ No native/OrbStack daemon/service action, inference, installation, new release
 package or positive installed-policy acceptance is claimed. These source/mock
 receipts do not complete T027 or native/G2/resource enrollment. Whole tasks
 remain38/55.
+
+
+### 2026-11-02 exact native error lookup/default binding (partial source checkpoint)
+
+`ModelRegistry.loadErrorNameDupe` now locks before resolving an empty/marketing
+default, keeping the borrowed identifier and error-name lookup inside the same
+protected read. Native request and explicit-load error responses now reuse the
+same resolved target ID that was passed into loading, rather than consulting a
+subsequently changed default for diagnostics. Success, model selection and
+routing policies are unchanged.
+
+The fixed functional driver can select the existing upstream metadata case
+`ModelRegistry: memory-refused loads keep their identity, other failures expose their name`.
+Its ordinary assertions now also check that an explicit original ID retains
+its failure after a default change, while empty/marketing aliases read the new
+default. This creates no backend/model handle and performs no source bypass or
+historical fault/mutation campaign. No new concurrent race reproduction or
+loaded-model failure acceptance is claimed.
+
+The preliminary protected-read-only build passes3/3 plus complete native build
+(`/tmp/fios-009-error-default-native-build.log`, preliminary capsule):
+reviewbd2ab5a59acea15bbbd97d80daa4e1cf6046fd691dae0a3bdfc198035dcfd012,
+binary167b505537ec14f1f01c78edf588217e838af1bc87db93197ed18490f267655e.
+The final metadata case, including both ordinary aliases and explicit original
+identity after the default changes, passes3/3. Complete native executable
+build/link succeeds (`/tmp/fios-009-bound-error-native-build.log`, scratchvOCyyC).
+Accepted capsule`/private/tmp/fios-009-bound-error-native-review/capsule`, review
+218cc74d1156c66e36ad00d4405ff7a37f84ad8ee5f52664619ec11a6ed4bda1,
+binary03d40133612e77d284f64ddf44661e7e3f586ea36d9d10257a6cf97eff6eda1f.
+Final focused Node24/24 and boundary pass
+(`/tmp/fios-009-bound-error-{node,boundary}.log`). No new inference/service/
+installed or concurrent native-failure result is claimed. Earlier cached-source
+drain and core inference receipts remain attributed to their own artifacts.
+Whole tasks remain38/55.
