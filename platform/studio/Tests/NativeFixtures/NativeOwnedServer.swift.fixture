@@ -1,0 +1,66 @@
+// Appended only to the private runtime translation unit. This source fixture
+// owns a fresh empty-model binary; validators are synthetic, never native leases.
+extension MLXServingProcessRuntime {
+    static func require(_ condition:Bool)throws {if !condition {throw RuntimeError.identity}}
+    static func wait(_ condition:()->Bool)throws {
+        let end=ProcessInfo.processInfo.systemUptime+10
+        while ProcessInfo.processInfo.systemUptime<end {if condition() {return};Thread.sleep(forTimeInterval:0.02)}
+        throw RuntimeError.deadline
+    }
+    fileprivate static func runNativeOwnedFixture()throws {
+        let args=CommandLine.arguments
+        try require(args.count==5)
+        let executable=try VerifiedExecutable(path:args[1],sha256:args[2]),home=args[3]
+        try require(home.hasPrefix("/private/tmp/f9-native-owned-") && executable.path.hasPrefix("/private/tmp/"))
+        guard let port=Int(args[4]) else {throw RuntimeError.invalid}
+        let models=home+"/models"
+        try require(FileManager.default.contentsOfDirectory(atPath:models).isEmpty)
+        let key=UUID().uuidString
+        let inputs=try NativeServingLaunchInputs(arguments:["serve","--host","127.0.0.1","--port",String(port),"--model-dir",models,"--no-warmup-eager","--api-key-env","FIOS_MLX_SERVING_API_KEY","--api-key-strict"],
+            environment:["PATH":"/usr/bin:/bin","HOME":home,"LANG":"C","LC_ALL":"C","FIOS_MLX_SERVING_API_KEY":key],workingDirectory:home)
+        let base=String(repeating:"a",count:64)
+        let runtime=try MLXServingProcessRuntime(executable:executable,arguments:inputs.arguments,environment:inputs.environment,workingDirectory:home,serviceProfileHash:base,
+            validateReservation:{_ in},validateStopReservation:{_ in})
+        let census=try ServiceProcessCensus(executable:executable,relatedRoots:[URL(fileURLWithPath:executable.path).deletingLastPathComponent().path],reviewDigest:base,uid:geteuid())
+        let probe=try ServiceHealthProbe(reviewedInputs:inputs)
+        let collector=ServiceHealthCollector(presence:census.capture,health:probe.probe,listener:probe.listenerIdentity,
+            now:HostResources.nowMilliseconds,uptime:{ProcessInfo.processInfo.systemUptime})
+        var identities=[ServiceIdentity]()
+        defer {
+            // Best-effort original-child cleanup after a fixture error. It cannot
+            // produce a passing receipt, native terminality or PID-only action.
+            runtime.lock.lock();let child=runtime.process,identity=runtime.identity;runtime.lock.unlock()
+            if let child,let identity {
+                try? child.terminate(expected:identity,deadline:ProcessInfo.processInfo.systemUptime+2)
+                let end=ProcessInfo.processInfo.systemUptime+2
+                while child.isRunning && ProcessInfo.processInfo.systemUptime<end {Thread.sleep(forTimeInterval:0.01)}
+            }
+        }
+        for _ in 0..<2 {
+            let id=UUID().uuidString.lowercased()
+            try runtime.begin(ServiceLaunchCommand(service:.mlx,id:id,expectedSHA256:executable.sha256,profileHash:runtime.recoveryProfileHash),deadline:ProcessInfo.processInfo.systemUptime+10)
+            var identity:ServiceIdentity?
+            try wait {
+                guard case .started(let value)=runtime.acknowledgeResult(id:id),!runtime.validationPending else {return false}
+                identity=value;return true
+            }
+            guard let identity else {throw RuntimeError.identity}
+            identities.append(identity)
+            try wait {collector.capture(sessionReady:true,credentialsReady:true)?.responding==true}
+            guard let observation=collector.capture(sessionReady:true,credentialsReady:true) else {throw RuntimeError.identity}
+            try require(observation.identity==identity && observation.health == .healthy && observation.nativeIdle==nil)
+            let receipt=ServiceRecordedLaunch(service:.mlx,id:id,identity:identity,boot:try HostBoot.identity(),profileHash:runtime.recoveryProfileHash)
+            let stop=UUID().uuidString.lowercased()
+            try runtime.beginStop(id:stop,matching:receipt,deadline:ProcessInfo.processInfo.systemUptime+10)
+            try wait {runtime.acknowledgeStopResult(id:stop,matching:receipt) == .localExited && !runtime.validationPending}
+            try require(collector.capture(sessionReady:true,credentialsReady:true)==nil)
+            try require(runtime.acknowledgeResult(id:id) == .started(identity))
+            try require(runtime.acknowledgeStopResult(id:stop,matching:receipt) == .localExited)
+        }
+        try require(identities.count==2 && identities[0] != identities[1])
+        try require(FileManager.default.contentsOfDirectory(atPath:models).isEmpty)
+        print("PASS: actual empty-model native server owned start/identity/listener-health/local stop/restart; two original children, no model request, synthetic reservations only")
+    }
+}
+
+@main private enum NativeOwnedServerFixture {static func main()throws {try MLXServingProcessRuntime.runNativeOwnedFixture()}}

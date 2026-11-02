@@ -53,6 +53,9 @@ test("real worker stops slow/no-token streams, preserves partial answer, and rec
 
 test("idle watchdog observes actual data, not synthetic keepalives; worker can restart after crash", async () => {
   const mock = await mockMlx();
+  // Readiness must not start the short upstream-data watchdog measurement.
+  // A delayed probe makes the old generic HTTP request handshake fail reliably.
+  mock.health.delayMs = 500;
   const client = new AgentClient({
     env: { MLX_BASE_URL: mock.url },
     idleMs: 10000,
@@ -60,7 +63,7 @@ test("idle watchdog observes actual data, not synthetic keepalives; worker can r
   try {
     await client.ready();
     const events = [];
-    const received = once(mock.server, "request", {
+    const received = once(mock.server, "model-request", {
       signal: AbortSignal.timeout(10000),
     });
     const firstRun = (async () => {

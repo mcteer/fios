@@ -1,0 +1,49 @@
+// Ordinary producer/consumer pthreads. No scheduling interception, counterfeit
+// handles, injected failures, model data or GPU object. The worker awaits its
+// caller's normal release while the caller observes a bounded pending join.
+#define JOIN_REQUIRE(v,m) do { if (!(v)) { fprintf(stderr,"%s\n",m); return 1; } } while (0)
+typedef struct {
+    pthread_mutex_t mutex;
+    pthread_cond_t condition;
+    int entered, released, finished;
+} selected_join_work;
+static void *selected_join_work_main(void *context) {
+    selected_join_work *work=context;
+    if (pthread_mutex_lock(&work->mutex) != 0) abort();
+    work->entered=1;
+    if (pthread_cond_broadcast(&work->condition) != 0) abort();
+    while (!work->released)
+        if (pthread_cond_wait(&work->condition,&work->mutex) != 0) abort();
+    work->finished=1;
+    if (pthread_mutex_unlock(&work->mutex) != 0) abort();
+    return NULL;
+}
+static int selected_join_wait_case(void) {
+    selected_join_work work={PTHREAD_MUTEX_INITIALIZER,PTHREAD_COND_INITIALIZER,0,0,0};
+    pthread_t worker;
+    JOIN_REQUIRE(pthread_create(&worker,NULL,selected_join_work_main,&work)==0,"Ordinary join target did not start");
+    JOIN_REQUIRE(pthread_mutex_lock(&work.mutex)==0,"Join work mutex unavailable");
+    while (!work.entered)
+        JOIN_REQUIRE(pthread_cond_wait(&work.condition,&work.mutex)==0,"Join target startup observation failed");
+    JOIN_REQUIRE(pthread_mutex_unlock(&work.mutex)==0,"Join work mutex release failed");
+    fios_native_join_ticket *ticket=fios_native_join_start(worker);
+    JOIN_REQUIRE(ticket!=NULL,"Ordinary native join ticket unavailable");
+    struct timespec before,after;
+    JOIN_REQUIRE(clock_gettime(CLOCK_MONOTONIC,&before)==0,"Join test clock unavailable");
+    int status=-1;
+    JOIN_REQUIRE(!fios_native_join_wait(ticket,1,&status),"A still-live ordinary worker was reported joined");
+    JOIN_REQUIRE(clock_gettime(CLOCK_MONOTONIC,&after)==0,"Join test completion clock unavailable");
+    const double elapsed=(double)(after.tv_sec-before.tv_sec)+(double)(after.tv_nsec-before.tv_nsec)/1000000000.0;
+    JOIN_REQUIRE(elapsed>=0 && elapsed<0.25,"Pending join blocked its caller beyond the finite observation budget");
+    JOIN_REQUIRE(pthread_mutex_lock(&work.mutex)==0,"Join work release mutex unavailable");
+    JOIN_REQUIRE(!work.finished,"Join target finished without its normal release");
+    work.released=1;
+    JOIN_REQUIRE(pthread_cond_broadcast(&work.condition)==0,"Join target release failed");
+    JOIN_REQUIRE(pthread_mutex_unlock(&work.mutex)==0,"Join work release failed");
+    JOIN_REQUIRE(fios_native_join_wait(ticket,1000,&status) && status==0,"Original worker did not genuinely join after release");
+    JOIN_REQUIRE(work.finished,"Original worker result was lost after join");
+    fios_native_join_release(ticket);
+    JOIN_REQUIRE(pthread_cond_destroy(&work.condition)==0 && pthread_mutex_destroy(&work.mutex)==0,"Ordinary joined work remained in use");
+    puts("PASS: real producer/consumer worker remains held through a bounded pending join and genuinely joins after normal release");
+    return 0;
+}

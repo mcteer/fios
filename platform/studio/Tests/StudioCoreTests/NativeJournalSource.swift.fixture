@@ -1,0 +1,157 @@
+// Administrative source-request correlation only. This does not instantiate a
+// ModelBroker admission binding, issue a task grant, or resolve an inference.
+import Foundation
+import Darwin
+import CryptoKit
+import CSQLite
+
+@main
+struct NativeJournalSource {
+    static let model="mlx-community/gemma-4-e4b-it-4bit"
+    // Private administrative observation metadata only; never native proof.
+    struct PrimaryRecord {
+        var samples=0,positive=0,preparing=0,active=0,responding=0
+        var sequence:UInt64=0
+        var diagnostic=NativePrimaryActivityDiagnostics(configured:true)
+        mutating func capture(client:NativeControlClient,instance:String,directory:URL)throws {
+            let sample=try client.primaryActivity(instance:instance,after:sequence),value=sample.activity
+            diagnostic.completed(sample,expectedInstance:instance,now:HostResources.nowMilliseconds())
+            guard diagnostic.summary(now:HostResources.nowMilliseconds())["state"] as? String=="received",
+                  value.models.count<=1,value.models.allSatisfy({WireScalar.exactModel($0.model,NativeJournalSource.model)}),
+                  let stamp=value.sampledAt,samples<32 else {throw NativeControlError.invalid}
+            samples+=1;sequence=value.sampleSequence
+            if let row=value.models.first {
+                positive+=1;preparing=max(preparing,row.preparing);active=max(active,row.active);responding=max(responding,row.responding)
+            }
+            let fields:[String:Any]=["version":1,"scope":"primary_request_ownership","coverage":"unknown","authority":false,
+                "native_instance":instance,"model":NativeJournalSource.model,"samples":samples,"positive_samples":positive,
+                "source_sequence":sequence,"source_sampled_at":stamp,"preparing_max":preparing,"active_max":active,"responding_max":responding,
+                "uncertainty_observed":diagnostic.summary(now:HostResources.nowMilliseconds())["retained_uncertainty"] as? Bool ?? true]
+            try AtomicState.write(JSONSerialization.data(withJSONObject:fields,options:[.sortedKeys]),to:directory.appendingPathComponent("source-primary-observation.json"))
+        }
+    }
+    static func emit(_ value:[String:Any])throws {
+        var bytes=try JSONSerialization.data(withJSONObject:value,options:[.sortedKeys]);bytes.append(10)
+        FileHandle.standardOutput.write(bytes)
+    }
+    static func digest(_ bytes:Data)->String {SHA256.hash(data:bytes).map {String(format:"%02x",$0)}.joined()}
+    static func main() {
+        do {try run()} catch {FileHandle.standardError.write(Data("Native journal source fixture refused; retain private state.\n".utf8));exit(1)}
+    }
+    static func run()throws {
+        let args=Array(CommandLine.arguments.dropFirst())
+        guard geteuid() != 0,args.count>1,args[1].hasPrefix("/private/tmp/f9-model-") else {throw ControlError.invalid_request}
+        if args[0]=="--inspect" {try inspect(args);return}
+        guard args.count==9,args[0]=="--observe",let pid=Int32(args[5]),pid>1,
+              WireScalar.sha256(args[6]),WireScalar.sha256(args[7]),WireScalar.uuid(args[8]),
+              ProcessInfo.processInfo.physicalMemory==24*(1<<30),
+              args[2]==URL(fileURLWithPath:args[1]).deletingLastPathComponent().appendingPathComponent(".fios-native-control/control.sock").path,
+              !FileManager.default.fileExists(atPath:args[1]) else {throw ControlError.invalid_request}
+        let peer=NativeControlPeer(pid:pid,start:try WorkerResources.startIdentifier(pid:pid),executable:try VerifiedExecutable(path:args[3],sha256:args[4]))
+        let client=NativeControlClient(path:args[2],peer:peer,version:3)
+        let native=try client.request(operation:.observe)
+        let scope=InferenceScope(host:"fios-core.lab",endpointHash:args[6],profileHash:args[7],managerEpoch:UUID().uuidString.lowercased(),
+            nativeEpoch:native.instance,canonicalModel:model,nativeModel:model,sequence:1,sampledAt:HostResources.nowMilliseconds())
+        let job=args[8],journal=try Journal(directory:URL(fileURLWithPath:args[1]))
+        try journal.claim(job:job,attempt:0,model:model,scope:scope)
+        let poller=NativeLineagePoller(journal:journal,source:client)
+        let correlation=try scope.nativeRequestCorrelationID(job:job,attempt:0)
+        var primary=PrimaryRecord()
+        try primary.capture(client:client,instance:native.instance,directory:journal.directory)
+        let flags=fcntl(STDIN_FILENO,F_GETFL)
+        guard flags>=0,fcntl(STDIN_FILENO,F_SETFL,flags|O_NONBLOCK)==0 else {throw ControlError.invalid_request}
+        try emit(["event":"ready","job":job,"correlation_id":correlation,"native_instance":native.instance,
+            "scope_sha256":digest(try scope.encoded()),"native_authority":false])
+        let deadline=ProcessInfo.processInfo.systemUptime+25
+        var input=Data(),attempted=false,stopping=false,pending=false,nextPoll=Double.infinity
+        while !stopping && ProcessInfo.processInfo.systemUptime<deadline {
+            var bytes=[UInt8](repeating:0,count:32)
+            let count=Darwin.read(STDIN_FILENO,&bytes,bytes.count)
+            if count>0 {
+                input.append(contentsOf:bytes.prefix(count))
+                guard input.count<=32 else {throw ControlError.invalid_request}
+                while let end=input.firstIndex(of:10) {
+                    let command=String(decoding:input.prefix(upTo:end),as:UTF8.self)
+                    input.removeSubrange(...end)
+                    if command=="attempt",!attempted,!stopping {
+                        // Durable MAY-dispatch edge precedes the parent's one
+                        // actual HTTP attempt; this is not admission authority.
+                        try journal.markDispatched(job:job,attempt:0);attempted=true
+                        nextPoll=ProcessInfo.processInfo.systemUptime+0.2
+                        try emit(["event":"dispatched","native_authority":false])
+                    } else if command=="stop",!stopping {stopping=true}
+                    else {throw ControlError.invalid_request}
+                }
+            } else if count==0 {stopping=true}
+            else if errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR {throw ControlError.invalid_request}
+            if try poller.drain(now:HostResources.nowMilliseconds()) {pending=false}
+            let tick=ProcessInfo.processInfo.systemUptime
+            if !stopping,attempted,tick>=nextPoll,!pending {
+                pending=try poller.beginNext();nextPoll=tick+2
+                try primary.capture(client:client,instance:native.instance,directory:journal.directory)
+            }
+            if !stopping {Thread.sleep(forTimeInterval:0.025)}
+        }
+        // Read-only lookup completion cannot resolve the model request. No
+        // fresh query starts here, and expiry never becomes native terminality.
+        let drainUntil=ProcessInfo.processInfo.systemUptime+2.2
+        while pending && ProcessInfo.processInfo.systemUptime<drainUntil {
+            if try poller.drain(now:HostResources.nowMilliseconds()) {pending=false;break}
+            Thread.sleep(forTimeInterval:0.025)
+        }
+        try journal.markUncertain(job:job,attempt:0)
+        guard try journal.inferenceScope(job:job,attempt:0)?.state == .uncertain,!pending else {throw JournalError.invalid}
+        try emit(["event":"stopped","attempt_intent_recorded":attempted,"uncertainty_retained":true,"native_authority":false])
+    }
+    static func inspect(_ args:[String])throws {
+        guard args.count==7,WireScalar.uuid(args[2]),WireScalar.sha256(args[3]),WireScalar.sha256(args[5]),["0","1"].contains(args[6]) else {throw ControlError.invalid_request}
+        _=try NativeControlWire.instanceBytes(args[4])
+        // A second connection is permitted only after the parent reaped the
+        // observer, with both stopped-state writer fences held here.
+        let stopped=try StoppedPlatformState(directory:URL(fileURLWithPath:args[1]))
+        defer {withExtendedLifetime(stopped) {}}
+        var db:OpaquePointer?,row:OpaquePointer?
+        guard sqlite3_open_v2(URL(fileURLWithPath:args[1]).appendingPathComponent("state.sqlite").path,&db,SQLITE_OPEN_READONLY|SQLITE_OPEN_FULLMUTEX,nil)==SQLITE_OK else {throw JournalError.storage}
+        defer {sqlite3_finalize(row);sqlite3_close(db)}
+        let sql="SELECT s.payload,s.state,i.uncertain,l.payload FROM inference_scopes s JOIN inference i ON i.job=s.job AND i.attempt=s.attempt LEFT JOIN native_lineages l ON l.job=s.job AND l.attempt=s.attempt WHERE s.job=? AND s.attempt=0"
+        guard sqlite3_prepare_v2(db,sql,-1,&row,nil)==SQLITE_OK else {throw JournalError.storage}
+        let transient=unsafeBitCast(-1,to:sqlite3_destructor_type.self)
+        guard sqlite3_bind_text(row,1,args[2],-1,transient)==SQLITE_OK,sqlite3_step(row)==SQLITE_ROW,sqlite3_column_int(row,2)==1 else {throw JournalError.invalid}
+        func data(_ column:Int32)throws->Data {
+            let count=Int(sqlite3_column_bytes(row,column))
+            guard (1...16384).contains(count),let bytes=sqlite3_column_text(row,column) else {throw JournalError.invalid}
+            return Data(bytes:bytes,count:count)
+        }
+        let payload=try data(0),scope=try InferenceScope.decode(payload)
+        guard digest(payload)==args[5],String(decoding:try data(1),as:UTF8.self)=="uncertain",
+              scope.host=="fios-core.lab",WireScalar.exactModel(scope.canonicalModel,model),WireScalar.exactModel(scope.nativeModel,model),
+              scope.nativeEpoch==args[4],try scope.nativeRequestCorrelationID(job:args[2],attempt:0)==args[3] else {throw JournalError.invalid}
+        var root:String?=nil
+        if sqlite3_column_type(row,3) != SQLITE_NULL {
+            let checkpoint=try data(3)
+            try NativeRequestLineageConsumer.validateCheckpoint(checkpoint,scope:scope,job:args[2],attempt:0)
+            guard let object=try JSONSerialization.jsonObject(with:checkpoint) as? [String:Any],object["correlationID"] as? String==args[3],
+                  object["instance"] as? String==args[4],object["fenced"] as? Bool==false else {throw JournalError.invalid}
+            root=object["root"] as? String
+        }
+        let observed=root.flatMap(UInt64.init).map {$0>0} ?? false
+        guard args[6]=="0" || observed,sqlite3_step(row)==SQLITE_DONE else {throw JournalError.invalid}
+        let primaryBytes=try Data(contentsOf:URL(fileURLWithPath:args[1]).appendingPathComponent("source-primary-observation.json"))
+        try StrictJSON.validate(primaryBytes,maximum:4096)
+        guard let primary=try JSONSerialization.jsonObject(with:primaryBytes) as? [String:Any],
+              primary["version"] as? Int==1,primary["scope"] as? String=="primary_request_ownership",
+              primary["coverage"] as? String=="unknown",primary["authority"] as? Bool==false,
+              primary["native_instance"] as? String==args[4],let observedModel=primary["model"] as? String,WireScalar.exactModel(observedModel,model),
+              let samples=WireScalar.integer(primary["samples"],maximum:32),samples>0,
+              let positive=WireScalar.integer(primary["positive_samples"],maximum:samples),
+              let sourceSequence=WireScalar.integer(primary["source_sequence"]),sourceSequence>0,
+              let sourceTime=WireScalar.integer(primary["source_sampled_at"]),sourceTime>0,
+              let preparing=WireScalar.integer(primary["preparing_max"],maximum:256),
+              let active=WireScalar.integer(primary["active_max"],maximum:256),
+              let responding=WireScalar.integer(primary["responding_max"],maximum:256),
+              primary["uncertainty_observed"] is Bool,
+              args[6]=="0" || (positive>0 && preparing+active+responding>0) else {throw JournalError.invalid}
+        try emit(["source_fixture_only":true,"scope_correlated":true,"persisted_native_root":root.map {$0 as Any} ?? NSNull(),
+            "actual_request_root_observed":observed,"primary_observations":primary,"inference_state":"uncertain","native_quiescence":"unproven","native_authority":false])
+    }
+}

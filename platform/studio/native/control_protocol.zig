@@ -1,0 +1,455 @@
+// Finite native-private control protocol. Transport must authenticate its peer.
+// No shell, PID selection, force/quit, device-terminal or coverage authority.
+const std = @import("std");
+const ownership = @import("request_ownership.zig");
+const device = @import("device_owner.zig");
+pub const OwnerBarrier = struct { context: *anyopaque, probe: *const fn (*anyopaque) device.Reading };
+pub const request_size = 32;
+pub const response_size = 64;
+pub const timestamped_response_size = 80;
+pub const lineage_request_size = 64;
+pub const lineage_response_size = 112;
+pub const Status = enum(u8) { ok, invalid, maintenance, wrong_instance };
+
+// Independent partial source flags only. Null is unavailable, not false/zero.
+// No observer here grants native coverage, idle, terminality or a reservation.
+pub const BackendFenceReadings = struct {
+    mimo_warm_uncertain: ?bool = null,
+    ds4_metal_uncertainty: ?u32 = null,
+    ds4_host_uncertainty: ?u32 = null,
+};
+pub const BackendFenceSource = *const fn () BackendFenceReadings;
+pub const backend_request_size = 32;
+pub const backend_response_size = 64;
+pub fn dispatchBackendFences(tracker: *ownership.Tracker, io: std.Io, request: *const [backend_request_size]u8, source: ?BackendFenceSource) [backend_response_size]u8 {
+    var response: [backend_response_size]u8 = @splat(0);
+    @memcpy(response[0..4], "FIF9");response[4] = 1;
+    if (!std.mem.eql(u8, request[0..4], "FIB9") or request[4] != 1 or
+        !std.mem.allEqual(u8, request[5..8], 0) or !std.mem.allEqual(u8, request[24..32], 0)) {
+        response[5] = @intFromEnum(Status.invalid);return response;
+    }
+    const captured_at = std.Io.Clock.real.now(io).toMilliseconds();
+    const snapshot = tracker.snapshot(io);
+    @memcpy(response[8..24], &snapshot.instance);
+    std.mem.writeInt(u64, response[24..32], snapshot.sample_sequence, .big);
+    const stamp: u64 = if (captured_at > 0 and captured_at <= ownership.maximum_sample_sequence)
+        @intCast(captured_at) else std.math.maxInt(u64);
+    std.mem.writeInt(u64, response[32..40], stamp, .big);
+    if (!snapshot.initialized or !std.mem.eql(u8, request[8..24], &snapshot.instance)) {
+        response[5] = @intFromEnum(Status.wrong_instance);return response;
+    }
+    const flags: BackendFenceReadings = if (source) |read| read() else .{};
+    if ((flags.ds4_metal_uncertainty orelse 0) > 31 or (flags.ds4_host_uncertainty orelse 0) > 7) {
+        response[5] = @intFromEnum(Status.invalid);return response;
+    }
+    if (flags.mimo_warm_uncertain) |value| {response[6] |= 1;response[7] = @intFromBool(value);}
+    if (flags.ds4_metal_uncertainty) |value| {response[6] |= 2;std.mem.writeInt(u32, response[40..44], value, .big);}
+    if (flags.ds4_host_uncertainty) |value| {response[6] |= 4;std.mem.writeInt(u32, response[44..48], value, .big);}
+    return response;
+}
+
+// Primary ownership observation only, never normalized all-client activity.
+pub const primary_request_size = 32;
+pub const primary_record_size = 16 + ownership.model_limit;
+pub const primary_response_size = 64 + ownership.model_capacity * primary_record_size;
+pub fn dispatchPrimaryActivity(tracker: *ownership.Tracker, io: std.Io, request: *const [primary_request_size]u8) [primary_response_size]u8 {
+    var response: [primary_response_size]u8 = @splat(0);
+    @memcpy(response[0..4], "FIT9");response[4] = 1;
+    if (!std.mem.eql(u8, request[0..4], "FIA9") or request[4] != 1 or
+        !std.mem.allEqual(u8, request[5..8], 0) or !std.mem.allEqual(u8, request[24..32], 0)) {
+        response[5] = @intFromEnum(Status.invalid);return response;
+    }
+    _ = tracker.backendKnownUncertain(io); // Explicit fixed negative source; ordinary snapshots stay callback-free.
+    const captured_at = std.Io.Clock.real.now(io).toMilliseconds();
+    const snapshot = tracker.primarySnapshot(io);
+    @memcpy(response[8..24], &snapshot.instance);
+    std.mem.writeInt(u64, response[24..32], snapshot.sample_sequence, .big);
+    const stamp: u64 = if (captured_at > 0 and captured_at <= ownership.maximum_sample_sequence)
+        @intCast(captured_at) else std.math.maxInt(u64);
+    std.mem.writeInt(u64, response[32..40], stamp, .big);
+    if (!snapshot.initialized or !std.mem.eql(u8, request[8..24], &snapshot.instance)) {
+        response[5] = @intFromEnum(Status.wrong_instance);return response;
+    }
+    response[7] = @intFromBool(snapshot.uncertain);
+    inline for (.{snapshot.owned,snapshot.ingress,snapshot.preparing,snapshot.active,snapshot.responding,snapshot.model_count}, 0..) |value,index|
+        std.mem.writeInt(u32, response[40 + index * 4 ..][0..4], @intCast(value), .big);
+    for (snapshot.models[0..snapshot.model_count], 0..) |model,index| {
+        const offset = 64 + index * primary_record_size;
+        std.mem.writeInt(u16, response[offset..][0..2], @intCast(model.len), .big);
+        inline for (.{model.preparing,model.active,model.responding}, 0..) |value,phase|
+            std.mem.writeInt(u32, response[offset + 4 + phase * 4 ..][0..4], @intCast(value), .big);
+        @memcpy(response[offset + 16 ..][0..model.len], model.id[0..model.len]);
+    }
+    return response;
+}
+
+// Separate readonly frame namespace: never reinterpret lineage bytes as an
+// ingress action. A missing live lineage is unknown, not terminal/not-sent.
+pub fn dispatchLineage(tracker: *ownership.Tracker, io: std.Io, request: *const [lineage_request_size]u8) [lineage_response_size]u8 {
+    var response: [lineage_response_size]u8 = @splat(0);
+    @memcpy(response[0..4], "FIP9"); response[4] = 1; response[7] = 1;
+    @memcpy(response[24..56], request[24..56]);
+    if (!std.mem.eql(u8, request[0..4], "FIQ9") or request[4] != 1 or request[5] != 0 or
+        request[6] != 0 or request[7] != 0 or !std.mem.allEqual(u8, request[56..64], 0)) {
+        response[5] = @intFromEnum(Status.invalid);
+        return response;
+    }
+    _ = tracker.backendKnownUncertain(io);
+    const snapshot = tracker.correlationSnapshot(io, request[24..56].*);
+    @memcpy(response[8..24], &snapshot.instance);
+    std.mem.writeInt(u64, response[56..64], snapshot.sample_sequence, .big);
+    if (!std.mem.eql(u8, request[8..24], &snapshot.instance)) {
+        response[5] = @intFromEnum(Status.wrong_instance);
+        return response;
+    }
+    response[6] = @intFromBool(snapshot.found);
+    response[7] = @intFromBool(snapshot.uncertain);
+    std.mem.writeInt(u64, response[64..72], snapshot.root_sequence, .big);
+    std.mem.writeInt(u64, response[72..80], snapshot.references, .big);
+    inline for (.{snapshot.owners,snapshot.ingress,snapshot.preparing,snapshot.active,snapshot.responding}, 0..) |value,index| {
+        std.mem.writeInt(u32, response[80 + index * 4 ..][0..4], @intCast(value), .big);
+    }
+    return response;
+}
+
+pub fn dispatch(tracker: *ownership.Tracker, io: std.Io, request: *const [request_size]u8) [response_size]u8 {
+    return dispatchWithBarrier(tracker, io, request, null);
+}
+pub fn dispatchWithBarrier(tracker: *ownership.Tracker, io: std.Io, request: *const [request_size]u8, barrier: ?OwnerBarrier) [response_size]u8 {
+    return dispatchVersion(2, tracker, io, request, barrier);
+}
+pub fn dispatchTimestamped(tracker: *ownership.Tracker, io: std.Io, request: *const [request_size]u8, barrier: ?OwnerBarrier) [timestamped_response_size]u8 {
+    return dispatchVersion(3, tracker, io, request, barrier);
+}
+fn dispatchVersion(comptime version: u8, tracker: *ownership.Tracker, io: std.Io, request: *const [request_size]u8, barrier: ?OwnerBarrier) [if (version == 3) timestamped_response_size else response_size]u8 {
+    var status: Status = .ok;
+    var reading: device.Reading = .{ .outcome = .not_requested };
+    const op = request[5];
+    const sequence = std.mem.readInt(u64, request[8..16], .big);
+    const valid_format = std.mem.eql(u8, request[0..4], "FIC9") and request[4] == version and
+        request[6] == 0 and request[7] == 0 and op <= 3 and (op >= 2 or sequence == 0);
+    // A known-negative source must refuse BEFORE touching its device barrier.
+    // The final capture below independently catches uncertainty during a probe.
+    if (valid_format and op == 3) _ = tracker.backendKnownUncertain(io);
+    const before = tracker.snapshot(io);
+    if (!valid_format) {
+        status = .invalid;
+    } else if (op != 0 and (!before.initialized or !std.mem.eql(u8, request[16..32], &before.instance))) {
+        status = .wrong_instance;
+    } else switch (op) {
+        0 => {}, // Observe is not inference ownership or quiescence proof.
+        1 => { _ = tracker.pauseAdmissions(io) catch { status = .maintenance; }; },
+        2 => tracker.resumeAdmissions(io, .{ .instance = request[16..32].*, .sequence = sequence }) catch { status = .invalid; },
+        3 => {
+            if (!before.admissions_closed or sequence == 0 or sequence != before.admission_pause or
+                before.uncertain or before.owned != 0 or tracker.hasRetainedWork(io)) status = .invalid
+            else if (barrier) |probe| { reading = probe.probe(probe.context); }
+            else reading = .{};
+        },
+        else => unreachable,
+    }
+    if (status == .ok or status == .maintenance) _ = tracker.backendKnownUncertain(io);
+    // Capture the source clock before taking the final coherent tracker
+    // snapshot. Serialization/transport cannot refresh this original time.
+    const captured_at = if (version == 3) std.Io.Clock.real.now(io).toMilliseconds() else 0;
+    const snapshot = tracker.snapshot(io);
+    if (op == 3 and reading.outcome == .owner_streams_synchronized and
+        (!snapshot.admissions_closed or snapshot.admission_pause != sequence or snapshot.owned != 0 or snapshot.uncertain or tracker.hasRetainedWork(io) or reading.streams > 256)) reading = .{};
+    var response: [if (version == 3) timestamped_response_size else response_size]u8 = @splat(0);
+    @memcpy(response[0..4], "FIR9");
+    response[4] = version;
+    response[5] = op;
+    response[6] = @intFromEnum(status);
+    @memcpy(response[8..24], &snapshot.instance);
+    std.mem.writeInt(u64, response[24..32], snapshot.admission_pause, .big);
+    inline for (.{ snapshot.owned, snapshot.ingress, snapshot.preparing, snapshot.active, snapshot.responding, snapshot.model_count }, 0..) |value, index| {
+        std.mem.writeInt(u32, response[32 + index * 4 ..][0..4], @intCast(value), .big);
+    }
+    response[56] = @intFromBool(snapshot.admissions_closed);
+    response[57] = @intFromBool(snapshot.uncertain);
+    response[58] = @intFromEnum(reading.outcome);
+    std.mem.writeInt(u32, response[60..64], reading.streams, .big);
+    if (version == 3) {
+        std.mem.writeInt(u64, response[64..72], snapshot.sample_sequence, .big);
+        // An unavailable clock is explicit metadata absence, not receipt time.
+        const stamp: u64 = if (captured_at > 0 and captured_at <= ownership.maximum_sample_sequence)
+            @intCast(captured_at) else std.math.maxInt(u64);
+        std.mem.writeInt(u64, response[72..80], stamp, .big);
+    }
+    return response;
+}
+
+test "partial owner-stream probe requires exact paused source and never grants coverage" {
+    const Hook = struct {
+        fn run(context: *anyopaque) device.Reading {
+            const called: *bool = @ptrCast(@alignCast(context));
+            called.* = true;
+            return .{ .outcome = .owner_streams_synchronized, .streams = 1 };
+        }
+    };
+    const io = std.testing.io;
+    var tracker: ownership.Tracker = .{};
+    try tracker.initialize(io, @splat(7));
+    var request: [request_size]u8 = @splat(0);
+    @memcpy(request[0..4], "FIC9"); request[4] = 2; request[5] = 3;
+    @memcpy(request[16..32], &(@as([16]u8, @splat(7))));
+    std.mem.writeInt(u64, request[8..16], 1, .big);
+    var called = false;
+    const hook: OwnerBarrier = .{ .context = &called, .probe = &Hook.run };
+    var response = dispatchWithBarrier(&tracker, io, &request, hook);
+    try std.testing.expectEqual(@intFromEnum(Status.invalid), response[6]);
+    try std.testing.expect(!called);
+    const pause = try tracker.pauseAdmissions(io);
+    response = dispatchWithBarrier(&tracker, io, &request, hook);
+    try std.testing.expect(called);
+    try std.testing.expectEqual(@intFromEnum(device.Outcome.owner_streams_synchronized), response[58]);
+    try std.testing.expectEqual(@as(u32, 1), std.mem.readInt(u32, response[60..64], .big));
+    try tracker.resumeAdmissions(io, pause);
+}
+
+test "finite private control rejects malformed and cross-instance authority" {
+    const io = std.testing.io;
+    var tracker: ownership.Tracker = .{};
+    try tracker.initialize(io, @splat(7));
+    var request: [request_size]u8 = @splat(0);
+    @memcpy(request[0..4], "FIC9"); request[4] = 2;
+    var response = dispatch(&tracker, io, &request);
+    try std.testing.expectEqual(@as(u8, 0), response[6]);
+    try std.testing.expectEqualSlices(u8, &(@as([16]u8, @splat(7))), response[8..24]);
+    request[5] = 1;
+    response = dispatch(&tracker, io, &request);
+    try std.testing.expectEqual(@intFromEnum(Status.wrong_instance), response[6]);
+    try std.testing.expect(!tracker.snapshot(io).admissions_closed);
+    @memcpy(request[16..32], &(@as([16]u8, @splat(7))));
+    request[6] = 1;
+    response = dispatch(&tracker, io, &request);
+    try std.testing.expectEqual(@intFromEnum(Status.invalid), response[6]);
+    try std.testing.expect(!tracker.snapshot(io).admissions_closed);
+    request[6] = 0;
+    response = dispatch(&tracker, io, &request);
+    try std.testing.expectEqual(@as(u8, 0), response[6]);
+    try std.testing.expectEqual(@as(u8, 1), response[56]);
+    const sequence = std.mem.readInt(u64, response[24..32], .big);
+    request[5] = 2;
+    std.mem.writeInt(u64, request[8..16], sequence, .big);
+    response = dispatch(&tracker, io, &request);
+    try std.testing.expectEqual(@as(u8, 0), response[56]);
+    response = dispatch(&tracker, io, &request);
+    try std.testing.expectEqual(@intFromEnum(Status.invalid), response[6]);
+    try std.testing.expectEqual(@as(u8, 1), response[57]);
+}
+
+test "readonly lineage frames preserve retained ownership and missing stays unknown" {
+    const io = std.testing.io;
+    var tracker: ownership.Tracker = .{ .primary_guard = true };
+    try tracker.initialize(io, @splat(31));
+    var request: [lineage_request_size]u8 = @splat(0);
+    @memcpy(request[0..4], "FIQ9"); request[4] = 1;
+    @memcpy(request[8..24], &(@as([16]u8, @splat(31))));
+    const id = try ownership.parseCorrelationHex("29fc52e328d588a1afee500c96d67ccc1045a873a328efccec3dc9ddfaef2cf5");
+    @memcpy(request[24..56], &id);
+    var response = dispatchLineage(&tracker, io, &request);
+    try std.testing.expectEqual(@as(u8, 0), response[5]);
+    try std.testing.expectEqual(@as(u8, 0), response[6]);
+    try std.testing.expectEqual(@as(u8, 1), response[7]);
+    const first = std.mem.readInt(u64, response[56..64], .big);
+    const root = try tracker.enter(io);
+    try tracker.associate(io, root, id);
+    try tracker.bind(io, root, "test/model");
+    const child = try tracker.reservePreparation(io, root, "test/model");
+    try tracker.leave(io, root);
+    response = dispatchLineage(&tracker, io, &request);
+    try std.testing.expectEqual(@as(u8, 1), response[6]);
+    try std.testing.expectEqual(@as(u8, 0), response[7]);
+    try std.testing.expectEqualSlices(u8, &id, response[24..56]);
+    try std.testing.expectEqual(root.sequence, std.mem.readInt(u64, response[64..72], .big));
+    try std.testing.expectEqual(@as(u64, 1), std.mem.readInt(u64, response[72..80], .big));
+    try std.testing.expectEqual(@as(u32, 1), std.mem.readInt(u32, response[80..84], .big));
+    try std.testing.expectEqual(@as(u32, 1), std.mem.readInt(u32, response[88..92], .big));
+    try std.testing.expect(std.mem.readInt(u64, response[56..64], .big) > first);
+    request[8] ^= 1;
+    response = dispatchLineage(&tracker, io, &request);
+    try std.testing.expectEqual(@intFromEnum(Status.wrong_instance), response[5]);
+    try std.testing.expectEqual(@as(u8, 0), response[6]);
+    try std.testing.expectEqual(@as(u8, 1), response[7]);
+    request[8] ^= 1; request[56] = 1;
+    try std.testing.expectEqual(@intFromEnum(Status.invalid), dispatchLineage(&tracker, io, &request)[5]);
+    request[56] = 0;
+    try std.testing.expectEqual(@as(usize, 1), tracker.snapshot(io).owned);
+    try tracker.leave(io, child);
+    response = dispatchLineage(&tracker, io, &request);
+    try std.testing.expectEqual(@as(u8, 0), response[6]);
+    try std.testing.expectEqual(@as(u8, 1), response[7]);
+    try std.testing.expectEqual(@as(u64, 0), std.mem.readInt(u64, response[64..72], .big));
+}
+
+test "timestamped control replies carry native capture metadata" {
+    const io = std.testing.io;
+    var tracker: ownership.Tracker = .{};
+    try tracker.initialize(io, @splat(9));
+    const token = try tracker.enter(io);
+    var request: [request_size]u8 = @splat(0);
+    @memcpy(request[0..4], "FIC9"); request[4] = 3;
+    const began = std.Io.Clock.real.now(io).toMilliseconds();
+    const first = dispatchTimestamped(&tracker, io, &request, null);
+    const ended = std.Io.Clock.real.now(io).toMilliseconds();
+    try std.testing.expectEqual(@as(usize, 80), first.len);
+    try std.testing.expectEqual(@as(u8, 3), first[4]);
+    try std.testing.expectEqual(@as(u8, 0), first[6]);
+    try std.testing.expectEqual(@as(u32, 1), std.mem.readInt(u32, first[32..36], .big));
+    try std.testing.expectEqual(@as(u32, 1), std.mem.readInt(u32, first[36..40], .big));
+    const sequence = std.mem.readInt(u64, first[64..72], .big);
+    const captured = std.mem.readInt(u64, first[72..80], .big);
+    try std.testing.expect(sequence > 0);
+    try std.testing.expect(captured >= began and captured <= ended);
+    try tracker.leave(io, token);
+    const second = dispatchTimestamped(&tracker, io, &request, null);
+    try std.testing.expect(std.mem.readInt(u64, second[64..72], .big) > sequence);
+    try std.testing.expectEqual(@as(u32, 0), std.mem.readInt(u32, second[32..36], .big));
+    try std.testing.expectEqualSlices(u8, first[8..24], second[8..24]);
+    request[4] = 2;
+    const legacy = dispatch(&tracker, io, &request);
+    try std.testing.expectEqual(@as(usize, 64), legacy.len);
+    try std.testing.expectEqual(@as(u8, 2), legacy[4]);
+}
+
+test "native observation captures its enrolled negative source" {
+    const io = std.testing.io;
+    const Kind = enum { ingress_v2, ingress_v3, primary, lineage };
+    const Probe = struct {
+        var uncertain: std.atomic.Value(bool) = .init(false);
+        var calls: std.atomic.Value(u32) = .init(0);
+        fn read() bool {
+            _ = calls.fetchAdd(1, .acq_rel);
+            return uncertain.load(.acquire);
+        }
+        fn capture(kind: Kind, tracker: *ownership.Tracker, test_io: std.Io) u8 {
+            switch (kind) {
+                .ingress_v2, .ingress_v3 => {
+                    var request: [request_size]u8 = @splat(0);
+                    @memcpy(request[0..4], "FIC9");
+                    request[4] = if (kind == .ingress_v2) 2 else 3;
+                    @memcpy(request[16..32], &tracker.instance);
+                    return if (kind == .ingress_v2) dispatch(tracker, test_io, &request)[57]
+                        else dispatchTimestamped(tracker, test_io, &request, null)[57];
+                },
+                .primary => {
+                    var request: [primary_request_size]u8 = @splat(0);
+                    @memcpy(request[0..4], "FIA9"); request[4] = 1;
+                    @memcpy(request[8..24], &tracker.instance);
+                    return dispatchPrimaryActivity(tracker, test_io, &request)[7];
+                },
+                .lineage => {
+                    var request: [lineage_request_size]u8 = @splat(0);
+                    @memcpy(request[0..4], "FIQ9"); request[4] = 1;
+                    @memcpy(request[8..24], &tracker.instance);
+                    @memset(request[24..56], 89);
+                    return dispatchLineage(tracker, test_io, &request)[7];
+                },
+            }
+        }
+    };
+    for ([_]Kind{ .ingress_v2, .ingress_v3, .primary, .lineage }) |kind| {
+        for ([_]bool{ true, false }) |uncertain| {
+            Probe.uncertain.store(false, .release);
+            var tracker: ownership.Tracker = .{ .primary_guard = true };
+            try tracker.initialize(io, @splat(87));
+            try tracker.enrollBackendUncertaintyProbe(io, &Probe.read);
+            const root = try tracker.enter(io);
+            try tracker.associate(io, root, @splat(89));
+            try tracker.bind(io, root, "fixture/observed-negative");
+            Probe.calls.store(0, .release);
+            Probe.uncertain.store(uncertain, .release);
+            // Ordinary accounting remains callback-free; only the explicit
+            // native observation asks the original enrolled source to read.
+            try std.testing.expect(!tracker.snapshot(io).uncertain);
+            try std.testing.expectEqual(@as(u32, 0), Probe.calls.load(.acquire));
+            const observed = Probe.capture(kind, &tracker, io);
+            std.debug.print("native_observation kind={s} negative={} observed={d}\n", .{ @tagName(kind), uncertain, observed });
+            try std.testing.expectEqual(@as(u8, @intFromBool(uncertain)), observed);
+            try std.testing.expectEqual(@as(u32, 1), Probe.calls.load(.acquire));
+            Probe.uncertain.store(false, .release); // Test getter only.
+            try std.testing.expectEqual(observed, Probe.capture(kind, &tracker, io));
+            try tracker.leave(io, root);
+            const final = tracker.snapshot(io);
+            try std.testing.expectEqual(@as(usize, 0), final.owned);
+            try std.testing.expectEqual(uncertain, final.uncertain);
+        }
+    }
+    std.debug.print("PASS: native observations consume original enrolled negative evidence and retain uncertainty after local release; metadata only\n", .{});
+}
+
+test "native owner probe refuses known uncertainty before its barrier" {
+    const io = std.testing.io;
+    const Hook = struct {
+        var uncertain: std.atomic.Value(bool) = .init(false);
+        fn read() bool { return uncertain.load(.acquire); }
+        fn run(raw: *anyopaque) device.Reading {
+            const called: *bool = @ptrCast(@alignCast(raw));
+            called.* = true;
+            return .{ .outcome = .owner_streams_synchronized, .streams = 1 };
+        }
+    };
+    for ([_]u8{ 2, 3 }) |version| {
+        for ([_]u8{ 3, 0, 1, 2 }) |case| {
+            Hook.uncertain.store(false, .release);
+            var tracker: ownership.Tracker = .{ .primary_guard = true };
+            try tracker.initialize(io, @splat(97));
+            try tracker.enrollBackendUncertaintyProbe(io, &Hook.read);
+            const root = if (case == 1) try tracker.enter(io) else null;
+            defer if (root) |token| tracker.leave(io, token) catch {};
+            const mutation = if (case == 3) try tracker.beginModelMutation(io, "fixture/probe-mutator") else null;
+            defer if (mutation) |ticket| tracker.endModelMutation(io, ticket) catch {};
+            const paused = try tracker.pauseAdmissions(io);
+            Hook.uncertain.store(case == 0, .release);
+            var called = false;
+            const barrier: OwnerBarrier = .{ .context = &called, .probe = &Hook.run };
+            var request: [request_size]u8 = @splat(0);
+            @memcpy(request[0..4], "FIC9"); request[4] = version; request[5] = 3;
+            std.mem.writeInt(u64, request[8..16], paused.sequence, .big);
+            @memcpy(request[16..32], &paused.instance);
+            const result = if (version == 2) dispatchWithBarrier(&tracker, io, &request, barrier)
+                else dispatchTimestamped(&tracker, io, &request, barrier)[0..response_size].*;
+            std.debug.print("native_owner_probe version={d} case={d} called={} uncertain={d}\n", .{ version, case, called, result[57] });
+            try std.testing.expectEqual(case == 2, called);
+            try std.testing.expectEqual(@intFromEnum(if (case == 2) Status.ok else Status.invalid), result[6]);
+            try std.testing.expectEqual(@as(u8, @intFromBool(case == 0)), result[57]);
+            try std.testing.expectEqual(@intFromEnum(if (case == 2) device.Outcome.owner_streams_synchronized else device.Outcome.not_requested), result[58]);
+        }
+    }
+    Hook.uncertain.store(false, .release); // Test source only.
+    std.debug.print("PASS: native owner probe refuses known-negative and owned sources before calling its fixed barrier; metadata only\n", .{});
+}
+
+test "native owner probe rejects a model-change ticket acquired during its barrier" {
+    const io = std.testing.io;
+    const Work = struct {
+        tracker: *ownership.Tracker,
+        ticket: ?ownership.ModelMutation = null,
+        fn run(raw: *anyopaque) device.Reading {
+            const self: *@This() = @ptrCast(@alignCast(raw));
+            self.ticket = self.tracker.beginModelMutation(std.testing.io, "fixture/probe-pending") catch return .{};
+            return .{ .outcome = .owner_streams_synchronized, .streams = 1 };
+        }
+    };
+    for ([_]u8{ 2, 3 }) |version| {
+        var tracker: ownership.Tracker = .{ .primary_guard = true };
+        try tracker.initialize(io, @splat(101));
+        const paused = try tracker.pauseAdmissions(io);
+        var work: Work = .{ .tracker = &tracker };
+        defer if (work.ticket) |ticket| tracker.endModelMutation(io, ticket) catch {};
+        var request: [request_size]u8 = @splat(0);
+        @memcpy(request[0..4], "FIC9"); request[4] = version; request[5] = 3;
+        std.mem.writeInt(u64, request[8..16], paused.sequence, .big);
+        @memcpy(request[16..32], &paused.instance);
+        const barrier: OwnerBarrier = .{ .context = &work, .probe = &Work.run };
+        const result = if (version == 2) dispatchWithBarrier(&tracker, io, &request, barrier)
+            else dispatchTimestamped(&tracker, io, &request, barrier)[0..response_size].*;
+        try std.testing.expect(work.ticket != null);
+        try std.testing.expect(tracker.hasRetainedWork(io));
+        try std.testing.expectEqual(@as(usize, 0), tracker.snapshot(io).owned);
+        try std.testing.expectEqual(@intFromEnum(device.Outcome.blocked), result[58]);
+        try std.testing.expectEqual(@as(u32, 0), std.mem.readInt(u32, result[60..64], .big));
+    }
+    std.debug.print("PASS: native owner probe blocks publication while the original model-change ticket remains held; metadata only\n", .{});
+}

@@ -1,5 +1,8 @@
-"""Isolated installed-package unittest runner with a loopback-only socket guard."""
+"""Installed-package tests: loopback plus private generated guard-fixture Unix sockets only."""
 import ipaddress
+import os
+import stat
+import tempfile
 from pathlib import Path
 import socket
 import sys
@@ -23,13 +26,27 @@ def check(address):
         raise AssertionError('Non-loopback network access is forbidden in Python unit tests.')
 
 
+def check_private_unix(address):
+    try:
+        path=Path(os.fsdecode(address));parent=path.parent.resolve()
+        info=parent.stat();target=path.lstat()
+        if (parent.parent!=Path(tempfile.gettempdir()).resolve() or not parent.name.startswith('fg-')
+                or path.name!='observe.sock' or info.st_uid!=os.geteuid() or info.st_mode & 0o077
+                or not stat.S_ISSOCK(target.st_mode) or target.st_uid!=os.geteuid() or target.st_mode & 0o077):
+            raise ValueError()
+    except (ValueError,TypeError,OSError):
+        raise AssertionError('Only private generated Unix guard fixtures are permitted.') from None
+
+
 def guarded_connect(self,address):
-    check(address)
+    if self.family==socket.AF_UNIX:check_private_unix(address)
+    else:check(address)
     return connect(self,address)
 
 
 def guarded_connect_ex(self,address):
-    check(address)
+    if self.family==socket.AF_UNIX:check_private_unix(address)
+    else:check(address)
     return connect_ex(self,address)
 
 

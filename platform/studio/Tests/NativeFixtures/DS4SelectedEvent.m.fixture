@@ -1,0 +1,38 @@
+// Complete genuine Metal module. Counter boundary is privately initialized;
+// real event/buffer objects come only from actual public GPU APIs.
+#define REQUIRE(v,m) do{if(!(v)){fprintf(stderr,"%s\n",m);return 77;}}while(0)
+int main(int argc,char **argv){@autoreleasepool{
+ if(argc==2&&!strcmp(argv[1],"--cold")){
+  REQUIRE(!g_initialized&&!g_device&&!g_selected_readback_event,"EVENT_COLD_NOT_COLD");
+  g_selected_readback_event_value=UINT64_MAX;uint64_t cold=99;
+  REQUIRE(!ds4_gpu_signal_selected_readback_ready(&cold)&&cold==0&&!g_initialized&&!g_device&&g_fios_pending_uncertain,
+          "FIO_DS4_SELECTED_EVENT_EXHAUSTION_INITIALIZED_BACKEND");
+  g_selected_readback_event_value=0;
+  REQUIRE(!ds4_gpu_signal_selected_readback_ready(&cold)&&!g_initialized&&!g_device&&g_fios_pending_uncertain,
+          "FIO_DS4_SELECTED_EVENT_COLD_EXHAUSTION_REFUNDED");
+  puts("PASS: private exhausted selected-event counter refuses before cold backend initialization and remains sticky.");return 0;
+ }
+ REQUIRE(argc==1,"EVENT_BAD_MODE");
+ REQUIRE(ds4_gpu_init()&&ds4_gpu_begin_commands(),"EVENT_REAL_INITIALIZATION_FAILED");
+ uint64_t value=0;
+ REQUIRE(ds4_gpu_signal_selected_readback_ready(&value)&&value==1&&g_selected_readback_event,
+         "EVENT_REAL_FIRST_SIGNAL_FAILED");
+ REQUIRE(ds4_gpu_commit_and_wait_selected_readback(value,"private event control")&&ds4_gpu_synchronize(),
+         "EVENT_REAL_POSITIVE_COMPLETION_FAILED");
+ REQUIRE(ds4_gpu_begin_commands()&&g_batch_cb,"EVENT_REAL_SECOND_BATCH_FAILED");
+ id<MTLCommandBuffer> held=g_batch_cb;id<MTLSharedEvent> event=g_selected_readback_event;
+ const NSUInteger pending=[g_pending_cbs count];
+ g_selected_readback_event_value=UINT64_MAX;
+ value=99;
+ REQUIRE(!ds4_gpu_signal_selected_readback_ready(&value)&&value==0,"FIO_DS4_SELECTED_EVENT_EXHAUSTION_ACCEPTED");
+ REQUIRE(g_fios_pending_uncertain&&g_selected_readback_event_value==UINT64_MAX&&g_batch_cb==held&&
+         g_selected_readback_event==event&&[g_pending_cbs count]==pending,"FIO_DS4_SELECTED_EVENT_EXHAUSTION_LOST_CUSTODY");
+ // A private attempted counter reset cannot refund the independent failure.
+ g_selected_readback_event_value=0;value=99;
+ REQUIRE(!ds4_gpu_signal_selected_readback_ready(&value)&&value==0&&g_fios_pending_uncertain&&g_batch_cb==held,
+         "FIO_DS4_SELECTED_EVENT_EXHAUSTION_REFUNDED");
+ REQUIRE(!ds4_gpu_prepare_release()&&g_batch_cb==held&&g_selected_readback_event==event,
+         "FIO_DS4_SELECTED_EVENT_EXHAUSTION_RELEASED_PARENT");
+ puts("PASS: genuine Metal event positive completion; private UINT64_MAX boundary refuses before encode and preserves sticky uncertainty/exact batch/event custody.");
+ return 0;
+}}

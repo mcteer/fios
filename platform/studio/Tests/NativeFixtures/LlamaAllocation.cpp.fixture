@@ -1,0 +1,51 @@
+// Private CPU allocator fault injection; no backend symbol is replaced.
+// Included AFTER the genuine bridge so its actual C++ metadata types are used.
+#include <new>
+static std::atomic<int> fios_fail_at{-1}, fios_allocations{0}, fios_deallocations{0};
+static std::atomic<void *> fios_allocated[3]{};
+void *operator new(std::size_t size) {
+    const int fail = fios_fail_at.load();
+    const int index = fail >= 0 ? fios_allocations.fetch_add(1) : -1;
+    if (index >= fail && fail >= 0) throw std::bad_alloc();
+    void *p = std::malloc(size ? size : 1);
+    if (!p) throw std::bad_alloc();
+    if (index >= 0 && index < 3) fios_allocated[index].store(p);
+    return p;
+}
+void *operator new(std::size_t size, const std::nothrow_t &) noexcept {
+    try { return ::operator new(size); } catch (...) { return nullptr; }
+}
+void operator delete(void *p) noexcept {
+    if (!p) return;
+    for (auto &slot : fios_allocated) {
+        void *expected = p;
+        if (slot.compare_exchange_strong(expected, nullptr)) fios_deallocations.fetch_add(1);
+    }
+    std::free(p);
+}
+void operator delete(void *p, std::size_t) noexcept { ::operator delete(p); }
+void operator delete(void *p, const std::nothrow_t &) noexcept { ::operator delete(p); }
+static int fios_context_metadata_failures() {
+    // The genuine default-params function is CPU-only. No native model exists.
+    (void)llama_context_default_params();
+    mlx_llama_engine empty{};
+    mlx_llama_ctx_params parameters{};
+    parameters.n_ctx = 16; // Avoid the model's trained-context metadata lookup.
+    parameters.n_seq = 1;
+    for (int failure = 0; failure < 3; ++failure) {
+        char error[128]{};
+        fios_allocations.store(0); fios_deallocations.store(0);
+        fios_fail_at.store(failure);
+        auto *context = mlx_llama_ctx_create(&empty, &parameters, error, sizeof(error));
+        fios_fail_at.store(-1);
+        if (context || fios_allocations.load() != failure + 1 ||
+            !std::strstr(error, "out of memory allocating context metadata")) {
+            std::fprintf(stderr, "FIO_LLAMA_CONTEXT_METADATA_ORDER\n"); return 17;
+        }
+        if (fios_deallocations.load() != failure) {
+            std::fprintf(stderr, "FIO_LLAMA_CONTEXT_METADATA_LEAK\n"); return 18;
+        }
+        for (auto &slot : fios_allocated) if (slot.load()) return 18;
+    }
+    return 0;
+}

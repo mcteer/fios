@@ -1,0 +1,85 @@
+// Actual peer table/ACK source with explicit CPU-only mock layouts/callees.
+// No native session/transport handle, socket, peer or RDMA operation exists.
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+typedef struct {int marker;} ds4_session;
+typedef struct {uint64_t id;ds4_session *session;} ds4_tp_worker_session;
+typedef struct {ds4_tp_worker_session *v;uint32_t len,cap;} ds4_tp_worker_sessions;
+typedef struct {void *data;uint32_t len,cap;} ds4_tokens;
+typedef struct {bool fenced;} ds4_engine;
+typedef struct ds4_tp_worker_custody {
+ ds4_tp_worker_sessions sessions;float *logits;ds4_tokens prompt;bool held;
+} ds4_tp_worker_custody;
+typedef struct {int control_fd,data_fd;ds4_tp_worker_custody *fios_worker_custody;} ds4_tp;
+static unsigned destructive,unbind_calls;
+static int unbind_result=1;
+static void ds4_engine_fence_teardown(ds4_engine *e){if(e)e->fenced=true;}
+static int ds4_engine_tp_unbind_checked(ds4_engine *e){(void)e;++unbind_calls;return unbind_result;}
+static void ds4_engine_tp_unbind(ds4_engine *e){(void)ds4_engine_tp_unbind_checked(e);}
+#define free(...) (++destructive)
+#define close(...) (++destructive)
+#define ds4_tokens_free(...) (++destructive)
+static int free_result,free_calls,ack_status=-1,ack_calls,command_frees;
+static int ds4_session_free_checked(ds4_session *s){(void)s;++free_calls;return free_result;}
+static void ds4_session_free(ds4_session *s){(void)ds4_session_free_checked(s);}
+enum {DS4_TP_FRAME_SESSION_DESTROY=7};
+typedef struct {int type;uint64_t session_id;} ds4_tp_command;
+static int ds4_tp_send_command_ack(void *tp,uint64_t id,int status){(void)tp;(void)id;ack_status=status;++ack_calls;return 1;}
+static void ds4_tp_command_free(ds4_tp_command *c){(void)c;++command_frees;}
+/* SOURCE_FUNCTIONS */
+/* SOURCE_FINISH */
+static int run_ack(ds4_tp_worker_sessions *original){
+ ds4_tp_worker_sessions sessions=*original;
+ ds4_tp_command command={.type=DS4_TP_FRAME_SESSION_DESTROY,.session_id=22};
+ void *tp=NULL;int rc=0;
+ do {
+/* SOURCE_ACK */
+ }while(0);
+ *original=sessions;return rc;
+}
+int main(int argc,char **argv){
+ if(argc!=2)return 77;
+ ds4_session cpu[3]={{1},{2},{3}};
+ ds4_tp_worker_session entries[3]={{11,&cpu[0]},{22,&cpu[1]},{33,&cpu[2]}},before[3];
+ memcpy(before,entries,sizeof(entries));ds4_tp_worker_sessions sessions={entries,3,3};
+ if(strncmp(argv[1],"--finish-",9)==0||strcmp(argv[1],"--tp-free-held")==0){
+  int payload=9;ds4_engine engine={0};
+  ds4_tp_worker_custody custody={.sessions=sessions,.logits=(float*)&payload,.prompt={.data=&payload,.len=1,.cap=1}};
+  ds4_tp tp={.control_fd=-1,.data_fd=-1,.fios_worker_custody=&custody};
+  if(strcmp(argv[1],"--tp-free-held")==0){
+   ds4_tp_free(&tp);if(destructive){fputs("FIO_DS4_TP_FREE_DROPPED_HELD_WORKER\n",stderr);return 77;}return 0;
+  }
+  const int success=strcmp(argv[1],"--finish-success")==0;
+  free_result=success||strcmp(argv[1],"--finish-unbind-refusal")==0;
+  if(strcmp(argv[1],"--finish-unbind-refusal")==0)unbind_result=0;
+  const int result=tp_worker_finish(&engine,&tp,&custody,0);
+  if(success){if(result||!destructive||engine.fenced||unbind_calls!=1){fputs("PEER_FINISH_SUCCESS_CHANGED\n",stderr);return 77;}return 0;}
+  if(result!=1||destructive||!engine.fenced||!custody.held||tp.fios_worker_custody!=&custody){
+   fputs("FIO_DS4_WORKER_FINISH_RELEASED_UNCERTAIN_CUSTODY\n",stderr);return 77;
+  }
+  const int old_calls=free_calls;free_result=1;unbind_result=1;
+  if(tp_worker_finish(&engine,&tp,&custody,0)!=1||destructive||free_calls!=old_calls){
+   fputs("FIO_DS4_WORKER_FINISH_UNCERTAINTY_REFUNDED\n",stderr);return 77;
+  }
+  return 0;
+ }
+ const int ack=strncmp(argv[1],"--ack-",6)==0;
+ const int success=strstr(argv[1],"success")!=NULL;free_result=success;
+ const int result=ack?(run_ack(&sessions)==0):FIOS_REMOVE(&sessions,1);
+ if(!success){
+  if(ack&&(ack_status!=1||ack_calls!=1||command_frees!=1)){
+   fputs("FIO_DS4_PEER_ACKNOWLEDGED_REFUSED_DESTROY\n",stderr);return 77;
+  }
+  if(sessions.len!=3||memcmp(entries,before,sizeof(entries))||free_calls!=1||(!ack&&result)){
+   fputs("FIO_DS4_PEER_DROPPED_REFUSED_SESSION\n",stderr);return 77;
+  }
+ }else{
+  if(!result||sessions.len!=2||entries[0].id!=11||entries[1].id!=33||free_calls!=1||(ack&&ack_status!=0)){
+   fputs("PEER_LOCAL_DESTRUCTION_CONTROL_CHANGED\n",stderr);return 77;
+  }
+ }
+ return 0;
+}

@@ -1,0 +1,269 @@
+import Foundation
+
+private final class FakeSandboxExecutor:SandboxExecuting {
+    var values:[SandboxExecution]=[]
+    var commands:[SandboxCommand]=[]
+    var present:[String:(SandboxConfiguration,String,Bool)]=[:]
+    var active:Int { 0 }
+    var reportExitCodes=false
+    var holdResponses=false
+    var resourceNow:Int64=0
+    var resourceFailure=false
+    var resourceRequests:[Int64]=[]
+    var resourceValues:[VMReadResult]=[]
+    func submitResources(configuration:SandboxConfiguration,id:String,leaseUntil:Int64)throws {
+        resourceRequests.append(resourceNow)
+        let envelope=VMResourceObservation(runtimeHash:String(repeating:"a",count:64),sampledAt:resourceNow,configuredCap:12<<30,total:16<<30,free:8<<30,allVMConsumersCovered:true)
+        let sample=VMKernelSample(sampledAt:resourceNow,total:16<<30,free:8<<30,bootHash:String(repeating:"b",count:64),envelope:envelope)
+        resourceValues.append(VMReadResult(job:configuration.job,runtimeID:id,result:resourceFailure ? .failure(.unavailable) : .success(sample)))
+    }
+    func drainResources()->[VMReadResult] {let values=resourceValues;resourceValues=[];return values}
+    func submit(job:String,command:SandboxCommand) throws {
+        commands.append(command)
+        let result:SandboxExecutionValue
+        switch command {
+        case .create(let config):
+            let id=String(repeating:job.first=="a" ? "a" : "b",count:64)
+            present[job]=(config,id,false);result = .created(id)
+        case .inspect:
+            if let (config,id,running)=present[job] { result = .observed(.present(id:id,name:"/"+config.name,image:config.image,nonce:config.nonce,running:running),exitCode:reportExitCodes ? 0:nil) }
+            else { result = .observed(.absent) }
+        case .start:
+            if let (config,id,_)=present[job] { present[job]=(config,id,true) };result = .acknowledged
+        case .stop:
+            if let (config,id,_)=present[job] { present[job]=(config,id,false) };result = .acknowledged
+        case .remove:present.removeValue(forKey:job);result = .acknowledged
+        }
+        values.append(SandboxExecution(job:job,result:.success(result)))
+    }
+    func drain()->[SandboxExecution] { if holdResponses {return []};let result=values;values=[];return result }
+}
+
+func runJobControllerTests() throws {
+    let directory=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at:directory) }
+    let journal=try Journal(directory:directory),runtime=FakeSandboxExecutor()
+    let controller=JobController(journal:journal,executor:runtime)
+    var admission=AdmissionPolicy()
+    func sample(_ now:Int64,cpu:Double=10)->ResourceSample { ResourceSample(sampledAt:now,physical:128<<30,available:64<<30,vmAvailable:8<<30,diskFree:100<<30,cpu:cpu,pressure:.normal,thermal:.nominal,vmSampledAt:now) }
+    let ids=[UUID().uuidString.lowercased(),UUID().uuidString.lowercased()]
+    for (index,id) in ids.enumerated() {
+        let stamp:Int64=10000+Int64(index)
+        let job=try DurableJob(id:id,idempotency:UUID().uuidString.lowercased(),ownerHash:String(repeating:"a",count:64),requestHash:String(repeating:"b",count:64),created:stamp)
+        let config=try SandboxConfiguration(job:id,nonce:String(repeating:"a",count:64),image:"sha256:"+String(repeating:"b",count:64),memory:512<<20,cpus:1)
+        try admission.reserve(job:id,memory:config.memory,cpus:1,sample:sample(stamp),now:stamp)
+        _=try journal.reserveSandbox(job:job,configuration:config)
+    }
+    for tick in 0..<5 {
+        try controller.tick(now:11000+Int64(tick*100),sample:sample(11000+Int64(tick*100)),admission:&admission,transportReady:{_ in false},cancelModel:{_ in})
+    }
+    guard runtime.commands.allSatisfy({if case .start=$0 {return false};return true}) else { fatalError("Container started before trusted transport readiness") }
+    for tick in 0..<7 {
+        try controller.tick(now:13000+Int64(tick*500),sample:sample(13000+Int64(tick*500)),admission:&admission,transportReady:{_ in true},cancelModel:{_ in})
+    }
+    guard try journal.jobs().allSatisfy({$0.state == .running}) else { fatalError("Sandbox coordinator did not reach running") }
+    var cancelled:[String]=[]
+    try controller.tick(now:19000,sample:sample(19000,cpu:90),admission:&admission,transportReady:{_ in true},cancelModel:{cancelled.append($0)})
+    guard cancelled==[ids[1]],try journal.jobs().first(where:{$0.id==ids[0]})?.state == .running else { fatalError("Pressure did not select durable newest-owned job only") }
+    for tick in 0..<24 {
+        try controller.tick(now:19100+Int64(tick*500),sample:sample(19100+Int64(tick*500)),admission:&admission,transportReady:{_ in true},cancelModel:{_ in})
+    }
+    guard try journal.jobs().first(where:{$0.id==ids[1]})?.state == .removed else { fatalError("Owned sandbox cleanup did not finish") }
+    print("PASS: asynchronous sandbox coordinator, transport-before-start fencing, newest-owned pressure revocation and proof-gated cleanup")
+}
+
+func runVMProbePermissionTests() throws {
+    let directory=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer {try? FileManager.default.removeItem(at:directory)}
+    let journal=try Journal(directory:directory),runtime=FakeSandboxExecutor()
+    let jobs=JobController(journal:journal,executor:runtime,collectVM:true)
+    let artifacts=AsyncArtifacts(store:try ArtifactStore(directory:directory.appendingPathComponent("artifacts")))
+    let sandbox=SandboxTaskController(journal:journal,jobs:jobs,tasks:TaskController(journal:journal,broker:ModelBroker(journal:journal)),artifacts:artifacts,socket:"/var/empty/unenrolled-probe.sock",peerUID:geteuid())
+    let coordinator=VMProbeCoordinator(journal:journal,jobs:jobs,sandbox:sandbox)
+    let permission=try VMProbePermission(reviewedImage:"sha256:"+String(repeating:"b",count:64),reviewDigest:String(repeating:"c",count:64),managerEpoch:UUID().uuidString.lowercased(),issued:10000)
+    var admission=AdmissionPolicy()
+    func sample(_ now:Int64)->ResourceSample {ResourceSample(sampledAt:now,physical:128<<30,available:64<<30,vmAvailable:nil,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal)}
+    func refuse(_ body:()throws->Void) {do {try body();fatalError("Unreviewed/reused probe authority accepted")}catch {}}
+    refuse {try admission.reserve(job:UUID().uuidString.lowercased(),memory:512<<20,cpus:1,sample:sample(10000),now:10000)}
+    let clockPermission=try VMProbePermission(reviewedImage:permission.image,reviewDigest:String(repeating:"c",count:64),managerEpoch:UUID().uuidString.lowercased(),issued:10000)
+    try clockPermission.validate(now:11000)
+    refuse {try clockPermission.validate(now:10500)}
+    refuse {try clockPermission.validate(now:12000)}
+    let foreign=try SandboxConfiguration(job:permission.id,nonce:permission.nonce,image:"sha256:"+String(repeating:"f",count:64),memory:512<<20,cpus:1)
+    refuse {try admission.reserveVMProbe(foreign,permission:permission,sample:sample(10000),now:10000)}
+    let id=try coordinator.begin(permission:permission,sample:sample(10000),admission:&admission,now:10000)
+    refuse {_=try coordinator.begin(permission:permission,sample:sample(10000),admission:&admission,now:10000)}
+    guard permission.job==id,try journal.jobs().count==1,try journal.unresolvedCount()==0 else {throw JournalError.storage}
+    let spoof=try DurableJob(id:id,idempotency:UUID().uuidString.lowercased(),ownerHash:String(repeating:"f",count:64),requestHash:VMProbePermission.sourceHash,created:10000,lifetime:30000)
+    refuse {try permission.authorize(journal.sandboxRecords()[0].configuration,job:spoof,now:10000)}
+    for tick in 0..<14 {
+        let now:Int64=10000+Int64(tick)*500;runtime.resourceNow=now
+        try jobs.tick(now:now,sample:sample(now),admission:&admission,transportReady:{_ in true},cancelModel:{_ in})
+    }
+    guard try journal.jobs()[0].state == .running,jobs.vmAvailable(now:16500)==4<<30 else {fatalError("Reviewed finite probe could not collect while ordinary VM admission remained unknown")}
+    refuse {try permission.validate(now:40000)}
+    // New controller generation does not inherit/mint the in-memory exception.
+    runtime.values=[];runtime.resourceValues=[]
+    let recovered=JobController(journal:journal,executor:runtime,collectVM:true)
+    try recovered.tick(now:18000,sample:sample(18000),admission:&admission,transportReady:{_ in true},cancelModel:{_ in})
+    guard try journal.jobs()[0].state == .revoking else {fatalError("Restart replayed finite bootstrap authority")}
+    print("PASS: trusted one-use image/owner/boot/UID/30s finite VM bootstrap authority is separate from task admission, expires/rejects reuse and is not replayed after controller recovery (fake runtime only)")
+}
+
+func runGlobalHostPressureTests() throws {
+    let directory=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer {try? FileManager.default.removeItem(at:directory)}
+    let journal=try Journal(directory:directory),runtime=FakeSandboxExecutor()
+    let controller=JobController(journal:journal,executor:runtime)
+    var admission=AdmissionPolicy(),cancelled:[String]=[]
+    func sample(_ now:Int64,cpu:Double=10,vm:UInt64?=8<<30)->ResourceSample {
+        ResourceSample(sampledAt:now,physical:128<<30,available:64<<30,vmAvailable:vm,diskFree:100<<30,cpu:cpu,pressure:.normal,thermal:.nominal,vmSampledAt:now)
+    }
+    let sandbox=UUID().uuidString.lowercased()
+    let job=try DurableJob(id:sandbox,idempotency:UUID().uuidString.lowercased(),ownerHash:String(repeating:"a",count:64),requestHash:String(repeating:"b",count:64),created:10000)
+    let config=try SandboxConfiguration(job:sandbox,nonce:String(repeating:"a",count:64),image:"sha256:"+String(repeating:"b",count:64),memory:512<<20,cpus:1)
+    try admission.reserve(job:sandbox,memory:config.memory,cpus:1,sample:sample(10000),now:10000)
+    _=try journal.reserveSandbox(job:job,configuration:config)
+    for tick in 0..<14 {
+        let now:Int64=10000+Int64(tick)*500
+        try controller.tick(now:now,sample:sample(now),admission:&admission,transportReady:{_ in true},cancelModel:{cancelled.append($0)})
+    }
+    guard try journal.jobs().first(where:{$0.id==sandbox})?.state == .running else {fatalError("Pressure fixture sandbox did not start")}
+    var models:[String]=[]
+    for index in 0..<2 {
+        let id=UUID().uuidString.lowercased();models.append(id)
+        _=try journal.reserveJob(DurableJob(id:id,idempotency:UUID().uuidString.lowercased(),ownerHash:job.ownerHash,requestHash:job.requestHash,created:20000+Int64(index)))
+        try journal.transitionJob(id:id,to:.running)
+    }
+    try journal.claim(job:models[1],attempt:0,model:"fixture-model")
+    try journal.markUncertain(job:models[1],attempt:0)
+    try controller.tick(now:23000,sample:sample(23000,cpu:90),admission:&admission,transportReady:{_ in true},cancelModel:{cancelled.append($0)})
+    guard cancelled==[models[1]],try journal.jobs().first(where:{$0.id==sandbox})?.state == .running else {fatalError("Host pressure skipped newer model-only job for older sandbox")}
+    try controller.tick(now:23500,sample:sample(23500,cpu:90),admission:&admission,transportReady:{_ in true},cancelModel:{cancelled.append($0)})
+    guard cancelled==[models[1]] else {fatalError("Host pressure ignored the2s revocation cadence")}
+    try controller.tick(now:25000,sample:sample(25000,cpu:90),admission:&admission,transportReady:{_ in true},cancelModel:{cancelled.append($0)})
+    guard cancelled==[models[1],models[0]],try journal.jobs().first(where:{$0.id==sandbox})?.state == .running else {fatalError("Global newest-first model-only ordering changed")}
+    try controller.tick(now:27000,sample:sample(27000,vm:nil),admission:&admission,transportReady:{_ in true},cancelModel:{cancelled.append($0)})
+    guard cancelled==[models[1],models[0],sandbox],try journal.unresolvedCount()==1 else {fatalError("VM loss crossed model scope or pressure cleared native uncertainty")}
+    print("PASS: host pressure revokes globally newest model-only/sandbox jobs at2s cadence; VM-only loss stays scoped and native uncertainty survives")
+}
+
+func runModelOnlyVMIsolationTests() throws {
+    let directory=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer {try? FileManager.default.removeItem(at:directory)}
+    let journal=try Journal(directory:directory),controller=JobController(journal:journal,executor:FakeSandboxExecutor())
+    let id=UUID().uuidString.lowercased(),job=try DurableJob(id:id,idempotency:UUID().uuidString.lowercased(),ownerHash:String(repeating:"a",count:64),requestHash:String(repeating:"b",count:64),created:10000)
+    _=try journal.reserveJob(job)
+    var admission=AdmissionPolicy(),cancelled:[String]=[]
+    let sample=ResourceSample(sampledAt:11000,physical:128<<30,available:64<<30,vmAvailable:nil,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal)
+    try controller.tick(now:11000,sample:sample,admission:&admission,transportReady:{_ in false},cancelModel:{cancelled.append($0)})
+    guard cancelled.isEmpty,try journal.jobs().first(where:{$0.id==id})?.state == .reserved else {fatalError("Missing VM telemetry revoked unrelated native-only job")}
+    print("PASS: sandbox VM uncertainty cannot revoke unrelated native model-only jobs; subsystem ownership remains separate")
+}
+
+func runVMControllerTests() throws {
+    let directory=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer {try? FileManager.default.removeItem(at:directory)}
+    let journal=try Journal(directory:directory),runtime=FakeSandboxExecutor()
+    let controller=JobController(journal:journal,executor:runtime,collectVM:true)
+    var admission=AdmissionPolicy()
+    func sample(_ now:Int64)->ResourceSample {ResourceSample(sampledAt:now,physical:128<<30,available:64<<30,vmAvailable:8<<30,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal,vmSampledAt:now)}
+    let id=UUID().uuidString.lowercased(),job=try DurableJob(id:id,idempotency:UUID().uuidString.lowercased(),ownerHash:String(repeating:"a",count:64),requestHash:String(repeating:"b",count:64),created:10000)
+    let config=try SandboxConfiguration(job:id,nonce:String(repeating:"a",count:64),image:"sha256:"+String(repeating:"b",count:64),memory:512<<20,cpus:1)
+    try admission.reserve(job:id,memory:config.memory,cpus:1,sample:sample(10000),now:10000)
+    _=try journal.reserveSandbox(job:job,configuration:config)
+    for tick in 0..<14 {
+        let now:Int64=10000+Int64(tick)*500;runtime.resourceNow=now
+        try controller.tick(now:now,sample:sample(now),admission:&admission,transportReady:{_ in true},cancelModel:{_ in})
+    }
+    guard !runtime.resourceRequests.isEmpty,controller.vmAvailable(now:16500)==4<<30,controller.vmEpoch(now:16500)?.count==64,
+          controller.vmAvailable(now:30000)==nil else {fatalError("VM controller failed fresh/stale capacity publication")}
+    for pair in zip(runtime.resourceRequests,runtime.resourceRequests.dropFirst()) {guard pair.1-pair.0>=2000 else {fatalError("Unbounded VM polling")}}
+    runtime.resourceFailure=true
+    for tick in 0..<8 {
+        let now:Int64=17000+Int64(tick)*500;runtime.resourceNow=now
+        try controller.tick(now:now,sample:sample(now),admission:&admission,transportReady:{_ in true},cancelModel:{_ in})
+    }
+    guard controller.vmAvailable(now:20500)==nil,controller.vmEpoch(now:20500)==nil else {fatalError("Failed source retained verified VM capacity")}
+    print("PASS: serialized VM coordinator polls owned running targets at2s, publishes only fresh envelopes and immediately invalidates failed/stale resource authority (fake runtime telemetry)")
+}
+
+func runSandboxExitProofTests()throws {
+    let directory=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer {try? FileManager.default.removeItem(at:directory)}
+    let journal=try Journal(directory:directory),runtime=FakeSandboxExecutor()
+    runtime.reportExitCodes=true
+    let controller=JobController(journal:journal,executor:runtime)
+    var admission=AdmissionPolicy()
+    func sample(_ now:Int64)->ResourceSample {ResourceSample(sampledAt:now,physical:128<<30,available:64<<30,vmAvailable:8<<30,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal,vmSampledAt:now)}
+    let id=UUID().uuidString.lowercased()
+    let job=try DurableJob(id:id,idempotency:UUID().uuidString.lowercased(),ownerHash:String(repeating:"a",count:64),requestHash:String(repeating:"b",count:64),created:10000)
+    let config=try SandboxConfiguration(job:id,nonce:String(repeating:"a",count:64),image:"sha256:"+String(repeating:"b",count:64),memory:512<<20,cpus:1)
+    try admission.reserve(job:id,memory:config.memory,cpus:1,sample:sample(10000),now:10000)
+    _=try journal.reserveSandbox(job:job,configuration:config)
+    func tick(_ now:Int64)throws {try controller.tick(now:now,sample:sample(now),admission:&admission,transportReady:{_ in true},cancelModel:{_ in})}
+    for index in 0..<14 {
+        try tick(10000+Int64(index)*500)
+        if try journal.jobs().first(where:{$0.id==id})?.state == .creating,
+           try journal.sandboxRecords().first(where:{$0.configuration.job==id})?.startIssued == true,
+           controller.exitProof[id] != nil {fatalError("FIO_SANDBOX_CREATED_STATE_BECAME_EXIT_PROOF")}
+    }
+    guard try journal.jobs().first(where:{$0.id==id})?.state == .running,controller.exitProof[id]==nil,
+          let (_,runtimeID,_)=runtime.present[id] else {fatalError("Running sandbox retained birth exit status")}
+    runtime.present[id]=(config,runtimeID,false)
+    try tick(19000);try tick(20000)
+    guard controller.exitProof[id]==true else {fatalError("Verified post-start mock exit status was lost")}
+    runtime.present[id]=(config,runtimeID,true)
+    try tick(21000);try tick(21001)
+    guard controller.exitProof[id]==nil else {fatalError("FIO_SANDBOX_RUNNING_RESTART_REUSED_PRIOR_EXIT_PROOF")}
+    guard try journal.sandboxRecords().first(where:{$0.configuration.job==id})?.removalProven == false else {fatalError("Restart observation released sandbox reservation")}
+    print("PASS: synthetic created/running snapshots cannot certify exit; observed restart clears old local exit proof without releasing cleanup custody")
+}
+
+func runCleanupStatusRecoveryTests() throws {
+    let directory=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer {try? FileManager.default.removeItem(at:directory)}
+    let journal=try Journal(directory:directory),runtime=FakeSandboxExecutor()
+    let controller=JobController(journal:journal,executor:runtime)
+    var admission=AdmissionPolicy()
+    func sample(_ now:Int64)->ResourceSample {
+        ResourceSample(sampledAt:now,physical:128<<30,available:64<<30,vmAvailable:8<<30,
+            diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal,vmSampledAt:now)
+    }
+    let id=UUID().uuidString.lowercased()
+    let job=try DurableJob(id:id,idempotency:UUID().uuidString.lowercased(),ownerHash:String(repeating:"a",count:64),requestHash:String(repeating:"b",count:64),created:10000)
+    let configuration=try SandboxConfiguration(job:id,nonce:String(repeating:"a",count:64),image:"sha256:"+String(repeating:"b",count:64),memory:512<<20,cpus:1)
+    try admission.reserve(job:id,memory:configuration.memory,cpus:1,sample:sample(10000),now:10000)
+    _=try journal.reserveSandbox(job:job,configuration:configuration)
+    for index in 0..<14 {
+        let now:Int64=10000+Int64(index)*500
+        try controller.tick(now:now,sample:sample(now),admission:&admission,transportReady:{_ in true},cancelModel:{_ in})
+    }
+    let running=try journal.jobs()[0];precondition(running.state == .running)
+    // Independent local model metadata has no dispatched worker/request here.
+    let modelID=UUID().uuidString.lowercased()
+    _=try journal.reserveJob(DurableJob(id:modelID,idempotency:UUID().uuidString.lowercased(),
+        ownerHash:job.ownerHash,requestHash:job.requestHash,created:18000))
+    try journal.transitionJob(id:modelID,to:.running,now:18000)
+    try journal.claim(job:modelID,attempt:0,model:"fixture/model")
+    try journal.markUncertain(job:modelID,attempt:0)
+    try journal.transitionJob(id:id,to:.revoking,now:20000)
+    runtime.holdResponses=true
+    try controller.tick(now:20000,sample:sample(20000),admission:&admission,transportReady:{_ in true},cancelModel:{_ in})
+    let first=controller.cleanupStatus(now:20000)
+    precondition(first["pending_sandboxes"] as? Int == 1 && first["waiting_over_60s"] as? Bool == false)
+    try controller.tick(now:81000,sample:sample(81000),admission:&admission,transportReady:{_ in true},cancelModel:{_ in})
+    let waiting=controller.cleanupStatus(now:81000)
+    precondition(waiting["observed_wait_ms"] as? Int64 == 61000 && waiting["waiting_over_60s"] as? Bool == true)
+    runtime.holdResponses=false
+    for index in 0..<20 {
+        let now:Int64=82000+Int64(index)*500
+        try controller.tick(now:now,sample:sample(now),admission:&admission,transportReady:{_ in true},cancelModel:{_ in})
+    }
+    let removed=try journal.jobs().first{$0.id==id};precondition(removed?.state == .removed)
+    let completed=controller.cleanupStatus(now:92000)
+    precondition(completed["pending_sandboxes"] as? Int == 0 && completed["waiting_over_60s"] as? Bool == false)
+    let unresolved=try journal.unresolvedCount(),uncertain=try journal.uncertainCount()
+    precondition(unresolved==1 && uncertain==1)
+    print("PASS: ordinary delayed runtime completion reports waiting, then clears current cleanup status after removal")
+}

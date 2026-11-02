@@ -1,0 +1,85 @@
+import Foundation
+import Darwin
+import CSQLite
+
+@main
+struct NativeControlLive {
+    static func main() {
+        do {try run()} catch {FileHandle.standardError.write(Data("Native control fixture refused.\n".utf8));exit(1)}
+    }
+    static func run() throws {
+        let args=Array(CommandLine.arguments.dropFirst())
+        if args.count==2,args[0]=="--isolated-health",let port=Int(args[1]) {
+            guard try ServiceHealthProbe(port:port).probe()==ServiceHealthState.healthy else {throw NativeControlError.invalid}
+            print("{\"healthy\":true,\"identity_proven\":false,\"native_idle_proven\":false}")
+            return
+        }
+        if args.count==7,["--isolated-manager","--isolated-manager-v3","--isolated-manager-fences","--isolated-manager-primary","--isolated-seed-lineage"].contains(args[0]) {
+            guard args[1].hasPrefix("/tmp/") || args[1].hasPrefix("/private/tmp/"),let pid=Int32(args[6]),pid>1 else {throw NativeControlError.invalid}
+            let peer=NativeControlPeer(pid:pid,start:try WorkerResources.startIdentifier(pid:pid),executable:try VerifiedExecutable(path:args[3],sha256:args[4]))
+            // args[5] is a fixed source fixture marker, not a role or authority.
+            guard args[5]=="source-fixture-only" else {throw NativeControlError.invalid}
+            let client=NativeControlClient(path:args[2],peer:peer,version:["--isolated-manager-v3","--isolated-manager-fences","--isolated-manager-primary"].contains(args[0]) ? 3:2,observeBackendFences:["--isolated-manager-fences","--isolated-manager-primary"].contains(args[0]),observePrimaryActivity:args[0]=="--isolated-manager-primary")
+            if args[0]=="--isolated-seed-lineage" {
+                let status=try client.request(operation:.observe,instance:nil,sequence:0)
+                let scope=InferenceScope(host:"source-fixture-host",endpointHash:String(repeating:"a",count:64),profileHash:String(repeating:"b",count:64),
+                    managerEpoch:UUID().uuidString.lowercased(),nativeEpoch:status.instance,canonicalModel:"fixture/model",nativeModel:"fixture/model",sequence:1,sampledAt:HostResources.nowMilliseconds())
+                let journal=try Journal(directory:URL(fileURLWithPath:args[1]))
+                try journal.claim(job:"00000000-0000-4000-8000-000000000009",attempt:0,model:scope.canonicalModel,scope:scope)
+                try journal.markDispatched(job:"00000000-0000-4000-8000-000000000009",attempt:0)
+                print("{\"seeded_unit_scope\":true,\"model_requests\":0,\"native_authority\":false}")
+                return
+            }
+            try ManagerRuntime.run(directory:URL(fileURLWithPath:args[1]),nativeControl:client)
+            return
+        }
+        if args.count==3,args[0]=="--isolated-check-lineage" {
+            guard args[1].hasPrefix("/private/tmp/f9-native-status-") else {throw NativeControlError.invalid}
+            let stopped=try StoppedPlatformState(directory:URL(fileURLWithPath:args[1]))
+            defer {withExtendedLifetime(stopped) {}}
+            var db:OpaquePointer?,row:OpaquePointer?
+            guard sqlite3_open_v2(URL(fileURLWithPath:args[1]).appendingPathComponent("state.sqlite").path,&db,SQLITE_OPEN_READONLY|SQLITE_OPEN_FULLMUTEX,nil)==SQLITE_OK else {throw JournalError.storage}
+            defer {sqlite3_finalize(row);sqlite3_close(db)}
+            let sql="SELECT l.payload,i.uncertain FROM native_lineages l JOIN inference i ON l.job=i.job AND l.attempt=i.attempt WHERE l.job='00000000-0000-4000-8000-000000000009' AND l.attempt=0"
+            guard sqlite3_prepare_v2(db,sql,-1,&row,nil)==SQLITE_OK,sqlite3_step(row)==SQLITE_ROW,
+                  sqlite3_column_int(row,1)==1,let text=sqlite3_column_text(row,0) else {throw JournalError.invalid}
+            let count=Int(sqlite3_column_bytes(row,0))
+            guard (1...16384).contains(count),
+                  let value=try JSONSerialization.jsonObject(with:Data(bytes:text,count:count)) as? [String:Any],
+                  value["instance"] as? String==args[2],value["root"] as? String=="0",value["fenced"] as? Bool==false,
+                  let sequence=WireScalar.integer(value["sequence"]),sequence>0,
+                  let time=WireScalar.integer(value["sampledAt"]),time>0,
+                  sqlite3_step(row)==SQLITE_DONE else {throw JournalError.invalid}
+            print("{\"persisted_source_sample\":true,\"missing_root_unknown\":true,\"unresolved_uncertainty_retained\":true,\"native_authority\":false}")
+            return
+        }
+        if args.count==7,args[0]=="--isolated-lineage" {
+            guard args[1].hasPrefix("/tmp/") || args[1].hasPrefix("/private/tmp/"),let pid=Int32(args[4]),pid>1 else {throw NativeControlError.invalid}
+            let peer=NativeControlPeer(pid:pid,start:try WorkerResources.startIdentifier(pid:pid),executable:try VerifiedExecutable(path:args[2],sha256:args[3]))
+            let sample=try NativeControlClient(path:args[1],peer:peer).lineage(instance:args[5],correlationID:args[6])
+            let scope=InferenceScope(host:"fixture-host",endpointHash:PythonWorkerFactory.digest("http://127.0.0.1:1/v1"),
+                profileHash:String(repeating:"d",count:64),managerEpoch:"00000000-0000-4000-8000-000000000002",
+                nativeEpoch:args[5],canonicalModel:"test/model",nativeModel:"test/model",sequence:1,sampledAt:sample.sampledAt)
+            var consumer=try NativeRequestLineageConsumer(scope:scope,job:"00000000-0000-4000-8000-000000000001",attempt:0,peer:peer)
+            guard consumer.correlationID==args[6],case .unknown=consumer.accept(sample,now:HostResources.nowMilliseconds()),
+                  !consumer.fenced,consumer.rootSequence==nil else {throw NativeControlError.invalid}
+            let value=sample.lineage
+            let fields:[String:Any]=["instance":value.instance,"correlation_id":value.correlationID,
+                "sample_sequence":String(value.sampleSequence),"root_sequence":String(value.rootSequence),
+                "references":String(value.references),"found":value.found,"uncertain":value.uncertain,
+                "owners":value.owners,"sampled_at":sample.sampledAt,"consumer":"unknown"]
+            print(String(decoding:try JSONSerialization.data(withJSONObject:fields,options:[.sortedKeys]),as:UTF8.self))
+            return
+        }
+        guard args.count==8,args[0]=="--isolated",args[1].hasPrefix("/tmp/") || args[1].hasPrefix("/private/tmp/"),
+              let pid=Int32(args[4]),pid>1,let operation=NativeControlOperation(rawValue:UInt8(args[5]) ?? 255),
+              let sequence=UInt64(args[7]) else {throw NativeControlError.invalid}
+        let executable=try VerifiedExecutable(path:args[2],sha256:args[3])
+        let peer=NativeControlPeer(pid:pid,start:try WorkerResources.startIdentifier(pid:pid),executable:executable)
+        let client=NativeControlClient(path:args[1],peer:peer)
+        let value=try client.request(operation:operation,instance:args[6]=="-" ? nil:args[6],sequence:sequence)
+        let fields:[String:Any]=["status":value.status.rawValue,"instance":value.instance,"sequence":String(value.pauseSequence),
+            "owners":value.owners,"closed":value.closed,"uncertain":value.uncertain,"activity":"unknown"]
+        print(String(decoding:try JSONSerialization.data(withJSONObject:fields,options:[.sortedKeys]),as:UTF8.self))
+    }
+}

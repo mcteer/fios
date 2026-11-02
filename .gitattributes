@@ -1,0 +1,3 @@
+# Unified-diff artifacts require a leading space on empty context lines.
+# Preserve their reviewed, hash-pinned bytes and final context verbatim.
+platform/studio/native/*.patch whitespace=-blank-at-eol,-blank-at-eof
