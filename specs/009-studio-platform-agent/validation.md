@@ -2370,3 +2370,111 @@ native quiescence unproven/coverage unknown/authority false. No generated text
 logged. This is administrative source-only functional evidence, not production
 admission/platform dispatch/worker competence or Studio acceptance;0 installed
 or Studio actions and38/55 whole tasks complete.
+
+### 2026-11-01 retain native serving frames after connection-drain timeout
+
+Code review found that the existing shutdown drain counted requested20ms sleeps
+up to30,000ms and then proceeded with response-store cleanup/serving defers while
+original connection threads could still be active. The source now measures the
+initial30s with its original monotonic clock, sets the existing uncertainty
+fence on timeout and retains the original serving frame/globals/storage/defers
+until those actual threads release. Local stop timeout is still uncertainty,
+not exit/adoption/replacement or complete backend terminality. The existing
+thread count is incremented before spawn and released last; no synthetic
+counter or positive all-client/native proof is introduced.
+
+An ordinary finite source fixture uses a real empty catalog and one incomplete
+128-byte GET body, sending progress every500ms around an ordinary owned-child
+stop signal. It sends no model POST and touches no installed service. The first
+prior case `/tmp/fios-009-native-connection-drain-prior.log`, review
+`/private/tmp/f9-connection-drain-UvDYrC`, fails the expected uncertainty field.
+The repeated prior case adds safe source timing/count output
+(`/tmp/fios-009-native-connection-drain-prior-final.log`, review
+`/private/tmp/f9-connection-drain-27UAFY`): at31,635ms, the original body remains
+open, owned1/ingress1, original source sequence6, uncertainty false. It fails
+`assert(held.uncertain)`; the native process has not yet exited at that sample.
+Do not report this as a demonstrated early native exit or dangling-memory crash.
+Private cleanup closes that original connection, then the original child exits
+normally; no forced cleanup or inference/native terminal proof follows.
+
+Corrected source build and real post-timeout retention/release case are pending
+at this checkpoint.44 Node tests and inference boundary pass
+(`/tmp/fios-009-connection-drain-{node,boundary}.log`).38/55 whole tasks complete;
+T027/T030 and complete native ownership/admission remain open.
+
+Connection-only enclosing build passes (`/tmp/fios-009-connection-drain-native-build.log`),
+capsule `/private/tmp/fios-009-connection-drain-native-review/capsule`, review
+2f74ecb5252f543e43d3dbc85bff5343a7bff7b6e52228821c0db952cce3ac89,
+binary1dde132b784d00065e522d31670d6d7f8222787a718eca01eb39c37894590203,
+18-path root patch23d9c4d4d4636d81cb033541529694c6e0c46090216de4ecacca7eab18835e99.
+Actual final unfinished-GET case passes (`/tmp/fios-009-native-connection-drain-green.log`,
+`/private/tmp/f9-connection-drain-QI5Dtg/receipt.json`): original instance
+441c273a689bc00f8041cb1d7184a7ed, at31,633ms owned1/ingress1/uncertain true,
+64 of128 body bytes sent. Actual retention branch is logged while cleanup branch
+is absent; closing the original connection permits normal exit0, no force.
+Driver4bce097fff045da07e20a35a5e61fbd5580db9e6187f3439365efdcb4330ddab.
+Actual readonly native primary/backend HTTP checks pass
+(`/tmp/fios-009-connection-drain-native-http.log`, `/private/tmp/f9-backend-fences-FGAiVH`).
+
+The same connection-only native capsule also passes Debug/optimized actual
+supervisor/manager composition (`/tmp/fios-009-connection-drain-supervised-server.log`,
+`/private/tmp/fios-009-serving-runtime-native-VcMob8/receipt.json`):4 native
+children,2 actual supervisors/4 actual managers/2 manager replacements, real
+kernel listener health, exact same original child across manager replacement,
+then guarded recovery/stopped intent. Readiness, initial absence, health
+loading/failure overlays and native reservations remain synthetic fixtures.
+Core Swift filename set/bytes plus fixture are bracketed, not whole repository/
+native provenance. No model or installed action; uncertain journal claim retained.
+
+Follow-up broadens local serving retention to actor/backend owner references
+and model-mutation tickets after original HTTP references leave. Pure readonly
+hasRetainedWork uses the existing mutex/slots, has no callback, does not capture
+or refresh observation sequence/time and never clears uncertainty. An uninitialized
+tracker stays retained/unknown. Independent idle eviction is stopped before the
+wait, with its original deferred join still protecting an active iteration.
+This is not an atomic hold over every untracked native producer or terminal proof.
+
+New ordinary ownership fixture has missing-interface compiler red
+(`/tmp/fios-009-retention-interface-red.log`) and Debug/ReleaseSafe green
+(`/tmp/fios-009-serving-retention-{debug,release}{-build,}.log`), exactly1 filtered
+test/mode, denied networking/10s process bound. The unit creates real tracker tokens and transfers a retained reference set
+to an actual thread; the original connection reference leaves, local
+retention persists, actual thread release leaves the real model-mutation ticket
+retained, and its exact release leaves uncertainty sticky. Source snapshots
+advance only when actually sampled. This is local metadata/reference evidence,
+not an SDK callback/device/error simulation or native whole-task acceptance.
+Expanded enclosing build/runtime regression pending;38/55 whole tasks complete.
+
+Expanded retention build passes (`/tmp/fios-009-serving-retention-native-build.log`),
+functional-only/model-capable MAS, historical matrices skipped. Final capsule
+`/private/tmp/fios-009-serving-retention-native-review/capsule`, review
+1e879e78d07ffd2d5a70a8bcae972a3014b3865481fa77ec2b3e0177fe5df3e8,
+binaryb31e11cf314c5c6216bcd9106fec54ae5185dc6a6c877110ad9ee76089eb1327,
+source marker native_connection_drain_retention_version2. Final18-path root
+patch9c87667e6ed23fdc39abdaa720b6d3c63c3a26eb89d1000228c5d5d9e4a477a2;
+ownership2c0783bfe074b5ebe4f8ca975b961d4d00064aa397fd8b59c752e4b18c6d1ca5;
+unit7f53f166fb617a93a7e0d839ec90c1cefb56ec91d7f2d560fd16e7110529d6bb.
+Exact final artifact passes unfinished-GET retention/release
+(`/tmp/fios-009-serving-retention-native-drain.log`,
+`/private/tmp/f9-connection-drain-vZfg79/receipt.json`):31,633ms, original
+instance79160ad183962023b34064215cf02f56, owned1/ingress1/uncertain true,
+64/128 body bytes, normal exit0 after original connection release, no force.
+Readonly native primary/backend observation passes
+(`/tmp/fios-009-serving-retention-native-http.log`).44 Node tests and boundary
+pass (`/tmp/fios-009-serving-retention-{node,boundary}.log`).
+
+A final new one-use plan `/private/tmp/fios-009-serving-retention-model-plan/plan.json`,
+SHAfbac6d3fde0d25c173100000b4b90d91ff3f31e154c2cd397620d147d5c5ee22,
+passes empty check (`/tmp/fios-009-serving-retention-model-check.log`,
+`/private/tmp/f9-model-check-SeMLkU`) and actual core-only exact Gemma run
+(`/tmp/fios-009-serving-retention-model-run.log`, `/private/tmp/f9-model-run-rdfjBH`).
+Same finite one-POST/concurrency1/context512/output2/request10s/work15s/cleanup7s,
+sampled native12GiB/observer128MiB bounds on fios-core Apple M4 Pro24GiB only.
+Two tokens/two deltas complete4454ms,44 coherent component samples/4 primary
+samples/3 positive, original root5 persisted/source sequence93, instance
+78937563b7bc2629a9d20dee4400f1a1. Native RSS3,225,436,160/footprint4,664,953,928;
+observer RSS12,206,080/footprint4,719,144. Both local processes reap normally,
+with the journal still uncertain, native quiescence unproven/coverage unknown/
+authority false. No generated text logged; source administrative request only,
+not production admission/platform dispatch/worker competence or Studio acceptance.
+No installed/Studio actions;38/55 whole tasks complete.

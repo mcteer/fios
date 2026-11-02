@@ -182,3 +182,32 @@ value. This is monitoring, not absence, all-client idle, admission or a lifecycl
 permit; public recovery/native-control/start/stop issuers remain absent.
 Positive installed configuration/collector behavior remains separately gated and
 unexecuted. A development package or this source wiring creates no installation.
+
+### Connection-drain retention in the source server
+
+A stop signal ends the native accept loop. The source server gives its existing
+connection threads a30s observation using monotonic elapsed time, rather than
+counting requested sleep intervals. A remaining original thread sets the
+independent request uncertainty fence. The serving frame, response storage,
+globals and deferred scheduler teardown remain retained until those actual
+threads and the tracker's retained owners/model-mutation tickets finish. The
+local retained-work predicate takes only its original metadata lock; it does
+not call backends, advance observation sequence/time or change uncertainty.
+Independent idle eviction stops before this wait; its original deferred join
+still protects an already-running iteration. These tracked lifetimes are not
+an atomic reservation of every possible native producer. A supervisor stop deadline may therefore remain uncertain; it
+must retain the original child and may not infer exit or launch a replacement.
+This is local connection custody, not complete backend/device terminality or
+all-client native enrollment. No age, cleanup or local reap clears independent
+inference uncertainty.
+
+The isolated source command `node scripts/check-platform-native-connection-drain.mjs
+--isolated --release ABS_CAPSULE --sha256 REVIEW_SHA` uses one private empty-model
+server, one incomplete128-byte GET body, loopback/private Unix only, no model
+POSTs and no installed actions. It drips fewer than128 bytes for31.5s around an
+ordinary stop signal, observes the original ingress still owned and uncertain,
+then closes its own connection and waits at most5s for the original process.
+A forced private cleanup is reported as failure, not accepted exit or native
+quiescence. The capsule marker native_connection_drain_retention_version1 covers connection
+retention; version2 adds tracked owner/mutation lifetime checks. Each is
+source-format metadata, not installed authority.

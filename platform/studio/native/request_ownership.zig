@@ -226,6 +226,22 @@ pub const Tracker = struct {
         defer self.mutex.unlock(io);
         self.uncertain = true;
     }
+    // Local serving-memory lifetime only. The final HTTP reference may leave
+    // before an original actor/backend callback or model mutation releases.
+    // This read neither samples/refreshes observations nor calls a backend.
+    // False never establishes device completion, idle or all-client coverage.
+    pub fn hasRetainedWork(self: *Tracker, io: std.Io) bool {
+        self.mutex.lockUncancelable(io);
+        defer self.mutex.unlock(io);
+        if (!self.initialized) return true;
+        for (&self.slots) |*slot| {
+            if (slot.phase != .vacant or slot.references != 0 or slot.sequence != 0) return true;
+        }
+        for (&self.mutations) |*mutation| {
+            if (mutation.len != 0 or mutation.sequence != 0) return true;
+        }
+        return false;
+    }
     pub fn enter(self: *Tracker, io: std.Io) !Token {
         self.mutex.lockUncancelable(io);
         defer self.mutex.unlock(io);
