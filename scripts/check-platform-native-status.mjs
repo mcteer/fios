@@ -13,12 +13,13 @@ import {verifyNativeReview} from './lib/platform-native-review.mjs';
 const args=process.argv.slice(2);
 let protocolVersion=2;
 function option(flag){const index=args.indexOf(flag);assert.equal(args.filter(value=>value===flag).length,index<0?0:1);if(index>=0)args.splice(index,1);return index>=0;}
-const withLineage=option('--lineage'),withBackendFences=option('--backend-fences');
+const withLineage=option('--lineage'),withBackendFences=option('--backend-fences'),withPrimaryActivity=option('--primary-activity');
 if(args.length===7){assert.equal(args[5],'--protocol-version');assert.equal(args[6],'3');protocolVersion=3;args.splice(5,2);}
 assert(args.length===5&&args[0]==='--isolated'&&args[1]==='--capsule'&&args[3]==='--sha256');
 assert.equal(process.platform,'darwin');assert.notEqual(process.getuid(),0);
 const capsule=verifyNativeReview(args[2],args[4]),binary=capsule.binary;
 if(withBackendFences){assert.equal(protocolVersion,3);assert.equal(capsule.receipt.declared_inputs.native_backend_fences_version,1);}
+if(withPrimaryActivity){assert(withBackendFences);assert.equal(capsule.receipt.declared_inputs.native_primary_activity_version,1);}
 const binarySHA=capsule.receipt.files['bin/mlx-serve'].sha256;
 const root=resolve(import.meta.dirname,'..'),directory=mkdtempSync('/private/tmp/f9-native-status-');
 const models=join(directory,'empty-models'),state=join(directory,'manager');mkdirSync(models,{mode:0o700});
@@ -56,17 +57,23 @@ try{
  await until(()=>existsSync(control));
  const lineageSeed=withLineage?JSON.parse(run(fixture,['--isolated-seed-lineage',state,control,binary,binarySHA,'source-fixture-only',String(native.pid)],5000)):null;
  if(withLineage)assert.deepEqual(lineageSeed,{seeded_unit_scope:true,model_requests:0,native_authority:false});
- const manager=spawn(fixture,[withBackendFences?'--isolated-manager-fences':protocolVersion===3?'--isolated-manager-v3':'--isolated-manager',state,control,binary,binarySHA,'source-fixture-only',String(native.pid)],{cwd:root,env,stdio:['ignore','ignore','pipe']});children.push(manager);
+ const manager=spawn(fixture,[withPrimaryActivity?'--isolated-manager-primary':withBackendFences?'--isolated-manager-fences':protocolVersion===3?'--isolated-manager-v3':'--isolated-manager',state,control,binary,binarySHA,'source-fixture-only',String(native.pid)],{cwd:root,env,stdio:['ignore','ignore','pipe']});children.push(manager);
  let managerErrors='';manager.stderr.on('data',part=>{managerErrors+=part.toString();});
  const initial=await until(()=>{assert(!exited(manager),`Private manager exited: ${managerErrors}`);return command(['status']);});
  assert(['waiting','received'].includes(initial.native_control.state));assert.equal(initial.native_control.authoritative,false);
  assert.equal(command(['service','mlx','running']).applied,false);
- const opened=await until(()=>{const value=command(['status']);return value?.native_control.state==='received'&&value.native_admissions==='admissionsOpen'&&(!withBackendFences||value.native_control.backend_fences?.state==='received') ? value:null;});
+ const opened=await until(()=>{const value=command(['status']);return value?.native_control.state==='received'&&value.native_admissions==='admissionsOpen'&&(!withBackendFences||value.native_control.backend_fences?.state==='received')&&(!withPrimaryActivity||value.native_control.primary_activity?.state==='received') ? value:null;});
  const diagnostic=opened.native_control;
  if(withBackendFences){
   const fences=diagnostic.backend_fences;assert.equal(fences.scope,'independent_partial_backend_fences');assert.equal(fences.coverage,'unknown');assert.equal(fences.authority,false);assert.equal(fences.source_instance,diagnostic.source_instance);
   assert.equal(fences.mimo_warm_uncertain,false);assert.equal(fences.ds4_metal_uncertainty,0);assert.equal(fences.ds4_host_uncertainty,0);assert.equal(fences.retained_uncertainty,false);
   assert(fences.source_sequence>0&&fences.source_age_ms>=-1000&&fences.source_age_ms<=5000);
+ }
+ if(withPrimaryActivity){
+  const primary=diagnostic.primary_activity;assert.equal(primary.scope,'primary_request_ownership');assert.equal(primary.coverage,'unknown');assert.equal(primary.authority,false);assert.equal(primary.source_instance,diagnostic.source_instance);
+  assert.equal(primary.model_identities,0);assert.equal(primary.tracker_uncertain,false);assert.equal(primary.retained_uncertainty,false);
+  assert.equal(primary.reported_counts.owners,primary.reported_counts.ingress);assert.equal(primary.reported_counts.preparing,0);assert.equal(primary.reported_counts.active,0);assert.equal(primary.reported_counts.responding,0);
+  assert(primary.source_sequence>diagnostic.source_sequence);assert(primary.source_age_ms>=-1000&&primary.source_age_ms<=5000);
  }
  assert.equal(diagnostic.scope,'native_ingress_tracker');assert.equal(diagnostic.authoritative,false);
  if(protocolVersion===3){
@@ -104,6 +111,11 @@ try{
   const refreshed=await until(()=>{const next=command(['status'])?.native_control.backend_fences;return next?.state==='received'&&next.source_sequence>firstFences.source_sequence?next:null;});
   assert.equal(refreshed.source_instance,firstFences.source_instance);assert(refreshed.source_sampled_at>=firstFences.source_sampled_at);
  }
+ if(withPrimaryActivity){
+  const first=diagnostic.primary_activity;
+  const refreshed=await until(()=>{const next=command(['status'])?.native_control.primary_activity;return next?.state==='received'&&next.source_sequence>first.source_sequence?next:null;});
+  assert.equal(refreshed.source_instance,first.source_instance);assert(refreshed.source_sampled_at>=first.source_sampled_at);
+ }
  assert.equal(command(['service','mlx','maintenance']).applied,false);
  const paused=await until(()=>{const value=command(['status']);return value?.native_control.state==='received'&&value.native_control.ingress_closed===true&&value.native_admissions==='admissionsClosed' ? value:null;});
  assert.equal(paused.native_control.source_instance,diagnostic.source_instance);
@@ -117,7 +129,7 @@ try{
  const lineageReceipt=withLineage?JSON.parse(run(fixture,['--isolated-check-lineage',state,diagnostic.source_instance],5000)):null;
  if(withLineage){assert.equal(lineageReceipt.persisted_source_sample,true);assert.equal(lineageReceipt.unresolved_uncertainty_retained,true);writeFileSync(join(directory,'lineage-receipt.json'),JSON.stringify(lineageReceipt)+'\n',{mode:0o600});}
  native.kill('SIGTERM');await until(()=>exited(native),7000);
- console.log(JSON.stringify({ok:true,protocol_version:protocolVersion,source_health_probe:true,source_ingress_roundtrip:true,automatic_lineage_checkpoint:withLineage,automatic_backend_fences:withBackendFences,model_requests:0,installed_service_actions:0,authoritative:false,review_directory:directory}));
+ console.log(JSON.stringify({ok:true,protocol_version:protocolVersion,source_health_probe:true,source_ingress_roundtrip:true,automatic_lineage_checkpoint:withLineage,automatic_backend_fences:withBackendFences,automatic_primary_activity:withPrimaryActivity,model_requests:0,installed_service_actions:0,authoritative:false,review_directory:directory}));
 }finally{
  for(const child of [...children].reverse())if(!exited(child)){child.kill('SIGTERM');try{await until(()=>exited(child),7000);}catch{child.kill('SIGKILL');await until(()=>exited(child),3000);}}
  // Retain only private source-test data; process exit grants no native proof.

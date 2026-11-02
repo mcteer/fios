@@ -121,8 +121,12 @@ pub const Bridge = struct {
             count += @intCast(n);
             if (count > protocol.lineage_request_size) return;
         } else return;
-        var storage: [protocol.lineage_response_size]u8 = undefined;
-        const response: []const u8 = if (count == protocol.backend_request_size and std.mem.eql(u8, input[0..4], "FIB9")) fences: {
+        var storage: [protocol.primary_response_size]u8 = undefined;
+        const response: []const u8 = if (count == protocol.primary_request_size and std.mem.eql(u8, input[0..4], "FIA9")) primary: {
+            const value = protocol.dispatchPrimaryActivity(&ownership.shared, self.io, input[0..protocol.primary_request_size]);
+            @memcpy(storage[0..protocol.primary_response_size], &value);
+            break :primary &storage;
+        } else if (count == protocol.backend_request_size and std.mem.eql(u8, input[0..4], "FIB9")) fences: {
             const value = protocol.dispatchBackendFences(&ownership.shared, self.io, input[0..protocol.backend_request_size], self.backend_fences);
             @memcpy(storage[0..protocol.backend_response_size], &value);
             break :fences storage[0..protocol.backend_response_size];
@@ -135,8 +139,9 @@ pub const Bridge = struct {
             @memcpy(storage[0..protocol.response_size], &value);
             break :legacy storage[0..protocol.response_size];
         } else if (count == protocol.lineage_request_size and std.mem.eql(u8, input[0..4], "FIQ9")) lineage: {
-            storage = protocol.dispatchLineage(&ownership.shared, self.io, input[0..protocol.lineage_request_size]);
-            break :lineage &storage;
+            const value = protocol.dispatchLineage(&ownership.shared, self.io, input[0..protocol.lineage_request_size]);
+            @memcpy(storage[0..protocol.lineage_response_size], &value);
+            break :lineage storage[0..protocol.lineage_response_size];
         } else return;
         var sent: usize = 0;
         while (sent < response.len and self.ready(peer, c.POLL.OUT, deadline)) {

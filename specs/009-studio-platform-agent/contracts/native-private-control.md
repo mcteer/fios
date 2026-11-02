@@ -256,3 +256,38 @@ sticky uncertainty; a later lower mask/cleared sticky flag fences the cache.
 Missing providers remain null, not false/zero. These flags never enter a native
 admission, lifecycle reservation or terminal proof. Coverage remains unknown,
 authority false, and false/zero never establishes idle or all-client completion.
+
+## Primary ownership observation (version1, source-only)
+
+A separate readonly FIA9 version1 request uses32 bytes with expected source
+instance8..24 and zero reserved5..8/24..32. FIT9 version1 reply is fixed66,624
+bytes:64-byte header and64 records of1,040 bytes. Header status is byte5,
+reserved6 is zero, uncertainty7 is boolean, instance8..24, original source
+sequence24..32, original UTC capture milliseconds32..40, owned/ingress/
+preparing/active/responding/model-count UInt32 values at40/44/48/52/56/60.
+Unknown clock is UINT64_MAX. Each used record contains UInt16 ID byte-length,
+two zero reserved bytes, UInt32 preparing/active/responding at4/8/12 and up to
+1,024 exact ID bytes at16; remaining bytes/unused records are zero. Integers
+are big-endian. At most256 ownership roots and64 primary model identities are
+reported. Auxiliary association stays in the legacy source view.
+
+This is conservative primary ownership attribution, including internal load
+preparation roots and retained references, not disjoint HTTP request counts,
+residency, execution/device phases or complete all-client coverage. Unbound
+ingress has no invented model. Independent source clock/sequence and unknown
+coverage remain mandatory; no native action, reservation or terminal proof is
+created. The existing private channel authentication, single response and2s
+transport deadline apply. FIC2/3, lineage and backend fence frames stay distinct.
+
+
+The opted-in Swift client validates all primary IDs/phases and retains the
+complete typed set internally. Its manager status view reports bounded aggregate
+counts and model-identity count, without truncating/exporting the64×1024-byte
+identity set into the existing64KiB status envelope. This remains separate from
+normalized all-client activity. Original primary capture/receipt clocks and
+sequence do not replace ingress metadata. Source gaps retain the original
+checkpoint and sticky tracker uncertainty; source/peer/clock rollback or a
+cleared sticky flag fences diagnostics. No state here releases journal claims.
+The existing single retained observe worker may issue these distinct finite
+reads; it creates no retry queue or native action from observations. Public
+startup remains unenrolled; both optional diagnostic clients default off.

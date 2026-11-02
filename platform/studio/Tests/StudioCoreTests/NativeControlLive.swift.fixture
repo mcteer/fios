@@ -14,12 +14,12 @@ struct NativeControlLive {
             print("{\"healthy\":true,\"identity_proven\":false,\"native_idle_proven\":false}")
             return
         }
-        if args.count==7,["--isolated-manager","--isolated-manager-v3","--isolated-manager-fences","--isolated-seed-lineage"].contains(args[0]) {
+        if args.count==7,["--isolated-manager","--isolated-manager-v3","--isolated-manager-fences","--isolated-manager-primary","--isolated-seed-lineage"].contains(args[0]) {
             guard args[1].hasPrefix("/tmp/") || args[1].hasPrefix("/private/tmp/"),let pid=Int32(args[6]),pid>1 else {throw NativeControlError.invalid}
             let peer=NativeControlPeer(pid:pid,start:try WorkerResources.startIdentifier(pid:pid),executable:try VerifiedExecutable(path:args[3],sha256:args[4]))
             // args[5] is a fixed source fixture marker, not a role or authority.
             guard args[5]=="source-fixture-only" else {throw NativeControlError.invalid}
-            let client=NativeControlClient(path:args[2],peer:peer,version:["--isolated-manager-v3","--isolated-manager-fences"].contains(args[0]) ? 3:2,observeBackendFences:args[0]=="--isolated-manager-fences")
+            let client=NativeControlClient(path:args[2],peer:peer,version:["--isolated-manager-v3","--isolated-manager-fences","--isolated-manager-primary"].contains(args[0]) ? 3:2,observeBackendFences:["--isolated-manager-fences","--isolated-manager-primary"].contains(args[0]),observePrimaryActivity:args[0]=="--isolated-manager-primary")
             if args[0]=="--isolated-seed-lineage" {
                 let status=try client.request(operation:.observe,instance:nil,sequence:0)
                 let scope=InferenceScope(host:"source-fixture-host",endpointHash:String(repeating:"a",count:64),profileHash:String(repeating:"b",count:64),

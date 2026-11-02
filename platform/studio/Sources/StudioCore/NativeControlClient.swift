@@ -119,8 +119,9 @@ struct NativeControlClient:Sendable {
     let peer:NativeControlPeer
     let version:UInt8
     let observesBackendFences:Bool
-    init(path:String,peer:NativeControlPeer,version:UInt8=2,observeBackendFences:Bool=false) {
-        self.path=path;self.peer=peer;self.version=version;observesBackendFences=observeBackendFences
+    let observesPrimaryActivity:Bool
+    init(path:String,peer:NativeControlPeer,version:UInt8=2,observeBackendFences:Bool=false,observePrimaryActivity:Bool=false) {
+        self.path=path;self.peer=peer;self.version=version;observesBackendFences=observeBackendFences;observesPrimaryActivity=observePrimaryActivity
     }
     func request(operation:NativeControlOperation,instance:String?=nil,sequence:UInt64=0) throws -> NativeIngressStatus {
         let data=try NativeControlWire.request(operation:operation,instance:instance,sequence:sequence,version:version)
@@ -148,8 +149,17 @@ struct NativeControlClient:Sendable {
               let stamp=value.sampledAt,(-1000...5000).contains(completed-stamp) else {throw NativeControlError.invalid}
         return NativeBackendFenceSample(peer:peer,receivedAt:completed,fences:value)
     }
+    func primaryActivity(instance:String,after sequence:UInt64=0)throws->NativePrimaryActivitySample {
+        let began=HostResources.nowMilliseconds()
+        let value=try NativePrimaryActivityWire.reply(exchange(NativePrimaryActivityWire.request(instance:instance),maximum:NativePrimaryActivityWire.responseSize),instance:instance,after:sequence)
+        let completed=HostResources.nowMilliseconds()
+        guard (0...ActivityPolicy.maximumTimestamp).contains(began),completed>=began,
+              completed<=ActivityPolicy.maximumTimestamp,completed-began<=5000,
+              let stamp=value.sampledAt,(-1000...5000).contains(completed-stamp) else {throw NativeControlError.invalid}
+        return NativePrimaryActivitySample(peer:peer,receivedAt:completed,activity:value)
+    }
     private func exchange(_ data:Data,maximum:Int)throws->Data {
-        guard [32,64].contains(data.count),[64,80,112].contains(maximum) else {throw NativeControlError.invalid}
+        guard [32,64].contains(data.count),[64,80,112,NativePrimaryActivityWire.responseSize].contains(maximum) else {throw NativeControlError.invalid}
         guard path.hasPrefix("/"),path.utf8.count<104,!path.contains("\0") else {throw NativeControlError.invalid}
         var parent=stat(),socketInfo=stat()
         let directory=URL(fileURLWithPath:path).deletingLastPathComponent().path

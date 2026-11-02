@@ -38,6 +38,23 @@ node scripts/check-platform-native-backend-fences.mjs --isolated --release /ABS/
 
 It correlates the existing readonly HTTP endpoint with private control instance, checks increasing source sequence and an empty catalog, and stops only its original child. It performs0 model POSTs/control actions, with bounded startup/GET/shutdown and only the selected localhost/private Unix network access. MIMO/DS4 Metal/DS4 host values are independent partial fences; unavailable is null, and false/zero never grants idle/completion/admission authority. This recipe requires envelope4, preserving older artifact evidence separately.
 
+The current source capsule can additionally expose its separate primary
+ownership snapshot. Both commands require its declared version1 capability:
+
+```sh
+node scripts/check-platform-native-backend-fences.mjs --isolated --release /ABS/PRIVATE_SOURCE_CAPSULE --sha256 EXACT_CAPSULE_RECEIPT_SHA --primary-activity
+node scripts/check-platform-native-status.mjs --isolated --capsule /ABS/PRIVATE_SOURCE_CAPSULE --sha256 EXACT_CAPSULE_RECEIPT_SHA --protocol-version 3 --lineage --backend-fences --primary-activity
+```
+
+The first checks the bounded fixed binary frame and independent source sequence;
+the second uses the actual Swift client/manager and verifies automatic refresh
+alongside backend flags and durable missing-lineage uncertainty. Both are finite
+empty-model fixtures with0 model POSTs/installed actions. Primary ownership
+includes internal load-preparation roots and retained references; it is not
+complete HTTP/all-client activity, resident state, device completion or admission.
+Manager status exports counts/model-identity count, keeping the full exact ID set
+in its private typed observation to preserve the existing status size bound.
+
 The actual source server can also exercise direct owned-child lifecycle through the real Swift runtime, independently of installed service activation:
 
 ```sh

@@ -14,15 +14,23 @@ struct NativeControlDiagnostics {
     private var receivedAt:Int64?
     private var unavailable=false
     private var backendObservations:NativeBackendFenceDiagnostics
-    init(configured:Bool,backendFencesConfigured:Bool=false) {
-        self.configured=configured;backendObservations=NativeBackendFenceDiagnostics(configured:backendFencesConfigured)
+    private var primaryObservations:NativePrimaryActivityDiagnostics
+    init(configured:Bool,backendFencesConfigured:Bool=false,primaryActivityConfigured:Bool=false) {
+        self.configured=configured;backendObservations=NativeBackendFenceDiagnostics(configured:backendFencesConfigured);primaryObservations=NativePrimaryActivityDiagnostics(configured:primaryActivityConfigured)
     }
     mutating func begin(retainingObservation:Bool=false) {
         if !retainingObservation {value=nil;receivedAt=nil;unavailable=false}
     }
-    mutating func completed(_ value:NativeIngressStatus,receivedAt:Int64,backendFences:Result<NativeBackendFenceSample,NativeControlError>?=nil) {
+    mutating func completed(_ value:NativeIngressStatus,receivedAt:Int64,backendFences:Result<NativeBackendFenceSample,NativeControlError>?=nil,primaryActivity:Result<NativePrimaryActivitySample,NativeControlError>?=nil) {
         self.value=value;self.receivedAt=receivedAt;unavailable=false
         backendObservations.bind(instance:value.instance)
+        primaryObservations.bind(instance:value.instance)
+        if let primaryActivity {
+            switch primaryActivity {
+            case .success(let sample):primaryObservations.completed(sample,expectedInstance:value.instance,now:HostResources.nowMilliseconds())
+            case .failure:primaryObservations.failed()
+            }
+        }
         if let backendFences {
             switch backendFences {
             case .success(let sample):backendObservations.completed(sample,expectedInstance:value.instance,now:HostResources.nowMilliseconds())
@@ -30,7 +38,7 @@ struct NativeControlDiagnostics {
             }
         }
     }
-    mutating func failed() {value=nil;receivedAt=nil;unavailable=true;backendObservations.failed()}
+    mutating func failed() {value=nil;receivedAt=nil;unavailable=true;backendObservations.failed();primaryObservations.failed()}
     private func fresh(_ time:Int64,now:Int64)->Bool {
         (0...ActivityPolicy.maximumTimestamp).contains(time) && (0...ActivityPolicy.maximumTimestamp).contains(now) &&
         (-1000...5000).contains(now-time)
@@ -54,6 +62,7 @@ struct NativeControlDiagnostics {
             "received_at":NSNull(),"receipt_age_ms":NSNull(),"source_sampled_at":NSNull(),
             "source_sequence":NSNull(),"source_age_ms":NSNull(),"source_instance":NSNull(),"reported_counts":NSNull(),
             "ingress_closed":NSNull(),"tracker_uncertain":NSNull()]
+        if primaryObservations.configured {output["primary_activity"]=primaryObservations.summary(now:now)}
         if backendObservations.configured {output["backend_fences"]=backendObservations.summary(now:now)}
         guard configured,let value,let receivedAt,
               (0...ActivityPolicy.maximumTimestamp).contains(receivedAt),

@@ -1976,3 +1976,73 @@ fixture0db2eba47fecfd4ba720a41d2b3d9ea3c5e868df8e13a093c88e6c0a7702a7b9.
 Transport/manager normalization and enclosing native rebuild remain pending for
 this source increment. Existing capsules/packages predate it.38/55 whole tasks
 remain complete; source/mock receipts do not complete T020/all-client admission.
+
+
+### 2026-11-01 readonly primary ownership wire and manager diagnostics
+
+Separate FIA9/FIT9 version1 is fixed32/66,624 bytes: original instance, capture
+sequence/time, bounded ownership phases and up to64 exact1024-byte primary IDs.
+Its64-byte header/64 fixed1040-byte rows leave reserved/padding/unused bytes zero.
+This is partial conservative primary ownership (including internal preparation
+roots), not HTTP request cardinality, queued/device phase, residency or all-client
+coverage. Existing FIC2/3, lineage/backend frames and HTTP4 remain distinct.
+
+Native missing-interface compile red `/tmp/fios-009-primary-wire-red.log` and
+Swift missing-type compile red `/tmp/fios-009-primary-activity-swift-red.log`
+precede implementation; neither is an old-runtime behavioral witness. One
+ordinary native wire test per Debug/ReleaseSafe passes
+`/tmp/fios-009-primary-wire-{debug,release}{-build,}.log`, denied networking,
+actual tracker primary/auxiliary attribution and no backend/model work. Swift
+wire-only checkpoint full Debug suite passes
+`/tmp/fios-009-primary-activity-swift-debug.log`. New manager-integrated Debug
+suite passes `/tmp/fios-009-primary-activity-manager-debug.log`, including typed
+count/ID coherence, source/receipt freshness, unavailable clock/gap retention,
+sticky uncertainty and safe extreme-time handling. No historical fault/mutation/
+counter campaigns run.
+
+Fresh provider-source functional-only enclosing build passes
+`/tmp/fios-009-primary-activity-native-build.log`, capsule
+`/private/tmp/fios-009-primary-activity-native-XJJ6PY/capsule`, review
+edcac344a5c28e39fc4108aa1764c43b73a216aadd69b5b3207366021fce0898,
+binary9960a677143089f38b7b1d88128f792b5463b3f36d96b928b3dc5bfad54f330b.
+It declares primary version1/current companions, current MIMO22a945/DS4 host6bdb075/
+MLX atomic3ea1f9 inputs. Historical root/runtime/HTTP matrices are skipped;
+this is declared composition, not whole-repository/native provenance.
+
+Actual Unix/HTTP observation passes
+`/tmp/fios-009-primary-activity-native-http.log`, receipt
+`/private/tmp/f9-backend-fences-Fr0qpl/receipt.json`: instance
+c6ebf286dc89c5498b8dcb51bf5b5242, backend sequence3, primary4, HTTP5→6.
+Primary owns0 roots/models at this capture, both catalogs empty, backend flags
+false/0/0. These zero observations confer no idle/native terminality authority.
+Original-child bounded shutdown and unchanged capsule verification pass;
+0 model POSTs/management/installed actions.
+
+Actual authenticated Swift client/manager passes
+`/tmp/fios-009-primary-activity-native-manager.log`, receipts in
+`/private/tmp/f9-native-status-JvvQk7`: protocol3 source health, normal private
+ingress running→maintenance→running, automatic primary/backend refresh and
+lineage checkpoint all pass. Primary source/receipt clocks/counter stay separate
+from original ingress capture; normalized coverage remains unknown and seeded
+independent inference uncertainty stays1 after cleanup. Typed full primary IDs
+stay internal; manager status exports bounded counts/model-identity count rather
+than truncating that set into its64KiB envelope. Both source opt-ins default off;
+public native issuers remain absent.44 platform Node cases and inference boundary
+pass (`/tmp/fios-009-primary-activity-{node,boundary}.log`). Optimized full suite
+is in progress at this checkpoint. No installed credential/Studio/native rollout,
+real inference, UI change, merge or deployment occurs;38/55 whole tasks complete.
+
+
+Final optimized complete suite passes
+`/tmp/fios-009-primary-activity-manager-release.log`. Fresh actual legacy2
+source-server/Swift-manager compatibility also passes
+`/tmp/fios-009-primary-activity-native-legacy.log`, review
+`/private/tmp/f9-native-status-mk3zTZ`: original private running/maintenance/
+running,0 models/installed actions, optional observations off and authorityfalse.
+This exercises the resized transport's legacy64-byte slice separately from the
+new frame. Protocol source32ca51b232a6a06f8043a14ca4676ada31767f0f1a7fe0a8bde9e69b95482224,
+transportefbdd7c3bc9ace7a8682b9d09193013323751d0e5abb7324e8a5fc3c81d867b3,
+Swift primary reader9dd66da957b84f5cc3e16480e205682b2b61212abe4a0e0a015565ec14872612.
+The earlier98c792f platform package predates primary observation; no current
+complete platform/native release or installed provenance is claimed.38/55 whole
+tasks remain complete.

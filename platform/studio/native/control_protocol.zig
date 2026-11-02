@@ -48,6 +48,40 @@ pub fn dispatchBackendFences(tracker: *ownership.Tracker, io: std.Io, request: *
     return response;
 }
 
+// Primary ownership observation only, never normalized all-client activity.
+pub const primary_request_size = 32;
+pub const primary_record_size = 16 + ownership.model_limit;
+pub const primary_response_size = 64 + ownership.model_capacity * primary_record_size;
+pub fn dispatchPrimaryActivity(tracker: *ownership.Tracker, io: std.Io, request: *const [primary_request_size]u8) [primary_response_size]u8 {
+    var response: [primary_response_size]u8 = @splat(0);
+    @memcpy(response[0..4], "FIT9");response[4] = 1;
+    if (!std.mem.eql(u8, request[0..4], "FIA9") or request[4] != 1 or
+        !std.mem.allEqual(u8, request[5..8], 0) or !std.mem.allEqual(u8, request[24..32], 0)) {
+        response[5] = @intFromEnum(Status.invalid);return response;
+    }
+    const captured_at = std.Io.Clock.real.now(io).toMilliseconds();
+    const snapshot = tracker.primarySnapshot(io);
+    @memcpy(response[8..24], &snapshot.instance);
+    std.mem.writeInt(u64, response[24..32], snapshot.sample_sequence, .big);
+    const stamp: u64 = if (captured_at > 0 and captured_at <= ownership.maximum_sample_sequence)
+        @intCast(captured_at) else std.math.maxInt(u64);
+    std.mem.writeInt(u64, response[32..40], stamp, .big);
+    if (!snapshot.initialized or !std.mem.eql(u8, request[8..24], &snapshot.instance)) {
+        response[5] = @intFromEnum(Status.wrong_instance);return response;
+    }
+    response[7] = @intFromBool(snapshot.uncertain);
+    inline for (.{snapshot.owned,snapshot.ingress,snapshot.preparing,snapshot.active,snapshot.responding,snapshot.model_count}, 0..) |value,index|
+        std.mem.writeInt(u32, response[40 + index * 4 ..][0..4], @intCast(value), .big);
+    for (snapshot.models[0..snapshot.model_count], 0..) |model,index| {
+        const offset = 64 + index * primary_record_size;
+        std.mem.writeInt(u16, response[offset..][0..2], @intCast(model.len), .big);
+        inline for (.{model.preparing,model.active,model.responding}, 0..) |value,phase|
+            std.mem.writeInt(u32, response[offset + 4 + phase * 4 ..][0..4], @intCast(value), .big);
+        @memcpy(response[offset + 16 ..][0..model.len], model.id[0..model.len]);
+    }
+    return response;
+}
+
 // Separate readonly frame namespace: never reinterpret lineage bytes as an
 // ingress action. A missing live lineage is unknown, not terminal/not-sent.
 pub fn dispatchLineage(tracker: *ownership.Tracker, io: std.Io, request: *const [lineage_request_size]u8) [lineage_response_size]u8 {

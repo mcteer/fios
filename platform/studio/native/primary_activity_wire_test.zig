@@ -1,0 +1,33 @@
+const std = @import("std");
+const ownership = @import("request_ownership.zig");
+const protocol = @import("control_protocol.zig");
+test "fios primary activity readonly wire preserves attribution" {
+    const io = std.testing.io;
+    var tracker: ownership.Tracker = .{};
+    try tracker.initialize(io, @splat(7));
+    const token = try tracker.enter(io);
+    try tracker.bind(io, token, "org/primary");
+    try tracker.bindAuxiliary(io, token, "org/auxiliary");
+    try tracker.active(io, token);
+    var request: [32]u8 = @splat(0);
+    @memcpy(request[0..4], "FIA9");request[4] = 1;
+    @memcpy(request[8..24], &(@as([16]u8, @splat(7))));
+    const response = protocol.dispatchPrimaryActivity(&tracker, io, &request);
+    try std.testing.expectEqual(@as(usize, 66624), response.len);
+    try std.testing.expectEqualSlices(u8, "FIT9", response[0..4]);
+    try std.testing.expectEqualSlices(u8, &.{1, 0, 0, 0}, response[4..8]);
+    try std.testing.expectEqualSlices(u8, request[8..24], response[8..24]);
+    try std.testing.expect(std.mem.readInt(u64, response[24..32], .big) > 0);
+    try std.testing.expect(std.mem.readInt(u64, response[32..40], .big) > 0);
+    try std.testing.expectEqual(@as(u32, 1), std.mem.readInt(u32, response[40..44], .big));
+    try std.testing.expectEqual(@as(u32, 1), std.mem.readInt(u32, response[52..56], .big));
+    try std.testing.expectEqual(@as(u32, 1), std.mem.readInt(u32, response[60..64], .big));
+    try std.testing.expectEqual(@as(u16, 11), std.mem.readInt(u16, response[64..66], .big));
+    try std.testing.expectEqualSlices(u8, "org/primary", response[80..91]);
+    try std.testing.expect(std.mem.allEqual(u8, response[91..], 0));
+    try tracker.leave(io, token);
+    const empty = protocol.dispatchPrimaryActivity(&tracker, io, &request);
+    try std.testing.expectEqual(@as(u32, 0), std.mem.readInt(u32, empty[40..44], .big));
+    try std.testing.expect(std.mem.allEqual(u8, empty[64..], 0));
+    std.debug.print("PASS: finite readonly primary frame retains source/clock/phase and exact ID without auxiliary double-counting; no native action\n", .{});
+}
