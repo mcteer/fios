@@ -184,12 +184,18 @@ pub const Tracker = struct {
         self.backend_uncertainty_probe = probe;
     }
     fn observeBackendUncertainty(self: *Tracker, io: std.Io) void {
+        _ = self.backendKnownUncertain(io);
+    }
+    // Fixed native source only. Positive is sticky negative evidence; false
+    // never proves completion. Ordinary leave/snapshot remain callback-free.
+    pub fn backendKnownUncertain(self: *Tracker, io: std.Io) bool {
         self.mutex.lockUncancelable(io);
         const probe = self.backend_uncertainty_probe;
         self.mutex.unlock(io);
-        // No callback runs while holding this tracker mutex. Snapshot/read,
-        // release and response accounting do not invoke this admission edge.
-        if (probe) |read| if (read()) self.fence(io);
+        // No callback runs while holding this tracker mutex.
+        const known = if (probe) |read| read() else false;
+        if (known) self.fence(io);
+        return known;
     }
     // Close the same mutex-protected reservation edge used by enter(). Work
     // already owning ingress is NOT cancelled. No clock/manager death resumes

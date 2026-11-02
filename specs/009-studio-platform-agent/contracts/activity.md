@@ -153,3 +153,10 @@ flags for DS4-bearing scopes. The wrapper performs only the established atomic
 reads; it initializes no engine and synchronizes no device. Both backend-kind
 bits come from model metadata after complete owner retention. Missing/zero
 negative flags cannot prove healthy asynchronous completion or native idle.
+
+Load/encoder preparation retirement explicitly queries its original
+startup-enrolled negative probe outside the tracker lock. Known backend
+uncertainty retains the exact preparation child's reference and inherited
+request correlation after the parent leaves. The probe includes native SDK
+owner-module uncertainty. Ordinary leave/snapshot remain callback-free;
+neither a false probe nor missing retired lineage is a terminal receipt.

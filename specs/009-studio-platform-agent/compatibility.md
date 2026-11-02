@@ -198,3 +198,19 @@ case; actual entry reads stay after complete owner retention. C/Metal
 participants and partial wire coverage are unchanged. Neither a cold zero nor
 a successful core MLX regression is loaded DS4 completion/Studio acceptance;
 G2 and full backend ownership remain open.
+
+
+### Preparation retirement under known uncertainty (partial source checkpoint)
+
+Load/encoder preparation now retains its exact correlated child when the
+existing startup-enrolled backend probe reports independent uncertainty.
+The query latches the tracker fence and runs its fixed native getter outside
+the tracker lock; ordinary leave/snapshot remain callback-free. Native SDK
+owner-module uncertainty joins the existing source-negative predicate. False
+or missing probe evidence never provides terminal authority.
+
+The actual metadata preparation scope reproduces prior owner/lineage loss and
+then retains the original parent root under known-negative policy input.
+Healthy local release leaves missing lineage explicitly unknown. These are
+policy/reference cases without a loaded backend; asynchronous ownership and
+device-terminal coverage/G2/installed activation remain unfinished.

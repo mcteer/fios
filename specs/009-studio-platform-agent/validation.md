@@ -3369,3 +3369,75 @@ uncertain, coverage unknown and native quiescence unproven. This exercises the
 normal shared actor path on core MLX, not a loaded DS4 error or Studio/platform/
 Pydantic acceptance. No generated text, native service action or authority.
 Whole tasks remain38/55; no new supervisor/drain receipt is claimed.
+
+
+### 2026-11-02 load-preparation uncertainty retirement (source checkpoint)
+
+The load/encoder preparation child still leaves its original reference on
+local return even if an independent native backend has become uncertain.
+An explicit internal query now exposes the existing startup-enrolled backend
+probe result while retaining its positive sticky fence and running the getter
+outside the tracker lock. Ordinary leave/snapshot stay callback-free; false is
+not terminal evidence. The production probe additionally includes the native
+SDK-owner module's existing sticky uncertainty alongside its existing backend
+negative getters. No wire capability or native activity/idle proof is added.
+
+The new selected ordinary native case reserves a real metadata preparation
+child with the original request correlation, releases only its parent's local
+reference, then checks healthy/known-uncertain retirement. Its fake getter is
+policy metadata only, with no model/backend handles or native producer claim.
+The original unconditional preparation release is still present for the prior
+behavior build at `/tmp/fios-009-preparation-prior-native-build.log`. No red,
+fixed retirement or accepted capsule is claimed yet. Native inputs are frozen
+while this build runs. Whole tasks remain38/55; G2/terminal/activation stay open.
+
+
+The original preparation retirement reproduces the exact loss: healthy input
+leaves0 owners/fenced=false/missing lineage as expected, but known uncertainty
+also leaves0/fenced=false/missing lineage instead of retaining the child.
+`/tmp/fios-009-preparation-prior-native-build.log`, private build
+`/tmp/f9-linked-native-iZM7K4`: executable8/8 steps succeeds; selected unit
+compile27s succeeds, then2 pass/1 fail (3 total), expected1/found0. This is a
+behavioral metadata red, not a compiler failure or loaded backend-error test;
+no accepted capsule is produced.
+
+The fix now queries the original startup-enrolled native probe before releasing
+this exact child. Known uncertainty retains its reference/correlation and the
+tracker's sticky fence. Healthy local release remains local only; missing
+lineage remains explicitly unknown. Enclosing fixed build is running at
+`/tmp/fios-009-preparation-native-build.log`; source inputs remain frozen.
+
+
+The fixed exact selected native case passes3/3 roots, with executable8/8 steps:
+healthy owners0/fenced=false/missing lineage remains unknown; known uncertainty
+retains owners1/fenced=true/found lineage with the original parent's root.
+`/tmp/fios-009-preparation-native-build.log`, private build
+`/tmp/f9-linked-native-ICKw7P`; capsule
+`/private/tmp/fios-009-preparation-native-review/capsule`, review SHA
+92ead1ab75617db22318549d6a7193c323a8d7dee1647cfc41f8a8c36e629c0d,
+binary4cfef41355fb2bdb94c3bbf42a2d95627a537c400a7adc5a5f2ba9b2f2247f28.
+Root patch66f8e983ae1720d7400b201cbcf0d41356c0d445dcca526b9f1e1f0d09e1f8b3;
+request-ownership companion0cd3a0686dae3998a342f223128674778d2cfa382f3be79fbc9095eff8d846b3.
+Declared preparation-retention1/known-SDK-refusal1 describe selected source,
+not all-client/backend completion or whole native provenance. Source Node24/24,
+driver syntax and inference boundary pass
+(`/tmp/fios-009-preparation-{node,boundary}.log`). No historical matrices or
+loaded backend failure is executed; whole tasks remain38/55.
+
+
+Fixed preparation capsule's core regression plan
+ a35f7682680dc0d0f65e97aff5c2edb31f346a2450269524b39f4813715bc248
+is consumed. Check issues0 model POSTs (`/tmp/fios-009-preparation-model-check.log`,
+`/private/tmp/f9-model-check-ZXBPK5`). Run issues1 exact core-only Gemma POST,
+two tokens/two deltas/complete response in4,686ms
+(`/tmp/fios-009-preparation-model-run.log`,
+`/private/tmp/f9-model-run-bi4KkT/result.json`). Fixed24GiB M4Pro core host,
+`mlx-community/gemma-4-e4b-it-4bit`,512 context/2 tokens/1 POST/1 concurrent,
+10s request/15s work/7s cleanup,12GiB sampled native/128MiB observer bounds remain.
+Native peak RSS2,964,176,896/footprint4,679,748,704; observer RSS12,189,696/
+footprint4,882,960. SDK46/46 coherent partial samples; primary4/3 positive,
+original root5/sequence96. Both own processes reap; original claim stays
+uncertain, coverage unknown and native quiescence unproven. No generated text,
+Studio service/model operation, platform/Pydantic acceptance or native authority.
+No new supervisor/drain receipt is claimed for this preparation-only change;
+preceding results remain separately attributed. Whole tasks remain38/55.

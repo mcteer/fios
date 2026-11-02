@@ -640,3 +640,11 @@ That same fixed actor case now also calls the actual cold DS4 host/Metal
 negative getters, without initializing a native engine. The generic retirement
 policy covers the known-uncertain input; this does not create a loaded DS4
 failure, prove healthy asynchronous completion or expand all-client coverage.
+
+Another fixed ordinary case is
+`--functional-test 'fios native load preparation preserves independently uncertain owners'`
+before `--functional-build-only`. It reserves the actual metadata preparation
+child, preserves inherited correlation under a known-negative policy input,
+and treats missing healthy-retired lineage as unknown. No model/native handle
+or genuine backend failure is created; the private fake probe is policy data,
+not backend/admission authority. Expected selected-root result remains3/3.

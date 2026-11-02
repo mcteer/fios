@@ -2752,7 +2752,7 @@ index da1f791..8ee23d0 100644
 +    try std.testing.expectEqual(@as(usize, 1), registry.entries.count());
 +}
 diff --git a/src/scheduler.zig b/src/scheduler.zig
-index 9e12566..40e60ff 100644
+index 9e12566..58e048d 100644
 --- a/src/scheduler.zig
 +++ b/src/scheduler.zig
 @@ -32,6 +32,8 @@
@@ -4077,7 +4077,7 @@ index 9e12566..40e60ff 100644
      entry.weights = null;
      entry.transformer = null;
      entry.vision_encoder = null;
-@@ -4606,7 +5481,47 @@ fn loadGlmHead(allocator: std.mem.Allocator, config: *const model_mod.ModelConfi
+@@ -4606,7 +5481,52 @@ fn loadGlmHead(allocator: std.mem.Allocator, config: *const model_mod.ModelConfi
  /// On any error the partial state has already been freed via errdefer; the
  /// caller decides how to surface (startup → recordLoadError + signal
  /// started; on-demand → req.error_name + done broadcast).
@@ -4113,7 +4113,12 @@ index 9e12566..40e60ff 100644
 +    fn finish(self: FiosActorLoadPreparation, io: std.Io) void {
 +        fios_ownership.current = self.previous;
 +        fios_ownership.current_group = self.previous_group;
-+        if (self.token) |token| self.tracker.?.leave(io, token) catch { self.tracker.?.fence(io); };
++        if (self.token) |token| {
++            const source = self.tracker.?;
++            // A returning CPU/load call cannot retire independently uncertain
++            // backend work. Preserve this exact child's original lineage.
++            if (!source.backendKnownUncertain(io)) source.leave(io, token) catch { source.fence(io); };
++        }
 +    }
 +};
 +
@@ -4125,7 +4130,7 @@ index 9e12566..40e60ff 100644
      // ── ds4 fast path: when the caller passed `ds4_path`, the model is a
      //    GGUF served by the embedded ds4 engine. The MLX scaffolding
      //    (weights/Transformer/vision/drafter/JIT/warmup) is entirely
-@@ -4668,7 +5583,7 @@ fn doLoadOnInferenceThread(sch: *Scheduler, params: anytype) !void {
+@@ -4668,7 +5588,7 @@ fn doLoadOnInferenceThread(sch: *Scheduler, params: anytype) !void {
      else
          null;
      defer if (in_dir_drafter) |p| sch.allocator.free(p);
@@ -4134,7 +4139,7 @@ index 9e12566..40e60ff 100644
      if (!skip_mem_preflight) {
          const gb = 1024.0 * 1024.0 * 1024.0;
          const sidecar: []const u8 = chosen_drafter orelse in_dir_drafter orelse "";
-@@ -5302,18 +6217,23 @@ fn doLoadOnInferenceThread(sch: *Scheduler, params: anytype) !void {
+@@ -5302,18 +6222,23 @@ fn doLoadOnInferenceThread(sch: *Scheduler, params: anytype) !void {
      //    accounting; `state_cond.broadcast` (inside markReadyLocked) wakes
      //    any waiter blocked in ensureLoaded.
      //
@@ -4164,7 +4169,7 @@ index 9e12566..40e60ff 100644
      entry.drafter_block_size = sch.drafter_block_size;
      entry.mtp = if (mtp_ptr) |h|
          generate_mod.MtpHeadRef{ .qwen = h }
-@@ -5333,20 +6253,12 @@ fn doLoadOnInferenceThread(sch: *Scheduler, params: anytype) !void {
+@@ -5333,20 +6258,12 @@ fn doLoadOnInferenceThread(sch: *Scheduler, params: anytype) !void {
      // A MERGED drafter has no `--drafter` to echo, so the reported path comes
      // from what was actually resolved — `drafter_loaded` and `drafter_path`
      // must not disagree about the same sidecar.
@@ -4186,7 +4191,7 @@ index 9e12566..40e60ff 100644
      // Per-model hot prefix cache (Plan 03 → Plan 05 move). Hybrid recurrent
      // archs are accepted iff `ssm_checkpoint_stride > 0` (Phase 1 of the
      // performance plan): with per-stride SSM checkpoints we can rewind both
-@@ -5691,7 +6603,7 @@ pub fn armShutdownDeadline(slot: *std.atomic.Value(i64), now_ms: i64, secs: u32)
+@@ -5691,7 +6608,7 @@ pub fn armShutdownDeadline(slot: *std.atomic.Value(i64), now_ms: i64, secs: u32)
  }
  
  fn hasWorkPendingLocked(sch: *const Scheduler) bool {
@@ -4195,7 +4200,7 @@ index 9e12566..40e60ff 100644
          sch.decoding.items.len > 0 or
          sch.vision_queue.items.len > 0 or
          sch.embed_queue.items.len > 0 or
-@@ -5701,6 +6613,165 @@ fn hasWorkPendingLocked(sch: *const Scheduler) bool {
+@@ -5701,6 +6618,165 @@ fn hasWorkPendingLocked(sch: *const Scheduler) bool {
          sch.unload_queue.items.len > 0;
  }
  
@@ -4361,7 +4366,7 @@ index 9e12566..40e60ff 100644
  /// Poll interval for the idle-eviction sweep, given the configured window.
  ///
  /// A quarter of the window, so a model is evicted within ~1.25x the configured
-@@ -5713,6 +6784,15 @@ pub fn idleEvictTickMs(window_ms: i64) i64 {
+@@ -5713,6 +6789,15 @@ pub fn idleEvictTickMs(window_ms: i64) i64 {
  fn inferenceLoop(ctx: ThreadCtx) void {
      const sch = ctx.scheduler;
      const params = ctx.params;
@@ -4377,7 +4382,7 @@ index 9e12566..40e60ff 100644
      // Covers shutdown and startup-load failure.
      defer sleep_inhibit.release();
  
-@@ -5749,6 +6829,14 @@ fn inferenceLoop(ctx: ThreadCtx) void {
+@@ -5749,6 +6834,14 @@ fn inferenceLoop(ctx: ThreadCtx) void {
      }
  
      while (!sch.shutdown.load(.acquire)) {
@@ -4392,7 +4397,7 @@ index 9e12566..40e60ff 100644
          // Phase D: cold-load drain. Process ONE load per tick — loading a
          // model is heavy (~seconds; weight read + JIT compile + warmup)
          // and we want the rest of the inference loop to stay responsive.
-@@ -6203,6 +7291,12 @@ fn slotStateBytes(s: *const Slot) u64 {
+@@ -6203,6 +7296,12 @@ fn slotStateBytes(s: *const Slot) u64 {
  /// not the scheduler's borrowed-view singleton — each LoadedModel has its
  /// own vision encoder when applicable.
  fn runVisionEncode(sch: *Scheduler, req: *VisionEncodeRequest) void {
@@ -4405,7 +4410,7 @@ index 9e12566..40e60ff 100644
      const vision_enc = req.model.vision_encoder orelse {
          finishVisionRequest(sch, req, "VisionEncoderNotLoaded");
          return;
-@@ -6414,6 +7508,12 @@ fn finishVisionRequest(sch: *Scheduler, req: *VisionEncodeRequest, err_name: []c
+@@ -6414,6 +7513,12 @@ fn finishVisionRequest(sch: *Scheduler, req: *VisionEncodeRequest, err_name: []c
  /// forward pass via `generate.computeEmbeddingsBatch(xfm, ...)`, which resets
  /// the global xfm.cache before every sub-batch, and wakes the conn thread.
  fn runEmbedRequest(sch: *Scheduler, req: *EmbedRequest) void {
@@ -4418,7 +4423,7 @@ index 9e12566..40e60ff 100644
      const xfm_ptr = req.model.transformer.?;
      // Held in a local: the request lives on the waiting thread's stack and is gone once `done` is observed.
      const vision = req.vision_embeddings;
-@@ -6460,15 +7560,20 @@ fn logWiredPolicy(r: mlx.WiredPolicyResult) void {
+@@ -6460,15 +7565,20 @@ fn logWiredPolicy(r: mlx.WiredPolicyResult) void {
  }
  
  /// Free `victims` (each marked `.evicting`, nobody holding it) on this thread.
@@ -4441,7 +4446,7 @@ index 9e12566..40e60ff 100644
          sch.registry.mutex.lockUncancelable(sch.io);
          sch.registry.accountEvictedLocked(victim_bytes);
          sch.registry.finalizeEvictionLocked(victim);
-@@ -6483,7 +7588,7 @@ fn evictResident(sch: *Scheduler, victims: []const *LoadedModel) void {
+@@ -6483,7 +7593,7 @@ fn evictResident(sch: *Scheduler, victims: []const *LoadedModel) void {
  /// Unloads idle models, oldest first, when that lets a load of `weights` fit in RAM: as few as fit
  /// it, none when it already fits or when even all of them cannot (`planRamEvictionsLocked`). Runs
  /// past `--skip-mem-preflight` too: an idle model reloads, an overcommitted Mac kills the server.
@@ -4450,7 +4455,7 @@ index 9e12566..40e60ff 100644
      const room = loadRamRoom() orelse return;
      const need = loadRequirementBytes(weights);
      var victims: [16]*LoadedModel = undefined;
-@@ -6497,20 +7602,20 @@ fn makeRoomInRam(sch: *Scheduler, keep_id: []const u8, weights: u64) void {
+@@ -6497,20 +7607,20 @@ fn makeRoomInRam(sch: *Scheduler, keep_id: []const u8, weights: u64) void {
          @as(f64, @floatFromInt(room)) / 1_073_741_824.0,
          n,
      });
@@ -4474,7 +4479,7 @@ index 9e12566..40e60ff 100644
              _ = sch.ane_builds.fetchAdd(1, .acq_rel);
              const t = std.Thread.spawn(.{}, aneBuildThread, .{ sch, req, arch }) catch return aneBuildThread(sch, req, arch);
              t.detach();
-@@ -6663,7 +7768,107 @@ pub fn genYieldEnabled(cuda: bool, env: ?[]const u8) bool {
+@@ -6663,7 +7773,107 @@ pub fn genYieldEnabled(cuda: bool, env: ?[]const u8) bool {
  /// connection. We bracket it with the model's `gen_busy` flag for visibility
  /// and signal `done` so the conn thread in `runGeneration` wakes. Several
  /// merged jobs (`takeMergeable`) run as one `run_many` call.
@@ -4582,7 +4587,7 @@ index 9e12566..40e60ff 100644
      const req = reqs[0];
      req.model.gen_busy = true;
      var gy = GenYield{ .sch = sch, .step_sw = io_util.Stopwatch.init(sch.io) };
-@@ -6760,14 +7965,29 @@ fn shouldClearCache(decision: bool, cached: usize) bool {
+@@ -6760,14 +7970,29 @@ fn shouldClearCache(decision: bool, cached: usize) bool {
  /// accounting. The conn thread already marked the entry `.evicting` and
  /// drained its refcount in `unloadModel`.
  fn runUnloadRequest(sch: *Scheduler, req: *UnloadRequest) void {
@@ -4613,7 +4618,7 @@ index 9e12566..40e60ff 100644
      // unloadResident freed the arrays into MLX's allocator cache — clear it
      // so the unload actually returns the memory to the OS (the whole point
      // of the load→generate→unload flow).
-@@ -6795,10 +8015,6 @@ fn runUnloadRequest(sch: *Scheduler, req: *UnloadRequest) void {
+@@ -6795,10 +8020,6 @@ fn runUnloadRequest(sch: *Scheduler, req: *UnloadRequest) void {
      // configuration the policy exists to avoid.
      logWiredPolicy(mlx.applyWiredPolicy());
  
@@ -4624,7 +4629,7 @@ index 9e12566..40e60ff 100644
  }
  
  fn dflashContextCoversPrefix(context_len: usize, prefix_len: usize) bool {
-@@ -7331,10 +8547,10 @@ fn runPrefillDs4(sch: *Scheduler, slot: *Slot, engine: *arch_ds4.Ds4Engine) !voi
+@@ -7331,10 +8552,10 @@ fn runPrefillDs4(sch: *Scheduler, slot: *Slot, engine: *arch_ds4.Ds4Engine) !voi
          break :blk created;
      };
  
@@ -4637,7 +4642,7 @@ index 9e12566..40e60ff 100644
          return err;
      };
  
-@@ -7414,9 +8630,9 @@ fn llamaSampling(slot: *const Slot) arch_llama.Sampling {
+@@ -7414,9 +8635,9 @@ fn llamaSampling(slot: *const Slot) arch_llama.Sampling {
  fn runDs4DecodeTick(sch: *Scheduler, slot: *Slot, session: *arch_ds4.Ds4Session) !void {
      const engine = slot.model.ds4_engine.?;
      const next_id: i32 = if (slot.sampling.temperature <= 0.0)
@@ -4649,7 +4654,7 @@ index 9e12566..40e60ff 100644
              slot.sampling.temperature,
              @intCast(slot.sampling.top_k),
              slot.sampling.top_p,
-@@ -7433,7 +8649,7 @@ fn runDs4DecodeTick(sch: *Scheduler, slot: *Slot, session: *arch_ds4.Ds4Session)
+@@ -7433,7 +8654,7 @@ fn runDs4DecodeTick(sch: *Scheduler, slot: *Slot, session: *arch_ds4.Ds4Session)
      const tok_u32: u32 = @intCast(next_id);
  
      // EOS handling — match the MLX path: do NOT emit the stop token.
@@ -4658,7 +4663,7 @@ index 9e12566..40e60ff 100644
          finishSlot(sch, slot, "stop");
          return;
      }
-@@ -7442,17 +8658,17 @@ fn runDs4DecodeTick(sch: *Scheduler, slot: *Slot, session: *arch_ds4.Ds4Session)
+@@ -7442,17 +8663,17 @@ fn runDs4DecodeTick(sch: *Scheduler, slot: *Slot, session: *arch_ds4.Ds4Session)
      // verifies several more, advancing ds4's KV internally (no separate eval).
      // It emits `[sampled, accepted…]`, so this tick may push several tokens.
      // Mirrors ds4's own CLI loop; engages only under greedy sampling.
@@ -4680,7 +4685,7 @@ index 9e12566..40e60ff 100644
              slot.markError("ds4_spec_failed");
              return;
          };
-@@ -7460,7 +8676,7 @@ fn runDs4DecodeTick(sch: *Scheduler, slot: *Slot, session: *arch_ds4.Ds4Session)
+@@ -7460,7 +8681,7 @@ fn runDs4DecodeTick(sch: *Scheduler, slot: *Slot, session: *arch_ds4.Ds4Session)
          for (spec_buf[0..n_usize]) |t| {
              const t_u32: u32 = @intCast(t);
              // EOS may appear mid-batch — stop, and never emit it.
@@ -4689,7 +4694,7 @@ index 9e12566..40e60ff 100644
                  finishSlot(sch, slot, "stop");
                  return;
              }
-@@ -7482,7 +8698,7 @@ fn runDs4DecodeTick(sch: *Scheduler, slot: *Slot, session: *arch_ds4.Ds4Session)
+@@ -7482,7 +8703,7 @@ fn runDs4DecodeTick(sch: *Scheduler, slot: *Slot, session: *arch_ds4.Ds4Session)
      // Advance ds4's KV by feeding the freshly-sampled token. After this
      // the session is in the state expected by the NEXT decode tick.
      session.eval(next_id) catch |err| {
@@ -4698,7 +4703,7 @@ index 9e12566..40e60ff 100644
          return err;
      };
  
-@@ -7518,8 +8734,12 @@ test "ds4MtpShouldEngage: >1 draft tokens + greedy (legacy MTP and DSpark)" {
+@@ -7518,8 +8739,12 @@ test "ds4MtpShouldEngage: >1 draft tokens + greedy (legacy MTP and DSpark)" {
  /// the slot keeps decoding.
  fn emitLlamaToken(sch: *Scheduler, slot: *Slot, tok: i32) bool {
      const engine = slot.model.llama_engine.?;
@@ -4712,7 +4717,7 @@ index 9e12566..40e60ff 100644
          finishSlot(sch, slot, "stop");
          return false;
      }
-@@ -8304,6 +9524,13 @@ fn interleaveDecodeTick(sch: *Scheduler) u64 {
+@@ -8304,6 +9529,13 @@ fn interleaveDecodeTick(sch: *Scheduler) u64 {
  }
  
  fn runPrefill(sch: *Scheduler, slot: *Slot) !void {
@@ -4726,7 +4731,7 @@ index 9e12566..40e60ff 100644
      // Mark the phase for the whole of prefill, and clear both signals on EVERY
      // exit path (success, cancel, error). `requests_prefilling` flips at entry
      // so the panel isn't blind until the first chunk lands; the chunk loop in
-@@ -8815,6 +10042,14 @@ fn sumInflightGeneratedTokens(active: anytype) u64 {
+@@ -8815,6 +10047,14 @@ fn sumInflightGeneratedTokens(active: anytype) u64 {
  
  fn runDecodeTick(sch: *Scheduler, active: []*Slot) !void {
      if (active.len == 0) return;
@@ -4741,7 +4746,7 @@ index 9e12566..40e60ff 100644
  
      // Publish the in-flight generated-token aggregate for the gauge sampler.
      // Runs after the whole tick (all decode work + any finishSlot calls) on
-@@ -9384,7 +10619,7 @@ fn runSingleDecodeTick(sch: *Scheduler, slot: *Slot) !void {
+@@ -9384,7 +10624,7 @@ fn runSingleDecodeTick(sch: *Scheduler, slot: *Slot) !void {
  fn runSingleDecodeTickInner(sch: *Scheduler, slot: *Slot) !void {
      // ds4-backed slot: drive the engine's session forward by one token. No
      // PLD / drafter / batched paths apply — ds4 has its own internal MTP
@@ -4750,7 +4755,7 @@ index 9e12566..40e60ff 100644
      if (slot.ds4_session) |session| {
          return runDs4DecodeTick(sch, slot, session);
      }
-@@ -13042,3 +14277,151 @@ test "a refusal right after a two-model eviction waits for the memory to come ba
+@@ -13042,3 +14282,206 @@ test "a refusal right after a two-model eviction waits for the memory to come ba
      mark.record(1_100, 17 * GiB);
      try std.testing.expect(waitForUnload(211 * GiB, 108 * GiB, mark, 1_200));
  }
@@ -4902,8 +4907,63 @@ index 9e12566..40e60ff 100644
 +    }
 +    std.debug.print("PASS: actual actor retirement preserves uncertain original roots and releases healthy metadata owners; no backend handles\n", .{});
 +}
++
++
++test "fios native load preparation preserves independently uncertain owners" {
++    const io = std.testing.io;
++    const Probe = struct {
++        var uncertain: std.atomic.Value(bool) = .init(false);
++        fn read() bool { return uncertain.load(.acquire); }
++    };
++    const correlation: fios_ownership.CorrelationID = @splat(47);
++    for ([_]bool{false, true}) |uncertain| {
++        Probe.uncertain.store(false, .release);
++        var tracker: fios_ownership.Tracker = .{ .primary_guard = true };
++        try tracker.initialize(io, @splat(37));
++        try tracker.enrollBackendUncertaintyProbe(io, &Probe.read);
++        const parent = try tracker.enter(io);
++        try tracker.associate(io, parent, correlation);
++        try tracker.bind(io, parent, "fixture/load-preparation");
++        const registry = try ModelRegistry.init(std.testing.allocator, io, null, 2, 0, null);
++        defer registry.deinit();
++        registry.fios_request_tracker = &tracker;
++        var scheduler = std.mem.zeroInit(Scheduler, .{
++            .allocator = std.testing.allocator, .io = io, .registry = registry, .queue_cap = 2,
++            .kv_quant_config = transformer_mod.KVQuantConfig.dense,
++        });
++        const previous = fios_ownership.current;
++        const previous_group = fios_ownership.current_group;
++        const preparation = try FiosActorLoadPreparation.begin(&scheduler, "fixture/load-preparation", parent);
++        try tracker.leave(io, parent); // Only the original preparation child remains.
++        try std.testing.expectEqual(@as(usize, 1), tracker.snapshot(io).owned);
++        Probe.uncertain.store(uncertain, .release);
++        preparation.finish(io);
++        try std.testing.expect(std.meta.eql(previous, fios_ownership.current));
++        if (previous_group) |group| {
++            try std.testing.expect(fios_ownership.current_group != null);
++            try std.testing.expect(fios_ownership.current_group.?.ptr == group.ptr and fios_ownership.current_group.?.len == group.len);
++        } else try std.testing.expect(fios_ownership.current_group == null);
++        const snapshot = tracker.snapshot(io);
++        const lineage = tracker.correlationSnapshot(io, correlation);
++        std.debug.print("native_preparation_retirement uncertain={} owners={d} fenced={} lineage={}\n", .{ uncertain, snapshot.owned, snapshot.uncertain, lineage.found });
++        try std.testing.expectEqual(@as(usize, if (uncertain) 1 else 0), snapshot.owned);
++        try std.testing.expectEqual(uncertain, snapshot.uncertain);
++        if (uncertain) {
++            try std.testing.expect(lineage.found);
++            try std.testing.expect(lineage.uncertain);
++            try std.testing.expectEqual(parent.sequence, lineage.root_sequence);
++            try std.testing.expectEqual(@as(usize, 1), lineage.owners);
++            try std.testing.expect(tracker.hasRetainedWork(io));
++        } else {
++            try std.testing.expect(!lineage.found);
++            try std.testing.expect(lineage.uncertain); // Missing is unknown, never completed.
++        }
++    }
++    Probe.uncertain.store(false, .release); // Test getter only; no production backend reset.
++    std.debug.print("PASS: actual load preparation preserves uncertain original lineage and releases healthy CPU ownership; metadata only\n", .{});
++}
 diff --git a/src/server.zig b/src/server.zig
-index 720b2c6..1bb169e 100644
+index 720b2c6..44049eb 100644
 --- a/src/server.zig
 +++ b/src/server.zig
 @@ -1,4 +1,9 @@
@@ -4942,7 +5002,7 @@ index 720b2c6..1bb169e 100644
 +
 +fn fiosKnownBackendUncertain() bool {
 +    const flags = fiosBackendFences();
-+    return fios_device.knownSourceUncertain() or arch_llama.fiosSourceUncertain() or
++    return fios_sdk_owners.diagnostic().uncertain or fios_device.knownSourceUncertain() or arch_llama.fiosSourceUncertain() or
 +        (flags.mimo_warm_uncertain orelse false) or
 +        (flags.ds4_metal_uncertainty orelse 0) != 0 or
 +        (flags.ds4_host_uncertainty orelse 0) != 0;
