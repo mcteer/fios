@@ -263,3 +263,25 @@ metadata cases pass4/4, with full executable/link success. These use no loaded
 ANE model or runtime handle. CoreML/private completion, compile/lane workers,
 full preflight/eviction and G2 remain unfinished; no all-client or lifecycle
 authority follows.
+
+
+### Cold preflight and explicit negative-source capture (partial source checkpoint)
+
+The actual queued cold-load scope now precedes victim eviction, ANE admission
+and wired-policy work. Its fixed ready/ANE disposition is published only after
+scope retirement, before completion wake or ANE spawning can release borrowed
+sender storage. The unchanged ready/loading/backend order remains intact.
+
+Explicit ingress-v2/v3, primary/lineage and HTTP native diagnostic captures now
+query the original startup-enrolled negative before final snapshot/timestamp.
+Ordinary accounting snapshots/release stay callback-free. A native owner probe
+refuses known uncertainty, request owners and retained model-change tickets
+before its fixed barrier; final publication rechecks retained work, including
+a ticket acquired during the barrier. This is partial stream observation,
+never normalized all-client or terminal/admission authority.
+
+Actual missing-negative and premature-barrier cases fail first. Three selected
+protocol cases pass Debug/ReleaseSafe; full native build and a bounded headless
+core-only exact Gemma cold-load POST pass. The original journal claim remains
+uncertain after both processes reap. Whole G2, native all-client/backend/modalities
+and installed Studio acceptance remain open; no resident/GPU-idle claim follows.

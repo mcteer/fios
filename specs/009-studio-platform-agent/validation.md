@@ -3672,3 +3672,98 @@ No actual ANE model/build, CoreML/private-runtime terminality, compile/lane-work
 attribution, full cold preflight/eviction ownership, new inference or new
 HTTP/supervisor/drain receipt is claimed. No historical matrix or model policy/
 fallback change is made. G2 and whole tasks remain38/55.
+
+
+### 2026-11-02 cold preflight context and explicit negative-source observations (partial source checkpoint)
+
+Actual cold-load preflight now executes inside queued preparation before
+victim eviction, ANE admission and wired-policy work. A fixed private return
+variant selects ready versus the existing ANE dispatch. The caller publishes
+completion or spawns ANE only after the preflight scope retires, so a fast
+child cannot wake the sender while that inference-thread scope still borrows
+its metadata. Existing backend/policy order is preserved; startup retains its
+separate preparation entry. The actual preflight helper's missing-parent
+refusal is exercised before uninitialized backend inputs may be read.
+
+Explicit ingress-v2/v3, primary and lineage captures now read their original
+startup-enrolled negative source before the final snapshot/source timestamp.
+HTTP native diagnostic captures do likewise. Ordinary accounting snapshots,
+release and cleanup remain callback-free. No new backend getter, reset, wire
+version, terminal outcome or all-client authority is added.
+
+The original protocol reports0 with an already-positive enrolled negative:
+`/tmp/fios-009-observed-negative-prior-debug.log` (actual selected Zig test,
+0 passed/1 failed). The earlier healthy-only call witness is separately kept
+at`/tmp/fios-009-observed-negative-prior-probe.log`. Fixed selected Debug and
+ReleaseSafe cases each pass1/1, exercising all four observations with healthy
+and negative inputs; later false samples/local release cannot clear the
+original uncertainty. Logs:`/tmp/fios-009-observed-negative-{debug,releasesafe}.log`.
+
+Combined native executable build/link succeeds and fixed native ownership
+cases pass4/4 (safe-root compile2m/5GiB):
+`/tmp/fios-009-cold-observation-native-build.log`, scratchUFXqgI. Accepted capsule
+`/private/tmp/fios-009-cold-observation-native-review/capsule`, review
+ d7757ce64fc400bd61bbee663d3424263ef70714ccf7b9ae49adac6cb5ad3af4,
+binary111379190ef5a3694f7f872657a702edf48eef0b1bc7cac782ad2983b50bdad2.
+Node24/24 and boundary pass (`/tmp/fios-009-cold-observation-{node,boundary}.log`).
+
+Actual private native HTTP/FIF/FIA diagnostics pass with0 model POSTs/0 service
+management actions (`/tmp/fios-009-cold-observation-native-fences.log`,
+`/private/tmp/f9-backend-fences-8PmL6y`). Actual private manager v3 ingress
+roundtrip, automatic lineage/backend/primary polling and source health also
+pass with0 model requests/0 installed service actions
+(`/tmp/fios-009-cold-observation-native-status.log`,
+`/private/tmp/f9-native-status-rk4vYC`). Coverage stays unknown and authorityfalse.
+No live model/ANE/eviction or installed acceptance is attributed to this capsule.
+Whole tasks remain38/55.
+
+### 2026-11-02 guard known-negative/model-changing sources before owner probing (partial source checkpoint)
+
+The existing final check rejected a partial owner-stream result under known
+uncertainty, but it still invoked the fixed device barrier first. A valid paused
+source with a positive enrolled negative reproduces that call:
+`/tmp/fios-009-before-probe-prior-debug.log` (selected genuine unit0 passed/1 failed).
+A separate actual model-change ticket, with0 request owners, also reproduces
+the premature call (`/tmp/fios-009-before-probe-model-ticket-prior-debug.log`).
+This uses the real `beginModelMutation` metadata API, not a code-bypass campaign.
+
+The guard now reads its fixed enrolled negative before taking the pre-probe
+snapshot and refuses uncertainty, request owners or retained model-change work.
+The final publication check independently rechecks retained work, including a
+ticket acquired during the barrier. Existing exact paused instance/sequence
+checks remain. Neither an empty source nor a successful partial stream result
+supplies all-client/native terminal authority.
+
+The three selected ordinary protocol cases pass3/3 in Debug and ReleaseSafe:
+`/tmp/fios-009-probe-guard-final-{debug,releasesafe}.log`. These include healthy
+controls and retained uncertainty after local release; no GPU barrier is run.
+Full native executable build/link succeeds in functional-only mode:
+`/tmp/fios-009-probe-guard-native-build.log`, scratchHldYQ0. Accepted capsule
+`/private/tmp/fios-009-probe-guard-native-review/capsule`, review
+1d865836d53cf5eaab3ca59b412438939ace1163d95c0305a7e65f7841e1f1b9,
+binaryb6e384e6330a09158e44c15ef6511939cc2ab8a5f038e830d2f1bf0f7312c880.
+The unchanged queued/ANE ownership cases remain attributed to the preceding
+d775 capsule; they are not rerun by this build. Node24/24 and boundary pass
+(`/tmp/fios-009-probe-guard-{node,boundary}.log`). The added feature versions
+are declared source inputs, not full native/repository provenance or authority.
+
+Bounded core plan24b1a5224a17ab2f7be92570a11406d88e5c9dc39bca43411d4311b7e4f8128a
+is consumed. It fixes fios-core24GiB M4Pro and exact
+`mlx-community/gemma-4-e4b-it-4bit` (5,146,800,534 weight bytes),512 context/
+2 output tokens/1 POST/1 concurrent,10s request/15s work/7s cleanup,
+12GiB sampled native/128MiB observer bounds. Check issues0 POSTs
+(`/tmp/fios-009-probe-guard-model-check.log`, `/private/tmp/f9-model-check-mJqGNj`).
+Run issues1 POST, produces2 tokens/2 deltas and completes its response at4,636ms,
+run elapsed4,695ms (`/tmp/fios-009-probe-guard-model-run.log`,
+`/private/tmp/f9-model-run-Kwwhz4/result.json`). The existing headless model-dir
+profile starts with no primary, so this first POST exercises the changed actual
+cold-load queue/preflight, not a warmed startup-model fast path.
+
+Native RSS2,890,694,656/footprint4,678,077,488; observer RSS12,238,848/
+footprint4,801,040. SDK46/46 coherent partial samples; preparation max4,
+primary4 samples/3 positive, original root5/source sequence95. Both owned
+processes reap. Original journal claim remains uncertain, coverage unknown,
+native quiescence unproven and authorityfalse. No generated text, Studio model,
+resident replacement, ANE computation, platform dispatch/Pydantic acceptance,
+installed lifecycle action or native admission proof follows. No historical
+fault/mutation campaign is run. Whole tasks remain38/55.

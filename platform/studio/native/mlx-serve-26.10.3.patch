@@ -2752,7 +2752,7 @@ index da1f791..8ee23d0 100644
 +    try std.testing.expectEqual(@as(usize, 1), registry.entries.count());
 +}
 diff --git a/src/scheduler.zig b/src/scheduler.zig
-index 9e12566..092215f 100644
+index 9e12566..927975b 100644
 --- a/src/scheduler.zig
 +++ b/src/scheduler.zig
 @@ -32,6 +32,8 @@
@@ -4504,7 +4504,7 @@ index 9e12566..092215f 100644
      const room = loadRamRoom() orelse return;
      const need = loadRequirementBytes(weights);
      var victims: [16]*LoadedModel = undefined;
-@@ -6497,20 +7648,20 @@ fn makeRoomInRam(sch: *Scheduler, keep_id: []const u8, weights: u64) void {
+@@ -6497,48 +7648,65 @@ fn makeRoomInRam(sch: *Scheduler, keep_id: []const u8, weights: u64) void {
          @as(f64, @floatFromInt(room)) / 1_073_741_824.0,
          n,
      });
@@ -4512,26 +4512,66 @@ index 9e12566..092215f 100644
 +    try evictResident(sch, victims[0..n]);
  }
  
++const FiosQueuedLoadDisposition = union(enum) { ready, ane: arch_ane.Arch };
++
  fn runLoadRequest(sch: *Scheduler, req: *LoadRequest) void {
-     // Step 1: evict victims (if any) BEFORE the load, so peak GPU residency
-     // never holds the old + new model at once. unloadResident() drops
-     // mlx_arrays — same thread-stream invariant as cleanup_queue drain.
+-    // Step 1: evict victims (if any) BEFORE the load, so peak GPU residency
+-    // never holds the old + new model at once. unloadResident() drops
+-    // mlx_arrays — same thread-stream invariant as cleanup_queue drain.
 -    evictResident(sch, req.evict_entries);
-+    evictResident(sch, req.evict_entries) catch |err| return failLoadRequest(sch, req, err);
++    const disposition = runLoadRequestPrepared(sch, req) catch |err| return failLoadRequest(sch, req, err);
++    // The preflight/load scope retires before either completion wake or ANE
++    // dispatch. A fast ANE child cannot invalidate borrowed sender storage
++    // while that scope is still live on this inference thread.
++    switch (disposition) {
++        .ready => readyLoadRequest(sch, req),
++        .ane => |arch| {
++            _ = sch.ane_builds.fetchAdd(1, .acq_rel);
++            const t = std.Thread.spawn(.{}, aneBuildThread, .{ sch, req, arch }) catch return aneBuildThread(sch, req, arch);
++            t.detach();
++        },
++    }
++}
++
++fn runLoadRequestPrepared(sch: *Scheduler, req: *LoadRequest) !FiosQueuedLoadDisposition {
++    const scope = try FiosActorLoadPreparation.beginQueued(sch, req.entry.id, req.fios_parent, req.fios_origins);
++    defer scope.finish(sch.io);
++    if (scope.tracker != null and req.fios_parent == null) return error.MissingActorRequestOwner;
++    // Keep actual eviction, resource preflight and wired-policy work inside
++    // the original queued request's context, not just the backend load body.
++    try evictResident(sch, req.evict_entries);
      req.evict_entries = &.{};
  
-     // A Neural Engine build runs on its own thread while the GPU keeps serving.
+-    // A Neural Engine build runs on its own thread while the GPU keeps serving.
      if (!req.ane_declined and aneWanted(req.config, req.ane)) {
          req.entry.load_progress.start(io_util.nowMsMonotonic(sch.io));
 -        if (aneAdmit(sch, req)) |arch| {
-+        if (aneAdmit(sch, req) catch |err| return failLoadRequest(sch, req, err)) |arch| {
-             _ = sch.ane_builds.fetchAdd(1, .acq_rel);
-             const t = std.Thread.spawn(.{}, aneBuildThread, .{ sch, req, arch }) catch return aneBuildThread(sch, req, arch);
-             t.detach();
-@@ -6534,11 +7685,22 @@ fn runLoadRequest(sch: *Scheduler, req: *LoadRequest) void {
-     readyLoadRequest(sch, req);
- }
- 
+-            _ = sch.ane_builds.fetchAdd(1, .acq_rel);
+-            const t = std.Thread.spawn(.{}, aneBuildThread, .{ sch, req, arch }) catch return aneBuildThread(sch, req, arch);
+-            t.detach();
+-            return;
+-        }
++        if (try aneAdmit(sch, req)) |arch| return .{ .ane = arch };
+         req.ane_declined = true;
+     }
+-
+-    // Step 2: the actual load. On error, mark .error_state and signal done
+-    // (conn thread frees pre-parsed CPU state — ownership stays on req on
+-    // the failure path).
+     const had_error = mlx.errorPending();
+     doLoadOnInferenceThread(sch, req) catch |err| {
+-        // The load's own MLX error is reported here; latched, it would fail the next request.
+         mlx.dropLatchedErrorUnless(had_error);
+-        return failLoadRequest(sch, req, err);
++        return err;
+     };
+-    // Re-apply so `fit` capacity covers everything this load brought in
+-    // (MTP head / drafter / vision land after the mid-load apply).
+     logWiredPolicy(mlx.applyWiredPolicy());
+-    readyLoadRequest(sch, req);
++    return .ready;
++}
++
 +// Cold ANE work has its own real thread (or inline spawn fallback). Keep
 +// request lineage through the complete synchronous build, then retire this
 +// CPU scope BEFORE ready/failure signals can release the caller's storage.
@@ -4541,8 +4581,8 @@ index 9e12566..092215f 100644
 +    defer scope.finish(sch.io);
 +    if (scope.tracker != null and req.fios_parent == null) return error.MissingActorRequestOwner;
 +    return aneBuild(sch, req, arch);
-+}
-+
+ }
+ 
  /// A cold Neural Engine load's build, minutes on a first load: done, or back on the load queue
  /// for the GPU when the build declines. Never calls MLX.
  fn aneBuildThread(sch: *Scheduler, req: *LoadRequest, arch: arch_ane.Arch) void {
@@ -4552,7 +4592,7 @@ index 9e12566..092215f 100644
      if (built) return readyLoadRequest(sch, req);
      req.ane_declined = true;
      sch.queue_mu.lockUncancelable(sch.io);
-@@ -6663,7 +7825,110 @@ pub fn genYieldEnabled(cuda: bool, env: ?[]const u8) bool {
+@@ -6663,7 +7831,110 @@ pub fn genYieldEnabled(cuda: bool, env: ?[]const u8) bool {
  /// connection. We bracket it with the model's `gen_busy` flag for visibility
  /// and signal `done` so the conn thread in `runGeneration` wakes. Several
  /// merged jobs (`takeMergeable`) run as one `run_many` call.
@@ -4663,7 +4703,7 @@ index 9e12566..092215f 100644
      const req = reqs[0];
      req.model.gen_busy = true;
      var gy = GenYield{ .sch = sch, .step_sw = io_util.Stopwatch.init(sch.io) };
-@@ -6760,14 +8025,29 @@ fn shouldClearCache(decision: bool, cached: usize) bool {
+@@ -6760,14 +8031,29 @@ fn shouldClearCache(decision: bool, cached: usize) bool {
  /// accounting. The conn thread already marked the entry `.evicting` and
  /// drained its refcount in `unloadModel`.
  fn runUnloadRequest(sch: *Scheduler, req: *UnloadRequest) void {
@@ -4694,7 +4734,7 @@ index 9e12566..092215f 100644
      // unloadResident freed the arrays into MLX's allocator cache — clear it
      // so the unload actually returns the memory to the OS (the whole point
      // of the load→generate→unload flow).
-@@ -6795,10 +8075,6 @@ fn runUnloadRequest(sch: *Scheduler, req: *UnloadRequest) void {
+@@ -6795,10 +8081,6 @@ fn runUnloadRequest(sch: *Scheduler, req: *UnloadRequest) void {
      // configuration the policy exists to avoid.
      logWiredPolicy(mlx.applyWiredPolicy());
  
@@ -4705,7 +4745,7 @@ index 9e12566..092215f 100644
  }
  
  fn dflashContextCoversPrefix(context_len: usize, prefix_len: usize) bool {
-@@ -7331,10 +8607,10 @@ fn runPrefillDs4(sch: *Scheduler, slot: *Slot, engine: *arch_ds4.Ds4Engine) !voi
+@@ -7331,10 +8613,10 @@ fn runPrefillDs4(sch: *Scheduler, slot: *Slot, engine: *arch_ds4.Ds4Engine) !voi
          break :blk created;
      };
  
@@ -4718,7 +4758,7 @@ index 9e12566..092215f 100644
          return err;
      };
  
-@@ -7414,9 +8690,9 @@ fn llamaSampling(slot: *const Slot) arch_llama.Sampling {
+@@ -7414,9 +8696,9 @@ fn llamaSampling(slot: *const Slot) arch_llama.Sampling {
  fn runDs4DecodeTick(sch: *Scheduler, slot: *Slot, session: *arch_ds4.Ds4Session) !void {
      const engine = slot.model.ds4_engine.?;
      const next_id: i32 = if (slot.sampling.temperature <= 0.0)
@@ -4730,7 +4770,7 @@ index 9e12566..092215f 100644
              slot.sampling.temperature,
              @intCast(slot.sampling.top_k),
              slot.sampling.top_p,
-@@ -7433,7 +8709,7 @@ fn runDs4DecodeTick(sch: *Scheduler, slot: *Slot, session: *arch_ds4.Ds4Session)
+@@ -7433,7 +8715,7 @@ fn runDs4DecodeTick(sch: *Scheduler, slot: *Slot, session: *arch_ds4.Ds4Session)
      const tok_u32: u32 = @intCast(next_id);
  
      // EOS handling — match the MLX path: do NOT emit the stop token.
@@ -4739,7 +4779,7 @@ index 9e12566..092215f 100644
          finishSlot(sch, slot, "stop");
          return;
      }
-@@ -7442,17 +8718,17 @@ fn runDs4DecodeTick(sch: *Scheduler, slot: *Slot, session: *arch_ds4.Ds4Session)
+@@ -7442,17 +8724,17 @@ fn runDs4DecodeTick(sch: *Scheduler, slot: *Slot, session: *arch_ds4.Ds4Session)
      // verifies several more, advancing ds4's KV internally (no separate eval).
      // It emits `[sampled, accepted…]`, so this tick may push several tokens.
      // Mirrors ds4's own CLI loop; engages only under greedy sampling.
@@ -4761,7 +4801,7 @@ index 9e12566..092215f 100644
              slot.markError("ds4_spec_failed");
              return;
          };
-@@ -7460,7 +8736,7 @@ fn runDs4DecodeTick(sch: *Scheduler, slot: *Slot, session: *arch_ds4.Ds4Session)
+@@ -7460,7 +8742,7 @@ fn runDs4DecodeTick(sch: *Scheduler, slot: *Slot, session: *arch_ds4.Ds4Session)
          for (spec_buf[0..n_usize]) |t| {
              const t_u32: u32 = @intCast(t);
              // EOS may appear mid-batch — stop, and never emit it.
@@ -4770,7 +4810,7 @@ index 9e12566..092215f 100644
                  finishSlot(sch, slot, "stop");
                  return;
              }
-@@ -7482,7 +8758,7 @@ fn runDs4DecodeTick(sch: *Scheduler, slot: *Slot, session: *arch_ds4.Ds4Session)
+@@ -7482,7 +8764,7 @@ fn runDs4DecodeTick(sch: *Scheduler, slot: *Slot, session: *arch_ds4.Ds4Session)
      // Advance ds4's KV by feeding the freshly-sampled token. After this
      // the session is in the state expected by the NEXT decode tick.
      session.eval(next_id) catch |err| {
@@ -4779,7 +4819,7 @@ index 9e12566..092215f 100644
          return err;
      };
  
-@@ -7518,8 +8794,12 @@ test "ds4MtpShouldEngage: >1 draft tokens + greedy (legacy MTP and DSpark)" {
+@@ -7518,8 +8800,12 @@ test "ds4MtpShouldEngage: >1 draft tokens + greedy (legacy MTP and DSpark)" {
  /// the slot keeps decoding.
  fn emitLlamaToken(sch: *Scheduler, slot: *Slot, tok: i32) bool {
      const engine = slot.model.llama_engine.?;
@@ -4793,7 +4833,7 @@ index 9e12566..092215f 100644
          finishSlot(sch, slot, "stop");
          return false;
      }
-@@ -8304,6 +9584,13 @@ fn interleaveDecodeTick(sch: *Scheduler) u64 {
+@@ -8304,6 +9590,13 @@ fn interleaveDecodeTick(sch: *Scheduler) u64 {
  }
  
  fn runPrefill(sch: *Scheduler, slot: *Slot) !void {
@@ -4807,7 +4847,7 @@ index 9e12566..092215f 100644
      // Mark the phase for the whole of prefill, and clear both signals on EVERY
      // exit path (success, cancel, error). `requests_prefilling` flips at entry
      // so the panel isn't blind until the first chunk lands; the chunk loop in
-@@ -8815,6 +10102,14 @@ fn sumInflightGeneratedTokens(active: anytype) u64 {
+@@ -8815,6 +10108,14 @@ fn sumInflightGeneratedTokens(active: anytype) u64 {
  
  fn runDecodeTick(sch: *Scheduler, active: []*Slot) !void {
      if (active.len == 0) return;
@@ -4822,7 +4862,7 @@ index 9e12566..092215f 100644
  
      // Publish the in-flight generated-token aggregate for the gauge sampler.
      // Runs after the whole tick (all decode work + any finishSlot calls) on
-@@ -9384,7 +10679,7 @@ fn runSingleDecodeTick(sch: *Scheduler, slot: *Slot) !void {
+@@ -9384,7 +10685,7 @@ fn runSingleDecodeTick(sch: *Scheduler, slot: *Slot) !void {
  fn runSingleDecodeTickInner(sch: *Scheduler, slot: *Slot) !void {
      // ds4-backed slot: drive the engine's session forward by one token. No
      // PLD / drafter / batched paths apply — ds4 has its own internal MTP
@@ -4831,7 +4871,7 @@ index 9e12566..092215f 100644
      if (slot.ds4_session) |session| {
          return runDs4DecodeTick(sch, slot, session);
      }
-@@ -13042,3 +14337,481 @@ test "a refusal right after a two-model eviction waits for the memory to come ba
+@@ -13042,3 +14343,483 @@ test "a refusal right after a two-model eviction waits for the memory to come ba
      mark.record(1_100, 17 * GiB);
      try std.testing.expect(waitForUnload(211 * GiB, 108 * GiB, mark, 1_200));
  }
@@ -5223,6 +5263,8 @@ index 9e12566..092215f 100644
 +    var unowned_ane = std.mem.zeroInit(LoadRequest, .{ .entry = model, .allocator = std.testing.allocator, .config = undefined, .tok = undefined, .chat_config = undefined });
 +    try std.testing.expectError(error.MissingActorRequestOwner,
 +        aneBuildOwned(&scheduler, &unowned_ane, std.mem.zeroes(arch_ane.Arch)));
++    try std.testing.expectError(error.MissingActorRequestOwner,
++        runLoadRequestPrepared(&scheduler, &unowned_ane));
 +    try std.testing.expect(fios_ownership.current == null and fios_ownership.current_group == null);
 +    const posted = try fios_ownership.shared.reservePreparation(io, first, model.id);
 +    var posted_live = true;
@@ -5314,7 +5356,7 @@ index 9e12566..092215f 100644
 +    std.debug.print("PASS: actual ANE worker refuses missing owners and preserves independently uncertain original lineage; cancellation metadata only\n", .{});
 +}
 diff --git a/src/server.zig b/src/server.zig
-index 720b2c6..44049eb 100644
+index 720b2c6..4f80894 100644
 --- a/src/server.zig
 +++ b/src/server.zig
 @@ -1,4 +1,9 @@
@@ -5504,7 +5546,7 @@ index 720b2c6..44049eb 100644
  ) !void {
      // Plan 05: resolve which model this request targets. The registry was
      // set up in `serve()`; per-POST routing happens after we read the body
-@@ -2603,6 +2685,86 @@ fn handleConnection(
+@@ -2603,6 +2685,88 @@ fn handleConnection(
          }
      }
  
@@ -5551,6 +5593,7 @@ index 720b2c6..44049eb 100644
 +            try sendErrorResponse(allocator, stream, "403 Forbidden", "forbidden", "Local observation only", 403);
 +            return;
 +        }
++        _ = fios_requests.backendKnownUncertain(stream.io);
 +        const snapshot = fios_requests.snapshot(stream.io);
 +        var activity_buffer: [1024]u8 = undefined;
 +        const body = try fios_ownership.renderSnapshot(snapshot, &activity_buffer);
@@ -5579,6 +5622,7 @@ index 720b2c6..44049eb 100644
 +        const ds4_host_flags = backend_fences.ds4_host_uncertainty;
 +        var host_flag_buffer: [16]u8 = undefined;
 +        const host_flag_text: []const u8 = if (ds4_host_flags) |value| try std.fmt.bufPrint(&host_flag_buffer, "{d}", .{value}) else "null";
++        _ = fios_requests.backendKnownUncertain(stream.io);
 +        const snapshot = fios_requests.snapshot(stream.io);
 +        var response_buffer: [4096]u8 = undefined;
 +        const body = try std.fmt.bufPrint(&response_buffer,
@@ -5591,7 +5635,7 @@ index 720b2c6..44049eb 100644
      // ── Plan 05: routes that don't depend on a loaded model (connectivity
      //    probes + CORS preflight + listing endpoints). Handle these BEFORE
      //    `scheduler.ensureLoaded` so they don't trigger a cold load of the
-@@ -2705,7 +2867,7 @@ fn handleConnection(
+@@ -2705,7 +2869,7 @@ fn handleConnection(
          // get a 404 here even though the main dispatch path below falls
          // back to default for SDK compatibility.
          log.debug("POST /v1/load-model -> 200\n", .{});
@@ -5600,7 +5644,7 @@ index 720b2c6..44049eb 100644
          return;
      }
      // Any method: a status route never reaches `ensureLoaded`, whatever its body names.
-@@ -2784,6 +2946,35 @@ fn handleConnection(
+@@ -2784,6 +2948,35 @@ fn handleConnection(
          &model_id_buf,
          body_model orelse queryModel(&query_model_buf, raw_path) orelse "",
      );
@@ -5636,7 +5680,7 @@ index 720b2c6..44049eb 100644
      // ── LAN-discovered remote model (`<id>@<peer>`) → proxy the request to
      //    its host byte-for-byte, model field rewritten to the bare id.
      //    Any DIRECT client may initiate the hop (loopback app, the
-@@ -2798,16 +2989,32 @@ fn handleConnection(
+@@ -2798,16 +2991,32 @@ fn handleConnection(
      if (g_providers) |prov| if (lan_mod.splitRemoteId(requested_model_id)) |rid| if (prov.isProvider(rid.peer) and
          !isTunneledRequest(request[0..header_end_pos]) and registry.peek(requested_model_id) == null)
      {
@@ -5670,7 +5714,7 @@ index 720b2c6..44049eb 100644
          .id => |id| requested_model_id = id,
          .unknown_path => {
              try sendErrorResponse(allocator, stream, "404 Not Found", "model_not_found", "No model is registered at that path; load it first with POST /v1/load-model", 404);
-@@ -2873,7 +3080,14 @@ fn handleConnection(
+@@ -2873,7 +3082,14 @@ fn handleConnection(
              return;
          }
      }
@@ -5686,7 +5730,7 @@ index 720b2c6..44049eb 100644
          // Headless gen-only boot (media models resident, no default chat
          // model): /props keeps answering with the live memory counters —
          // the app's tray polls it, and a 503 here read as "0 MB".
-@@ -2887,6 +3101,10 @@ fn handleConnection(
+@@ -2887,6 +3103,10 @@ fn handleConnection(
      // A status read must not look like use — see `isStatusRoute`.
      const status_read = isStatusRoute(method, path);
      defer if (status_read) scheduler.releaseStatus(lm) else scheduler.release(lm);
@@ -5697,7 +5741,7 @@ index 720b2c6..44049eb 100644
  
      // A model loaded on demand freezes its own auto-context here, for the same
      // reason the `--model` primary does at startup: the number we advertise is
-@@ -7800,7 +8018,7 @@ fn handleModelsRescan(allocator: std.mem.Allocator, stream: *Conn) !void {
+@@ -7800,7 +8020,7 @@ fn handleModelsRescan(allocator: std.mem.Allocator, stream: *Conn) !void {
  /// Plan 05 Phase E: explicit cold-load. Strict on unknown ids (404 — the
  /// caller asked for a specific id, not "anything"). Routes through
  /// scheduler.ensureLoaded so eviction/back-pressure kicks in.
@@ -5706,7 +5750,7 @@ index 720b2c6..44049eb 100644
      const scheduler = global_scheduler orelse {
          try sendErrorResponse(allocator, stream, "503 Service Unavailable", "internal_error", "Scheduler not ready", 503);
          return;
-@@ -7885,11 +8103,20 @@ fn handleLoadModelStrict(allocator: std.mem.Allocator, stream: *Conn, request_bo
+@@ -7885,11 +8105,20 @@ fn handleLoadModelStrict(allocator: std.mem.Allocator, stream: *Conn, request_bo
          .id => |id| requested_id = id,
          else => {},
      };
@@ -5728,7 +5772,7 @@ index 720b2c6..44049eb 100644
      // Promotion happens only past ensureLoaded's error switch: a load that
      // FAILED must never steal the default from a model that answers.
      if (make_default) {
-@@ -8030,6 +8257,7 @@ fn handleTranscriptions(allocator: std.mem.Allocator, stream: *Conn, body: []con
+@@ -8030,6 +8259,7 @@ fn handleTranscriptions(allocator: std.mem.Allocator, stream: *Conn, body: []con
              try sendErrorResponse(allocator, stream, "400 Bad Request", "invalid_request_error", "diarized_json needs Nemotron 3 Diarization, which is not on disk or did not load: download " ++ DIARIZER_REPO ++ " beside the ASR model", 400);
              return;
          }).id;
@@ -5736,7 +5780,7 @@ index 720b2c6..44049eb 100644
          diarizer = global_scheduler.?.ensureLoaded(id) catch |err| blk: {
              log.warn("  diarizer {s} did not load ({s}): one speaker\n", .{ id, @errorName(err) });
              break :blk null;
-@@ -8054,16 +8282,19 @@ fn handleTranscriptions(allocator: std.mem.Allocator, stream: *Conn, body: []con
+@@ -8054,16 +8284,19 @@ fn handleTranscriptions(allocator: std.mem.Allocator, stream: *Conn, body: []con
          defer if (timed) |*x| x.deinit(allocator);
          if (aligner) |*al| {
              if (t.text.len > 0 and al.languages & transcription_mod.languageBit(t.language orelse "") != 0) {
@@ -5766,7 +5810,7 @@ index 720b2c6..44049eb 100644
                  if (al.lm) |alm| timed = (try alignPiece(allocator, stream, alm, pcm[start..end], t.text, t.language.?, who, start * 1000 / transcription_mod.SAMPLE_RATE)) orelse return;
              }
          }
-@@ -8179,6 +8410,7 @@ fn findCompanion(arch_hint: []const u8) ?*LoadedModel {
+@@ -8179,6 +8412,7 @@ fn findCompanion(arch_hint: []const u8) ?*LoadedModel {
  
  fn findAligner(allocator: std.mem.Allocator) !?Aligner {
      const entry = findCompanion("qwen3_forced_aligner") orelse return null;
@@ -5774,7 +5818,7 @@ index 720b2c6..44049eb 100644
      var config = model_mod.parseConfig(global_registry.?.io, allocator, entry.path) catch return null;
      defer config.deinit(allocator);
      const fa = config.forced_aligner orelse return null;
-@@ -8584,9 +8816,9 @@ fn embeddedEngineSettings(st: PropsSettings, engine: PropsEngine, engine_mtp: bo
+@@ -8584,9 +8818,9 @@ fn embeddedEngineSettings(st: PropsSettings, engine: PropsEngine, engine_mtp: bo
      return out;
  }
  
@@ -5786,7 +5830,7 @@ index 720b2c6..44049eb 100644
      var out = embeddedEngineSettings(mlxPropsSettings(lm), engine, engine_mtp);
      if (lm.ane != null) out.kv_quant = "off";
      return out;
-@@ -8754,7 +8986,7 @@ fn handleProps(allocator: std.mem.Allocator, stream: *Conn, lm: *LoadedModel) !v
+@@ -8754,7 +8988,7 @@ fn handleProps(allocator: std.mem.Allocator, stream: *Conn, lm: *LoadedModel) !v
      defer allocator.free(ngram_json);
      const batching_json = try batchingPropsJson(allocator, batchVerdictFor(lm));
      defer allocator.free(batching_json);
@@ -5795,7 +5839,7 @@ index 720b2c6..44049eb 100644
      defer allocator.free(settings_json);
      const cluster_json = try @import("distributed.zig").propsJson(allocator);
      defer allocator.free(cluster_json);
-@@ -9300,7 +9532,7 @@ fn handleDetokenize(
+@@ -9300,7 +9534,7 @@ fn handleDetokenize(
  
      const ids = try allocator.alloc(u32, tokens_val.array.items.len);
      defer allocator.free(ids);
@@ -5804,7 +5848,7 @@ index 720b2c6..44049eb 100644
          try sendErrorResponse(allocator, stream, "400 Bad Request", "invalid_request_error", "'tokens' must be integers inside the model's vocabulary", 400);
          return;
      }
-@@ -9665,9 +9897,9 @@ fn echoModelName(root: std.json.ObjectMap, fallback: []const u8) []const u8 {
+@@ -9665,9 +9899,9 @@ fn echoModelName(root: std.json.ObjectMap, fallback: []const u8) []const u8 {
  
  /// The vocabulary a request's token ids index. An embedded engine's stub config keeps the
  /// default vocab; its ids are the engine's, and an id past its vocab aborts inside llama.cpp.
@@ -5816,7 +5860,7 @@ index 720b2c6..44049eb 100644
      return if (lm.config) |c| c.vocab_size else 0;
  }
  
-@@ -10555,7 +10787,7 @@ fn handleCompletions(
+@@ -10555,7 +10789,7 @@ fn handleCompletions(
          return;
      };
  
@@ -5825,7 +5869,7 @@ index 720b2c6..44049eb 100644
      defer if (prompt == .ids) allocator.free(prompt.ids);
      switch (prompt) {
          .missing, .invalid => {
-@@ -13838,6 +14070,50 @@ fn findContentLength(headers: []const u8) ?usize {
+@@ -13838,6 +14072,50 @@ fn findContentLength(headers: []const u8) ?usize {
  /// Case-insensitive header lookup returning the trimmed VALUE (`Content-Type`
  /// carries the multipart boundary, so `/v1/images/edits` can't be parsed from
  /// the body alone like every other endpoint).
@@ -5876,7 +5920,7 @@ index 720b2c6..44049eb 100644
  fn findHeaderValue(headers: []const u8, comptime name_lower: []const u8) ?[]const u8 {
      var lines = std.mem.splitSequence(u8, headers, "\r\n");
      while (lines.next()) |line| {
-@@ -14405,6 +14681,52 @@ test "resolveRequestModelId: a path names its own entry, never the default model
+@@ -14405,6 +14683,52 @@ test "resolveRequestModelId: a path names its own entry, never the default model
      try std.testing.expectEqualStrings("", resolveRequestModelId(reg, &aliases, "", "/v1/chat/completions").id);
  }
  
@@ -5929,7 +5973,7 @@ index 720b2c6..44049eb 100644
  test "the route-existence 404 is answered BEFORE the model is resolved" {
      // A path we do not serve must cost nothing. Resolution ran first, so
      // `POST /v1/load` (the real route is /v1/load-model) with a `model` field
-@@ -14413,7 +14735,7 @@ test "the route-existence 404 is answered BEFORE the model is resolved" {
+@@ -14413,7 +14737,7 @@ test "the route-existence 404 is answered BEFORE the model is resolved" {
      // answer has to precede `ensureLoaded`, not sit in one of its error arms.
      const src = @embedFile("server.zig");
      const gate = "if (!routeExists(" ++ "path)) {";
@@ -5938,7 +5982,7 @@ index 720b2c6..44049eb 100644
      const gate_at = std.mem.indexOf(u8, src, gate) orelse return error.GateMissing;
      const resolve_at = std.mem.indexOf(u8, src, resolve) orelse return error.ResolveMissing;
      try std.testing.expect(gate_at < resolve_at);
-@@ -14871,8 +15193,24 @@ pub const insufficient_free_memory_message =
+@@ -14871,8 +15195,24 @@ pub const insufficient_free_memory_message =
      "Not enough free memory to load model: weights + warmup headroom exceed what is currently available. " ++
      "Close other apps or models and retry (the server log names the peak estimate and available memory), or pass --skip-mem-preflight to override.";
  

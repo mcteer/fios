@@ -664,3 +664,32 @@ and the genuine native SDK-owner metadata capture API. Both original correlated
 roots must survive after outer actor/client references retire, then release
 through that descriptor's ordinary metadata cleanup. No native backend handle,
 GPU buffer, model or SDK substitute is used; this is not terminal/G2 authority.
+
+For queued/ANE origin metadata, select
+`--functional-test 'fios native queued preparation preserves merged request origins'`
+before final `--functional-build-only` in the enclosing native command. This
+fixed selection runs two named cases plus two import roots (4 total): actual
+queued-worker/native SDK capture and actual ANE slot cancellation/refusal. It
+also checks missing-parent refusal at the separate ANE build and cold-load
+preflight entries. Backend-only test inputs remain unread; no model is loaded.
+The fixed cases run before the complete native executable build/link. A failed
+case produces no accepted capsule; a successful case alone is insufficient.
+Keep native/companion/component inputs frozen throughout the entire command.
+
+The separate ordinary protocol case
+`native observation captures its enrolled negative source` in
+`platform/studio/native/control_protocol.zig` exercises ingress-v2/v3, primary
+and lineage captures in Debug/ReleaseSafe. Its startup-enrolled test getter
+supplies healthy/negative metadata only. Explicit observation reads may latch
+negative evidence; ordinary accounting snapshots/release remain callback-free.
+A later false sample or local release cannot clear the original uncertainty.
+These commands supply no native coverage, terminality or installed authority.
+
+
+The fixed ordinary observation/owner-probe suite is selected by
+`zig test platform/studio/native/control_protocol.zig -O Debug --test-filter 'control_protocol.test.native '`
+(and separately `-O ReleaseSafe`). Its three cases use actual source metadata:
+known negatives, retained request owners and real model-change tickets before
+or during the barrier callback. The callback itself does no GPU work. Local
+reference/ticket release never clears independent uncertainty, and passing
+this suite does not enroll a native admission or device-terminal issuer.
