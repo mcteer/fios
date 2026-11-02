@@ -250,3 +250,16 @@ The actual worker/native metadata case reproduces scalar loss, then passes with
 both roots retained after caller retirement. No backend/model handle is used;
 all ANE/other queue paths, native terminality and G2 remain unfinished. This adds
 no wire-selected identity, installed capability or lifecycle authority.
+
+
+### ANE worker and cold-build ownership (partial source checkpoint)
+
+The separate cold-build wrapper now installs validated queued preparation and
+retires it before publishing ready/failure. `runAneSlot` enters the existing
+retained-owner context before cancellation/backend access and holds it through
+error handling/checkpoint; its original enrolled negative source governs
+retirement. Actual missing-owner entry fails first and the fixed selected
+metadata cases pass4/4, with full executable/link success. These use no loaded
+ANE model or runtime handle. CoreML/private completion, compile/lane workers,
+full preflight/eviction and G2 remain unfinished; no all-client or lifecycle
+authority follows.

@@ -3629,3 +3629,46 @@ pass (`/tmp/fios-009-queued-origins-{node,boundary}.log`). No new real inference
 HTTP/supervisor/drain receipt or historical matrix is attributed to this capsule.
 Existing core/model results remain attributed to their original artifacts.
 Full ANE/other queue paths and G2 remain unfinished. Whole tasks remain38/55.
+
+
+### 2026-11-02 separate ANE preparation and worker ownership (partial source checkpoint)
+
+Cold ANE builds dispatch to `aneBuildThread`, including a synchronous fallback
+when thread creation fails. `aneBuildOwned` now installs explicit queued
+preparation around the synchronous build and retires it before ready/failure
+can wake the sender. Missing enrolled parents refuse before backend metadata
+access. The actual wrapper's missing-parent case accompanies the selected
+queued-origin/native SDK metadata case.
+
+The actual `runAneSlot` worker now retains its original queued slot owners
+through cancellation, error handling and checkpoint. Its original enrolled
+negative source governs actor retirement; no Llama/DS4 model kind is asserted.
+The real entry point's missing-owner regression compiles29s and fails with the
+expected absent `MissingActorRequestOwner` outcome (3 passed/1 failed,4 total):
+`/tmp/fios-009-ane-actor-prior-native-build.log`, scratchkyxXfS. No full native
+executable build or accepted capsule is claimed for that red run.
+
+Two earlier fixture compilation errors (nonnullable request pointers and a
+nonoptional finish-reason access) are retained at
+`/tmp/fios-009-ane-origins-native-build.log` and
+`/tmp/fios-009-ane-actor-fixture-compile.log`; neither is behavioral evidence.
+The driver now runs only the fixed selected cases before the executable build,
+while successful acceptance still requires both the cases and full linkage.
+
+Final selected cases pass4/4: missing-owner refusal before model/engine access,
+healthy0 owners/fencedfalse, independent negative1 original owner/fencedtrue
+with the original correlation root. Queued merged roots and ANE cold-build
+early refusal also pass. Full native executable build/link succeeds:
+`/tmp/fios-009-ane-actor-native-build.log`, scratch`/tmp/f9-linked-native-JbsRGU`.
+Accepted capsule`/private/tmp/fios-009-ane-actor-native-review/capsule`, review
+c3f24c17bd6d25232da517b1d3990c6feffb01c78fe1ba823243084aa81a1524,
+binary20454cfb847edad62bd841078dcf2524d84322429a1f4d3639bdb0393b36863b.
+The declared native_ane_actor_retention_version1 and
+native_ane_preparation_origins_version1 are partial source features, not native
+provenance/admission authority. Focused Node24/24 and boundary pass
+(`/tmp/fios-009-ane-actor-{node,boundary}.log`).
+
+No actual ANE model/build, CoreML/private-runtime terminality, compile/lane-worker
+attribution, full cold preflight/eviction ownership, new inference or new
+HTTP/supervisor/drain receipt is claimed. No historical matrix or model policy/
+fallback change is made. G2 and whole tasks remain38/55.
