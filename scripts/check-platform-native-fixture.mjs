@@ -11,6 +11,7 @@ import { homedir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {stageNativeReview,finishNativeReview} from './lib/platform-native-review.mjs';
+import {bindNativeSystemCxx} from './lib/platform-native-system-cxx.mjs';
 import {verifyMlxSourceReview} from './lib/platform-mlx-source-review.mjs';
 import {verifyDs4SourceBuild,bindDs4SourceBuildGraph} from './lib/platform-ds4-source-review.mjs';
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
@@ -99,13 +100,22 @@ assert.equal(createHash('sha256').update(JSON.stringify(headerRows)).digest('hex
 const scratch=mkdtempSync('/tmp/f9-linked-native-');
 const mlxLibraries=mlxDependency?path.join(scratch,'mlx'):path.join(source,'lib/mlx/lib');
 const participantFile=path.join(root,'platform/studio/native/source_mlx_participants.cpp'),participantBytes=mlxDependency?readFileSync(participantFile,'utf8'):null;
-const sourceBufferOwnerSets=!!mlxDependency&&mlxDependency.patch_sha256===sha(path.join(root,'platform/studio/native/mlx-64ea011-metal-owner-sets.patch'));
+const sourceOwnerUncertainty=!!mlxDependency&&mlxDependency.patch_sha256===sha(path.join(root,'platform/studio/native/mlx-64ea011-owner-uncertainty.patch'));
+const sourceBufferAbandonment=sourceOwnerUncertainty||!!mlxDependency&&mlxDependency.patch_sha256===sha(path.join(root,'platform/studio/native/mlx-64ea011-buffer-abandonment.patch'));
+const sourceBufferOwnerSets=sourceBufferAbandonment||!!mlxDependency&&mlxDependency.patch_sha256===sha(path.join(root,'platform/studio/native/mlx-64ea011-metal-owner-sets.patch'));
 const sourceRequestMetalOwners=sourceBufferOwnerSets||!!mlxDependency&&mlxDependency.patch_sha256===sha(path.join(root,'platform/studio/native/mlx-64ea011-request-metal-owners.patch'));
 const sourceRequestOwners=sourceRequestMetalOwners||!!mlxDependency&&mlxDependency.patch_sha256===sha(path.join(root,'platform/studio/native/mlx-64ea011-request-host-owners.patch'));
 const sourceComponentHold=sourceRequestOwners||!!mlxDependency&&mlxDependency.patch_sha256===sha(path.join(root,'platform/studio/native/mlx-64ea011-source-component-hold.patch'));
 const env={DEVELOPER_DIR:'/Applications/Xcode.app/Contents/Developer',PATH:'/usr/bin:/bin',HOME:scratch,LANG:'C',LC_ALL:'C',TMPDIR:scratch,ZIG_GLOBAL_CACHE_DIR:path.join(homedir(),'.cache/zig')};
 const run=(file,argv,options={})=>execFileSync(file,argv,{encoding:'utf8',env,timeout:600000,maxBuffer:16*1024*1024,...options});
 assert.equal(run('/usr/bin/xcrun',['--sdk','macosx','--show-sdk-version']).trim(),'27.2');
+if(mlxDependency)assert.equal(mlxDependency.sdk,'27.2','Source SDK and selected C++ SDK must match');
+const systemCxxSDK=mlxDependency?realpathSync(run('/usr/bin/xcrun',['--sdk','macosx','--show-sdk-path']).trim()):null;
+const cxxHeaderNames=['__config','__config_site','cstdint','memory','functional','optional','stdexcept','typeinfo','exception'];
+const cxxDeclaredFiles=systemCxxSDK?[path.join(systemCxxSDK,'usr/lib/libc++.1.tbd'),...cxxHeaderNames.map(name=>path.join(systemCxxSDK,'usr/include/c++/v1',name)),path.join(root,'scripts/lib/platform-native-system-cxx.mjs'),path.join(root,'platform/studio/native/mlx_cxx_callback_error_test.cpp')]:[];
+const cxxDeclaredHashes=Object.fromEntries(cxxDeclaredFiles.map(file=>[file,sha(file)]));
+let cxxControlPassed=false;
+
 const filename=`fios-linked-${randomUUID()}.zig`,generated=path.join(source,filename);
 const schedulerFile=path.join(source,'src/scheduler.zig'),registryFile=path.join(source,'src/model_registry.zig'),serverFile=path.join(source,'src/server.zig');
 const ds4File=path.join(source,'src/arch/ds4.zig'),llamaFile=path.join(source,'src/arch/llama.zig');
@@ -142,6 +152,31 @@ function stage(from,to){
 }
 try{
  mimoReceipt=verifyMimo();
+ if(systemCxxSDK){
+  const directory=path.join(scratch,'cxx-control');mkdirSync(directory,{mode:0o700});
+  const graph=`const std=@import("std");
+pub fn build(b:*std.Build) void {
+ const target=b.standardTargetOptions(.{});
+ const optimize=b.standardOptimizeOption(.{});
+ const module=b.createModule(.{.target=target,.optimize=optimize,.link_libc=true,.link_libcpp=true});
+ module.addIncludePath(.{.cwd_relative=${JSON.stringify(mlxDependency.source)}});
+ module.addObjectFile(.{.cwd_relative=${JSON.stringify(mlxDependency.libraries['libmlx.dylib'])}});
+ module.addRPath(.{.cwd_relative=${JSON.stringify(path.dirname(mlxDependency.libraries['libmlx.dylib']))}});
+ module.addCSourceFile(.{.file=.{.cwd_relative=${JSON.stringify(path.join(root,'platform/studio/native/mlx_cxx_callback_error_test.cpp'))}},.flags=&.{"-std=c++20","-O2"}});
+ const exe=b.addExecutable(.{.name="cxx-control",.root_module=module});
+ b.installArtifact(exe);
+}
+`;
+  writeFileSync(path.join(directory,'build.zig'),bindNativeSystemCxx(graph,systemCxxSDK),{mode:0o600,flag:'wx'});
+  for(const mode of ['Debug','ReleaseFast']){
+   run(zig,['build','--sysroot',systemCxxSDK,'-j2','-Doptimize='+mode],{cwd:directory,timeout:120000});
+   const output=run('/usr/bin/sandbox-exec',['-p','(version 1)(allow default)(deny network*)',path.join(directory,'zig-out/bin/cxx-control')],{timeout:10000,maxBuffer:4096});
+   assert(output.includes('PASS: actual system C++ SDK callback error channel and completed CPU cleanup'));
+   console.log('CXX '+mode+': '+output.trim());
+  }
+  cxxControlPassed=true;
+ }
+
  // Fail cheap on integration-script syntax before expensive native codegen.
  run(process.execPath,['--check',path.join(root,'scripts/check-platform-native-http.mjs')]);
  // Before staging: verifies commits/submodules, exact reviewed fixed-file
@@ -209,12 +244,13 @@ try{
  }
  const reviewedGraph=readFileSync(path.join(source,'build.zig'),'utf8');
  let graph=bindDs4SourceBuildGraph(reviewedGraph,ds4Dependency);
+ if(systemCxxSDK)graph=bindNativeSystemCxx(graph,systemCxxSDK);
  const guards='    if (target.result.os.tag == .macos) {\n        if (webp_prefix) |dir| verifyCopiedDeps(b, dir) else verifyBrewDeps(b);\n        verifyMlxStage(b);\n    }\n';
  assert.equal(graph.split(guards).length,2);
  graph=graph.replace(guards,'    // SOURCE FIXTURE ONLY: real copied deps, NO upstream staging/release attestation.\n');
  if(mlxDependency){
   const libraryEdge='module.addLibraryPath(b.path("lib/mlx/lib"));';assert.equal(graph.split(libraryEdge).length,2);
-  graph=graph.replace(libraryEdge,'module.addLibraryPath(.{ .cwd_relative = '+JSON.stringify(mlxLibraries)+' });');
+  graph=graph.replace(libraryEdge,'module.addLibraryPath(.{ .cwd_relative = '+JSON.stringify(systemCxxSDK?path.relative(source,mlxLibraries):mlxLibraries)+' });');
   const participant=path.join(scratch,'source-mlx-participants.cpp');
   writeFileSync(participant,(sourceComponentHold?'#define FIOS_SOURCE_COMPONENT_HOLD 1\n':'')+(sourceRequestOwners?'#define FIOS_NATIVE_REQUEST_OWNERS 1\n':'')+'#include '+JSON.stringify(path.join(mlxDependency.source,'mlx/stream.h'))+'\n#include '+JSON.stringify(path.join(root,'platform/studio/native/device_owner_barrier.h'))+'\n'+participantBytes,{mode:0o600});
   const first='    const exe = b.addExecutable(.{';assert.equal(graph.split(first).length,3);
@@ -222,6 +258,7 @@ try{
  }
  const exe='    const exe = b.addExecutable(.{';
  assert.equal(graph.split(exe).length,3);
+ if(systemCxxSDK)graph=graph.replace(exe,'    mod.addRPath(.{ .cwd_relative = '+JSON.stringify(lib)+' });\n'+exe);
  graph=graph.replace(exe,['mlx','llama'].map(name=>`    mod.addRPath(.{ .cwd_relative = ${JSON.stringify(name==='mlx'?mlxLibraries:path.join(source,'lib',name,'lib'))} });`).join('\n')+'\n'+exe);
  const install='    b.installArtifact(exe);';
  graph=graph.replace(install,install+'\n    b.step("fios-linked-build", "Disposable linked native source fixture").dependOn(&b.addInstallArtifact(exe, .{}).step);');
@@ -300,7 +337,7 @@ try{
   assert.equal(variant.split(pin).length,2);mutated=true;
   writeFileSync(mutationFile,variant.replace(pin,replacement));
  }
- const options=['-j2','--build-file',filename,'--prefix',path.join(scratch,'output'),providerSourceFixture?'-Dmas=false':'-Dmas=true','-Dversion=26.10.3-fios-source-fixture',`-Dwebp-prefix=${prefix}`,...(mimoSource?[`-Dmlx-stream-dir=${mimoSource}`]:[]),'--summary','all'];
+ const options=['-j2',...(systemCxxSDK?['--sysroot',systemCxxSDK]:[]),'--build-file',filename,'--prefix',path.join(scratch,'output'),providerSourceFixture?'-Dmas=false':'-Dmas=true','-Dversion=26.10.3-fios-source-fixture',`-Dwebp-prefix=${systemCxxSDK?path.relative(source,prefix):prefix}`,...(mimoSource?[`-Dmlx-stream-dir=${mimoSource}`]:[]),'--summary','all'];
  // No C/object/library inputs removed. Root-only deliberately omits the
  // executable/HTTP/manager claim; its genuine test root still executes.
  const buildLog=rootOnly?'':run('/usr/bin/nice',['-n','10',zig,'build','fios-linked-build','-Doptimize=ReleaseFast',...options],{cwd:source});
@@ -331,12 +368,19 @@ try{
   assert.match(testLog,/17\/17 tests passed/,'Every declared root case must execute; a compiled but filtered-out test is not evidence');
  }
  let binary=path.join(scratch,'output/bin/mlx-serve'),digest=rootOnly?null:sha(binary),review;
+ if(systemCxxSDK&&!rootOnly){
+  assert(cxxControlPassed);
+  const linked=run('/usr/bin/otool',['-L',binary]);assert(linked.includes('/usr/lib/libc++.1.dylib'));
+  assert(!/\b[Tt] +___cxa_throw(?:\n|$)/m.test(run('/usr/bin/nm',['-gU',binary])),'Native image still defines a bundled C++ throw runtime');
+  for(const [file,hash] of Object.entries(cxxDeclaredHashes))assert.equal(sha(file),hash);
+ }
+
  if(reviewOutput){
   assert(!rootOnly,'Review output requires an actual executable build');
   const libraries=Object.fromEntries(Object.keys(runtime).map(name=>[name,path.join(name==='libwebp.dylib'||name==='libsharpyuv.dylib'?lib:bundle,name)]));
   libraries['libllama.dylib']=path.join(source,'lib/llama/lib/libllama.dylib');
   if(mlxDependency)for(const name of ['libmlx.dylib','mlx.metallib','libjaccl.dylib'])libraries[name]=mlxDependency.libraries[name];
-  review=stageNativeReview({directory:reviewOutput,binary,libraries,inputs:{provider_source_fixture:providerSourceFixture,mas_build:!providerSourceFixture,verification_mode:functionalBuildOnly?'functional_build_only':'full_source_fixture',root_tests_rerun:!functionalBuildOnly,http_checks_rerun:!functionalBuildOnly,native_control_protocol_versions:[2,3],native_request_host_owners_version:sourceRequestOwners?3:0,native_request_metal_owners_version:sourceBufferOwnerSets?2:sourceRequestMetalOwners?1:0,native_request_owner_sets_version:sourceBufferOwnerSets?1:0,native_connection_drain_retention_version:serverOriginal.includes('fios_sdk_owners.diagnostic().uncertain')?3:serverOriginal.includes('fios_requests.hasRetainedWork(io)')?2:serverOriginal.includes('retaining original server state')?1:0,native_known_backend_refusal_version:serverOriginal.includes('enrollBackendUncertaintyProbe')?1:0,native_known_mlx_refusal_version:mlxDependency&&serverOriginal.includes('fios_device.knownSourceUncertain()')&&readFileSync(path.join(mlxDependency.source,'mlx/stream.h'),'utf8').includes('#define MLX_FIOS_KNOWN_UNCERTAINTY 1')?1:0,native_primary_activity_version:readFileSync(path.join(root,'platform/studio/native/control_transport.zig'),'utf8').includes('dispatchPrimaryActivity')?1:0,native_backend_fences_version:serverOriginal.includes('Bridge.startWithBackendFences')?1:0,native_source_component_envelope_version:serverOriginal.includes('ds4_host_uncertainty')?4:serverOriginal.includes('independent_partial_backend_fences')?3:2,native_bound_target_json_version:serverOriginal.includes('var fios_target_json: ?std.json.Parsed(std.json.Value) = null;')?1:0,native_bound_local_target_guard_version:serverOriginal.includes('var fios_process_bound = false;')&&serverOriginal.includes('native_target_not_local')&&serverOriginal.includes('native_target_not_found')?1:0,native_expected_instance_guard_version:(serverOriginal.includes('fn fiosExpectedInstanceHeader(')&&serverOriginal.includes('const expected_instance = fiosExpectedInstanceHeader(')?1:0),companion_sources:Object.fromEntries(['backend_lifetime.zig','request_ownership.zig','control_protocol.zig','control_transport.zig','device_owner.zig','sdk_request_ownership.zig','startup_guard.zig','device_owner_barrier.cpp','device_owner_barrier.h'].map(name=>[name,sha(path.join(root,'platform/studio/native',name))])),native_base:'046b647686419df06c6c7132fb1d15d76185c3e5',root_patch_sha256:sha(path.join(root,'platform/studio/native/mlx-serve-26.10.3.patch')),runtime_inputs:runtime,runtime_input_scope:mlxDependency?'readonly_installed_bundle_bracket_not_selected_runtime_provenance':'declared_installed_bundle_inputs_only',mimo_candidate:mimoReceipt,ds4_source_dependency:ds4Dependency,mlx_source_dependency:mlxDependency,source_component_diagnostics:!!mlxDependency,source_component_hold:sourceComponentHold,mlx_participant_source_sha256:participantBytes?createHash('sha256').update(participantBytes).digest('hex'):null}});
+  review=stageNativeReview({directory:reviewOutput,binary,libraries,inputs:{system_cxx:systemCxxSDK?{version:1,sdk:'27.2',callback_error_controls:cxxControlPassed?['Debug','ReleaseFast']:[],scope:'selected_SDK_stub_and_header_inputs_not_mapped_OS_runtime_attestation',declared_inputs:cxxDeclaredHashes}:null,provider_source_fixture:providerSourceFixture,mas_build:!providerSourceFixture,verification_mode:functionalBuildOnly?'functional_build_only':'full_source_fixture',root_tests_rerun:!functionalBuildOnly,http_checks_rerun:!functionalBuildOnly,native_control_protocol_versions:[2,3],native_request_host_owners_version:sourceRequestOwners?3:0,native_request_metal_owners_version:sourceBufferOwnerSets?2:sourceRequestMetalOwners?1:0,native_request_owner_sets_version:sourceBufferOwnerSets?1:0,native_request_owner_abandonment_version:sourceBufferAbandonment?1:0,native_request_owner_uncertainty_version:sourceOwnerUncertainty?1:0,native_connection_drain_retention_version:serverOriginal.includes('fios_sdk_owners.diagnostic().uncertain')?3:serverOriginal.includes('fios_requests.hasRetainedWork(io)')?2:serverOriginal.includes('retaining original server state')?1:0,native_known_backend_refusal_version:serverOriginal.includes('enrollBackendUncertaintyProbe')?1:0,native_known_mlx_refusal_version:mlxDependency&&serverOriginal.includes('fios_device.knownSourceUncertain()')&&readFileSync(path.join(mlxDependency.source,'mlx/stream.h'),'utf8').includes('#define MLX_FIOS_KNOWN_UNCERTAINTY 1')?1:0,native_primary_activity_version:readFileSync(path.join(root,'platform/studio/native/control_transport.zig'),'utf8').includes('dispatchPrimaryActivity')?1:0,native_backend_fences_version:serverOriginal.includes('Bridge.startWithBackendFences')?1:0,native_source_component_envelope_version:serverOriginal.includes('ds4_host_uncertainty')?4:serverOriginal.includes('independent_partial_backend_fences')?3:2,native_bound_target_json_version:serverOriginal.includes('var fios_target_json: ?std.json.Parsed(std.json.Value) = null;')?1:0,native_bound_local_target_guard_version:serverOriginal.includes('var fios_process_bound = false;')&&serverOriginal.includes('native_target_not_local')&&serverOriginal.includes('native_target_not_found')?1:0,native_expected_instance_guard_version:(serverOriginal.includes('fn fiosExpectedInstanceHeader(')&&serverOriginal.includes('const expected_instance = fiosExpectedInstanceHeader(')?1:0),companion_sources:Object.fromEntries(['backend_lifetime.zig','request_ownership.zig','control_protocol.zig','control_transport.zig','device_owner.zig','sdk_request_ownership.zig','startup_guard.zig','device_owner_barrier.cpp','device_owner_barrier.h'].map(name=>[name,sha(path.join(root,'platform/studio/native',name))])),native_base:'046b647686419df06c6c7132fb1d15d76185c3e5',root_patch_sha256:sha(path.join(root,'platform/studio/native/mlx-serve-26.10.3.patch')),runtime_inputs:runtime,runtime_input_scope:mlxDependency?'readonly_installed_bundle_bracket_not_selected_runtime_provenance':'declared_installed_bundle_inputs_only',mimo_candidate:mimoReceipt,ds4_source_dependency:ds4Dependency,mlx_source_dependency:mlxDependency,source_component_diagnostics:!!mlxDependency,source_component_hold:sourceComponentHold,mlx_participant_source_sha256:participantBytes?createHash('sha256').update(participantBytes).digest('hex'):null}});
   binary=review.binary;digest=review.sha256;
  }
  const httpLog=rootOnly||functionalBuildOnly?'':run(process.execPath,[path.join(root,'scripts/check-platform-native-http.mjs'),'--isolated','--binary',binary,'--sha256',digest]);

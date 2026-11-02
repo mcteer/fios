@@ -574,3 +574,33 @@ bounded120s/command and execution20s/mode with IP networking denied. Omit
 `--buffer-origins` and the header archive for ordinary CPU callback regression.
 Rebuild the enclosing native capsule with `--functional-build-only` before any
 private server/core-model regression; component receipts grant no native authority.
+
+
+For the additional native-owner abandonment fence, build with
+`--abandoned-buffer-owners` (implies buffer/Metal/host ownership) and replace
+`--buffer-origins` in the fixture command with `--abandoned-buffer`. This drops
+a real private unsubmitted Metal buffer and its genuine SDK reservation, then
+requires the original native context/root to stay quarantined and new work to
+refuse. It performs no submitted GPU work, model or fault-injection campaign.
+A passing component case supplies no native terminal or installation authority.
+
+
+Build the cumulative shared uncertainty/callback-error candidate with
+`--owner-uncertainty`. The SDK/native-owner driver additionally accepts
+`--stream-cleanup` or `--callback-error`, without Metal/header arguments. Each
+executes one real CPU callback and supported cleanup or ordinary application
+exception through the existing SDK error channel in Debug/ReleaseSafe. It
+links the selected SDK's system C++ runtime and records that stub hash.
+The enclosing native source builder now composes the same system C++ ABI for
+source SDK inputs and first runs a finite real callback/error-channel control
+in Debug/ReleaseFast (120s build/10s execution per mode). This is ordinary
+functional compatibility work; `--functional-build-only` continues to skip
+historical root/HTTP/fault matrices. Full enclosing server acceptance and
+installed/native provenance remain separate from these component controls.
+
+
+Source-SDK model plans now require the matched C++ record: version1, SDK27.2,
+Debug/ReleaseFast callback controls and twelve selected source/header/stub
+hashes. Earlier source capsules without it remain historical evidence and
+refuse new model plans. The native builder records this separately from
+whole-runtime provenance; it does not authorize installation/admission.

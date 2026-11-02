@@ -9,6 +9,17 @@ export function nativeReviewModelInputs(inputs){
  const dependency=inputs?.mlx_source_dependency;
  if(dependency!==undefined&&dependency!==null){
   assert(dependency.source_fixture_only===true&&dependency.native_authority===false&&dependency.features?.safetensors===true,'Source SDK lacks required Safetensors support');
+  const cxx=inputs.system_cxx,message='Source SDK lacks matched C++ runtime compatibility';
+  assert(cxx&&typeof cxx==='object'&&!Array.isArray(cxx)&&cxx.version===1&&cxx.sdk===dependency.sdk&&cxx.sdk==='27.2'&&
+   JSON.stringify(cxx.callback_error_controls)===JSON.stringify(['Debug','ReleaseFast'])&&
+   cxx.scope==='selected_SDK_stub_and_header_inputs_not_mapped_OS_runtime_attestation',message);
+  assert(cxx.declared_inputs&&typeof cxx.declared_inputs==='object'&&!Array.isArray(cxx.declared_inputs),message);
+  const files=Object.keys(cxx.declared_inputs),suffix='/usr/lib/libc++.1.tbd',stubs=files.filter(file=>file.endsWith(suffix));
+  assert(files.length===12&&stubs.length===1&&files.every(file=>path.isAbsolute(file)&&path.normalize(file)===file&&!file.includes('\0')&&/^[a-f0-9]{64}$/.test(cxx.declared_inputs[file])),message);
+  const sdk=stubs[0].slice(0,-suffix.length);
+  assert(['__config','__config_site','cstdint','memory','functional','optional','stdexcept','typeinfo','exception'].every(name=>files.includes(sdk+'/usr/include/c++/v1/'+name))&&
+   files.some(file=>file.endsWith('/scripts/lib/platform-native-system-cxx.mjs'))&&files.some(file=>file.endsWith('/platform/studio/native/mlx_cxx_callback_error_test.cpp')),message);
+
  }
 }
 // Fixed experiment capability check only; not native admission/ownership proof.

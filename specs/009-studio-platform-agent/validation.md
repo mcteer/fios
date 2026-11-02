@@ -2827,3 +2827,213 @@ footprint4,801,040. Actual root5/source sequence95 is retained in the journal;
 quiescence unproven/coverage unknown/authority false. No generated text logged.
 This is administrative source-request correlation, not platform/Pydantic/Studio
 acceptance. Whole tasks remain38/55; no installation, merge or deployment.
+
+
+### 2026-11-02 native-owner retention on abandoned Metal reservations
+
+Source review found an unretired SDK Metal reservation marks SDK uncertainty
+in its destructor but then destroys its native owner descriptor without
+fencing the native context module. The genuine prior buffer-union SDK
+reproduces native_contexts0/uncertain=false/retained_roots0 after dropping its
+reservation and paired real private unsubmitted Metal buffer:
+`/tmp/fios-009-sdk-abandoned-owners-prior-final.log`,
+`/private/tmp/fios-009-sdk-host-owners-igOHrq`. This is actual SDK/native
+component lifetime evidence; it does not claim an automatically exercised
+encoder failure, shader dispatch, all-client coverage or installed behavior.
+An initial preflight refused the superseded patch before execution; the prior
+case above uses its unchanged source copy and recognized original patch.
+
+Cumulative patch825543835f6a89e4257bb5bcac91cfba7856f2a4c08c3a02dbf5963c298b230b
+(`mlx-64ea011-buffer-abandonment.patch`) now calls the trusted native uncertainty
+hook outside the SDK lock before member destruction. SDK build passes ordinary
+CPU/cleanup/scalar-loader controls:
+`/tmp/fios-009-sdk-abandoned-owners-build.log`,
+`/private/tmp/fios-009-mlx-component-build-ATFlsU/sdk/candidate.json`, review SHA
+08773f716451756e51e7b85949f138b3c825933c169ea379bd1f6c44d7b023ec.
+Builder used the then-current buffer-owner patch path; that exact payload is
+now separately retained as the cumulative abandonment candidate. Future builds
+select it explicitly with `--abandoned-buffer-owners`; earlier buffer-only
+patch/receipt remain independently recognized.
+
+Debug/ReleaseSafe genuine reservation/native-owner cases pass with context1/
+uncertain=true/root1 and same-model work refused:
+`/tmp/fios-009-sdk-abandoned-owners-green.log`,
+`/private/tmp/fios-009-sdk-host-owners-cUXAO3/receipt.json`. Both modes' ordinary
+real encoder/buffer-union/destructor-CPU regression also pass:
+`/tmp/fios-009-sdk-abandoned-owners-buffer-regression.log`,
+`/private/tmp/fios-009-sdk-host-owners-YVNcMn/receipt.json`. No model, fake SDK,
+installed operation or historical fault campaign occurs. These are declared
+component inputs, not entire native/repository provenance. Enclosing rebuild
+and private server regressions are in progress. Whole tasks remain38/55.
+
+
+Enclosing abandonment-fence native build passes:
+`/tmp/fios-009-sdk-abandoned-owners-native-build.log`, capsule
+`/private/tmp/fios-009-sdk-abandoned-owners-native-review/capsule`, review SHA
+ec2d54befce8257376d5e1148306adb07da2cefdff07d5639c961b0083d52b19, binary
+6f1e0e4ddbcf8f12c5372ea9b3ccdbeaf98636f2e304dc6ee4c43da309c97ecd.
+Ordinary readonly HTTP/private metadata and actual31,572ms connection retention
+pass (`/tmp/fios-009-sdk-abandoned-owners-native-{http,drain}.log`,
+`/private/tmp/f9-backend-fences-XuidDo`,
+`/private/tmp/f9-connection-drain-ywYQAj`). No new supervisor test is claimed
+for this SDK-only change; the preceding capsule's serial result stays separate.
+One-use plan393fcc3494f1f464d3cf1e5a4c14951d77c0554427b4e201d593ed172aa5ec23
+is consumed. Check issues0 POSTs (`/private/tmp/f9-model-check-iAHMse`); run
+issues exactly1/two tokens/two deltas in4,809ms (`/private/tmp/f9-model-run-f79CLP`,
+`/tmp/fios-009-sdk-abandoned-owners-model-run.log`). Same core-only exact Gemma
+model and512-context/two-token/10s-request/15s-work/7s-cleanup/12GiB-native/
+128MiB-observer bounds apply. Native peak RSS3,233,169,408/footprint4,677,602,352;
+observer RSS12,435,456/footprint4,964,880. Root5/source96 remains durably correlated
+and uncertain after both processes reap;4 primary samples/3 positive. No text
+logged, native terminal/admission/platform/Pydantic/Studio acceptance or installed
+action. Whole tasks remain38/55.
+
+### 2026-11-02 shared SDK uncertainty at native descriptor release (in progress)
+
+A separate genuine ordinary CPU callback invokes the SDK's supported
+`clear_streams`; the prior abandonment-only SDK records SDK uncertainty but
+releases native_contexts0/root0 with the native module still uncertain=false.
+Log `/tmp/fios-009-sdk-owner-uncertainty-prior.log`, private fixture
+`/private/tmp/fios-009-sdk-host-owners-O2H81n`. This is real SDK cleanup and CPU
+callback lifetime, not a fake SDK, shader/model or fault-injection campaign.
+The cumulative owner-uncertainty candidate additionally consults the existing
+lock-free sticky SDK uncertainty in the shared native-owner descriptor
+destructor before release, outside metadata locks. Its SDK build is in progress;
+no green new-candidate/full-native receipt is claimed yet.
+
+
+The intermediate shared-destructor candidate passes actual SDK CPU cleanup in
+Debug/ReleaseSafe (`/tmp/fios-009-sdk-owner-uncertainty-cleanup-green.log`,
+`/private/tmp/fios-009-sdk-host-owners-G99onH`, SDK receipt9ae9b146…); it was
+not the final candidate and grants no enclosing-native acceptance. Further
+source review found callback-error publication can occur after captured
+context destruction. The final cumulative candidate also explicitly fences
+the native owner scope before callback captures are destroyed when the actual
+stream error channel reports failure or a callback throws. It keeps existing
+error propagation, no retries, wire changes or authority issuer.
+
+Final SDK patch e23c6f6c16afc64589cd00d490a0a4985056e8be85a40a74ae5a67c8b332ac7f
+(`mlx-64ea011-owner-uncertainty.patch`), source
+`/private/tmp/fios-009-mlx-owner-uncertainty-of9ebbuk/source`, passes ordinary
+SDK build/CPU/scalar-loader controls (`/tmp/fios-009-sdk-owner-uncertainty-final-build.log`).
+Review `/private/tmp/fios-009-mlx-component-build-6IuqPP/sdk/candidate.json`, SHA
+25fad303919ed531195ba2f7d64327ffca14d7774dd4c6a4f917e0ba13da0b90.
+
+The first callback-error fixture aborts with SIGABRT before ownership assertions
+(`/tmp/fios-009-sdk-callback-error-owners-prior.log`,
+`/private/tmp/fios-009-sdk-host-owners-c3WkTM`); it is not a root-loss assertion
+receipt. It mixed a clang-built callback/SDK with Zig's bundled C++ runtime.
+Using the genuine selected SDK system C++ runtime resolves that fixture abort.
+The actual old SDK then reproduces context0/uncertain=false/root0 after its
+ordinary callback exception (`/tmp/fios-009-sdk-callback-error-owners-prior-system-cxx.log`,
+`/private/tmp/fios-009-sdk-host-owners-W32HFL`). The final candidate passes
+Debug/ReleaseSafe with context1/uncertainty/root retained and new same-model work
+refused (`/tmp/fios-009-sdk-callback-error-owners-green.log`,
+`/private/tmp/fios-009-sdk-host-owners-HFCYpu`). Matching-runtime final supported
+stream-cleanup, real encoder-origin union/normal cleanup and abandoned-reservation
+cases also pass both modes:
+`/tmp/fios-009-sdk-owner-uncertainty-final-cleanup.log` (HDGiwx),
+`/tmp/fios-009-sdk-owner-uncertainty-buffer-regression.log` (inPT53),
+`/tmp/fios-009-sdk-owner-uncertainty-abandonment-regression.log` (4fBnJy), all
+under `/private/tmp/fios-009-sdk-host-owners-`. The driver records the selected
+SDK system C++ stub hash; it is not mapped OS runtime attestation.
+
+### 2026-11-02 native C++ runtime compatibility integration (in progress)
+
+A separate genuine C++/SDK control confirms the compatibility gap beyond the
+Zig/native-owner fixture: pure Zig C++ throw/catch passes, Zig bundled-runtime
+caller to SDK CPU callback exception aborts, and system C++ caller to the same
+SDK handles the error. Private inputs `/private/tmp/fios-009-cxx-error-control-a889swmg`,
+logs `/tmp/fios-009-cxx-{pure-run,error-control-run,system-control-run}.log`.
+A Zig-compiled caller using the selected Apple C++ headers/shared runtime
+passes (`/tmp/fios-009-cxx-zig-system-control-run.log`). An actual Zig build-graph
+control using the same composition also passes
+(`/tmp/fios-009-native-system-cxx-graph-{build,run}.log`,
+`/private/tmp/fios-009-native-system-cxx-graph-7v0OLF`). These are ordinary
+CPU callback/error-channel checks with0 models/installed changes, no substitute
+SDK or historical fault campaign.
+
+The preceding enclosing native compile with the final SDK succeeds
+(`/tmp/fios-009-sdk-owner-uncertainty-native-build.log`, capsule review
+18a7e6b96f2d12708ca3c2a7fbd1512ea7a00aabf370284d9b093528cf9e1cbb), but
+retains the old C++ composition and is not accepted for this compatibility
+path. No inference runs against that artifact. The new source-build recipe
+uses one selected SDK C++ ABI in the main/imported macOS modules and checks
+Debug/ReleaseFast CPU callback/error completion before enclosing compilation.
+It requires a shared-system C++ import and refuses a defined bundled throw
+runtime in the resulting image. SDK stub/selected header/recipe/control hashes
+are declared inputs, explicitly not complete SDK or mapped-runtime provenance.
+
+Early full composition attempts fail before executable acceptance: .tbd alias
+preflight, then sysroot rebasing of absolute library/framework paths, then
+missing C++ headers on imported MIMO modules. Logs
+`/tmp/fios-009-sdk-system-cxx-native-{build,final-build,composed-build}.log`.
+Regular libc++.1.tbd, relative private library/SDK framework search paths and
+explicit imported-module headers address those errors; the next enclosing
+build is running (`/tmp/fios-009-sdk-system-cxx-native-module-build.log`).
+Whole tasks remain38/55; no final full-native compatibility, activation,
+Studio acceptance,009 merge or deployment is claimed yet.
+
+
+The complete selected-SDK C++ composition now builds successfully:
+`/tmp/fios-009-sdk-system-cxx-native-module-build.log`, private capsule
+`/private/tmp/fios-009-sdk-system-cxx-native-review/capsule`, review SHA
+7fb3e2d4d913a03b2961832df1631fc390cad51374d9fe916ef4a4bfd0aef56b, binary
+e6f662eef73b92ae399e846d70048c3b062071dcd14331eea19c100cb831df97.
+Both Debug/ReleaseFast actual CPU callback/error controls pass first. The
+resulting image imports system libc++.1 and does not define its own throw
+runtime. Nine selected C++ headers, regular SDK stub, recipe and control source
+are hash-bracketed; these twelve declared files are not complete SDK/compiler/
+mapped-runtime attestation. Healthy native-owner CPU nested/destructor
+regression also passes Debug/ReleaseSafe against the final SDK/runtime:
+`/tmp/fios-009-sdk-owner-uncertainty-cpu-regression.log`,
+`/private/tmp/fios-009-sdk-host-owners-gX4pg6`.
+
+Actual rebuilt-server readonly HTTP/backend/primary frames pass
+(`/tmp/fios-009-sdk-system-cxx-native-http.log`,
+`/private/tmp/f9-backend-fences-0SGL9z`). Actual original-connection drain holds
+request/uncertainty at31,569ms, then exits only after its original connection
+closes (`/tmp/fios-009-sdk-system-cxx-native-drain.log`,
+`/private/tmp/f9-connection-drain-W5YBsl`). Debug/optimized actual supervisor
+custody passes without a repeated readiness failure:
+`/tmp/fios-009-sdk-system-cxx-native-supervised.log`,
+`/private/tmp/fios-009-serving-runtime-native-uc9T17/receipt.json`;4 actual
+empty native children,2 supervisors/4 managers/2 manager replacements, stable
+original child identity/receipt across manager replacement, guarded recovery
+and stopped intent, independent uncertain claim retained. Synthetic initial
+absence/readiness overlays/reservations remain separate from actual listener/
+GET health; this is no installed lifecycle or native admission proof.
+Automatic actual manager lineage/backend/primary refresh passes
+(`/tmp/fios-009-sdk-system-cxx-native-manager.log`,
+`/private/tmp/f9-native-status-K3HvZV`),0 model/installed actions.
+
+The model-development guard now rejects source SDK capsule metadata without
+the matching version1/same-SDK/two-control/selected-input C++ record, in
+addition to its existing model-free-provider and Safetensors refusals.
+Failing-first/green metadata tests are
+`/tmp/fios-009-native-system-cxx-model-guard-{red,green}.log` (17 current tests).
+Actual preceding mixed-runtime capsule metadata18a7e6b… refuses and current
+7fb3e2d… passes the pure prerequisite check,0 model requests. Metadata alone
+never supplies native admission or whole-runtime provenance. Focused Node
+27/27 and inference boundary pass (`/tmp/fios-009-sdk-system-cxx-{node,boundary}.log`).
+
+New core-only journal-correlation plan
+d3dbe90ac319b0da04e36fde89911f7073d5ecce1c3852a6968392d29b94d3a8 is consumed.
+Check performs0 POSTs (`/tmp/fios-009-sdk-system-cxx-model-check.log`,
+`/private/tmp/f9-model-check-fuYgw3`); actual run performs exactly1, two tokens/
+two deltas/complete response in4,652ms (`/tmp/fios-009-sdk-system-cxx-model-run.log`,
+`/private/tmp/f9-model-run-7TdGVu/result.json`). Same exact core Gemma model/
+24GiB M4 Pro and512 context/two tokens/10s request/15s work/7s cleanup/12GiB
+sampled native/128MiB observer bounds apply. Native peak RSS3,240,198,144/
+footprint4,686,580,832; observer RSS12,189,696/footprint4,784,656. SDK46/46
+coherent partial samples,4 primary/3 positive; original root5/source95 stays
+correlated and uncertain after both own processes reap. Quiescence unproven/
+coverage unknown/authority false/no text logged. Administrative source request,
+not platform dispatch/Pydantic competence/Studio acceptance.38/55 whole tasks
+remain complete; no installation, merge or deployment occurred.
+
+Separately, pushed137ad01090614dff78f17c919a3eecde9bffa693 has all six CI
+prerequisites and aggregate successful
+([run41457538260](https://github.com/mcteer/fios/actions/runs/41457538260)). It
+is the prior buffer-origin checkpoint; newer uncertainty/runtime changes need
+their own exact-head CI after push. CI remains mock-only.

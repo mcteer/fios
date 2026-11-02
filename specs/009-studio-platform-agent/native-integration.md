@@ -188,7 +188,7 @@ Current `/tmp/fios-009-multi-owner-linked.log`/`.status` exit0: genuine two-CPU-
 
 Current development source passes known warm-engine lifetime custody through Source/Module, stream-model/Transformer and LoadedModel cleanup before enclosing resets or frees. The engine predicate is mutex-protected; the outer calls are preflights, not an atomic reservation. A held-engine CPU regression and exact predicate bypass fail at the designated marker; optimized focused/upstream CPU tests pass. Ten supplementary source-edge checks reject individual missing delegations, but do not prove runtime model/context retention. Full combined native executable,12/12 ownership roots and private HTTP/control/manager checks pass; hashes and logs are in validation.md.
 
-The native patch covers13 fixed paths. The separately pinned MIMO candidate covers exactly gpu_warm/module/root/source, and candidate receipts hash all four files separately from the binary. Other arches keep existing behavior without this candidate hook. No production lease issuer, all-backend coverage, deferred cleanup, atomic reservation, native terminality or installed acceptance follows. Current whole-task count remains37/55; earlier counts above are historical.
+The native patch covers13 fixed paths. The separately pinned MIMO candidate covers exactly gpu_warm/module/root/source, and candidate receipts hash all four files separately from the binary. Other arches keep existing behavior without this candidate hook. No production lease issuer, all-backend coverage, deferred cleanup, atomic reservation, native terminality or installed acceptance follows. Current whole-task count is38/55; earlier counts above are historical.
 
 ### Checked warm-owner retirement during destruction
 

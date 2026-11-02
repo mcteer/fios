@@ -38,7 +38,7 @@ test('source model preparation refuses a declared SDK without selected-format su
  nativeReviewModelInputs({});
  assert.throws(()=>nativeReviewModelInputs({provider_source_fixture:true}),/model-free/);
  nativeReviewModelInputs({provider_source_fixture:false});
- nativeReviewModelInputs({mlx_source_dependency:{source_fixture_only:true,native_authority:false,features:{safetensors:true}}});
+ assert.throws(()=>nativeReviewModelInputs({mlx_source_dependency:{source_fixture_only:true,native_authority:false,features:{safetensors:true}}}),/C\+\+/);
  for(const dependency of [{},{source_fixture_only:true,native_authority:false},{source_fixture_only:true,native_authority:false,features:{safetensors:false}},{source_fixture_only:true,native_authority:true,features:{safetensors:true}},{source_fixture_only:true,native_authority:false,features:{safetensors:'true'}}])assert.throws(()=>nativeReviewModelInputs({mlx_source_dependency:dependency}));
 });
 
@@ -134,4 +134,17 @@ test('source journal correlation keeps planning/check model-free and run explici
  assert.deepEqual(nativeReviewIntent(['--plan','--capsule','/private/capsule','--sha256',digest,'--output','/private/plan','--scenario',scenario]),{mode:'plan',inferenceRequested:false,scenario});
  assert.deepEqual(nativeReviewIntent(['--check','--plan','/private/plan','--sha256',digest,'--scenario',scenario]),{mode:'check',inferenceRequested:false,scenario});
  assert.deepEqual(nativeReviewIntent(['--run','--plan','/private/plan','--sha256',digest,'--allow-native-inference','--scenario',scenario]),{mode:'run',inferenceRequested:true,scenario});
+});
+
+// Metadata fixtures only: neither these declarations nor this parser grant
+// native admission, mapped-runtime provenance or inference authorization.
+test('source SDK model preparation requires the matched C++ compatibility record',()=>{
+ const dependency={source_fixture_only:true,native_authority:false,sdk:'27.2',features:{safetensors:true}};
+ const sdk='/fixture/SDK',root='/fixture/repo';
+ const files=[sdk+'/usr/lib/libc++.1.tbd',...['__config','__config_site','cstdint','memory','functional','optional','stdexcept','typeinfo','exception'].map(name=>sdk+'/usr/include/c++/v1/'+name),root+'/scripts/lib/platform-native-system-cxx.mjs',root+'/platform/studio/native/mlx_cxx_callback_error_test.cpp'];
+ const cxx={version:1,sdk:'27.2',callback_error_controls:['Debug','ReleaseFast'],scope:'selected_SDK_stub_and_header_inputs_not_mapped_OS_runtime_attestation',declared_inputs:Object.fromEntries(files.map(name=>[name,'a'.repeat(64)]))};
+ nativeReviewModelInputs({mlx_source_dependency:dependency,system_cxx:cxx});
+ for(const system_cxx of [null,{}, {...cxx,version:2},{...cxx,sdk:'27.0'},{...cxx,callback_error_controls:[]},{...cxx,callback_error_controls:['Debug','Debug']},{...cxx,scope:'mapped_runtime_attestation'},{...cxx,declared_inputs:{}},{...cxx,declared_inputs:{...cxx.declared_inputs,[files[0]]:'invalid'}}]){
+  assert.throws(()=>nativeReviewModelInputs({mlx_source_dependency:dependency,system_cxx}),/C\+\+/);
+ }
 });

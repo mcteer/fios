@@ -85,3 +85,25 @@ source change covers reviewed encoder entry points, not raw aliases, every
 backend/client or authoritative native terminal reconciliation. No sampled
 zero, successful response, local descriptor release or process reaping clears
 independent inference uncertainty. T002/T018–T022 remain open.
+
+
+The optional cumulative `mlx-64ea011-buffer-abandonment.patch` additionally
+fences native contexts before an unretired Metal reservation's member
+destruction can drop its last owner. SDK metadata uncertainty is set under its
+lock, then the trusted native hook runs outside that lock. Native descriptors
+and original roots remain quarantined; dropping the private Metal object does
+not establish terminality or restore admission. The ordinary reservation
+lifetime fixture pairs the genuine SDK reservation with a real private
+unsubmitted Metal buffer; it is component evidence, not an automatic encoder
+abandonment-path or all-backend attestation.
+
+
+The cumulative `mlx-64ea011-owner-uncertainty.patch` checks the existing sticky
+SDK uncertainty before any native-owner descriptor release. CPU callback
+failures additionally fence their original native scope before destroying
+captures, because the outer host task can publish its SDK failure afterward.
+The unchanged stream error channel carries the error; no retry or terminal
+receipt is introduced. Ordinary supported cleanup/callback-error fixtures
+retain original native ownership while healthy completion still releases it.
+The source build must use a compatible C++ runtime with the selected SDK;
+compilation or a successful normal request does not validate exception handling.
