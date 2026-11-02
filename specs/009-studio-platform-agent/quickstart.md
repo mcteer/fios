@@ -625,3 +625,12 @@ and a5s execution alarm, and retains private compile/run artifacts. It creates
 zero native contexts/models and runs no historical mutation/fault campaign.
 Null preflight stays unfenced; existing empty-metadata MTP retirement refusal
 sets an irreversible negative source fence. This is not GPU/model acceptance.
+
+The native builder also allows the fixed ordinary case
+`--functional-test 'fios native llama actor preserves independently uncertain owners'`
+before its final `--functional-build-only`. This tests actual actor/tracker
+retirement with healthy/known-uncertain policy inputs and no backend handles:
+healthy ownership releases, uncertain original references remain quarantined,
+and a later refused owner cannot clear them. It is not a loaded Llama failure
+or device-terminal test. The selected case and two import-only roots total3/3;
+historical root/HTTP/fault matrices remain skipped.

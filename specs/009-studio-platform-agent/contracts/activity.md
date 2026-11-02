@@ -140,3 +140,10 @@ The ordinary genuine-shim fixture uses empty context metadata and no backend
 handles. It exercises the existing retirement refusal and sticky getter in
 Debug/optimized modes, not loaded target/MTP synchronization, device completion
 or an enrolled all-client contract. Installed native activation remains closed.
+
+Llama-bearing prefill/decode actor scopes also preserve their original held
+request references when the fixed module getter reports uncertainty. Restoring
+the enclosing thread-local context does not refund that original ownership;
+the tracker is fenced and the references remain quarantined. Healthy actor
+retirement still releases its references. This retains source correlation and
+model pins, without issuing native terminal proof or broadening wire coverage.

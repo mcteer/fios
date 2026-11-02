@@ -3216,3 +3216,97 @@ primary4 samples/3 positive, original root5/sequence96. Both own processes reap,
 with the independent journal claim still uncertain, coverage unknown and native
 quiescence unproven. No generated text, Studio model/service action, platform
 job/Pydantic acceptance or native authority is claimed. Whole tasks remain38/55.
+
+
+Exact66cd87d CI is in progress:
+[run41478390443](https://github.com/mcteer/fios/actions/runs/41478390443).
+Five non-native prerequisites pass; native platform tests/aggregate remain
+pending. Previous6ca7bc9 run41473825586 was cancelled by the newer branch push,
+not accepted as green or counted as a code failure. No009 merge/deployment or
+native activation follows from these source results.
+
+### 2026-11-02 Llama actor ownership retirement (source checkpoint)
+
+The new module fence protects admission/frame lifetime but the existing actor
+retirement still releases its original request references unconditionally.
+The next ordinary metadata case exercises that actual tracker retirement with
+healthy and known-uncertain source inputs. It creates no native/backend/model
+handle and makes no device-terminal claim. The private native build at
+`/tmp/fios-009-llama-actor-prior-native-build.log` is running the existing release
+behavior first; no behavioral red or accepted new capsule is claimed yet.
+A second fixed reviewed functional-case name is allowed by the source builder;
+no arbitrary filter or historical fault/mutation matrix is enabled.
+Whole tasks remain38/55.
+
+
+The prior release behavior reproduces the ownership loss in the actual
+ReleaseSafe scheduler/tracker fixture: healthy input leaves0 owners as
+expected, but known-uncertain input also leaves0 owners/fenced=false instead
+of retaining1/fenced=true. `/tmp/fios-009-llama-actor-prior-native-build.log`,
+private build `/tmp/f9-linked-native-K7ctCW`: executable compile succeeds,
+selected unit compile succeeds22s, then2 pass/1 fail (3 total). No compiler
+failure is counted as the red and no accepted capsule is produced. This is a
+retirement-policy metadata case, not a positive loaded backend-error test.
+
+The fix now preserves the original held tracker references and sets its
+sticky fence when an actual Llama-bearing actor sees known module uncertainty.
+It restores the enclosing TLS context and releases healthy ownership normally.
+The private helper accepts the fixed native getter result in production; only
+the unit metadata case supplies literal known/healthy policy inputs. No wire,
+task/model setting or native authority is added. The final enclosing build at
+`/tmp/fios-009-llama-actor-native-build.log` is in progress. Full backend/device
+terminal and installed/native acceptance stay open; whole tasks remain38/55.
+
+
+The first retirement-fix candidate passes the same selected ReleaseSafe case:
+healthy owners0/fenced=false, uncertain owners1/fenced=true,3/3 roots total.
+`/tmp/fios-009-llama-actor-native-build.log`, intermediate capsule review
+43fbd200fc9c8aeeb49a33c2cd16ceea50bb5e7be93028a7b228b2109a018790,
+binary08fb6a36c8616849781f62a7a7b3f64e277a5e9f4c74468faa733d3b529a3a39.
+Source review then found model inspection had been added too early inside the
+ownership-only helper. This intermediate artifact is not used for model tests
+or final entry/installation acceptance.
+
+Model inspection now stays at the real prefill/decode entry points after the
+complete owner set has been validated/retained. The generic context helper
+again reads ownership metadata only. The same selected ordinary case adds real
+prefill/decode missing-owner refusals with unset model metadata: rejection must
+precede model/backend access. Empty registry/slot metadata creates no native
+handles, threads, model or fault-injection substitute. Final build runs at
+`/tmp/fios-009-llama-actor-entry-native-build.log`; inputs stay frozen.
+
+
+Final entry-ordered actor build passes:8/8 native executable steps and3/3
+selected test roots, including actual prefill/decode missing-owner refusal
+before unset model metadata can be read. The healthy policy case leaves0
+owners/fenced=false; known uncertainty leaves the original1/fenced=true and a
+later refused owner cannot refund it. Log
+`/tmp/fios-009-llama-actor-entry-native-build.log`, private build
+`/tmp/f9-linked-native-16iWaI`. Final capsule
+`/private/tmp/fios-009-llama-actor-entry-native-review/capsule`, review SHA
+3e0b04c43e7b7b50d43d218e07f1fcc8ddbf40c1617d998bf17c5157c4689cda,
+binary440ab772da868f7c425b8d9c9d9ba6f2106c19c5fa0bbf2ecb2af7ed9ff7ffc1,
+root patch8178c98d222c16cb463fdc42f07885ad3b785c384c3cf44b7d4bf141696ece84.
+Declared Llama actor-retention version1 is source metadata, not native proof.
+Historical matrices remain unexecuted. Focused Node22/22, driver syntax and
+inference boundary pass (`/tmp/fios-009-llama-actor-{node,boundary}.log`).
+Actual loaded Llama-error/terminal and installed acceptance remain unexecuted;
+this policy fixture must not be promoted into backend/G2 authority.
+
+
+Final entry-ordered capsule core journal plan
+1a380e314f74363b947bba899526319803a5da7ac37856a7fe4c21e803ee8fb5 is
+consumed. Check issues0 POSTs (`/tmp/fios-009-llama-actor-model-check.log`,
+`/private/tmp/f9-model-check-j7pHsH`). Run issues1 exact core-only Gemma POST,
+two tokens/two deltas/complete response in4,560ms
+(`/tmp/fios-009-llama-actor-model-run.log`,
+`/private/tmp/f9-model-run-WXD1mB/result.json`). Same fixed24GiB M4Pro core host,
+`mlx-community/gemma-4-e4b-it-4bit`,512-context/2-token/1-POST/1-concurrent,
+10s request/15s work/7s cleanup,12GiB sampled native/128MiB observer bounds apply.
+Native peak RSS3,240,132,608/footprint4,680,698,976; observer RSS12,238,848/
+footprint4,719,120. SDK44/44 coherent partial samples; primary4/3 positive,
+original root5/sequence93. Both own processes reap and original claim stays
+uncertain, coverage unknown and native quiescence unproven. No generated text,
+Studio service/model action, platform/Pydantic job acceptance or native authority.
+No new supervisor/drain receipt is claimed for this actor-only increment;
+preceding b765a709… results remain distinct. Whole tasks remain38/55.

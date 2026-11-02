@@ -170,3 +170,22 @@ The retained set has a fixed capacity256, deduplicates repeated tokens and valid
 ### Text actor context (partial source checkpoint)
 
 Prefill and decode entry points install the union of retained slot origins before backend/resource work. Nested/interleaved passes restore the previous context; duplicate tokens coalesce, while missing/foreign owners, contradictory identities and overflow refuse entry. Retention validates the complete bounded token set before acquiring references. Metadata-only native tests exercise the context and missing-owner entry points; a deliberate second-origin omission fails its exact runtime assertion. This does not show that every asynchronous backend/cache/destructor path captures context or that device work has terminated. G2 and T022 remain open; no installed activation or native admission capability is issued.
+
+
+### Llama uncertainty and actor retirement (partial source checkpoint)
+
+The existing C++ context synchronization/MTP retirement failures now publish a
+sticky noninitializing module getter to the native admission guard. Known
+backend uncertainty also retains the original serving frame independently of
+local reference retirement. Llama-bearing prefill/decode scopes preserve their
+original tracker references in quarantine when that fixed getter is positive;
+healthy retirement releases them. Model metadata is inspected only after all
+actor owners are retained, keeping missing-owner refusal before resource access.
+
+Genuine shim empty-metadata cases and actual scheduler/tracker policy cases
+are separate evidence: the former establishes the negative getter's ordinary
+refusal persistence, the latter reproduces old root loss and verifies original
+reference retention/TLS restoration and real entry refusal. Neither exercises
+a loaded Llama synchronization error or establishes all-client/backend/device
+terminal coverage. The partial wire frame keeps its three declared sources.
+G2/T002/T021/T022 and installed activation remain open.

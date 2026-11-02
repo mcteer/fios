@@ -2741,7 +2741,7 @@ index da1f791..8ee23d0 100644
 +    try std.testing.expectEqual(@as(usize, 1), registry.entries.count());
 +}
 diff --git a/src/scheduler.zig b/src/scheduler.zig
-index 9e12566..7960cf9 100644
+index 9e12566..3078231 100644
 --- a/src/scheduler.zig
 +++ b/src/scheduler.zig
 @@ -32,6 +32,8 @@
@@ -4463,13 +4463,14 @@ index 9e12566..7960cf9 100644
              _ = sch.ane_builds.fetchAdd(1, .acq_rel);
              const t = std.Thread.spawn(.{}, aneBuildThread, .{ sch, req, arch }) catch return aneBuildThread(sch, req, arch);
              t.detach();
-@@ -6663,7 +7768,89 @@ pub fn genYieldEnabled(cuda: bool, env: ?[]const u8) bool {
+@@ -6663,7 +7768,101 @@ pub fn genYieldEnabled(cuda: bool, env: ?[]const u8) bool {
  /// connection. We bracket it with the model's `gen_busy` flag for visibility
  /// and signal `done` so the conn thread in `runGeneration` wakes. Several
  /// merged jobs (`takeMergeable`) run as one `run_many` call.
 +// Stable in-place TLS storage. Batch callbacks and retained references see
 +// every distinct origin; nested single-request actors restore this full set.
 +const FiosGenActorContext = struct {
++    has_llama_context: bool = false,
 +    held: ?fios_ownership.Retained = null,
 +    previous: ?fios_ownership.Token = null,
 +    previous_group: ?[]const fios_ownership.Token = null,
@@ -4529,10 +4530,21 @@ index 9e12566..7960cf9 100644
 +        }
 +    }
 +    fn finish(self: *FiosGenActorContext, io: std.Io) void {
++        self.finishWithLlamaFence(io, self.has_llama_context and arch_llama.fiosSourceUncertain());
++    }
++    // Native caller supplies only its actual fixed noninitializing getter.
++    // The named metadata fixture exercises retirement policy without a backend.
++    fn finishWithLlamaFence(self: *FiosGenActorContext, io: std.Io, known_uncertain: bool) void {
 +        fios_ownership.current = self.previous;
 +        fios_ownership.current_group = self.previous_group;
-+        if (self.held) |held| held.release(io);
++        if (self.held) |held| {
++            // Preserve these original tracker references in quarantine. A
++            // local actor return is not retirement of uncertain backend work;
++            // no later request/reset/cleanup may refund these references.
++            if (known_uncertain) held.tracker.fence(io) else held.release(io);
++        }
 +        self.held = null;
++        self.has_llama_context = false;
 +    }
 +};
 +fn failFiosGenRequests(sch: *Scheduler, reqs: []*GenRequest) void {
@@ -4553,7 +4565,7 @@ index 9e12566..7960cf9 100644
      const req = reqs[0];
      req.model.gen_busy = true;
      var gy = GenYield{ .sch = sch, .step_sw = io_util.Stopwatch.init(sch.io) };
-@@ -6760,14 +7947,29 @@ fn shouldClearCache(decision: bool, cached: usize) bool {
+@@ -6760,14 +7959,29 @@ fn shouldClearCache(decision: bool, cached: usize) bool {
  /// accounting. The conn thread already marked the entry `.evicting` and
  /// drained its refcount in `unloadModel`.
  fn runUnloadRequest(sch: *Scheduler, req: *UnloadRequest) void {
@@ -4584,7 +4596,7 @@ index 9e12566..7960cf9 100644
      // unloadResident freed the arrays into MLX's allocator cache — clear it
      // so the unload actually returns the memory to the OS (the whole point
      // of the load→generate→unload flow).
-@@ -6795,10 +7997,6 @@ fn runUnloadRequest(sch: *Scheduler, req: *UnloadRequest) void {
+@@ -6795,10 +8009,6 @@ fn runUnloadRequest(sch: *Scheduler, req: *UnloadRequest) void {
      // configuration the policy exists to avoid.
      logWiredPolicy(mlx.applyWiredPolicy());
  
@@ -4595,7 +4607,7 @@ index 9e12566..7960cf9 100644
  }
  
  fn dflashContextCoversPrefix(context_len: usize, prefix_len: usize) bool {
-@@ -7331,10 +8529,10 @@ fn runPrefillDs4(sch: *Scheduler, slot: *Slot, engine: *arch_ds4.Ds4Engine) !voi
+@@ -7331,10 +8541,10 @@ fn runPrefillDs4(sch: *Scheduler, slot: *Slot, engine: *arch_ds4.Ds4Engine) !voi
          break :blk created;
      };
  
@@ -4608,7 +4620,7 @@ index 9e12566..7960cf9 100644
          return err;
      };
  
-@@ -7414,9 +8612,9 @@ fn llamaSampling(slot: *const Slot) arch_llama.Sampling {
+@@ -7414,9 +8624,9 @@ fn llamaSampling(slot: *const Slot) arch_llama.Sampling {
  fn runDs4DecodeTick(sch: *Scheduler, slot: *Slot, session: *arch_ds4.Ds4Session) !void {
      const engine = slot.model.ds4_engine.?;
      const next_id: i32 = if (slot.sampling.temperature <= 0.0)
@@ -4620,7 +4632,7 @@ index 9e12566..7960cf9 100644
              slot.sampling.temperature,
              @intCast(slot.sampling.top_k),
              slot.sampling.top_p,
-@@ -7433,7 +8631,7 @@ fn runDs4DecodeTick(sch: *Scheduler, slot: *Slot, session: *arch_ds4.Ds4Session)
+@@ -7433,7 +8643,7 @@ fn runDs4DecodeTick(sch: *Scheduler, slot: *Slot, session: *arch_ds4.Ds4Session)
      const tok_u32: u32 = @intCast(next_id);
  
      // EOS handling — match the MLX path: do NOT emit the stop token.
@@ -4629,7 +4641,7 @@ index 9e12566..7960cf9 100644
          finishSlot(sch, slot, "stop");
          return;
      }
-@@ -7442,17 +8640,17 @@ fn runDs4DecodeTick(sch: *Scheduler, slot: *Slot, session: *arch_ds4.Ds4Session)
+@@ -7442,17 +8652,17 @@ fn runDs4DecodeTick(sch: *Scheduler, slot: *Slot, session: *arch_ds4.Ds4Session)
      // verifies several more, advancing ds4's KV internally (no separate eval).
      // It emits `[sampled, accepted…]`, so this tick may push several tokens.
      // Mirrors ds4's own CLI loop; engages only under greedy sampling.
@@ -4651,7 +4663,7 @@ index 9e12566..7960cf9 100644
              slot.markError("ds4_spec_failed");
              return;
          };
-@@ -7460,7 +8658,7 @@ fn runDs4DecodeTick(sch: *Scheduler, slot: *Slot, session: *arch_ds4.Ds4Session)
+@@ -7460,7 +8670,7 @@ fn runDs4DecodeTick(sch: *Scheduler, slot: *Slot, session: *arch_ds4.Ds4Session)
          for (spec_buf[0..n_usize]) |t| {
              const t_u32: u32 = @intCast(t);
              // EOS may appear mid-batch — stop, and never emit it.
@@ -4660,7 +4672,7 @@ index 9e12566..7960cf9 100644
                  finishSlot(sch, slot, "stop");
                  return;
              }
-@@ -7482,7 +8680,7 @@ fn runDs4DecodeTick(sch: *Scheduler, slot: *Slot, session: *arch_ds4.Ds4Session)
+@@ -7482,7 +8692,7 @@ fn runDs4DecodeTick(sch: *Scheduler, slot: *Slot, session: *arch_ds4.Ds4Session)
      // Advance ds4's KV by feeding the freshly-sampled token. After this
      // the session is in the state expected by the NEXT decode tick.
      session.eval(next_id) catch |err| {
@@ -4669,7 +4681,7 @@ index 9e12566..7960cf9 100644
          return err;
      };
  
-@@ -7518,8 +8716,12 @@ test "ds4MtpShouldEngage: >1 draft tokens + greedy (legacy MTP and DSpark)" {
+@@ -7518,8 +8728,12 @@ test "ds4MtpShouldEngage: >1 draft tokens + greedy (legacy MTP and DSpark)" {
  /// the slot keeps decoding.
  fn emitLlamaToken(sch: *Scheduler, slot: *Slot, tok: i32) bool {
      const engine = slot.model.llama_engine.?;
@@ -4683,29 +4695,35 @@ index 9e12566..7960cf9 100644
          finishSlot(sch, slot, "stop");
          return false;
      }
-@@ -8304,6 +9506,10 @@ fn interleaveDecodeTick(sch: *Scheduler) u64 {
+@@ -8304,6 +9518,12 @@ fn interleaveDecodeTick(sch: *Scheduler) u64 {
  }
  
  fn runPrefill(sch: *Scheduler, slot: *Slot) !void {
 +    var fios_actor_context: FiosGenActorContext = .{};
 +    try fios_actor_context.beginSlots(sch, &.{slot});
 +    defer fios_actor_context.finish(sch.io);
++    // Inspect resource metadata only after every native owner is retained.
++    fios_actor_context.has_llama_context = slot.model.llama_ctx != null;
 +
      // Mark the phase for the whole of prefill, and clear both signals on EVERY
      // exit path (success, cancel, error). `requests_prefilling` flips at entry
      // so the panel isn't blind until the first chunk lands; the chunk loop in
-@@ -8815,6 +10021,10 @@ fn sumInflightGeneratedTokens(active: anytype) u64 {
+@@ -8815,6 +10035,14 @@ fn sumInflightGeneratedTokens(active: anytype) u64 {
  
  fn runDecodeTick(sch: *Scheduler, active: []*Slot) !void {
      if (active.len == 0) return;
 +    var fios_actor_context: FiosGenActorContext = .{};
 +    try fios_actor_context.beginSlots(sch, active);
 +    defer fios_actor_context.finish(sch.io);
++    for (active) |slot| if (slot.model.llama_ctx != null) {
++        fios_actor_context.has_llama_context = true;
++        break;
++    };
 +
  
      // Publish the in-flight generated-token aggregate for the gauge sampler.
      // Runs after the whole tick (all decode work + any finishSlot calls) on
-@@ -9384,7 +10594,7 @@ fn runSingleDecodeTick(sch: *Scheduler, slot: *Slot) !void {
+@@ -9384,7 +10612,7 @@ fn runSingleDecodeTick(sch: *Scheduler, slot: *Slot) !void {
  fn runSingleDecodeTickInner(sch: *Scheduler, slot: *Slot) !void {
      // ds4-backed slot: drive the engine's session forward by one token. No
      // PLD / drafter / batched paths apply — ds4 has its own internal MTP
@@ -4714,7 +4732,7 @@ index 9e12566..7960cf9 100644
      if (slot.ds4_session) |session| {
          return runDs4DecodeTick(sch, slot, session);
      }
-@@ -13042,3 +14252,88 @@ test "a refusal right after a two-model eviction waits for the memory to come ba
+@@ -13042,3 +14270,146 @@ test "a refusal right after a two-model eviction waits for the memory to come ba
      mark.record(1_100, 17 * GiB);
      try std.testing.expect(waitForUnload(211 * GiB, 108 * GiB, mark, 1_200));
  }
@@ -4802,6 +4820,64 @@ index 9e12566..7960cf9 100644
 +        try std.testing.expectEqual(@as(u32, 0), second.refcount.load(.acquire));
 +    }
 +    std.debug.print("PASS: actual scheduler keeps protected exact model across concurrent empty/marketing default changes; model-free registry fixture only\n", .{});
++}
++
++
++test "fios native llama actor preserves independently uncertain owners" {
++    const io = std.testing.io;
++    {
++        // Missing ownership must refuse before an unset model pointer is read.
++        // Empty registry/slot metadata only; no backend handles or threads.
++        const registry = try ModelRegistry.init(std.testing.allocator, io, null, 2, 0, null);
++        defer registry.deinit();
++        var tracker: fios_ownership.Tracker = .{ .primary_guard = true };
++        try tracker.initialize(io, @splat(31));
++        registry.fios_request_tracker = &tracker;
++        var scheduler = std.mem.zeroInit(Scheduler, .{
++            .allocator = std.testing.allocator, .io = io, .registry = registry, .queue_cap = 2,
++            .kv_quant_config = transformer_mod.KVQuantConfig.dense,
++        });
++        var missing: Slot = undefined;
++        missing.fios_owner = null;
++        try std.testing.expectError(error.MissingActorRequestOwner, runPrefill(&scheduler, &missing));
++        var batch = [_]*Slot{&missing};
++        try std.testing.expectError(error.MissingActorRequestOwner, runDecodeTick(&scheduler, &batch));
++        try std.testing.expectEqual(@as(usize, 0), tracker.snapshot(io).owned);
++    }
++    for ([_]bool{false, true}) |uncertain| {
++        var tracker: fios_ownership.Tracker = .{ .primary_guard = true };
++        try tracker.initialize(io, @splat(29));
++        const original = try tracker.enter(io);
++        try tracker.bind(io, original, "fixture/llama-actor");
++        const retained = try tracker.retainTokens(io, &.{original});
++        try tracker.leave(io, original); // Only the actor reference remains.
++        const previous = fios_ownership.current;
++        const previous_group = fios_ownership.current_group;
++        defer { fios_ownership.current = previous; fios_ownership.current_group = previous_group; }
++        var actor: FiosGenActorContext = .{ .held = retained, .previous = previous, .previous_group = previous_group, .has_llama_context = true };
++        fios_ownership.current = retained.tokens[0];
++        fios_ownership.current_group = retained.tokens[0..retained.count];
++        actor.finishWithLlamaFence(io, uncertain);
++        try std.testing.expect(std.meta.eql(previous, fios_ownership.current));
++        if (previous_group) |group| {
++            try std.testing.expect(fios_ownership.current_group != null);
++            try std.testing.expect(fios_ownership.current_group.?.ptr == group.ptr and fios_ownership.current_group.?.len == group.len);
++        } else try std.testing.expect(fios_ownership.current_group == null);
++        try std.testing.expect(actor.held == null);
++        const snapshot = tracker.snapshot(io);
++        std.debug.print("native_llama_actor uncertain={} owners={d} fenced={}\n", .{ uncertain, snapshot.owned, snapshot.uncertain });
++        try std.testing.expectEqual(@as(usize, if (uncertain) 1 else 0), snapshot.owned);
++        try std.testing.expectEqual(uncertain, snapshot.uncertain);
++        if (uncertain) {
++            try std.testing.expect(tracker.hasRetainedWork(io));
++            const later = try tracker.enter(io);
++            try std.testing.expectError(error.CoverageUncertain, tracker.bind(io, later, "fixture/llama-actor"));
++            try tracker.leave(io, later);
++            try std.testing.expectEqual(@as(usize, 1), tracker.snapshot(io).owned);
++            try std.testing.expect(tracker.snapshot(io).uncertain);
++        }
++    }
++    std.debug.print("PASS: actual actor retirement preserves uncertain original roots and releases healthy metadata owners; no backend handles\n", .{});
 +}
 diff --git a/src/server.zig b/src/server.zig
 index 720b2c6..1bb169e 100644
