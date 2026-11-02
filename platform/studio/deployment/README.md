@@ -203,3 +203,16 @@ locks and does not copy `serving-custody.json`, which is volatile peer metadata,
 not a portable capability. These fences do not prove native inference/device
 terminality, adopt an orphan, authorize installed updates or clear uncertainty.
 Retain independent native reconciliation and reviewed installation/rollback gates.
+
+
+The source-only reviewed native launch document now supports a separate fixed
+agent-owned artifact path through schema2:
+`/Library/Application Support/Fios/Studio/native/bin/mlx-serve`. Schema1 retains
+the historical vendor-bundle server identity. The GUI stays separately pinned at
+its existing bundle, providing the reviewed settings source rather than server
+ownership. See [native launch inputs](../../../specs/009-studio-platform-agent/contracts/native-serving-launch-inputs.md)
+for the exact metadata schemas and census scopes. This does not add native files
+to the current development package, create root metadata, install/activate a
+server or approve GUI handover. Complete immutable native dependencies, native
+admission/reservations and separately reviewed installation are still required;
+current public factories and install plans remain gated.

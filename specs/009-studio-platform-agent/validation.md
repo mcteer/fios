@@ -2109,3 +2109,40 @@ merge or deployment change occurs. This administrative source case does not
 exercise platform task admission/dispatch or Pydantic execution and does not
 complete all-client/modality/native terminality or Studio acceptance.38/55 whole
 tasks remain complete.
+
+
+### 2026-11-01 separate reviewed agent-owned native artifact profile
+
+The existing profile fixed its server inside the signed vendor GUI bundle,
+which cannot also locate a separately staged reviewed Fios native artifact.
+Source configuration schema2 now requires exactly
+server_artifact=reviewed_fios_native and selects the fixed
+`/Library/Application Support/Fios/Studio/native/bin/mlx-serve`; no caller path
+field is introduced. Schema1 retains the vendor server path. Both keep the
+separately pinned existing MLXCore GUI. Managed census scope includes vendor
+and native roots, so a vendor server/live GUI/unrecognized participant cannot
+be promoted to absence or adopted. Existing root/image/host/UID/state checks
+apply; dependency/mapped-code/namespace/handover/native admission remain open.
+
+Actual compiled metadata fixture red
+`/tmp/fios-009-managed-native-profile-red.log` ends SIGTRAP from unhandled
+RuntimeError.invalid at the newly unsupported schema2 decode. This is an
+unsupported-configuration feature gap, not an installed/native failure or
+security campaign. New Debug complete suite passes
+`/tmp/fios-009-managed-native-profile-debug.log`: version1 compatibility,
+version2 path/GUI/census-root selection, unchanged reviewed arguments and
+missing/unknown fixed flavor refusal. Tests use synthetic metadata and compare
+fixed paths; no managed server file, root policy or positive installed branch
+is created/executed. Development manager/supervisor still return nil before
+reading installed metadata. Protected document SHA remains part of recovery
+correlation; config changes refuse old history without rewriting it. Full
+optimized suite is in progress;38/55 whole tasks remain complete.
+
+
+Final optimized complete suite passes
+`/tmp/fios-009-managed-native-profile-release.log`;44 platform Node tests and
+inference boundary pass (`...-profile-{node,boundary}.log`). No actual managed
+native artifact, GUI handover or installed policy is created/executed. The
+preceding core model plan binds its earlier148 inputs and predates this profile
+metadata increment; it is not a current whole-repository/native attestation.
+38/55 whole tasks remain complete.

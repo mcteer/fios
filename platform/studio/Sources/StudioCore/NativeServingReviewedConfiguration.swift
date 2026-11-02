@@ -55,7 +55,7 @@ struct NativeServingReviewedConfiguration:Sendable {
         _=try ServiceIdentity.verified(peer:NativeControlPeer(pid:getpid(),start:WorkerResources.startIdentifier(pid:getpid()),executable:own),
             expectedUID:document.uid,deadline:ProcessInfo.processInfo.systemUptime+2)
         let profile=try MLXServingProcessProfile(serverSHA256:document.serverSHA256,applicationSHA256:document.applicationSHA256,
-            reviewDigest:document.reviewSHA256,uid:document.uid)
+            reviewDigest:document.reviewSHA256,uid:document.uid,artifact:document.serverArtifact)
         try RootPolicyFile.verifyApplicationTree(path:MLXServingProcessProfile.bundle,deadline:ProcessInfo.processInfo.systemUptime+10)
         try RootPolicyFile.verifyExecutable(profile.server)
         try RootPolicyFile.verifyExecutable(profile.application)

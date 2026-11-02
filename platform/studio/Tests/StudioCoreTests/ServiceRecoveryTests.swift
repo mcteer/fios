@@ -66,6 +66,22 @@ func runServiceRecoveryTests() throws {
     guard try NativeServingReviewedConfiguration.load(directory:directory)==nil else {fatalError("Development binary loaded installed native configuration")}
     guard try NativeServingReviewedConfiguration.load(directory:directory,role:.supervisor)==nil else {fatalError("Development binary acquired supervisor configuration")}
     let decoded=try decodeLaunch(launchDocument)
+    var managedDocument=launchDocument
+    managedDocument["version"]=2;managedDocument["server_artifact"]="reviewed_fios_native"
+    print("Checking reviewed source native artifact configuration")
+    let managedDecoded=try decodeLaunch(managedDocument)
+    guard try managedDecoded.resolvingCredential("fixture-managed-key").arguments==nativeArgs else {fatalError("Managed native artifact changed reviewed arguments")}
+    let managedProfile=try MLXServingProcessProfile(serverSHA256:hash,applicationSHA256:hash,reviewDigest:hash,uid:geteuid(),artifact:managedDecoded.serverArtifact)
+    let vendorProfile=try MLXServingProcessProfile(serverSHA256:hash,applicationSHA256:hash,reviewDigest:hash,uid:geteuid(),artifact:decoded.serverArtifact)
+    guard managedProfile.server.path==MLXServingProcessProfile.managedNativeRoot+"/bin/mlx-serve",
+          managedProfile.application.path==MLXServingProcessProfile.bundle+"/Contents/MacOS/MLXCore",
+          managedProfile.relatedRoots==Set([MLXServingProcessProfile.bundle,MLXServingProcessProfile.managedNativeRoot]),
+          vendorProfile.server.path==MLXServingProcessProfile.bundle+"/Contents/MacOS/mlx-serve",
+          vendorProfile.relatedRoots==Set([MLXServingProcessProfile.bundle]) else {fatalError("Reviewed source server artifact remained tied to the GUI bundle")}
+    var missingArtifact=managedDocument;missingArtifact.removeValue(forKey:"server_artifact")
+    do {_=try decodeLaunch(missingArtifact);fatalError("Version2 omitted the fixed native artifact flavor")}catch RuntimeError.invalid {}
+    var arbitraryArtifact=managedDocument;arbitraryArtifact["server_artifact"]="/tmp/caller-selected-server"
+    do {_=try decodeLaunch(arbitraryArtifact);fatalError("Reviewed artifact flavor became a caller-selected path")}catch RuntimeError.invalid {}
     let resolved=try decoded.resolvingCredential("fixture-resolved-key")
     guard resolved.arguments==nativeArgs,resolved.environment["FIOS_MLX_SERVING_API_KEY"]=="fixture-resolved-key",
           resolved.workingDirectory=="/",decoded.host=="fios-edge-a.lab" else {fatalError("Reviewed launch inputs changed")}

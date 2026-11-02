@@ -12,6 +12,7 @@ struct NativeServingLaunchDocument:Sendable {
     let supervisorSHA256:String
     let serverSHA256:String
     let applicationSHA256:String
+    let serverArtifact:MLXServingProcessProfile.ServerArtifact
     let revision:String
     let statePath:String
     let workingDirectory:String
@@ -23,8 +24,9 @@ struct NativeServingLaunchDocument:Sendable {
         do {
             try StrictJSON.validate(bytes,maximum:32768)
             guard let value=try JSONSerialization.jsonObject(with:bytes) as? [String:Any],
-                  Set(value.keys)==Set(["version","purpose","host","uid","review_sha256","manager_sha256","supervisor_sha256","server_sha256","application_sha256","revision","state_path","working_directory","arguments","environment","credential_channel"]),
-                  WireScalar.integer(value["version"],maximum:1)==1,
+                  let version=WireScalar.integer(value["version"],maximum:2),[1,2].contains(version),
+                  Set(value.keys)==Set(["version","purpose","host","uid","review_sha256","manager_sha256","supervisor_sha256","server_sha256","application_sha256","revision","state_path","working_directory","arguments","environment","credential_channel"]+(version==2 ? ["server_artifact"]:[])),
+                  version==1 || value["server_artifact"] as? String=="reviewed_fios_native",
                   value["purpose"] as? String=="reviewed_native_serving_launch",
                   let host=value["host"] as? String,["fios-edge-a.lab","fios-edge-b.lab"].contains(host),
                   let uid=WireScalar.integer(value["uid"],maximum:Int64(UInt32.max)),uid>0,
@@ -61,7 +63,7 @@ struct NativeServingLaunchDocument:Sendable {
             if !argumentCredential {validationEnv["FIOS_MLX_SERVING_API_KEY"]="profile-validation"}
             _=try NativeServingLaunchInputs(arguments:args,environment:validationEnv,workingDirectory:cwd)
             self.host=host;self.uid=uid_t(uid);reviewSHA256=review;managerSHA256=manager;supervisorSHA256=supervisor
-            serverSHA256=server;applicationSHA256=application;self.revision=revision
+            serverSHA256=server;applicationSHA256=application;serverArtifact = version==1 ? .vendorBundle:.reviewedFiosNative;self.revision=revision
             statePath=state;workingDirectory=cwd;arguments=args;environment=env;self.argumentCredential=argumentCredential
         } catch {throw RuntimeError.invalid}
     }

@@ -20,6 +20,32 @@ Version1 has exactly these fields:
 | `environment` | Preserved bounded noncredential framework/home/locale inputs |
 | `credential_channel` | `argument` or `environment` |
 
+Version2 adds exactly `server_artifact: "reviewed_fios_native"` to that schema.
+It preserves all other fields and selects a fixed separately reviewed native
+artifact, without accepting an executable path from the document:
+
+| Document | Server image | GUI image |
+| --- | --- | --- |
+| Version1 | `/Applications/MLX-Serve.app/Contents/MacOS/mlx-serve` | `/Applications/MLX-Serve.app/Contents/MacOS/MLXCore` |
+| Version2 | `/Library/Application Support/Fios/Studio/native/bin/mlx-serve` | `/Applications/MLX-Serve.app/Contents/MacOS/MLXCore` |
+
+This separates the agent-owned source artifact from the existing signed GUI
+bundle. It does not replace/patch that bundle or create an installed native
+release. Version2 requires its exact flavor; missing/unknown flavors refuse.
+Version1 does not accept the additional field. The selected policy bytes remain
+part of the existing recovery fingerprint, so changing flavor cannot reuse old
+history. Document schema version2 is distinct from the existing launch-input
+fingerprint domain version2; recovery file version3 is unchanged.
+
+The managed profile's readonly census includes both fixed native and GUI roots.
+A vendor server, live GUI companion or unknown executable in those roots cannot
+be mistaken for absence or silently adopted. Current GUI image/tree checks
+still apply separately; the managed server receives its own root-protected
+image check. Its dependencies/mapped code, immutable release lifetime, exclusive
+GUI handover, native namespace/reservations and complete admission remain
+independent enrollment requirements. Neither the flavor name nor successful
+metadata decoding proves any of them. Public native issuers remain absent.
+
 The complete document is at most32KiB. Unknown/duplicate keys, coercions,
 unsupported versions/hosts, malformed identities and unbounded inputs refuse.
 The preserved argument list must contain exactly one two-token `--host <IP>`
