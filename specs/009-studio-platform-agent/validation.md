@@ -2733,3 +2733,97 @@ passes Debug/optimized (`/tmp/fios-009-runtime-compile-budget-proof.log`,
 operation. Synthetic readiness/permits and partial declared-source provenance
 remain explicit. Exact-head CI after push remains a separate pending result.
 No009 merge, application deployment or native installation occurred.
+
+
+### 2026-11-02 Metal encoding-origin union (source increment, in progress)
+
+The prior callback-only SDK fails the genuine `--buffer-origins` regression:
+a real unsubmitted encoder after origin release reports native_contexts0/
+retained_roots0 before any completion registration. Log
+`/tmp/fios-009-sdk-buffer-origins-prior-final.log`, private fixture
+`/private/tmp/fios-009-sdk-host-owners-q7fBYf`. Cleanup releases only its own
+private encoder; no model/shader/fake SDK/fault campaign or installed action.
+
+The cumulative seven-path patch f8286440dcb4325c2b86fe92bc535780584cbdd64eba3b04a582127455ee9768
+retains the union of actual native encoding origins per buffer. Private source
+`/private/tmp/fios-009-mlx-owner-sets-5bxkrzzg/source`; ordinary SDK build
+`/tmp/fios-009-sdk-buffer-owners-build.log`, review
+`/private/tmp/fios-009-mlx-component-build-AsaPwo/sdk/candidate.json`, SHA
+5b64b17e17d15cfbf791344ca9da4fd1e3ada4298ee982d8f781ca38b9d41111.
+Debug/optimized ordinary CPU hold/cleanup and scalar safetensors checks pass.
+
+Genuine buffer-origin Debug/ReleaseSafe cases pass:
+`/tmp/fios-009-sdk-buffer-origins-green.log`,
+`/private/tmp/fios-009-sdk-host-owners-qzWdKr/receipt.json`. First origin remains
+retained before callback registration; two independently captured native roots
+remain through real Metal completion and destructor-enqueued CPU cleanup.
+Original local contexts retire only after actual cleanup; tracker uncertainty
+remains. Ordinary CPU callback regression passes both modes:
+`/tmp/fios-009-sdk-buffer-owners-cpu.log`,
+`/private/tmp/fios-009-sdk-host-owners-7IL5TD/receipt.json`. Native union/TLS unit
+passes Debug and ReleaseSafe (`/tmp/fios-009-sdk-owner-union-{debug,release}.log`).
+Focused Node metadata/source tests26/26 and inference boundary pass.
+
+Full native rebuild and private server/core regression remain in progress for
+this increment. These receipts cover declared component inputs only, not entire
+repository/native provenance, every encoder/alias/backend, all-client activity,
+per-request terminal proof or activation. Whole tasks remain38/55.
+
+Separately, exact pushed d6f19943fd5dba61536b88f323498326f04af537 now has all six
+prerequisites and aggregate CI gate successful:
+[run41407760209](https://github.com/mcteer/fios/actions/runs/41407760209). This
+is the preceding callback checkpoint, not the uncommitted buffer-origin change.
+No merge, application deployment or native installation occurred.
+
+
+Enclosing model-capable native build for that buffer-origin increment passes
+with `--functional-build-only` (historical matrices deliberately unexecuted):
+`/tmp/fios-009-sdk-buffer-owners-native-build.log`, capsule
+`/private/tmp/fios-009-sdk-buffer-owners-native-review/capsule`, review SHA
+29b2c16e7a6566dee1ee33303fe0bf0240dadcfdb989d30066928adec5bbd3b9, binary
+1f2f0dc4f28af2c1bca81c0ab416bd689a485b190509d24c09881fe48e38995b.
+Declared host ownership3/Metal ownership2/buffer owner sets1/drain retention3.
+Actual readonly HTTP/private backend/primary frames pass with empty catalog:
+`/tmp/fios-009-sdk-buffer-owners-native-http.log`,
+`/private/tmp/f9-backend-fences-LQXIPc/receipt.json`.
+Actual connection drain passes at31,571ms with original request retained and
+sticky uncertainty, then exits only after connection release:
+`/tmp/fios-009-sdk-buffer-owners-native-drain.log`,
+`/private/tmp/f9-connection-drain-iO5Lgi/receipt.json`; no model/native authority.
+
+First supervisor custody run fails its initial14s readiness wait:
+`/tmp/fios-009-sdk-buffer-owners-native-supervised.log`, retained
+`/private/tmp/fios-009-serving-runtime-native-y6NMrq`. The private producer later
+records a present process, while last manager status is unknown with no cached
+sample. Driver cleanup's incomplete-cycle guard raises RuntimeError.invalid;
+this is a failed receipt, not accepted lifecycle evidence. Serial rerun is in
+progress; no identity/health/reservation guards or deadlines were weakened.
+
+
+Serial supervisor rerun passes Debug/optimized without source/guard/deadline
+changes (`/tmp/fios-009-sdk-buffer-owners-native-supervised-serial.log`,
+`/private/tmp/fios-009-serving-runtime-native-rVzLzW/receipt.json`):4 actual
+empty-model native children,2 supervisors,4 managers/2 replacements, actual
+kernel listener/GET health; synthetic readiness/reservations remain explicit.
+Original child PID/start/receipt survives manager replacement, guarded recovery
+and stopped intent work, independent unresolved claim stays1. The earlier
+readiness failure is retained; root cause under concurrent validation is not
+established by the passing rerun.
+
+Automatic readonly manager/lineage/backend/primary polling also passes:
+`/tmp/fios-009-sdk-buffer-owners-native-manager.log`,
+`/private/tmp/f9-native-status-Q4bxCb`;0 model/installed actions, no authority.
+One-use core plan SHA762184136ca263768a86db8addf3e1df00a5715425802330b152ef985d56346e
+is consumed. Check issues0 model POSTs (`/tmp/fios-009-sdk-buffer-owners-model-check.log`,
+`/private/tmp/f9-model-check-VMNye5`). Run passes with exactly1 POST, two output
+tokens/complete response in4,914ms:
+`/tmp/fios-009-sdk-buffer-owners-model-run.log`,
+`/private/tmp/f9-model-run-VXxVAv/result.json`. Exact model
+`mlx-community/gemma-4-e4b-it-4bit`, host fios-core24GiB M4 Pro only; context512/
+request10s/work15s/cleanup7s and sampled native12GiB/observer128MiB bounds.
+Peak native RSS2,452,373,504/footprint4,676,389,984; observer RSS12,091,392/
+footprint4,801,040. Actual root5/source sequence95 is retained in the journal;
+4 primary samples/3 positive. Both owned processes reap; claim remains uncertain,
+quiescence unproven/coverage unknown/authority false. No generated text logged.
+This is administrative source-request correlation, not platform/Pydantic/Studio
+acceptance. Whole tasks remain38/55; no installation, merge or deployment.

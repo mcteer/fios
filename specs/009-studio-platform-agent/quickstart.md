@@ -553,3 +553,24 @@ The source candidate and genuine runtime library hashes are checked before and
 after. Only exact nonce-bound generated text is removed; private outputs and
 unrelated resources remain. This does not exercise a real model/GPU failure,
 issue native proof or clear independent inference uncertainty.
+
+
+### Ordinary source SDK request ownership
+
+The source SDK builder above accepts `--buffer-owner-sets` for the cumulative
+Metal encoding-origin union candidate (implying host/Metal callback ownership).
+Keep its source, patch and declared build fixtures unchanged throughout a build.
+Run the genuine SDK/native-owner fixture on `fios-core`:
+
+```sh
+node scripts/check-platform-sdk-host-owners.mjs --isolated --sdk /ABS/SDK/candidate.json --sha256 EXACT_SDK_RECEIPT_SHA --source /ABS/REVIEWED_MLX --zig /ABS/PINNED_ZIG --developer-dir /Applications/Xcode.app/Contents/Developer --buffer-origins --metal-cpp-zip /ABS/PINNED_ARCHIVE
+```
+
+Each Debug/ReleaseSafe case encodes real buffer bytes under one native origin,
+adds another before submitting a SharedEvent-gated Metal buffer, and checks both
+through completion/destructor-enqueued CPU cleanup. No shader dispatch/model,
+fake SDK, installed service or historical fault campaign runs. Compilation is
+bounded120s/command and execution20s/mode with IP networking denied. Omit
+`--buffer-origins` and the header archive for ordinary CPU callback regression.
+Rebuild the enclosing native capsule with `--functional-build-only` before any
+private server/core-model regression; component receipts grant no native authority.

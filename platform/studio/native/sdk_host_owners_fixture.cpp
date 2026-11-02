@@ -11,6 +11,11 @@ extern "C" void* fios_native_request_owners_capture();
 extern "C" uint64_t fios_native_request_owners_enter(void*);
 extern "C" int fios_native_request_owners_leave(uint64_t);
 extern "C" void fios_native_request_owners_release(void*);
+#ifdef MLX_FIOS_REQUEST_OWNER_GROUPS
+extern "C" void* fios_native_request_owners_merge(void*,void*);
+extern "C" int fios_native_request_owners_covers_current(void*);
+extern "C" void fios_native_request_owners_uncertain();
+#endif
 namespace mx=mlx::core;
 using namespace std::chrono_literals;
 namespace {
@@ -44,7 +49,12 @@ extern "C" int fios_host_owner_fixture_start() {
 #ifdef MLX_FIOS_REQUEST_HOST_OWNERS
   static const mx::FiosRequestOwnerHooks hooks{
     fios_native_request_owners_capture,fios_native_request_owners_enter,
-    fios_native_request_owners_leave,fios_native_request_owners_release};
+    fios_native_request_owners_leave,fios_native_request_owners_release
+#ifdef MLX_FIOS_REQUEST_OWNER_GROUPS
+        ,fios_native_request_owners_merge,fios_native_request_owners_covers_current,
+        fios_native_request_owners_uncertain
+#endif
+    };
   if (!mx::fios_register_request_owner_hooks(&hooks)) return 0;
 #endif
   const auto stream=mx::new_stream(mx::Device::cpu);

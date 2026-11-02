@@ -8,8 +8,10 @@ import {readFileSync,writeFileSync,mkdtempSync,mkdirSync,lstatSync,realpathSync,
 import {resolve,join} from 'node:path';
 import {homedir} from 'node:os';
 const args=process.argv.slice(2),root=resolve(import.meta.dirname,'..');
-const metalOwnersIndex=args.indexOf('--request-metal-owners'),requestMetalOwners=metalOwnersIndex>=0;
-if(requestMetalOwners){assert.equal(args.lastIndexOf('--request-metal-owners'),metalOwnersIndex);args.splice(metalOwnersIndex,1);}
+const bufferOwnersIndex=args.indexOf('--buffer-owner-sets'),bufferOwnerSets=bufferOwnersIndex>=0;
+if(bufferOwnerSets){assert.equal(args.lastIndexOf('--buffer-owner-sets'),bufferOwnersIndex);args.splice(bufferOwnersIndex,1);}
+const metalOwnersIndex=args.indexOf('--request-metal-owners'),requestMetalOwners=metalOwnersIndex>=0||bufferOwnerSets;
+if(metalOwnersIndex>=0){assert.equal(args.lastIndexOf('--request-metal-owners'),metalOwnersIndex);args.splice(metalOwnersIndex,1);}
 const ownersIndex=args.indexOf('--request-host-owners'),requestHostOwners=ownersIndex>=0||requestMetalOwners;
 if(ownersIndex>=0){assert.equal(args.lastIndexOf('--request-host-owners'),ownersIndex);args.splice(ownersIndex,1);}
 assert(process.platform==='darwin'&&process.getuid()>0);
@@ -37,7 +39,7 @@ run('/usr/bin/codesign',['--verify','--strict','--test-requirement','=anchor app
 const metalVersion=run('/usr/bin/xcrun',['--sdk','macosx','metal','--version']).trim();
 const versions={'27.0':'32023.921','27.2':'32023.922'};assert(versions[sdk]&&metalVersion.startsWith('Apple metal version '+versions[sdk]+' '));
 const paths=['mlx/backend/cpu/eval.cpp','mlx/backend/metal/device.cpp','mlx/backend/metal/device.h','mlx/backend/metal/eval.cpp','mlx/scheduler.cpp','mlx/stream.cpp','mlx/stream.h'];
-const patchFile=join(root,'platform/studio/native',requestMetalOwners?'mlx-64ea011-request-metal-owners.patch':requestHostOwners?'mlx-64ea011-request-host-owners.patch':'mlx-64ea011-source-component-hold.patch'),patch=bytes(patchFile),patchSHA=digest(patch);
+const patchFile=join(root,'platform/studio/native',bufferOwnerSets?'mlx-64ea011-metal-owner-sets.patch':requestMetalOwners?'mlx-64ea011-request-metal-owners.patch':requestHostOwners?'mlx-64ea011-request-host-owners.patch':'mlx-64ea011-source-component-hold.patch'),patch=bytes(patchFile),patchSHA=digest(patch);
 assert.equal(git(source,'diff','--no-ext-diff','--no-textconv','HEAD','--',...paths),patch.toString());
 assert.deepEqual(git(source,'status','--porcelain','--untracked-files=all','--ignored=matching').trimEnd().split('\n'),paths.map(path=>' M '+path));
 const fixture=join(root,'platform/studio/native/mlx_source_component_hold_test.cpp'),fixtureSHA=sha(fixture);
@@ -69,5 +71,5 @@ const receipt={version:1,purpose:'private_mlx_source_dependency_review',activati
  scope:'reviewed_patch_and_declared_dependencies_not_whole_native_provenance',features:{safetensors:true,gguf:false,cpu:true,metal:true,metal_jit:true},loader_fixture_sha256:loaderSHA,pins,patch_sha256:patchSHA,
  declared_sources:Object.fromEntries(paths.map(path=>[path,sha(join(checkout,path))])),cmake_sha256:sha(cmake),metal_cpp_zip_sha256:sha(metalZIP),metal_driver_sha256:sha(metal),metal_version:metalVersion,sdk,files};
 const review=Buffer.from(JSON.stringify(receipt)+'\n');writeFileSync(join(output,'candidate.json'),review,{mode:0o400,flag:'wx'});
-const result={ok:true,directory,request_host_owners:requestHostOwners,request_metal_owners:requestMetalOwners,dependency_review:{directory:output,receipt_sha256:digest(review)},fixture_sha256:fixtureSHA,patch_sha256:patchSHA,source_component_hold:'atomic_partial_only',source_fixture_only:true,native_authority:false,all_backend_terminality:false,installed:false,native_inference:false,models:0};
+const result={ok:true,directory,buffer_owner_sets:bufferOwnerSets,request_host_owners:requestHostOwners,request_metal_owners:requestMetalOwners,dependency_review:{directory:output,receipt_sha256:digest(review)},fixture_sha256:fixtureSHA,patch_sha256:patchSHA,source_component_hold:'atomic_partial_only',source_fixture_only:true,native_authority:false,all_backend_terminality:false,installed:false,native_inference:false,models:0};
 writeFileSync(join(directory,'receipt.json'),JSON.stringify(result)+'\n',{mode:0o600,flag:'wx'});console.log(JSON.stringify(result));

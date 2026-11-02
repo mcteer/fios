@@ -64,3 +64,24 @@ The separate journal stores the original native root and peer identity plus the 
 Schema7/8 startup remains closed. Their explicit stopped-backup copy migrations publish schema9 with a durable maintenance hold; original backups remain available for matching old-artifact rollback. There is no installed native issuer or native terminal/quiescence reconciliation authority in this checkpoint. T021 remains incomplete.
 
 The manager’s trusted code-only native observation path now uses one off-loop per-request lineage slot. On the existing2s cycle it selects unresolved dispatched/uncertain, scope-bound requests round-robin (≤32), without selecting reserved or unbound legacy rows. Draining rechecks the exact original scope and current outcome before persisting metadata; a reply arriving after completion/pruning cannot resurrect ownership. A held source call retains its slot and never blocks the heartbeat. Source errors remain unknown. Public unenrolled startup has no native client, and migration-held startup suppresses this path. The polling path supplies no native terminal, admission or all-client capability.
+
+
+### Source Metal buffer origin checkpoint
+
+The optional cumulative `mlx-64ea011-metal-owner-sets.patch` records the native
+owner set at each reviewed `CommandEncoder::fios_reserve_buffer` entry, including
+encoding before callback registration. One buffer accumulates a bounded union of
+exact native slot/sequence/instance tokens; a later origin cannot replace an
+earlier one. Submission seals the set. Completion handlers and captured-resource
+cleanup enter the complete set, including destructor-enqueued CPU work. Physical
+completion plus all registered captures retiring releases the buffer descriptor;
+shared callback scopes retain it until their own cleanup finishes.
+
+Trusted native comparison/merge/release hooks run outside SDK metadata locks.
+Contexts remain limited to4096, each union to the native256-root capacity and
+TLS nesting to64. Allocation/union/identity failures fence and quarantine native
+references. Missing attribution stays unavailable, never an empty proof. The
+source change covers reviewed encoder entry points, not raw aliases, every
+backend/client or authoritative native terminal reconciliation. No sampled
+zero, successful response, local descriptor release or process reaping clears
+independent inference uncertainty. T002/T018–T022 remain open.

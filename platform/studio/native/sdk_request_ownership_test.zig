@@ -17,8 +17,17 @@ test "fios SDK owner context transfers and restores original references" {
     try ownership.shared.active(io, second);
     const group = [_]ownership.Token{root, second};
     ownership.current = root;
+    const left = sdk.fios_native_request_owners_capture() orelse return error.NoCapturedOwner;
+    ownership.current = second;
+    const right = sdk.fios_native_request_owners_capture() orelse return error.NoCapturedOwner;
+    try std.testing.expectEqual(@as(c_int, 0), sdk.fios_native_request_owners_covers_current(left));
+    try std.testing.expectEqual(@as(c_int, 1), sdk.fios_native_request_owners_covers_current(right));
+    const captured = sdk.fios_native_request_owners_merge(left, right) orelse return error.NoMergedOwners;
+    sdk.fios_native_request_owners_release(left);
+    sdk.fios_native_request_owners_release(right);
+    ownership.current = root;
     ownership.current_group = &group;
-    const captured = sdk.fios_native_request_owners_capture() orelse return error.NoCapturedOwner;
+    try std.testing.expectEqual(@as(c_int, 1), sdk.fios_native_request_owners_covers_current(captured));
     var captured_held = true;
     defer if (captured_held) sdk.fios_native_request_owners_release(captured);
     ownership.current = null;

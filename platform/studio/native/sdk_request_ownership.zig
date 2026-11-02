@@ -39,6 +39,9 @@ pub export fn fios_native_request_owners_capture() ?*anyopaque {
     if (state.load(.acquire) != 2 or failed.load(.acquire)) return null;
     const io = source_io.?;
     const retained = owners.retainCurrent(io) catch { fence(); return null; } orelse return null;
+    return createContext(retained);
+}
+fn createContext(retained: owners.Retained) ?*anyopaque {
     var count = contexts.load(.acquire);
     while (true) {
         if (count >= maximum_contexts) {
@@ -57,6 +60,49 @@ pub export fn fios_native_request_owners_capture() ?*anyopaque {
     context.* = .{ .retained = retained };
     return @ptrCast(context);
 }
+fn sameToken(a: owners.Token, b: owners.Token) bool {
+    return a.slot == b.slot and a.sequence == b.sequence and std.mem.eql(u8, &a.instance, &b.instance);
+}
+fn contains(tokens: []const owners.Token, token: owners.Token) bool {
+    for (tokens) |value| if (sameToken(value, token)) return true;
+    return false;
+}
+// Immutable token comparison only: no IO, allocation, tracker/SDK lock or
+// inference. A missing current source is unavailable, never an empty set.
+pub export fn fios_native_request_owners_covers_current(raw: ?*anyopaque) c_int {
+    if (state.load(.acquire) != 2 or failed.load(.acquire)) return -1;
+    const context: *Context = @ptrCast(@alignCast(raw orelse return -1));
+    const held = context.retained.tokens[0..context.retained.count];
+    if (owners.current_group) |group| {
+        if (group.len == 0 or group.len > owners.capacity) return -1;
+        for (group) |token| if (!contains(held, token)) return 0;
+        return 1;
+    }
+    const token = owners.current orelse return -1;
+    return @intFromBool(contains(held, token));
+}
+// Buffer origins accumulate before submission. Keep the complete bounded
+// union, never only its most recent origin or a sampled aggregate count.
+pub export fn fios_native_request_owners_merge(first: ?*anyopaque, second: ?*anyopaque) ?*anyopaque {
+    if (state.load(.acquire) != 2 or failed.load(.acquire)) return null;
+    const left: *Context = @ptrCast(@alignCast(first orelse { fence(); return null; }));
+    const right: *Context = @ptrCast(@alignCast(second orelse { fence(); return null; }));
+    if (left.retained.tracker != &owners.shared or right.retained.tracker != &owners.shared) { fence(); return null; }
+    var tokens: [owners.capacity]owners.Token = undefined;
+    var count: usize = 0;
+    for ([_]*Context{ left, right }) |context| {
+        if (context.retained.count == 0 or context.retained.count > owners.capacity) { fence(); return null; }
+        for (context.retained.tokens[0..context.retained.count]) |token| {
+            if (contains(tokens[0..count], token)) continue;
+            if (count == tokens.len) { fence(); return null; }
+            tokens[count] = token;
+            count += 1;
+        }
+    }
+    const retained = owners.shared.retainTokens(source_io.?, tokens[0..count]) catch { fence(); return null; };
+    return createContext(retained);
+}
+pub export fn fios_native_request_owners_uncertain() void { fence(); }
 // Context addresses are private compiled-SDK values, never wire/model input.
 // The SDK owns their shared lifetime through the complete callback cleanup.
 pub export fn fios_native_request_owners_release(raw: ?*anyopaque) void {

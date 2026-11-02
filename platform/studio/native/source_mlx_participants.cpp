@@ -7,6 +7,11 @@ extern "C" void* fios_native_request_owners_capture();
 extern "C" uint64_t fios_native_request_owners_enter(void*);
 extern "C" int fios_native_request_owners_leave(uint64_t);
 extern "C" void fios_native_request_owners_release(void*);
+#ifdef MLX_FIOS_REQUEST_OWNER_GROUPS
+extern "C" void* fios_native_request_owners_merge(void*,void*);
+extern "C" int fios_native_request_owners_covers_current(void*);
+extern "C" void fios_native_request_owners_uncertain();
+#endif
 #endif
 namespace {
 #ifdef MLX_FIOS_KNOWN_UNCERTAINTY
@@ -27,7 +32,12 @@ __attribute__((constructor)) void enable_private_mlx_source_participants() {
 #if defined(MLX_FIOS_REQUEST_HOST_OWNERS) && defined(FIOS_NATIVE_REQUEST_OWNERS)
     static const mlx::core::FiosRequestOwnerHooks hooks{
         fios_native_request_owners_capture,fios_native_request_owners_enter,
-        fios_native_request_owners_leave,fios_native_request_owners_release};
+        fios_native_request_owners_leave,fios_native_request_owners_release
+#ifdef MLX_FIOS_REQUEST_OWNER_GROUPS
+        ,fios_native_request_owners_merge,fios_native_request_owners_covers_current,
+        fios_native_request_owners_uncertain
+#endif
+    };
     if (!mlx::core::fios_register_request_owner_hooks(&hooks)) std::_Exit(78);
 #endif
     // Pure metadata enablement before main/MLX initialization. Late adoption
