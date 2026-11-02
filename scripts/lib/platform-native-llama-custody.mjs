@@ -2,7 +2,19 @@
 import assert from 'node:assert/strict';
 export function verifyLlamaCustody(arch,registry,shim) {
  const dropStart=shim.indexOf('static bool drop_mtp('),dropEnd=shim.indexOf('// Pair each target row',dropStart),drop=shim.slice(dropStart,dropEnd);
- assert(dropStart>=0&&drop.indexOf('mlx_llama_ctx_terminal(c) != 1')>=0&&drop.indexOf('c->fios_uncertain = true;')>drop.indexOf('mlx_llama_ctx_terminal(c) != 1')&&drop.indexOf('return false;')<drop.indexOf('llama_batch_ext_free(c->dbatch)'),'FIO_LLAMA_MTP_RETIREMENT_MISSING');
+ const errorStart=shim.indexOf('static bool fios_require_terminal_after_error(');
+ if(errorStart>=0){
+  const error=shim.slice(errorStart,dropStart);
+  assert(error.includes('mlx_llama_ctx_terminal(c) != 1')&&error.indexOf('c->fios_uncertain = true;')>error.indexOf('mlx_llama_ctx_terminal(c) != 1')&&error.includes('fios_llama_source_uncertain.store(true, std::memory_order_release);'),'FIO_LLAMA_ERROR_RETIREMENT_MISSING');
+  const guard=drop.indexOf('if (!fios_require_terminal_after_error(c)) return false;');
+  assert(dropStart>=0&&guard>=0&&guard<drop.indexOf('llama_batch_ext_free(c->dbatch)'),'FIO_LLAMA_MTP_RETIREMENT_MISSING');
+  assert(shim.includes('if (fios_require_terminal_after_error(c)) seq_clear(c, seq);'),'FIO_LLAMA_ERROR_RETIREMENT_MISSING');
+  assert.equal(shim.split('(void)fios_require_terminal_after_error(c);').length,3,'FIO_LLAMA_ERROR_RETIREMENT_MISSING');
+  const rejected=shim.indexOf('if (n_draft < 0)');
+  assert(shim.includes('if (n < k && !fios_require_terminal_after_error(c)) return -1;')&&rejected>=0&&rejected<shim.indexOf('// Verify: id_last'),'FIO_LLAMA_ERROR_RETIREMENT_MISSING');
+ }else{
+  assert(dropStart>=0&&drop.indexOf('mlx_llama_ctx_terminal(c) != 1')>=0&&drop.indexOf('c->fios_uncertain = true;')>drop.indexOf('mlx_llama_ctx_terminal(c) != 1')&&drop.indexOf('return false;')<drop.indexOf('llama_batch_ext_free(c->dbatch)'),'FIO_LLAMA_MTP_RETIREMENT_MISSING');
+ }
  assert(shim.includes('if (c->dft && mtp_catch_up(c, rows, n) != 0 && !drop_mtp(c)) return -1;'),'FIO_LLAMA_MTP_RETIREMENT_MISSING');
  assert.match(shim,/static bool valid_seq\(const mlx_llama_ctx \*c, int32_t seq\) \{\s*return c && !c->fios_uncertain/,'FIO_LLAMA_MTP_RETIREMENT_MISSING');
  assert(!arch.includes('pub fn chatTemplate(self:'),'FIO_LLAMA_TEMPLATE_BORROW_ESCAPES');

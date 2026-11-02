@@ -8,6 +8,8 @@ import {mkdtempSync,readFileSync,writeFileSync,realpathSync,lstatSync} from 'nod
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 const args=process.argv.slice(2);
+const decodeIndex=args.indexOf('--decode-error-retirement'),decodeErrorRetirement=decodeIndex>=0;
+if(decodeErrorRetirement){assert.equal(args.lastIndexOf('--decode-error-retirement'),decodeIndex);args.splice(decodeIndex,1);}
 assert(process.platform==='darwin'&&process.getuid()>0&&args.length===3&&args[0]==='--isolated'&&args[1]==='--source'&&path.isAbsolute(args[2]));
 const source=realpathSync(args[2]),root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 assert(source.startsWith('/private/tmp/')&&lstatSync(source).uid===process.getuid()&&(lstatSync(source).mode&0o022)===0);
@@ -39,8 +41,9 @@ int main() {
     if (mlx_llama_source_uncertainty() != 0) return 12;
     if (mlx_llama_ctx_terminal(nullptr) || mlx_llama_ctx_try_free(nullptr)) return 13;
     if (mlx_llama_source_uncertainty() != 0) return 14;
+    ${decodeErrorRetirement?'if (fios_require_terminal_after_error(nullptr) || mlx_llama_source_uncertainty() != 0) return 20;':''}
     mlx_llama_ctx context{};
-    if (drop_mtp(&context) || !context.fios_uncertain) return 15;
+    if (${decodeErrorRetirement?'fios_require_terminal_after_error':'drop_mtp'}(&context) || !context.fios_uncertain) return 15;
     if (mlx_llama_source_uncertainty() != 1) return 16;
     mlx_llama_ctx other{};
     mlx_llama_seq_reset(&context, 0);
@@ -61,4 +64,4 @@ for(const optimized of [false,true]) {
 }
 assert.equal(readFileSync(path.join(source,'lib/llama_shim/llama_shim.cpp'),'utf8'),original);
 assert.equal(sha(library),'10f39f1688515e851c79e111a18a2a852923c4edb20f950061f6d7356ef8987b');
-console.log(JSON.stringify({scratch,modes:['Debug','optimized'],empty_metadata_only:true,native_contexts:0,model_requests:0,coverage:'unknown',native_authority:false}));
+console.log(JSON.stringify({scratch,modes:['Debug','optimized'],decode_error_retirement_policy:decodeErrorRetirement,empty_metadata_only:true,native_contexts:0,model_requests:0,coverage:'unknown',native_authority:false}));

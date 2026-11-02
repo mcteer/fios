@@ -372,3 +372,23 @@ This does not enroll or certify independent raw keepalive buffers or TP/host
 worker handoffs. Real DS4 initialization/normal producer execution and loaded
 model/device-context acceptance remain unexecuted. The partial all-client
 ceiling remains unknown and installed/native admission remains closed.
+
+### Returned Llama decode errors
+
+The shim now applies its existing creator-bound target+draft terminal primitive
+to prefill/decode/MTP verification errors, including metadata failure inside a
+decode batch. Refused completion latches the existing context/module fence and
+preserves sequence/target/draft state. A failed partial draft cannot trim or
+continue target verification until that check succeeds; healthy draft behavior
+and the existing known-complete MTP-drop behavior are retained. Null preflight
+alone has no context to retire and does not fence. Metadata checks and native
+builds are not loaded-backend or all-client/device proof. The core model tree
+contains no local GGUF artifact at this checkpoint; no new model is downloaded
+or substituted, and loaded Llama acceptance remains open.
+
+Source audit also confirms the ordinary DS4 CPU row-pool coordinator waits
+for every worker callback before returning, including inline/nested work. Its
+retained outer caller scope covers that synchronous lifetime; this is static
+source analysis, not new host/model acceptance. TP exchange and independent
+keepalive/provider contracts remain separately unfinished; no routing/RDMA or
+new worker architecture is introduced by that observation.

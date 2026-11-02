@@ -772,3 +772,13 @@ Empty future-batch placeholders own no request references; every normal
 encoding edge must prepare before use. Independent keepalive/TP worker
 contracts, real DS4/model/Studio acceptance and complete native admission remain
 open; these source/adapter receipts grant no installed runtime authority.
+
+`check-platform-llama-source-fence.mjs --isolated --source ABS_NATIVE_ROOT
+--decode-error-retirement` exercises only the genuine shim's null/empty-wrapper
+error-retirement policy in Debug/optimized builds. The default mode retains
+the prior MTP-drop regression. Neither creates a native Llama context nor loads
+a model. The shared error guard uses the existing exact target+draft terminal
+primitive before error cleanup, and preserves uncertainty on refusal; failed
+partial drafts return before trim/target verification. These controls do not
+certify loaded Llama success/error, all-client/device terminality or native
+admission. Do not substitute a larger core model or Studio inference scenario.
