@@ -323,3 +323,36 @@ False/unavailable results cannot authorize dispatch, replacement or terminality.
 Older reviewed source headers omit this optional hook rather than substituting
 an SDK declaration. The capsule's native_known_mlx_refusal_version is a declared
 source-format marker, not evidence that all backends or installed code enroll.
+
+## Optional native request owners in source MLX host callbacks
+
+The reviewed source SDK can accept one fixed compiled hook tuple to capture,
+enter, leave and release native owner contexts. It retains actual native tracker
+references before posting host work, enters their immutable bounded owner set
+on the actual callback thread and restores that thread's original TLS scope on
+return. Nested SDK CPU enqueue inherits the originating set. The descriptor
+survives callback cleanup and is released by the SDK's original shared lifetime;
+no wire/model-selected pointer, role, code, command or endpoint is accepted.
+
+Native context capacity is4096 fixed-size Retained descriptors, with64 nested
+scope frames/thread and non-reused global UInt64 scope IDs. Descriptor payload
+is bounded by4096 times its compiled size; allocator/thread overhead is separate,
+not a hard process/GPU memory quota. Startup binds the original native IO once.
+Hooks never run under the SDK's source-registry/queue mutexes. An absent scope
+is unavailable, not evidence of no model work. No context/counter/clock reset,
+lease timeout or later successful callback can clear recorded uncertainty.
+
+Failed context capture preserves its already-retained original references;
+failed contexts/descriptors remain quarantined. A scope-entry failure uses the
+SDK stream's existing error channel. Native drain format3 additionally retains
+serving state when the owner-context module has failed, independently of a
+subsequent zero local count. This is conservative source failure handling, not
+an authorized installed lifecycle/admission issuer or a completion proof.
+
+Private development checkpoints used native_request_host_owners_version1/2;
+the published source patch declares version3, including failure retention/stream
+error handling and captured-task destruction inside the original scope.
+These are source-format markers only. Existing private wire formats, unknown
+all-client coverage and independent inference claims remain unchanged. Metal
+callbacks/other native actors/backends and complete request terminality remain
+separate technical work; host-queue completion never implies device completion.

@@ -28,7 +28,7 @@ run(process.execPath, [path.join(root, 'scripts/check-platform-native.mjs'), '--
 // Check the actual sources being semantically compiled against the exact patch.
 const patch = readFileSync(path.join(root, 'platform/studio/native/mlx-serve-26.10.3.patch'), 'utf8');
 assert.equal(git(source, 'diff', '--', 'build.zig','lib/llama_shim/llama_shim.cpp','lib/llama_shim/llama_shim.h','src/arch/ds4.zig','src/arch/ds4_stub.zig','src/arch/llama.zig','src/arch/llama_stub.zig','src/arch/mlx_stream.zig','src/arch/mlx_stream_stub.zig','src/ds4_ffi.zig','src/llama_ffi.zig','src/main.zig','src/mlx.zig','src/model_discovery.zig','src/model_registry.zig','src/server.zig','src/scheduler.zig','src/transformer.zig'), patch, 'native checkout differs from reviewed patch');
-for (const name of ['backend_lifetime.zig', 'request_ownership.zig', 'control_protocol.zig', 'control_transport.zig', 'device_owner.zig', 'startup_guard.zig']) {
+for (const name of ['backend_lifetime.zig', 'request_ownership.zig', 'control_protocol.zig', 'control_transport.zig', 'device_owner.zig', 'sdk_request_ownership.zig', 'startup_guard.zig']) {
   assert.equal(readFileSync(path.join(source, 'src', name), 'utf8'), readFileSync(path.join(root, 'platform/studio/native', name), 'utf8'));
 }
 for (const name of ['device_owner_barrier.cpp', 'device_owner_barrier.h']) {

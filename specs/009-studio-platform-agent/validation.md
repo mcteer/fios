@@ -2478,3 +2478,149 @@ with the journal still uncertain, native quiescence unproven/coverage unknown/
 authority false. No generated text logged; source administrative request only,
 not production admission/platform dispatch/worker competence or Studio acceptance.
 No installed/Studio actions;38/55 whole tasks complete.
+
+### 2026-11-01 native request owners across genuine MLX host queues
+
+Source SDK host callbacks now carry native tracker-owner references across the
+actual CPU queue, enter their original group on the worker and restore previous
+TLS when that body returns. Nested CPU enqueue inherits the same group. This
+is reference/context custody only, not all-client or device-terminal authority.
+Native construction is fixed compiled hooks, once-only IO enrollment,4096
+contexts/64 scope frames per thread and non-reused global scope IDs. Missing
+unattributed scope is unknown, never zero/idle. No model payload or credential
+is part of a context. SDK registry/queue locks never span the native hooks.
+
+Initial actual-thread native context Debug/ReleaseSafe tests pass
+(`/tmp/fios-009-sdk-owner-context-{debug,release}{-build,}.log`), one filtered
+test/mode, denied networking/10s bound. Updated failure-retaining implementation
+also passes `/tmp/fios-009-sdk-owner-final-{Debug,ReleaseSafe}{-build,}.log`.
+These are ordinary native TLS/reference fixtures, not SDK/device error witnesses.
+
+Initial SDK cumulative patch08bee40794a1775bb9886c4fb5e0975e91d8b9c64f72f6fd5705a8e7ef4d8a31
+builds with ordinary lifecycle/safetensors checks
+(`/tmp/fios-009-sdk-host-owners-build.log`), source
+`/private/tmp/fios-009-mlx-host-owners-b02h8kp8/source`, review
+`/private/tmp/fios-009-mlx-component-build-wmcuKo/sdk/candidate.json`, SHA
+0402fc2a2497ac475d08080b9de890a71fabb0841af6ac739d98862ac144c73f.
+Initial driver `/tmp/fios-009-sdk-host-owners-prior.log` has linker-path failure;
+`...-prior-runtime.log` has a fixture defer-syntax compiler error. Neither is
+accepted runtime evidence.
+
+Corrected genuine prior SDK case (`/tmp/fios-009-sdk-host-owners-prior-final.log`,
+`/private/tmp/fios-009-sdk-host-owners-kvrpS1/Debug-run.log`) uses the unchanged
+f9d469 source SDK and actual native owner implementation. The original CPU body
+is actually held on a private condition variable after enqueue; releasing its
+original connection reference leaves owner_present0/native_contexts0/retained_roots0.
+It fails `expect(owners.shared.hasRetainedWork(io))`. Finally releases the real
+parent/nested callbacks and performs finite actual host-queue cleanup. No fake
+SDK, source-body/counter mutation, hardware fault or model call is used.
+
+Initial host-propagating SDK green (`/tmp/fios-009-sdk-host-owners-green.log`,
+`/private/tmp/fios-009-sdk-host-owners-7UCgaJ/receipt.json`) passes Debug and
+ReleaseSafe, two actual CPU callbacks/mode. Original root remains after its
+connection release; actual parent and nested queue bodies both observe native
+context; actual cleanup drops contexts while tracker uncertainty remains.
+The initial enclosing native server also links
+(`/tmp/fios-009-sdk-host-owners-native-build.log`) but is not the final accepted
+failure-handling variant. Its original native-module/root-patch bytes remain
+in the private review parent for provenance.
+
+Review then strengthens context-failure handling: failed capture retains its
+already-acquired original references, failed descriptors remain quarantined,
+new capture/entry stays closed on sticky context failure, and the serving drain
+also checks that failure independent of local counts. SDK entry errors use the
+existing stream error channel. No fault-injection campaign exercises these
+failure branches; ordinary positive behavior plus source review are separate.
+
+Failure-retaining SDK cumulative patch7b8ef40b27984d562b428ef5969464b517fcb8da9aa062c84afb808848ed9403
+builds (`/tmp/fios-009-sdk-host-retention-build.log`), source
+`/private/tmp/fios-009-mlx-host-retention-11k8tnjv/source`, review
+`/private/tmp/fios-009-mlx-component-build-h8LPhq/sdk/candidate.json`, SHA
+b9822710ec4c5dc44a61b68c58c3a7d128810da62dc5ddcb02ccf906472738af.
+Failure-retaining callback-body CPU/native context Debug/ReleaseSafe integration passes
+(`/tmp/fios-009-sdk-host-retention-green.log`,
+`/private/tmp/fios-009-sdk-host-owners-ikU83a/receipt.json`). Final native module
+0dee43a464ad481b2f78d723ab49187c584bc82c2ae02ae43943a73a84b95456;
+unitdde286e7dc981bdd7c2481c887407e4cabb6a9f5801d4d13cc919ef6c2bb2dd0;
+C++ fixture0e9325b7fa92421dbe84391766284b470f18e1cb3d5d4b7f0d8fc07bcd76c85e;
+Zig fixturec08ab74df45a85d157b5cc1e43d225356091c086d98c1ae09607eef0e9cee3a3.
+Declared native implementation/SDK inputs are not whole-repository/native
+provenance or all-backend authority.44 Node tests/boundary pass at the earlier
+host-source checkpoint; final enclosing native build/core regression pending.
+No model, installed or Studio action in these CPU/context fixtures;38/55 complete.
+
+A stronger ordinary fixture then moves child enqueue into destruction of the
+original callback's captured object, rather than its body. This finds a genuine
+remaining gap in the failure-retaining variant
+(`/tmp/fios-009-sdk-host-cleanup-prior.log`,
+`/private/tmp/fios-009-sdk-host-owners-XUfzEI/Debug-run.log`): original body sees
+owner1/context1/root1, but the actual destructor-enqueued child sees owner0/
+context0/root0 and fails its exact expected-owner assertion. No SDK object,
+completion value, counter or production body is rewritten; this is a genuine
+normal captured-object destructor posting actual CPU work. The previous body-
+only receipt does not prove captured-resource cleanup ownership.
+
+Cleanup variant destroys the original std::function captures while its original
+native context scope is active, on both body return/error unwind, and orders
+its capture members so owner lifetime also brackets task destruction. New
+cumulative SDK patch3aa53f11c5ac18dd6eecaf49ea500eb323814e33356a72ae3fd1abcaec4825b4
+builds (`/tmp/fios-009-sdk-host-cleanup-build.log`), source
+`/private/tmp/fios-009-mlx-host-cleanup-786zag96/source`, candidate
+`/private/tmp/fios-009-mlx-component-build-tdYXSK/sdk/candidate.json`, SHA
+dfb29cc99a1043245c8523bdb4b53a77d2eb9a5d785afac1a0b1fe93268b1daa.
+Genuine destructor/child/native-owner Debug/ReleaseSafe green
+(`/tmp/fios-009-sdk-host-cleanup-green.log`,
+`/private/tmp/fios-009-sdk-host-owners-dbf3UC/receipt.json`) now preserves the
+original root through original connection release, original body, captured-
+object destruction and actual nested callback cleanup. Final C++ fixture
+64e3846e26348a0dda045f5177ce367a98528b3e846cbf7bf99515b970791707;
+Zig fixture693dc8cd746cef2eee1285b9cdd34dab3a4da11042113811b18581580040463e.
+Two real CPU callbacks/mode, no model/device workload or installed operation.
+Final enclosing native build and healthy core model regression pending;
+38/55 whole tasks complete. Complete Metal/all-backend/native terminality
+still remains separate; these partial source receipts grant no authority.
+
+Published host-owner implementation is one cumulative seven-path SDK patch,
+`mlx-64ea011-request-host-owners.patch`3aa53f11c5ac18dd6eecaf49ea500eb323814e33356a72ae3fd1abcaec4825b4,
+selected by --request-host-owners. Intermediate08bee/7b8ef variants remain private
+historical evidence, not accepted current SDK inputs; their original patch
+bytes were preserved in the respective private native-review parents and their
+pinned source checkouts remain intact. Consolidation changes no compiled final
+SDK/native bytes. Final standalone actual SDK/native-owner Debug/ReleaseSafe
+integration passes again through the published selection
+(`/tmp/fios-009-sdk-host-owners-published-green.log`,
+`/private/tmp/fios-009-sdk-host-owners-eebQqm/receipt.json`).44 Node tests and
+boundary pass (`/tmp/fios-009-sdk-host-owners-final-{node,boundary}.log`).
+
+Enclosing final functional-only MAS/native build passes
+(`/tmp/fios-009-sdk-host-cleanup-native-build.log`), capsule
+`/private/tmp/fios-009-sdk-host-cleanup-native-review/capsule`, review
+9ffe9c115a2baef1ea6958b996798dba657d85f8caf158088427a7ff3a832f3a,
+binary39cee2f9fdee41d151fd433a4837601b5a4f5c22725fd1e7c98fc8d2b503708e.
+Declared native_request_host_owners_version3/native_connection_drain_retention_version3,
+source component hold enabled; native root patch remains18 paths, SHA
+3c10964a331881fd9d35a42678e318932abc3f9e9b143070090aabc682fe4c22,
+plus7 Zig/2 C++ companions. Actual private HTTP/primary/backend observations
+pass (`/tmp/fios-009-sdk-host-cleanup-native-http.log`,
+`/private/tmp/f9-backend-fences-hqFzlk`), actual manager lineage/primary/backend
+refresh passes (`...-native-manager.log`, `/private/tmp/f9-native-status-EwZmua`).
+Actual unfinished-GET stop/drain still passes (`...-native-drain.log`,
+`/private/tmp/f9-connection-drain-RC85yW/receipt.json`):31,631ms,
+owned1/ingress1/uncertain true, original connection release followed by normal
+exit0, no force. No model or installed/Studio action in these source checks.
+
+Final core-only one-use plan `/private/tmp/fios-009-sdk-host-cleanup-model-plan/plan.json`,
+SHA564a4e77eaf884b12aa8fedc58f7d629783b8d0e994d2e419720cc96b8da43cf,
+passes empty check (`/tmp/fios-009-sdk-host-cleanup-model-check.log`,
+`/private/tmp/f9-model-check-nwjrU1`) and actual source request
+(`/tmp/fios-009-sdk-host-cleanup-model-run.log`, `/private/tmp/f9-model-run-HdPZYk`).
+Exact mlx-community/gemma-4-e4b-it-4bit on fios-core Apple M4 Pro24GiB;
+one POST/concurrency1/context512/output2/request10s/work15s/cleanup7s,
+sampled native12GiB/observer128MiB bounds. Two tokens/two deltas complete4461ms,
+44 coherent component samples/4 primary samples/3 positive, persisted root5/
+source sequence93, instance750f53ae83a57a313be901d5ca058878. Native
+RSS3,232,497,664/footprint4,672,162,888; observer RSS12,255,232/footprint4,686,352.
+Both original local processes reap normally. Journal claim remains uncertain,
+native quiescence unproven/coverage unknown/authority false; no generated text
+logged. Administrative source request only, not production admission/platform
+dispatch/worker competence or Studio acceptance.38/55 whole tasks complete.

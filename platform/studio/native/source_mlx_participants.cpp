@@ -2,6 +2,12 @@
 // prepends the verified genuine patched mlx/stream.h, never an SDK substitute.
 #include <cstdlib>
 extern "C" int fios_private_mlx_source_components_json(char*,size_t);
+#if defined(MLX_FIOS_REQUEST_HOST_OWNERS) && defined(FIOS_NATIVE_REQUEST_OWNERS)
+extern "C" void* fios_native_request_owners_capture();
+extern "C" uint64_t fios_native_request_owners_enter(void*);
+extern "C" int fios_native_request_owners_leave(uint64_t);
+extern "C" void fios_native_request_owners_release(void*);
+#endif
 namespace {
 #ifdef MLX_FIOS_KNOWN_UNCERTAINTY
 int known_source_uncertainty() {
@@ -18,6 +24,12 @@ int release_source_components(uint64_t ticket) {
 const fios_mlx_source_hold_hooks source_hold_hooks{acquire_source_components,release_source_components};
 #endif
 __attribute__((constructor)) void enable_private_mlx_source_participants() {
+#if defined(MLX_FIOS_REQUEST_HOST_OWNERS) && defined(FIOS_NATIVE_REQUEST_OWNERS)
+    static const mlx::core::FiosRequestOwnerHooks hooks{
+        fios_native_request_owners_capture,fios_native_request_owners_enter,
+        fios_native_request_owners_leave,fios_native_request_owners_release};
+    if (!mlx::core::fios_register_request_owner_hooks(&hooks)) std::_Exit(78);
+#endif
     // Pure metadata enablement before main/MLX initialization. Late adoption
     // refuses the experiment; no library/default/installed fallback is allowed.
     if (!mlx::core::fios_enable_stream_custody_fixture() || fios_mlx_register_source_renderer(fios_private_mlx_source_components_json)!=0) std::_Exit(78);
