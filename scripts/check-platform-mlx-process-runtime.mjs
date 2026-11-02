@@ -21,7 +21,10 @@ const integration=Object.fromEntries(integrationNames.map(n=>[n,readFileSync(joi
 const unit=join(directory,'RuntimeFixture.swift');writeFileSync(unit,Buffer.concat([implementation,Buffer.from('\n'),fixture]));
 for(const mode of ['debug','release']){
  const binary=join(directory,mode),state=join(directory,mode+'-state');
- run('swiftc',['-parse-as-library','-swift-version','6','-warnings-as-errors',...(mode==='release'?['-O']:[]),'-I',join(root,'platform/studio/Sources/CSQLite'),...readdirSync(core).filter(n=>n.endsWith('.swift')&&n!==name).sort().map(n=>join(core,n)),unit,'-o',binary]);
+ const compileBegan=performance.now();
+ console.log(JSON.stringify({phase:'swift_compile',mode,timeout_ms:300000}));
+ run('swiftc',['-parse-as-library','-swift-version','6','-warnings-as-errors',...(mode==='release'?['-O']:[]),'-I',join(root,'platform/studio/Sources/CSQLite'),...readdirSync(core).filter(n=>n.endsWith('.swift')&&n!==name).sort().map(n=>join(core,n)),unit,'-o',binary],300000);
+ console.log(JSON.stringify({phase:'swift_compile_complete',mode,elapsed_ms:Math.round(performance.now()-compileBegan)}));
  const output=run(binary,[helper,hash(readFileSync(helper)),state,hash(readFileSync(binary))],30000);writeFileSync(join(directory,mode+'.log'),output,{mode:0o600});
  assert(output.includes('PASS: actual private serving-role process launch/identity/local reap/relaunch'));
  assert(output.includes('PASS: launch-input preparation runs off-loop once per attempt, missing/drift inputs never spawn'));
