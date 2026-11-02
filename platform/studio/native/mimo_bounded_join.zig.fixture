@@ -1,0 +1,60 @@
+// Genuine warm Metal queue with two tiny chunks behind a private three-second
+// shared-event wait. No model, source-body rewrite, fake SDK or injected error.
+const std = @import("std");
+const warm = @import("arch/mimo_v2/gpu_warm.zig");
+extern fn fios_join_event_create() u64;
+extern fn fios_join_event_release(u64) void;
+extern fn fios_join_gate_create(?*anyopaque) ?*anyopaque;
+extern fn fios_join_gate_finish(?*anyopaque) c_int;
+extern fn fios_join_gate_release(?*anyopaque) void;
+fn tick() void {
+    const interval: std.c.timespec = .{ .sec = 0, .nsec = std.time.ns_per_ms };
+    _ = std.c.nanosleep(&interval, null);
+}
+test "fios ordinary bounded original warm worker retirement" {
+    const event = fios_join_event_create();
+    try std.testing.expect(event != 0);
+    defer fios_join_event_release(event);
+    const engine = blk: {
+        var backend = try warm.Metal.init(1, event);
+        errdefer backend.deinit();
+        break :blk try warm.Warm.create(std.testing.allocator, backend, .{
+            .fios_fixture_control = true, .first_iters = 1, .target_chunk_ns = 1,
+            .stuck_ns = 5 * std.time.ns_per_s,
+        });
+    };
+    var alive = true;
+    const gate = fios_join_gate_create(engine.backend.h) orelse {engine.destroy();return error.GateUnavailable;};
+    defer {
+        if (fios_join_gate_finish(gate) == 1) {
+            if (alive) _ = engine.tryDestroy();
+            fios_join_gate_release(gate);
+        }
+    }
+    engine.arm(1);
+    const dispatch_deadline = warm.nowNs() + std.time.ns_per_s;
+    while (engine.n_chunks.load(.acquire) < 2 and warm.nowNs() < dispatch_deadline) tick();
+    try std.testing.expectEqual(@as(u64, 2), engine.n_chunks.load(.acquire));
+    const began = warm.nowNs();
+    const destroyed = engine.tryDestroy();
+    const elapsed = warm.nowNs() - began;
+    if (destroyed) alive = false;
+    std.debug.print("genuine_warm_cleanup elapsed_ns={d} destroyed={}\n", .{elapsed,destroyed});
+    try std.testing.expect(!destroyed);
+    try std.testing.expect(elapsed >= 800 * std.time.ns_per_ms and elapsed < 1500 * std.time.ns_per_ms);
+    try std.testing.expect(warm.fiosSourceUncertain());
+    try std.testing.expect(!engine.fiosCanDestroy());
+    try std.testing.expect(engine.fios_closed.load(.acquire));
+    try std.testing.expectEqual(@as(c_int, 1), fios_join_gate_finish(gate));
+    const cleanup_deadline = warm.nowNs() + std.time.ns_per_s;
+    while (alive and warm.nowNs() < cleanup_deadline) {
+        if (engine.fiosCanDestroy()) {
+            try std.testing.expect(!engine.failed.load(.acquire));
+            alive = !engine.tryDestroy();
+        }
+        if (alive) tick();
+    }
+    try std.testing.expect(!alive);
+    try std.testing.expect(warm.fiosSourceUncertain());
+    std.debug.print("PASS: genuine two-chunk warm work retains engine on bounded original-worker join, later local cleanup succeeds and source uncertainty stays true\n", .{});
+}

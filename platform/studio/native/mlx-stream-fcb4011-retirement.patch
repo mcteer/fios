@@ -1,8 +1,8 @@
 diff --git a/src/arch/mimo_v2/gpu_warm.zig b/src/arch/mimo_v2/gpu_warm.zig
-index fa7f751..9e33c59 100644
+index fa7f751..2530987 100644
 --- a/src/arch/mimo_v2/gpu_warm.zig
 +++ b/src/arch/mimo_v2/gpu_warm.zig
-@@ -17,6 +17,13 @@
+@@ -17,6 +17,23 @@
  //! failed yet) stops the warming until a newer value is armed.
  const std = @import("std");
  const builtin = @import("builtin");
@@ -12,11 +12,21 @@ index fa7f751..9e33c59 100644
 +// False is not idle/coverage/terminal proof; no reset/authority API exists.
 +var fios_source_uncertain = std.atomic.Value(bool).init(false);
 +pub fn fiosSourceUncertain() bool { return fios_source_uncertain.load(.acquire); }
++// Checked monotonic observation for the local join wait only.
++fn fiosJoinClock() ?u64 {
++    var ts: std.c.timespec = undefined;
++    if (std.c.clock_gettime(.MONOTONIC, &ts) != 0 or ts.sec < 0 or ts.nsec < 0 or ts.nsec >= std.time.ns_per_s) return null;
++    const seconds: u64 = @intCast(ts.sec);
++    const nanos: u64 = @intCast(ts.nsec);
++    if (seconds > (std.math.maxInt(u64) - nanos) / std.time.ns_per_s) return null;
++    return seconds * std.time.ns_per_s + nanos;
++}
++
 +
  const mlx = @import("sdk").mlx;
  
  const log = std.log.scoped(.mimo);
-@@ -168,7 +175,13 @@ pub const Stats = struct {
+@@ -168,7 +185,13 @@ pub const Stats = struct {
  };
  
  /// Tunables (tests shorten them).
@@ -30,10 +40,11 @@ index fa7f751..9e33c59 100644
      target_chunk_ns: u64 = chunk_target_ns,
      stuck_ns: u64 = stuck_ns,
      first_iters: u32 = initial_iters,
-@@ -179,6 +192,15 @@ pub const Params = struct {
+@@ -179,6 +202,20 @@ pub const Params = struct {
  pub fn Engine(comptime B: type) type {
      return struct {
          const Self = @This();
++        const FiosJoinState = enum(u8) { not_started, pending, joined, failed };
 +        var next_fixture_instance = std.atomic.Value(u64).init(0);
 +        fios_instance: u64 = 0,
 +        fios_closed: std.atomic.Value(bool) = .init(false),
@@ -43,10 +54,14 @@ index fa7f751..9e33c59 100644
 +        fios_unknown: bool = false,
 +        fios_lifetime_sequence: u64 = 0,
 +        fios_lifetime_ticket: u64 = 0,
++        fios_join_state: std.atomic.Value(FiosJoinState) = .init(.not_started),
++        fios_joiner: ?std.Thread = null, // retained if detach fails; under mu
++        fios_join_broken: bool = false, // under mu, never reset
++
          a: std.mem.Allocator,
          backend: B,
          params: Params,
-@@ -216,26 +238,154 @@ pub fn Engine(comptime B: type) type {
+@@ -216,26 +253,208 @@ pub fn Engine(comptime B: type) type {
          pub fn create(a: std.mem.Allocator, backend: B, params: Params) !*Self {
              const self = try a.create(Self);
              errdefer a.destroy(self);
@@ -64,14 +79,26 @@ index fa7f751..9e33c59 100644
 +            // A metadata publisher is not permission to wait on cleanup.
 +            if (std.c.pthread_mutex_trylock(&self.mu) != .SUCCESS) return false;
 +            defer _ = std.c.pthread_mutex_unlock(&self.mu);
-+            return self.fios_lifetime_ticket == 0;
++            const state = self.fios_join_state.load(.acquire);
++            return self.fios_lifetime_ticket == 0 and !self.fios_join_broken and
++                (state == .not_started or state == .joined);
 +        }
 +
          /// Stops the thread (it retires its chunks in flight), joins it, releases the backend.
          pub fn destroy(self: *Self) void {
 -            self.quit.store(true, .seq_cst);
 -            self.signal();
+-            self.thread.join();
 +            _ = self.tryDestroy();
++        }
++
++        // Exactly one helper may join this engine's original worker. Its last
++        // engine access publishes the actual pthread_join result; no backend
++        // or metadata lock is held across that wait. No guessed terminality.
++        fn fiosJoinOriginal(self: *Self) void {
++            const result = std.c.pthread_join(self.thread.getHandle(), null);
++            if (result != .SUCCESS) fios_source_uncertain.store(true, .release);
++            self.fios_join_state.store(if (result == .SUCCESS) .joined else .failed, .release);
 +        }
 +
 +        pub fn tryDestroy(self: *Self) bool {
@@ -80,18 +107,61 @@ index fa7f751..9e33c59 100644
 +                if (self.fios_lifetime_ticket != 0) {
 +                    self.markFixtureUnknown();
 +                    _ = std.c.pthread_mutex_unlock(&self.mu);
-+                    return false; // Preserve engine/backend; original owner must retry.
++                    return false;
 +                }
-+                self.quit.store(true, .seq_cst);
-+                self.wakeLocked(); // Publish stop under the already-held metadata lock.
++                const state = self.fios_join_state.load(.acquire);
++                if (self.fios_join_broken or state == .failed) {
++                    self.markFixtureUnknown();
++                    _ = std.c.pthread_mutex_unlock(&self.mu);
++                    return false;
++                }
++                if (state == .not_started) {
++                    self.fios_closed.store(true, .seq_cst);
++                    self.quit.store(true, .seq_cst);
++                    self.wakeLocked();
++                    self.fios_join_state.store(.pending, .release);
++                    const joiner = std.Thread.spawn(.{ .stack_size = 256 * 1024 }, fiosJoinOriginal, .{self}) catch {
++                        self.fios_join_state.store(.failed, .release);
++                        self.markFixtureUnknown();
++                        _ = std.c.pthread_mutex_unlock(&self.mu);
++                        return false;
++                    };
++                    self.fios_joiner = joiner;
++                    if (std.c.pthread_detach(joiner.getHandle()) != .SUCCESS) {
++                        self.fios_join_broken = true;
++                        self.markFixtureUnknown();
++                        _ = std.c.pthread_mutex_unlock(&self.mu);
++                        return false;
++                    }
++                    self.fios_joiner = null;
++                }
 +                _ = std.c.pthread_mutex_unlock(&self.mu);
++                const began = fiosJoinClock() orelse {
++                    fios_source_uncertain.store(true, .release);return false;
++                };
++                while (self.fios_join_state.load(.acquire) == .pending) {
++                    const current = fiosJoinClock() orelse {
++                        fios_source_uncertain.store(true, .release);return false;
++                    };
++                    if (current < began or current - began >= std.time.ns_per_s) {
++                        fios_source_uncertain.store(true, .release);return false;
++                    }
++                    const interval: std.c.timespec = .{ .sec = 0, .nsec = std.time.ns_per_ms };
++                    _ = std.c.nanosleep(&interval, null);
++                }
++                if (self.fios_join_state.load(.acquire) != .joined) {
++                    fios_source_uncertain.store(true, .release);return false;
++                }
++                if (std.c.pthread_mutex_trylock(&self.mu) != .SUCCESS) return false;
++                const joined = !self.fios_join_broken and self.fios_lifetime_ticket == 0 and
++                    self.fios_join_state.load(.acquire) == .joined;
++                _ = std.c.pthread_mutex_unlock(&self.mu);
++                if (!joined) return false;
 +            } else {
 +                self.quit.store(true, .seq_cst);
 +                self.signal();
++                self.thread.join();
 +            }
-+            // Positive cleanup still joins the actual worker. This metadata
-+            // preflight is not a bounded backend/device retirement contract.
-             self.thread.join();
              if (comptime @hasDecl(B, "deinit")) self.backend.deinit();
              _ = std.c.pthread_cond_destroy(&self.cv);
              _ = std.c.pthread_mutex_destroy(&self.mu);
@@ -205,7 +275,7 @@ index fa7f751..9e33c59 100644
              var cur = self.target.load(.seq_cst);
              while (value > cur) cur = self.target.cmpxchgWeak(cur, value, .seq_cst, .seq_cst) orelse break;
              if (self.parked.load(.seq_cst) != 0 and !self.failed.load(.monotonic)) self.signal();
-@@ -244,6 +394,17 @@ pub fn Engine(comptime B: type) type {
+@@ -244,6 +463,17 @@ pub fn Engine(comptime B: type) type {
          /// A host wait on bytes begins (`on`) or ends: warm while any is in progress (the read-ahead's, whose GPU work
          /// is not gated on a value). Never blocks on the warm thread.
          pub fn hold(self: *Self, on: bool) void {
@@ -223,7 +293,7 @@ index fa7f751..9e33c59 100644
              if (on) {
                  _ = self.holds.fetchAdd(1, .seq_cst);
                  if (self.parked.load(.seq_cst) != 0 and !self.failed.load(.monotonic)) self.signal();
-@@ -268,6 +429,7 @@ pub fn Engine(comptime B: type) type {
+@@ -268,6 +498,7 @@ pub fn Engine(comptime B: type) type {
  
          /// A target past the event's value and past a target given up as stuck, and no failure.
          fn wants(self: *Self, t: u64) bool {
@@ -231,7 +301,7 @@ index fa7f751..9e33c59 100644
              if (self.failed.load(.monotonic)) return false;
              if (self.holds.load(.seq_cst) > 0) return true;
              return t > self.stuck_at and self.backend.eventValue() < t;
-@@ -275,6 +437,7 @@ pub fn Engine(comptime B: type) type {
+@@ -275,6 +506,7 @@ pub fn Engine(comptime B: type) type {
  
          fn main(self: *Self) void {
              while (!self.quit.load(.seq_cst)) {
@@ -239,7 +309,7 @@ index fa7f751..9e33c59 100644
                  if (self.wants(self.target.load(.seq_cst))) {
                      self.warm();
                      continue;
-@@ -303,6 +466,7 @@ pub fn Engine(comptime B: type) type {
+@@ -303,6 +535,7 @@ pub fn Engine(comptime B: type) type {
              var seen = self.backend.eventValue();
              var moved = nowNs();
              while (true) {
@@ -247,7 +317,7 @@ index fa7f751..9e33c59 100644
                  const t = self.target.load(.seq_cst);
                  const v = self.backend.eventValue();
                  const held = self.holds.load(.seq_cst) > 0;
-@@ -359,12 +523,23 @@ pub fn Engine(comptime B: type) type {
+@@ -359,12 +592,23 @@ pub fn Engine(comptime B: type) type {
          }
  
          fn drain(self: *Self) void {
@@ -273,7 +343,7 @@ index fa7f751..9e33c59 100644
              self.drain();
          }
      };
-@@ -491,6 +666,237 @@ pub const Trace = struct {
+@@ -491,6 +735,237 @@ pub const Trace = struct {
  
  pub const TraceEngine = Engine(Trace);
  

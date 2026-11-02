@@ -213,3 +213,17 @@ lock rather than reacquiring it to signal. This only bounds the metadata
 preflight; its subsequent actual worker/backend join is still a separate
 unbounded retirement issue, not an all-client/device lifecycle reservation.
 The normal unopted serving path is unchanged.
+
+
+The subsequent opted-in MIMO retirement candidate retains at most one join
+helper for each original warm worker. The helper checks the actual pthread_join
+result and publishes it as its last engine access. The caller observes that
+result for at most one monotonic second without holding metadata locks. A
+timeout/clock failure/helper failure keeps the engine/backend and records sticky
+source uncertainty; it does not cancel the worker, create another join or free
+its context. Stop closes the local warm gate before waiting. Pending/failed
+join state refuses fiosCanDestroy even with no lifetime ticket. A later explicit
+original-owner cleanup may finish after a positive original-worker join; the
+process source fence remains true. Failed detach retains its helper handle and
+refuses cleanup. This is local warm-worker retirement only; unopted serving
+behavior is unchanged, and no all-client/device terminal authority follows.

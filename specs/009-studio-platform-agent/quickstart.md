@@ -14,6 +14,14 @@ Append `--protocol-version 3` for a source capsule declaring timestamped replies
 
 Large-model metadata preparation has a separate [CPU-only source config/index/header check](native-acceptance-preparation.md#ordinary-source-parser-check). It uses fixed reviewed metadata hashes and genuine parser/hash/region functions, with no weight payload, table mapping, server or model request. Its receipt covers declared source inputs and header arithmetic; it grants no installed/native authority or runtime-fit proof.
 
+A separate ordinary MIMO retirement fixture uses the genuine warm Metal queue and two tiny chunks behind a private three-second event wait:
+
+```sh
+node scripts/check-platform-mimo-bounded-join.mjs --isolated --source /ABS/PRIVATE_NATIVE_SOURCE --mimo-source /ABS/PRIVATE_MIMO_SOURCE --zig /ABS/PINNED_ZIG
+```
+
+Debug/ReleaseSafe each require bounded caller refusal while the original worker remains pending, then positive local cleanup after actual completion with sticky source uncertainty retained. The private plugin copy appends fixture entry points to unchanged original C++ bytes; no body rewrite, injected error or model runs. Exactly one test/mode, two tiny chunks/mode,20s execution/300s build bounds and denied IP networking apply. Source authority stays false. Do not run alongside a build using the same native source inputs; retain the reported private copy/receipts for diagnosis.
+
 The ordinary MIMO metadata cleanup regression uses the genuine plugin SDK graph and an idle Engine thread:
 
 ```sh
