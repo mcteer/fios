@@ -172,3 +172,24 @@ retains coverage unknown/authority false. Existing binary protocol and its
 partial owner-stream result are unchanged. The enclosing builder enables this
 composition only for the verified cumulative atomic-component source patch;
 older SDKs do not silently substitute an implementation.
+
+
+## Readonly backend fence envelope
+
+The existing local authenticated `/v1/fios/source-components` source observation
+uses JSON component envelope3. Its exact fields are `schema_version`, `scope`,
+`coverage`, `authority`, `mlx`, `mimo_warm_uncertain` and
+`ds4_metal_uncertainty`. Scope is `independent_partial_backend_fences`, coverage
+is `unknown` and authority is false. `mlx` retains the previous schema1/2
+subdomain without changing its availability semantics. MIMO is a boolean or
+null when unavailable; DS4 is a mask0..31 or null when unavailable. Null never
+means false/zero. The mask maps pending buffer1, TP service2, TP GPU4,
+ordinary keepalive8 and pread16. Loads are independent, not a coherent combined
+backend snapshot. False/zero cannot establish idle, native completion or
+admission authority. Envelope3 does not change private control protocol2/3.
+
+The finite model-free backend-fence fixture correlates the HTTP source instance
+with the original private control channel, checks increasing source sequence
+and leaves the model catalog empty. It performs no control action. This is
+source observation evidence, not installed process enrollment or all-client
+coverage.

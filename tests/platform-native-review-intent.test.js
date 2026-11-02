@@ -90,6 +90,30 @@ test('source components remain partial even when epochs agree and counters are z
  assert.throws(()=>nativeReviewComponents(fixture(),'b'.repeat(32)));assert.throws(()=>nativeReviewComponents(fixture(),instance,1));
 });
 
+test('backend source fences retain independent unknown coverage and unavailable values',()=>{
+ const instance='a'.repeat(32);
+ const mlx={schema_version:1,scope:'partial_mlx_source_components',coverage:'unknown',authority:false,available:false};
+ const components={schema_version:3,scope:'independent_partial_backend_fences',coverage:'unknown',authority:false,mlx,mimo_warm_uncertain:true,ds4_metal_uncertainty:1};
+ const packet={source_instance:instance,sample_sequence:1,components};
+ const parsed=nativeReviewComponents(packet,instance);
+ assert.equal(parsed.available,false);assert.equal(parsed.authority,false);
+ assert.equal(parsed.component_envelope_schema_version,3);
+ assert.deepEqual(parsed.backend_fences,{scope:'independent_partial_backend_fences',coverage:'unknown',authority:false,mimo_warm_uncertain:true,ds4_metal_uncertainty:1});
+ const absent=nativeReviewComponents({...packet,components:{...components,mimo_warm_uncertain:null,ds4_metal_uncertainty:null}},instance);
+ assert.equal(absent.backend_fences.mimo_warm_uncertain,null);assert.equal(absent.backend_fences.ds4_metal_uncertainty,null);
+ const cold=nativeReviewComponents({...packet,components:{...components,mimo_warm_uncertain:false,ds4_metal_uncertainty:0}},instance);
+ assert.equal(cold.available,false);assert.equal(cold.authority,false);assert.equal(cold.backend_fences.coverage,'unknown');
+});
+
+test('backend source fence schema refuses invented coverage, coercion and recursive envelopes',()=>{
+ const instance='a'.repeat(32);
+ const base={schema_version:3,scope:'independent_partial_backend_fences',coverage:'unknown',authority:false,mlx:{schema_version:1,scope:'partial_mlx_source_components',coverage:'unknown',authority:false,available:false},mimo_warm_uncertain:false,ds4_metal_uncertainty:0};
+ const parse=components=>nativeReviewComponents({source_instance:instance,sample_sequence:1,components},instance);
+ for(const patch of [{authority:true},{coverage:'all_clients'},{scope:'all_backends'},{coherent:true},{mimo_warm_uncertain:0},{mimo_warm_uncertain:'false'},{ds4_metal_uncertainty:-1},{ds4_metal_uncertainty:32},{ds4_metal_uncertainty:true},{ds4_metal_uncertainty:'1'},{ds4_metal_uncertainty:1.5}])assert.throws(()=>parse({...base,...patch}));
+ assert.throws(()=>parse({...base,mlx:base}));
+ assert.throws(()=>parse({...base,mlx:{...base.mlx,authority:true}}));
+});
+
 test('source journal correlation keeps planning/check model-free and run explicit',()=>{
  const scenario='journal-correlation',digest='a'.repeat(64);
  assert.deepEqual(nativeReviewIntent(['--plan','--capsule','/private/capsule','--sha256',digest,'--output','/private/plan','--scenario',scenario]),{mode:'plan',inferenceRequested:false,scenario});
