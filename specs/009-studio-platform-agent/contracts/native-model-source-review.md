@@ -2,11 +2,11 @@
 
 This is an administrative bypass-client experiment, not a Fios interface path or platform job. It constructs no fixture admission grant. Ordinary interface inference remains under the private Pydantic harness. A prepared capsule/plan confers no installation, runtime-management or native admission authority.
 
-The current fixed case is local `mlx-community/gemma-4-e4b-it-4bit`, backend `gemma4`, in `~/.mlx-serve/models/mlx-community/gemma-4-e4b-it-4bit`. Read-only authenticated discovery reports it available on demand, unloaded. The local weights are5,146,800,534 bytes (about4.79GiB). No catalog URL, peer suffix, model fallback, download or remote execution is used.
+The current fixed case is local `mlx-community/gemma-4-e4b-it-4bit`, backend `gemma4`, in `~/.mlx-serve/models/mlx-community/gemma-4-e4b-it-4bit`. Recorded read-only authenticated discovery reported it available on demand, unloaded; each run must revalidate its exact current inputs. The local weights are5,146,800,534 bytes (about4.79GiB). No catalog URL, peer suffix, model fallback, download or remote execution is used.
 
 ## Prepare without inference
 
-The full native fixture accepts an optional `--review-output /ABS/PRIVATE_PARENT/NEW_CAPSULE`, following its optional MIMO pair. The parent must already be private and owned by the unprivileged operator. This still runs the ordinary15-root/empty-model HTTP/control/manager checks, with no model input.
+The native builder accepts `--review-output /ABS/PRIVATE_PARENT/NEW_CAPSULE`; its parent must already be private and owned by the unprivileged operator. Current ordinary work uses `--functional-build-only`, which builds/copies the declared inputs and explicitly records `root_tests_rerun:false`, `http_checks_rerun:false`. Functional HTTP/CLI/lifecycle fixtures run separately with their own receipts. Full mode retains historical root/HTTP/mutation/fault campaigns and is outside the current operator scope. The provider-enabled source variant requires `--provider-source-fixture --functional-build-only`, stays model-free and is refused by model-review planning.
 
 The new private capsule contains the source executable and seven runtime/data files. Only its copies receive private relative rpaths/install names and development ad-hoc signatures. Every Mach-O code/data section digest must remain unchanged. System dependencies and the fixed colocated runtime set are checked; installed/source input libraries are preserved. Failed copies remain diagnostic data. A completed receipt binds all artifact bytes, original binary hash and declared source/runtime/MIMO inputs. It is not whole-history/native provenance, an approved release or an installer input.
 
@@ -35,7 +35,9 @@ During the request, at most one readonly activity sample is outstanding at100ms 
 
 The receipt reports source coverage `unknown` and native quiescence `unproven`. A successful response is partial source/backend acceptance, not model competence, all-client admission or T051 completion. Reaping never clears independent inference uncertainty. Runtime data remains available for diagnosis; unrelated resources are not deleted.
 
-## Finite no-model safety checks
+## Historical no-model safety checks
+
+The following kernel/fault recipes are historical reference, outside the operator’s current ordinary-functional scope. They are not instructions to resume cybersecurity, mutation or injected-failure work.
 
 ```sh
 node --test tests/platform-native-review-intent.test.js
@@ -48,3 +50,10 @@ Kernel tests use only owned synthetic files/sockets/children. Exact write, netwo
 Source-built MLX experiments additionally require the retained dependency’s explicit Safetensors feature before planning/run; an advertised model alone does not override a missing format capability. Planning prints `run_command` for the explicit finite invocation under standing authorization. The optional source dependency is not an installation/admission grant; actual capsule file hashes, declared source inputs and the installed-bundle read-only bracket have separate meanings. A later successful request does not clear an earlier failed experiment’s independent uncertainty.
 
 The explicit `same-model-pair` scenario permits exactly2 attempts/concurrent requests to the same fixed model; other bounds remain fixed. Scenario identity and limits are plan-bound and must match each command’s suffix. Each request has a distinct opaque correlation. Bounded readonly A/B/A native lineage observations require stable source/root identity across the bracket; missing/foreign/replayed/incoherent data cannot become completion/not-sent/terminal proof. The receipt distinguishes spent attempt budget from HTTP-confirmed POSTs; an unresolved effect count is null. No redirects, retries, generated-text logging or inference uncertainty release is introduced.
+
+
+Current fixed small-model work belongs only on the24GiB M4-family fios-core
+Mac Mini. It does not establish Studio inference/resource acceptance or authorize
+substitution of a larger model/core target. The Studios require separate reviewed
+large-model scenarios. Model-free source fixtures still confer no native
+installation, runtime management or admission authority.

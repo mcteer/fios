@@ -14,6 +14,14 @@ Append `--protocol-version 3` for a source capsule declaring timestamped replies
 
 Large-model metadata preparation has a separate [CPU-only source config/index/header check](native-acceptance-preparation.md#ordinary-source-parser-check). It uses fixed reviewed metadata hashes and genuine parser/hash/region functions, with no weight payload, table mapping, server or model request. Its receipt covers declared source inputs and header arithmetic; it grants no installed/native authority or runtime-fit proof.
 
+The ordinary MIMO metadata cleanup regression uses the genuine plugin SDK graph and an idle Engine thread:
+
+```sh
+node scripts/check-platform-mimo-metadata-lifecycle.mjs --isolated --source /ABS/PRIVATE_NATIVE_SOURCE --mimo-source /ABS/PRIVATE_MIMO_SOURCE --zig /ABS/PINNED_ZIG
+```
+
+It runs Debug/ReleaseSafe with two ordinary250ms metadata publications, requiring both cleanup preflights to refuse within100ms and leave quit/source uncertainty unchanged before later healthy local cleanup. No backend dispatch, model, injected error, source rewrite or historical campaign runs. The actual worker join after successful preflight remains a separate retirement issue. Do not run this alongside a native build using the same source inputs; the driver creates exact nonce-bound graph/helper files and removes only its own unchanged generated text.
+
 Current source envelope4 observations have a separate finite model-free check:
 
 ```sh

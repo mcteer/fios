@@ -203,3 +203,13 @@ observation. Host flags are independent atomic sticky loads, without mutexes,
 initialization, joins, cleanup or reset. DS4_NO_GPU source builds omit GPU-only
 host worker flags; absence/zero never establishes complete coverage. The
 server's host field is available only for its enabled macOS DS4 build.
+
+
+The opted-in MIMO warm-engine cleanup preflight now refuses metadata contention
+with pthread_mutex_trylock in both fiosCanDestroy and tryDestroy. Refusal
+leaves the engine/backend, quit state and independent source uncertainty
+unchanged. A positive destruction path publishes quit/wake under the existing
+lock rather than reacquiring it to signal. This only bounds the metadata
+preflight; its subsequent actual worker/backend join is still a separate
+unbounded retirement issue, not an all-client/device lifecycle reservation.
+The normal unopted serving path is unchanged.
