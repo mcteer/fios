@@ -518,6 +518,46 @@ pub const Tracker = struct {
     pub fn snapshot(self: *Tracker, io: std.Io) Snapshot {
         self.mutex.lockUncancelable(io);
         defer self.mutex.unlock(io);
+        return self.snapshotLocked();
+    }
+    // Disjoint primary request attribution only. Auxiliary identities remain
+    // in the legacy associated-model snapshot, never additional requests here.
+    // No resident state, queue/device phase, all-client coverage or idle proof.
+    pub fn primarySnapshot(self: *Tracker, io: std.Io) Snapshot {
+        self.mutex.lockUncancelable(io);
+        defer self.mutex.unlock(io);
+        var result = self.snapshotLocked();
+        result.models = @splat(.{});
+        result.model_count = 0;
+        for (self.slots) |slot| {
+            if (slot.phase == .vacant) continue;
+            const index = slot.primary orelse {
+                if (slot.phase != .ingress) self.uncertain = true;
+                continue;
+            };
+            const model = self.models[index];
+            if (model.len == 0 or model.owners == 0) {self.uncertain = true;continue;}
+            const row = &result.models[index];
+            row.id = model.id;row.len = model.len;
+            switch (slot.phase) {
+                .preparing => row.preparing += 1,
+                .active => row.active += 1,
+                .responding => row.responding += 1,
+                else => self.uncertain = true,
+            }
+        }
+        for (0..model_capacity) |index| {
+            const row = result.models[index];
+            if (row.preparing + row.active + row.responding == 0) continue;
+            result.models[result.model_count] = row;
+            result.model_count += 1;
+        }
+        for (result.model_count..model_capacity) |index| result.models[index] = .{};
+        result.uncertain = self.uncertain;
+        return result;
+    }
+    // Caller holds the tracker mutex; one original source capture per call.
+    fn snapshotLocked(self: *Tracker) Snapshot {
         self.advanceCaptureLocked();
         var result: Snapshot = .{ .sequence = self.sequence, .sample_sequence = self.sample_sequence, .uncertain = self.uncertain,
             .instance = self.instance, .initialized = self.initialized,

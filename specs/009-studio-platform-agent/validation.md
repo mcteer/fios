@@ -1949,3 +1949,30 @@ Refreshed Debug/optimized composition passes
 `/private/tmp/fios-009-serving-runtime-native-grVSKp/receipt.json`, fixture
 2b896d9324cd4ea156007285d2e07a1d15389a1b477b16da041ac93e9f62acf7. Same totals and synthetic/native-authority limits apply;
 38/55 whole tasks remain complete. No installed action or inference occurred.
+
+
+### 2026-11-01 disjoint primary-request source snapshot
+
+The tracker adds primarySnapshot under the same existing mutex/source capture
+counter. Legacy snapshot continues reporting all associated primary/auxiliary
+models. The new view reports each live request root once against its primary
+identity; ingress without a bound model stays in aggregate ingress, and retained
+references keep the original root after connection release. No allocator/I/O/
+callback occurs under the mutex. At most256 slots/64 model rows are examined;
+no resident/queued/device phase, idle proof or all-client coverage is invented.
+
+Actual missing-interface compile red `/tmp/fios-009-primary-activity-red.log`
+precedes implementation; it is not an old-runtime behavioral witness. Final
+separately checked Debug/ReleaseSafe compilations and denied-network programs
+pass `/tmp/fios-009-primary-activity-final-{debug,release}{-build,}.log`, one
+ordinary metadata test per mode. Real Tracker API operations create two distinct
+primary roots, one auxiliary identity and unbound ingress; associated snapshot
+has3 model identities, primary view2 with correct disjoint phases. A retained
+root remains active/responding after its connection reference leaves; ordinary
+release returns empty without uncertainty. No backend/model action, artificial
+counter, fault or mutation campaign runs. Source SHA
+3ca49dc67daa2307f79afc739831f0f3652efb817cec81231df98403a7ce89c5,
+fixture0db2eba47fecfd4ba720a41d2b3d9ea3c5e868df8e13a093c88e6c0a7702a7b9.
+Transport/manager normalization and enclosing native rebuild remain pending for
+this source increment. Existing capsules/packages predate it.38/55 whole tasks
+remain complete; source/mock receipts do not complete T020/all-client admission.
