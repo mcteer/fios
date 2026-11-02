@@ -3310,3 +3310,62 @@ uncertain, coverage unknown and native quiescence unproven. No generated text,
 Studio service/model action, platform/Pydantic job acceptance or native authority.
 No new supervisor/drain receipt is claimed for this actor-only increment;
 preceding b765a709… results remain distinct. Whole tasks remain38/55.
+
+
+### 2026-11-02 DS4 actor negative-fence integration (source checkpoint)
+
+The same original-reference retirement policy now also reads the existing DS4
+host/Metal source uncertainty for actual DS4-bearing prefill/decode scopes.
+An internal readonly wrapper performs only the two existing noninitializing
+atomic queries; unavailable builds retain an explicit non-authoritative stub.
+Actual entry metadata is inspected only after all request owners are retained.
+The generic retirement helper remains the already-tested policy: known source
+uncertainty quarantines original references; healthy retirement releases them.
+No C/Metal participant implementation, GPU synchronization, native admission
+capability or partial wire coverage changes.
+
+The selected ordinary actor case adds actual cold DS4/Llama getter calls, with
+no native context/model/backend initialization. Its positive policy input is
+metadata only; it is not a new positive loaded DS4-error observation. Native
+build at `/tmp/fios-009-ds4-actor-native-build.log` is in progress. Prior DS4
+component receipts stay separate because the participant sources are unchanged.
+Complete asynchronous/all-client/device proof and whole tasks remain open;
+whole task count38/55.
+
+
+Focused Node24/24, native driver syntax and inference boundary pass for this
+DS4 wrapper/actor source change (`/tmp/fios-009-ds4-actor-{node,boundary}.log`).
+The enclosing native compile remains in progress. These source checks do not
+validate a loaded DS4 failure or change native activation status.
+
+
+Final DS4-wrapper native build passes8/8 executable steps and3/3 selected test
+roots, including actual cold C/ObjC getter calls, entry refusal and the existing
+original-owner retirement policy. `/tmp/fios-009-ds4-actor-native-build.log`,
+private build `/tmp/f9-linked-native-NryuIC`; capsule
+`/private/tmp/fios-009-ds4-actor-native-review/capsule`, review SHA
+11ce8417dcac8500943852812015534a9dbb6125f9e5c307adb7c7fa9046f177,
+binaryf7a3c12b4a585322bea8584c6a127654fae71a3ccc09919d36eaf606c5dcb1f7,
+root patch590e8337136167a737126f9aa9202f42910c2f074bd691872ea67ce20c673e27.
+Declared DS4 actor-retention1/Llama actor-retention1 are source feature metadata,
+not native/G2 authority. No historical matrices, loaded DS4 error, model or
+participant initializer runs in this selected test. Source declaration scope
+remains separate from complete native/runtime provenance.
+
+
+DS4-wrapper capsule's bounded core regression plan
+4828c0755f2ff1200f9706cc9016b67a44df62d0e6a8181cf0ff5a2bf853284e is
+consumed. Check issues0 POSTs (`/tmp/fios-009-ds4-actor-model-check.log`,
+`/private/tmp/f9-model-check-d7W9Kc`). Run issues1 exact core-only Gemma POST,
+two tokens/two deltas/complete response in4,533ms
+(`/tmp/fios-009-ds4-actor-model-run.log`,
+`/private/tmp/f9-model-run-gbxS9s/result.json`). Fixed core24GiB M4Pro host,
+`mlx-community/gemma-4-e4b-it-4bit`,512 context/2 tokens/1 POST/1 concurrent,
+10s request/15s work/7s cleanup,12GiB sampled native/128MiB observer limits are
+unchanged. Native RSS3,234,906,112/footprint4,674,161,760; observer RSS12,238,848/
+footprint4,719,120. SDK44/44 coherent partial samples; primary4/3 positive,
+original root5/sequence95. Both own processes reap with original journal claim
+uncertain, coverage unknown and native quiescence unproven. This exercises the
+normal shared actor path on core MLX, not a loaded DS4 error or Studio/platform/
+Pydantic acceptance. No generated text, native service action or authority.
+Whole tasks remain38/55; no new supervisor/drain receipt is claimed.

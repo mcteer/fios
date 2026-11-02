@@ -634,3 +634,9 @@ healthy ownership releases, uncertain original references remain quarantined,
 and a later refused owner cannot clear them. It is not a loaded Llama failure
 or device-terminal test. The selected case and two import-only roots total3/3;
 historical root/HTTP/fault matrices remain skipped.
+
+
+That same fixed actor case now also calls the actual cold DS4 host/Metal
+negative getters, without initializing a native engine. The generic retirement
+policy covers the known-uncertain input; this does not create a loaded DS4
+failure, prove healthy asynchronous completion or expand all-client coverage.

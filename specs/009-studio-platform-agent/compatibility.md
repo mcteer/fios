@@ -189,3 +189,12 @@ reference retention/TLS restoration and real entry refusal. Neither exercises
 a loaded Llama synchronization error or establishes all-client/backend/device
 terminal coverage. The partial wire frame keeps its three declared sources.
 G2/T002/T021/T022 and installed activation remain open.
+
+
+The same scoped retirement now consumes the existing DS4 host/Metal negative
+flags when actual model metadata names a DS4 engine. Cold genuine getters and
+the unchanged original-reference retirement policy pass the selected native
+case; actual entry reads stay after complete owner retention. C/Metal
+participants and partial wire coverage are unchanged. Neither a cold zero nor
+a successful core MLX regression is loaded DS4 completion/Studio acceptance;
+G2 and full backend ownership remain open.

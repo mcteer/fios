@@ -282,10 +282,10 @@ index 12bd0f7..f32c794 100644
  // Clear `seq` (position -> 0).
  void    mlx_llama_seq_reset(mlx_llama_ctx *c, int32_t seq);
 diff --git a/src/arch/ds4.zig b/src/arch/ds4.zig
-index 338a1b1..024d844 100644
+index 338a1b1..90d2271 100644
 --- a/src/arch/ds4.zig
 +++ b/src/arch/ds4.zig
-@@ -16,6 +16,8 @@
+@@ -16,13 +16,24 @@
  // straight through.
  
  const std = @import("std");
@@ -294,15 +294,23 @@ index 338a1b1..024d844 100644
  const builtin = @import("builtin");
  const gguf_meta = @import("../gguf_meta.zig");
  const ffi = @import("../ds4_ffi.zig");
-@@ -23,6 +25,7 @@ const metal_sources = @import("ds4_metal_sources");
+ const metal_sources = @import("ds4_metal_sources");
  const log = @import("../log.zig");
  
++// Readonly negative evidence for tracked native participants only. No backend
++// initialization, joining or idle/terminal assertion follows from a zero read.
++pub fn fiosSourceUncertain() bool {
++    if (comptime builtin.os.tag != .macos) return false;
++    return ffi.ds4_gpu_source_uncertainty() != 0 or ffi.ds4_host_source_uncertainty() != 0;
++}
++
++
  pub const Error = error{
 +    LifetimeUnavailable,
      EngineOpenFailed,
      SplitGgufUnsupported,
      SessionCreateFailed,
-@@ -275,11 +278,15 @@ pub const Ds4Engine = struct {
+@@ -275,11 +286,15 @@ pub const Ds4Engine = struct {
      handle: *ffi.Engine,
      model_path_owned: [:0]u8,
      mtp_path_owned: ?[:0]u8,
@@ -318,7 +326,7 @@ index 338a1b1..024d844 100644
          try refuseSplitGguf(allocator, model_path);
          if (builtin.os.tag == .macos) try ensureMetalKernels(allocator);
  
-@@ -331,60 +338,94 @@ pub const Ds4Engine = struct {
+@@ -331,60 +346,94 @@ pub const Ds4Engine = struct {
              return Error.EngineOpenFailed;
          }
  
@@ -426,7 +434,7 @@ index 338a1b1..024d844 100644
          const text_z = allocator.dupeSentinel(u8, text, 0) catch return Error.OutOfMemory;
          defer allocator.free(text_z);
  
-@@ -404,6 +445,8 @@ pub const Ds4Engine = struct {
+@@ -404,6 +453,8 @@ pub const Ds4Engine = struct {
          user: []const u8,
          think_mode: ffi.ThinkMode,
      ) Error![]i32 {
@@ -435,7 +443,7 @@ index 338a1b1..024d844 100644
          const sys_z: ?[:0]u8 = if (system) |s| (allocator.dupeSentinel(u8, s, 0) catch return Error.OutOfMemory) else null;
          defer if (sys_z) |s| allocator.free(s);
          const user_z = allocator.dupeSentinel(u8, user, 0) catch return Error.OutOfMemory;
-@@ -432,6 +475,8 @@ pub const Ds4Engine = struct {
+@@ -432,6 +483,8 @@ pub const Ds4Engine = struct {
          turns: []const ChatTurn,
          think_mode: ffi.ThinkMode,
      ) Error![]i32 {
@@ -444,7 +452,7 @@ index 338a1b1..024d844 100644
          var tv = ffi.Tokens{};
          defer ffi.ds4_tokens_free(&tv);
  
-@@ -459,6 +504,8 @@ pub const Ds4Engine = struct {
+@@ -459,6 +512,8 @@ pub const Ds4Engine = struct {
      /// Single token → bytes lookup. Caller owns the returned buffer.
      /// Returned bytes are NOT NUL-terminated; the slice length is authoritative.
      pub fn detokenizeOne(self: *Ds4Engine, allocator: std.mem.Allocator, token_id: i32) Error![]u8 {
@@ -453,7 +461,7 @@ index 338a1b1..024d844 100644
          var len_out: usize = 0;
          const raw = ffi.ds4_token_text(self.handle, @intCast(token_id), &len_out);
          if (raw == null or len_out == 0) {
-@@ -469,21 +516,24 @@ pub const Ds4Engine = struct {
+@@ -469,21 +524,24 @@ pub const Ds4Engine = struct {
      }
  
      pub fn createSession(self: *Ds4Engine, ctx_size: i32) Error!*Ds4Session {
@@ -482,7 +490,7 @@ index 338a1b1..024d844 100644
          };
          return sess;
      }
-@@ -498,13 +548,22 @@ fn tokensToOwnedSlice(allocator: std.mem.Allocator, tv: *const ffi.Tokens) Error
+@@ -498,13 +556,22 @@ fn tokensToOwnedSlice(allocator: std.mem.Allocator, tv: *const ffi.Tokens) Error
      return buf;
  }
  
@@ -506,7 +514,7 @@ index 338a1b1..024d844 100644
  };
  
  pub const Ds4Session = struct {
-@@ -512,27 +571,50 @@ pub const Ds4Session = struct {
+@@ -512,27 +579,50 @@ pub const Ds4Session = struct {
      engine: *Ds4Engine,
      handle: *ffi.Session,
      ctx_size: i32,
@@ -563,7 +571,7 @@ index 338a1b1..024d844 100644
          var holder = try TokenHolder.init(self.allocator, prompt_ids);
          defer holder.deinit();
          var err_buf: [256]u8 = undefined;
-@@ -544,6 +626,8 @@ pub const Ds4Session = struct {
+@@ -544,6 +634,8 @@ pub const Ds4Session = struct {
      }
  
      pub fn commonPrefix(self: *Ds4Session, prompt_ids: []const i32) Error!i32 {
@@ -572,7 +580,7 @@ index 338a1b1..024d844 100644
          var holder = try TokenHolder.init(self.allocator, prompt_ids);
          defer holder.deinit();
          return @intCast(ffi.ds4_session_common_prefix(self.handle, &holder.tv));
-@@ -551,6 +635,8 @@ pub const Ds4Session = struct {
+@@ -551,6 +643,8 @@ pub const Ds4Session = struct {
  
      /// Evaluate one new token. Caller has already synced to the prefix.
      pub fn eval(self: *Ds4Session, token: i32) Error!void {
@@ -581,7 +589,7 @@ index 338a1b1..024d844 100644
          var err_buf: [256]u8 = undefined;
          const rc = ffi.ds4_session_eval(self.handle, @intCast(token), &err_buf, err_buf.len);
          if (rc != 0) {
-@@ -559,15 +645,21 @@ pub const Ds4Session = struct {
+@@ -559,15 +653,21 @@ pub const Ds4Session = struct {
          }
      }
  
@@ -606,7 +614,7 @@ index 338a1b1..024d844 100644
          return @intCast(ffi.ds4_session_sample(self.handle, temperature, @intCast(top_k), top_p, min_p, rng));
      }
  
-@@ -581,6 +673,8 @@ pub const Ds4Session = struct {
+@@ -581,6 +681,8 @@ pub const Ds4Session = struct {
          eos_token: i32,
          out_tokens: []i32,
      ) Error!i32 {
@@ -615,7 +623,7 @@ index 338a1b1..024d844 100644
          var c_out_buf = self.allocator.alloc(c_int, out_tokens.len) catch return Error.OutOfMemory;
          defer self.allocator.free(c_out_buf);
  
-@@ -618,6 +712,8 @@ pub const Ds4Session = struct {
+@@ -618,6 +720,8 @@ pub const Ds4Session = struct {
          rng: *u64,
          out_tokens: []i32,
      ) Error!i32 {
@@ -624,7 +632,7 @@ index 338a1b1..024d844 100644
          var c_out_buf = self.allocator.alloc(c_int, out_tokens.len) catch return Error.OutOfMemory;
          defer self.allocator.free(c_out_buf);
          var err_buf: [256]u8 = undefined;
-@@ -645,18 +741,30 @@ pub const Ds4Session = struct {
+@@ -645,18 +749,30 @@ pub const Ds4Session = struct {
          return @intCast(n);
      }
  
@@ -658,7 +666,7 @@ index 338a1b1..024d844 100644
          var err_buf: [256]u8 = undefined;
          const rc = ffi.ds4_session_load_snapshot(self.handle, &snap.inner, &err_buf, err_buf.len);
          if (rc != 0) {
-@@ -733,3 +841,182 @@ test "kernel hash is stable across calls" {
+@@ -733,3 +849,182 @@ test "kernel hash is stable across calls" {
      const b = computeKernelHash();
      try std.testing.expectEqualSlices(u8, &a, &b);
  }
@@ -842,13 +850,16 @@ index 338a1b1..024d844 100644
 +    }
 +}
 diff --git a/src/arch/ds4_stub.zig b/src/arch/ds4_stub.zig
-index 82e806a..2080af0 100644
+index 82e806a..5250576 100644
 --- a/src/arch/ds4_stub.zig
 +++ b/src/arch/ds4_stub.zig
-@@ -5,11 +5,13 @@
+@@ -5,11 +5,16 @@
  //! panic. Signatures mirror `arch/ds4.zig` exactly.
  
  const std = @import("std");
++
++// Backend absent; this never establishes native idle or terminality.
++pub fn fiosSourceUncertain() bool { return false; }
 +pub const CloseTicket = @import("../backend_lifetime.zig").Close;
  const ffi = @import("../ds4_ffi_stub.zig");
  
@@ -859,7 +870,7 @@ index 82e806a..2080af0 100644
      EngineOpenFailed,
      SplitGgufUnsupported,
      SessionCreateFailed,
-@@ -61,6 +63,7 @@ pub const OpenOptions = struct {
+@@ -61,6 +66,7 @@ pub const OpenOptions = struct {
  };
  
  pub const Ds4Snapshot = struct {
@@ -867,7 +878,7 @@ index 82e806a..2080af0 100644
      pub fn free(self: *Ds4Snapshot) void {
          _ = self;
          @panic(unavailable);
-@@ -79,38 +82,42 @@ pub const Ds4Engine = struct {
+@@ -79,38 +85,42 @@ pub const Ds4Engine = struct {
          _ = opts;
          return Error.EngineOpenFailed;
      }
@@ -924,7 +935,7 @@ index 82e806a..2080af0 100644
      }
      pub fn tokenizeText(self: *Ds4Engine, allocator: std.mem.Allocator, text: []const u8) Error![]i32 {
          _ = self;
-@@ -160,22 +167,24 @@ pub const Ds4Engine = struct {
+@@ -160,22 +170,24 @@ pub const Ds4Engine = struct {
  };
  
  pub const Ds4Session = struct {
@@ -955,7 +966,7 @@ index 82e806a..2080af0 100644
      }
      pub fn sync(self: *Ds4Session, prompt_ids: []const i32) Error!void {
          _ = self;
-@@ -209,23 +218,23 @@ pub const Ds4Session = struct {
+@@ -209,23 +221,23 @@ pub const Ds4Session = struct {
          _ = out_tokens;
          @panic(unavailable);
      }
@@ -985,7 +996,7 @@ index 82e806a..2080af0 100644
      }
      pub fn evalSpeculative(
          self: *Ds4Session,
-@@ -241,11 +250,11 @@ pub const Ds4Session = struct {
+@@ -241,11 +253,11 @@ pub const Ds4Session = struct {
          _ = out_tokens;
          @panic(unavailable);
      }
@@ -2741,7 +2752,7 @@ index da1f791..8ee23d0 100644
 +    try std.testing.expectEqual(@as(usize, 1), registry.entries.count());
 +}
 diff --git a/src/scheduler.zig b/src/scheduler.zig
-index 9e12566..3078231 100644
+index 9e12566..40e60ff 100644
 --- a/src/scheduler.zig
 +++ b/src/scheduler.zig
 @@ -32,6 +32,8 @@
@@ -4463,7 +4474,7 @@ index 9e12566..3078231 100644
              _ = sch.ane_builds.fetchAdd(1, .acq_rel);
              const t = std.Thread.spawn(.{}, aneBuildThread, .{ sch, req, arch }) catch return aneBuildThread(sch, req, arch);
              t.detach();
-@@ -6663,7 +7768,101 @@ pub fn genYieldEnabled(cuda: bool, env: ?[]const u8) bool {
+@@ -6663,7 +7768,107 @@ pub fn genYieldEnabled(cuda: bool, env: ?[]const u8) bool {
  /// connection. We bracket it with the model's `gen_busy` flag for visibility
  /// and signal `done` so the conn thread in `runGeneration` wakes. Several
  /// merged jobs (`takeMergeable`) run as one `run_many` call.
@@ -4471,6 +4482,7 @@ index 9e12566..3078231 100644
 +// every distinct origin; nested single-request actors restore this full set.
 +const FiosGenActorContext = struct {
 +    has_llama_context: bool = false,
++    has_ds4_engine: bool = false,
 +    held: ?fios_ownership.Retained = null,
 +    previous: ?fios_ownership.Token = null,
 +    previous_group: ?[]const fios_ownership.Token = null,
@@ -4529,12 +4541,16 @@ index 9e12566..3078231 100644
 +            }
 +        }
 +    }
++    fn knownBackendUncertain(self: *const FiosGenActorContext) bool {
++        return (self.has_llama_context and arch_llama.fiosSourceUncertain()) or
++            (self.has_ds4_engine and arch_ds4.fiosSourceUncertain());
++    }
 +    fn finish(self: *FiosGenActorContext, io: std.Io) void {
-+        self.finishWithLlamaFence(io, self.has_llama_context and arch_llama.fiosSourceUncertain());
++        self.finishWithBackendFence(io, self.knownBackendUncertain());
 +    }
 +    // Native caller supplies only its actual fixed noninitializing getter.
 +    // The named metadata fixture exercises retirement policy without a backend.
-+    fn finishWithLlamaFence(self: *FiosGenActorContext, io: std.Io, known_uncertain: bool) void {
++    fn finishWithBackendFence(self: *FiosGenActorContext, io: std.Io, known_uncertain: bool) void {
 +        fios_ownership.current = self.previous;
 +        fios_ownership.current_group = self.previous_group;
 +        if (self.held) |held| {
@@ -4545,6 +4561,7 @@ index 9e12566..3078231 100644
 +        }
 +        self.held = null;
 +        self.has_llama_context = false;
++        self.has_ds4_engine = false;
 +    }
 +};
 +fn failFiosGenRequests(sch: *Scheduler, reqs: []*GenRequest) void {
@@ -4565,7 +4582,7 @@ index 9e12566..3078231 100644
      const req = reqs[0];
      req.model.gen_busy = true;
      var gy = GenYield{ .sch = sch, .step_sw = io_util.Stopwatch.init(sch.io) };
-@@ -6760,14 +7959,29 @@ fn shouldClearCache(decision: bool, cached: usize) bool {
+@@ -6760,14 +7965,29 @@ fn shouldClearCache(decision: bool, cached: usize) bool {
  /// accounting. The conn thread already marked the entry `.evicting` and
  /// drained its refcount in `unloadModel`.
  fn runUnloadRequest(sch: *Scheduler, req: *UnloadRequest) void {
@@ -4596,7 +4613,7 @@ index 9e12566..3078231 100644
      // unloadResident freed the arrays into MLX's allocator cache — clear it
      // so the unload actually returns the memory to the OS (the whole point
      // of the load→generate→unload flow).
-@@ -6795,10 +8009,6 @@ fn runUnloadRequest(sch: *Scheduler, req: *UnloadRequest) void {
+@@ -6795,10 +8015,6 @@ fn runUnloadRequest(sch: *Scheduler, req: *UnloadRequest) void {
      // configuration the policy exists to avoid.
      logWiredPolicy(mlx.applyWiredPolicy());
  
@@ -4607,7 +4624,7 @@ index 9e12566..3078231 100644
  }
  
  fn dflashContextCoversPrefix(context_len: usize, prefix_len: usize) bool {
-@@ -7331,10 +8541,10 @@ fn runPrefillDs4(sch: *Scheduler, slot: *Slot, engine: *arch_ds4.Ds4Engine) !voi
+@@ -7331,10 +8547,10 @@ fn runPrefillDs4(sch: *Scheduler, slot: *Slot, engine: *arch_ds4.Ds4Engine) !voi
          break :blk created;
      };
  
@@ -4620,7 +4637,7 @@ index 9e12566..3078231 100644
          return err;
      };
  
-@@ -7414,9 +8624,9 @@ fn llamaSampling(slot: *const Slot) arch_llama.Sampling {
+@@ -7414,9 +8630,9 @@ fn llamaSampling(slot: *const Slot) arch_llama.Sampling {
  fn runDs4DecodeTick(sch: *Scheduler, slot: *Slot, session: *arch_ds4.Ds4Session) !void {
      const engine = slot.model.ds4_engine.?;
      const next_id: i32 = if (slot.sampling.temperature <= 0.0)
@@ -4632,7 +4649,7 @@ index 9e12566..3078231 100644
              slot.sampling.temperature,
              @intCast(slot.sampling.top_k),
              slot.sampling.top_p,
-@@ -7433,7 +8643,7 @@ fn runDs4DecodeTick(sch: *Scheduler, slot: *Slot, session: *arch_ds4.Ds4Session)
+@@ -7433,7 +8649,7 @@ fn runDs4DecodeTick(sch: *Scheduler, slot: *Slot, session: *arch_ds4.Ds4Session)
      const tok_u32: u32 = @intCast(next_id);
  
      // EOS handling — match the MLX path: do NOT emit the stop token.
@@ -4641,7 +4658,7 @@ index 9e12566..3078231 100644
          finishSlot(sch, slot, "stop");
          return;
      }
-@@ -7442,17 +8652,17 @@ fn runDs4DecodeTick(sch: *Scheduler, slot: *Slot, session: *arch_ds4.Ds4Session)
+@@ -7442,17 +8658,17 @@ fn runDs4DecodeTick(sch: *Scheduler, slot: *Slot, session: *arch_ds4.Ds4Session)
      // verifies several more, advancing ds4's KV internally (no separate eval).
      // It emits `[sampled, accepted…]`, so this tick may push several tokens.
      // Mirrors ds4's own CLI loop; engages only under greedy sampling.
@@ -4663,7 +4680,7 @@ index 9e12566..3078231 100644
              slot.markError("ds4_spec_failed");
              return;
          };
-@@ -7460,7 +8670,7 @@ fn runDs4DecodeTick(sch: *Scheduler, slot: *Slot, session: *arch_ds4.Ds4Session)
+@@ -7460,7 +8676,7 @@ fn runDs4DecodeTick(sch: *Scheduler, slot: *Slot, session: *arch_ds4.Ds4Session)
          for (spec_buf[0..n_usize]) |t| {
              const t_u32: u32 = @intCast(t);
              // EOS may appear mid-batch — stop, and never emit it.
@@ -4672,7 +4689,7 @@ index 9e12566..3078231 100644
                  finishSlot(sch, slot, "stop");
                  return;
              }
-@@ -7482,7 +8692,7 @@ fn runDs4DecodeTick(sch: *Scheduler, slot: *Slot, session: *arch_ds4.Ds4Session)
+@@ -7482,7 +8698,7 @@ fn runDs4DecodeTick(sch: *Scheduler, slot: *Slot, session: *arch_ds4.Ds4Session)
      // Advance ds4's KV by feeding the freshly-sampled token. After this
      // the session is in the state expected by the NEXT decode tick.
      session.eval(next_id) catch |err| {
@@ -4681,7 +4698,7 @@ index 9e12566..3078231 100644
          return err;
      };
  
-@@ -7518,8 +8728,12 @@ test "ds4MtpShouldEngage: >1 draft tokens + greedy (legacy MTP and DSpark)" {
+@@ -7518,8 +8734,12 @@ test "ds4MtpShouldEngage: >1 draft tokens + greedy (legacy MTP and DSpark)" {
  /// the slot keeps decoding.
  fn emitLlamaToken(sch: *Scheduler, slot: *Slot, tok: i32) bool {
      const engine = slot.model.llama_engine.?;
@@ -4695,7 +4712,7 @@ index 9e12566..3078231 100644
          finishSlot(sch, slot, "stop");
          return false;
      }
-@@ -8304,6 +9518,12 @@ fn interleaveDecodeTick(sch: *Scheduler) u64 {
+@@ -8304,6 +9524,13 @@ fn interleaveDecodeTick(sch: *Scheduler) u64 {
  }
  
  fn runPrefill(sch: *Scheduler, slot: *Slot) !void {
@@ -4704,26 +4721,27 @@ index 9e12566..3078231 100644
 +    defer fios_actor_context.finish(sch.io);
 +    // Inspect resource metadata only after every native owner is retained.
 +    fios_actor_context.has_llama_context = slot.model.llama_ctx != null;
++    fios_actor_context.has_ds4_engine = slot.model.ds4_engine != null;
 +
      // Mark the phase for the whole of prefill, and clear both signals on EVERY
      // exit path (success, cancel, error). `requests_prefilling` flips at entry
      // so the panel isn't blind until the first chunk lands; the chunk loop in
-@@ -8815,6 +10035,14 @@ fn sumInflightGeneratedTokens(active: anytype) u64 {
+@@ -8815,6 +10042,14 @@ fn sumInflightGeneratedTokens(active: anytype) u64 {
  
  fn runDecodeTick(sch: *Scheduler, active: []*Slot) !void {
      if (active.len == 0) return;
 +    var fios_actor_context: FiosGenActorContext = .{};
 +    try fios_actor_context.beginSlots(sch, active);
 +    defer fios_actor_context.finish(sch.io);
-+    for (active) |slot| if (slot.model.llama_ctx != null) {
-+        fios_actor_context.has_llama_context = true;
-+        break;
-+    };
++    for (active) |slot| {
++        if (slot.model.llama_ctx != null) fios_actor_context.has_llama_context = true;
++        if (slot.model.ds4_engine != null) fios_actor_context.has_ds4_engine = true;
++    }
 +
  
      // Publish the in-flight generated-token aggregate for the gauge sampler.
      // Runs after the whole tick (all decode work + any finishSlot calls) on
-@@ -9384,7 +10612,7 @@ fn runSingleDecodeTick(sch: *Scheduler, slot: *Slot) !void {
+@@ -9384,7 +10619,7 @@ fn runSingleDecodeTick(sch: *Scheduler, slot: *Slot) !void {
  fn runSingleDecodeTickInner(sch: *Scheduler, slot: *Slot) !void {
      // ds4-backed slot: drive the engine's session forward by one token. No
      // PLD / drafter / batched paths apply — ds4 has its own internal MTP
@@ -4732,7 +4750,7 @@ index 9e12566..3078231 100644
      if (slot.ds4_session) |session| {
          return runDs4DecodeTick(sch, slot, session);
      }
-@@ -13042,3 +14270,146 @@ test "a refusal right after a two-model eviction waits for the memory to come ba
+@@ -13042,3 +14277,151 @@ test "a refusal right after a two-model eviction waits for the memory to come ba
      mark.record(1_100, 17 * GiB);
      try std.testing.expect(waitForUnload(211 * GiB, 108 * GiB, mark, 1_200));
  }
@@ -4825,6 +4843,11 @@ index 9e12566..3078231 100644
 +
 +test "fios native llama actor preserves independently uncertain owners" {
 +    const io = std.testing.io;
++    // Actual cold C/ObjC getters; a false read is not native idle evidence.
++    const cold_ds4: FiosGenActorContext = .{ .has_ds4_engine = true };
++    const cold_llama: FiosGenActorContext = .{ .has_llama_context = true };
++    try std.testing.expect(!cold_ds4.knownBackendUncertain());
++    try std.testing.expect(!cold_llama.knownBackendUncertain());
 +    {
 +        // Missing ownership must refuse before an unset model pointer is read.
 +        // Empty registry/slot metadata only; no backend handles or threads.
@@ -4857,7 +4880,7 @@ index 9e12566..3078231 100644
 +        var actor: FiosGenActorContext = .{ .held = retained, .previous = previous, .previous_group = previous_group, .has_llama_context = true };
 +        fios_ownership.current = retained.tokens[0];
 +        fios_ownership.current_group = retained.tokens[0..retained.count];
-+        actor.finishWithLlamaFence(io, uncertain);
++        actor.finishWithBackendFence(io, uncertain);
 +        try std.testing.expect(std.meta.eql(previous, fios_ownership.current));
 +        if (previous_group) |group| {
 +            try std.testing.expect(fios_ownership.current_group != null);

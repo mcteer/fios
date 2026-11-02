@@ -147,3 +147,9 @@ the enclosing thread-local context does not refund that original ownership;
 the tracker is fenced and the references remain quarantined. Healthy actor
 retirement still releases its references. This retains source correlation and
 model pins, without issuing native terminal proof or broadening wire coverage.
+
+The same retirement policy also consumes the existing DS4 host/Metal negative
+flags for DS4-bearing scopes. The wrapper performs only the established atomic
+reads; it initializes no engine and synchronizes no device. Both backend-kind
+bits come from model metadata after complete owner retention. Missing/zero
+negative flags cannot prove healthy asynchronous completion or native idle.
