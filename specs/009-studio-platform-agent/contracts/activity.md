@@ -166,3 +166,11 @@ retiring, including media/MLX actors with no Llama/DS4 kind bit. Known native
 SDK/MIMO/other enrolled uncertainty preserves that actor's original reference
 set and correlation. This is a negative retention check; late errors and
 healthy asynchronous completion still require the unfinished native contract.
+
+A synchronous preparation whose explicit parent is the actual current caller
+preserves that caller's stable merged group during SDK capture. The scalar
+child still spans CPU preparation, while native captures retain every original
+request instead of only the first lineage. The outer storage already outlives
+the nested scope for TLS restoration, and SDK capture deep-copies its tokens.
+Unrelated explicit parents retain scalar attribution. This does not establish
+complete queued ancestry or native/G2 coverage.

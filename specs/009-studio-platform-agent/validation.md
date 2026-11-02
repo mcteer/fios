@@ -3508,3 +3508,85 @@ uncertain, coverage unknown and native quiescence unproven. No generated text,
 Studio model/service action, platform/Pydantic acceptance or native authority.
 No new supervisor/drain receipt is claimed for this actor-only source change;
 preceding artifacts' receipts stay distinct. Whole tasks remain38/55.
+
+
+### 2026-11-02 nested preparation and merged origins (source checkpoint)
+
+The existing nested preparation installs a scalar child and clears its caller's
+stable merged TLS group. The new ordinary case uses two actual correlated
+metadata request roots, the real generation context helper, a nested active
+preparation and the genuine native SDK-owner capture/release API. It then
+retires the original actor/client references and checks whether both original
+lineages remain in the captured descriptor. No model, backend handle, GPU
+buffer, SDK substitute or injected backend fault is constructed.
+
+The original scalar-only behavior is compiling at
+`/tmp/fios-009-nested-origins-prior-native-build.log`. No red/fix or accepted
+capsule is claimed yet; source inputs stay frozen. The planned change preserves
+the already-stable outer group only when the explicit parent is the actual
+current native caller, keeping unrelated explicit-parent work separate. Group
+storage already outlives the nested scope for existing TLS restoration; native
+SDK capture deep-copies it. Queued/other ancestry and complete native/G2 coverage
+remain separate unfinished work. Whole tasks remain38/55.
+
+
+The genuine metadata capture reproduces first-origin-only retention:
+`covers=0 first=true second=false` after retiring outer actor/client references.
+`/tmp/fios-009-nested-origins-prior-native-build.log`, private build
+`/tmp/f9-linked-native-xQUz6L`: executable8/8 succeeds; selected unit compile25s
+succeeds, then2 pass/1 fail (3 total). No compiler failure is counted as the
+behavioral red, and no accepted prior capsule is produced. The captured object
+is the actual native SDK-owner descriptor, not a backend or descriptor mock.
+
+The nested scope now preserves the already-stable outer group only for its
+exact current explicit caller; unrelated explicit parents retain scalar
+attribution. SDK capture deep-copies all original request tokens before the
+outer scope retires. The old broader metadata fixture's nested expectations
+are updated to the intended full group, but its historical matrix is not run.
+Fixed selected build is in progress at
+`/tmp/fios-009-nested-origins-native-build.log`. Source inputs remain frozen;
+complete queued ancestry/native/G2 acceptance stays open.
+
+
+The fixed genuine capture case passes3/3 roots and native executable8/8 steps:
+`covers=1 first=true second=true` after retiring outer actor/client references,
+then ordinary descriptor cleanup leaves0 native metadata contexts/owners without
+SDK uncertainty. No such count is promoted into device terminality. Log
+`/tmp/fios-009-nested-origins-native-build.log`, private build
+`/tmp/f9-linked-native-1BKJSK`; capsule
+`/private/tmp/fios-009-nested-origins-native-review/capsule`, review SHA
+cdd5a1dd30437a93ae0f2f112282113a39192bfa6417fe6248372c10fe472ac5,
+binary581404edd215161ca92ea2316fa81909ffd8f822a657ae6c900ce55155523829.
+Root patch03f9451e7cdfd6a791b2f5e80875d1169e7d88837b30c47bc80082c0d33a7b9a;
+declared nested-preparation origins1 is source feature metadata, not backend/
+all-client authority or whole native provenance. Node24/24, driver syntax and
+inference boundary pass (`/tmp/fios-009-nested-origins-{node,boundary}.log`).
+The selected case creates no native backend/model/GPU handle. Historical
+matrices stay unexecuted; queued/other ancestry and G2 remain open.
+
+
+Exact pushed dc158855b6be38925a1dcedf04ddb8a0e88b2b31 passes all six CI
+prerequisites plus aggregate CI gate:
+[run41491841501](https://github.com/mcteer/fios/actions/runs/41491841501).
+This is the preceding enrolled-actor checkpoint, not the uncommitted nested
+origin change. New source requires its own exact-head CI. CI remains mock-only;
+no009 merge, application deployment or native activation follows.
+
+
+Nested-origin capsule core regression plan
+11118fcaa5aea4eac1c260ced2a3a4f1c149f855e317121808999edf0fa9c4c3 is
+consumed. Check issues0 POSTs (`/tmp/fios-009-nested-origins-model-check.log`,
+`/private/tmp/f9-model-check-fpDwfi`). Run issues1 exact core-only Gemma POST,
+two tokens/two deltas/complete response in4,519ms
+(`/tmp/fios-009-nested-origins-model-run.log`,
+`/private/tmp/f9-model-run-7Kf1IH/result.json`). Fixed24GiB M4Pro core host,
+`mlx-community/gemma-4-e4b-it-4bit`,512 context/2 tokens/1 POST/1 concurrent,
+10s request/15s work/7s cleanup,12GiB sampled native/128MiB observer bounds apply.
+Native RSS3,233,775,616/footprint4,673,145,976; observer RSS12,271,616/
+footprint4,768,272. SDK44/44 coherent partial samples; primary4/3 positive,
+original root5/sequence96. Both own processes reap; original claim remains
+uncertain, coverage unknown and native quiescence unproven. No generated text,
+Studio model/service action, platform/Pydantic acceptance or native authority.
+This checks ordinary core request/retirement, not actual merged-model backend
+computation or full queued ancestry. No new supervisor/drain receipt is claimed;
+whole tasks remain38/55.

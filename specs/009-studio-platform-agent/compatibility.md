@@ -223,3 +223,16 @@ those references under known-negative metadata input. The immutable production
 probe supplies native SDK/MIMO/other source fences; it is not model input.
 Healthy local release stays separate from device completion, and late errors/
 full asynchronous/native terminal/G2 acceptance remain unfinished.
+
+
+### Nested merged-origin capture (partial source checkpoint)
+
+A synchronous preparation with its actual current explicit parent now retains
+the stable outer merged TLS group during native SDK metadata capture. The
+scalar preparation child still spans CPU work; unrelated explicit parents do
+not inherit the group. The genuine native capture API reproduces prior
+first-only retention and, after the fix, preserves both original lineages even
+after outer client/actor references retire. Capture deep-copies tokens; no new
+borrowed-storage lifetime or native authority is introduced. The metadata case
+creates no backend/model/GPU handle. Queued/other ancestry and full native/G2
+acceptance remain incomplete.

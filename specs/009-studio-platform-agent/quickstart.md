@@ -656,3 +656,11 @@ metadata with no native kind or backend handle, driving healthy/known-negative
 inputs through the actual enrolled-probe retirement path. Original lineage
 must stay retained/fenced for known uncertainty; missing healthy-retired
 lineage stays unknown. This is not a loaded SDK/MIMO failure or native authority.
+
+The fixed case
+`--functional-test 'fios native nested preparation preserves merged request origins'`
+with final `--functional-build-only` uses real generation/preparation helpers
+and the genuine native SDK-owner metadata capture API. Both original correlated
+roots must survive after outer actor/client references retire, then release
+through that descriptor's ordinary metadata cleanup. No native backend handle,
+GPU buffer, model or SDK substitute is used; this is not terminal/G2 authority.
