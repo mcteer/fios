@@ -1713,10 +1713,19 @@ index 1c9946d..9ea7149 100644
  
  pub extern fn mlx_llama_seq_prefill(c: *Ctx, seq: i32, tokens: [*]const i32, n_tokens: i32, err: ?[*]u8, errlen: usize) i32;
 diff --git a/src/main.zig b/src/main.zig
-index 2a12423..528ce86 100644
+index 2a12423..6cc588e 100644
 --- a/src/main.zig
 +++ b/src/main.zig
-@@ -524,29 +524,34 @@ fn printUsage(io: std.Io) void {
+@@ -4,6 +4,8 @@ const crt = @import("crt.zig");
+ const build_options = @import("build_options");
+ // pub: lib/mlx-serve-gguf and lib/sushi reach these through their host root.
+ pub const mlx = @import("mlx.zig");
++// Compiled serving-only request context bridge for native background warm work.
++pub const fios_warm_request_owners = @import("sdk_request_ownership.zig");
+ pub const io_util = @import("io_util.zig");
+ const mlx_gguf = @import("arch/mlx_gguf.zig");
+ const model_mod = @import("model.zig");
+@@ -524,29 +526,34 @@ fn printUsage(io: std.Io) void {
      stdout_w.interface.flush() catch {};
  }
  
@@ -1771,7 +1780,7 @@ index 2a12423..528ce86 100644
      // Materialize CLI args from the iterator API into a flat slice
      var args_iter = try std.process.Args.Iterator.initAllocator(init.minimal.args, allocator);
      defer args_iter.deinit();
-@@ -565,6 +570,40 @@ pub fn main(init: std.process.Init) !void {
+@@ -565,6 +572,40 @@ pub fn main(init: std.process.Init) !void {
          return;
      }
  
@@ -1812,7 +1821,7 @@ index 2a12423..528ce86 100644
      // ── Subcommands (Ollama-grade CLI): `mlx-serve run|pull|list|serve` ──
      // `pull` and `list` finish here; `run` and `serve` fall through into the
      // normal flag parse (skipping the consumed positionals) and serve path.
-@@ -705,28 +744,7 @@ pub fn main(init: std.process.Init) !void {
+@@ -705,28 +746,7 @@ pub fn main(init: std.process.Init) !void {
      var i: usize = arg_start;
      while (i < args.len) : (i += 1) {
          if (std.mem.eql(u8, args[i], "--version")) {
@@ -1842,7 +1851,7 @@ index 2a12423..528ce86 100644
              return;
          } else if (std.mem.eql(u8, args[i], "--help") or std.mem.eql(u8, args[i], "-h")) {
              printUsage(io);
-@@ -1918,7 +1936,7 @@ fn runDs4Offline(
+@@ -1918,7 +1938,7 @@ fn runDs4Offline(
      };
      defer engine.close();
  
@@ -1851,7 +1860,7 @@ index 2a12423..528ce86 100644
  
      // Render the prompt through ds4's built-in chat template. `prompt` is the
      // raw user text; the engine adds BOS, system markers, and the assistant
-@@ -1950,11 +1968,11 @@ fn runDs4Offline(
+@@ -1950,11 +1970,11 @@ fn runDs4Offline(
      var generated: u32 = 0;
      while (generated < max_tokens) : (generated += 1) {
          const next_id: i32 = if (temp <= 0.0)
@@ -1866,7 +1875,7 @@ index 2a12423..528ce86 100644
  
          const piece = try engine.detokenizeOne(allocator, next_id);
          defer allocator.free(piece);
-@@ -2483,13 +2501,13 @@ fn runLlamaOffline(
+@@ -2483,13 +2503,13 @@ fn runLlamaOffline(
  
      log.info("[llama] backend: Metal, model: {s}\n", .{gguf_path});
  
@@ -1882,7 +1891,7 @@ index 2a12423..528ce86 100644
  
      // Render the single user turn through the model's chat template; tokenize the
      // result with add_special=false (the template owns BOS). Fall back to a raw
-@@ -2524,7 +2542,7 @@ fn runLlamaOffline(
+@@ -2524,7 +2544,7 @@ fn runLlamaOffline(
      while (generated < max_tokens) : (generated += 1) {
          const next_id = sess.sample(.{ .temperature = temp }, &rng);
  

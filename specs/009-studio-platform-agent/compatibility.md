@@ -330,3 +330,25 @@ source uncertainty remains sticky after late original-worker cleanup, per-arm
 request-origin attribution remains unfinished, and unrelated native backend
 synchronization/all-client admission contracts remain open. Previous reviewed
 patches and artifacts retain their own identities and results.
+
+### MiMo warm request origins
+
+The separate cumulative `mlx-stream-fcb4011-request-origins.patch` composes
+bounded serving cleanup with a compiled native request-owner bridge exported
+by the serving root. Hosts without that declaration retain their prior
+component behavior and gain no ownership claim. Native `arm`/positive `hold`
+capture and merge immutable original contexts under the engine metadata lock;
+only actual native-created descriptors are accepted. Each committed chunk
+gets its own copied context and temporary worker TLS scope, with at most two
+in-flight chunks. The complete pending union remains bounded by the existing
+256-token/4096-context native limits. Missing/failed/overflowed capture fences
+source uncertainty before more submission. Callback cleanup uses cached-fence
+conditional retirement, with no backend probe under the metadata lock.
+
+The worker drains its final idle chunks before releasing the pending union,
+so healthy completed requests do not wait for model destruction. Failed
+retirement/TLS/capture and bounded join uncertainty preserve original contexts
+and lineages after late local cleanup. Component fixtures prove this finite
+private warm-queue scope only; all-client coverage, other MiMo background
+lanes, complete device/context terminality, Studio model/resource acceptance
+and native admission remain unfinished. No installed activation follows.

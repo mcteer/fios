@@ -21,6 +21,8 @@ const functionalBuildOnly=args.at(-1)==='--functional-build-only';
 if(functionalBuildOnly)args.pop();
 const servingJoinIndex=args.indexOf('--mimo-serving-join'),mimoServingJoin=servingJoinIndex>=0;
 if(mimoServingJoin){assert(functionalBuildOnly&&args.lastIndexOf('--mimo-serving-join')===servingJoinIndex);args.splice(servingJoinIndex,1);}
+const originsIndex=args.indexOf('--mimo-request-origins'),mimoRequestOrigins=originsIndex>=0;
+if(mimoRequestOrigins){assert(functionalBuildOnly&&!mimoServingJoin&&args.lastIndexOf('--mimo-request-origins')===originsIndex);args.splice(originsIndex,1);}
 const functionalIndex=args.indexOf('--functional-test');
 const registryErrorCase='ModelRegistry: memory-refused loads keep their identity, other failures expose their name';
 let functionalTest=null;
@@ -68,7 +70,7 @@ if(mimoIndex!==-1){
  mimoSource=realpathSync(args[9]);args.splice(8,2);
 }
 assert(process.platform==='darwin' && process.getuid()!==0);
-if(mimoServingJoin)assert(mimoSource,'Serving warm join requires the explicit reviewed MIMO candidate');
+if(mimoServingJoin||mimoRequestOrigins)assert(mimoSource,'Serving warm changes require the explicit reviewed MIMO candidate');
 assert((args.length===8 || (args.length===9 && ['--empty-gpu','--root-tests-only','--mutation-request-eviction-guard','--mutation-load-preparation-guard','--mutation-actor-load-preparation','--mutation-encoder-active-owner','--mutation-generation-origin','--mutation-text-origin','--mutation-native-refusal-response','--mutation-drop-model-pins','--mutation-drop-parked-pins','--mutation-access-foreign-release','--mutation-drop-registry-preparation','--mutation-clear-registry-preparation','--mutation-registry-stub-frontdoor','--mutation-registry-path-frontdoor','--mutation-registry-scan-frontdoor','--mutation-registry-teardown','--mutation-loaded-model-teardown','--mutation-retained-cpu-cleanup','--mutation-resident-unload','--mutation-ds4-snapshot-free','--mutation-llama-trim-status'].includes(args[8]))) && args[0]==='--source' && args[2]==='--zig' && args[4]==='--webp-source' && args[6]==='--metal-cpp-zip' && [args[1],args[3],args[5],args[7]].every(path.isAbsolute),
  'usage: check-platform-native-fixture.mjs --source ABS_CHECKOUT --zig ABS_ZIG --webp-source ABS_WEBP_1_6_0 --metal-cpp-zip ABS_APPLE_METAL_CPP_26_ZIP --ds4-build ABS_JSON --ds4-sha256 HEX [--mimo-source ABS_REVIEWED_CANDIDATE] [--mlx-dependency ABS_JSON --mlx-sha256 HEX --mlx-source ABS] [--mutation-native-refusal-response|--mutation-load-preparation-guard|--mutation-actor-load-preparation|--mutation-encoder-active-owner|--mutation-generation-origin|--mutation-text-origin|--mutation-request-eviction-guard|--empty-gpu|--root-tests-only|--mutation-drop-model-pins|--mutation-drop-parked-pins|--mutation-access-foreign-release|--mutation-drop-registry-preparation|--mutation-clear-registry-preparation|--mutation-registry-stub-frontdoor|--mutation-registry-path-frontdoor|--mutation-registry-scan-frontdoor|--mutation-registry-teardown|--mutation-loaded-model-teardown|--mutation-retained-cpu-cleanup|--mutation-resident-unload|--mutation-ds4-snapshot-free|--mutation-llama-trim-status]');
 if(functionalBuildOnly)assert.equal(args.length,8,'Functional build cannot select a test/mutation mode');
@@ -147,9 +149,10 @@ function verifyMimo(){
  assert.equal(git('diff','--cached','--name-only').trim(),'','no staged candidate changes');
  const candidateFiles=['gpu_warm','module','root','source'].map(name=>`src/arch/mimo_v2/${name}.zig`);
  assert.deepEqual(git('diff','--name-only').trim().split('\n'),candidateFiles,'only reviewed candidate paths may differ');
- const patchFile=path.join(root,mimoServingJoin?'platform/studio/native/mlx-stream-fcb4011-serving-join.patch':'platform/studio/native/mlx-stream-fcb4011-retirement.patch');
+ const patchFile=path.join(root,mimoRequestOrigins?'platform/studio/native/mlx-stream-fcb4011-request-origins.patch':mimoServingJoin?'platform/studio/native/mlx-stream-fcb4011-serving-join.patch':'platform/studio/native/mlx-stream-fcb4011-retirement.patch');
  assert.equal(git('diff','--no-ext-diff','--no-textconv','--',...candidateFiles),readFileSync(patchFile,'utf8'),'candidate must exactly match reviewed retirement patch');
- return {revision,patch_sha256:sha(patchFile),source_sha256:sha(path.join(mimoSource,file)),files:candidateFiles.map(file=>({path:file,sha256:sha(path.join(mimoSource,file))})),serving_bounded_join_version:mimoServingJoin?1:0,source_fixture_only:true};
+ if(mimoRequestOrigins)assert(readFileSync(path.join(source,'src/main.zig'),'utf8').includes('pub const fios_warm_request_owners = @import("sdk_request_ownership.zig");'),'Native serving root must supply the actual request owner bridge');
+ return {revision,patch_sha256:sha(patchFile),source_sha256:sha(path.join(mimoSource,file)),files:candidateFiles.map(file=>({path:file,sha256:sha(path.join(mimoSource,file))})),serving_bounded_join_version:mimoServingJoin||mimoRequestOrigins?1:0,request_origins_version:mimoRequestOrigins?1:0,source_fixture_only:true};
 }
 
 // Refuse to replace an existing differing input, or follow a link. Development

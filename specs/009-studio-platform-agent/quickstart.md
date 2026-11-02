@@ -738,3 +738,16 @@ The native source build selects this fixed cumulative patch only with
 remain unsupported. Run the component fixture and enclosing native build
 sequentially. No models or installed services are used; late local cleanup
 never clears native source uncertainty or supplies terminal/admission proof.
+
+The MiMo request-origin candidate has its own fixed cumulative patch and
+`check-platform-mimo-request-origins.mjs --isolated --source ABS_NATIVE_ROOT
+--mimo-source ABS_EXACT_CANDIDATE --zig ABS_PINNED_ZIG` driver. `--prior` selects
+the preserved serving-join candidate for the genuine missing-origin regression;
+it never rewrites production bodies or accepts an arbitrary patch. The ordinary
+driver runs healthy/cached/missing-origin fresh processes in Debug/ReleaseSafe,
+with two tiny private warm chunks for each healthy/cached case and no models.
+Its host shim adds only the actual native SDK-owner/tracker module exports to
+the original host surface. Both current native companion files must match the
+repository exactly. The enclosing native build uses `--mimo-request-origins`
+with `--functional-build-only`; it requires the serving root's actual bridge.
+Run component and enclosing builds sequentially and freeze their inputs.
