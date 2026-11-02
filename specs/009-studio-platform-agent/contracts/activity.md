@@ -160,3 +160,9 @@ uncertainty retains the exact preparation child's reference and inherited
 request correlation after the parent leaves. The probe includes native SDK
 owner-module uncertainty. Ordinary leave/snapshot remain callback-free;
 neither a false probe nor missing retired lineage is a terminal receipt.
+
+Every retained actor also reads its original tracker's enrolled probe before
+retiring, including media/MLX actors with no Llama/DS4 kind bit. Known native
+SDK/MIMO/other enrolled uncertainty preserves that actor's original reference
+set and correlation. This is a negative retention check; late errors and
+healthy asynchronous completion still require the unfinished native contract.

@@ -2752,7 +2752,7 @@ index da1f791..8ee23d0 100644
 +    try std.testing.expectEqual(@as(usize, 1), registry.entries.count());
 +}
 diff --git a/src/scheduler.zig b/src/scheduler.zig
-index 9e12566..58e048d 100644
+index 9e12566..ea55782 100644
 --- a/src/scheduler.zig
 +++ b/src/scheduler.zig
 @@ -32,6 +32,8 @@
@@ -4479,7 +4479,7 @@ index 9e12566..58e048d 100644
              _ = sch.ane_builds.fetchAdd(1, .acq_rel);
              const t = std.Thread.spawn(.{}, aneBuildThread, .{ sch, req, arch }) catch return aneBuildThread(sch, req, arch);
              t.detach();
-@@ -6663,7 +7773,107 @@ pub fn genYieldEnabled(cuda: bool, env: ?[]const u8) bool {
+@@ -6663,7 +7773,110 @@ pub fn genYieldEnabled(cuda: bool, env: ?[]const u8) bool {
  /// connection. We bracket it with the model's `gen_busy` flag for visibility
  /// and signal `done` so the conn thread in `runGeneration` wakes. Several
  /// merged jobs (`takeMergeable`) run as one `run_many` call.
@@ -4551,7 +4551,10 @@ index 9e12566..58e048d 100644
 +            (self.has_ds4_engine and arch_ds4.fiosSourceUncertain());
 +    }
 +    fn finish(self: *FiosGenActorContext, io: std.Io) void {
-+        self.finishWithBackendFence(io, self.knownBackendUncertain());
++        // Media/MLX scopes have no Llama/DS4 kind bit. Their original enrolled
++        // probe still carries independent SDK/MIMO/other native uncertainty.
++        const enrolled_uncertain = if (self.held) |held| held.tracker.backendKnownUncertain(io) else false;
++        self.finishWithBackendFence(io, self.knownBackendUncertain() or enrolled_uncertain);
 +    }
 +    // Native caller supplies only its actual fixed noninitializing getter.
 +    // The named metadata fixture exercises retirement policy without a backend.
@@ -4587,7 +4590,7 @@ index 9e12566..58e048d 100644
      const req = reqs[0];
      req.model.gen_busy = true;
      var gy = GenYield{ .sch = sch, .step_sw = io_util.Stopwatch.init(sch.io) };
-@@ -6760,14 +7970,29 @@ fn shouldClearCache(decision: bool, cached: usize) bool {
+@@ -6760,14 +7973,29 @@ fn shouldClearCache(decision: bool, cached: usize) bool {
  /// accounting. The conn thread already marked the entry `.evicting` and
  /// drained its refcount in `unloadModel`.
  fn runUnloadRequest(sch: *Scheduler, req: *UnloadRequest) void {
@@ -4618,7 +4621,7 @@ index 9e12566..58e048d 100644
      // unloadResident freed the arrays into MLX's allocator cache — clear it
      // so the unload actually returns the memory to the OS (the whole point
      // of the load→generate→unload flow).
-@@ -6795,10 +8020,6 @@ fn runUnloadRequest(sch: *Scheduler, req: *UnloadRequest) void {
+@@ -6795,10 +8023,6 @@ fn runUnloadRequest(sch: *Scheduler, req: *UnloadRequest) void {
      // configuration the policy exists to avoid.
      logWiredPolicy(mlx.applyWiredPolicy());
  
@@ -4629,7 +4632,7 @@ index 9e12566..58e048d 100644
  }
  
  fn dflashContextCoversPrefix(context_len: usize, prefix_len: usize) bool {
-@@ -7331,10 +8552,10 @@ fn runPrefillDs4(sch: *Scheduler, slot: *Slot, engine: *arch_ds4.Ds4Engine) !voi
+@@ -7331,10 +8555,10 @@ fn runPrefillDs4(sch: *Scheduler, slot: *Slot, engine: *arch_ds4.Ds4Engine) !voi
          break :blk created;
      };
  
@@ -4642,7 +4645,7 @@ index 9e12566..58e048d 100644
          return err;
      };
  
-@@ -7414,9 +8635,9 @@ fn llamaSampling(slot: *const Slot) arch_llama.Sampling {
+@@ -7414,9 +8638,9 @@ fn llamaSampling(slot: *const Slot) arch_llama.Sampling {
  fn runDs4DecodeTick(sch: *Scheduler, slot: *Slot, session: *arch_ds4.Ds4Session) !void {
      const engine = slot.model.ds4_engine.?;
      const next_id: i32 = if (slot.sampling.temperature <= 0.0)
@@ -4654,7 +4657,7 @@ index 9e12566..58e048d 100644
              slot.sampling.temperature,
              @intCast(slot.sampling.top_k),
              slot.sampling.top_p,
-@@ -7433,7 +8654,7 @@ fn runDs4DecodeTick(sch: *Scheduler, slot: *Slot, session: *arch_ds4.Ds4Session)
+@@ -7433,7 +8657,7 @@ fn runDs4DecodeTick(sch: *Scheduler, slot: *Slot, session: *arch_ds4.Ds4Session)
      const tok_u32: u32 = @intCast(next_id);
  
      // EOS handling — match the MLX path: do NOT emit the stop token.
@@ -4663,7 +4666,7 @@ index 9e12566..58e048d 100644
          finishSlot(sch, slot, "stop");
          return;
      }
-@@ -7442,17 +8663,17 @@ fn runDs4DecodeTick(sch: *Scheduler, slot: *Slot, session: *arch_ds4.Ds4Session)
+@@ -7442,17 +8666,17 @@ fn runDs4DecodeTick(sch: *Scheduler, slot: *Slot, session: *arch_ds4.Ds4Session)
      // verifies several more, advancing ds4's KV internally (no separate eval).
      // It emits `[sampled, accepted…]`, so this tick may push several tokens.
      // Mirrors ds4's own CLI loop; engages only under greedy sampling.
@@ -4685,7 +4688,7 @@ index 9e12566..58e048d 100644
              slot.markError("ds4_spec_failed");
              return;
          };
-@@ -7460,7 +8681,7 @@ fn runDs4DecodeTick(sch: *Scheduler, slot: *Slot, session: *arch_ds4.Ds4Session)
+@@ -7460,7 +8684,7 @@ fn runDs4DecodeTick(sch: *Scheduler, slot: *Slot, session: *arch_ds4.Ds4Session)
          for (spec_buf[0..n_usize]) |t| {
              const t_u32: u32 = @intCast(t);
              // EOS may appear mid-batch — stop, and never emit it.
@@ -4694,7 +4697,7 @@ index 9e12566..58e048d 100644
                  finishSlot(sch, slot, "stop");
                  return;
              }
-@@ -7482,7 +8703,7 @@ fn runDs4DecodeTick(sch: *Scheduler, slot: *Slot, session: *arch_ds4.Ds4Session)
+@@ -7482,7 +8706,7 @@ fn runDs4DecodeTick(sch: *Scheduler, slot: *Slot, session: *arch_ds4.Ds4Session)
      // Advance ds4's KV by feeding the freshly-sampled token. After this
      // the session is in the state expected by the NEXT decode tick.
      session.eval(next_id) catch |err| {
@@ -4703,7 +4706,7 @@ index 9e12566..58e048d 100644
          return err;
      };
  
-@@ -7518,8 +8739,12 @@ test "ds4MtpShouldEngage: >1 draft tokens + greedy (legacy MTP and DSpark)" {
+@@ -7518,8 +8742,12 @@ test "ds4MtpShouldEngage: >1 draft tokens + greedy (legacy MTP and DSpark)" {
  /// the slot keeps decoding.
  fn emitLlamaToken(sch: *Scheduler, slot: *Slot, tok: i32) bool {
      const engine = slot.model.llama_engine.?;
@@ -4717,7 +4720,7 @@ index 9e12566..58e048d 100644
          finishSlot(sch, slot, "stop");
          return false;
      }
-@@ -8304,6 +9529,13 @@ fn interleaveDecodeTick(sch: *Scheduler) u64 {
+@@ -8304,6 +9532,13 @@ fn interleaveDecodeTick(sch: *Scheduler) u64 {
  }
  
  fn runPrefill(sch: *Scheduler, slot: *Slot) !void {
@@ -4731,7 +4734,7 @@ index 9e12566..58e048d 100644
      // Mark the phase for the whole of prefill, and clear both signals on EVERY
      // exit path (success, cancel, error). `requests_prefilling` flips at entry
      // so the panel isn't blind until the first chunk lands; the chunk loop in
-@@ -8815,6 +10047,14 @@ fn sumInflightGeneratedTokens(active: anytype) u64 {
+@@ -8815,6 +10050,14 @@ fn sumInflightGeneratedTokens(active: anytype) u64 {
  
  fn runDecodeTick(sch: *Scheduler, active: []*Slot) !void {
      if (active.len == 0) return;
@@ -4746,7 +4749,7 @@ index 9e12566..58e048d 100644
  
      // Publish the in-flight generated-token aggregate for the gauge sampler.
      // Runs after the whole tick (all decode work + any finishSlot calls) on
-@@ -9384,7 +10624,7 @@ fn runSingleDecodeTick(sch: *Scheduler, slot: *Slot) !void {
+@@ -9384,7 +10627,7 @@ fn runSingleDecodeTick(sch: *Scheduler, slot: *Slot) !void {
  fn runSingleDecodeTickInner(sch: *Scheduler, slot: *Slot) !void {
      // ds4-backed slot: drive the engine's session forward by one token. No
      // PLD / drafter / batched paths apply — ds4 has its own internal MTP
@@ -4755,7 +4758,7 @@ index 9e12566..58e048d 100644
      if (slot.ds4_session) |session| {
          return runDs4DecodeTick(sch, slot, session);
      }
-@@ -13042,3 +14282,206 @@ test "a refusal right after a two-model eviction waits for the memory to come ba
+@@ -13042,3 +14285,254 @@ test "a refusal right after a two-model eviction waits for the memory to come ba
      mark.record(1_100, 17 * GiB);
      try std.testing.expect(waitForUnload(211 * GiB, 108 * GiB, mark, 1_200));
  }
@@ -4961,6 +4964,54 @@ index 9e12566..58e048d 100644
 +    }
 +    Probe.uncertain.store(false, .release); // Test getter only; no production backend reset.
 +    std.debug.print("PASS: actual load preparation preserves uncertain original lineage and releases healthy CPU ownership; metadata only\n", .{});
++}
++
++
++test "fios native actor preserves enrolled backend uncertainty" {
++    const io = std.testing.io;
++    const Probe = struct {
++        var uncertain: std.atomic.Value(bool) = .init(false);
++        fn read() bool { return uncertain.load(.acquire); }
++    };
++    const correlation: fios_ownership.CorrelationID = @splat(53);
++    for ([_]bool{false, true}) |uncertain| {
++        Probe.uncertain.store(false, .release);
++        var tracker: fios_ownership.Tracker = .{ .primary_guard = true };
++        try tracker.initialize(io, @splat(41));
++        try tracker.enrollBackendUncertaintyProbe(io, &Probe.read);
++        const root = try tracker.enter(io);
++        try tracker.associate(io, root, correlation);
++        try tracker.bind(io, root, "fixture/enrolled-actor");
++        const retained = try tracker.retainTokens(io, &.{root});
++        try tracker.leave(io, root);
++        const previous = fios_ownership.current;
++        const previous_group = fios_ownership.current_group;
++        // Actual retained actor state, as for media/MLX: no native model kind
++        // or backend handle is supplied by this metadata policy fixture.
++        var actor: FiosGenActorContext = .{ .held = retained, .previous = previous, .previous_group = previous_group };
++        fios_ownership.current = retained.tokens[0];
++        fios_ownership.current_group = retained.tokens[0..retained.count];
++        Probe.uncertain.store(uncertain, .release);
++        actor.finish(io);
++        try std.testing.expect(std.meta.eql(previous, fios_ownership.current));
++        if (previous_group) |group| {
++            try std.testing.expect(fios_ownership.current_group != null);
++            try std.testing.expect(fios_ownership.current_group.?.ptr == group.ptr and fios_ownership.current_group.?.len == group.len);
++        } else try std.testing.expect(fios_ownership.current_group == null);
++        const snapshot = tracker.snapshot(io);
++        const lineage = tracker.correlationSnapshot(io, correlation);
++        std.debug.print("native_enrolled_actor uncertain={} owners={d} fenced={} lineage={}\n", .{ uncertain, snapshot.owned, snapshot.uncertain, lineage.found });
++        try std.testing.expectEqual(@as(usize, if (uncertain) 1 else 0), snapshot.owned);
++        try std.testing.expectEqual(uncertain, snapshot.uncertain);
++        if (uncertain) {
++            try std.testing.expect(lineage.found and lineage.uncertain);
++            try std.testing.expectEqual(root.sequence, lineage.root_sequence);
++            try std.testing.expectEqual(@as(usize, 1), lineage.owners);
++            try std.testing.expect(tracker.hasRetainedWork(io));
++        } else try std.testing.expect(!lineage.found and lineage.uncertain);
++    }
++    Probe.uncertain.store(false, .release); // Policy fixture only, not a native reset.
++    std.debug.print("PASS: actual actor retirement consumes its enrolled negative probe and preserves original lineage; metadata only\n", .{});
 +}
 diff --git a/src/server.zig b/src/server.zig
 index 720b2c6..44049eb 100644

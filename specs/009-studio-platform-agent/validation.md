@@ -3441,3 +3441,70 @@ uncertain, coverage unknown and native quiescence unproven. No generated text,
 Studio service/model operation, platform/Pydantic acceptance or native authority.
 No new supervisor/drain receipt is claimed for this preparation-only change;
 preceding results remain separately attributed. Whole tasks remain38/55.
+
+
+### 2026-11-02 all actor scopes and enrolled negative probe (source checkpoint)
+
+Preparation retirement now preserves its original child, but media/MLX actor
+scopes can have neither a Llama nor DS4 kind bit. The existing actor retirement
+then misses the already-enrolled native SDK/MIMO negative predicate. The next
+ordinary case constructs a real retained/correlated actor with no native kind
+or backend handle and drives its actual finish path with healthy/known-negative
+policy input. It tests the existing enrolled probe, not a fake native producer.
+
+Prior behavior is compiling at
+`/tmp/fios-009-enrolled-actor-prior-native-build.log`; source retirement is still
+unchanged for this red-first run. No red/fix/accepted capsule is claimed yet.
+Native inputs stay frozen; no historical fault/mutation campaign, model request,
+installed action or native authority is added. Whole tasks remain38/55.
+
+
+The prior actual actor finish reproduces the gap: healthy owners0/fenced=false/
+missing lineage as expected; known enrolled uncertainty also owners0/fenced=false/
+missing lineage instead of retaining the original root. Log
+`/tmp/fios-009-enrolled-actor-prior-native-build.log`, private build
+`/tmp/f9-linked-native-fbm1js`: executable8/8 succeeds; unit compile22s succeeds,
+then2 pass/1 fail (3 total), expected1/found0. This is a metadata behavior red,
+not a compiler failure, backend substitute or real SDK/MIMO error observation.
+No accepted prior capsule is produced.
+
+Actor finish now queries its exact original held tracker's startup-enrolled
+probe before retirement, alongside its existing kind-specific negative reads.
+This includes media/MLX scopes without native kind bits and preserves all their
+original references on known source uncertainty. Healthy local release remains
+non-authoritative. Fixed build is running at
+`/tmp/fios-009-enrolled-actor-native-build.log`; native inputs remain frozen.
+
+
+The fixed exact selected actor case passes3/3 roots, with executable8/8 steps:
+healthy owners0/fenced=false/missing lineage unknown; known enrolled uncertainty
+owners1/fenced=true/found original lineage, despite no native kind bit. Log
+`/tmp/fios-009-enrolled-actor-native-build.log`, private build
+`/tmp/f9-linked-native-2uPdO7`; capsule
+`/private/tmp/fios-009-enrolled-actor-native-review/capsule`, review SHA
+f75ec1e5bb1392a502adac32d5d022d9ac91e4c40884edcffccf356b006eb6d3,
+binaryc887b8f8992b0fdb220c468c0ace49bcc9278ff6cb164b2e749d03d56c5ba5ab.
+Root patchf01e81c8a54cb13740445b31cac8e1cf12575b6fa9084eb6e35d84b60ca8c316.
+Declared enrolled-actor retention1 is source metadata, not all-client or native
+completion authority. Node24/24, driver syntax and inference boundary pass
+(`/tmp/fios-009-enrolled-actor-{node,boundary}.log`). No native model/backend
+handle or genuine backend-error producer is supplied by the policy fixture.
+Historical matrices remain unexecuted; whole tasks remain38/55.
+
+
+Fixed enrolled-actor capsule core regression plan
+5388f6e80e295e5988ee536666fc60cd029f1d51a3bb373dfa57fa38705dcc6e is
+consumed. Check issues0 POSTs (`/tmp/fios-009-enrolled-actor-model-check.log`,
+`/private/tmp/f9-model-check-8RkSh6`). Run issues1 exact core-only Gemma POST,
+two tokens/two deltas/complete response in4,639ms
+(`/tmp/fios-009-enrolled-actor-model-run.log`,
+`/private/tmp/f9-model-run-F0Z7qp/result.json`). Fixed24GiB M4Pro core host,
+`mlx-community/gemma-4-e4b-it-4bit`,512 context/2 tokens/1 POST/1 concurrent,
+10s request/15s work/7s cleanup,12GiB sampled native/128MiB observer bounds apply.
+Native RSS3,240,656,896/footprint4,687,154,224; observer RSS12,369,920/
+footprint4,948,496. SDK45/45 coherent partial samples; primary4/3 positive,
+original root5/sequence94. Both own processes reap; original claim remains
+uncertain, coverage unknown and native quiescence unproven. No generated text,
+Studio model/service action, platform/Pydantic acceptance or native authority.
+No new supervisor/drain receipt is claimed for this actor-only source change;
+preceding artifacts' receipts stay distinct. Whole tasks remain38/55.

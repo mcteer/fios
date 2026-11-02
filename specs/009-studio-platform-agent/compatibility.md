@@ -214,3 +214,12 @@ then retains the original parent root under known-negative policy input.
 Healthy local release leaves missing lineage explicitly unknown. These are
 policy/reference cases without a loaded backend; asynchronous ownership and
 device-terminal coverage/G2/installed activation remain unfinished.
+
+
+All retained actors now consult their original tracker's enrolled negative
+probe before retirement, covering media/MLX actors without Llama/DS4 kind bits.
+The actual finish path reproduces prior original-root/lineage loss and retains
+those references under known-negative metadata input. The immutable production
+probe supplies native SDK/MIMO/other source fences; it is not model input.
+Healthy local release stays separate from device completion, and late errors/
+full asynchronous/native terminal/G2 acceptance remain unfinished.

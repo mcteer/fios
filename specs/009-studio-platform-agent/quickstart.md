@@ -648,3 +648,11 @@ child, preserves inherited correlation under a known-negative policy input,
 and treats missing healthy-retired lineage as unknown. No model/native handle
 or genuine backend failure is created; the private fake probe is policy data,
 not backend/admission authority. Expected selected-root result remains3/3.
+
+The fixed case
+`--functional-test 'fios native actor preserves enrolled backend uncertainty'`
+also runs with final `--functional-build-only`. It uses real actor/tracker
+metadata with no native kind or backend handle, driving healthy/known-negative
+inputs through the actual enrolled-probe retirement path. Original lineage
+must stay retained/fenced for known uncertainty; missing healthy-retired
+lineage stays unknown. This is not a loaded SDK/MIMO failure or native authority.
