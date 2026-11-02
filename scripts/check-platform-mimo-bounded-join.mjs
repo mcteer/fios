@@ -6,7 +6,8 @@ import {execFileSync,spawnSync} from 'node:child_process';
 import {createHash,randomUUID} from 'node:crypto';
 import {readFileSync,writeFileSync,mkdtempSync,realpathSync,lstatSync,unlinkSync} from 'node:fs';
 import {resolve,join} from 'node:path';
-const root=resolve(import.meta.dirname,'..'),args=process.argv.slice(2);
+const root=resolve(import.meta.dirname,'..'),args=process.argv.slice(2),priorIndex=args.indexOf('--prior-ownership'),priorOwnership=priorIndex>=0;
+if(priorOwnership){assert.equal(args.lastIndexOf('--prior-ownership'),priorIndex);args.splice(priorIndex,1);}
 assert(process.platform==='darwin'&&process.getuid()>0&&args.length===7&&args[0]==='--isolated'&&args[1]==='--source'&&args[3]==='--mimo-source'&&args[5]==='--zig');
 const [source,mimo,zig]=[2,4,6].map(i=>realpathSync(args[i]));
 const directory=mkdtempSync('/private/tmp/fios-009-mimo-bounded-join-'),plugin=join(directory,'plugin');
@@ -29,6 +30,9 @@ const cppFile=join(plugin,'csrc/mimo_gpu_warm.inc'),cppOriginal=readFileSync(cpp
 assert.equal(cppOriginal.toString(),git(mimo,'show','HEAD:csrc/mimo_gpu_warm.inc'));
 // Append fixture entry points; every original implementation byte is unchanged.
 writeFileSync(cppFile,composed);
+const ownershipFile=join(root,'platform/studio/native/request_ownership.zig'),ownershipBytes=priorOwnership?Buffer.from(git(root,'show','caf43ef:platform/studio/native/request_ownership.zig')):readFileSync(ownershipFile);
+if(priorOwnership)assert.equal(hash(ownershipBytes),'3ca49dc67daa2307f79afc739831f0f3652efb817cec81231df98403a7ce89c5');
+writeFileSync(join(plugin,'src/fios-request-ownership.zig'),ownershipBytes,{mode:0o600,flag:'wx'});
 const fixtureFile=join(root,'platform/studio/native/mimo_bounded_join.zig.fixture'),fixture=readFileSync(fixtureFile),fixturePath=join(plugin,'src/fios-bounded-join.zig');writeFileSync(fixturePath,fixture,{mode:0o600,flag:'wx'});
 const original=readFileSync(join(source,'build.zig'),'utf8'),guards='    if (target.result.os.tag == .macos) {\n        if (webp_prefix) |dir| verifyCopiedDeps(b, dir) else verifyBrewDeps(b);\n        verifyMlxStage(b);\n    }\n';assert.equal(original.split(guards).length,2);
 let graph=original.replace(guards,'    // Private genuine warm retirement fixture, not staging/release attestation.\n');
@@ -53,10 +57,11 @@ try {
   const result=spawnSync('/usr/bin/sandbox-exec',['-p','(version 1)(allow default)(deny network*)',join(prefix,'bin/fios-bounded-join')],{env,encoding:'utf8',timeout:20000,maxBuffer:8192});
   const log=(result.stdout??'')+(result.stderr??'');writeFileSync(join(directory,mode+'-run.log'),log,{mode:0o600});
   assert(!result.error&&!result.signal);assert.equal(result.status,0,log);
-  assert(log.includes('PASS: genuine two-chunk warm work retains engine on bounded original-worker join'));assert(log.includes('All 1 tests passed.'));console.log(mode+': '+log.trim());
+  assert(log.includes('PASS: genuine two-chunk warm work retains engine on bounded original-worker join'));assert(log.includes('All 1 tests passed.'));assert(log.includes('PASS: actual warm source timeout refuses new work'));console.log(mode+': '+log.trim());
  }
  checkCandidate();assert.equal(readFileSync(join(source,'build.zig'),'utf8'),original);assert.equal(sha(patchFile),patchSHA);assert(readFileSync(cppFile).equals(composed));assert(readFileSync(fixtureFile).equals(fixture));assert(readFileSync(helperFile).equals(helper));
  for(const [name,digest] of Object.entries(libraries))assert.equal(sha(join(source,'lib/mlx/lib',name)),digest);
- const receipt={ok:true,directory,scope:'declared_original_warm_source_with_additive_fixture_entries_and_sdk_inputs_only',patch_sha256:patchSHA,fixture_sha256:hash(fixture),helper_sha256:hash(helper),original_warm_cpp_sha256:hash(cppOriginal),composed_warm_cpp_sha256:hash(composed),declared_sources:Object.fromEntries(paths.map(p=>[p,sha(join(mimo,p))])),libraries,modes:['Debug','ReleaseSafe'],model_posts:0,work_chunks:2,source_body_rewritten:false,fault_injection:false,native_authority:false,installed:false,native_inference:false};
+ if(!priorOwnership)assert(readFileSync(ownershipFile).equals(ownershipBytes));
+ const receipt={ok:true,directory,request_ownership_sha256:hash(ownershipBytes),prior_ownership_snapshot:priorOwnership,known_backend_refusal:true,scope:'declared_original_warm_source_with_additive_fixture_entries_and_sdk_inputs_only',patch_sha256:patchSHA,fixture_sha256:hash(fixture),helper_sha256:hash(helper),original_warm_cpp_sha256:hash(cppOriginal),composed_warm_cpp_sha256:hash(composed),declared_sources:Object.fromEntries(paths.map(p=>[p,sha(join(mimo,p))])),libraries,modes:['Debug','ReleaseSafe'],model_posts:0,work_chunks:2,source_body_rewritten:false,fault_injection:false,native_authority:false,installed:false,native_inference:false};
  writeFileSync(join(directory,'receipt.json'),JSON.stringify(receipt)+'\n',{mode:0o600,flag:'wx'});console.log(JSON.stringify(receipt));
 } finally {if(readFileSync(build,'utf8')===graph)unlinkSync(build);}

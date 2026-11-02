@@ -139,12 +139,14 @@ pub fn retainReference(reference: *std.atomic.Value(u32)) !void {
     }
 }
 
+pub const BackendUncertaintyProbe = *const fn () bool;
 pub const Tracker = struct {
     mutex: std.Io.Mutex = .init,
     // Trusted native construction only, never a wire option. The serving
     // singleton protects primary binding; local audit fixtures may track
     // multiple primaries to characterize incomplete/contradictory sources.
     primary_guard: bool = false,
+    backend_uncertainty_probe: ?BackendUncertaintyProbe = null,
     mutations: [model_capacity]MutationSlot = @splat(.{}),
     mutation_sequence: u64 = 0,
     slots: [capacity]Slot = @splat(.{}),
@@ -168,6 +170,26 @@ pub const Tracker = struct {
         }
         self.instance = instance;
         self.initialized = true;
+    }
+    // Trusted startup-only, fixed nonblocking readonly backend getter. This
+    // is negative evidence only, never a coverage/admission capability.
+    pub fn enrollBackendUncertaintyProbe(self: *Tracker, io: std.Io, probe: BackendUncertaintyProbe) !void {
+        self.mutex.lockUncancelable(io);
+        defer self.mutex.unlock(io);
+        if (!self.initialized or !self.primary_guard or self.backend_uncertainty_probe != null or
+            self.sequence != 0 or self.mutation_sequence != 0) {
+            self.uncertain = true;
+            return error.InvalidProbeEnrollment;
+        }
+        self.backend_uncertainty_probe = probe;
+    }
+    fn observeBackendUncertainty(self: *Tracker, io: std.Io) void {
+        self.mutex.lockUncancelable(io);
+        const probe = self.backend_uncertainty_probe;
+        self.mutex.unlock(io);
+        // No callback runs while holding this tracker mutex. Snapshot/read,
+        // release and response accounting do not invoke this admission edge.
+        if (probe) |read| if (read()) self.fence(io);
     }
     // Close the same mutex-protected reservation edge used by enter(). Work
     // already owning ingress is NOT cancelled. No clock/manager death resumes
@@ -321,6 +343,7 @@ pub const Tracker = struct {
     // no TLS/client identity can bypass exact token/model membership checks.
     // This is CPU/load-path ownership, NOT backend/device-terminal proof.
     pub fn reservePreparation(self: *Tracker, io: std.Io, parent: ?Token, model: []const u8) !Token {
+        self.observeBackendUncertainty(io);
         self.mutex.lockUncancelable(io);
         defer self.mutex.unlock(io);
         if (!self.initialized or self.uncertain) return error.CoverageUncertain;
@@ -366,6 +389,7 @@ pub const Tracker = struct {
     // it through destruction/rollback, and release only their exact ticket.
     // This metadata edge is not proof of device completion or native quiescence.
     pub fn beginModelMutation(self: *Tracker, io: std.Io, id: []const u8) !ModelMutation {
+        self.observeBackendUncertainty(io);
         self.mutex.lockUncancelable(io);
         defer self.mutex.unlock(io);
         if (!self.initialized or self.uncertain) return error.CoverageUncertain;
@@ -407,6 +431,7 @@ pub const Tracker = struct {
         mutation.* = .{}; // Never clear the independent uncertainty fence.
     }
     pub fn bind(self: *Tracker, io: std.Io, token: Token, model: []const u8) !void {
+        self.observeBackendUncertainty(io);
         self.mutex.lockUncancelable(io);
         defer self.mutex.unlock(io);
         return self.bindLocked(token, model);
@@ -434,9 +459,11 @@ pub const Tracker = struct {
         slot.phase = .preparing;
     }
     pub fn bindAuxiliary(self: *Tracker, io: std.Io, token: Token, model: []const u8) !void {
+        self.observeBackendUncertainty(io);
         self.mutex.lockUncancelable(io);
         defer self.mutex.unlock(io);
         const slot = try self.checked(token);
+        if (self.primary_guard and self.uncertain) return error.CoverageUncertain;
         if (slot.primary == null or (slot.phase != .preparing and slot.phase != .active)) {
             self.uncertain = true;
             return error.InvalidPhase;
@@ -448,6 +475,7 @@ pub const Tracker = struct {
         self.mutex.lockUncancelable(io);
         defer self.mutex.unlock(io);
         const slot = try self.checked(token);
+        if (to == .active and self.primary_guard and self.uncertain) return error.CoverageUncertain;
         if (slot.phase != from) {
             self.uncertain = true;
             return error.InvalidPhase;
@@ -455,6 +483,7 @@ pub const Tracker = struct {
         slot.phase = to;
     }
     pub fn active(self: *Tracker, io: std.Io, token: Token) !void {
+        self.observeBackendUncertainty(io);
         try self.advance(io, token, .preparing, .active);
     }
     pub fn responding(self: *Tracker, io: std.Io, token: Token) !void {

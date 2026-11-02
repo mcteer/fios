@@ -2192,3 +2192,108 @@ perform model or service operations. Source-only wiring is not installation,
 immutable dependency/GUI handover/native acceptance or whole T027 completion;
 38/55 whole tasks remain complete. Updated packaged public-startup smoke is
 pending at this checkpoint.
+
+
+### 2026-11-01 packaged read-only health startup checkpoint
+
+Sourcecaf43ef produces inactive nine-artifact package
+`/private/tmp/fios-009-native-health-package-Z9f9lV/release`, manifest
+ff46e463eca012d289cf5abcb9a3347f8ec873dc68aac9087461fc3accd70581,
+declared-source projectionc0ebf85464527cae6fcc40ceda44080e5a18a32133f159c822384c1c7e47c7fc,
+scratch `/private/tmp/fios-package-uqCJ0J` (`/tmp/fios-009-native-health-package.log`).
+Actual packaged supervisor/manager/CLI public startup passes both temporary-path
+spellings with explicit native-health-source validation
+(`...-package-status.log`, review
+`/private/tmp/fios-009-supervisor-package-status-NrFUzJ`). The metadata loader
+returns unconfigured, service recovery disabled, native admissions unsupported,
+MLX observation unknown and health absent;0 native actions/model POSTs.
+Data-only install plan remains blocked/incomplete, changes_made=false and
+privileged_commands=[] (`...-package-plan.json`). This proves the development
+public-path refusal/observation-only behavior, not the positive installed branch
+or native dependency/GUI handover enrollment. The declared projection includes
+Swift bootstrap/profile code, not native/SDK/source-model capsules or whole
+repository/native provenance. No installation/activation occurs;38/55 complete.
+
+
+### 2026-11-01 known backend uncertainty refuses new native work
+
+Source startup now enrolls one fixed readonly atomic predicate before tracked
+requests/model mutations. It combines existing independent MIMO warm/DS4 Metal/
+DS4 host uncertainty. New primary/preparation/auxiliary/execution/model-mutation
+edges consult it outside the tracker mutex and preserve the existing one-way
+uncertainty fence. Snapshot/primary/lineage/backend reads do not invoke it;
+existing response/reference release can finish without clearing the fence.
+False/unavailable flags never grant all-client coverage, idle, native capacity
+or terminality. This is partial known-negative refusal, with other source/
+backend/context/device contracts still incomplete and installed authority absent.
+
+Initial `/tmp/fios-009-backend-refusal-red.log` is a fixture compiler error from
+an inner declaration shadowing tracker, not an interface/runtime witness.
+Corrected fixture against a private exact caf43ef ownership snapshot has genuine
+missing-interface compile red (`...-refusal-interface-red.log`). New standalone
+Debug/ReleaseSafe tests pass (`...-refusal-{debug,release}{-build,}.log`), one
+ordinary test per mode, denied networking/10s process bound, canned unit
+predicate values explicitly not SDK/device proof. A reentrant snapshot getter
+proves the callback is outside its mutex. Original active/preparing owners and
+accounting remain; later healthy input/release do not clear uncertainty.
+
+Actual genuine original MIMO warm queue adds the same tracker integration.
+Preliminary receipt `/private/tmp/fios-009-mimo-bounded-join-GnI3MQ/receipt.json`
+passes; the stronger final case tests same-model entry and a different target
+following late local cleanup. Fixed --prior-ownership reads the exact caf43ef
+snapshot3ca49dc67daa2307f79afc739831f0f3652efb817cec81231df98403a7ce89c5,
+not a rewritten production body. Genuine prior runtime red
+`/tmp/fios-009-backend-refusal-genuine-prior.log`, review
+`/private/tmp/fios-009-mimo-bounded-join-gJupgk`, reports actual warm cleanup
+1,000,446,208ns/destroyed=false/source uncertainty, then accepts new same-model
+work (`expected error.CoverageUncertain, found void`). No counterfeit SDK object,
+hardware fault, artificial counter or historical mutation/fault campaign runs.
+
+Final genuine Debug/ReleaseSafe green
+`/tmp/fios-009-backend-refusal-genuine-final.log`, receipt
+`/private/tmp/fios-009-mimo-bounded-join-z29cC4/receipt.json`, uses the actual
+three-second private shared-event/two tiny chunks and original worker. Actual
+source timeout now causes new-work refusal; positive later original-worker join/
+local cleanup and zero remaining tracked roots still refuse another target.
+Canonical MIMO four-path patch remains22a945; only additive private fixture
+entries are appended to unchanged original C++. Ownership source
+18b9d1d96274235e4c255a33bf99f693f137dad53ea21a16761e457b41f8d4ac,
+fixture711d941077d042c1475e81e6fe317c9c13f76ed236abfe3206e2481ff77ad4da,
+helper0178ad4f6a02f289b5a01eb8f88f20f3b43d2b525ea7588bbaa59c18117b2835;
+unit6b7cc1a2ca116070aa1cfaf89d8ca01534469be9749a5714240c0bbabd7512c2.
+Declared-input scope is not whole-native/repository provenance or authority.
+
+Source server registration is in the same18-path root patch, now
+18919dd0ac9486ebeabcbf2189bf57434744c9cbb831fbc25b2a177dd58b2b29.
+ReleaseSafe ordinary primary/primary-wire/readonly-backend regressions each pass
+(`/tmp/fios-009-refusal-regression-{primary,wire,fences}{-build,}.log`).44 Node
+tests and inference boundary pass (`/tmp/fios-009-backend-refusal-{node,boundary}.log`).
+Enclosing functional source rebuild passes with historical campaigns skipped:
+`/tmp/fios-009-backend-refusal-native-build.log`, model-capable MAS capsule
+`/private/tmp/fios-009-backend-refusal-native-91EmhH/capsule`, receipt
+ed359801a0ba8b3a3c1b2455ace53be6bf274e914cd887e02f22412915812801,
+binary0a1c6f7a79954a4f071b97e1a0f5ba0cab9b14516180fb30a4c3ec30087e8bd4.
+Native readonly HTTP/private activity/backend checks pass
+(`/tmp/fios-009-backend-refusal-native-http.log`, review
+`/private/tmp/f9-backend-fences-jNF4rd`). Actual Swift manager receives lineage,
+primary and backend observations (`...-native-manager.log`, review
+`/private/tmp/f9-native-status-zIga5j`). These checks make zero model requests.
+
+Healthy core regression separately uses a new immutable one-use model plan,
+`/private/tmp/fios-009-refusal-model-plan-sj60ok7r/plan.json`, SHA
+31f2cac29d6e32bf385aaa9cbe380b98ead81ac4405043fe2534fdc6415f77f1.
+Its declared runner inputs now include149 Core Swift sources, not whole-native/
+repository provenance. Empty-model check passes (`/tmp/fios-009-refusal-model-check.log`,
+`/private/tmp/f9-model-check-wSU4nE`). Actual run passes
+(`/tmp/fios-009-refusal-model-run.log`, `/private/tmp/f9-model-run-R8Mh3W`):
+fios-core Apple M4 Pro24GiB only, exact mlx-community/gemma-4-e4b-it-4bit,
+one POST/concurrency1/context512/output2/request10s/work15s/cleanup7s,
+sampled native12GiB/observer128MiB bounds. Two tokens/two deltas complete in4444ms;
+44 source samples,4 primary samples/3 positive,preparing maximum3/active1,
+actual native root5 persisted. Native RSS3,226,501,120/footprint4,666,117,216;
+observer RSS12,435,456/footprint4,932,112. These are sampled bounds, not a GPU quota.
+Original source instance f0ddd0ad59d013f21bf0cb558ea2e41c; final primary sequence93.
+Journal remains uncertain after both local processes reap, native quiescence
+unproven/coverage unknown/authority false. Administrative source request only,
+not production admission, platform dispatch, worker competence or Studio acceptance.
+No generated text logged, no installed/Studio actions;38/55 complete.

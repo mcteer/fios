@@ -291,3 +291,21 @@ cleared sticky flag fences diagnostics. No state here releases journal claims.
 The existing single retained observe worker may issue these distinct finite
 reads; it creates no retry queue or native action from observations. Public
 startup remains unenrolled; both optional diagnostic clients default off.
+
+
+## Known backend uncertainty at native work edges
+
+Native startup enrolls one fixed nonblocking readonly backend predicate before
+any tracked request/model mutation. Primary binding, preparation, auxiliary
+binding, execution entry and destructive model mutation consult it outside the
+tracker mutex. A positive predicate sets the existing one-way tracker fence and
+refuses new work; later false input/local cleanup cannot clear it. The source
+predicate currently combines MIMO warm, DS4 Metal and DS4 host uncertainty.
+Unavailable/zero flags grant no coverage, admission, capacity or idle proof.
+Other backend/context/native contracts remain incomplete.
+
+Snapshot/primary/lineage/backend queries never invoke this admission predicate
+or import a fence as a read side effect. Existing response/reference-release
+accounting remains possible and never clears uncertainty. This does not cancel
+existing work or signal a process. It is a known-negative refusal, not an atomic
+all-client/device-terminal reservation or a production authority issuer.
