@@ -55,6 +55,7 @@ func runServiceStatusTests() throws {
 }
 
 func runServiceStatusSummaryTests() throws {
+    try runNativeHealthConfigurationTests()
     let sample=ServiceObservation(identity:nil,responding:false,sessionReady:false,credentialsReady:true,
                                   nativeIdle:nil,runtimeUnmanaged:nil,sampledAt:1000)
     let waiting=ServiceStatusPolicy.summary(desired:.running,observation:sample,launchPending:false,now:1200)
@@ -67,4 +68,10 @@ func runServiceStatusSummaryTests() throws {
     let pending=ServiceStatusPolicy.summary(desired:.running,observation:ServiceObservation(identity:nil,responding:false,
         sessionReady:true,credentialsReady:true,nativeIdle:nil,runtimeUnmanaged:nil,sampledAt:1000),launchPending:true,now:1200)
     precondition(pending["observed"] as? String == "starting" && pending["launch_pending"] as? Bool == true)
+    let healthy=ServiceObservation(identity:ServiceIdentity(pid:123,start:1,sha256:String(repeating:"a",count:64)),responding:true,
+        sessionReady:false,credentialsReady:false,nativeIdle:nil,runtimeUnmanaged:nil,sampledAt:1000,health:.healthy)
+    let monitored=ServiceStatusPolicy.summary(desired:.running,observation:healthy,launchPending:false,now:1200)
+    precondition(monitored["health"] as? String=="healthy" && monitored["observed"] as? String=="waiting_credentials")
+    precondition(ServiceStatusPolicy.summary(desired:.running,observation:healthy,launchPending:false,now:6001)["health"]==nil)
+
 }

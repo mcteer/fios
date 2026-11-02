@@ -2146,3 +2146,49 @@ native artifact, GUI handover or installed policy is created/executed. The
 preceding core model plan binds its earlier148 inputs and predates this profile
 metadata increment; it is not a current whole-repository/native attestation.
 38/55 whole tasks remain complete.
+
+
+### 2026-11-01 current separate-artifact package checkpoint
+
+Source596f29c builds inactive nine-artifact package
+manifest7cc79053b2635e6ca039bf2b88765828c5f6dad9437f2761e326e155dafa57f8,
+declared-source projection71a92ce6b15cacb335b9fa0633a07ba7580222d88b2a844034ec479b0779f7b9,
+scratch `/private/tmp/fios-package-ksszVP` (`/tmp/fios-009-managed-native-package.log`).
+Packaged supervisor/manager observation-only smoke passes both temporary-path
+spellings (`...-package-status.log`, review
+`/private/tmp/fios-009-supervisor-package-status-5GkRYP`),0 native actions/model
+POSTs. Install plan remains incomplete/gated, changes_made=false and no
+privileged commands (`...-package-plan.json`). The source projection includes
+profile/primary Swift sources, not a bundled native/SDK release or whole-native
+provenance. This package predates the following health-bootstrap increment.
+No installed root/configuration/GUI/native service change occurs;38/55 complete.
+
+
+### 2026-11-01 read-only manager health configuration off-loop
+
+Actual status fixture red `/tmp/fios-009-native-health-bootstrap-red.log` fails
+ServiceStatusTests.swift:73: the healthy response is not exposed beside its
+independent waiting_credentials state. New summary behavior exposes the fixed
+health label only for a fresh valid present observation, preserving credential
+state and omitting stale health. This grants no readiness/admission authority.
+
+Public manager startup now constructs one retained off-loop protected metadata
+loader. Only the fixed installed-role image can read installed policy; dev/wrong
+images return unconfigured before it. A valid result supplies only the existing
+bounded identity/listener-bound health collector. The manager loop polls one
+completion and starts ordinary async collection; metadata I/O cannot hold its
+heartbeat/control loop. No credential/Preferences, native-control/recovery,
+actuator or execution factory is supplied; independent readiness staysfalse.
+Metadata errors become a fixed unavailable state, with no raw data or retry.
+
+Debug/optimized complete suites pass
+`/tmp/fios-009-native-health-bootstrap-{debug,release}.log`. Ordinary held-loader
+publication proves off-main execution, pending slot retention, one completion
+and absent/malformed metadata outcomes. Synthetic health proves healthy plus
+waiting_credentials and expired-health omission.44 platform Node tests and
+inference boundary pass (`...-bootstrap-{node,boundary}.log`). These tests create
+no installed root/native artifact or positive installed observer, and do not
+perform model or service operations. Source-only wiring is not installation,
+immutable dependency/GUI handover/native acceptance or whole T027 completion;
+38/55 whole tasks remain complete. Updated packaged public-startup smoke is
+pending at this checkpoint.

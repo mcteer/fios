@@ -1,7 +1,17 @@
 import Foundation
 import Darwin
 
-enum ServiceHealthState:Equatable,Sendable {case healthy,loading,waitingCredentials,unavailable}
+enum ServiceHealthState:Equatable,Sendable {
+    case healthy,loading,waitingCredentials,unavailable
+    var statusLabel:String {
+        switch self {
+        case .healthy:return "healthy"
+        case .loading:return "loading"
+        case .waitingCredentials:return "waiting_credentials"
+        case .unavailable:return "unavailable"
+        }
+    }
+}
 
 // Bounded read-only metadata, NOT absence/identity/native-idle evidence. No
 // prompts, API keys, redirects, cookies, proxies, DNS or model requests.

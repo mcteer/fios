@@ -25,6 +25,9 @@ enum ServiceStatusPolicy {
            (0...ActivityPolicy.maximumTimestamp).contains(now) {
             value["sampled_at"]=time;value["age_ms"]=now-time
         }
+        if observed != .unknown,observation?.identity?.valid==true,let health=observation?.health {
+            value["health"]=health.statusLabel
+        }
         return value
     }
     static func observed(desired:ServiceDesired,observation:ServiceObservation?,launchPending:Bool,now:Int64)->ServiceObserved {

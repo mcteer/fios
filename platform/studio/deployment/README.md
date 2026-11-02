@@ -215,4 +215,13 @@ for the exact metadata schemas and census scopes. This does not add native files
 to the current development package, create root metadata, install/activate a
 server or approve GUI handover. Complete immutable native dependencies, native
 admission/reservations and separately reviewed installation are still required;
-current public factories and install plans remain gated.
+public native actuation factories and install plans remain gated.
+
+
+Installed manager startup now has a read-only metadata/health path. A single
+retained worker loads only the protected reviewed configuration; developer images
+return unconfigured before installed policy access. It does not read serving
+credentials/Preferences, issue native control or enable lifecycle/recovery/jobs.
+Status reports native_health_source and, for fresh present observations, health
+separately from credential readiness. See the launch-input contract above.
+Positive installed behavior remains unexecuted and requires reviewed installation.

@@ -1,9 +1,9 @@
 # Reviewed native serving launch inputs
 
-`NativeServingLaunchDocument` decodes bounded configuration metadata only. No
-public manager entry point loads it. Successful decoding issues no credential
-reader, native reservation or process actuator. A separate source-only protected
-metadata loader is described below.
+`NativeServingLaunchDocument` decodes bounded configuration metadata only.
+Installed manager startup may load its protected metadata for read-only health
+through the one-shot worker described below. Successful decoding issues no
+credential reader, native reservation or process actuator.
 
 Version1 has exactly these fields:
 
@@ -94,7 +94,7 @@ The code-only native runtime constructor now takes only supervisor-role opaque
 protected configuration, resolves its credential in memory and requires both start/stop
 reservation validators. A bare process-profile constructor is private to the
 same-file fixtures. Construction does not invoke a validator or start a child;
-public startup still has no native configuration or authority producer.
+public startup still has no native credential/control/lifecycle authority producer.
 
 Recovery correlation additionally includes the SHA256 of the exact credential-free
 reviewed document bytes, under the version2 launch-input fingerprint domain.
@@ -160,3 +160,25 @@ access and the installed domain/setting branch remain unexecuted and require
 reviewed native installation/acceptance. Synthetic JSON and actual private C
 children test decoding/preparation; they are not credential-source enrollment,
 whole-native provenance or native admission authority.
+
+
+## Read-only manager health startup
+
+The public manager starts one retained metadata-loading worker. Only the fixed
+installed manager image can pass the protected loader; development images return
+unconfigured before reading installed policy. Loading and collector construction
+run off the heartbeat/control loop. A blocked load retains its original worker;
+completion is consumed once, with no retry or fallback to another image/profile.
+The fixed status state is loading/configured/unconfigured/unavailable; raw policy
+errors are not exposed. Native and runtime service control remain separate.
+
+A valid result supplies only the existing identity/listener-bound health
+collector. Collection remains bounded and off-loop at the existing2s cadence.
+No serving credential or GUI Preferences are read. Credential/session readiness
+remain independently false in this public path. Present fresh health is exposed
+separately from the observed service state: healthy can coexist with
+waiting_credentials. Stale/invalid/identity-missing observations expose no health
+value. This is monitoring, not absence, all-client idle, admission or a lifecycle
+permit; public recovery/native-control/start/stop issuers remain absent.
+Positive installed configuration/collector behavior remains separately gated and
+unexecuted. A development package or this source wiring creates no installation.

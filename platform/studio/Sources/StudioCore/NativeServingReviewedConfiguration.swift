@@ -6,7 +6,8 @@ enum NativeServingEntryRole:Sendable {case manager,supervisor}
 
 // Protected configuration metadata only, not native activity/dependency
 // attestation, exclusive ownership, a credential reader or lifecycle authority.
-// The public manager does not load or activate this source factory.
+// Installed manager startup may load this for read-only health; native
+// credentials, control and lifecycle activation remain separate.
 struct NativeServingReviewedConfiguration:Sendable {
     static let policyPath="/Library/Application Support/Fios/Studio/native-serving-launch.json"
     static let managerPath="/Library/Application Support/Fios/Studio/bin/studio-manager"
