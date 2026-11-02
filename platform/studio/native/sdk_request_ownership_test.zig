@@ -12,21 +12,29 @@ test "fios SDK owner context transfers and restores original references" {
     const root = try ownership.shared.enter(io);
     try ownership.shared.bind(io, root, "fixture/original");
     try ownership.shared.active(io, root);
+    const second = try ownership.shared.enter(io);
+    try ownership.shared.bind(io, second, "fixture/original");
+    try ownership.shared.active(io, second);
+    const group = [_]ownership.Token{root, second};
     ownership.current = root;
+    ownership.current_group = &group;
     const captured = sdk.fios_native_request_owners_capture() orelse return error.NoCapturedOwner;
     var captured_held = true;
     defer if (captured_held) sdk.fios_native_request_owners_release(captured);
     ownership.current = null;
+    ownership.current_group = null;
     try ownership.shared.leave(io, root);
+    try ownership.shared.leave(io, second);
     try std.testing.expect(ownership.shared.hasRetainedWork(io));
     const Worker = struct {
-        fn run(context: *anyopaque, expected: ownership.Token, child: *?*anyopaque) void {
+        fn run(context: *anyopaque, expected: ownership.Token, expected_second: ownership.Token, child: *?*anyopaque) void {
             require(ownership.current == null and ownership.current_group == null);
             const temporary = ownership.shared.enter(std.testing.io) catch @panic("temporary owner");
             ownership.current = temporary;
             const first = sdk.fios_native_request_owners_enter(context);
             require(first != 0 and ownership.current.?.sequence == expected.sequence);
-            require(ownership.current_group.?.len == 1);
+            require(ownership.current_group.?.len == 2);
+            require(ownership.current_group.?[1].sequence == expected_second.sequence);
             child.* = sdk.fios_native_request_owners_capture();
             require(child.* != null);
             const nested = sdk.fios_native_request_owners_enter(child.*);
@@ -40,7 +48,7 @@ test "fios SDK owner context transfers and restores original references" {
         }
     };
     var descendant: ?*anyopaque = null;
-    const thread = try std.Thread.spawn(.{}, Worker.run, .{ captured, root, &descendant });
+    const thread = try std.Thread.spawn(.{}, Worker.run, .{ captured, root, second, &descendant });
     thread.join();
     const child = descendant orelse return error.NoDescendant;
     try std.testing.expectEqual(@as(u32, 2), sdk.diagnostic().active_contexts);

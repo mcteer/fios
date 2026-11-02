@@ -2624,3 +2624,112 @@ Both original local processes reap normally. Journal claim remains uncertain,
 native quiescence unproven/coverage unknown/authority false; no generated text
 logged. Administrative source request only, not production admission/platform
 dispatch/worker competence or Studio acceptance.38/55 whole tasks complete.
+
+### 2026-11-02 native owners through genuine SDK Metal completion cleanup
+
+The source SDK now records native owner sets on original registered Metal
+capture records, including commit completion. Capture is outside SDK metadata
+locks; the actual callback takes its owner set once and enters/restores native
+TLS around its body and actual captured-resource cleanup. Context references
+are released after local cleanup rather than depending on an arbitrarily long
+Metal block lifetime. Destructor-enqueued CPU work inherits those same native
+owners. The existing native context limits/quarantine and unknown authority
+remain unchanged. This is not every buffer-operation origin, raw/foreign SDK,
+all-backend/native terminality or an all-client reservation.
+
+A model-free core-only genuine fixture creates one SDK GPU stream/command
+buffer and a private real SharedEvent wait. It calls the reviewed event helper,
+not the raw command-buffer alias getter. No array/shader/model/inference or SDK
+counter/completion substitution is used. Original connections leave while the
+real command buffer remains waiting; after real event release, actual captured-
+object destruction enqueues a genuine CPU callback, with finite cleanup. Pinned
+Metal C++ headers are extracted from the exact reviewed archive; no installed
+service or Studio is touched.
+
+Genuine prior host-only SDK runtime red
+(`/tmp/fios-009-sdk-metal-owners-prior.log`,
+`/private/tmp/fios-009-sdk-host-owners-1SIYBm/Debug-run.log`) shows no native owner
+context/root after connection release despite that real pending buffer, failing
+`expect(owners.shared.hasRetainedWork(io))`. Original event/callback cleanup is
+released in the finite finally path. No hardware fault/counter mutation or
+historical campaign is used.
+
+New seven-path cumulative SDK patch
+df98b5fe15ef5df0a20083a147e910648edf70755e04bba571b79a9b6fd10518
+builds (`/tmp/fios-009-sdk-metal-owners-build.log`), source
+`/private/tmp/fios-009-mlx-metal-owners-grukoa7b/source`, candidate
+`/private/tmp/fios-009-mlx-component-build-AkSbN0/sdk/candidate.json`, SHA
+dcb6070bb0530ae78009767568425299a59d2859b231fae9b7c2a09696c6ff1c.
+Original CPU component lifecycle and scalar safetensors checks still pass.
+
+Actual one-origin Metal/native-owner Debug/ReleaseSafe green
+(`/tmp/fios-009-sdk-metal-owners-green.log`,
+`/private/tmp/fios-009-sdk-host-owners-WxMjuQ/receipt.json`) reports3 actual native
+contexts/1 retained root while the buffer is pending, then inherited ownership
+in the real destructor-enqueued CPU callback; local refs release while tracker
+uncertainty remains. Stronger two-origin case also passes both modes
+(`/tmp/fios-009-sdk-metal-owners-batch-green.log`,
+`/private/tmp/fios-009-sdk-host-owners-DDAnGY/receipt.json`):3 contexts/2 retained
+roots, one real buffer/one actual CPU callback per mode. This demonstrates the
+bounded originating set rather than selecting the first owner. Expanded native
+TLS/actual-thread unit also passes Debug/ReleaseSafe with two originating roots
+(`/tmp/fios-009-sdk-owner-batch-{debug,release}{-build,}.log`).
+Final C++ fixture435dd93762c36cf9cd057573049ac84a9ab7097a513ce07caa5b9b60eae62b00;
+Zig fixture45bbe6fc79b0f39d3d921cac74e298e313f06313c91b28734afd195f47c4c5eb.
+44 Node cases and boundary pass at the earlier Metal source checkpoint
+(`/tmp/fios-009-sdk-metal-owners-{node,boundary}.log`). Final enclosing native/
+healthy core model regression pending. Declared SDK/native inputs only, not
+whole-repository/native provenance or authority;38/55 whole tasks complete.
+
+Final enclosing functional-only MAS/native build passes
+(`/tmp/fios-009-sdk-metal-owners-native-build.log`), capsule
+`/private/tmp/fios-009-sdk-metal-owners-native-review/capsule`, review
+a7559bb86c0d3b0a1f42043f826050ca128a66e44df92787d0ccefd181bc5299,
+binary6d41e97ce1466137b44f14f79f6fd81fa37c7d7ed1c0c420ade7512f3885c64e.
+Host-owner format3 and Metal-owner format1 are declared source metadata only;
+wire formats remain unchanged. Actual readonly native HTTP/primary/backend
+checks pass (`/tmp/fios-009-sdk-metal-owners-native-http.log`); real manager
+lineage/primary/backend refresh passes (`...-native-manager.log`,
+`/private/tmp/f9-native-status-VNQkce`). Actual unfinished-GET drain passes
+(`...-native-drain.log`, `/private/tmp/f9-connection-drain-bvproN/receipt.json`):
+31,631ms, original owned1/ingress1/uncertain true, connection release then normal
+exit0, no force.44 Node tests and boundary pass
+(`/tmp/fios-009-sdk-metal-owners-final-{node,boundary}.log`).
+
+New core-only one-use plan `/private/tmp/fios-009-sdk-metal-owners-model-plan/plan.json`,
+SHAfb757d326d644b63e01820ad63da8f8942b89f7d85349a23d217360f7b7c3a87,
+passes empty check (`/tmp/fios-009-sdk-metal-owners-model-check.log`,
+`/private/tmp/f9-model-check-012d22`) and actual source request
+(`/tmp/fios-009-sdk-metal-owners-model-run.log`, `/private/tmp/f9-model-run-7UDXdH`).
+Exact mlx-community/gemma-4-e4b-it-4bit on fios-core Apple M4 Pro24GiB,
+one POST/concurrency1/context512/output2/request10s/work15s/cleanup7s,
+sampled native12GiB/observer128MiB limits. Two tokens/two deltas complete4479ms,
+44 coherent source samples/4 primary samples/3 positive, root5 persisted/source
+sequence95, instancef58d4e6d8864171709a5f68c06cf7e1d. Observed partial SDK maxima:
+metal pending21/captures883, host pending6/active1; these are not device idle or
+complete per-request proof. Native RSS3,242,819,584/footprint4,683,861,088;
+observer RSS12,304,384/footprint4,801,040. Original local processes reap normally,
+with journal still uncertain, native quiescence unproven/coverage unknown/
+authority false. No generated text logged. Administrative core source request,
+not production/platform/Pydantic-worker/Studio acceptance;38/55 complete.
+
+### 2026-11-02 exact-head CI compiler timeout and bounded fixture correction
+
+CI at host-owner checkpoint71b38c44d7dfd5cc00f838bed7ef1a0c3a1149cd fails its
+native mock/process job and aggregate ([run](https://github.com/mcteer/fios/actions/runs/41402671106)).
+Node22/24, browser, audits and ARM64 container/rollback succeed. Native failure
+is ETIMEDOUT/SIGTERM at check-platform-mlx-process-runtime.mjs:24 while swiftc
+compiles the disposable full-Core fixture, before that mode's runtime assertions;
+no compiler diagnostic or completed assertion failure is reported. This run
+is red, never green CI/native acceptance or deployment.
+
+Commit5c5a7b0 sets only that compiler call's finite budget to300s and emits safe
+mode/start/completed duration metadata; process/lifecycle/runtime deadlines and
+all checks remain unchanged. Full local disposable C-helper lifecycle script
+passes Debug/optimized (`/tmp/fios-009-runtime-compile-budget-proof.log`,
+`/private/tmp/fios-009-serving-runtime-DrHlX1/receipt.json`): compiler27,790ms/
+76,083ms,34 private C children/32 serving,16 guarded stops,8 manager processes,
+2 actual supervisors/2 manager replacements; no native MLX/model/installed
+operation. Synthetic readiness/permits and partial declared-source provenance
+remain explicit. Exact-head CI after push remains a separate pending result.
+No009 merge, application deployment or native installation occurred.

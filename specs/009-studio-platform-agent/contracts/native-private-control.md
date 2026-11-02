@@ -356,3 +356,20 @@ These are source-format markers only. Existing private wire formats, unknown
 all-client coverage and independent inference claims remain unchanged. Metal
 callbacks/other native actors/backends and complete request terminality remain
 separate technical work; host-queue completion never implies device completion.
+
+## Optional native owners in source MLX Metal callbacks
+
+Source format native_request_metal_owners_version1 adds native owner references
+to registered Metal capture records and the original commit callback. Capture
+happens outside SDK metadata locks. The actual callback takes its original owner
+set once, enters/restores native TLS and destroys its actual retained payloads
+inside that scope; destructor-enqueued CPU work inherits the same owner set.
+Taking the owner set out of the record separates it from any longer Metal block
+object lifetime. Capture, scope and cleanup failure remain conservative source
+uncertainty, never a positive native or device terminal receipt.
+
+This covers registered source SDK callbacks only, not every operation appended
+to a reused buffer, raw/foreign SDK work, all native backends or a complete
+native model/instance reservation. Null/unattributed contexts remain unknown.
+No source marker, zero callback count, original local release or completed tiny
+fixture grants all-client idle, device completion or installed admission.
