@@ -1,6 +1,7 @@
 import Foundation
 
 func runNativeControlTests() throws {
+    try runNativeBackendFenceWireTests()
     let instance=String(repeating:"07",count:16)
     let request=try NativeControlWire.request(operation:.pause,instance:instance,sequence:0)
     guard request.count==32,Array(request.prefix(6))==[70,73,67,57,2,1],Array(request.suffix(16))==Array(repeating:7,count:16) else {fatalError("Native control frame changed")}

@@ -118,7 +118,10 @@ struct NativeControlClient:Sendable {
     let path:String
     let peer:NativeControlPeer
     let version:UInt8
-    init(path:String,peer:NativeControlPeer,version:UInt8=2) {self.path=path;self.peer=peer;self.version=version}
+    let observesBackendFences:Bool
+    init(path:String,peer:NativeControlPeer,version:UInt8=2,observeBackendFences:Bool=false) {
+        self.path=path;self.peer=peer;self.version=version;observesBackendFences=observeBackendFences
+    }
     func request(operation:NativeControlOperation,instance:String?=nil,sequence:UInt64=0) throws -> NativeIngressStatus {
         let data=try NativeControlWire.request(operation:operation,instance:instance,sequence:sequence,version:version)
         let maximum=version==3 ? 80:64
@@ -135,6 +138,15 @@ struct NativeControlClient:Sendable {
         let completed=HostResources.nowMilliseconds()
         guard stamp>=0,completed<=ActivityPolicy.maximumTimestamp,completed>=stamp,completed-stamp<=5000 else {throw NativeControlError.invalid}
         return NativeRequestLineageSample(peer:peer,sampledAt:stamp,lineage:value)
+    }
+    func backendFences(instance:String,after sequence:UInt64=0)throws->NativeBackendFenceSample {
+        let began=HostResources.nowMilliseconds()
+        let value=try NativeBackendFenceWire.reply(exchange(NativeBackendFenceWire.request(instance:instance),maximum:64),instance:instance,after:sequence)
+        let completed=HostResources.nowMilliseconds()
+        guard (0...ActivityPolicy.maximumTimestamp).contains(began),completed>=began,
+              completed<=ActivityPolicy.maximumTimestamp,completed-began<=5000,
+              let stamp=value.sampledAt,(-1000...5000).contains(completed-stamp) else {throw NativeControlError.invalid}
+        return NativeBackendFenceSample(peer:peer,receivedAt:completed,fences:value)
     }
     private func exchange(_ data:Data,maximum:Int)throws->Data {
         guard [32,64].contains(data.count),[64,80,112].contains(maximum) else {throw NativeControlError.invalid}

@@ -39,16 +39,34 @@ function sourceInstance(){return new Promise((resolve,reject)=>{
   const instance=bytes.subarray(8,24).toString('hex');assert.notEqual(instance,'0'.repeat(32));resolve(instance);
  }catch(error){reject(error);}});
 });}
+function backendFences(instance){return new Promise((resolve,reject)=>{
+ const frame=Buffer.alloc(32);frame.write('FIB9');frame[4]=1;Buffer.from(instance,'hex').copy(frame,8);
+ const socket=createConnection(join(directory,'.fios-native-control/control.sock'));let bytes=Buffer.alloc(0);
+ socket.setTimeout(2000,()=>socket.destroy(Error('Private backend observation deadline')));
+ socket.once('connect',()=>socket.end(frame));socket.once('error',reject);
+ socket.on('data',part=>{bytes=Buffer.concat([bytes,part]);if(bytes.length>64)socket.destroy(Error('Private backend observation bound'));});
+ socket.once('end',()=>{try{
+  console.log(JSON.stringify({observed_private_backend_frame:bytes.subarray(0,4).toString(),model_posts:0}));
+  assert.equal(bytes.length,64);assert.equal(bytes.subarray(0,4).toString(),'FIF9');assert.equal(bytes[4],1);assert.equal(bytes[5],0);assert.equal(bytes[6],7);assert.equal(bytes[7],0);
+  assert.equal(bytes.subarray(8,24).toString('hex'),instance);assert(bytes.subarray(48).every(value=>value===0));
+  const sequence=bytes.readBigUInt64BE(24),sampledAt=bytes.readBigUInt64BE(32);
+  assert(sequence>0n&&sequence<=BigInt(Number.MAX_SAFE_INTEGER));assert(sampledAt>0n&&sampledAt<=BigInt(Number.MAX_SAFE_INTEGER));
+  assert(Date.now()-Number(sampledAt)>=-1000&&Date.now()-Number(sampledAt)<=5000);
+  assert.equal(bytes.readUInt32BE(40),0);assert.equal(bytes.readUInt32BE(44),0);
+  resolve({sequence:Number(sequence),sampled_at:Number(sampledAt),mimo_warm_uncertain:false,ds4_metal_uncertainty:0,ds4_host_uncertainty:0});
+ }catch(error){reject(error);}});
+});}
 let startupComplete=false,forced=false;
 console.log(JSON.stringify({retained_directory:directory,model_request_budget:0,management_action_budget:0,installed:false}));
 try {
  const end=performance.now()+10000;
  while(performance.now()<end){assert(!exited());try{const health=await get('/health');if(health.status==='ok'){startupComplete=true;break;}}catch(error){if(!['ECONNREFUSED','ECONNRESET'].includes(error.code))throw error;}await delay(50);}
  assert(startupComplete);const instance=await sourceInstance();const catalog=await get('/v1/models');assert.deepEqual(catalog.data,[]);
+ const privateFences=await backendFences(instance);
  const first=await get('/v1/fios/source-components');
  console.log(JSON.stringify({observed_component_schema:first.components?.schema_version,models:catalog.data.length,model_posts:0}));
  assert.equal(first.components?.schema_version,4);
- const parsed=nativeReviewComponents(first,instance);assert(!exited());
+ const parsed=nativeReviewComponents(first,instance,privateFences.sequence);assert(!exited());
  assert.equal(parsed.component_envelope_schema_version,4);assert.equal(parsed.backend_fences.coverage,'unknown');assert.equal(parsed.backend_fences.authority,false);
  assert.equal(parsed.backend_fences.mimo_warm_uncertain,false);assert.equal(parsed.backend_fences.ds4_metal_uncertainty,0);assert.equal(parsed.backend_fences.ds4_host_uncertainty,0);
  const second=await get('/v1/fios/source-components'),next=nativeReviewComponents(second,instance,parsed.sequence);assert(!exited());
@@ -56,7 +74,7 @@ try {
  assert.deepEqual((await get('/v1/models')).data,[]);
  child.kill('SIGTERM');await until(exited,5000);
  assert.deepEqual(verifyNativeReview(args[2],args[4]),review);
- const receipt={ok:true,directory,review_sha256:args[4],component_schema:4,backend_fences:parsed.backend_fences,source_instance:first.source_instance,first_sequence:parsed.sequence,last_sequence:next.sequence,model_posts:0,models:0,management_actions:0,installed:false,native_authority:false,all_backend_terminality:false};
+ const receipt={ok:true,directory,review_sha256:args[4],component_schema:4,private_backend_fences_version:1,private_backend_fences:privateFences,backend_fences:parsed.backend_fences,source_instance:first.source_instance,first_sequence:parsed.sequence,last_sequence:next.sequence,model_posts:0,models:0,management_actions:0,installed:false,native_authority:false,all_backend_terminality:false};
  writeFileSync(join(directory,'receipt.json'),JSON.stringify(receipt)+'\n',{mode:0o600,flag:'wx'});console.log(JSON.stringify(receipt));
 } finally {
  if(!exited()){child.kill('SIGTERM');try{await until(exited,5000);}catch{forced=true;child.kill('SIGKILL');await until(exited,5000);}}

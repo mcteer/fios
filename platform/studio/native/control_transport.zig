@@ -5,6 +5,8 @@ const std = @import("std");
 const ownership = @import("request_ownership.zig");
 const protocol = @import("control_protocol.zig");
 pub const OwnerBarrier = protocol.OwnerBarrier;
+pub const BackendFenceReadings = protocol.BackendFenceReadings;
+pub const BackendFenceSource = protocol.BackendFenceSource;
 const c = std.c;
 extern "c" fn getpeereid(fd: c_int, uid: *c.uid_t, gid: *c.gid_t) c_int;
 
@@ -13,12 +15,16 @@ pub const Bridge = struct {
     allocator: std.mem.Allocator,
     fd: c_int,
     barrier: ?OwnerBarrier,
+    backend_fences: ?BackendFenceSource = null,
     path: [256:0]u8,
     identity: c.Stat,
     stopped: std.atomic.Value(bool) = .init(false),
     thread: ?std.Thread = null,
 
     pub fn start(io: std.Io, allocator: std.mem.Allocator, version: []const u8, barrier: ?OwnerBarrier) !?*Bridge {
+        return startWithBackendFences(io, allocator, version, barrier, null);
+    }
+    pub fn startWithBackendFences(io: std.Io, allocator: std.mem.Allocator, version: []const u8, barrier: ?OwnerBarrier, backend_fences: ?BackendFenceSource) !?*Bridge {
         const enabled = c.getenv("FIOS_NATIVE_CONTROL");
         if (enabled == null) return null;
         if (!std.mem.eql(u8, std.mem.span(enabled.?), "isolated-source-fixture") or
@@ -53,7 +59,7 @@ pub const Bridge = struct {
             return error.ControlUnavailable;
         const self = try allocator.create(Bridge);
         errdefer allocator.destroy(self);
-        self.* = .{ .io = io, .allocator = allocator, .fd = fd, .barrier = barrier, .path = path_buffer, .identity = info };
+        self.* = .{ .io = io, .allocator = allocator, .fd = fd, .barrier = barrier, .backend_fences = backend_fences, .path = path_buffer, .identity = info };
         self.thread = try std.Thread.spawn(.{}, run, .{self});
         return self;
     }
@@ -116,7 +122,11 @@ pub const Bridge = struct {
             if (count > protocol.lineage_request_size) return;
         } else return;
         var storage: [protocol.lineage_response_size]u8 = undefined;
-        const response: []const u8 = if (count == protocol.request_size and input[4] == 3) timestamped: {
+        const response: []const u8 = if (count == protocol.backend_request_size and std.mem.eql(u8, input[0..4], "FIB9")) fences: {
+            const value = protocol.dispatchBackendFences(&ownership.shared, self.io, input[0..protocol.backend_request_size], self.backend_fences);
+            @memcpy(storage[0..protocol.backend_response_size], &value);
+            break :fences storage[0..protocol.backend_response_size];
+        } else if (count == protocol.request_size and input[4] == 3) timestamped: {
             const value = protocol.dispatchTimestamped(&ownership.shared, self.io, input[0..protocol.request_size], self.barrier);
             @memcpy(storage[0..protocol.timestamped_response_size], &value);
             break :timestamped storage[0..protocol.timestamped_response_size];

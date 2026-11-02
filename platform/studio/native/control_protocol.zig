@@ -11,6 +11,43 @@ pub const lineage_request_size = 64;
 pub const lineage_response_size = 112;
 pub const Status = enum(u8) { ok, invalid, maintenance, wrong_instance };
 
+// Independent partial source flags only. Null is unavailable, not false/zero.
+// No observer here grants native coverage, idle, terminality or a reservation.
+pub const BackendFenceReadings = struct {
+    mimo_warm_uncertain: ?bool = null,
+    ds4_metal_uncertainty: ?u32 = null,
+    ds4_host_uncertainty: ?u32 = null,
+};
+pub const BackendFenceSource = *const fn () BackendFenceReadings;
+pub const backend_request_size = 32;
+pub const backend_response_size = 64;
+pub fn dispatchBackendFences(tracker: *ownership.Tracker, io: std.Io, request: *const [backend_request_size]u8, source: ?BackendFenceSource) [backend_response_size]u8 {
+    var response: [backend_response_size]u8 = @splat(0);
+    @memcpy(response[0..4], "FIF9");response[4] = 1;
+    if (!std.mem.eql(u8, request[0..4], "FIB9") or request[4] != 1 or
+        !std.mem.allEqual(u8, request[5..8], 0) or !std.mem.allEqual(u8, request[24..32], 0)) {
+        response[5] = @intFromEnum(Status.invalid);return response;
+    }
+    const captured_at = std.Io.Clock.real.now(io).toMilliseconds();
+    const snapshot = tracker.snapshot(io);
+    @memcpy(response[8..24], &snapshot.instance);
+    std.mem.writeInt(u64, response[24..32], snapshot.sample_sequence, .big);
+    const stamp: u64 = if (captured_at > 0 and captured_at <= ownership.maximum_sample_sequence)
+        @intCast(captured_at) else std.math.maxInt(u64);
+    std.mem.writeInt(u64, response[32..40], stamp, .big);
+    if (!snapshot.initialized or !std.mem.eql(u8, request[8..24], &snapshot.instance)) {
+        response[5] = @intFromEnum(Status.wrong_instance);return response;
+    }
+    const flags: BackendFenceReadings = if (source) |read| read() else .{};
+    if ((flags.ds4_metal_uncertainty orelse 0) > 31 or (flags.ds4_host_uncertainty orelse 0) > 7) {
+        response[5] = @intFromEnum(Status.invalid);return response;
+    }
+    if (flags.mimo_warm_uncertain) |value| {response[6] |= 1;response[7] = @intFromBool(value);}
+    if (flags.ds4_metal_uncertainty) |value| {response[6] |= 2;std.mem.writeInt(u32, response[40..44], value, .big);}
+    if (flags.ds4_host_uncertainty) |value| {response[6] |= 4;std.mem.writeInt(u32, response[44..48], value, .big);}
+    return response;
+}
+
 // Separate readonly frame namespace: never reinterpret lineage bytes as an
 // ingress action. A missing live lineage is unknown, not terminal/not-sent.
 pub fn dispatchLineage(tracker: *ownership.Tracker, io: std.Io, request: *const [lineage_request_size]u8) [lineage_response_size]u8 {

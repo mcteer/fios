@@ -38,7 +38,7 @@ public enum ManagerRuntime {
         let nativeQueue=activeNativeControl.map {AsyncNativeControl(client:$0)}
         let nativeLineage=activeNativeControl.map {NativeLineagePoller(journal:journal,source:$0)}
         let nativeCoverage:NativeCoverage = nativeQueue == nil ? .unsupported:.unknown
-        var nativeDiagnostics=NativeControlDiagnostics(configured:nativeQueue != nil)
+        var nativeDiagnostics=NativeControlDiagnostics(configured:nativeQueue != nil,backendFencesConfigured:activeNativeControl?.observesBackendFences ?? false)
         func enqueueNative(_ command:NativeMaintenanceCommand) {
             guard let nativeQueue else {return}
             do {try nativeQueue.submit(command);nativeDiagnostics.begin(retainingObservation:nativeMaintenance.observationOnly)} catch {nativeMaintenance.failed(id:command.id);nativeDiagnostics.failed()}
@@ -120,7 +120,7 @@ public enum ManagerRuntime {
                 case .success(let value):
                     do {
                         let command=try nativeMaintenance.receive(id:result.id,value:value)
-                        nativeDiagnostics.completed(value,receivedAt:result.receivedAt)
+                        nativeDiagnostics.completed(value,receivedAt:result.receivedAt,backendFences:result.backendFences)
                         if let command {enqueueNative(command)}
                     } catch {nativeMaintenance.failed(id:result.id);nativeDiagnostics.failed()}
                 case .failure: nativeMaintenance.failed(id:result.id);nativeDiagnostics.failed()

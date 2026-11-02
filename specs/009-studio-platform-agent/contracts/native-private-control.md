@@ -227,3 +227,32 @@ original-owner cleanup may finish after a positive original-worker join; the
 process source fence remains true. Failed detach retains its helper handle and
 refuses cleanup. This is local warm-worker retirement only; unopted serving
 behavior is unchanged, and no all-client/device terminal authority follows.
+
+
+## Private readonly backend fences (version1)
+
+An explicitly opted-in source client may query independent backend flags over
+its existing UID/kernel-image-authenticated private Unix channel, without the
+native serving key. FIC2/FIC3 and HTTP envelope4 remain unchanged. A32-byte
+FIB9 request carries version1 at byte4, expected16-byte instance at8..24 and
+zero reserved bytes. The64-byte FIF9 reply contains version1/status at4/5,
+availability bits MIMO1/DS4 Metal2/DS4 host4 at6, MIMO boolean at7,
+instance8..24, big-endian sample sequence24..32, source UTC milliseconds32..40,
+Metal mask40..44, host mask44..48 and zero reserved48..64. Unavailable fields
+have zero wire values and absent availability bits; unavailable time is UINT64_MAX.
+Status0 succeeds,1 is invalid,3 is wrong instance. Masks are bounded31/7.
+
+Source capture advances the source sequence; each reply has its own original
+clock. The retained asynchronous observe worker reads ingress first and records
+its receipt before querying backend fences. Backend observation cannot refresh
+that older ingress receipt. A failed backend query does not replace a valid
+ingress result. Both exchanges remain finite, with one retained worker slot and
+no retry. Public startup remains unenrolled; this is an internal source opt-in.
+
+Manager diagnostics independently require fresh source/receipt clocks within
+5s with at most1s future tolerance, stable peer/source identity and increasing
+source sequence. Unknown gaps retain the checkpoint and previously observed
+sticky uncertainty; a later lower mask/cleared sticky flag fences the cache.
+Missing providers remain null, not false/zero. These flags never enter a native
+admission, lifecycle reservation or terminal proof. Coverage remains unknown,
+authority false, and false/zero never establishes idle or all-client completion.

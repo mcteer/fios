@@ -1827,3 +1827,57 @@ Final actual private-process proof passes `/tmp/fios-009-prepared-credential-run
 Source ca2064027157a207680535bce7f151d4358e0af6 produces a fresh nine-artifact development package `/private/tmp/fios-009-current-platform-package-szt1hwom/release` with manifest28cef4a0cd802667ef27a291b640ad900321a7968b89b62caa5a7c996c3cc4e6 and declared-source projection20790bbdde8b501a44b038f057f91b8d6fa4e5fba27483cc2d601cff193416c6. Build `/tmp/fios-009-current-platform-package.log` retains `/private/tmp/fios-package-5c7Rjz`. This includes current platform Core/credential factory sources, not the separate native server/SDK source capsule. The projection is the packer's declared input set, not whole-repository/native provenance; unrelated frontend/catalog work is excluded.
 
 Actual packaged supervisor/manager/CLI observation-only smoke passes both macOS temporary-path spellings (`/tmp/fios-009-current-platform-package-status.log`, private review `/private/tmp/fios-009-supervisor-package-status-F3m2dp`),0 native actions/0 model POSTs. No live Preferences read or installed factory activation occurs. Data-only installation review `/tmp/fios-009-current-platform-package-plan.json` remains blocked by incomplete release/interpreter/native enrollment/all-client coverage/installation authorization; privileged_commands is empty and changes_made=false. Package_complete and activation remainfalse. No launchd, Studio, native service, app merge/deployment or inference action is performed.38/55 whole tasks complete.
+
+
+### 2026-11-01 private backend observations through the manager
+
+A new opt-in FIB9/FIF9 version1 read-only frame carries independent MIMO/DS4
+Metal/DS4 host flags over the existing authenticated private Unix channel.
+FIC2/3 and HTTP4 stay unchanged. No serving key is supplied to the manager.
+The retained observe worker records ingress receipt before the separate backend
+query; neither independent source capture nor receipt can refresh the older
+phase snapshot. Missing fields remain unknown, all coverage stays unknown and
+no admission/lifecycle/terminal proof is issued. Peer/source/clock changes and
+sticky-flag regression fence diagnostics; unavailable gaps retain checkpoints.
+
+Missing-interface compile red is `/tmp/fios-009-backend-fences-wire-red.log`,
+not a behavioral witness. Genuine old capsule returns legacy FIR9 instead of
+FIF9 (`/tmp/fios-009-backend-fences-private-http-red.log`), with empty catalog
+and original-child cleanup. New Zig Debug/ReleaseSafe ordinary filtered test
+passes (`/tmp/fios-009-backend-fences-wire-{debug,release}.log`), one test per
+mode under denied networking. Canned flags are explicitly unit inputs.
+
+Fresh provider-source functional-only build passes
+`/tmp/fios-009-private-backend-native-build.log`; capsule
+`/private/tmp/fios-009-private-backend-native-58h74hnq/capsule`, review
+d32b43f589446debb275f7e3c6d406dd047e410df260c0047ffd8f088bd2f3e4,
+binary b1afdb2c4a04f81a86b55fcb94329ca852d4beb6941195ed8c3470bfc2a26ccf.
+It declares private backend version1 and HTTP4 with current MIMO22a945,
+DS4 host6bdb075 and MLX atomic3ea1f9 source candidates. Historical mutation,
+fault and counter campaigns remain skipped. This is declared-input composition,
+not whole-repository/native provenance or installed enrollment.
+
+Actual private Unix+HTTP observation passes
+`/tmp/fios-009-backend-fences-private-http-green.log`, receipt
+`/private/tmp/f9-backend-fences-WC3k48/receipt.json`: source instance
+591a9c75510bea15f468114294c76ec5, private sequence3, HTTP4 sequence4→5,
+MIMO false/Metal0/host0, both catalogs empty,0 model POSTs/control actions.
+Original-child bounded shutdown and unchanged capsule verification pass.
+
+Swift Debug and optimized complete mock suites pass
+`/tmp/fios-009-backend-fences-manager-{mock,release}.log`;44 Node tests and
+inference boundary pass (`...-node.log`, `...-boundary.log`). Genuine actual
+manager/native integration passes
+`/tmp/fios-009-backend-fences-native-manager-final.log`, receipts in
+`/private/tmp/f9-native-status-BW3Xc8`: protocol3, source health, private ingress
+running→maintenance→running, automatic lineage checkpoint and backend refresh,
+0 model requests/installed actions, authority false. Initial integration log
+`...-native-manager.log` failed a fixture assertion comparing refreshed sequence11
+with earlier snapshot8; moving refresh verification after initial snapshot checks
+corrected that test ordering. It is not source failure/red evidence. Seeded
+independent inference uncertainty remains1 after local cleanup.
+
+The earlier ca206 package does not contain this new client/protocol increment.
+All artifacts remain private/inactive; no live GUI Preferences, Studio service,
+installed policy, inference, UI authentication, merge or deployment was changed.
+No whole task closes:38/55 complete,17 open.

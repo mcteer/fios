@@ -13,14 +13,24 @@ struct NativeControlDiagnostics {
     private var value:NativeIngressStatus?
     private var receivedAt:Int64?
     private var unavailable=false
-    init(configured:Bool) {self.configured=configured}
+    private var backendObservations:NativeBackendFenceDiagnostics
+    init(configured:Bool,backendFencesConfigured:Bool=false) {
+        self.configured=configured;backendObservations=NativeBackendFenceDiagnostics(configured:backendFencesConfigured)
+    }
     mutating func begin(retainingObservation:Bool=false) {
         if !retainingObservation {value=nil;receivedAt=nil;unavailable=false}
     }
-    mutating func completed(_ value:NativeIngressStatus,receivedAt:Int64) {
+    mutating func completed(_ value:NativeIngressStatus,receivedAt:Int64,backendFences:Result<NativeBackendFenceSample,NativeControlError>?=nil) {
         self.value=value;self.receivedAt=receivedAt;unavailable=false
+        backendObservations.bind(instance:value.instance)
+        if let backendFences {
+            switch backendFences {
+            case .success(let sample):backendObservations.completed(sample,expectedInstance:value.instance,now:HostResources.nowMilliseconds())
+            case .failure:backendObservations.failed()
+            }
+        }
     }
-    mutating func failed() {value=nil;receivedAt=nil;unavailable=true}
+    mutating func failed() {value=nil;receivedAt=nil;unavailable=true;backendObservations.failed()}
     private func fresh(_ time:Int64,now:Int64)->Bool {
         (0...ActivityPolicy.maximumTimestamp).contains(time) && (0...ActivityPolicy.maximumTimestamp).contains(now) &&
         (-1000...5000).contains(now-time)
@@ -44,6 +54,7 @@ struct NativeControlDiagnostics {
             "received_at":NSNull(),"receipt_age_ms":NSNull(),"source_sampled_at":NSNull(),
             "source_sequence":NSNull(),"source_age_ms":NSNull(),"source_instance":NSNull(),"reported_counts":NSNull(),
             "ingress_closed":NSNull(),"tracker_uncertain":NSNull()]
+        if backendObservations.configured {output["backend_fences"]=backendObservations.summary(now:now)}
         guard configured,let value,let receivedAt,
               (0...ActivityPolicy.maximumTimestamp).contains(receivedAt),
               (0...ActivityPolicy.maximumTimestamp).contains(now) else {return output}
