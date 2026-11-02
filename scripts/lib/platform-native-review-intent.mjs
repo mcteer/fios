@@ -39,16 +39,17 @@ export function nativeReviewComponents(value,instance,previous=0){
  assert(typeof value.source_instance==='string'&&value.source_instance===instance&&/^[a-f0-9]{32}$/.test(instance)&&instance!=='0'.repeat(32));
  assert(Number.isSafeInteger(previous)&&previous>=0&&Number.isSafeInteger(value.sample_sequence)&&value.sample_sequence>0&&value.sample_sequence>previous);
  const state=value.components;
- if(state?.schema_version===3){
-  exact(state,['schema_version','scope','coverage','authority','mlx','mimo_warm_uncertain','ds4_metal_uncertainty']);
+ if([3,4].includes(state?.schema_version)){
+  exact(state,['schema_version','scope','coverage','authority','mlx','mimo_warm_uncertain','ds4_metal_uncertainty',...(state.schema_version===4?['ds4_host_uncertainty']:[])]);
   assert(state.scope==='independent_partial_backend_fences'&&state.coverage==='unknown'&&state.authority===false);
   assert(state.mimo_warm_uncertain===null||typeof state.mimo_warm_uncertain==='boolean');
   assert(state.ds4_metal_uncertainty===null||(Number.isInteger(state.ds4_metal_uncertainty)&&state.ds4_metal_uncertainty>=0&&state.ds4_metal_uncertainty<=31));
+  if(state.schema_version===4)assert(state.ds4_host_uncertainty===null||(Number.isInteger(state.ds4_host_uncertainty)&&state.ds4_host_uncertainty>=0&&state.ds4_host_uncertainty<=7));
   // Exactly one legacy MLX subdomain, never recursively nested envelopes.
   assert([1,2].includes(state.mlx?.schema_version));
   const mlx=nativeReviewComponents({...value,components:state.mlx},instance,previous);
-  return {...mlx,component_envelope_schema_version:3,backend_fences:{scope:state.scope,coverage:'unknown',authority:false,
-   mimo_warm_uncertain:state.mimo_warm_uncertain,ds4_metal_uncertainty:state.ds4_metal_uncertainty}};
+  return {...mlx,component_envelope_schema_version:state.schema_version,backend_fences:{scope:state.scope,coverage:'unknown',authority:false,
+   mimo_warm_uncertain:state.mimo_warm_uncertain,ds4_metal_uncertainty:state.ds4_metal_uncertainty,...(state.schema_version===4?{ds4_host_uncertainty:state.ds4_host_uncertainty}:{})}};
  }
  const base=['schema_version','scope','coverage','authority','available'];
  assert(typeof state?.available==='boolean');exact(state,state.available?[...base,'coherent','stream','host','metal',...(state.schema_version===2?['uncertainty_site']:[])]:base);

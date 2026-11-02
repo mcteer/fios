@@ -14,6 +14,14 @@ Append `--protocol-version 3` for a source capsule declaring timestamped replies
 
 Large-model metadata preparation has a separate [CPU-only source config/index/header check](native-acceptance-preparation.md#ordinary-source-parser-check). It uses fixed reviewed metadata hashes and genuine parser/hash/region functions, with no weight payload, table mapping, server or model request. Its receipt covers declared source inputs and header arithmetic; it grants no installed/native authority or runtime-fit proof.
 
+Current source envelope4 observations have a separate finite model-free check:
+
+```sh
+node scripts/check-platform-native-backend-fences.mjs --isolated --release /ABS/PRIVATE_SOURCE_CAPSULE --sha256 EXACT_CAPSULE_RECEIPT_SHA
+```
+
+It correlates the existing readonly HTTP endpoint with private control instance, checks increasing source sequence and an empty catalog, and stops only its original child. It performs0 model POSTs/control actions, with bounded startup/GET/shutdown and only the selected localhost/private Unix network access. MIMO/DS4 Metal/DS4 host values are independent partial fences; unavailable is null, and false/zero never grants idle/completion/admission authority. This recipe requires envelope4, preserving older artifact evidence separately.
+
 The actual source server can also exercise direct owned-child lifecycle through the real Swift runtime, independently of installed service activation:
 
 ```sh

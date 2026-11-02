@@ -32,14 +32,15 @@ const compilation=spawnSync(compiler,['-isysroot',sdk,'-I',source,'-std=gnu11','
  {env,encoding:'utf8',timeout:120000,maxBuffer:4<<20});
 writeFileSync(path.join(directory,'compile.log'),(compilation.stdout??'')+(compilation.stderr??''),{mode:0o600});
 assert.equal(compilation.status,0,`Actual lifecycle interface compilation failed; retain ${directory}`);
-const result=spawnSync(binary,[],{cwd:source,env,encoding:'utf8',timeout:10000,maxBuffer:1<<20});
+const result=spawnSync('/usr/bin/sandbox-exec',['-p','(version 1)(allow default)(deny network*)',binary],{cwd:source,env,encoding:'utf8',timeout:10000,maxBuffer:1<<20});
 writeFileSync(path.join(directory,'run.log'),(result.stdout??'')+(result.stderr??''),{mode:0o600});
 assert(!result.error&&!result.signal,`Lifecycle check did not complete normally; retain ${directory}`);
 assert.equal(result.status,0,`Ordinary lifecycle failed; retain ${directory}`);
+assert(result.stdout.includes("PASS: cold and healthy DS4 host source uncertainty stays zero without initialization or waiting behind page-in metadata"));
 assert.deepEqual(verifyDs4SourceBuild(config),selected);assert.equal(readFileSync(path.join(source,'ds4.c'),'utf8'),original);
 assert.equal(readFileSync(fixtureFile,'utf8'),fixture);assert.equal(readFileSync(joinFixtureFile,'utf8'),joinFixture);assert.equal(readFileSync(metadataFixtureFile,'utf8'),metadataFixture);assert.equal(readFileSync(cpuFixtureFile,'utf8'),cpuFixture);assert.equal(readFileSync(pageinFixtureFile,'utf8'),pageinFixture);
 const outcome={ok:true,directory,build_receipt_sha256:args[4],fixture_sha256:hash(fixture),join_fixture_sha256:hash(joinFixture),metadata_fixture_sha256:hash(metadataFixture),cpu_fixture_sha256:hash(cpuFixture),pagein_fixture_sha256:hash(pageinFixture),binary_sha256:hash(readFileSync(binary)),
- pagein_factory_join_cases:4,pagein_preflight_nonblocking:true,cpu_pool_cycles:2,cpu_preflights_nonblocking:true,nonblocking_mailbox_preflight:true,bounded_pending_join:true,late_original_join_observed:true,ordinary_idle_worker_cycles:6,sequential_lifecycle_creators:3,post_join_creator_cleared:true,repeated_idle_shutdown:true,
+ host_source_uncertainty_cold_no_init:true,host_source_uncertainty_nonblocking:true,host_source_uncertainty_positive_flags_tested:false,pagein_factory_join_cases:4,pagein_preflight_nonblocking:true,cpu_pool_cycles:2,cpu_preflights_nonblocking:true,nonblocking_mailbox_preflight:true,bounded_pending_join:true,late_original_join_observed:true,ordinary_idle_worker_cycles:6,sequential_lifecycle_creators:3,post_join_creator_cleared:true,repeated_idle_shutdown:true,
  observed_thread_retirement:true,lifecycle_owner_mismatch_refused:true,source_rewritten:false,model_jobs:0,gpu_objects:0,
  fault_injection:false,native_inference:false,native_authority:false,parent_engine_teardown_tested:false};
 writeFileSync(path.join(directory,'receipt.json'),JSON.stringify(outcome,null,2)+'\n',{mode:0o600});

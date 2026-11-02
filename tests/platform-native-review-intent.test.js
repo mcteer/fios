@@ -114,6 +114,21 @@ test('backend source fence schema refuses invented coverage, coercion and recurs
  assert.throws(()=>parse({...base,mlx:{...base.mlx,authority:true}}));
 });
 
+test('backend fence envelope4 observes host uncertainty separately from Metal and older envelopes',()=>{
+ const instance='a'.repeat(32);
+ const state={schema_version:4,scope:'independent_partial_backend_fences',coverage:'unknown',authority:false,mlx:{schema_version:1,scope:'partial_mlx_source_components',coverage:'unknown',authority:false,available:false},mimo_warm_uncertain:false,ds4_metal_uncertainty:0,ds4_host_uncertainty:3};
+ const parse=components=>nativeReviewComponents({source_instance:instance,sample_sequence:1,components},instance);
+ const value=parse(state);assert.equal(value.component_envelope_schema_version,4);assert.equal(value.available,false);
+ assert.equal(value.backend_fences.ds4_host_uncertainty,3);assert.equal(value.backend_fences.ds4_metal_uncertainty,0);
+ assert.equal(value.backend_fences.coverage,'unknown');assert.equal(value.backend_fences.authority,false);
+ assert.equal(parse({...state,ds4_host_uncertainty:null}).backend_fences.ds4_host_uncertainty,null);
+ for(const ds4_host_uncertainty of [0,1,2,4,7])assert.equal(parse({...state,ds4_host_uncertainty}).backend_fences.ds4_host_uncertainty,ds4_host_uncertainty);
+ for(const ds4_host_uncertainty of [-1,8,true,'1',1.5])assert.throws(()=>parse({...state,ds4_host_uncertainty}));
+ const old={...state,schema_version:3};delete old.ds4_host_uncertainty;
+ assert.equal(Object.hasOwn(parse(old).backend_fences,'ds4_host_uncertainty'),false);
+ assert.throws(()=>parse({...old,schema_version:4}));assert.throws(()=>parse({...state,schema_version:3}));
+});
+
 test('source journal correlation keeps planning/check model-free and run explicit',()=>{
  const scenario='journal-correlation',digest='a'.repeat(64);
  assert.deepEqual(nativeReviewIntent(['--plan','--capsule','/private/capsule','--sha256',digest,'--output','/private/plan','--scenario',scenario]),{mode:'plan',inferenceRequested:false,scenario});

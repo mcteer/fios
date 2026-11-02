@@ -193,3 +193,13 @@ with the original private control channel, checks increasing source sequence
 and leaves the model catalog empty. It performs no control action. This is
 source observation evidence, not installed process enrollment or all-client
 coverage.
+
+
+Envelope4 adds exactly `ds4_host_uncertainty` to envelope3, preserving the
+existing MLX, MIMO and DS4 Metal fields. Host masks0..7 map CPU pool1,
+page-in2 and selected-loader shutdown4; null means unavailable. Envelopes3
+and4 have distinct exact schemas, so an older response never invents a host
+observation. Host flags are independent atomic sticky loads, without mutexes,
+initialization, joins, cleanup or reset. DS4_NO_GPU source builds omit GPU-only
+host worker flags; absence/zero never establishes complete coverage. The
+server's host field is available only for its enabled macOS DS4 build.

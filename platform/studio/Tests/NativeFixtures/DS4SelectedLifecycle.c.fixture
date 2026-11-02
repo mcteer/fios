@@ -83,6 +83,11 @@ static void *selected_sequential_creator(void *context) {
     return NULL;
 }
 int main(void) {
+    REQUIRE(!g_pool.initialized && !g_metal_graph_selected_async_load_thread_started && !g_fios_pagein_count,
+            "Cold host participants were initialized before observation");
+    REQUIRE(ds4_host_source_uncertainty()==0,"Cold host source reported uncertainty");
+    REQUIRE(!g_pool.initialized && !g_metal_graph_selected_async_load_thread_started && !g_fios_pagein_count,
+            "Readonly source getter initialized host participants");
     REQUIRE(selected_mailbox_probe_case() == 0, "Nonblocking selected-loader preflight failed");
     REQUIRE(selected_join_wait_case() == 0, "Bounded native join custody failed");
     REQUIRE(cpu_lifecycle_case() == 0, "Bounded CPU pool lifecycle failed");
@@ -104,6 +109,8 @@ int main(void) {
         previous_owner = result.owner;
     }
     REQUIRE(metal_graph_selected_async_load_shutdown_checked(), "Final idle shutdown failed");
+    REQUIRE(ds4_host_source_uncertainty()==0,"Healthy host cleanup invented source uncertainty");
+    puts("PASS: cold and healthy DS4 host source uncertainty stays zero without initialization or waiting behind page-in metadata");
     puts("PASS: six ordinary selected-worker cycles across three sequential creators; mismatched caller retains custody; repeated shutdown succeeds; exact threads absent after creator join");
     return 0;
 }

@@ -20,9 +20,11 @@ static int pagein_lifecycle_case(void) {
     struct timespec before,after;
     JOIN_REQUIRE(clock_gettime(CLOCK_MONOTONIC,&before)==0,"Page-in preflight clock unavailable");
     const bool retained=metal_graph_stream_pagein_busy();
+    const uint32_t source_uncertainty=ds4_host_source_uncertainty();
     JOIN_REQUIRE(clock_gettime(CLOCK_MONOTONIC,&after)==0,"Page-in preflight completion clock unavailable");
     JOIN_REQUIRE(pthread_join(publisher,NULL)==0,"Page-in metadata publisher did not finish");
     const double elapsed=(double)(after.tv_sec-before.tv_sec)+(double)(after.tv_nsec-before.tv_nsec)/1000000000.0;
+    JOIN_REQUIRE(source_uncertainty==0,"Ordinary metadata publication invented host uncertainty");
     JOIN_REQUIRE(retained && elapsed>=0 && elapsed<0.1,"Page-in preflight waited for held metadata");
     JOIN_REQUIRE(!g_fios_pagein_uncertain && !g_fios_pagein_count && !metal_graph_stream_pagein_busy(),"Ordinary metadata contention poisoned page-in custody");
     JOIN_REQUIRE(pthread_cond_destroy(&work.condition)==0 && pthread_mutex_destroy(&work.mutex)==0,"Page-in metadata publisher remained live");

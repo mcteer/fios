@@ -1,5 +1,5 @@
 diff --git a/ds4.c b/ds4.c
-index 633a3cf..07544d8 100644
+index 633a3cf..fb34444 100644
 --- a/ds4.c
 +++ b/ds4.c
 @@ -2073,6 +2073,94 @@ static void cpu_directional_steering_project_rows(
@@ -313,7 +313,7 @@ index 633a3cf..07544d8 100644
 +static pthread_mutex_t g_fios_pagein_mutex = PTHREAD_MUTEX_INITIALIZER;
 +static metal_graph_stream_pagein_job *g_fios_pagein_jobs;
 +static unsigned g_fios_pagein_count;
-+static bool g_fios_pagein_uncertain;
++static int g_fios_pagein_uncertain; // atomic sticky source observation
 +static uint64_t g_fios_pagein_next_owner = 1;
 +static uint64_t g_fios_pagein_next_job = 1;
 +static _Thread_local uint64_t g_fios_pagein_local_owner;
@@ -333,7 +333,7 @@ index 633a3cf..07544d8 100644
 +
 +static bool metal_graph_stream_pagein_busy(void) {
 +    if (pthread_mutex_trylock(&g_fios_pagein_mutex)!=0) return true;
-+    const bool busy = g_fios_pagein_count || g_fios_pagein_uncertain;
++    const bool busy = g_fios_pagein_count || __atomic_load_n(&g_fios_pagein_uncertain, __ATOMIC_ACQUIRE);
 +    pthread_mutex_unlock(&g_fios_pagein_mutex);
 +    return busy;
 +}
@@ -341,7 +341,7 @@ index 633a3cf..07544d8 100644
 +static void metal_graph_stream_pagein_refuse(metal_graph_stream_pagein_job *job) {
 +    if (!fios_native_join_lock(&g_fios_pagein_mutex,1000)) return; // Registry still retains the original job/tickets.
 +    job->uncertain = true;
-+    g_fios_pagein_uncertain = true;
++    __atomic_store_n(&g_fios_pagein_uncertain, 1, __ATOMIC_RELEASE);
 +    pthread_mutex_unlock(&g_fios_pagein_mutex);
 +}
 +
@@ -352,14 +352,14 @@ index 633a3cf..07544d8 100644
 +    metal_graph_stream_pagein_job **link = &g_fios_pagein_jobs;
 +    while (*link && *link != job) link = &(*link)->retained_next;
 +    if (!*link || job->uncertain || !g_fios_pagein_count) {
-+        g_fios_pagein_uncertain = true;
++        __atomic_store_n(&g_fios_pagein_uncertain, 1, __ATOMIC_RELEASE);
 +        pthread_mutex_unlock(&g_fios_pagein_mutex);
 +        return false;
 +    }
 +    bool retired=job->created<=16 && job->joined==((1u<<job->created)-1u);
 +    for (uint32_t i=0;i<16;++i) if (job->join_tickets[i]) retired=false;
 +    if (!retired) {
-+        job->uncertain=true;g_fios_pagein_uncertain=true;
++        job->uncertain=true;__atomic_store_n(&g_fios_pagein_uncertain, 1, __ATOMIC_RELEASE);
 +        pthread_mutex_unlock(&g_fios_pagein_mutex);
 +        return false;
 +    }
@@ -414,7 +414,7 @@ index 633a3cf..07544d8 100644
 +        free(job);free(owner->ranges);memset(owner,0,sizeof(*owner));
 +        return false; // No worker exists and no registry entry was published.
 +    }
-+    if (g_fios_pagein_uncertain || g_fios_pagein_count >= 64) {
++    if (__atomic_load_n(&g_fios_pagein_uncertain, __ATOMIC_ACQUIRE) || g_fios_pagein_count >= 64) {
 +        pthread_mutex_unlock(&g_fios_pagein_mutex);
 +        free(job);
 +        free(owner->ranges);
@@ -423,7 +423,7 @@ index 633a3cf..07544d8 100644
 +    }
 +    if ((!g_fios_pagein_local_owner && g_fios_pagein_next_owner == UINT64_MAX) ||
 +        g_fios_pagein_next_job == UINT64_MAX) {
-+        g_fios_pagein_uncertain = true;
++        __atomic_store_n(&g_fios_pagein_uncertain, 1, __ATOMIC_RELEASE);
 +        pthread_mutex_unlock(&g_fios_pagein_mutex);
 +        free(job);
 +        free(owner->ranges);
@@ -1085,11 +1085,47 @@ index 633a3cf..07544d8 100644
  }
  
  int ds4_session_distributed_route_ready(ds4_session *s, char *err, size_t errlen) {
+@@ -83773,3 +84227,18 @@ bool ds4_test_dspark_prefix_capture(ds4_engine *engine, const ds4_tokens *prompt
+     return ok;
+ }
+ #endif
++
++/* Independent sticky host-participant loads only. No initialization, mutex,
++ * join, cleanup or reset. Zero is not an idle/all-writer/terminal receipt. */
++uint32_t ds4_host_source_uncertainty(void) {
++    uint32_t flags = 0;
++    if (__atomic_load_n(&g_fios_cpu_pool_uncertain, __ATOMIC_ACQUIRE))
++        flags |= DS4_HOST_SOURCE_CPU_POOL_UNCERTAIN;
++#ifndef DS4_NO_GPU
++    if (__atomic_load_n(&g_fios_pagein_uncertain, __ATOMIC_ACQUIRE))
++        flags |= DS4_HOST_SOURCE_PAGEIN_UNCERTAIN;
++    if (__atomic_load_n(&g_fios_selected_shutdown_uncertain, __ATOMIC_ACQUIRE))
++        flags |= DS4_HOST_SOURCE_SELECTED_UNCERTAIN;
++#endif
++    return flags;
++}
 diff --git a/ds4.h b/ds4.h
-index c817abc..6a3373f 100644
+index c817abc..02e5b69 100644
 --- a/ds4.h
 +++ b/ds4.h
-@@ -243,6 +243,9 @@ int ds4_engine_create_with_gpu_config(ds4_engine **out,
+@@ -8,6 +8,16 @@
+ 
+ #include "ds4_ssd.h"
+ 
++/* Readonly partial host-source uncertainty. Independent loads, not a
++ * coherent snapshot, ownership or completion proof. GPU-only host workers
++ * are omitted in DS4_NO_GPU builds; zero never establishes coverage. */
++enum ds4_host_source_uncertainty_flags {
++    DS4_HOST_SOURCE_CPU_POOL_UNCERTAIN = 1u,
++    DS4_HOST_SOURCE_PAGEIN_UNCERTAIN = 2u,
++    DS4_HOST_SOURCE_SELECTED_UNCERTAIN = 4u,
++};
++uint32_t ds4_host_source_uncertainty(void);
++
+ /* Public engine boundary.
+  *
+  * The CLI and server should treat ds4_engine as the loaded model and
+@@ -243,6 +253,9 @@ int ds4_engine_create_with_gpu_config(ds4_engine **out,
                                         const ds4_engine_options *opt,
                                         const struct ds4_gpu_config *gpu_cfg);
  void ds4_engine_close(ds4_engine *e);
@@ -1099,7 +1135,7 @@ index c817abc..6a3373f 100644
  void ds4_engine_summary(ds4_engine *e);
  int ds4_engine_vocab_size(ds4_engine *e);
  uint32_t ds4_engine_prefill_chunk(ds4_engine *e);
-@@ -402,9 +405,15 @@ int ds4_engine_tp_bind(ds4_engine *e, struct ds4_tp *tp, char *err, size_t errle
+@@ -402,9 +415,15 @@ int ds4_engine_tp_bind(ds4_engine *e, struct ds4_tp *tp, char *err, size_t errle
  /* Release gate resources before freeing a bound transport. Sessions must
   * already be closed. Also called by ds4_engine_close(). */
  void ds4_engine_tp_unbind(ds4_engine *e);
