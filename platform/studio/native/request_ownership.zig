@@ -540,6 +540,24 @@ pub const Tracker = struct {
         for (result.tokens[0..result.count]) |token| self.slots[token.slot].references += 1;
         return result;
     }
+    // Trusted cross-thread metadata only. The sender keeps these references
+    // alive until worker completion; this validates identities without effects.
+    pub fn validatePreparationOrigins(self: *Tracker, io: std.Io, origins: *const Retained, model: []const u8) !void {
+        self.mutex.lockUncancelable(io);
+        defer self.mutex.unlock(io);
+        if (origins.tracker != self or origins.count == 0 or origins.count > capacity) return error.InvalidReferenceGroup;
+        if (!self.initialized or self.uncertain) return error.CoverageUncertain;
+        for (origins.tokens[0..origins.count]) |token| {
+            const slot = try self.checked(token);
+            if (slot.phase != .preparing and slot.phase != .active) return error.InvalidPhase;
+            var member = false;
+            for (self.models, 0..) |identity, index| {
+                if (slot.models & (@as(u64, 1) << @as(u6, @intCast(index))) != 0 and
+                    std.mem.eql(u8, identity.id[0..identity.len], model)) { member = true; break; }
+            }
+            if (!member) return error.ModelConflict;
+        }
+    }
     pub fn leave(self: *Tracker, io: std.Io, token: Token) !void {
         self.mutex.lockUncancelable(io);
         defer self.mutex.unlock(io);

@@ -236,3 +236,17 @@ after outer client/actor references retire. Capture deep-copies tokens; no new
 borrowed-storage lifetime or native authority is introduced. The metadata case
 creates no backend/model/GPU handle. Queued/other ancestry and full native/G2
 acceptance remain incomplete.
+
+
+### Queued merged-origin capture (partial source checkpoint)
+
+Cold `ensureLoaded` now retains its complete caller group before registry
+mutation, lends stable immutable storage through its uncancelable completion
+wait and supplies it to the actual inference-thread load preparation. The
+worker validates source/count/live tokens/phase/exact target membership before
+installing group context. SDK capture independently copies/retains every root;
+known backend uncertainty quarantines sender references after local completion.
+The actual worker/native metadata case reproduces scalar loss, then passes with
+both roots retained after caller retirement. No backend/model handle is used;
+all ANE/other queue paths, native terminality and G2 remain unfinished. This adds
+no wire-selected identity, installed capability or lifecycle authority.

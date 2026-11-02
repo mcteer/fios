@@ -3590,3 +3590,42 @@ Studio model/service action, platform/Pydantic acceptance or native authority.
 This checks ordinary core request/retirement, not actual merged-model backend
 computation or full queued ancestry. No new supervisor/drain receipt is claimed;
 whole tasks remain38/55.
+
+
+### 2026-11-02 posted preparation origin handoff (partial source checkpoint)
+
+Load requests currently post a scalar preparation parent. The new ordinary
+model-free case retains two actual correlated source roots on the caller,
+starts a real worker with empty TLS, enters a queued preparation and captures
+through the genuine native SDK-owner API. The caller's retained data outlives
+worker retirement/join; afterward the descriptor must still hold both original
+lineages. No backend/model/GPU handle or SDK substitute is supplied.
+
+The prior scalar helper compiles successfully, then fails the selected case:
+`native_queued_preparation_capture first=true second=false` (2 passed/1 failed,
+3 total), `/tmp/fios-009-queued-origins-prior-native-build.log`. This is a real
+metadata-lineage regression, not a compiler failure or device-completion test.
+
+The source fix retains the complete caller group before cold-load registry
+mutation, holds immutable storage through the uncancelable request completion
+wait and passes it explicitly on `LoadRequest`; startup `LoadParams` defaults
+to no group. The worker validates exact tracker, bounded count, live token,
+phase and exact model membership before installing the borrowed group. Genuine
+SDK capture copies and independently retains it. Local completion quarantines
+the sender's references when its original source reports backend uncertainty.
+No wire/configuration API or positive native authority is added.
+
+Final functional-only native executable build succeeds and the selected
+actual-worker case passes3/3, with both original lineages retained after caller
+retirement, then0 owners/0 SDK contexts after descriptor release. Invalid
+tracker/count/model/missing-parent cases refuse before installing TLS. Log:
+`/tmp/fios-009-queued-origins-native-build.log` (scratch`/tmp/f9-linked-native-vqGXYM`).
+Accepted private capsule`/private/tmp/fios-009-queued-origins-native-review/capsule`,
+review8628c9407ce6fa3ba667c297ccc9c6d6971157875ca6eada48796bea9ceb939f,
+binary7da70449b4012586e57b9d750b252e2f596fd4074897dd4313cbb07836cd290e.
+The declared native_queued_preparation_origins_version1 is a source feature,
+not native provenance/admission authority. Focused Node24/24 and agent boundary
+pass (`/tmp/fios-009-queued-origins-{node,boundary}.log`). No new real inference,
+HTTP/supervisor/drain receipt or historical matrix is attributed to this capsule.
+Existing core/model results remain attributed to their original artifacts.
+Full ANE/other queue paths and G2 remain unfinished. Whole tasks remain38/55.
