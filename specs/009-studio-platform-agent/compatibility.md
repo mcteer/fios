@@ -9,6 +9,12 @@ Edge-b's own native-local catalog GET advertises ten IDs, including five peer-su
 The public26.11.2 tag resolves to `4e231ceebe63308cc038117d40b9f9b64bd0372e`; a clean private checkout at `/private/tmp/fios-009-upstream-26112-6ywcy8w4/source` supports read-only source review. Its `src/host/api/admission.zig` delegates prompt/context memory admission to the engine ABI; those reviewed functions are not an all-client host observation/quiescence contract. This limited check does not claim exhaustive absence of other facilities or close G2. Older26.10.3 native source fixtures and inventory remain explicitly historical/candidate inputs; no old receipt is promoted to installed26.11.2 compatibility or installed admission authority.
 
 
+### Current source-port prerequisite
+
+A read-only `git apply --check` against exact26.11.2 source4e231ceebe63308cc038117d40b9f9b64bd0372e rejects the18-path26.10.3 candidate patch (`/private/tmp/fios-009-26112-compatibility-check.log`); the checkout remains clean. This is an explicit compatibility failure, not a model/runtime test. Most old paths no longer exist. The registry is now `src/host/registry/registry.zig`; HTTP is `src/host/http/server.zig`; the former scheduler responsibilities are divided between `src/host/gpu_thread/scheduler.zig` and `src/engines/mlx/scheduler.zig`.
+
+The default macOS build now compiles host, MLX engine and plugin groups as separate units. Other serving engines use `src/abi/engine.zig` version1 with request `finished` events and `close` callbacks. These documented request/lifecycle callbacks do not by themselves establish asynchronous device terminality or all-client reservation. A source port must preserve original ownership through the actual host/engine boundaries and revalidate exact dependency inputs; renaming patch paths or replaying26.10.3 fixtures is insufficient. No26.11.2 candidate patch, build, normalized positive-coverage issuer or native admission acceptance is claimed.
+
 ## Direct server ownership decision2026-11-01
 
 The operator selected direct agent ownership of `mlx-serve`, rather than GUI
