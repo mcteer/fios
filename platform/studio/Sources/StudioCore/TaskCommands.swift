@@ -97,7 +97,7 @@ final class TaskCommands {
                 guard uploads.count<4 else {throw TaskCommandError.resource_limit}
                 let model:WorkerDispatchBinding?
                 if let name=value["model"] as? String {
-                    guard let allowed=binding(name),WireScalar.exactModel(allowed.canonicalModel,name),allowed.nativeCompatibilityAccepted else {throw TaskCommandError.model_unavailable}
+                    guard let allowed=binding(name),WireScalar.exactModel(allowed.canonicalModel,name),NativeAdmission.bindingIsCoherent(allowed) else {throw TaskCommandError.model_unavailable}
                     model=allowed
                 } else {guard value["model"] is NSNull else {throw TaskCommandError.invalid_request};model=nil}
                 guard try ServiceAdmissionPolicy.permits(journal:journal,model:model != nil,sandbox:kind=="sandbox") else {throw TaskCommandError.native_unsupported}

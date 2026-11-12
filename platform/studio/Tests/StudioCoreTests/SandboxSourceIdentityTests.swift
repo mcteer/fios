@@ -8,7 +8,7 @@ func runSandboxSourceIdentityTests()throws {
     var admission=AdmissionPolicy()
     let sample=ResourceSample(sampledAt:1000,physical:128<<30,available:64<<30,vmAvailable:nil,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal)
     func binding(_ epoch:String)->WorkerDispatchBinding {
-        let snapshot=NativeSnapshot(host:"fixture-host",endpointHash:String(repeating:"b",count:64),nativeEpoch:epoch,sequence:1,sampledAt:1000,allClientLifecycleCoverage:true,residentModel:nil,outstandingOwners:0,loading:false)
+        let snapshot=NativeSnapshot(host:"fixture-host",endpointHash:PythonWorkerFactory.digest("http://127.0.0.1:1/v1"),nativeEpoch:epoch,sequence:1,sampledAt:1000,allClientLifecycleCoverage:true,residentModel:nil,outstandingOwners:0,loading:false)
         return WorkerDispatchBinding(baseURL:"http://127.0.0.1:1/v1",guardPath:"/fixture/observe.sock",host:"fixture-host",profileHash:String(repeating:"c",count:64),managerEpoch:manager,canonicalModel:"fixture/model",nativeModel:"fixture/model",nativeSnapshot:snapshot,nativeCompatibilityAccepted:true,apiKey:nil)
     }
     func registered(_ epoch:String)throws->(String,String) {

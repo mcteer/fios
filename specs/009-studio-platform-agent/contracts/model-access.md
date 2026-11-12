@@ -10,6 +10,12 @@ Approved profile maps a canonical exact catalog identity to its independently ve
 
 The known small model `mlx-community/gemma-4-e4b-it-4bit` belongs only on `fios-core`/`fios-core.lab`. The placement constraint checks both canonical and native mapping fields before broker submission/startup and worker construction; the advisory activity predicate also preserves it. Other IDs still require their existing reviewed host/model profiles and all readiness/resource/native checks. This constraint neither infers model size from arbitrary IDs nor adds core to009’s two-Studio installation targets. The Studios’ approved operational allocation remains larger models only.
 
+## Selected-source consistency
+
+The shared `NativeAdmission` validator checks the selected binding's host against the activity snapshot, and its endpoint digest against the fixed worker base URL, before creating a model-upload reservation. Task begin/start, sandbox channel registration, worker construction and broker source polling retain the same check. Exact model scalars, profile/manager identity, host allocation and existing compatibility acceptance remain required. Native capability or capacity is not inferred from a syntactically consistent binding.
+
+New dispatch additionally requires the existing fresh activity eligibility. An in-flight call may itself be loading/preparing; retained source quality therefore preserves that allowance while still refusing a foreign host/endpoint or lost coverage/freshness. A successful consistency check is advisory, not an atomic source reservation. The missing audited all-client guard/producer remains independently required before production activation, and no source rejection clears the original journal uncertainty or authorizes replay.
+
 ## Budgets and command/event lifecycle
 
 - At most4 actual model POSTs/job, attempts0..3; at most1 active per job and2 active/uncertain manager-originated model requests/host (external native same-model concurrency is not prohibited).≤32 unresolved owned records/host is a separate safety bound.

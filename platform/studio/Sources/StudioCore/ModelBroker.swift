@@ -69,8 +69,8 @@ final class ModelBroker {
         guard let factory else {throw PolicyError.invalidObservation}
         try validate(context:context)
         let owned=try job(id,owner:owner,now:now)
-        guard binding.modelPlacementAccepted,nativeCapacityProven,binding.nativeCompatibilityAccepted,entries[id]==nil,starting[id]==nil,launchHolds.isEmpty,
-              try ActivityPolicy.permits(target:binding.canonicalModel,snapshot:binding.nativeSnapshot,now:now)
+        guard nativeCapacityProven,entries[id]==nil,starting[id]==nil,launchHolds.isEmpty,
+              try NativeAdmission.permitsDispatch(binding,now:now)
         else { throw AdmissionError.capacity }
         let scope=Self.scopeIdentity(binding)
         guard scopes[id]==nil || scopes[id]==scope else { throw JournalError.conflict }
@@ -127,9 +127,9 @@ final class ModelBroker {
             let lease=(try? job(id,now:now)) != nil
             let current=try? source(id)
             let eligible=current.map { binding in
-                Self.scopeIdentity(binding)==Self.scopeIdentity(pending.binding) && binding.modelPlacementAccepted && binding.nativeCompatibilityAccepted
+                Self.scopeIdentity(binding)==Self.scopeIdentity(pending.binding)
                     && binding.nativeSnapshot.sequence>=pending.binding.nativeSnapshot.sequence
-                    && ((try? ActivityPolicy.permits(target:binding.canonicalModel,snapshot:binding.nativeSnapshot,now:now)) ?? false)
+                    && ((try? NativeAdmission.permitsDispatch(binding,now:now)) ?? false)
             } ?? false
             if !pending.revoked && (!lease || !eligible || uptime<pending.started || uptime-pending.started>=10000) {
                 pending.revoked=true;pending.operation.cancel()
@@ -165,10 +165,9 @@ final class ModelBroker {
             let lease=(try? job(id,now:now)) != nil
             let current=try? source(id)
             let coherent=current.map { binding in
-                let activity=try? ActivityPolicy.evaluate(binding.nativeSnapshot,now:now)
-                return binding.nativeCompatibilityAccepted && Self.scopeIdentity(binding)==Self.scopeIdentity(entry.binding)
+                return Self.scopeIdentity(binding)==Self.scopeIdentity(entry.binding)
                     && binding.nativeSnapshot.sequence>=entry.binding.nativeSnapshot.sequence
-                    && activity != nil && activity != .unknown
+                    && ((try? NativeAdmission.retainsSource(binding,now:now)) ?? false)
             } ?? false
             if lease && !coherent { try journal.transitionJob(id:id,to:.revoking,now:now) }
             // Own load/compute is not mistaken for source loss. Admission

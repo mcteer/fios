@@ -6,7 +6,7 @@ func runScalarTests() throws {
     // model registry/SQLite IDs are byte-exact and must never inherit that alias.
     let composed="org/caf\u{e9}",decomposed="org/cafe\u{301}"
     guard composed == decomposed,!composed.utf8.elementsEqual(decomposed.utf8) else {fatalError("Invalid exact-ID regression fixture")}
-    let snapshot=NativeSnapshot(host:"fios-edge-a.lab",endpointHash:String(repeating:"a",count:64),nativeEpoch:"native-fixture",sequence:1,sampledAt:1000,
+    let snapshot=NativeSnapshot(host:"fios-edge-a.lab",endpointHash:PythonWorkerFactory.digest("http://127.0.0.1:9/v1"),nativeEpoch:"native-fixture",sequence:1,sampledAt:1000,
         allClientLifecycleCoverage:true,residentModel:composed,outstandingOwners:1,loading:false)
     guard try !ActivityPolicy.permits(target:decomposed,snapshot:snapshot,now:1000) else {fatalError("Canonical Unicode equivalence bypassed exact native model guard")}
     guard try ActivityPolicy.permits(target:composed,snapshot:snapshot,now:1000) else {fatalError("Byte-exact same-model sharing rejected")}

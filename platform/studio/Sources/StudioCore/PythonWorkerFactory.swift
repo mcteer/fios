@@ -84,12 +84,10 @@ final class PythonWorkerFactory:Sendable {
     // Pure binding validation. Binary verification/spawn occur off-loop for
     // broker starts; no journal, caller argv or permission bytes enter work.
     private func validate(_ binding:WorkerDispatchBinding,now:Int64)throws {
-        guard binding.modelPlacementAccepted,binding.nativeCompatibilityAccepted,binding.nativeSnapshot.host==binding.host,
-              binding.nativeSnapshot.endpointHash==Self.digest(binding.baseURL),
-              binding.profileHash.utf8.count==64,binding.profileHash.utf8.allSatisfy({ (48...57).contains($0)||(97...102).contains($0) }),
+        guard binding.profileHash.utf8.count==64,binding.profileHash.utf8.allSatisfy({ (48...57).contains($0)||(97...102).contains($0) }),
               UUID(uuidString:binding.managerEpoch)?.uuidString.lowercased()==binding.managerEpoch,
               binding.guardPath.hasPrefix("/"),binding.guardPath.hasSuffix("/observe.sock"),
-              try ActivityPolicy.permits(target:binding.canonicalModel,snapshot:binding.nativeSnapshot,now:now) else { throw PolicyError.invalidObservation }
+              try NativeAdmission.permitsDispatch(binding,now:now) else { throw PolicyError.invalidObservation }
         let components=URLComponents(string:binding.baseURL)
         guard components?.scheme=="http",["127.0.0.1","::1","[::1]"].contains(components?.host ?? ""),
               components?.path=="/v1",components?.user==nil,components?.password==nil,

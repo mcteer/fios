@@ -26,9 +26,9 @@ final class TaskController {
             guard old.ownerHash==owner,old.requestHash==hash else { throw JournalError.conflict }
             return old // No replay, including reserved/reconciling/terminal jobs.
         }
-        guard nativeCapacityProven,binding.nativeCompatibilityAccepted,
+        guard nativeCapacityProven,
               try ServiceAdmissionPolicy.permits(journal:journal,model:true,sandbox:false),
-              try ActivityPolicy.permits(target:binding.canonicalModel,snapshot:binding.nativeSnapshot,now:now) else { throw AdmissionError.capacity }
+              try NativeAdmission.permitsDispatch(binding,now:now) else { throw AdmissionError.capacity }
         let owned=try journal.reserveJob(proposed)
         do {
             try journal.transitionJob(id:owned.id,to:.running,now:now)
@@ -49,9 +49,9 @@ final class TaskController {
             guard old.ownerHash==owner,old.requestHash==requestHash else {throw JournalError.conflict};return old
         }
         try ModelBroker.restoreReservations(journal:journal,admission:&admission)
-        guard nativeCapacityProven,binding.nativeCompatibilityAccepted,admission.resourcesSafe(sample,now:now,needsVM:false),
+        guard nativeCapacityProven,admission.resourcesSafe(sample,now:now,needsVM:false),
               try ServiceAdmissionPolicy.permits(journal:journal,model:true,sandbox:false),
-              try ActivityPolicy.permits(target:binding.canonicalModel,snapshot:binding.nativeSnapshot,now:now) else {throw AdmissionError.capacity}
+              try NativeAdmission.permitsDispatch(binding,now:now) else {throw AdmissionError.capacity}
         return try journal.reserveJob(DurableJob(id:UUID().uuidString.lowercased(),idempotency:idempotency,ownerHash:owner,requestHash:requestHash,created:now,lifetime:lifetime))
     }
     func startModelUpload(id:String,owner:String,requestHash:String,requestID:String,context:[ModelText],binding:WorkerDispatchBinding,
@@ -61,9 +61,9 @@ final class TaskController {
         guard saved.state == .reserved else {return saved} // Never replay a consumed/terminal upload.
         try broker.validate(context:context)
         var lease=saved.lease
-        guard lease.valid(now:now),nativeCapacityProven,binding.nativeCompatibilityAccepted,
+        guard lease.valid(now:now),nativeCapacityProven,
               try ServiceAdmissionPolicy.permits(journal:journal,model:true,sandbox:false),
-              try ActivityPolicy.permits(target:binding.canonicalModel,snapshot:binding.nativeSnapshot,now:now) else {throw AdmissionError.expired}
+              try NativeAdmission.permitsDispatch(binding,now:now) else {throw AdmissionError.expired}
         do {
             try journal.transitionJob(id:id,to:.running,now:now)
             try broker.submit(job:id,owner:owner,requestID:requestID,context:context,binding:binding,nativeCapacityProven:nativeCapacityProven,sample:sample,admission:&admission,now:now)
@@ -75,7 +75,7 @@ final class TaskController {
         guard let running=try journal.jobs().first(where:{$0.id==id}) else {throw JournalError.storage};return running
     }
     func registerSandbox(id:String,owner:String,runtimeID:String,binding:WorkerDispatchBinding) throws {
-        guard sandboxScopes[id]==nil,sandboxScopes.count<2,binding.nativeCompatibilityAccepted,
+        guard sandboxScopes[id]==nil,sandboxScopes.count<2,NativeAdmission.bindingIsCoherent(binding),
               let job=try journal.jobs().first(where:{$0.id==id}),job.ownerHash==owner,job.state == .running,
               let record=try journal.sandboxRecords().first(where:{$0.configuration.job==id}),
               record.runtimeID==runtimeID,record.startIssued,!record.removalProven else { throw ControlError.unauthorized }
