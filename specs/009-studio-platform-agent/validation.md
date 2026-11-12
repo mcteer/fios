@@ -1,5 +1,8 @@
 # Validation record:009 Studio platform management agent
 
+- **2026-11-12 ARM64 CI package repair;38/55 unchanged.** Exact d3a226d CI run43321459852's ARM64 job fails before runtime acceptance: Alpine removed pinned Git2.52.0-r0 and publishes2.52.1-r0 ([official package](https://pkgs.alpinelinux.org/package/v3.23/main/aarch64/git)). Updated only that exact controller package pin and its existing boundary assertion. Other tool/base-image pins remain fixed. On an isolated detached d3a226d checkout containing only this repair, deployment/container-service unit tests pass and the actual local ARM64 `check-agent-container.mjs` passes: observer expiry/recovery, installed mock-model/search/cancellation, hardened limits (494MiB observed peak), old→new→old backup/restore and automatic failed-upgrade rollback. Logs: `/private/tmp/fios-009-ci-repair-2_dkzr4c/deployment-unit.log`, `/private/tmp/fios-009-ci-repair-2_dkzr4c/container.log`; retained CI failure artifact `/private/tmp/fios-009-ci-d3a226d/fios-agent-test-52c7d4f5-451.log`. No production deployment/controller replacement, native service or real model request occurred. This local repair needs its own exact-head CI and does not complete T055.
+
+
 ### 2026-11-12 resumed Llama slot retirement — partial source checkpoint
 
 `Slot.deinit` now invokes the existing exact-context target+draft terminal primitive before capturing destructor fields, releasing the model/request or destroying the slot. Refusal retains the entire slot and fences its original tracker. Normal completion, cancellation and cleanup-queue OOM all use this destructor; the C++ terminal primitive independently rejects a foreign creator. A released session claim or local socket completion supplies no native completion proof.
