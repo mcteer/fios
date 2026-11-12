@@ -2,9 +2,14 @@
 
 ## Latest resumed checkpoint
 
+Further source checkpoint after pushed7ea5f20: local85f25db adds shared selected host/endpoint consistency in `NativeAdmission.swift` before model reservation and in worker/broker source paths. Actual foreign-source red, complete Debug/optimized,8 Node,16 SDK and real mock-model manager IPC pass. It is advisory consistency only, not the missing native atomic guard. The subsequent source counter correction now rejects non-JSON-safe native activity sequences; real unsafe-counter red and complete Debug/optimized pass. Private serving-process fixture compilation now uses bounded Debug jobs/optimized WMO; both full existing fixture modes pass (34 private children/8 managers,0 native MLX/model/installed actions). All exact logs/receipts are in validation. Whole tasks remain38/55.
+
+Current remote7ea5f20 CI run43330331112 has five successful prerequisites and a running native lane; later local work is not certified by that run. Previousc955e01 run43326899521 was superseded/cancelled before its native lane/aggregate finished, not green evidence. Let the current native lane finish before pushing another coherent source batch. No merge/deployment has occurred. A fresh private4eb8627 nine-artifact package passes public manager/CLI smoke but predates selected-source/counter changes; never promote its receipt to the newer source. Edge-a connectivity recheck still fails before SSH execution; the operator has been asked whether it should be online. No routing/access/service change is authorized by that question.
+
+
 Continue spec009 per the operator's repeated instruction to finish implementation and testing. Fios remains the MLX-Serve frontend;009 adds the explicitly scoped native platform boundary, not new model engines. Whole tasks remain38/55;17 incomplete. Do not claim mock/source receipts as installed/native acceptance.
 
-Pushed commits: d3a226d (Llama slot custody),031af69 (unavailable Alpine Git pin repair),869418c (public read-only VM observation/current toolchain/bounded Swift compilation),c955e01 (genuine owned-target VM collector fixture). Exact c955e01 CI run43326899521 currently has five prerequisites successful; native lane is still running. No merge/deployment. Avoid cancelling it with repeated small pushes.
+Earlier pushed commits: d3a226d (Llama slot custody),031af69 (unavailable Alpine Git pin repair),869418c (public read-only VM observation/current toolchain/bounded Swift compilation),c955e01 (genuine owned-target VM collector fixture). Its CI run was later superseded as described above; it is not aggregate green evidence. No merge/deployment.
 
 Current native-ingress continuity change passes full Debug/optimized,16 SDK tests, genuine protocol2 and3 empty-model manager/CLI integration, and the inference boundary. Validation contains original replay runtime red and exact logs. Source checkpoints survive failures and legacy diagnostics; no admission/native terminal authority is issued.
 

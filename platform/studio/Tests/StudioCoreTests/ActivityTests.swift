@@ -13,10 +13,10 @@ private func XCTAssertThrowsError<T>(_ expression: @autoclosure () throws -> T) 
 final class ActivityTests {
     private func observation(
         model: String? = "model-a", owners: Int = 0, loading: Bool = false,
-        complete: Bool = true, sampled: Int64 = 10_000, epoch: String = "server-1"
+        complete: Bool = true, sampled: Int64 = 10_000, epoch: String = "server-1", sequence: UInt64 = 1
     ) -> NativeSnapshot {
         NativeSnapshot(host: "edge-a", endpointHash: String(repeating: "a", count: 64),
-                       nativeEpoch: epoch, sequence: 1, sampledAt: sampled,
+                       nativeEpoch: epoch, sequence: sequence, sampledAt: sampled,
                        allClientLifecycleCoverage: complete, residentModel: model,
                        outstandingOwners: owners, loading: loading)
     }
@@ -33,6 +33,15 @@ final class ActivityTests {
     }
 
     func testStaleFutureAndMalformedSamplesReject() {
+        for sequence in [UInt64(0),UInt64(ActivityPolicy.maximumTimestamp)+1,UInt64.max] {
+            do {
+                _=try ActivityPolicy.evaluate(observation(sequence:sequence),now:10_000)
+                fatalError("FIO_ACTIVITY_UNSAFE_SOURCE_SEQUENCE_ACCEPTED")
+            }catch PolicyError.invalidObservation {}catch {fatalError("Invalid source sequence reported as another failure")}
+        }
+        do {
+            guard try ActivityPolicy.evaluate(observation(sequence:UInt64(ActivityPolicy.maximumTimestamp)),now:10_000) == .idle else {fatalError("Safe sequence boundary rejected")}
+        }catch {fatalError("Safe sequence boundary rejected")}
         for epoch in ["", "server\u{0}1", String(repeating:"é",count:65)] {
             do {
                 _ = try ActivityPolicy.evaluate(observation(epoch:epoch), now:10_000)
