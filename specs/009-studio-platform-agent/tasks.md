@@ -344,3 +344,8 @@ The selected-loader worker now also binds its creator's non-reusable thread-life
 First deliver independently validated US1 supervision, then US2 authoritative observation/safe admission. **US1 alone is not an008-unblocking MVP**. G1/G2 and native evidence still apply. Add safe service lifecycle, isolated sandbox management, then scoped model tasks; keep not-yet-accepted capabilities disabled. Never import unfinished008 code, change007 budgets, or hide a missing native capability behind unknown forever and declare success.
 
 Complete a task only when its entire described scope and evidence pass. Thirty-eight tasks are complete (T001/T003/T004/T005/T006/T007/T010/T011/T012/T013/T014/T015/T016/T017/T023/T024/T025/T026/T029/T031/T032/T034/T035/T037/T038/T039/T040/T041/T042/T043/T044/T046/T047/T048/T050/T052/T053/T054);17 remain unchecked. T002 is pending authoritative native integration evidence, not awaiting another generic implementation instruction; independent local implementation/testing proceeds.
+
+
+2026-11-12 operator-requested update pause: **38/55 whole tasks complete**. See [resume.md](resume.md) for preserved uncommitted Llama slot-cleanup work, recovered pinned inputs and remaining native compilation/runtime checks. Focused Node24/24 is partial evidence only; no checkbox changes.
+
+2026-11-12 resumed source checkpoint: actual refused-Llama slot destructor case passes3/3, full native executable links, C++ Debug/optimized controls and25 Node checks/boundary pass. Private original-release library inputs retain their six fixed hashes after the installed application advanced. See validation/resume; loaded/native/installed acceptance remains open. **38/55 whole tasks complete**, no checkbox changes.

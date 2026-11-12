@@ -403,6 +403,8 @@ node scripts/check-platform-native-fixture.mjs --source /ABS/PRIVATE_NATIVE --zi
 
 The normal empty-model native-status flow near the top of this guide remains available separately. Neither flow installs or activates native code.
 
+If the installed application has advanced beyond the fixture's reviewed library bytes, functional-build-only accepts `--bundle-frameworks /ABS/PRIVATE_TMP/FRAMEWORKS` before its final flag. Supply a private copy from the original reviewed release; all six fixed library hashes must still match before compilation and after the build. The receipt identifies private bundle inputs separately from installed-runtime provenance. This option neither changes the installed application nor reviews a newer runtime.
+
 ### Model-free llama draft retirement refusal
 
 ```sh
