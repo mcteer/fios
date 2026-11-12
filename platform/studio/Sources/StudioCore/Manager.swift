@@ -163,8 +163,8 @@ public enum ManagerRuntime {
                 switch result.value {
                 case .success(let value):
                     do {
+                        guard nativeDiagnostics.completed(value,receivedAt:result.receivedAt,backendFences:result.backendFences,primaryActivity:result.primaryActivity,now:timestamp()) else {throw NativeControlError.invalid}
                         let command=try nativeMaintenance.receive(id:result.id,value:value)
-                        nativeDiagnostics.completed(value,receivedAt:result.receivedAt,backendFences:result.backendFences,primaryActivity:result.primaryActivity)
                         if let command {enqueueNative(command)}
                     } catch {nativeMaintenance.failed(id:result.id);nativeDiagnostics.failed()}
                 case .failure: nativeMaintenance.failed(id:result.id);nativeDiagnostics.failed()

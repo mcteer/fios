@@ -2,11 +2,17 @@
 
 ## Latest resumed checkpoint
 
-The operator resumed work. The Llama slot-retirement source change now passes the actual scheduler case3/3 and complete native executable/link build; see validation for exact hashes and limitations. Whole tasks remain38/55.
+Continue spec009 per the operator's repeated instruction to finish implementation and testing. Fios remains the MLX-Serve frontend;009 adds the explicitly scoped native platform boundary, not new model engines. Whole tasks remain38/55;17 incomplete. Do not claim mock/source receipts as installed/native acceptance.
 
-Current private source base: `/private/tmp/fios-009-resume-sources-yyrvdgjh`; the earlier base below expired during updates. All canonical native submodules, pinned Zig/Llama, CMake, Apple headers and fresh MLX/DS4 source dependency receipts are restored. `slot-command.json` retains the exact finite build argv; `slot-native-build-complete.log` is the successful final build. Earlier failed recovery/build logs remain separately retained. The installed application is now26.11.2; the fixture uses a private original26.10.3 library copy with unchanged exact hashes through `--bundle-frameworks`. No installed code changed.
+Pushed commits: d3a226d (Llama slot custody),031af69 (unavailable Alpine Git pin repair),869418c (public read-only VM observation/current toolchain/bounded Swift compilation),c955e01 (genuine owned-target VM collector fixture). Exact c955e01 CI run43326899521 currently has five prerequisites successful; native lane is still running. No merge/deployment. Avoid cancelling it with repeated small pushes.
 
-Next: inspect exact-head PR CI after pushing this checkpoint, then continue ordinary functional source integration. Loaded GGUF/MTP synchronization behavior/latency, all-client native admission and installed lifecycle acceptance remain unproven. Do not relabel this empty-handle scheduler test as loaded-backend or Studio acceptance. No model/server/Studio/SSH/lifecycle/deployment action occurred.
+Current native-ingress continuity change passes full Debug/optimized,16 SDK tests, genuine protocol2 and3 empty-model manager/CLI integration, and the inference boundary. Validation contains original replay runtime red and exact logs. Source checkpoints survive failures and legacy diagnostics; no admission/native terminal authority is issued.
+
+Current private source base: `/private/tmp/fios-009-resume-sources-yyrvdgjh`. The26.10.3 capsule at `slot-review/capsule` has review SHA038f055f124ef4c1d619920a59ce89b1a8458ee4e3999406006cf7af2e0e3377. It uses six exact private original framework copies, not installed26.11.2 inputs. Native compilation/scheduler3/3 pass. Fresh MLX/DS4 dependency receipts, accepted package and live VM fixture are separately recorded in validation. No installed code changed.
+
+Read-only inventory: edge-a is unreachable before SSH execution; this proves no idle/terminal state. Edge-b now advertises26.11.2/OrbStack2.2.5,256GiB M3 Ultra. Its exact local catalog and observed binary hashes are in compatibility. The ten advertised entries include five cached peer entries, which are not peer readiness. Clean26.11.2 source is `/private/tmp/fios-009-upstream-26112-6ywcy8w4/source`, exact4e231ceebe63308cc038117d40b9f9b64bd0372e. Do not relabel26.10.3 candidate evidence as current installed acceptance.
+
+Next: complete remaining ordinary source integration and inspect native CI. T002/all-client native admission/terminal issuer, T008 complete installed VM mapping/bootstrap, production execution/lifecycle composition, full reviewed release/installer and separate installed/disruptive Studio acceptance remain open. No new inference/native service/Studio mutation, installation or deployment occurred in these resumed checks. Preserve unrelated user frontend/spec003 edits.
 
 ## Historical pause note
 

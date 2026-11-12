@@ -12,6 +12,7 @@ struct PolicyTestRunner {
             ("service status summary",runServiceStatusSummaryTests),
             ("cleanup status recovery",runCleanupStatusRecoveryTests),
             ("native control diagnostics",runNativeControlDiagnosticsTests),
+            ("native control continuity",runNativeControlContinuityTests),
             ("timestamped native control",runNativeTimestampedControlTests),
             ("model placement",runModelPlacementTests),
             ("workspace configuration",runWorkspaceConfigurationTests),

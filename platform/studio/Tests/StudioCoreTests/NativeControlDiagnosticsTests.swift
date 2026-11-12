@@ -44,3 +44,48 @@ func runNativeTimestampedControlTests() throws {
     precondition(capture?.instance==value.instance && capture?.sequence==42 && capture?.sampledAt==now-50)
     print("PASS: timestamped native control decoding preserves source and receipt clocks separately")
 }
+
+func runNativeControlContinuityTests() throws {
+    let instance=String(repeating:"a",count:32)
+    func sample(_ sequence:UInt64=42,_ time:Int64=1000,_ source:String?=nil,_ uncertain:Bool=false)->NativeIngressStatus {
+        var result=NativeIngressStatus(operation:.observe,status:.ok,instance:source ?? instance,pauseSequence:0,
+            owners:0,ingress:0,preparing:0,active:0,responding:0,modelIdentities:0,closed:false,uncertain:uncertain)
+        result.nativeSampleSequence=sequence;result.nativeSampledAt=time;return result
+    }
+    var replay=NativeControlDiagnostics(configured:true)
+    replay.completed(sample(),receivedAt:1000)
+    replay.failed();replay.begin()
+    replay.completed(sample(),receivedAt:1001)
+    guard replay.capture(now:1001)==nil,replay.ingressSample(now:1001)==nil else {fatalError("NATIVE_INGRESS_REPLAY_REFRESHED_CAPTURE")}
+    replay.completed(sample(43,1001),receivedAt:1002)
+    guard replay.capture(now:1002)?.sequence==43 else {fatalError("Rejected ingress replay lost original continuation")}
+    // Source identity, known native uncertainty and clocks cannot be reset by
+    // a read gap or a later healthy-looking reply from the same pinned peer.
+    for mode in 0..<4 {
+        var subject=NativeControlDiagnostics(configured:true)
+        subject.completed(sample(42,1000,nil,mode==3),receivedAt:1000)
+        let changed:NativeIngressStatus
+        let received:Int64
+        switch mode {
+        case 0:changed=sample(43,1001,String(repeating:"b",count:32));received=1001
+        case 1:changed=sample(43,999);received=1001
+        case 2:changed=sample(43,1000);received=999
+        default:changed=sample(43,1001);received=1001
+        }
+        subject.completed(changed,receivedAt:received)
+        subject.failed();subject.begin()
+        subject.completed(sample(44,1002),receivedAt:1002)
+        guard subject.capture(now:1002)==nil,subject.ingressSample(now:1002)==nil,
+              subject.summary(now:1002)["state"] as? String=="fenced" else {fatalError("NATIVE_INGRESS_CONTINUITY_FENCE_REOPENED")}
+    }
+    var legacy=sample();legacy.nativeSampleSequence=nil;legacy.nativeSampledAt=nil
+    var mixed=NativeControlDiagnostics(configured:true)
+    mixed.completed(sample(),receivedAt:1000)
+    mixed.completed(legacy,receivedAt:1001)
+    guard mixed.capture(now:1001)==nil,mixed.ingressSample(now:1001)?.sourceSampledAt==nil else {fatalError("Legacy diagnostic clock became a native capture")}
+    mixed.completed(sample(),receivedAt:1002)
+    guard mixed.capture(now:1002)==nil else {fatalError("Legacy diagnostic gap reset original native sequence")}
+    mixed.completed(sample(43,1003),receivedAt:1003)
+    guard mixed.capture(now:1003)?.sequence==43 else {fatalError("Advancing original ingress source failed after legacy gap")}
+    print("PASS: native ingress replay cannot refresh capture; instance, source/receipt rollback and uncertainty regression retain independent continuity fences")
+}
