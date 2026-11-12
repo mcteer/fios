@@ -3,9 +3,9 @@
   "approval": "development_observation_only",
   "architecture": "arm64",
   "toolchain": {
-    "swift": "6.4",
-    "swift_build": "swiftlang-6.4.0.34.1",
-    "sdk": "27.0",
+    "swift": "6.4.2",
+    "swift_build": "swiftlang-6.4.2.1.9",
+    "sdk": "27.2",
     "minimum_macos": "14.0"
   },
   "sqlite": {"provider": "macos_system", "version": "3.54.0"},

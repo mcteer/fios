@@ -32,10 +32,11 @@ try{
  for(const mode of ['unconfigured','unknown','waiting_session','waiting_credentials','stopped','ready','degraded','mixed','loading']){
   const state=join(directory,mode);
   child=spawn('/usr/bin/sandbox-exec',['-f',profile,binary,state,mode],{cwd:root,env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C',HOME:'/var/empty'},stdio:'ignore'});
-  await until(()=>{assert(!exited(child),'Status manager exited early');const observed=status(state);return observed&&['mlx','orbstack'].every(service=>observed.services[service].observed===expected(mode,service))&&(mode!=='unconfigured'||(observed.native_health_source==='unconfigured'&&[undefined,'unconfigured'].includes(observed.orbstack_health_source)));});
+  await until(()=>{assert(!exited(child),'Status manager exited early');const observed=status(state);return observed&&['mlx','orbstack'].every(service=>observed.services[service].observed===expected(mode,service))&&(mode!=='unconfigured'||['native_health_source','orbstack_health_source','vm_resource_source'].every(key=>observed[key]==='unconfigured'));});
   const combined=status(state);
   if(mode==='unconfigured'){
    assert.equal(combined.native_health_source,'unconfigured');assert.equal(combined.orbstack_health_source,'unconfigured');
+   assert.equal(combined.vm_resource_source,'unconfigured');
    assert.equal(combined.native_admissions,'unsupported');assert.equal(combined.service_recovery,'disabled');assert.equal(combined.sandbox_admission,'disabled');
   }
 

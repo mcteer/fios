@@ -18,7 +18,12 @@ export function validatePlatformManifest(value,{template=false,journalSchema=9}=
   exact(value.toolchain,['swift','swift_build','sdk','minimum_macos']);
   exact(value.sqlite,['provider','version']);
   if(value.sqlite.provider!=='macos_system'||value.sqlite.version!=='3.54.0')fail();
-  if(value.toolchain.swift!=='6.4'||value.toolchain.swift_build!=='swiftlang-6.4.0.34.1'||value.toolchain.sdk!=='27.0'||value.toolchain.minimum_macos!=='14.0')fail();
+  const reviewedToolchains=[
+    ['6.4','swiftlang-6.4.0.34.1','27.0'],
+    ['6.4.2','swiftlang-6.4.2.1.9','27.2'],
+  ];
+  if(value.toolchain.minimum_macos!=='14.0'||!reviewedToolchains.some(([swift,build,sdk])=>
+    value.toolchain.swift===swift&&value.toolchain.swift_build===build&&value.toolchain.sdk===sdk))fail();
   exact(value.python,['version','package','package_version','uv_lock_sha256','policy_sha256','policy_input_utf16','immutable_tree_enrolled']);
   if(value.python.version!=='3.11.17'||value.python.package!=='fios-agent'||value.python.package_version!=='0.1.0'||!digest(value.python.uv_lock_sha256)||!digest(value.python.policy_sha256)||value.python.policy_input_utf16!==504||value.python.immutable_tree_enrolled!==false)fail();
   exact(value.native_inventory,['hosts','mlx_version','mlx_server_sha256','mlx_application_sha256','mlx_application_identifier','mlx_team_identifier','orbstack_version','orbstack_application_sha256','docker_cli_sha256','orbctl_cli_sha256','all_client_coverage','enrolled']);

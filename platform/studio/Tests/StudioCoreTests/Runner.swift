@@ -53,6 +53,7 @@ struct PolicyTestRunner {
             ("resource observations",runResourceObservationTests),
             ("VM resource enrollment",runVMResourceEnrollmentTests),
             ("VM resource profile reader",runVMResourceProfileReaderTests),
+            ("read-only VM resources",runReadOnlyVMResourceTests),
             ("VM running prerequisite",runVMRunningTests),
             ("security",runSecurityTests),
             ("contracts",runContractTests),

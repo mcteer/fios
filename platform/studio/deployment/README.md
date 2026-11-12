@@ -4,7 +4,7 @@
 
 ## Build and verify
 
-On the pinned arm64 Swift6.4 build/SDK27.0/System SQLite3.54.0 toolchain:
+On the pinned arm64 Swift6.4.2 (`swiftlang-6.4.2.1.9`)/SDK27.2/System SQLite3.54.0 toolchain:
 
 ```sh
 node scripts/package-platform.mjs --output /ABSOLUTE/NEW_RELEASE_DIRECTORY
@@ -12,7 +12,7 @@ node scripts/package-platform.mjs --output /ABSOLUTE/NEW_RELEASE_DIRECTORY
 
 The packer uses clean scratch builds, fixed source/debug path maps, no UUID/debug metadata, fixed development ad-hoc identities and explicit source/artifact hashes (including the installer/state-plan review tooling in the source hash). It assembles and verifies the payload inside its own private build directory, then executes only the just-built CLI's data-only `stage-release` branch to publish it. The requested output must be new beneath an owned0700 private parent; retained directory descriptors/no-replace publication protect that destination. The packer never deletes the requested output after error and retains its private build directory on both success and failure for independent review. `build_directory` in its result identifies that data; staging diagnostics are retained there if publication refuses. No packaged program is executed from the input payload. It includes no credentials, environment files, interpreter tree or approved sandbox image. Nine artifacts and a canonical receipt are staged; package_complete remains false. Native inventory hashes are observations, not all-client coverage attestation. The Docker multicall binary hash is **not** an OrbStack lifecycle CLI authorization.
 
-A finite local failure rehearsal uses the genuine pinned Swift-only development build (SDK27.0, separate from SDK27.2/Metal backend receipts):
+A finite local failure rehearsal uses the genuine pinned Swift-only development build. Historical Swift6.4 (`swiftlang-6.4.0.34.1`)/SDK27.0 receipts remain bound to that complete tuple; current Swift6.4.2/SDK27.2 artifacts carry their own source/build identities. Neither tuple attests separately built Metal backends or installed native provenance:
 
 ```sh
 node scripts/check-platform-package-publication.mjs --isolated

@@ -7,6 +7,15 @@ import {tmpdir} from 'node:os';
 import {createHash} from 'node:crypto';
 import {validatePlatformManifest,decodePlatformManifest,validatePlatformRelease,platformArtifactModes} from '../scripts/lib/platform-release.mjs';
 const template=JSON.parse(readFileSync(new URL('../platform/studio/deployment/release.json',import.meta.url)));
+test('development release accepts the reviewed current and historical toolchain tuples without mixing them',()=>{
+  const previous={swift:'6.4',swift_build:'swiftlang-6.4.0.34.1',sdk:'27.0',minimum_macos:'14.0'};
+  const current={swift:'6.4.2',swift_build:'swiftlang-6.4.2.1.9',sdk:'27.2',minimum_macos:'14.0'};
+  for(const toolchain of [previous,current])assert.equal(validatePlatformManifest({...template,toolchain},{template:true}).toolchain,toolchain);
+  for(const toolchain of [{...current,sdk:previous.sdk},{...current,swift_build:previous.swift_build},
+    {...previous,sdk:current.sdk},{...current,swift:'6.4'},{...current,minimum_macos:'13.0'}]){
+    assert.throws(()=>validatePlatformManifest({...template,toolchain},{template:true}));
+  }
+});
 test('native development manifest pins toolchain/locks and cannot authorize activation',()=>{
   const value=validatePlatformManifest(template,{template:true});
   assert.equal(value.architecture,'arm64');

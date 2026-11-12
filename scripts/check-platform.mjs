@@ -124,13 +124,22 @@ try {
     });
   });
   const binary = join(directory, 'policy-tests');
+  // The unbatched driver reparses this module for every primary file. Use
+  // bounded Debug jobs and the package's whole-module release mode;
+  // keep -O and both original compile/runtime deadlines.
+  const compileMode=process.argv[3]==='--release'
+    ? ['-O','-whole-module-optimization','-num-threads','2']
+    : ['-j2'];
   for (const [command, args] of [
-    ['swiftc', ['-swift-version', '6', '-warnings-as-errors', ...(process.argv[3]==='--release'?['-O']:[]), '-I', resolve(root, 'platform/studio/Sources/CSQLite'), ...sources, '-o', binary]],
+    ['swiftc', ['-swift-version', '6', '-warnings-as-errors', ...compileMode, '-I', resolve(root, 'platform/studio/Sources/CSQLite'), ...sources, '-o', binary]],
     ['/usr/bin/sandbox-exec', ['-D', `FIOS_MOCK_ENDPOINT=localhost:${port}`, '-f', resolve(root, 'tests/fixtures/platform/mock-network.sb'), binary]],
   ]) {
     // Compilation has its own finite hosted-runner allowance. Runtime tests
     // retain120s; no model, IPC, native-command or cleanup deadline is raised.
+    const phase=command==='swiftc'?'compile':'runtime',began=performance.now();
+    console.log(`Policy ${phase} begin; mode=${process.argv[3]==='--release'?'optimized':'debug'}; source_files=${sources.length}`);
     const result = spawnSync(command, args, { cwd: root, stdio: 'inherit', timeout: command==='swiftc'?300_000:120_000, env: { ...process.env, FIOS_PLATFORM_MOCK_PORT: String(port), FIOS_PLATFORM_SETID_FIXTURE: setidFixture, FIOS_PLATFORM_LOCK_SETID_FIXTURE: setidLock, FIOS_PLATFORM_CENSUS_FIXTURE:censusBinary, FIOS_PLATFORM_ENDPOINT_FIXTURE:endpointBinary, FIOS_PLATFORM_VM_STATUS_FIXTURE:vmStatusBinary, FIOS_PLATFORM_VM_INVENTORY_FIXTURE:vmInventoryBinary, FIOS_PLATFORM_RSS_FIXTURE:rssBinary, FIOS_PLATFORM_SANDBOX_REMOVAL_FIXTURE:removalBinary } });
+    console.log(`Policy ${phase} returned; elapsed_ms=${Math.ceil(performance.now()-began)}; status=${result.status??'unknown'}`);
     if (result.error) throw result.error;
     if (result.status !== 0) throw new Error(`Platform policy validation failed (${result.status ?? result.signal})`);
   }

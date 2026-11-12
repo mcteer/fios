@@ -6,11 +6,11 @@ public enum ManagerRuntime {
     // Local developer/installed entry point. Production installation must pin
     // reviewed binaries and use a private operator-owned state directory.
     public static func run(directory:URL,telemetry:any PlatformTelemetry=NoopPlatformTelemetry()) throws {
-        try run(directory:directory,nativeControl:nil,nativeReadOnlyObservation:true,orbstackReadOnlyObservation:true,telemetry:telemetry)
+        try run(directory:directory,nativeControl:nil,nativeReadOnlyObservation:true,orbstackReadOnlyObservation:true,resourceReadOnlyObservation:true,telemetry:telemetry)
     }
     // No production issuer yet: only reviewed native enrollment may supply
     // this internal client. Never construct it from operator/model payloads.
-    static func run(directory:URL,nativeControl:NativeControlClient?,serviceObservations:ServiceObservationCache?=nil,serviceHealth:MLXServiceHealthCollector?=nil,serviceHealthReadiness:@Sendable()->(Bool,Bool)={ (false,false) },orbstackHealth:ServiceHealthCollector?=nil,orbstackHealthReadiness:@Sendable()->(Bool,Bool)={ (false,false) },serviceControl:(any ServiceRecoverySending)?=nil,servingLifecycle:ServingLifecyclePorts?=nil,drainObservations:ServiceDrainObservationCache?=nil,execution:ManagerExecutionPorts?=nil,nativeReadOnlyObservation:Bool=false,orbstackReadOnlyObservation:Bool=false,telemetry:any PlatformTelemetry=NoopPlatformTelemetry()) throws {
+    static func run(directory:URL,nativeControl:NativeControlClient?,serviceObservations:ServiceObservationCache?=nil,serviceHealth:MLXServiceHealthCollector?=nil,serviceHealthReadiness:@Sendable()->(Bool,Bool)={ (false,false) },orbstackHealth:ServiceHealthCollector?=nil,orbstackHealthReadiness:@Sendable()->(Bool,Bool)={ (false,false) },serviceControl:(any ServiceRecoverySending)?=nil,servingLifecycle:ServingLifecyclePorts?=nil,drainObservations:ServiceDrainObservationCache?=nil,execution:ManagerExecutionPorts?=nil,nativeReadOnlyObservation:Bool=false,orbstackReadOnlyObservation:Bool=false,resourceReadOnlyObservation:Bool=false,telemetry:any PlatformTelemetry=NoopPlatformTelemetry()) throws {
         guard geteuid() != 0 else { throw ControlError.unauthorized }
         guard serviceHealth == nil || serviceHealth?.service == .mlx,
               orbstackHealth == nil || orbstackHealth?.service == .orbstack,
@@ -38,6 +38,14 @@ public enum ManagerRuntime {
         let orbstackHealthConfiguration=orbstackReadOnlyObservation ? AsyncNativeHealthConfiguration(service:.orbstack) {
             try OrbStackHealthConfiguration.load(directory:directory)
         }:nil
+        // Execution compositions already own one shared resource/lifecycle
+        // executor. The observation-only entry must never add a second pool
+        // beside it or perform work while a migration holds this manager.
+        let vmResourceConfiguration=resourceReadOnlyObservation && activeExecution == nil && !migrationHeld ? AsyncVMObservationConfiguration {
+            try VMObservationConfiguration.load(directory:directory)
+        }:nil
+        var vmResourceSource:String?=vmResourceConfiguration == nil ? nil:"loading"
+        var readOnlyVM:ReadOnlyVMResources?
         var nativeHealthSource:String?=nativeHealthConfiguration == nil ? nil:"loading"
         var orbstackHealthSource:String?=orbstackHealthConfiguration == nil ? nil:"loading"
         let serviceObservations=serviceObservations ?? (serviceHealth == nil && orbstackHealth == nil && nativeHealthConfiguration == nil && orbstackHealthConfiguration == nil ? nil:ServiceObservationCache())
@@ -69,9 +77,11 @@ public enum ManagerRuntime {
         let taskCommands=TaskCommands(journal:journal,tasks:tasks,sandbox:sandboxes,artifacts:artifacts,
             approvedImages:activeExecution?.approvedImages ?? [],enrolled:activeExecution != nil,peerUID:geteuid(),admissionOpen:activeExecution?.admissionOpen ?? {false})
         func applyingVM(to sample:ResourceSample,now:Int64)->ResourceSample {
+            if let readOnlyVM {return readOnlyVM.applying(to:sample,now:now)}
             if activeExecution?.vmSource == .cached {return sample}
             return jobs.applyingVM(to:sample,now:now)
         }
+        func vmEpoch(now:Int64)->String? {readOnlyVM?.epoch(now:now) ?? jobs.vmEpoch(now:now)}
         func timestamp()->Int64 { Int64(Date().timeIntervalSince1970*1000) }
         try audit.record(.started,now:timestamp())
         defer { try? audit.record(.stopped,now:timestamp()) }
@@ -124,6 +134,13 @@ public enum ManagerRuntime {
                 case .unavailable:orbstackHealthSource="unavailable"
                 }
             }
+            if let result=vmResourceConfiguration?.poll() {
+                switch result {
+                case .configured(let work):readOnlyVM=ReadOnlyVMResources(work:work);vmResourceSource="configured"
+                case .unconfigured:vmResourceSource="unconfigured"
+                case .unavailable:vmResourceSource="unavailable"
+                }
+            }
             if let result=serviceHealthQueue?.poll() {serviceObservations?.publish(result.observation,for:.mlx)}
             if let result=orbstackHealthQueue?.poll() {serviceObservations?.publish(result.observation,for:.orbstack)}
             if let result=serviceQueue?.poll(),let serviceRecovery {
@@ -162,6 +179,9 @@ public enum ManagerRuntime {
             try taskCommands.tick(now:timestamp(),uptime:Int64(now*1000),artifactResults:updates.artifactResults,output:updates.output,model:updates.model,finished:updates.finished)
             if now - lastHeartbeat >= 2 {
                 sequence+=1;sampledAt=timestamp()
+                if let readOnlyVM {
+                    readOnlyVM.tick(records:try journal.sandboxRecords(),jobs:try journal.jobs(),physical:resourceSample.physical,now:sampledAt)
+                }
                 if let serviceHealthQueue {
                     let ready=serviceHealthReadiness()
                     serviceHealthQueue.begin(sessionReady:ready.0,credentialsReady:ready.1)
@@ -271,6 +291,7 @@ public enum ManagerRuntime {
                         response["services"]=serviceStates
                         if let nativeHealthSource {response["native_health_source"]=nativeHealthSource}
                         if let orbstackHealthSource {response["orbstack_health_source"]=orbstackHealthSource}
+                        if let vmResourceSource {response["vm_resource_source"]=vmResourceSource}
                         response["native_admissions"]=nativeQueue == nil ? "unsupported":nativeMaintenance.phase.rawValue
                         response["native_control"]=nativeDiagnostics.summary(now:requestedAt)
                         response["migration_maintenance"]=migrationHeld
@@ -282,7 +303,7 @@ public enum ManagerRuntime {
                     case .resources:
                         guard request.payload.isEmpty else { throw ControlError.invalid_request }
                         let telemetry=try ResourceObservationExport.encode(sample:requestResources,gpu:gpuSample,gpuSampledAt:gpuSampledAt,
-                            now:requestedAt,epoch:epoch,sequence:Int64(sequence),vmEpoch:jobs.vmEpoch(now:requestedAt))
+                            now:requestedAt,epoch:epoch,sequence:Int64(sequence),vmEpoch:vmEpoch(now:requestedAt))
                         response["resources"]=telemetry.resources
                         response["resource_observation"]=telemetry.observation
                     case .activity:

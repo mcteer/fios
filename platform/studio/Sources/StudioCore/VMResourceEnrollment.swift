@@ -69,4 +69,7 @@ struct VMResourceEnrolledPolicy {
             physical:ProcessInfo.processInfo.physicalMemory)
         return RunningVMResourceReader(kernel:profile,running:runtime.running,expectedCLIHash:runtime.document.orbctlSHA256)
     }
+    func makeObservationExecutor()throws->SandboxExecutor {
+        try SandboxExecutor(runtime:runtime.runtime,allowedImages:document.metadataImages,resourceReader:makeReader())
+    }
 }

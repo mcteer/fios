@@ -1,5 +1,14 @@
 # Installed Studio compatibility — 2026-10-26
 
+## Current read-only update inventory — 2026-11-12
+
+With existing strict-host-key/batch SSH and finite fixed metadata commands, edge-b reports macOS27.2.1,256GiB RAM,Mac15,14/Apple M3 Ultra, MLX-Serve26.11.2 and OrbStack2.2.5. Current on-disk vendor server SHA256 is `6fdef72cfbc88c1ba3cf06546eccbf7fd571d0ec968801e8e4c78dcf03b6009e`; GUI executable SHA256 is `971145725dc1ef933f8b4f502dc7957dde09a75a8fe5cc3fbac9f5c2c42690a1`. Native-local health returns200. These are current file/version observations, not kernel-bound running-image, dependency or all-client contract attestation. Edge-a SSH fails before remote execution with `Host is down`; this is unknown connectivity, not idle, terminality or authority to recover it. Logs: `/private/tmp/fios-009-fios-edge-{a,b}.lab-inventory-20261112.log`.
+
+Edge-b's own native-local catalog GET advertises ten IDs, including five peer-suffixed edge-a entries (`/private/tmp/fios-009-edge-b-catalog-20261112.log`). Peer advertisements do not prove edge-a readiness/locality and were not followed. The two previously documented exact large text candidate IDs remain advertised without substitution. No model, start/stop/restart, configuration, routing/RDMA or privilege action occurred.
+
+The public26.11.2 tag resolves to `4e231ceebe63308cc038117d40b9f9b64bd0372e`; a clean private checkout at `/private/tmp/fios-009-upstream-26112-6ywcy8w4/source` supports read-only source review. Its `src/host/api/admission.zig` delegates prompt/context memory admission to the engine ABI; those reviewed functions are not an all-client host observation/quiescence contract. This limited check does not claim exhaustive absence of other facilities or close G2. Older26.10.3 native source fixtures and inventory remain explicitly historical/candidate inputs; no old receipt is promoted to installed26.11.2 compatibility or installed admission authority.
+
+
 ## Direct server ownership decision2026-11-01
 
 The operator selected direct agent ownership of `mlx-serve`, rather than GUI

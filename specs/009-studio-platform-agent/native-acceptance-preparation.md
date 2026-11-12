@@ -2,6 +2,10 @@
 
 Status: metadata preparation only,2026-10-31. T051 remains open. This is not an executable plan, resource grant, installation approval or all-client compatibility result.
 
+## Update inventory — 2026-11-12
+
+Edge-b now reports macOS27.2.1/MLX-Serve26.11.2, unchanged256GiB hardware/OrbStack2.2.5 and native health200. Its own catalog GET still advertises both exact large text candidates below, along with peer-suffixed edge-a entries. Edge-a SSH failed before remote execution. Peer advertisements do not supply its readiness; nothing was loaded, followed to another host, restarted or reconfigured. See the current compatibility section for exact file hashes and logs. Historical configuration/sidecar observations below have not been revalidated against a new atomic file set or current memory use, and remain planning inputs only.
+
 ## Host observations
 
 Both Studios report256GiB physical RAM, `Mac15,14`, `Apple M3 Ultra` through the authorized read-only hardware query. Core's24GiB small-Gemma experiments are separate.
