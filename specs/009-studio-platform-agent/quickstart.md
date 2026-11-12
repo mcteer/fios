@@ -393,6 +393,14 @@ guard, requires the allocator-observed runtime failure and restores source.
 These runs use an empty CPU blob, no session/model, and confer no native admission
 or installation authority. Do not run source mutations concurrently.
 
+## Ordinary owned-target VM observation integration
+
+```sh
+node scripts/check-platform-vm-observation.mjs --isolated
+```
+
+Requires the already-running local OrbStack runtime and cached immutable `fios:current` base; no image pull or daemon startup fallback. This finite fixture builds a metadata-only image, creates one owned512MiB/1CPU/network-none/read-only container with a fixed20s passive lifetime, and exercises the actual owned-target reader → running prerequisite → first-kernel/profile/cap binding → read-only coordinator → resource export. It verifies three fresh source times and invalidation after observed target revocation, then waits for original container exit and verifies exact-ID removal before deleting its own uniquely labelled image. All failure state is retained; no force removal, create replay, model, SQLite, installed profile or native service action occurs. The journal/profile review identity is explicitly a fixture input, not production all-consumer or installed enrollment proof. Core measurements remain core-only.
+
 ## Historical native source validation recipes
 
 The following backend failure/mutation recipes are retained to explain historical receipts. They are outside the operator’s current scope and are not instructions to run them now. Continue ordinary functional builds and checks using already verified dependency inputs. For a fresh native build without the earlier probe/root-test/HTTP matrices, use:
