@@ -449,3 +449,30 @@ test('current slot cleanup preserves its original model custody and scheduler qu
   }
   assert.equal(expected.size,0);
 });
+
+
+test('current request book cleanup preserves locked negative evidence and actual parent fixtures',()=>{
+  const patch=readFileSync('platform/studio/native/mlx-serve-26.11.2-book-cleanup.patch','utf8');
+  const fixtures=new Map([
+    ['src/engines/own_thread/book.zig',['fios current book cleanup','current_book_cleanup_test.zig.fixture']],
+    ['src/engines/llama/engine.zig',['fios current llama close','current_llama_book_parent_test.zig.fixture']],
+  ]);
+  const helper='src/fios/current_locked_cleanup_uncertainty.zig';
+  const expected=new Set([...fixtures.keys(),'src/engines/ds4/engine.zig','src/engines/ane/engine.zig',helper]);
+  for(const section of patch.split(/(?=^diff --git )/m).filter(Boolean)){
+    const header=/^diff --git a\/(\S+) b\/(\S+)\n/.exec(section);
+    assert(header);assert.equal(header[1],header[2]);assert(expected.delete(header[1]));
+    if(header[1]===helper){
+      assert(section.includes('\nnew file mode 100644\n'));
+      const bytes=section.split('\n').filter(line=>line.startsWith('+')&&!line.startsWith('+++')).map(line=>line.slice(1)).join('\n')+'\n';
+      assert.equal(bytes,readFileSync('platform/studio/native/current_locked_cleanup_uncertainty.zig','utf8'));
+    }
+    if(fixtures.has(header[1])){
+      const [name,file]=fixtures.get(header[1]);
+      const start=section.indexOf('\n+test "'+name);assert(start>=0);
+      const fixture=section.slice(start+1).split('\n').filter(line=>line.startsWith('+')).map(line=>line.slice(1)).join('\n')+'\n';
+      assert.equal(fixture,readFileSync('platform/studio/native/'+file,'utf8').trimStart());
+    }
+  }
+  assert.equal(expected.size,0);
+});
