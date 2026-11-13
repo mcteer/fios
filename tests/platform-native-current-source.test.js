@@ -846,3 +846,16 @@ test('current private Krea cleanup composes exact negative guard and method fixt
   }
   assert.equal(expected.size,0);
 });
+
+
+test('current private ACE-Step cleanup retains exact CPU-only method controls and default order',()=>{
+  const patch=readFileSync('platform/studio/native/mlx-serve-26.11.2-acestep-ane-cleanup-custody.patch','utf8');
+  const sections=patch.split(/(?=^diff --git )/m).filter(Boolean);
+  assert.deepEqual(sections.map(section=>section.match(/^diff --git a\/(\S+) b\/(\S+)/)[1]),['src/plugins/acestep/acestep.zig','src/plugins/acestep/plugin.zig']);
+  const start=sections[0].indexOf('+// Actual ACE-Step cleanup method with CPU-only callbacks');assert(start>=0);
+  const bytes='\n'+sections[0].slice(start).split('\n').filter(line=>line.startsWith('+')).map(line=>line.slice(1)).join('\n')+'\n';
+  assert.equal(bytes,readFileSync('platform/studio/native/current_acestep_ane_cleanup_test.zig.fixture','utf8'));
+  assert(sections[0].includes('+                if (!ane.cleanup_guard.known() and eng.tryDeinit()) {'));
+  assert(sections[1].includes('+    if (ane_cleanup.enabled) {'));
+  assert(sections[1].includes('+        // Preserve the default wrapper\'s existing disposal order.'));
+});
