@@ -750,3 +750,13 @@ test('current private ANE raw binding custody changes only the declared bridge s
     const fixture=readFileSync('platform/studio/native/'+name,'utf8');assert(!/\b_ANE[A-Za-z]/.test(fixture));
   }
 });
+
+
+test('current private ANE request owner custody changes only the declared bridge source',()=>{
+  const patch=readFileSync('platform/studio/native/mlx-serve-26.11.2-ane-request-owners.patch','utf8');
+  const sections=patch.split(/(?=^diff --git )/m).filter(Boolean);assert.equal(sections.length,1);
+  assert(sections[0].startsWith('diff --git a/lib/ane/ane_bridge.m b/lib/ane/ane_bridge.m\n'));
+  for(const name of ['current_ane_request_owners.m.fixture','current_ane_request_refusal.m.fixture']){
+    const fixture=readFileSync('platform/studio/native/'+name,'utf8');assert(!/\b_ANE[A-Za-z]/.test(fixture));
+  }
+});
