@@ -8,9 +8,10 @@ assert len(sys.argv) == 5 and sys.argv[1] == '--source' and sys.argv[3] == '--zi
 s=Path(sys.argv[2]); zig=Path(sys.argv[4]); root=Path(__file__).resolve().parents[3]
 assert all(str(f).startswith('/private/tmp/') and f.resolve() == f for f in [s, zig])
 d=Path(tempfile.mkdtemp(prefix='fios-009-ds4-negative-',dir='/private/tmp'))
-files=['fios/request_ownership.zig','fios/current_backend_uncertainty.zig','fios/current_cleanup_uncertainty.zig','fios/current_locked_cleanup_uncertainty.zig','fios/current_ds4_backend_uncertainty.zig','fios/current_ds4_cleanup_uncertainty.zig','fios/current_ds4_locked_cleanup_uncertainty.zig','sdk/util/shared.zig']
+files=['fios/media_cleanup_host.zig','sdk/ane/cleanup_guard.zig','fios/request_ownership.zig','fios/current_backend_uncertainty.zig','fios/current_cleanup_uncertainty.zig','fios/current_locked_cleanup_uncertainty.zig','fios/current_ds4_backend_uncertainty.zig','fios/current_ds4_cleanup_uncertainty.zig','fios/current_ds4_locked_cleanup_uncertainty.zig','sdk/util/shared.zig']
 sha=lambda f:hashlib.sha256(f.read_bytes()).hexdigest()
 assert sha(zig) == '1c5f706db0ed6d55451940f31dc05a6177d05696bc1fa5d853696d04c718b523'
+files=list(dict.fromkeys(files+[str(f.relative_to(s/'src')) for f in sorted((s/'src/fios').glob('current_*uncertainty.zig'))]))
 runner_hash=sha(Path(__file__))
 inputs={n:sha(s/'src'/n) for n in files}
 upstream=subprocess.run(['/usr/bin/git','--no-replace-objects','-C',str(s),'show','4e231ceebe63308cc038117d40b9f9b64bd0372e:src/sdk/util/shared.zig'],capture_output=True,timeout=10,check=True).stdout
@@ -32,7 +33,7 @@ for mode in ['Debug','ReleaseSafe']:
  for scenario in ['healthy','host','gpu']:
   result=subprocess.run(['/usr/bin/sandbox-exec','-p','(version 1)(allow default)(deny network*)',str(b)],env={**env,'FIOS_DS4_NEGATIVE_SCENARIO':scenario},cwd=d,capture_output=True,timeout=10)
   log=result.stdout+result.stderr;(d/(mode+'-'+scenario+'.log')).write_bytes(log)
-  assert result.returncode==0 and b'PASS: fixed DS4 metadata probe composition' in log and b'All 1 tests passed.' in log,(d,mode,scenario)
+  assert result.returncode==0 and b'PASS: fixed DS4 metadata probe composition' in log and b'1/2 test.test.fios current DS4 fixed negative composition...' in log and b'2/2 fios.request_ownership.test_0...OK\nAll 2 tests passed.' in log,(d,mode,scenario)
   assert sha(b)==h;r['results'].append({'mode':mode,'scenario':scenario,'binary_sha256':h,'returncode':0})
 assert sha(fixture)==fixture_hash and sha(Path(__file__))==runner_hash
 for n in files:assert sha(s/'src'/n)==inputs[n] and sha(d/n)==inputs[n]

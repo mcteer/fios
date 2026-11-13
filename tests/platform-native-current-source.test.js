@@ -819,3 +819,30 @@ test('current private ANE media fallback patch changes only declared guard check
   }
   assert.equal(expected.size,0);
 });
+
+
+test('current private Krea cleanup composes exact negative guard and method fixtures',()=>{
+  const patch=readFileSync('platform/studio/native/mlx-serve-26.11.2-krea-ane-cleanup-custody.patch','utf8');
+  const sections=patch.split(/(?=^diff --git )/m).filter(Boolean);
+  const expected=new Set(['src/fios/media_cleanup_host.zig','src/fios/request_ownership.zig','src/plugins/krea/krea.zig','src/plugins/krea/plugin.zig','src/sdk/ane/cleanup_guard.zig','src/sdk/ane/offload.zig']);
+  for(const section of sections){
+    const h=section.match(/^diff --git a\/(\S+) b\/(\S+)/);assert(h&&h[1]===h[2]&&expected.delete(h[1]));
+    if(h[1]==='src/sdk/ane/cleanup_guard.zig'){
+      const bytes=section.split('\n').filter(line=>line.startsWith('+')&&!line.startsWith('+++')).map(line=>line.slice(1)).join('\n')+'\n';
+      assert.equal(bytes,readFileSync('platform/studio/native/current_ane_media_cleanup_guard.zig','utf8'));
+      assert(!bytes.includes('@import("../../fios/'));
+    }
+    if(h[1]==='src/fios/media_cleanup_host.zig'){
+      const bytes=section.split('\n').filter(line=>line.startsWith('+')&&!line.startsWith('+++')).map(line=>line.slice(1)).join('\n')+'\n';
+      assert.equal(bytes,readFileSync('platform/studio/native/current_ane_media_cleanup_host.zig','utf8'));
+      assert.equal('\n'+bytes.slice(bytes.indexOf('// Root metadata only;')),readFileSync('platform/studio/native/current_ane_media_cleanup_guard_test.zig.fixture','utf8'));
+    }
+    if(h[1]==='src/plugins/krea/krea.zig'){
+      assert(section.includes('+                if (!ane.cleanup_guard.known() and eng.tryDeinit()) {'));
+      const start=section.indexOf('+// Actual Dit cleanup method with CPU-only callbacks');assert(start>=0);
+      const bytes='\n'+section.slice(start).split('\n').filter(line=>line.startsWith('+')).map(line=>line.slice(1)).join('\n')+'\n';
+      assert.equal(bytes,readFileSync('platform/studio/native/current_krea_ane_cleanup_test.zig.fixture','utf8'));
+    }
+  }
+  assert.equal(expected.size,0);
+});

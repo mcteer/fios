@@ -5,10 +5,16 @@ Whole tasks: **38/55 complete;17 open**. Partial source/component receipts do no
 ## Branch and delivery
 
 - Use `009-studio-platform-agent`; draft [PR10](https://github.com/mcteer/fios/pull/10) targets `main`.
-- Last fully green source head:5ee5bb2/[CI43499500420](https://github.com/mcteer/fios/actions/runs/43499500420). Later3d1d44c/43504439668 failed only the mandatory audit/gate; new source+dependency commits need their own exact-head CI.
-- The branch includes verified55th-layer artifacts; the next root commit records56 plus the separate dependency repair. Private native9830df1 has only preserved vendor/build-job WIP.
+- Last pushed green head:dd89bba/[CI43510459584](https://github.com/mcteer/fios/actions/runs/43510459584), all six prerequisites and aggregate pass. Earlier3d1d44c/43504439668 failed dependency audit/gate; cb401ad pins dnspython2.9.2. Uncommitted57 requires new exact-head CI.
+- The branch includes56 verified source layers and the separate dependency repair. Private nativeca44881 commits57 plus preserved vendor/build-job WIP. All final source/component/profile checks pass; root57 needs commit and exact-head CI.
 - Consult the PR for newer exact-head CI; older green runs do not certify newer heads.
 - No merge, production deployment, Studio installation or native activation occurred. Approved merge must still lead to exact merged-main green CI and verified automatic application delivery with backup/rollback. Native delivery remains separately gated.
+
+## Current57th Krea cleanup integration
+
+Private source`ca44881` commits six paths: portable SDK cleanup guard/import, host composition, tracker enrollment/test inclusion and Krea model/plugin ownership. Preserve vendor/build-job WIP. Final closure/lint,125/125 native controls (64 current/61 support, no skips), separate C/host/portable-unit2/2, metadata outcome2/2 and DS4 scenarios6/6, source64/64, working-tree165 Node/106 installed Python, build/17 Chromium, boundary/Compose and85 declared-file equality pass. Both final native profiles and each exact image's3 runtime checks pass. Zero model inference/native ANE API; C control uses tiny healthy IOSurface≤32KiB. See native-26112-port.md for exact final and failed-intermediate receipts. Source57 root artifacts are ready for commit/new exact-head CI. No installed authority/native admission is claimed.
+
+Next source audit: ACE-Step and MiniMax H3 parent/constructor/unload. Their fallback guards were repaired in56. Use fixed full-negative composition/checked ownership and inspect actual parent/ABI paths; preserve numerical/default policy. Do not mutate source during builds/runtime input checks. Current scripts `krea-ane-cleanup-unwind-final-{check,run,runtime}.py`; current native test bounds64/128 are exactly satisfied for current fixtures/total125. Additional tests require an explicit finite-bound adjustment, not truncation. Preserve earlier failed/partial labels. No native fault campaigns or actual model/device teardown acceptance.
 
 ## Current56th source layer and dependency repair
 

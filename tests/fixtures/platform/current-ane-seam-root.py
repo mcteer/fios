@@ -9,7 +9,7 @@ s=Path(sys.argv[2]);zig=Path(sys.argv[4]);root=Path(__file__).resolve().parents[
 assert all(str(f).startswith('/private/tmp/') and f.resolve() == f for f in [s,zig])
 d=Path(tempfile.mkdtemp(prefix='fios-009-ane-seam-root-',dir='/private/tmp'))
 sha=lambda f:hashlib.sha256(f.read_bytes()).hexdigest()
-files=['src/fios/request_ownership.zig','src/sdk/util/shared.zig','lib/ane/ane_bridge.m','lib/ane/ane_bridge.h','src/sdk/ane/source_guard.zig']+['src/'+str(f.relative_to(s/'src')) for f in sorted((s/'src/fios').glob('current_*uncertainty.zig'))]
+files=['src/fios/media_cleanup_host.zig','src/sdk/ane/cleanup_guard.zig','src/fios/request_ownership.zig','src/sdk/util/shared.zig','lib/ane/ane_bridge.m','lib/ane/ane_bridge.h','src/sdk/ane/source_guard.zig']+['src/'+str(f.relative_to(s/'src')) for f in sorted((s/'src/fios').glob('current_*uncertainty.zig'))]
 runner_hash=sha(Path(__file__))
 inputs={n:sha(s/n) for n in files}
 for n in files:
