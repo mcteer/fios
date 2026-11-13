@@ -559,3 +559,13 @@ test('current native load custody keeps media publication and raw cleanup fixtur
   }
   assert.equal(expected.size,0);
 });
+
+
+test('current plugin construction preserves exact publication and cleanup-order fixtures',()=>{
+  const patch=readFileSync('platform/studio/native/mlx-serve-26.11.2-plugin-load-custody.patch','utf8');
+  const sections=patch.split(/(?=^diff --git )/m).filter(Boolean);assert.equal(sections.length,1);
+  const section=sections[0];assert(section.startsWith('diff --git a/src/engines/mlx/plugin/driver.zig b/src/engines/mlx/plugin/driver.zig\n'));
+  const start=section.indexOf('\n+test "fios current plugin load refuses');assert(start>=0);
+  const fixture=section.slice(start+1).split('\n').filter(line=>line.startsWith('+')).map(line=>line.slice(1)).join('\n')+'\n';
+  assert.equal(fixture,readFileSync('platform/studio/native/current_plugin_load_test.zig.fixture','utf8').trimStart());
+});
