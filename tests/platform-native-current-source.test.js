@@ -227,3 +227,13 @@ test('current ANE actor changes only existing worker attribution and preserves i
   const fixture=sections[0].slice(start+1).split('\n').filter(line=>line.startsWith('+')).map(line=>line.slice(1)).join('\n')+'\n';
   assert.equal(fixture,readFileSync('platform/studio/native/current_ane_actor_test.zig.fixture','utf8').trimStart());
 });
+
+test('current llama actor stays in the existing adapter and preserves its model-free fixture',()=>{
+  const patch=readFileSync('platform/studio/native/mlx-serve-26.11.2-llama-actor.patch','utf8');
+  const sections=patch.split(/(?=^diff --git )/m).filter(Boolean);
+  assert.equal(sections.length,1);
+  assert(sections[0].startsWith('diff --git a/src/engines/llama/engine.zig b/src/engines/llama/engine.zig\n'));
+  const start=sections[0].indexOf('\n+test "fios current llama adapter');assert(start>=0);
+  const fixture=sections[0].slice(start+1).split('\n').filter(line=>line.startsWith('+')).map(line=>line.slice(1)).join('\n')+'\n';
+  assert.equal(fixture,readFileSync('platform/studio/native/current_llama_actor_test.zig.fixture','utf8').trimStart());
+});
