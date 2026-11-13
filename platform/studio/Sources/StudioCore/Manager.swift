@@ -292,7 +292,10 @@ public enum ManagerRuntime {
                         if let nativeHealthSource {response["native_health_source"]=nativeHealthSource}
                         if let orbstackHealthSource {response["orbstack_health_source"]=orbstackHealthSource}
                         if let vmResourceSource {response["vm_resource_source"]=vmResourceSource}
-                        response["native_admissions"]=nativeQueue == nil ? "unsupported":nativeMaintenance.phase.rawValue
+                        // Ingress acknowledgements never grant atomic all-client admission.
+                        // No production native reservation issuer is composed here yet.
+                        response["native_admissions"]="unsupported"
+                        response["native_ingress_admissions"]=nativeQueue == nil ? "unconfigured":nativeMaintenance.phase.rawValue
                         response["native_control"]=nativeDiagnostics.summary(now:requestedAt)
                         response["migration_maintenance"]=migrationHeld
                         response["native_activity"]=nativeCoverage.rawValue

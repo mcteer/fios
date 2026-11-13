@@ -1,5 +1,10 @@
 # Native private ingress control — development transport
 
+## Manager status scope
+
+`native_ingress_admissions` reports only this coordinator's ingress acknowledgement (`unconfigured`, `unknown`, `observing`, `changingAdmissions`, `admissionsClosed`, `admissionsOpen`). The separate `native_admissions` field remains `unsupported` while no audited atomic native reservation issuer is composed. A fresh authenticated ingress reply, private pause/resume acknowledgement or zero connection count cannot open native model admission, clear independent uncertainty or prove device completion. Earlier private status receipts used `native_admissions` for the ingress phase; those historical labels never provided native authority.
+
+
 Status: source-fixture integration only; **not enrolled production control, all-client coverage or quiescence authority**. Installed MLX-Serve is unchanged. No public/LAN management listener is introduced.
 
 ## Activation and identity

@@ -62,7 +62,9 @@ try{
  const initial=await until(()=>{assert(!exited(manager),`Private manager exited: ${managerErrors}`);return command(['status']);});
  assert(['waiting','received'].includes(initial.native_control.state));assert.equal(initial.native_control.authoritative,false);
  assert.equal(command(['service','mlx','running']).applied,false);
- const opened=await until(()=>{const value=command(['status']);return value?.native_control.state==='received'&&value.native_admissions==='admissionsOpen'&&(!withBackendFences||value.native_control.backend_fences?.state==='received')&&(!withPrimaryActivity||value.native_control.primary_activity?.state==='received') ? value:null;});
+ const opened=await until(()=>{const value=command(['status']);return value?.native_control.state==='received'&&(value.native_ingress_admissions??value.native_admissions)==='admissionsOpen'&&(!withBackendFences||value.native_control.backend_fences?.state==='received')&&(!withPrimaryActivity||value.native_control.primary_activity?.state==='received') ? value:null;});
+ assert.equal(opened.native_admissions,'unsupported','FIO_INGRESS_ACK_EXPOSED_NATIVE_ADMISSION');
+ assert.equal(opened.native_ingress_admissions,'admissionsOpen');
  const diagnostic=opened.native_control;
  if(withBackendFences){
   const fences=diagnostic.backend_fences;assert.equal(fences.scope,'independent_partial_backend_fences');assert.equal(fences.coverage,'unknown');assert.equal(fences.authority,false);assert.equal(fences.source_instance,diagnostic.source_instance);
@@ -117,10 +119,10 @@ try{
   assert.equal(refreshed.source_instance,first.source_instance);assert(refreshed.source_sampled_at>=first.source_sampled_at);
  }
  assert.equal(command(['service','mlx','maintenance']).applied,false);
- const paused=await until(()=>{const value=command(['status']);return value?.native_control.state==='received'&&value.native_control.ingress_closed===true&&value.native_admissions==='admissionsClosed' ? value:null;});
+ const paused=await until(()=>{const value=command(['status']);return value?.native_control.state==='received'&&value.native_control.ingress_closed===true&&value.native_ingress_admissions==='admissionsClosed' ? value:null;});
  assert.equal(paused.native_control.source_instance,diagnostic.source_instance);
  assert.equal(command(['service','mlx','running']).applied,false);
- const resumed=await until(()=>{const value=command(['status']);return value?.native_control.state==='received'&&value.native_control.ingress_closed===false&&value.native_admissions==='admissionsOpen' ? value:null;});
+ const resumed=await until(()=>{const value=command(['status']);return value?.native_control.state==='received'&&value.native_control.ingress_closed===false&&value.native_ingress_admissions==='admissionsOpen' ? value:null;});
  assert.equal(resumed.native_control.source_instance,diagnostic.source_instance);
  if(protocolVersion===3)assert(resumed.native_control.source_sequence>paused.native_control.source_sequence&&paused.native_control.source_sequence>diagnostic.source_sequence);
  assert.equal(resumed.native_control.authoritative,false);assert.deepEqual(readdirSync(models),[]);

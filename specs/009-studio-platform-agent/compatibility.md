@@ -2,7 +2,17 @@
 
 ## Current read-only update inventory — 2026-11-12
 
-With existing strict-host-key/batch SSH and finite fixed metadata commands, edge-b reports macOS27.2.1,256GiB RAM,Mac15,14/Apple M3 Ultra, MLX-Serve26.11.2 and OrbStack2.2.5. Current on-disk vendor server SHA256 is `6fdef72cfbc88c1ba3cf06546eccbf7fd571d0ec968801e8e4c78dcf03b6009e`; GUI executable SHA256 is `971145725dc1ef933f8b4f502dc7957dde09a75a8fe5cc3fbac9f5c2c42690a1`. Native-local health returns200. These are current file/version observations, not kernel-bound running-image, dependency or all-client contract attestation. Edge-a SSH fails before remote execution with `Host is down`; this is unknown connectivity, not idle, terminality or authority to recover it. Logs: `/private/tmp/fios-009-fios-edge-{a,b}.lab-inventory-20261112.log`.
+
+**Configured address restored:** After the operator's correction, both `.lab` and `.local` resolve to192.168.4.11 and normal batch/strict-key SSH succeeds again. Authenticated application discovery also passes without inference. Logs `/private/tmp/fios-009-edge-a-restored-{hostname,resolution}.log` and `/private/tmp/fios-009-restored-discovery.log`. The agent changed no network/SSH/application endpoint configuration. The temporary192.168.4.198 override below is historical inventory, not a product fallback.
+
+
+**Recovered edge-a inventory:** The operator reported that the update changed its network address/reservation. Local resolution gives `fios-edge-a.lab →192.168.4.11` and `fios-edge-a.local →192.168.4.198`. A finite one-shot SSH `HostName=192.168.4.198` override with `HostKeyAlias=fios-edge-a.lab`, batch authentication and strict host-key checking verifies the existing Studio identity and succeeds. The agent changes no SSH, DNS, DHCP, MAC, routing or RDMA configuration; application peer readiness continues to use its configured endpoints, without an address fallback.
+
+Edge-a now independently reports256GiB RAM,Mac15,14/Apple M3 Ultra,macOS27.2.1, MLX-Serve26.11.2 and OrbStack2.2.5. Its on-disk native server SHA256 is6fdef72cfbc88c1ba3cf06546eccbf7fd571d0ec968801e8e4c78dcf03b6009e; GUI executable SHA256 is971145725dc1ef933f8b4f502dc7957dde09a75a8fe5cc3fbac9f5c2c42690a1. Native loopback health returns200 and its own bounded catalog GET returns five local IDs and five peer-suffixed edge-b advertisements, preserving both exact large text IDs below. Logs `/private/tmp/fios-009-edge-a-current-{address,inventory}.log` and filtered `/private/tmp/fios-009-edge-a-current-catalog.json`. These are current on-disk/version/HTTP observations, not kernel-bound running-image, all-client/device, idle, capacity or native-admission attestation.0 inference or service actions.
+
+The earlier edge-a connection failures below apply to the stale `.lab` resolution and remain historical observations, rather than evidence that the machine was powered off or native work ended.
+
+With existing strict-host-key/batch SSH and finite fixed metadata commands, edge-b reports macOS27.2.1,256GiB RAM,Mac15,14/Apple M3 Ultra, MLX-Serve26.11.2 and OrbStack2.2.5. Current on-disk vendor server SHA256 is `6fdef72cfbc88c1ba3cf06546eccbf7fd571d0ec968801e8e4c78dcf03b6009e`; GUI executable SHA256 is `971145725dc1ef933f8b4f502dc7957dde09a75a8fe5cc3fbac9f5c2c42690a1`. Native-local health returns200. These are current file/version observations, not kernel-bound running-image, dependency or all-client contract attestation. The initial edge-a SSH attempt failed before remote execution with `Host is down`; this was unknown connectivity, not idle, terminality or authority to recover it. Logs: `/private/tmp/fios-009-fios-edge-{a,b}.lab-inventory-20261112.log`.
 
 Edge-b's own native-local catalog GET advertises ten IDs, including five peer-suffixed edge-a entries (`/private/tmp/fios-009-edge-b-catalog-20261112.log`). Peer advertisements do not prove edge-a readiness/locality and were not followed. The two previously documented exact large text candidate IDs remain advertised without substitution. No model, start/stop/restart, configuration, routing/RDMA or privilege action occurred.
 
@@ -11,7 +21,11 @@ The public26.11.2 tag resolves to `4e231ceebe63308cc038117d40b9f9b64bd0372e`; a 
 
 ### Current source-port prerequisite
 
+See [the current source port record](native-26112-port.md) for exact new dependency inputs, build preparation and ownership/ABI relocation requirements. Baseline compilation does not supply an admission contract.
+
 A read-only `git apply --check` against exact26.11.2 source4e231ceebe63308cc038117d40b9f9b64bd0372e rejects the18-path26.10.3 candidate patch (`/private/tmp/fios-009-26112-compatibility-check.log`); the checkout remains clean. This is an explicit compatibility failure, not a model/runtime test. Most old paths no longer exist. The registry is now `src/host/registry/registry.zig`; HTTP is `src/host/http/server.zig`; the former scheduler responsibilities are divided between `src/host/gpu_thread/scheduler.zig` and `src/engines/mlx/scheduler.zig`.
+
+Current vendor source also changes the MLX dependency from the candidate’s64ea011 to c69303b00f5f61860436e832f23fa8c34b96f93a, retaining mlx-c56b2d39fc831f2c0eb5bb94d82ef7191f7b31fa6. Existing instrumented SDK receipts cannot be promoted to this new dependency.
 
 The default macOS build now compiles host, MLX engine and plugin groups as separate units. Other serving engines use `src/abi/engine.zig` version1 with request `finished` events and `close` callbacks. These documented request/lifecycle callbacks do not by themselves establish asynchronous device terminality or all-client reservation. A source port must preserve original ownership through the actual host/engine boundaries and revalidate exact dependency inputs; renaming patch paths or replaying26.10.3 fixtures is insufficient. No26.11.2 candidate patch, build, normalized positive-coverage issuer or native admission acceptance is claimed.
 

@@ -1,0 +1,1511 @@
+diff --git a/src/fios/control_protocol.zig b/src/fios/control_protocol.zig
+new file mode 100644
+index 0000000..f8029fc
+--- /dev/null
++++ b/src/fios/control_protocol.zig
+@@ -0,0 +1,455 @@
++// Finite native-private control protocol. Transport must authenticate its peer.
++// No shell, PID selection, force/quit, device-terminal or coverage authority.
++const std = @import("std");
++const ownership = @import("request_ownership.zig");
++const device = @import("device_owner.zig");
++pub const OwnerBarrier = struct { context: *anyopaque, probe: *const fn (*anyopaque) device.Reading };
++pub const request_size = 32;
++pub const response_size = 64;
++pub const timestamped_response_size = 80;
++pub const lineage_request_size = 64;
++pub const lineage_response_size = 112;
++pub const Status = enum(u8) { ok, invalid, maintenance, wrong_instance };
++
++// Independent partial source flags only. Null is unavailable, not false/zero.
++// No observer here grants native coverage, idle, terminality or a reservation.
++pub const BackendFenceReadings = struct {
++    mimo_warm_uncertain: ?bool = null,
++    ds4_metal_uncertainty: ?u32 = null,
++    ds4_host_uncertainty: ?u32 = null,
++};
++pub const BackendFenceSource = *const fn () BackendFenceReadings;
++pub const backend_request_size = 32;
++pub const backend_response_size = 64;
++pub fn dispatchBackendFences(tracker: *ownership.Tracker, io: std.Io, request: *const [backend_request_size]u8, source: ?BackendFenceSource) [backend_response_size]u8 {
++    var response: [backend_response_size]u8 = @splat(0);
++    @memcpy(response[0..4], "FIF9");response[4] = 1;
++    if (!std.mem.eql(u8, request[0..4], "FIB9") or request[4] != 1 or
++        !std.mem.allEqual(u8, request[5..8], 0) or !std.mem.allEqual(u8, request[24..32], 0)) {
++        response[5] = @intFromEnum(Status.invalid);return response;
++    }
++    const captured_at = std.Io.Clock.real.now(io).toMilliseconds();
++    const snapshot = tracker.snapshot(io);
++    @memcpy(response[8..24], &snapshot.instance);
++    std.mem.writeInt(u64, response[24..32], snapshot.sample_sequence, .big);
++    const stamp: u64 = if (captured_at > 0 and captured_at <= ownership.maximum_sample_sequence)
++        @intCast(captured_at) else std.math.maxInt(u64);
++    std.mem.writeInt(u64, response[32..40], stamp, .big);
++    if (!snapshot.initialized or !std.mem.eql(u8, request[8..24], &snapshot.instance)) {
++        response[5] = @intFromEnum(Status.wrong_instance);return response;
++    }
++    const flags: BackendFenceReadings = if (source) |read| read() else .{};
++    if ((flags.ds4_metal_uncertainty orelse 0) > 31 or (flags.ds4_host_uncertainty orelse 0) > 7) {
++        response[5] = @intFromEnum(Status.invalid);return response;
++    }
++    if (flags.mimo_warm_uncertain) |value| {response[6] |= 1;response[7] = @intFromBool(value);}
++    if (flags.ds4_metal_uncertainty) |value| {response[6] |= 2;std.mem.writeInt(u32, response[40..44], value, .big);}
++    if (flags.ds4_host_uncertainty) |value| {response[6] |= 4;std.mem.writeInt(u32, response[44..48], value, .big);}
++    return response;
++}
++
++// Primary ownership observation only, never normalized all-client activity.
++pub const primary_request_size = 32;
++pub const primary_record_size = 16 + ownership.model_limit;
++pub const primary_response_size = 64 + ownership.model_capacity * primary_record_size;
++pub fn dispatchPrimaryActivity(tracker: *ownership.Tracker, io: std.Io, request: *const [primary_request_size]u8) [primary_response_size]u8 {
++    var response: [primary_response_size]u8 = @splat(0);
++    @memcpy(response[0..4], "FIT9");response[4] = 1;
++    if (!std.mem.eql(u8, request[0..4], "FIA9") or request[4] != 1 or
++        !std.mem.allEqual(u8, request[5..8], 0) or !std.mem.allEqual(u8, request[24..32], 0)) {
++        response[5] = @intFromEnum(Status.invalid);return response;
++    }
++    _ = tracker.backendKnownUncertain(io); // Explicit fixed negative source; ordinary snapshots stay callback-free.
++    const captured_at = std.Io.Clock.real.now(io).toMilliseconds();
++    const snapshot = tracker.primarySnapshot(io);
++    @memcpy(response[8..24], &snapshot.instance);
++    std.mem.writeInt(u64, response[24..32], snapshot.sample_sequence, .big);
++    const stamp: u64 = if (captured_at > 0 and captured_at <= ownership.maximum_sample_sequence)
++        @intCast(captured_at) else std.math.maxInt(u64);
++    std.mem.writeInt(u64, response[32..40], stamp, .big);
++    if (!snapshot.initialized or !std.mem.eql(u8, request[8..24], &snapshot.instance)) {
++        response[5] = @intFromEnum(Status.wrong_instance);return response;
++    }
++    response[7] = @intFromBool(snapshot.uncertain);
++    inline for (.{snapshot.owned,snapshot.ingress,snapshot.preparing,snapshot.active,snapshot.responding,snapshot.model_count}, 0..) |value,index|
++        std.mem.writeInt(u32, response[40 + index * 4 ..][0..4], @intCast(value), .big);
++    for (snapshot.models[0..snapshot.model_count], 0..) |model,index| {
++        const offset = 64 + index * primary_record_size;
++        std.mem.writeInt(u16, response[offset..][0..2], @intCast(model.len), .big);
++        inline for (.{model.preparing,model.active,model.responding}, 0..) |value,phase|
++            std.mem.writeInt(u32, response[offset + 4 + phase * 4 ..][0..4], @intCast(value), .big);
++        @memcpy(response[offset + 16 ..][0..model.len], model.id[0..model.len]);
++    }
++    return response;
++}
++
++// Separate readonly frame namespace: never reinterpret lineage bytes as an
++// ingress action. A missing live lineage is unknown, not terminal/not-sent.
++pub fn dispatchLineage(tracker: *ownership.Tracker, io: std.Io, request: *const [lineage_request_size]u8) [lineage_response_size]u8 {
++    var response: [lineage_response_size]u8 = @splat(0);
++    @memcpy(response[0..4], "FIP9"); response[4] = 1; response[7] = 1;
++    @memcpy(response[24..56], request[24..56]);
++    if (!std.mem.eql(u8, request[0..4], "FIQ9") or request[4] != 1 or request[5] != 0 or
++        request[6] != 0 or request[7] != 0 or !std.mem.allEqual(u8, request[56..64], 0)) {
++        response[5] = @intFromEnum(Status.invalid);
++        return response;
++    }
++    _ = tracker.backendKnownUncertain(io);
++    const snapshot = tracker.correlationSnapshot(io, request[24..56].*);
++    @memcpy(response[8..24], &snapshot.instance);
++    std.mem.writeInt(u64, response[56..64], snapshot.sample_sequence, .big);
++    if (!std.mem.eql(u8, request[8..24], &snapshot.instance)) {
++        response[5] = @intFromEnum(Status.wrong_instance);
++        return response;
++    }
++    response[6] = @intFromBool(snapshot.found);
++    response[7] = @intFromBool(snapshot.uncertain);
++    std.mem.writeInt(u64, response[64..72], snapshot.root_sequence, .big);
++    std.mem.writeInt(u64, response[72..80], snapshot.references, .big);
++    inline for (.{snapshot.owners,snapshot.ingress,snapshot.preparing,snapshot.active,snapshot.responding}, 0..) |value,index| {
++        std.mem.writeInt(u32, response[80 + index * 4 ..][0..4], @intCast(value), .big);
++    }
++    return response;
++}
++
++pub fn dispatch(tracker: *ownership.Tracker, io: std.Io, request: *const [request_size]u8) [response_size]u8 {
++    return dispatchWithBarrier(tracker, io, request, null);
++}
++pub fn dispatchWithBarrier(tracker: *ownership.Tracker, io: std.Io, request: *const [request_size]u8, barrier: ?OwnerBarrier) [response_size]u8 {
++    return dispatchVersion(2, tracker, io, request, barrier);
++}
++pub fn dispatchTimestamped(tracker: *ownership.Tracker, io: std.Io, request: *const [request_size]u8, barrier: ?OwnerBarrier) [timestamped_response_size]u8 {
++    return dispatchVersion(3, tracker, io, request, barrier);
++}
++fn dispatchVersion(comptime version: u8, tracker: *ownership.Tracker, io: std.Io, request: *const [request_size]u8, barrier: ?OwnerBarrier) [if (version == 3) timestamped_response_size else response_size]u8 {
++    var status: Status = .ok;
++    var reading: device.Reading = .{ .outcome = .not_requested };
++    const op = request[5];
++    const sequence = std.mem.readInt(u64, request[8..16], .big);
++    const valid_format = std.mem.eql(u8, request[0..4], "FIC9") and request[4] == version and
++        request[6] == 0 and request[7] == 0 and op <= 3 and (op >= 2 or sequence == 0);
++    // A known-negative source must refuse BEFORE touching its device barrier.
++    // The final capture below independently catches uncertainty during a probe.
++    if (valid_format and op == 3) _ = tracker.backendKnownUncertain(io);
++    const before = tracker.snapshot(io);
++    if (!valid_format) {
++        status = .invalid;
++    } else if (op != 0 and (!before.initialized or !std.mem.eql(u8, request[16..32], &before.instance))) {
++        status = .wrong_instance;
++    } else switch (op) {
++        0 => {}, // Observe is not inference ownership or quiescence proof.
++        1 => { _ = tracker.pauseAdmissions(io) catch { status = .maintenance; }; },
++        2 => tracker.resumeAdmissions(io, .{ .instance = request[16..32].*, .sequence = sequence }) catch { status = .invalid; },
++        3 => {
++            if (!before.admissions_closed or sequence == 0 or sequence != before.admission_pause or
++                before.uncertain or before.owned != 0 or tracker.hasRetainedWork(io)) status = .invalid
++            else if (barrier) |probe| { reading = probe.probe(probe.context); }
++            else reading = .{};
++        },
++        else => unreachable,
++    }
++    if (status == .ok or status == .maintenance) _ = tracker.backendKnownUncertain(io);
++    // Capture the source clock before taking the final coherent tracker
++    // snapshot. Serialization/transport cannot refresh this original time.
++    const captured_at = if (version == 3) std.Io.Clock.real.now(io).toMilliseconds() else 0;
++    const snapshot = tracker.snapshot(io);
++    if (op == 3 and reading.outcome == .owner_streams_synchronized and
++        (!snapshot.admissions_closed or snapshot.admission_pause != sequence or snapshot.owned != 0 or snapshot.uncertain or tracker.hasRetainedWork(io) or reading.streams > 256)) reading = .{};
++    var response: [if (version == 3) timestamped_response_size else response_size]u8 = @splat(0);
++    @memcpy(response[0..4], "FIR9");
++    response[4] = version;
++    response[5] = op;
++    response[6] = @intFromEnum(status);
++    @memcpy(response[8..24], &snapshot.instance);
++    std.mem.writeInt(u64, response[24..32], snapshot.admission_pause, .big);
++    inline for (.{ snapshot.owned, snapshot.ingress, snapshot.preparing, snapshot.active, snapshot.responding, snapshot.model_count }, 0..) |value, index| {
++        std.mem.writeInt(u32, response[32 + index * 4 ..][0..4], @intCast(value), .big);
++    }
++    response[56] = @intFromBool(snapshot.admissions_closed);
++    response[57] = @intFromBool(snapshot.uncertain);
++    response[58] = @intFromEnum(reading.outcome);
++    std.mem.writeInt(u32, response[60..64], reading.streams, .big);
++    if (version == 3) {
++        std.mem.writeInt(u64, response[64..72], snapshot.sample_sequence, .big);
++        // An unavailable clock is explicit metadata absence, not receipt time.
++        const stamp: u64 = if (captured_at > 0 and captured_at <= ownership.maximum_sample_sequence)
++            @intCast(captured_at) else std.math.maxInt(u64);
++        std.mem.writeInt(u64, response[72..80], stamp, .big);
++    }
++    return response;
++}
++
++test "partial owner-stream probe requires exact paused source and never grants coverage" {
++    const Hook = struct {
++        fn run(context: *anyopaque) device.Reading {
++            const called: *bool = @ptrCast(@alignCast(context));
++            called.* = true;
++            return .{ .outcome = .owner_streams_synchronized, .streams = 1 };
++        }
++    };
++    const io = std.testing.io;
++    var tracker: ownership.Tracker = .{};
++    try tracker.initialize(io, @splat(7));
++    var request: [request_size]u8 = @splat(0);
++    @memcpy(request[0..4], "FIC9"); request[4] = 2; request[5] = 3;
++    @memcpy(request[16..32], &(@as([16]u8, @splat(7))));
++    std.mem.writeInt(u64, request[8..16], 1, .big);
++    var called = false;
++    const hook: OwnerBarrier = .{ .context = &called, .probe = &Hook.run };
++    var response = dispatchWithBarrier(&tracker, io, &request, hook);
++    try std.testing.expectEqual(@intFromEnum(Status.invalid), response[6]);
++    try std.testing.expect(!called);
++    const pause = try tracker.pauseAdmissions(io);
++    response = dispatchWithBarrier(&tracker, io, &request, hook);
++    try std.testing.expect(called);
++    try std.testing.expectEqual(@intFromEnum(device.Outcome.owner_streams_synchronized), response[58]);
++    try std.testing.expectEqual(@as(u32, 1), std.mem.readInt(u32, response[60..64], .big));
++    try tracker.resumeAdmissions(io, pause);
++}
++
++test "finite private control rejects malformed and cross-instance authority" {
++    const io = std.testing.io;
++    var tracker: ownership.Tracker = .{};
++    try tracker.initialize(io, @splat(7));
++    var request: [request_size]u8 = @splat(0);
++    @memcpy(request[0..4], "FIC9"); request[4] = 2;
++    var response = dispatch(&tracker, io, &request);
++    try std.testing.expectEqual(@as(u8, 0), response[6]);
++    try std.testing.expectEqualSlices(u8, &(@as([16]u8, @splat(7))), response[8..24]);
++    request[5] = 1;
++    response = dispatch(&tracker, io, &request);
++    try std.testing.expectEqual(@intFromEnum(Status.wrong_instance), response[6]);
++    try std.testing.expect(!tracker.snapshot(io).admissions_closed);
++    @memcpy(request[16..32], &(@as([16]u8, @splat(7))));
++    request[6] = 1;
++    response = dispatch(&tracker, io, &request);
++    try std.testing.expectEqual(@intFromEnum(Status.invalid), response[6]);
++    try std.testing.expect(!tracker.snapshot(io).admissions_closed);
++    request[6] = 0;
++    response = dispatch(&tracker, io, &request);
++    try std.testing.expectEqual(@as(u8, 0), response[6]);
++    try std.testing.expectEqual(@as(u8, 1), response[56]);
++    const sequence = std.mem.readInt(u64, response[24..32], .big);
++    request[5] = 2;
++    std.mem.writeInt(u64, request[8..16], sequence, .big);
++    response = dispatch(&tracker, io, &request);
++    try std.testing.expectEqual(@as(u8, 0), response[56]);
++    response = dispatch(&tracker, io, &request);
++    try std.testing.expectEqual(@intFromEnum(Status.invalid), response[6]);
++    try std.testing.expectEqual(@as(u8, 1), response[57]);
++}
++
++test "readonly lineage frames preserve retained ownership and missing stays unknown" {
++    const io = std.testing.io;
++    var tracker: ownership.Tracker = .{ .primary_guard = true };
++    try tracker.initialize(io, @splat(31));
++    var request: [lineage_request_size]u8 = @splat(0);
++    @memcpy(request[0..4], "FIQ9"); request[4] = 1;
++    @memcpy(request[8..24], &(@as([16]u8, @splat(31))));
++    const id = try ownership.parseCorrelationHex("29fc52e328d588a1afee500c96d67ccc1045a873a328efccec3dc9ddfaef2cf5");
++    @memcpy(request[24..56], &id);
++    var response = dispatchLineage(&tracker, io, &request);
++    try std.testing.expectEqual(@as(u8, 0), response[5]);
++    try std.testing.expectEqual(@as(u8, 0), response[6]);
++    try std.testing.expectEqual(@as(u8, 1), response[7]);
++    const first = std.mem.readInt(u64, response[56..64], .big);
++    const root = try tracker.enter(io);
++    try tracker.associate(io, root, id);
++    try tracker.bind(io, root, "test/model");
++    const child = try tracker.reservePreparation(io, root, "test/model");
++    try tracker.leave(io, root);
++    response = dispatchLineage(&tracker, io, &request);
++    try std.testing.expectEqual(@as(u8, 1), response[6]);
++    try std.testing.expectEqual(@as(u8, 0), response[7]);
++    try std.testing.expectEqualSlices(u8, &id, response[24..56]);
++    try std.testing.expectEqual(root.sequence, std.mem.readInt(u64, response[64..72], .big));
++    try std.testing.expectEqual(@as(u64, 1), std.mem.readInt(u64, response[72..80], .big));
++    try std.testing.expectEqual(@as(u32, 1), std.mem.readInt(u32, response[80..84], .big));
++    try std.testing.expectEqual(@as(u32, 1), std.mem.readInt(u32, response[88..92], .big));
++    try std.testing.expect(std.mem.readInt(u64, response[56..64], .big) > first);
++    request[8] ^= 1;
++    response = dispatchLineage(&tracker, io, &request);
++    try std.testing.expectEqual(@intFromEnum(Status.wrong_instance), response[5]);
++    try std.testing.expectEqual(@as(u8, 0), response[6]);
++    try std.testing.expectEqual(@as(u8, 1), response[7]);
++    request[8] ^= 1; request[56] = 1;
++    try std.testing.expectEqual(@intFromEnum(Status.invalid), dispatchLineage(&tracker, io, &request)[5]);
++    request[56] = 0;
++    try std.testing.expectEqual(@as(usize, 1), tracker.snapshot(io).owned);
++    try tracker.leave(io, child);
++    response = dispatchLineage(&tracker, io, &request);
++    try std.testing.expectEqual(@as(u8, 0), response[6]);
++    try std.testing.expectEqual(@as(u8, 1), response[7]);
++    try std.testing.expectEqual(@as(u64, 0), std.mem.readInt(u64, response[64..72], .big));
++}
++
++test "timestamped control replies carry native capture metadata" {
++    const io = std.testing.io;
++    var tracker: ownership.Tracker = .{};
++    try tracker.initialize(io, @splat(9));
++    const token = try tracker.enter(io);
++    var request: [request_size]u8 = @splat(0);
++    @memcpy(request[0..4], "FIC9"); request[4] = 3;
++    const began = std.Io.Clock.real.now(io).toMilliseconds();
++    const first = dispatchTimestamped(&tracker, io, &request, null);
++    const ended = std.Io.Clock.real.now(io).toMilliseconds();
++    try std.testing.expectEqual(@as(usize, 80), first.len);
++    try std.testing.expectEqual(@as(u8, 3), first[4]);
++    try std.testing.expectEqual(@as(u8, 0), first[6]);
++    try std.testing.expectEqual(@as(u32, 1), std.mem.readInt(u32, first[32..36], .big));
++    try std.testing.expectEqual(@as(u32, 1), std.mem.readInt(u32, first[36..40], .big));
++    const sequence = std.mem.readInt(u64, first[64..72], .big);
++    const captured = std.mem.readInt(u64, first[72..80], .big);
++    try std.testing.expect(sequence > 0);
++    try std.testing.expect(captured >= began and captured <= ended);
++    try tracker.leave(io, token);
++    const second = dispatchTimestamped(&tracker, io, &request, null);
++    try std.testing.expect(std.mem.readInt(u64, second[64..72], .big) > sequence);
++    try std.testing.expectEqual(@as(u32, 0), std.mem.readInt(u32, second[32..36], .big));
++    try std.testing.expectEqualSlices(u8, first[8..24], second[8..24]);
++    request[4] = 2;
++    const legacy = dispatch(&tracker, io, &request);
++    try std.testing.expectEqual(@as(usize, 64), legacy.len);
++    try std.testing.expectEqual(@as(u8, 2), legacy[4]);
++}
++
++test "native observation captures its enrolled negative source" {
++    const io = std.testing.io;
++    const Kind = enum { ingress_v2, ingress_v3, primary, lineage };
++    const Probe = struct {
++        var uncertain: std.atomic.Value(bool) = .init(false);
++        var calls: std.atomic.Value(u32) = .init(0);
++        fn read() bool {
++            _ = calls.fetchAdd(1, .acq_rel);
++            return uncertain.load(.acquire);
++        }
++        fn capture(kind: Kind, tracker: *ownership.Tracker, test_io: std.Io) u8 {
++            switch (kind) {
++                .ingress_v2, .ingress_v3 => {
++                    var request: [request_size]u8 = @splat(0);
++                    @memcpy(request[0..4], "FIC9");
++                    request[4] = if (kind == .ingress_v2) 2 else 3;
++                    @memcpy(request[16..32], &tracker.instance);
++                    return if (kind == .ingress_v2) dispatch(tracker, test_io, &request)[57]
++                        else dispatchTimestamped(tracker, test_io, &request, null)[57];
++                },
++                .primary => {
++                    var request: [primary_request_size]u8 = @splat(0);
++                    @memcpy(request[0..4], "FIA9"); request[4] = 1;
++                    @memcpy(request[8..24], &tracker.instance);
++                    return dispatchPrimaryActivity(tracker, test_io, &request)[7];
++                },
++                .lineage => {
++                    var request: [lineage_request_size]u8 = @splat(0);
++                    @memcpy(request[0..4], "FIQ9"); request[4] = 1;
++                    @memcpy(request[8..24], &tracker.instance);
++                    @memset(request[24..56], 89);
++                    return dispatchLineage(tracker, test_io, &request)[7];
++                },
++            }
++        }
++    };
++    for ([_]Kind{ .ingress_v2, .ingress_v3, .primary, .lineage }) |kind| {
++        for ([_]bool{ true, false }) |uncertain| {
++            Probe.uncertain.store(false, .release);
++            var tracker: ownership.Tracker = .{ .primary_guard = true };
++            try tracker.initialize(io, @splat(87));
++            try tracker.enrollBackendUncertaintyProbe(io, &Probe.read);
++            const root = try tracker.enter(io);
++            try tracker.associate(io, root, @splat(89));
++            try tracker.bind(io, root, "fixture/observed-negative");
++            Probe.calls.store(0, .release);
++            Probe.uncertain.store(uncertain, .release);
++            // Ordinary accounting remains callback-free; only the explicit
++            // native observation asks the original enrolled source to read.
++            try std.testing.expect(!tracker.snapshot(io).uncertain);
++            try std.testing.expectEqual(@as(u32, 0), Probe.calls.load(.acquire));
++            const observed = Probe.capture(kind, &tracker, io);
++            std.debug.print("native_observation kind={s} negative={} observed={d}\n", .{ @tagName(kind), uncertain, observed });
++            try std.testing.expectEqual(@as(u8, @intFromBool(uncertain)), observed);
++            try std.testing.expectEqual(@as(u32, 1), Probe.calls.load(.acquire));
++            Probe.uncertain.store(false, .release); // Test getter only.
++            try std.testing.expectEqual(observed, Probe.capture(kind, &tracker, io));
++            try tracker.leave(io, root);
++            const final = tracker.snapshot(io);
++            try std.testing.expectEqual(@as(usize, 0), final.owned);
++            try std.testing.expectEqual(uncertain, final.uncertain);
++        }
++    }
++    std.debug.print("PASS: native observations consume original enrolled negative evidence and retain uncertainty after local release; metadata only\n", .{});
++}
++
++test "native owner probe refuses known uncertainty before its barrier" {
++    const io = std.testing.io;
++    const Hook = struct {
++        var uncertain: std.atomic.Value(bool) = .init(false);
++        fn read() bool { return uncertain.load(.acquire); }
++        fn run(raw: *anyopaque) device.Reading {
++            const called: *bool = @ptrCast(@alignCast(raw));
++            called.* = true;
++            return .{ .outcome = .owner_streams_synchronized, .streams = 1 };
++        }
++    };
++    for ([_]u8{ 2, 3 }) |version| {
++        for ([_]u8{ 3, 0, 1, 2 }) |case| {
++            Hook.uncertain.store(false, .release);
++            var tracker: ownership.Tracker = .{ .primary_guard = true };
++            try tracker.initialize(io, @splat(97));
++            try tracker.enrollBackendUncertaintyProbe(io, &Hook.read);
++            const root = if (case == 1) try tracker.enter(io) else null;
++            defer if (root) |token| tracker.leave(io, token) catch {};
++            const mutation = if (case == 3) try tracker.beginModelMutation(io, "fixture/probe-mutator") else null;
++            defer if (mutation) |ticket| tracker.endModelMutation(io, ticket) catch {};
++            const paused = try tracker.pauseAdmissions(io);
++            Hook.uncertain.store(case == 0, .release);
++            var called = false;
++            const barrier: OwnerBarrier = .{ .context = &called, .probe = &Hook.run };
++            var request: [request_size]u8 = @splat(0);
++            @memcpy(request[0..4], "FIC9"); request[4] = version; request[5] = 3;
++            std.mem.writeInt(u64, request[8..16], paused.sequence, .big);
++            @memcpy(request[16..32], &paused.instance);
++            const result = if (version == 2) dispatchWithBarrier(&tracker, io, &request, barrier)
++                else dispatchTimestamped(&tracker, io, &request, barrier)[0..response_size].*;
++            std.debug.print("native_owner_probe version={d} case={d} called={} uncertain={d}\n", .{ version, case, called, result[57] });
++            try std.testing.expectEqual(case == 2, called);
++            try std.testing.expectEqual(@intFromEnum(if (case == 2) Status.ok else Status.invalid), result[6]);
++            try std.testing.expectEqual(@as(u8, @intFromBool(case == 0)), result[57]);
++            try std.testing.expectEqual(@intFromEnum(if (case == 2) device.Outcome.owner_streams_synchronized else device.Outcome.not_requested), result[58]);
++        }
++    }
++    Hook.uncertain.store(false, .release); // Test source only.
++    std.debug.print("PASS: native owner probe refuses known-negative and owned sources before calling its fixed barrier; metadata only\n", .{});
++}
++
++test "native owner probe rejects a model-change ticket acquired during its barrier" {
++    const io = std.testing.io;
++    const Work = struct {
++        tracker: *ownership.Tracker,
++        ticket: ?ownership.ModelMutation = null,
++        fn run(raw: *anyopaque) device.Reading {
++            const self: *@This() = @ptrCast(@alignCast(raw));
++            self.ticket = self.tracker.beginModelMutation(std.testing.io, "fixture/probe-pending") catch return .{};
++            return .{ .outcome = .owner_streams_synchronized, .streams = 1 };
++        }
++    };
++    for ([_]u8{ 2, 3 }) |version| {
++        var tracker: ownership.Tracker = .{ .primary_guard = true };
++        try tracker.initialize(io, @splat(101));
++        const paused = try tracker.pauseAdmissions(io);
++        var work: Work = .{ .tracker = &tracker };
++        defer if (work.ticket) |ticket| tracker.endModelMutation(io, ticket) catch {};
++        var request: [request_size]u8 = @splat(0);
++        @memcpy(request[0..4], "FIC9"); request[4] = version; request[5] = 3;
++        std.mem.writeInt(u64, request[8..16], paused.sequence, .big);
++        @memcpy(request[16..32], &paused.instance);
++        const barrier: OwnerBarrier = .{ .context = &work, .probe = &Work.run };
++        const result = if (version == 2) dispatchWithBarrier(&tracker, io, &request, barrier)
++            else dispatchTimestamped(&tracker, io, &request, barrier)[0..response_size].*;
++        try std.testing.expect(work.ticket != null);
++        try std.testing.expect(tracker.hasRetainedWork(io));
++        try std.testing.expectEqual(@as(usize, 0), tracker.snapshot(io).owned);
++        try std.testing.expectEqual(@intFromEnum(device.Outcome.blocked), result[58]);
++        try std.testing.expectEqual(@as(u32, 0), std.mem.readInt(u32, result[60..64], .big));
++    }
++    std.debug.print("PASS: native owner probe blocks publication while the original model-change ticket remains held; metadata only\n", .{});
++}
+diff --git a/src/fios/control_transport.zig b/src/fios/control_transport.zig
+new file mode 100644
+index 0000000..993ab8e
+--- /dev/null
++++ b/src/fios/control_transport.zig
+@@ -0,0 +1,153 @@
++// Source-fixture-only private operator transport. Disabled in ordinary builds.
++// UID-authenticated AF_UNIX, one finite frame per connection, no subprocesses.
++// No model-facing management route, lifecycle signal or quiescence authority.
++const std = @import("std");
++const ownership = @import("request_ownership.zig");
++const protocol = @import("control_protocol.zig");
++pub const OwnerBarrier = protocol.OwnerBarrier;
++pub const BackendFenceReadings = protocol.BackendFenceReadings;
++pub const BackendFenceSource = protocol.BackendFenceSource;
++const c = std.c;
++extern "c" fn getpeereid(fd: c_int, uid: *c.uid_t, gid: *c.gid_t) c_int;
++
++pub const Bridge = struct {
++    io: std.Io,
++    allocator: std.mem.Allocator,
++    fd: c_int,
++    barrier: ?OwnerBarrier,
++    backend_fences: ?BackendFenceSource = null,
++    path: [256:0]u8,
++    identity: c.Stat,
++    stopped: std.atomic.Value(bool) = .init(false),
++    thread: ?std.Thread = null,
++
++    pub fn start(io: std.Io, allocator: std.mem.Allocator, version: []const u8, barrier: ?OwnerBarrier) !?*Bridge {
++        return startWithBackendFences(io, allocator, version, barrier, null);
++    }
++    pub fn startWithBackendFences(io: std.Io, allocator: std.mem.Allocator, version: []const u8, barrier: ?OwnerBarrier, backend_fences: ?BackendFenceSource) !?*Bridge {
++        const enabled = c.getenv("FIOS_NATIVE_CONTROL");
++        if (enabled == null) return null;
++        if (!std.mem.eql(u8, std.mem.span(enabled.?), "isolated-source-fixture") or
++            !std.mem.endsWith(u8, version, "-fios-source-fixture") or c.getuid() == 0 or c.geteuid() != c.getuid())
++            return error.ControlUnavailable;
++        const home = c.getenv("HOME");
++        if (home == null) return error.ControlUnavailable;
++        var directory_buffer: [256]u8 = undefined;
++        const directory = try std.fmt.bufPrintSentinel(&directory_buffer, "{s}/.fios-native-control", .{std.mem.span(home.?)}, 0);
++        _ = c.mkdir(directory.ptr, 0o700);
++        var info: c.Stat = undefined;
++        if (c.fstatat(c.AT.FDCWD, directory.ptr, &info, c.AT.SYMLINK_NOFOLLOW) != 0 or info.uid != c.getuid() or
++            (info.mode & c.S.IFMT) != c.S.IFDIR or (info.mode & 0o777) != 0o700)
++            return error.ControlUnavailable;
++        var path_buffer: [256:0]u8 = @splat(0);
++        const path = try std.fmt.bufPrintSentinel(&path_buffer, "{s}/control.sock", .{directory}, 0);
++        // Never unlink/adopt an existing socket, including stale ones.
++        if (c.fstatat(c.AT.FDCWD, path.ptr, &info, c.AT.SYMLINK_NOFOLLOW) == 0) return error.ControlUnavailable;
++        var address: c.sockaddr.un = std.mem.zeroes(c.sockaddr.un);
++        if (path.len >= address.path.len) return error.ControlUnavailable;
++        address.family = c.AF.UNIX;
++        address.len = @sizeOf(c.sockaddr.un);
++        @memcpy(address.path[0..path.len], path);
++        const fd = c.socket(c.AF.UNIX, c.SOCK.STREAM, 0);
++        if (fd < 0) return error.ControlUnavailable;
++        errdefer _ = c.close(fd);
++        if (!secureFD(fd) or c.bind(fd, @ptrCast(&address), @sizeOf(c.sockaddr.un)) != 0)
++            return error.ControlUnavailable;
++        if (c.chmod(path.ptr, 0o600) != 0 or c.fstatat(c.AT.FDCWD, path.ptr, &info, c.AT.SYMLINK_NOFOLLOW) != 0 or
++            info.uid != c.getuid() or (info.mode & c.S.IFMT) != c.S.IFSOCK or
++            (info.mode & 0o777) != 0o600 or c.listen(fd, 2) != 0)
++            return error.ControlUnavailable;
++        const self = try allocator.create(Bridge);
++        errdefer allocator.destroy(self);
++        self.* = .{ .io = io, .allocator = allocator, .fd = fd, .barrier = barrier, .backend_fences = backend_fences, .path = path_buffer, .identity = info };
++        self.thread = try std.Thread.spawn(.{}, run, .{self});
++        return self;
++    }
++    pub fn stop(self: *Bridge) void {
++        self.stopped.store(true, .release);
++        if (self.thread) |thread| thread.join();
++        _ = c.close(self.fd);
++        // Delete only the exact pathname identity created by this instance.
++        var info: c.Stat = undefined;
++        if (c.fstatat(c.AT.FDCWD, &self.path, &info, c.AT.SYMLINK_NOFOLLOW) == 0 and info.dev == self.identity.dev and
++            info.ino == self.identity.ino and info.uid == self.identity.uid and
++            (info.mode & c.S.IFMT) == c.S.IFSOCK) _ = c.unlink(&self.path);
++        self.allocator.destroy(self);
++    }
++    fn secureFD(fd: c_int) bool {
++        const flags = c.fcntl(fd, c.F.GETFL);
++        const nonblock: c_int = @intCast(@as(u32, @bitCast(c.O{ .NONBLOCK = true })));
++        return flags >= 0 and c.fcntl(fd, c.F.SETFL, @as(c_int, flags | nonblock)) == 0 and
++            c.fcntl(fd, c.F.SETFD, @as(c_int, c.FD_CLOEXEC)) == 0;
++    }
++    fn nowMs() ?u64 {
++        var value: c.timespec = undefined;
++        if (c.clock_gettime(.MONOTONIC, &value) != 0 or value.sec < 0 or value.nsec < 0) return null;
++        const seconds = std.math.mul(u64, @intCast(value.sec), 1000) catch return null;
++        return std.math.add(u64, seconds, @as(u64, @intCast(value.nsec)) / 1_000_000) catch null;
++    }
++    fn ready(self: *Bridge, fd: c_int, events: c_short, deadline: u64) bool {
++        while (!self.stopped.load(.acquire)) {
++            if ((nowMs() orelse return false) >= deadline) return false;
++            var poll: c.pollfd = .{ .fd = fd, .events = events, .revents = 0 };
++            if (c.poll(@ptrCast(&poll), 1, 100) > 0) return (poll.revents & (events | c.POLL.HUP)) != 0;
++        }
++        return false;
++    }
++    fn run(self: *Bridge) void {
++        while (!self.stopped.load(.acquire)) {
++            const deadline = std.math.add(u64, nowMs() orelse break, 1000) catch break;
++            if (!self.ready(self.fd, c.POLL.IN, deadline)) continue;
++            const peer = c.accept(self.fd, null, null);
++            if (peer < 0) continue;
++            self.handle(peer);
++            _ = c.close(peer);
++        }
++    }
++    fn handle(self: *Bridge, peer: c_int) void {
++        var uid: c.uid_t = 0;
++        var gid: c.gid_t = 0;
++        var no_sigpipe: c_int = 1;
++        if (getpeereid(peer, &uid, &gid) != 0 or uid != c.getuid() or !secureFD(peer) or
++            c.setsockopt(peer, c.SOL.SOCKET, c.SO.NOSIGPIPE, &no_sigpipe, @sizeOf(c_int)) != 0) return;
++        const deadline = std.math.add(u64, nowMs() orelse return, 2000) catch return;
++        // Require a write-half-close: extra/trailing/replayed frames never act.
++        var input: [protocol.lineage_request_size + 1]u8 = undefined;
++        var count: usize = 0;
++        while (self.ready(peer, c.POLL.IN, deadline)) {
++            const n = c.read(peer, input[count..].ptr, input.len - count);
++            if (n < 0) return;
++            if (n == 0) break;
++            count += @intCast(n);
++            if (count > protocol.lineage_request_size) return;
++        } else return;
++        var storage: [protocol.primary_response_size]u8 = undefined;
++        const response: []const u8 = if (count == protocol.primary_request_size and std.mem.eql(u8, input[0..4], "FIA9")) primary: {
++            const value = protocol.dispatchPrimaryActivity(&ownership.shared, self.io, input[0..protocol.primary_request_size]);
++            @memcpy(storage[0..protocol.primary_response_size], &value);
++            break :primary &storage;
++        } else if (count == protocol.backend_request_size and std.mem.eql(u8, input[0..4], "FIB9")) fences: {
++            const value = protocol.dispatchBackendFences(&ownership.shared, self.io, input[0..protocol.backend_request_size], self.backend_fences);
++            @memcpy(storage[0..protocol.backend_response_size], &value);
++            break :fences storage[0..protocol.backend_response_size];
++        } else if (count == protocol.request_size and input[4] == 3) timestamped: {
++            const value = protocol.dispatchTimestamped(&ownership.shared, self.io, input[0..protocol.request_size], self.barrier);
++            @memcpy(storage[0..protocol.timestamped_response_size], &value);
++            break :timestamped storage[0..protocol.timestamped_response_size];
++        } else if (count == protocol.request_size) legacy: {
++            const value = protocol.dispatchWithBarrier(&ownership.shared, self.io, input[0..protocol.request_size], self.barrier);
++            @memcpy(storage[0..protocol.response_size], &value);
++            break :legacy storage[0..protocol.response_size];
++        } else if (count == protocol.lineage_request_size and std.mem.eql(u8, input[0..4], "FIQ9")) lineage: {
++            const value = protocol.dispatchLineage(&ownership.shared, self.io, input[0..protocol.lineage_request_size]);
++            @memcpy(storage[0..protocol.lineage_response_size], &value);
++            break :lineage storage[0..protocol.lineage_response_size];
++        } else return;
++        var sent: usize = 0;
++        while (sent < response.len and self.ready(peer, c.POLL.OUT, deadline)) {
++            const n = c.write(peer, response[sent..].ptr, response.len - sent);
++            if (n <= 0) return;
++            sent += @intCast(n);
++        }
++    }
++};
+diff --git a/src/fios/device_owner.zig b/src/fios/device_owner.zig
+new file mode 100644
+index 0000000..22f671e
+--- /dev/null
++++ b/src/fios/device_owner.zig
+@@ -0,0 +1,100 @@
++const std = @import("std");
++pub const Outcome = enum(u8) { not_requested, owner_streams_synchronized, blocked, wrong_owner, streams_changed, failed, timed_out };
++pub const Reading = struct { outcome: Outcome = .blocked, streams: u32 = 0 };
++const CResult = extern struct { seen: u32 = 0, synchronized: u32 = 0 };
++extern "c" fn fios_mlx_current_thread() u64;
++extern "c" fn fios_mlx_owner_barrier(owner: u64, result: *CResult) c_int;
++extern "c" fn fios_mlx_initialize_owner_defaults(owner: u64) c_int;
++pub fn initializeDefaults(owner: u64) bool { return fios_mlx_initialize_owner_defaults(owner) == 0; }
++pub fn currentThread() u64 { return fios_mlx_current_thread(); }
++extern "c" fn fios_mlx_source_known_uncertainty() c_int;
++// Negative-only source evidence, never all-client capacity or terminality.
++pub fn knownSourceUncertain() bool { return fios_mlx_source_known_uncertainty() > 0; }
++pub fn synchronize(owner: u64) Reading {
++    var result: CResult = .{};
++    const status = fios_mlx_owner_barrier(owner, &result);
++    if (status == 0 and result.seen == result.synchronized and result.seen <= 256)
++        return .{ .outcome = .owner_streams_synchronized, .streams = result.synchronized };
++    return .{ .outcome = switch (status) { 1 => .wrong_owner, 2 => .streams_changed, else => .failed } };
++}
++// Optional partial bridge-creation metadata hold. These hooks do NOT reserve
++// model/context lifetime, other backends or all native transitions. An explicit
++// source SDK composition can attach its tracked component gates after sync.
++pub const RegistryHooks = struct {
++    acquire: *const fn (u64) ?u64,
++    release: *const fn (u64, u64) bool,
++};
++extern "c" fn fios_mlx_hold_owned_registry(owner: u64, ticket: *u64) c_int;
++extern "c" fn fios_mlx_release_owned_registry(owner: u64, ticket: u64) c_int;
++fn acquireOwnedRegistry(owner: u64) ?u64 {
++    var ticket: u64 = 0;
++    if (fios_mlx_hold_owned_registry(owner, &ticket) != 0 or ticket == 0) return null;
++    return ticket;
++}
++fn releaseOwnedRegistry(owner: u64, ticket: u64) bool {
++    return fios_mlx_release_owned_registry(owner, ticket) == 0;
++}
++pub fn ownedRegistryHooks() RegistryHooks { return .{ .acquire = acquireOwnedRegistry, .release = releaseOwnedRegistry }; }
++// Scheduler parking with optional partial bridge metadata hold, NOT backend
++// terminality or an all-model/backend transition reservation. No age, failed
++// probe or foreign snapshot releases either hold.
++pub const ActorPauseHold = struct {
++    instance: [16]u8 = @splat(0),
++    sequence: u64 = 0,
++    registry: ?struct { owner: u64, ticket: u64, hooks: RegistryHooks } = null,
++    pub fn reserveOwnedRegistry(self: *ActorPauseHold, owner: u64, hooks: RegistryHooks) !void {
++        if (self.sequence == 0) return error.InvalidPause;
++        if (self.registry) |held| {
++            if (held.owner != owner) return error.WrongOwner;
++            return; // Never retarget the existing ticket/release hook.
++        }
++        const ticket = hooks.acquire(owner) orelse return error.Unavailable;
++        if (ticket == 0) return error.Unavailable;
++        self.registry = .{ .owner = owner, .ticket = ticket, .hooks = hooks };
++    }
++    pub fn reserve(self: *ActorPauseHold, instance: [16]u8, sequence: u64) !void {
++        if (sequence == 0 or (self.sequence != 0 and
++            (!std.mem.eql(u8, &self.instance, &instance) or sequence < self.sequence))) return error.InvalidPause;
++        self.instance = instance;
++        self.sequence = sequence;
++    }
++    pub fn blocks(self: *ActorPauseHold, instance: [16]u8, paused: bool, sequence: u64) bool {
++        if (self.sequence == 0) return false;
++        // Same tracker can expose open/newer pause only after exact resume.
++        if (std.mem.eql(u8, &self.instance, &instance) and
++            ((!paused and sequence == 0) or (paused and sequence > self.sequence))) {
++            if (self.registry) |held| {
++                if (!held.hooks.release(held.owner, held.ticket)) return true;
++                self.registry = null;
++            }
++            self.sequence = 0;
++            return false;
++        }
++        return true;
++    }
++};
++// Two references: parked sender and scheduler. Sender timeout never frees a
++// queued/executing request. One scheduler slot stays occupied until completion.
++pub const Request = struct {
++    allocator: std.mem.Allocator,
++    references: std.atomic.Value(u32) = .init(2),
++    done_mu: std.Io.Mutex = .init,
++    done_cond: std.Io.Condition = .init,
++    done: bool = false,
++    reading: Reading = .{},
++    instance: [16]u8,
++    pause_sequence: u64,
++    pub fn release(self: *Request) void {
++        if (self.references.fetchSub(1, .acq_rel) == 1) self.allocator.destroy(self);
++    }
++};
++
++// Optional readonly source subdomains, never all-context/terminal authority.
++extern "c" fn fios_mlx_source_components_json(output: [*]u8, capacity: usize) c_int;
++pub fn sourceComponents(output: []u8) ?[]const u8 {
++    const count = fios_mlx_source_components_json(output.ptr, output.len);
++    if (count <= 0) return null;
++    const size: usize = @intCast(count);
++    if (size > output.len) return null;
++    return output[0..size];
++}
+diff --git a/src/fios/request_ownership.zig b/src/fios/request_ownership.zig
+new file mode 100644
+index 0000000..ed6b086
+--- /dev/null
++++ b/src/fios/request_ownership.zig
+@@ -0,0 +1,707 @@
++//! Bounded request ownership, not a claim of native quiescence. No workload
++//! bodies, headers, credentials, allocation, I/O or callbacks under the mutex.
++//! Any overflow or protocol contradiction permanently makes coverage uncertain.
++const std = @import("std");
++pub const capacity = 256;
++pub const model_limit = 1024;
++pub const model_capacity = 64;
++// Exact JSON-safe capture counter; exhaustion stays fenced, never wraps.
++pub const maximum_sample_sequence: u64 = 9_007_199_254_740_991;
++pub const Token = struct { slot: usize, sequence: u64, instance: [16]u8 };
++pub const CorrelationID = [32]u8;
++pub fn parseCorrelationHex(value: []const u8) !CorrelationID {
++    if (value.len != 64) return error.InvalidCorrelation;
++    var result: CorrelationID = undefined;
++    for (&result, 0..) |*byte, index| {
++        var pair: u8 = 0;
++        for (value[index * 2 ..][0..2]) |character| {
++            const digit: u8 = if (character >= '0' and character <= '9') character - '0'
++                else if (character >= 'a' and character <= 'f') character - 'a' + 10
++                else return error.InvalidCorrelation;
++            pair = (pair << 4) | digit;
++        }
++        byte.* = pair;
++    }
++    return result;
++}
++// Live request lineage only. Missing entries NEVER mean not-sent, completed
++// or device-terminal. Root sequence remains attached to retained descendants.
++pub const CorrelationSnapshot = struct {
++    instance: [16]u8,
++    sample_sequence: u64,
++    root_sequence: u64 = 0,
++    found: bool = false,
++    uncertain: bool = true,
++    owners: usize = 0,
++    references: u64 = 0,
++    ingress: usize = 0,
++    preparing: usize = 0,
++    active: usize = 0,
++    responding: usize = 0,
++};
++pub const Phase = enum { vacant, ingress, preparing, active, responding };
++// Native-internal lease, NOT authentication or a wire management capability.
++// A future enrolled manager bridge must authenticate before calling these APIs.
++pub const AdmissionPause = struct { instance: [16]u8, sequence: u64 };
++pub const ModelMutation = struct { instance: [16]u8, slot: usize, sequence: u64 };
++const MutationSlot = struct {
++    id: [model_limit]u8 = @splat(0),
++    len: usize = 0,
++    sequence: u64 = 0,
++};
++const Slot = struct {
++    sequence: u64 = 0,
++    phase: Phase = .vacant,
++    primary: ?u6 = null,
++    models: u64 = 0,
++    references: u32 = 0,
++    correlation: ?CorrelationID = null,
++    correlation_root: u64 = 0,
++};
++const Model = struct {
++    id: [model_limit]u8 = @splat(0),
++    len: usize = 0,
++    owners: usize = 0,
++};
++// These are conservative REQUEST-OWNERSHIP phases, not GPU execution phases.
++// The diagnostic deliberately does not export these identities or normalize
++// this incomplete source into the manager's all-client activity contract.
++pub const ModelSnapshot = struct {
++    id: [model_limit]u8 = @splat(0),
++    len: usize = 0,
++    preparing: usize = 0,
++    active: usize = 0,
++    responding: usize = 0,
++};
++pub const Snapshot = struct {
++    sequence: u64,
++    sample_sequence: u64 = 0,
++    instance: [16]u8 = @splat(0),
++    initialized: bool = false,
++    admissions_closed: bool = false,
++    admission_pause: u64 = 0, // Native-private control state; not exported by HTTP.
++    owned: usize = 0,
++    ingress: usize = 0,
++    preparing: usize = 0,
++    active: usize = 0,
++    responding: usize = 0,
++    uncertain: bool,
++    model_mutations: usize = 0,
++    model_count: usize = 0,
++    models: [model_capacity]ModelSnapshot = @splat(.{}),
++};
++pub fn renderSnapshot(snapshot: Snapshot, buffer: []u8) ![]const u8 {
++    const instance = std.fmt.bytesToHex(snapshot.instance, .lower);
++    const label: []const u8 = if (snapshot.initialized) &instance else "uninitialized";
++    return std.fmt.bufPrint(buffer, "{{\"schema_version\":1,\"coverage\":\"unknown\",\"reason\":\"native_ownership_audit_incomplete\",\"observer_included\":true,\"source_instance\":\"{s}\",\"admissions_closed\":{s},\"sequence\":{d},\"sample_sequence\":{d},\"uncertain\":{s},\"owned_requests\":{d},\"ingress\":{d},\"preparing\":{d},\"active\":{d},\"responding\":{d}}}", .{ label, if (snapshot.admissions_closed) "true" else "false", snapshot.sequence, snapshot.sample_sequence, if (snapshot.uncertain) "true" else "false", snapshot.owned, snapshot.ingress, snapshot.preparing, snapshot.active, snapshot.responding });
++}
++
++// One process-local source, shared by connection and inference threads. TLS
++// propagates only a native-created token, never client-provided authority.
++pub var shared: Tracker = .{ .primary_guard = true };
++pub threadlocal var current: ?Token = null;
++pub threadlocal var current_group: ?[]const Token = null;
++pub const Retained = struct {
++    tracker: *Tracker,
++    tokens: [capacity]Token = undefined,
++    count: usize = 0,
++    pub fn release(self: Retained, io: std.Io) void {
++        for (self.tokens[0..self.count]) |token| self.tracker.leave(io, token) catch { self.tracker.fence(io); };
++    }
++    pub fn releaseIfCertain(self: Retained, io: std.Io) bool {
++        if (self.count == 0 or self.count > capacity) { self.tracker.fence(io); return false; }
++        return self.tracker.releaseIfCertain(io, self.tokens[0..self.count]);
++    }
++};
++pub fn retainCurrent(io: std.Io) !?Retained {
++    if (current_group) |tokens| return try shared.retainTokens(io, tokens);
++    const token = current orelse return null;
++    return try shared.retainTokens(io, &.{token});
++}
++pub fn bindAuxiliaryCurrent(io: std.Io, model: []const u8) !void {
++    if (current_group) |tokens| {
++        for (tokens) |token| shared.bindAuxiliary(io, token, model) catch |err| { shared.fence(io); return err; };
++        return;
++    }
++    const token = current orelse {
++        shared.fence(io);
++        return error.MissingOwner;
++    };
++    try shared.bindAuxiliary(io, token, model);
++}
++
++// Clone an existing caller-held model reference without waiting on eviction:
++// waiting could deadlock an evictor that is itself waiting for that caller.
++pub fn retainReference(reference: *std.atomic.Value(u32)) !void {
++    var old = reference.load(.acquire);
++    while (true) {
++        if (old == 0) return error.MissingReference;
++        if (old == std.math.maxInt(u32)) return error.ReferenceOverflow;
++        if (reference.cmpxchgWeak(old, old + 1, .acq_rel, .acquire)) |actual| {
++            old = actual;
++        } else return;
++    }
++}
++
++pub const BackendUncertaintyProbe = *const fn () bool;
++pub const Tracker = struct {
++    mutex: std.Io.Mutex = .init,
++    // Trusted native construction only, never a wire option. The serving
++    // singleton protects primary binding; local audit fixtures may track
++    // multiple primaries to characterize incomplete/contradictory sources.
++    primary_guard: bool = false,
++    backend_uncertainty_probe: ?BackendUncertaintyProbe = null,
++    mutations: [model_capacity]MutationSlot = @splat(.{}),
++    mutation_sequence: u64 = 0,
++    slots: [capacity]Slot = @splat(.{}),
++    models: [model_capacity]Model = @splat(.{}),
++    sequence: u64 = 0,
++    sample_sequence: u64 = 0,
++    instance: [16]u8 = @splat(0),
++    initialized: bool = false,
++    pause_sequence: u64 = 0,
++    pause_id: ?u64 = null,
++    uncertain: bool = false,
++
++    // Entropy is supplied by native startup OUTSIDE this mutex, not by a wire
++    // caller. It is source-instance identity, never a management capability.
++    pub fn initialize(self: *Tracker, io: std.Io, instance: [16]u8) !void {
++        self.mutex.lockUncancelable(io);
++        defer self.mutex.unlock(io);
++        if (self.initialized or self.sequence != 0 or self.sample_sequence != 0 or std.mem.allEqual(u8, &instance, 0)) {
++            self.uncertain = true;
++            return error.InvalidInstance;
++        }
++        self.instance = instance;
++        self.initialized = true;
++    }
++    // Trusted startup-only, fixed nonblocking readonly backend getter. This
++    // is negative evidence only, never a coverage/admission capability.
++    pub fn enrollBackendUncertaintyProbe(self: *Tracker, io: std.Io, probe: BackendUncertaintyProbe) !void {
++        self.mutex.lockUncancelable(io);
++        defer self.mutex.unlock(io);
++        if (!self.initialized or !self.primary_guard or self.backend_uncertainty_probe != null or
++            self.sequence != 0 or self.mutation_sequence != 0) {
++            self.uncertain = true;
++            return error.InvalidProbeEnrollment;
++        }
++        self.backend_uncertainty_probe = probe;
++    }
++    fn observeBackendUncertainty(self: *Tracker, io: std.Io) void {
++        _ = self.backendKnownUncertain(io);
++    }
++    // Fixed native source only. Positive is sticky negative evidence; false
++    // never proves completion. Ordinary leave/snapshot remain callback-free.
++    pub fn backendKnownUncertain(self: *Tracker, io: std.Io) bool {
++        self.mutex.lockUncancelable(io);
++        const probe = self.backend_uncertainty_probe;
++        self.mutex.unlock(io);
++        // No callback runs while holding this tracker mutex.
++        const known = if (probe) |read| read() else false;
++        if (known) self.fence(io);
++        return self.knownUncertain(io);
++    }
++    // Cached source state only: no callback, allocation or capture/clock advance.
++    // A later false backend sample cannot clear an already latched source fence.
++    pub fn knownUncertain(self: *Tracker, io: std.Io) bool {
++        self.mutex.lockUncancelable(io);
++        defer self.mutex.unlock(io);
++        return !self.initialized or self.uncertain;
++    }
++    // Close the same mutex-protected reservation edge used by enter(). Work
++    // already owning ingress is NOT cancelled. No clock/manager death resumes
++    // admission, and zero owners here is NOT a device/quiescence proof.
++    pub fn pauseAdmissions(self: *Tracker, io: std.Io) !AdmissionPause {
++        self.mutex.lockUncancelable(io);
++        defer self.mutex.unlock(io);
++        if (!self.initialized) {
++            self.uncertain = true;
++            return error.InvalidInstance;
++        }
++        if (self.pause_id != null) return error.Maintenance;
++        if (self.pause_sequence == std.math.maxInt(u64)) {
++            self.uncertain = true;
++            return error.SequenceExhausted;
++        }
++        self.pause_sequence += 1;
++        self.pause_id = self.pause_sequence;
++        return .{ .instance = self.instance, .sequence = self.pause_sequence };
++    }
++    pub fn resumeAdmissions(self: *Tracker, io: std.Io, pause: AdmissionPause) !void {
++        self.mutex.lockUncancelable(io);
++        defer self.mutex.unlock(io);
++        if (self.pause_id == null or self.pause_id.? != pause.sequence or
++            !std.mem.eql(u8, &self.instance, &pause.instance))
++        {
++            self.uncertain = true;
++            return error.InvalidPause;
++        }
++        self.pause_id = null;
++    }
++    pub fn fence(self: *Tracker, io: std.Io) void {
++        self.mutex.lockUncancelable(io);
++        defer self.mutex.unlock(io);
++        self.uncertain = true;
++    }
++    // Local serving-memory lifetime only. The final HTTP reference may leave
++    // before an original actor/backend callback or model mutation releases.
++    // This read neither samples/refreshes observations nor calls a backend.
++    // False never establishes device completion, idle or all-client coverage.
++    pub fn hasRetainedWork(self: *Tracker, io: std.Io) bool {
++        self.mutex.lockUncancelable(io);
++        defer self.mutex.unlock(io);
++        if (!self.initialized) return true;
++        for (&self.slots) |*slot| {
++            if (slot.phase != .vacant or slot.references != 0 or slot.sequence != 0) return true;
++        }
++        for (&self.mutations) |*mutation| {
++            if (mutation.len != 0 or mutation.sequence != 0) return true;
++        }
++        return false;
++    }
++    pub fn enter(self: *Tracker, io: std.Io) !Token {
++        self.mutex.lockUncancelable(io);
++        defer self.mutex.unlock(io);
++        return self.enterLocked(false);
++    }
++    fn enterLocked(self: *Tracker, continuation: bool) !Token {
++        if (self.pause_id != null and !continuation) return error.Maintenance;
++        if (self.sequence == std.math.maxInt(u64)) {
++            self.uncertain = true;
++            return error.SequenceExhausted;
++        }
++        for (&self.slots, 0..) |*slot, index| {
++            if (slot.phase == .vacant) {
++                self.sequence += 1;
++                slot.* = .{ .sequence = self.sequence, .phase = .ingress, .references = 1 };
++                return .{ .slot = index, .sequence = self.sequence, .instance = self.instance };
++            }
++        }
++        self.uncertain = true;
++        return error.Capacity;
++    }
++    fn checked(self: *Tracker, token: Token) !*Slot {
++        if (token.slot >= capacity or self.slots[token.slot].phase == .vacant or
++            self.slots[token.slot].sequence != token.sequence or self.slots[token.slot].references == 0 or
++            !std.mem.eql(u8, &token.instance, &self.instance))
++        {
++            self.uncertain = true;
++            return error.InvalidToken;
++        }
++        return &self.slots[token.slot];
++    }
++    pub fn associate(self: *Tracker, io: std.Io, token: Token, id: CorrelationID) !void {
++        self.mutex.lockUncancelable(io);
++        defer self.mutex.unlock(io);
++        if (!self.initialized or self.uncertain) return error.CoverageUncertain;
++        const slot = try self.checked(token);
++        if (slot.phase != .ingress or slot.correlation != null) return error.InvalidCorrelationState;
++        for (self.slots) |other| {
++            if (other.correlation) |existing| {
++                if (std.mem.eql(u8, &existing, &id)) return error.DuplicateCorrelation;
++            }
++        }
++        slot.correlation = id;
++        slot.correlation_root = token.sequence;
++    }
++    fn advanceCaptureLocked(self: *Tracker) void {
++        if (self.sample_sequence == maximum_sample_sequence) {
++            self.uncertain = true;
++        } else self.sample_sequence += 1;
++    }
++    pub fn correlationSnapshot(self: *Tracker, io: std.Io, id: CorrelationID) CorrelationSnapshot {
++        self.mutex.lockUncancelable(io);
++        defer self.mutex.unlock(io);
++        self.advanceCaptureLocked();
++        var result: CorrelationSnapshot = .{ .instance = self.instance, .sample_sequence = self.sample_sequence,
++            .uncertain = self.uncertain or !self.initialized };
++        for (self.slots) |slot| {
++            const existing = slot.correlation orelse continue;
++            if (!std.mem.eql(u8, &existing, &id)) continue;
++            if (slot.phase == .vacant or slot.references == 0 or slot.correlation_root == 0 or
++                (result.found and result.root_sequence != slot.correlation_root)) {
++                self.uncertain = true;
++                continue;
++            }
++            result.found = true;
++            result.root_sequence = slot.correlation_root;
++            result.owners += 1;
++            result.references += slot.references;
++            switch (slot.phase) {
++                .ingress => result.ingress += 1,
++                .preparing => result.preparing += 1,
++                .active => result.active += 1,
++                .responding => result.responding += 1,
++                .vacant => unreachable,
++            }
++        }
++        result.uncertain = result.uncertain or self.uncertain or !result.found;
++        return result;
++    }
++    fn addModelLocked(self: *Tracker, slot: *Slot, id: []const u8) !u6 {
++        if (id.len == 0 or id.len > model_limit or !std.unicode.utf8ValidateSlice(id) or
++            std.mem.indexOfScalar(u8, id, 0) != null)
++        {
++            self.uncertain = true;
++            return error.InvalidModel;
++        }
++        var free: ?usize = null;
++        var found: ?usize = null;
++        for (&self.models, 0..) |*model, index| {
++            if (model.owners == 0) {
++                if (free == null) free = index;
++            } else if (std.mem.eql(u8, model.id[0..model.len], id)) {
++                found = index;
++                break;
++            }
++        }
++        const index = found orelse free orelse {
++            self.uncertain = true;
++            return error.ModelCapacity;
++        };
++        const key: u6 = @intCast(index);
++        const mask = @as(u64, 1) << key;
++        if (slot.models & mask != 0) return key;
++        const model = &self.models[index];
++        if (model.owners == 0) {
++            @memcpy(model.id[0..id.len], id);
++            model.len = id.len;
++        }
++        model.owners += 1; // At most one per each of the 256 request slots.
++        slot.models |= mask;
++        return key;
++    }
++    // A distinct bounded internal owner spans scheduler preparation/loading.
++    // Parent identity is read and copied into the child under this same lock;
++    // no TLS/client identity can bypass exact token/model membership checks.
++    // This is CPU/load-path ownership, NOT backend/device-terminal proof.
++    pub fn reservePreparation(self: *Tracker, io: std.Io, parent: ?Token, model: []const u8) !Token {
++        self.observeBackendUncertainty(io);
++        self.mutex.lockUncancelable(io);
++        defer self.mutex.unlock(io);
++        if (!self.initialized or self.uncertain) return error.CoverageUncertain;
++        var root = model;
++        if (parent) |token| {
++            const original = try self.checked(token);
++            if (original.primary) |primary| {
++                if (original.phase != .preparing and original.phase != .active) return error.InvalidPhase;
++                var member = false;
++                for (self.models, 0..) |identity, index| {
++                    if (original.models & (@as(u64, 1) << @as(u6, @intCast(index))) != 0 and
++                        std.mem.eql(u8, identity.id[0..identity.len], model)) { member = true; break; }
++                }
++                if (!member) return error.ModelConflict;
++                const identity = &self.models[primary];
++                root = identity.id[0..identity.len];
++            } else {
++                // Admin/load requests that already own ingress retain their
++                // resolved model through response/connection release too.
++                try self.bindLocked(token, model);
++            }
++        }
++        if (self.transitioningLocked(model)) return error.ModelTransition;
++        const child = try self.enterLocked(parent != null);
++        errdefer self.leaveLocked(child) catch { self.uncertain = true; };
++        if (parent) |token| {
++            const original = try self.checked(token);
++            const descendant = try self.checked(child);
++            descendant.correlation = original.correlation;
++            descendant.correlation_root = original.correlation_root;
++        }
++        try self.bindLocked(child, root);
++        if (!std.mem.eql(u8, root, model)) _ = try self.addModelLocked(try self.checked(child), model);
++        return child;
++    }
++    fn transitioningLocked(self: *Tracker, id: []const u8) bool {
++        for (&self.mutations) |*mutation| {
++            if (mutation.len != 0 and std.mem.eql(u8, mutation.id[0..mutation.len], id)) return true;
++        }
++        return false;
++    }
++    // Registry callers must acquire this BEFORE committing an eviction, keep
++    // it through destruction/rollback, and release only their exact ticket.
++    // This metadata edge is not proof of device completion or native quiescence.
++    pub fn beginModelMutation(self: *Tracker, io: std.Io, id: []const u8) !ModelMutation {
++        self.observeBackendUncertainty(io);
++        self.mutex.lockUncancelable(io);
++        defer self.mutex.unlock(io);
++        if (!self.initialized or self.uncertain) return error.CoverageUncertain;
++        if (id.len == 0 or id.len > model_limit or !std.unicode.utf8ValidateSlice(id) or std.mem.indexOfScalar(u8, id, 0) != null) {
++            self.uncertain = true;
++            return error.InvalidModel;
++        }
++        for (&self.models) |*model| {
++            if (model.owners != 0 and std.mem.eql(u8, model.id[0..model.len], id)) return error.ModelOwned;
++        }
++        if (self.transitioningLocked(id)) return error.ModelTransition;
++        if (self.mutation_sequence == std.math.maxInt(u64)) {
++            self.uncertain = true;
++            return error.SequenceExhausted;
++        }
++        for (&self.mutations, 0..) |*mutation, index| {
++            if (mutation.len != 0) continue;
++            self.mutation_sequence += 1;
++            @memcpy(mutation.id[0..id.len], id);
++            mutation.len = id.len;
++            mutation.sequence = self.mutation_sequence;
++            return .{ .instance = self.instance, .slot = index, .sequence = mutation.sequence };
++        }
++        self.uncertain = true;
++        return error.ModelCapacity;
++    }
++    pub fn endModelMutation(self: *Tracker, io: std.Io, ticket: ModelMutation) !void {
++        self.mutex.lockUncancelable(io);
++        defer self.mutex.unlock(io);
++        if (ticket.slot >= model_capacity or !std.mem.eql(u8, &ticket.instance, &self.instance)) {
++            self.uncertain = true;
++            return error.InvalidMutation;
++        }
++        const mutation = &self.mutations[ticket.slot];
++        if (mutation.len == 0 or mutation.sequence != ticket.sequence) {
++            self.uncertain = true;
++            return error.InvalidMutation;
++        }
++        mutation.* = .{}; // Never clear the independent uncertainty fence.
++    }
++    pub fn bind(self: *Tracker, io: std.Io, token: Token, model: []const u8) !void {
++        self.observeBackendUncertainty(io);
++        self.mutex.lockUncancelable(io);
++        defer self.mutex.unlock(io);
++        return self.bindLocked(token, model);
++    }
++    fn bindLocked(self: *Tracker, token: Token, model: []const u8) !void {
++        const slot = try self.checked(token);
++        if (slot.phase != .ingress) {
++            self.uncertain = true;
++            return error.InvalidPhase;
++        }
++        if (self.transitioningLocked(model)) return error.ModelTransition;
++        if (self.primary_guard) {
++            if (!self.initialized or self.uncertain) return error.CoverageUncertain;
++            // Check and commit under the same mutex, BEFORE any caller can
++            // prepare/load/evict. Keep preparing/active/responding and retained
++            // owners; a completed newer request never releases an older one.
++            for (self.slots) |other| {
++                const primary = other.primary orelse continue;
++                if (other.phase == .vacant) continue;
++                const identity = &self.models[primary];
++                if (!std.mem.eql(u8, identity.id[0..identity.len], model)) return error.ModelConflict;
++            }
++        }
++        slot.primary = try self.addModelLocked(slot, model);
++        slot.phase = .preparing;
++    }
++    pub fn bindAuxiliary(self: *Tracker, io: std.Io, token: Token, model: []const u8) !void {
++        self.observeBackendUncertainty(io);
++        self.mutex.lockUncancelable(io);
++        defer self.mutex.unlock(io);
++        const slot = try self.checked(token);
++        if (self.primary_guard and self.uncertain) return error.CoverageUncertain;
++        if (slot.primary == null or (slot.phase != .preparing and slot.phase != .active)) {
++            self.uncertain = true;
++            return error.InvalidPhase;
++        }
++        if (self.transitioningLocked(model)) return error.ModelTransition;
++        _ = try self.addModelLocked(slot, model);
++    }
++    fn advance(self: *Tracker, io: std.Io, token: Token, from: Phase, to: Phase) !void {
++        self.mutex.lockUncancelable(io);
++        defer self.mutex.unlock(io);
++        const slot = try self.checked(token);
++        if (to == .active and self.primary_guard and self.uncertain) return error.CoverageUncertain;
++        if (slot.phase != from) {
++            self.uncertain = true;
++            return error.InvalidPhase;
++        }
++        slot.phase = to;
++    }
++    pub fn active(self: *Tracker, io: std.Io, token: Token) !void {
++        self.observeBackendUncertainty(io);
++        try self.advance(io, token, .preparing, .active);
++    }
++    pub fn responding(self: *Tracker, io: std.Io, token: Token) !void {
++        try self.advance(io, token, .active, .responding);
++    }
++    pub fn retain(self: *Tracker, io: std.Io, token: Token) !void {
++        self.mutex.lockUncancelable(io);
++        defer self.mutex.unlock(io);
++        const slot = try self.checked(token);
++        if (slot.references == std.math.maxInt(u32)) {
++            self.uncertain = true;
++            return error.ReferenceOverflow;
++        }
++        slot.references += 1;
++    }
++    // Validate the whole bounded set before increasing ANY reference. Shared
++    // callbacks retain every distinct origin, never just the first batch item.
++    pub fn retainTokens(self: *Tracker, io: std.Io, tokens: []const Token) !Retained {
++        self.mutex.lockUncancelable(io);
++        defer self.mutex.unlock(io);
++        if (tokens.len == 0 or tokens.len > capacity) return error.InvalidReferenceGroup;
++        var result: Retained = .{ .tracker = self };
++        var seen: [capacity]bool = @splat(false);
++        for (tokens) |token| {
++            const slot = try self.checked(token);
++            if (seen[token.slot]) continue;
++            if (slot.references == std.math.maxInt(u32)) { self.uncertain = true; return error.ReferenceOverflow; }
++            seen[token.slot] = true;
++            result.tokens[result.count] = token;
++            result.count += 1;
++        }
++        for (result.tokens[0..result.count]) |token| self.slots[token.slot].references += 1;
++        return result;
++    }
++    // Trusted cross-thread metadata only. The sender keeps these references
++    // alive until worker completion; this validates identities without effects.
++    pub fn validatePreparationOrigins(self: *Tracker, io: std.Io, origins: *const Retained, model: []const u8) !void {
++        self.mutex.lockUncancelable(io);
++        defer self.mutex.unlock(io);
++        if (origins.tracker != self or origins.count == 0 or origins.count > capacity) return error.InvalidReferenceGroup;
++        if (!self.initialized or self.uncertain) return error.CoverageUncertain;
++        for (origins.tokens[0..origins.count]) |token| {
++            const slot = try self.checked(token);
++            if (slot.phase != .preparing and slot.phase != .active) return error.InvalidPhase;
++            var member = false;
++            for (self.models, 0..) |identity, index| {
++                if (slot.models & (@as(u64, 1) << @as(u6, @intCast(index))) != 0 and
++                    std.mem.eql(u8, identity.id[0..identity.len], model)) { member = true; break; }
++            }
++            if (!member) return error.ModelConflict;
++        }
++    }
++    // Actor/preparation/SDK retirement only. The source-fence check and complete
++    // reference release share one lock, so a fence that wins this edge keeps
++    // every original token. Ordinary leave remains independent CPU accounting.
++    pub fn releaseIfCertain(self: *Tracker, io: std.Io, tokens: []const Token) bool {
++        self.mutex.lockUncancelable(io);
++        defer self.mutex.unlock(io);
++        if (!self.initialized or self.uncertain) return false;
++        if (tokens.len == 0 or tokens.len > capacity) { self.uncertain = true; return false; }
++        var seen: [capacity]bool = @splat(false);
++        for (tokens) |token| {
++            _ = self.checked(token) catch { self.uncertain = true; return false; };
++            if (seen[token.slot]) { self.uncertain = true; return false; }
++            seen[token.slot] = true;
++        }
++        for (tokens) |token| self.leaveLocked(token) catch { self.uncertain = true; return false; };
++        return true;
++    }
++    pub fn leave(self: *Tracker, io: std.Io, token: Token) !void {
++        self.mutex.lockUncancelable(io);
++        defer self.mutex.unlock(io);
++        return self.leaveLocked(token);
++    }
++    fn leaveLocked(self: *Tracker, token: Token) !void {
++        const slot = try self.checked(token);
++        if (slot.references > 1) {
++            slot.references -= 1;
++            return;
++        }
++        var remaining = slot.models;
++        while (remaining != 0) {
++            const index: u6 = @intCast(@ctz(remaining));
++            remaining &= remaining - 1;
++            const model = &self.models[index];
++            if (model.owners == 0) {
++                self.uncertain = true;
++                return error.InvalidModelOwnership;
++            }
++            model.owners -= 1;
++            if (model.owners == 0) model.* = .{};
++        }
++        // Clear identity without clearing the uncertainty fence or allowing replay.
++        slot.* = .{};
++    }
++    pub fn snapshot(self: *Tracker, io: std.Io) Snapshot {
++        self.mutex.lockUncancelable(io);
++        defer self.mutex.unlock(io);
++        return self.snapshotLocked();
++    }
++    // Disjoint primary request attribution only. Auxiliary identities remain
++    // in the legacy associated-model snapshot, never additional requests here.
++    // No resident state, queue/device phase, all-client coverage or idle proof.
++    pub fn primarySnapshot(self: *Tracker, io: std.Io) Snapshot {
++        self.mutex.lockUncancelable(io);
++        defer self.mutex.unlock(io);
++        var result = self.snapshotLocked();
++        result.models = @splat(.{});
++        result.model_count = 0;
++        for (self.slots) |slot| {
++            if (slot.phase == .vacant) continue;
++            const index = slot.primary orelse {
++                if (slot.phase != .ingress) self.uncertain = true;
++                continue;
++            };
++            const model = self.models[index];
++            if (model.len == 0 or model.owners == 0) {self.uncertain = true;continue;}
++            const row = &result.models[index];
++            row.id = model.id;row.len = model.len;
++            switch (slot.phase) {
++                .preparing => row.preparing += 1,
++                .active => row.active += 1,
++                .responding => row.responding += 1,
++                else => self.uncertain = true,
++            }
++        }
++        for (0..model_capacity) |index| {
++            const row = result.models[index];
++            if (row.preparing + row.active + row.responding == 0) continue;
++            result.models[result.model_count] = row;
++            result.model_count += 1;
++        }
++        for (result.model_count..model_capacity) |index| result.models[index] = .{};
++        result.uncertain = self.uncertain;
++        return result;
++    }
++    // Caller holds the tracker mutex; one original source capture per call.
++    fn snapshotLocked(self: *Tracker) Snapshot {
++        self.advanceCaptureLocked();
++        var result: Snapshot = .{ .sequence = self.sequence, .sample_sequence = self.sample_sequence, .uncertain = self.uncertain,
++            .instance = self.instance, .initialized = self.initialized,
++            .admissions_closed = self.pause_id != null,
++            .admission_pause = self.pause_id orelse 0 };
++        for (self.mutations) |mutation| {
++            if (mutation.len != 0) result.model_mutations += 1;
++        }
++        var indices: [model_capacity]?usize = @splat(null);
++        for (self.models, 0..) |model, index| {
++            if (model.owners == 0) continue;
++            indices[index] = result.model_count;
++            result.models[result.model_count] = .{ .id = model.id, .len = model.len };
++            result.model_count += 1;
++        }
++        for (self.slots) |slot| {
++            switch (slot.phase) {
++                .vacant => continue,
++                .ingress => result.ingress += 1,
++                .preparing => result.preparing += 1,
++                .active => result.active += 1,
++                .responding => result.responding += 1,
++            }
++            var remaining = slot.models;
++            while (remaining != 0) {
++                const index: u6 = @intCast(@ctz(remaining));
++                remaining &= remaining - 1;
++                const target = indices[index] orelse {
++                    self.uncertain = true;
++                    continue;
++                };
++                const model = &result.models[target];
++                switch (slot.phase) {
++                    .preparing => model.preparing += 1,
++                    .active => model.active += 1,
++                    .responding => model.responding += 1,
++                    else => self.uncertain = true,
++                }
++            }
++        }
++        for (self.models, 0..) |model, index| {
++            if (model.owners == 0) continue;
++            const row = result.models[indices[index].?];
++            if (row.preparing + row.active + row.responding != model.owners) self.uncertain = true;
++        }
++        result.uncertain = self.uncertain;
++        result.owned = result.ingress + result.preparing + result.active + result.responding;
++        return result;
++    }
++};
+diff --git a/src/host/http/request.zig b/src/host/http/request.zig
+index 17ed707..10fdfbb 100644
+--- a/src/host/http/request.zig
++++ b/src/host/http/request.zig
+@@ -1,6 +1,7 @@
+ //! connection thread, JSON depth, readRequest; header helpers
+ 
+ const std = @import("std");
++const fios_ownership = @import("../../fios/request_ownership.zig");
+ const log = @import("../../sdk/util/log.zig");
+ const io_util = @import("../../sdk/util/io_util.zig");
+ const nowMsMonotonic = io_util.nowMsMonotonic;
+@@ -30,6 +31,21 @@ pub fn handleConnectionThread(args: *ConnThreadArgs) void {
+     // shutdown drain in `serve` only sees this thread leave once it has fully
+     // returned from `complete()` and closed its socket.
+     defer _ = http_server.active_conn_threads.fetchSub(1, .acq_rel);
++    const fios_io = args.io;
++    const fios_allocator = args.allocator;
++    defer fios_allocator.destroy(args);
++    const fios_token: ?fios_ownership.Token = if (http_server.fios_connection_tracking.load(.acquire))
++        fios_ownership.shared.enter(fios_io) catch {
++            var refused: Conn = undefined;
++            Conn.init(&refused, args.accepted_stream, fios_io);
++            defer refused.close();
++            sendErrorResponse(fios_allocator, &refused, "503 Service Unavailable", "native_tracking_unavailable", "Source fixture ingress is unavailable", null) catch {};
++            return;
++        }
++    else null;
++    // Declared before conn.close(): retain this root through original response
++    // handling/socket cleanup. A refused retirement keeps tracker uncertainty.
++    defer if (fios_token) |token| fios_ownership.shared.leave(fios_io, token) catch { fios_ownership.shared.fence(fios_io); };
+     var conn: Conn = undefined;
+     Conn.init(&conn, args.accepted_stream, args.io);
+     defer conn.close();
+@@ -56,7 +72,6 @@ pub fn handleConnectionThread(args: *ConnThreadArgs) void {
+             else => log.err("  -> error: {}\n", .{err}),
+         }
+     };
+-    args.allocator.destroy(args);
+ }
+ 
+ /// Deepest JSON nesting a request may carry. Tool schemas and template kwargs are walked and
+diff --git a/src/host/http/server.zig b/src/host/http/server.zig
+index b6dd898..b463b1e 100644
+--- a/src/host/http/server.zig
++++ b/src/host/http/server.zig
+@@ -1,4 +1,9 @@
+ const std = @import("std");
++// Stage1 diagnostic port: HTTP connection custody only. Engine/model/device
++// origins are not enrolled and these observations cannot grant native admission.
++const fios_ownership = @import("../../fios/request_ownership.zig");
++const fios_control = @import("../../fios/control_transport.zig");
++pub var fios_connection_tracking = std.atomic.Value(bool).init(false);
+ const env = @import("../../env.zig");
+ const crt = @import("../../sdk/util/crt.zig");
+ const win_io = @import("../../sdk/util/win_io.zig");
+@@ -407,6 +412,15 @@ pub fn serve(
+     var scheduler = try mlx_engine.start(allocator, io, load_params, max_concurrent);
+     defer scheduler.deinit();
+     startup.stop();
++    var fios_instance: [16]u8 = undefined;
++    std.Io.random(io, &fios_instance);
++    try fios_ownership.shared.initialize(io, fios_instance);
++    const fios_bridge = try fios_control.Bridge.start(io, allocator, @import("build_options").version, null);
++    defer if (fios_bridge) |bridge| bridge.stop();
++    // The ordinary vendor path stays untracked unless the existing private
++    // fixture-only transport explicitly starts. No backend barrier is supplied.
++    fios_connection_tracking.store(fios_bridge != null, .release);
++    defer fios_connection_tracking.store(false, .release);
+     launch().global_scheduler = scheduler;
+     defer launch().global_scheduler = null;
+     mlx_engine.api().install_admission_hooks(true);

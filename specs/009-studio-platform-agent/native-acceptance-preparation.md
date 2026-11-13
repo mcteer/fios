@@ -4,6 +4,9 @@ Status: metadata preparation only,2026-10-31. T051 remains open. This is not an 
 
 ## Update inventory — 2026-11-12
 
+
+Recovered edge-a through a one-shot new-address override pinned to its existing SSH identity: both Studios independently report256GiB M3 Ultra/macOS27.2.1/MLX-Serve26.11.2/OrbStack2.2.5, matching current vendor file hashes and native health200. Edge-a's own catalog still advertises the exact large text candidates below. The operator subsequently restores the configured address: `.lab`/`.local` both resolve192.168.4.11, normal strict-key SSH and authenticated application discovery pass. The agent changes no network configuration or application fallback. See compatibility for exact resolution, logs and provenance limits. This fresh metadata does not establish kernel-bound running identity, safe model/resource scenarios, native all-client admission or acceptance; no inference or lifecycle action occurs.
+
 Edge-b now reports macOS27.2.1/MLX-Serve26.11.2, unchanged256GiB hardware/OrbStack2.2.5 and native health200. Its own catalog GET still advertises both exact large text candidates below, along with peer-suffixed edge-a entries. Edge-a SSH failed before remote execution. Peer advertisements do not supply its readiness; nothing was loaded, followed to another host, restarted or reconfigured. See the current compatibility section for exact file hashes and logs. Historical configuration/sidecar observations below have not been revalidated against a new atomic file set or current memory use, and remain planning inputs only.
 
 ## Host observations
