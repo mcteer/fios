@@ -9,9 +9,10 @@ import pathlib,subprocess,socket,tempfile,os,time,http.client,json,signal,sys,st
 assert sys.platform=="darwin" and os.geteuid()>0
 assert len(sys.argv) in [4,5] and sys.argv[1]=="--isolated"
 mode=sys.argv[4] if len(sys.argv)==5 else None
-assert mode in [None,"--expected-instance","--exact-target"]
+assert mode in [None,"--expected-instance","--exact-target","--startup"]
 check_instance=mode in ["--expected-instance","--exact-target"]
 check_target=mode=="--exact-target"
+check_startup=mode=="--startup"
 binary=pathlib.Path(sys.argv[2]);expected=sys.argv[3]
 assert binary.is_absolute() and str(binary).startswith("/private/tmp/") and binary.name=="mlx-serve"
 info=binary.lstat();assert binary.is_file() and not binary.is_symlink() and info.st_uid==os.geteuid() and info.st_nlink==1 and not info.st_mode&0o022 and 0<info.st_size<=64*1024*1024
@@ -81,6 +82,59 @@ try:
   if current[0]==0:released=True;break
   time.sleep(.025)
  assert released,"CURRENT_NATIVE_HTTP_CONNECTION_NOT_RETIRED"
+ if check_startup:
+  # Metadata-only calls remain available while the original process owns
+  # the reservation; these do not enter serving or load a model.
+  version=subprocess.run([str(binary),"--version"],cwd=home,env=env,capture_output=True,timeout=3)
+  assert version.returncode==0 and b"26.11.2-fios-source-fixture" in version.stdout,"CURRENT_NATIVE_METADATA_VERSION_BLOCKED"
+  usage=subprocess.run([str(binary),"--help"],cwd=home,env=env,capture_output=True,timeout=3)
+  assert usage.returncode==0 and b"mlx-serve" in usage.stdout,"CURRENT_NATIVE_METADATA_HELP_BLOCKED"
+  # A second ordinary empty-model invocation shares the private reservation,
+  # but has a different loopback port and no control transport collision.
+  second_listener=socket.socket();second_listener.bind(("127.0.0.1",0));second_port=second_listener.getsockname()[1];second_listener.close()
+  second_env=dict(env);second_env.pop("FIOS_NATIVE_CONTROL")
+  second_log=os.open(home/"second-native.log",os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)
+  second=subprocess.Popen([str(binary),"serve","--host","127.0.0.1","--port",str(second_port),"--model-dir",str(models),"--no-warmup-eager"],cwd=home,env=second_env,stdout=second_log,stderr=second_log,start_new_session=True);os.close(second_log)
+  try:
+   try:result=second.wait(timeout=3)
+   except subprocess.TimeoutExpired:
+    connection=http.client.HTTPConnection("127.0.0.1",second_port,timeout=1)
+    try:
+     connection.request("GET","/health");response=connection.getresponse();response.read(65537)
+     assert response.status==200,"CURRENT_NATIVE_SECOND_STARTUP_UNEXPECTED_STATE"
+    finally:connection.close()
+    raise AssertionError("CURRENT_NATIVE_STARTUP_RESERVATION_MISSING")
+   assert result!=0 and b"StartupGuardUnavailable" in (home/"second-native.log").read_bytes(),"CURRENT_NATIVE_DUPLICATE_NOT_REFUSED_BY_RESERVATION"
+   assert proc.poll() is None and get("/health")[0]==200,"CURRENT_NATIVE_ORIGINAL_LOST_AFTER_DUPLICATE"
+  finally:
+   if second.poll() is None:second.terminate()
+   try:second.wait(timeout=2)
+   except subprocess.TimeoutExpired:
+    if second.poll() is None:os.killpg(second.pid,signal.SIGKILL)
+    second.wait(timeout=2)
+  # Once the original private process has exited, the same reservation can
+  # be acquired normally. This says nothing about independent native work.
+  proc.terminate();proc.wait(timeout=5)
+  replacement_log=os.open(home/"replacement-native.log",os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)
+  replacement=subprocess.Popen([str(binary),"serve","--host","127.0.0.1","--port",str(second_port),"--model-dir",str(models),"--no-warmup-eager"],cwd=home,env=second_env,stdout=replacement_log,stderr=replacement_log,start_new_session=True);os.close(replacement_log)
+  try:
+   end=time.monotonic()+5;ready=False
+   while time.monotonic()<end:
+    assert replacement.poll() is None,"CURRENT_NATIVE_STARTUP_REACQUIRE_EXITED"
+    connection=http.client.HTTPConnection("127.0.0.1",second_port,timeout=1)
+    try:
+     connection.request("GET","/health");response=connection.getresponse();response.read(65537);ready=response.status==200
+    except (OSError,http.client.HTTPException):pass
+    finally:connection.close()
+    if ready:break
+    time.sleep(.025)
+   assert ready,"CURRENT_NATIVE_STARTUP_REACQUIRE_UNAVAILABLE"
+  finally:
+   if replacement.poll() is None:replacement.terminate()
+   try:replacement.wait(timeout=2)
+   except subprocess.TimeoutExpired:
+    if replacement.poll() is None:os.killpg(replacement.pid,signal.SIGKILL)
+    replacement.wait(timeout=2)
  if check_instance:
   wrong=("0" if instance[0]!="0" else "1")+instance[1:]
   connection=http.client.HTTPConnection("127.0.0.1",port,timeout=2)
@@ -112,7 +166,7 @@ try:
     assert rejected_with({"X-Fios-Native-Instance":instance},payload)==expected_result,"CURRENT_NATIVE_BOUND_JSON_SELECTION_CHANGED"
   else:
    assert legacy==matching and legacy[0]>=400,"CURRENT_NATIVE_MATCHING_EPOCH_CHANGED_LEGACY_SELECTION"
- receipt={"binary_sha256":hashlib.sha256(binary.read_bytes()).hexdigest(),"native_pid":proc.pid,"source_instance":instance,"source_sequence":sequence,"source_sampled_at":stamp,"http_connection_counts":list(counts),"accepted_connection_observed":True,"original_http_connection_retired":True,"private_home":str(home),"models":0,"model_requests":7 if check_target else (3 if check_instance else 0),"expected_instance_guard_checked":check_instance,"exact_target_guard_checked":check_target,"inference_started":False,"coverage":"unknown","native_admission_authority":False,"peer_authentication_proven":False,"installed":False}
+ receipt={"binary_sha256":hashlib.sha256(binary.read_bytes()).hexdigest(),"native_pid":proc.pid,"source_instance":instance,"source_sequence":sequence,"source_sampled_at":stamp,"http_connection_counts":list(counts),"accepted_connection_observed":True,"original_http_connection_retired":True,"private_home":str(home),"models":0,"model_requests":7 if check_target else (3 if check_instance else 0),"expected_instance_guard_checked":check_instance,"exact_target_guard_checked":check_target,"startup_reservation_checked":check_startup,"startup_reacquired_after_original_exit":check_startup,"metadata_available_while_reserved":check_startup,"inference_started":False,"coverage":"unknown","native_admission_authority":False,"peer_authentication_proven":False,"installed":False}
  (home/"receipt.json").write_text(json.dumps(receipt,indent=2)+"\n");print(json.dumps(receipt))
 finally:
  if proc.poll() is None:proc.terminate()

@@ -3978,3 +3978,7 @@ Operator is updating both Studios and the development Mac and requested a pause.
 ### Current-source exact target checkpoint
 
 38/55 whole tasks complete;17 remain open. Exact26.11.2 host-only target guard now builds30/30 and passes7 empty-registry selection requests with0 inference; source integrity3/3, working-tree app106 Node/106 installed Python/17 Chromium tests pass. See [port evidence](native-26112-port.md#exact-local-target-consistency-slice) for exact hashes, source/build scope, retained receipts and untested provider/positive-dispatch paths. T002/T018–T022 remain open: consistency is not native admission, correlation or backend terminality. No installed change, merge or deployment.
+
+### Current-source startup checkpoint
+
+38/55 whole tasks complete. The current host entry point now retains private startup exclusion before model-capable effects; actual duplicate refusal, metadata availability, original health and post-exit reacquisition pass against the exact rebuilt empty-model binary. Target guard regression also passes. See [startup evidence](native-26112-port.md#private-startup-exclusion-slice). Current installed activation stays unsupported; native inference uncertainty is independent of this lock. Earlier pushed2a3a7a9 has all6 CI prerequisites plus aggregate green in run43343784441; later additions require their own exact-head checks. No merge/deployment.

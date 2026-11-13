@@ -38,3 +38,21 @@ test('current local-target addition changes only the host router',()=>{
   assert.equal(paths[0][1],'src/host/http/router.zig');
   assert.equal(paths[0][2],paths[0][1]);
 });
+
+test('current startup addition preserves the existing exclusion companion',()=>{
+  const patch=readFileSync('platform/studio/native/mlx-serve-26.11.2-startup.patch','utf8');
+  const sections=patch.split(/(?=^diff --git )/m).filter(Boolean);
+  assert.equal(sections.length,2);
+  const expected=new Set(['src/main.zig','src/fios/startup_guard.zig']);
+  for(const section of sections){
+    const header=/^diff --git a\/(\S+) b\/(\S+)\n/.exec(section);
+    assert(header);assert.equal(header[1],header[2]);assert(expected.delete(header[1]));
+    if(header[1]==='src/fios/startup_guard.zig'){
+      assert(section.includes('\nnew file mode 100644\n'));
+      const hunk=section.slice(section.indexOf('\n@@ ')+1).split('\n').slice(1);
+      const bytes=hunk.filter(line=>line.startsWith('+')).map(line=>line.slice(1)).join('\n')+'\n';
+      assert.equal(bytes,readFileSync('platform/studio/native/startup_guard.zig','utf8'));
+    }
+  }
+  assert.equal(expected.size,0);
+});

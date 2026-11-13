@@ -47,7 +47,7 @@ The old18-path patch fails a read-only applicability check. A path rename is ins
 - Version source-build/capsule declarations around actual new inputs. Retain old26.10.3 artifacts as historical candidates. No old dependency receipt, empty-model fixture, backend flag or uninstrumented vendor baseline is promoted to current all-client/installed acceptance.
 - Continue ordinary correctness checks only. Installed activation, privileged/disruptive acceptance and both-Studio scenarios remain separately gated. Small-model tests belong only on core; there is no Studio small-model substitution or cybersecurity campaign.
 
-These are implementation requirements, not completed checks. T002/T018–T022 and the dependent runtime/lifecycle/release tasks remain open. The HTTP connection/control, expected-process and exact local-target slices are ported as detailed below. Backend/model/device custody, startup reservation, request correlation and the complete native contract remain unported.
+These are implementation requirements, not completed checks. T002/T018–T022 and the dependent runtime/lifecycle/release tasks remain open. The HTTP connection/control, expected-process and exact local-target slices are ported as detailed below. Backend/model/device custody, request correlation and the complete native contract remain unported. The private startup-exclusion addition below supplies process reservation, without current installed activation.
 
 ## Reproduce the first slice
 
@@ -92,3 +92,18 @@ Actual pre-change failure `CURRENT_NATIVE_BOUND_TARGET_USED_LEGACY_SELECTION` is
 ```
 
 The earlier `--expected-instance` matching-vs-legacy control describes the historical instance-only slice. Use `--exact-target` for the combined target patch, whose bound missing-ID behavior intentionally differs from legacy selection. Source-input integrity3/3 and sequential patch application pass. Working-tree application build,106 Node tests,106 installed Python tests and17 Chromium regressions pass; this working tree includes preserved unrelated frontend/spec003 edits and is not an exact clean-commit receipt. No installation or all-client/backend authority follows.
+
+## Private startup exclusion slice
+
+The [startup addition](../../platform/studio/native/mlx-serve-26.11.2-startup.patch), SHA31922ef9e4ccabcac17b5dc0b039e4f7f72e2ababa2a410e221850c1f1b89c21, applies after the first3 layers. It changes only `src/main.zig` and adds the byte-identical existing `startup_guard.zig`. The guard runs before model-capable subcommands/backend setup; exact metadata calls keep the existing report fields through an extracted helper. No engine implementation changes. The shared companion still explicitly recognizes only the historical26.10.3 installed version, so this addition does not enable current26.11.2 installed startup. The current source fixture uses the existing explicit private-HOME opt-in.
+
+Actual pre-change `CURRENT_NATIVE_STARTUP_RESERVATION_MISSING` follows two healthy ordinary empty-model servers sharing the same private reservation namespace but using different loopback ports and no second control transport; `startup-prior.log` and `/private/tmp/f9-cur-ingress-jxoi_61p` are retained. Native rebuild passes30/30 in49.571s; binary SHA05ddebef24de6f81420a13199b6bd46e7845073d9202666d0b6760e1269db7b9. Canonical `--startup` fixture passes metadata while the original owns the lock, duplicate refusal by `StartupGuardUnavailable`, original health preservation and normal reacquisition after the original process has exited. Receipt `/private/tmp/f9-cur-ingress-mcb0qd_l/receipt.json`, `startup-canonical-final.log`;0 model POSTs/inference. This is neither all-client activity nor terminality proof. Original child cleanup leaves independent native uncertainty untouched.
+
+```sh
+# Apply ingress, instance, target, then startup additions to the exact source.
+.venv/bin/python -I -B tests/fixtures/platform/current-native-ingress.py --isolated ABS_PRIVATE_BINARY REVIEWED_BINARY_SHA256 --startup
+```
+
+The combined binary also passes `--exact-target` again (7 empty-registry POSTs,0 inference; `startup-target-regression.log`). Source-input integrity4/4 and sequential patch application pass. CI run43343784441 is green for earlier pushed2a3a7a9, not these later additions. Whole-task count remains38/55. No installed lifecycle, approved launch, safe model replacement, request correlation, backend retirement or atomic native admission is claimed.
+
+The actual current Swift manager also authenticates this combined source process through PID/start/path/image binding and receives its ingress frame: `/private/tmp/f9-cur-ingress-n7w7tee9/receipt.json`, `startup-manager.log`. Status preserves `native_admissions:unsupported` separately from `native_ingress_admissions:admissionsOpen`;0 model POSTs,0 installed actions. Earlier target-only manager receipt is `/private/tmp/f9-cur-ingress-tv77yqi_/receipt.json`.
