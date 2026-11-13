@@ -1,0 +1,52 @@
+
+test "fios current slot retains request and model through queued cleanup" {
+    const a = std.testing.allocator;
+    const io = std.testing.io;
+    const registry = try ModelRegistry.init(a, io, null, 2, 0, null);
+    defer registry.deinit();
+    const model = try registry.registerStub("fixture/current-slot", "/fixture/never-loaded", null);
+    var config = std.mem.zeroInit(ModelConfig, .{ .model_type = "llama", .num_hidden_layers = 0 });
+    model.config = &config;
+    defer model.config = null;
+    model.state = .ready;
+    model.refcount.store(1, .release);
+    var model_held = true;
+    defer if (model_held) registry.releaseStatus(model);
+    var scheduler = std.mem.zeroInit(Scheduler, .{
+        .allocator = a, .io = io, .registry = registry, .queue_cap = 2,
+        .kv_quant_config = transformer_mod.KVQuantConfig.dense,
+    });
+    defer {
+        for (scheduler.pending.items) |pending| pending.deinit();
+        for (scheduler.cleanup_queue.items) |pending| pending.deinit();
+        scheduler.pending.deinit(a);
+        scheduler.cleanup_queue.deinit(a);
+    }
+    try fios_ownership.shared().initialize(io, @splat(19));
+    const root = try fios_ownership.shared().enter(io);
+    var root_held = true;
+    defer if (root_held) fios_ownership.shared().leave(io, root) catch {};
+    try fios_ownership.shared().bind(io, root, model.id);
+    fios_ownership.current().* = root;
+    defer fios_ownership.current().* = null;
+    const slot = try submit(&scheduler, .{
+        .prompt_ids = &.{1}, .sampling = .{}, .eos_token_ids = &.{},
+        .max_tokens = 1, .model = model,
+    });
+    complete(&scheduler, slot);
+    try std.testing.expectEqual(@as(usize, 1), scheduler.cleanup_queue.items.len);
+    registry.releaseStatus(model);
+    model_held = false;
+    try fios_ownership.shared().leave(io, root);
+    root_held = false;
+    fios_ownership.current().* = null;
+    const pending = fios_ownership.shared().snapshot(io);
+    if (pending.owned != 1) std.debug.print("FIO_CURRENT_SLOT_LOST_REQUEST_CUSTODY\n", .{});
+    try std.testing.expectEqual(@as(usize, 1), pending.owned);
+    try std.testing.expectEqual(@as(u32, 1), model.refcount.load(.acquire));
+    const cleanup = scheduler.cleanup_queue.pop().?;
+    cleanup.deinit();
+    try std.testing.expectEqual(@as(u32, 0), model.refcount.load(.acquire));
+    try std.testing.expectEqual(@as(usize, 0), fios_ownership.shared().snapshot(io).owned);
+    try std.testing.expect(fios_ownership.current().* == null and fios_ownership.current_group().* == null);
+}

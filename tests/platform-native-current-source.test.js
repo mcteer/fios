@@ -132,3 +132,21 @@ test('current optional SDK bridge preserves canonical native owner logic with sh
   }
   assert.equal(expected.size,0);
 });
+
+test('current slot custody stays within the existing scheduler and preserves its executable fixture',()=>{
+  const patch=readFileSync('platform/studio/native/mlx-serve-26.11.2-slot-custody.patch','utf8');
+  const sections=patch.split(/(?=^diff --git )/m).filter(Boolean);
+  assert.equal(sections.length,2);
+  const expected=new Set(['src/engines/mlx/scheduler.zig','src/engines/mlx/slot.zig']);
+  for(const section of sections){
+    const header=/^diff --git a\/(\S+) b\/(\S+)\n/.exec(section);
+    assert(header);assert.equal(header[1],header[2]);assert(expected.delete(header[1]));
+    if(header[1]==='src/engines/mlx/scheduler.zig'){
+      const start=section.indexOf('\n+test "fios current slot');
+      assert(start>=0);
+      const fixture=section.slice(start+1).split('\n').filter(line=>line.startsWith('+')).map(line=>line.slice(1)).join('\n')+'\n';
+      assert.equal(fixture,readFileSync('platform/studio/native/current_slot_custody_test.zig.fixture','utf8').trimStart());
+    }
+  }
+  assert.equal(expected.size,0);
+});
