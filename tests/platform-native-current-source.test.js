@@ -317,3 +317,12 @@ test('current llama parent custody stays in its genuine shim, matching wrappers 
   }
   assert.equal(expected.size,0);
 });
+
+
+test('current llama error custody stays within the existing C shim',()=>{
+  const patch=readFileSync('platform/studio/native/mlx-serve-26.11.2-llama-errors.patch','utf8');
+  const paths=[...patch.matchAll(/^diff --git a\/(\S+) b\/(\S+)$/gm)];
+  assert.equal(paths.length,1);
+  assert.equal(paths[0][1],'lib/llama_shim/llama_shim.cpp');
+  assert.equal(paths[0][2],paths[0][1]);
+});
