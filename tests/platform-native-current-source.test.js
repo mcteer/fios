@@ -691,3 +691,14 @@ test('current private ANE staging custody changes only the declared bridge sourc
   assert(fixture.includes('fios_ane_prepare_staging'));
   assert(!/\b(?:kill|msv_ane_\w+|objc_msgSend)\s*\(/.test(fixture));
 });
+
+
+test('current private ANE compile custody changes only the declared bridge source',()=>{
+  const patch=readFileSync('platform/studio/native/mlx-serve-26.11.2-ane-compile-custody.patch','utf8');
+  const sections=patch.split(/(?=^diff --git )/m).filter(Boolean);assert.equal(sections.length,1);
+  assert(sections[0].startsWith('diff --git a/lib/ane/ane_bridge.m b/lib/ane/ane_bridge.m\n'));
+  const fixture=readFileSync('platform/studio/native/current_ane_compile_metadata.m.fixture','utf8');
+  assert(fixture.includes('FiosCompileMetadata'));
+  assert(!/\b_ANE[A-Za-z]/.test(fixture));
+  assert(!/\b(?:kill|objc_msgSend)\s*\(/.test(fixture));
+});
