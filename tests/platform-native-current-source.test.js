@@ -207,3 +207,13 @@ test('current request-book custody stays within existing request metadata and pr
   const fixture=sections[0].slice(start+1).split('\n').filter(line=>line.startsWith('+')).map(line=>line.slice(1)).join('\n')+'\n';
   assert.equal(fixture,readFileSync('platform/studio/native/current_book_custody_test.zig.fixture','utf8').trimStart());
 });
+
+test('current DS4 actor changes only existing worker attribution and preserves its model-free fixture',()=>{
+  const patch=readFileSync('platform/studio/native/mlx-serve-26.11.2-ds4-actor.patch','utf8');
+  const sections=patch.split(/(?=^diff --git )/m).filter(Boolean);
+  assert.equal(sections.length,1);
+  assert(sections[0].startsWith('diff --git a/src/engines/ds4/engine.zig b/src/engines/ds4/engine.zig\n'));
+  const start=sections[0].indexOf('\n+test "fios current ds4 adapter');assert(start>=0);
+  const fixture=sections[0].slice(start+1).split('\n').filter(line=>line.startsWith('+')).map(line=>line.slice(1)).join('\n')+'\n';
+  assert.equal(fixture,readFileSync('platform/studio/native/current_ds4_actor_test.zig.fixture','utf8').trimStart());
+});
