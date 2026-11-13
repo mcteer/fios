@@ -787,3 +787,13 @@ test('current private ANE MLP wrapper custody changes only the declared bridge w
   assert(fixture.includes('wrapper->model==raw && !msv_ane_mlp_try_free(wrapper)'));
   assert(fixture.includes('CFGetRetainCount(surface)==before'));
 });
+
+
+test('current private ANE SDK cleanup preserves the exact model-free parent fixture',()=>{
+  const patch=readFileSync('platform/studio/native/mlx-serve-26.11.2-ane-sdk-cleanup-custody.patch','utf8');
+  const paths=patch.split('\n').filter(line=>line.startsWith('diff --git '));
+  assert.deepEqual(paths,['diff --git a/src/engines/mlx/ane_prefill.zig b/src/engines/mlx/ane_prefill.zig','diff --git a/src/engines/mlx/transformer.zig b/src/engines/mlx/transformer.zig','diff --git a/src/sdk/ane/offload.zig b/src/sdk/ane/offload.zig']);
+  const start=patch.indexOf('+// Model-free cleanup-result/allocator spies;');assert(start>=0);
+  const bytes='\n'+patch.slice(start).split('\n').filter(line=>line.startsWith('+')).map(line=>line.slice(1)).join('\n')+'\n';
+  assert.equal(bytes,readFileSync('platform/studio/native/current_ane_sdk_cleanup_test.zig.fixture','utf8'));
+});

@@ -1,0 +1,83 @@
+
+// Model-free cleanup-result/allocator spies; no ANE model or GPU operation.
+const FiosSdkCleanupProbe = struct {
+    var calls: usize = 0;
+    var blocked: bool = false;
+    var mode: enum { healthy, refuse, after, second_refuse } = .healthy;
+    fn negative() bool {
+        return blocked;
+    }
+    fn close(_: ?*MsvAneMlp) bool {
+        calls += 1;
+        if (mode == .second_refuse and calls == 1) return true;
+        if (mode != .healthy) blocked = true;
+        return mode != .refuse and mode != .second_refuse;
+    }
+    const Trace = struct {
+        frees: usize = 0,
+        fn alloc(_: *anyopaque, n: usize, alignment: std.mem.Alignment, ret: usize) ?[*]u8 {
+            return std.heap.page_allocator.rawAlloc(n, alignment, ret);
+        }
+        fn free(raw: *anyopaque, bytes: []u8, alignment: std.mem.Alignment, ret: usize) void {
+            const self: *@This() = @ptrCast(@alignCast(raw));
+            self.frees += 1;
+            std.heap.page_allocator.rawFree(bytes, alignment, ret);
+        }
+        const vtable: std.mem.Allocator.VTable = .{ .alloc = alloc, .resize = std.mem.Allocator.noResize, .remap = std.mem.Allocator.noRemap, .free = free };
+        fn allocator(self: *@This()) std.mem.Allocator {
+            return .{ .ptr = self, .vtable = &vtable };
+        }
+    };
+};
+fn fiosSdkCleanup(preexisting: bool, mode: @TypeOf(FiosSdkCleanupProbe.mode)) !void {
+    const P = FiosSdkCleanupProbe;
+    P.calls = 0;
+    P.blocked = preexisting;
+    P.mode = mode;
+    var trace: P.Trace = .{};
+    const a = trace.allocator();
+    const eng = try a.create(AnePrefill);
+    const count: usize = if (mode == .second_refuse) 2 else 1;
+    const units = try a.alloc(Unit, count);
+    eng.* = .{ .allocator = a, .io = testing.io, .units = units, .units_cap = count, .hidden = 1, .ffn = 1, .rows = 1, .chunk_rows = 1 };
+    const bank: *MsvAneMlp = @ptrFromInt(16); // Opaque identity, never dereferenced or passed to C.
+    for (units) |*u| {
+        u.* = .{ .parent = eng, .instance = 0, .layers = try a.alloc(?ProgramRef, 1), .gdn_layers = try a.alloc(?ProgramRef, 1) };
+        @memset(u.layers, null);
+        @memset(u.gdn_layers, null);
+        try u.banks.append(a, bank);
+    }
+    const accepted = eng.tryDeinitWith(true, P.negative, P.close);
+    const expected = !preexisting and mode == .healthy;
+    if (accepted != expected or (!expected and trace.frees != 0)) {
+        std.debug.print("FIO_ANE_SDK_PARENT_DROPPED_REFUSED_CHILD\n", .{});
+        try testing.expect(false); // Before reading a possibly disposed graph.
+    }
+    try testing.expectEqual(@as(usize, if (preexisting) 0 else count), P.calls);
+    if (expected) {
+        try testing.expect(trace.frees >= 5);
+        return;
+    }
+    try testing.expect(eng.units.ptr == units.ptr and units[0].parent == eng);
+    try testing.expect(units[0].banks.items.len == 1 and units[0].banks.items[0] == bank);
+    try testing.expect(!eng.tryDeinitWith(true, P.negative, P.close));
+    try testing.expectEqual(@as(usize, if (preexisting) 0 else count), P.calls);
+    try testing.expectEqual(@as(usize, 0), trace.frees);
+    // Only finite synthetic metadata remains until this isolated process exits.
+}
+test "fios current SDK ANE cleanup retains preexisting uncertainty" {
+    try fiosSdkCleanup(true, .healthy);
+}
+test "fios current SDK ANE cleanup retains child refusal" {
+    try fiosSdkCleanup(false, .refuse);
+}
+test "fios current SDK ANE cleanup retains post-close independent uncertainty" {
+    try fiosSdkCleanup(false, .after);
+}
+test "fios current SDK ANE cleanup accepts healthy local disposal" {
+    try fiosSdkCleanup(false, .healthy);
+}
+
+test "fios current SDK ANE cleanup retains earlier units when later child refuses" {
+    try fiosSdkCleanup(false, .second_refuse);
+}
