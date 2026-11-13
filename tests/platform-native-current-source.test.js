@@ -74,3 +74,12 @@ test('current primary phase addition stays in the host and explicit startup scop
     assert.equal(match[1],match[2]);return match[1];
   })),new Set(['src/host/http/router.zig','src/host/http/server.zig']));
 });
+
+test('current MLX dependency ownership addition stays within the seven reviewed SDK paths',()=>{
+  const patch=readFileSync('platform/studio/native/mlx-c69303b-owner-uncertainty.patch','utf8');
+  const paths=[...patch.matchAll(/^diff --git a\/(\S+) b\/(\S+)$/gm)];
+  assert.equal(paths.length,7);
+  assert.deepEqual(new Set(paths.map(match=>{
+    assert.equal(match[1],match[2]);return match[1];
+  })),new Set(['mlx/backend/cpu/eval.cpp','mlx/backend/metal/device.cpp','mlx/backend/metal/device.h','mlx/backend/metal/eval.cpp','mlx/scheduler.cpp','mlx/stream.cpp','mlx/stream.h']));
+});
