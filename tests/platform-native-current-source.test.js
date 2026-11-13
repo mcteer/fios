@@ -326,3 +326,12 @@ test('current llama error custody stays within the existing C shim',()=>{
   assert.equal(paths[0][1],'lib/llama_shim/llama_shim.cpp');
   assert.equal(paths[0][2],paths[0][1]);
 });
+
+
+test('current llama construction custody stays within the existing C shim',()=>{
+  const patch=readFileSync('platform/studio/native/mlx-serve-26.11.2-llama-construction.patch','utf8');
+  const paths=[...patch.matchAll(/^diff --git a\/(\S+) b\/(\S+)$/gm)];
+  assert.equal(paths.length,1);
+  assert.equal(paths[0][1],'lib/llama_shim/llama_shim.cpp');
+  assert.equal(paths[0][2],paths[0][1]);
+});

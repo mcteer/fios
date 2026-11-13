@@ -814,3 +814,6 @@ The first compiles the genuine shim with ordinary empty parent/child metadata, c
 
 
 The parent component driver also accepts `--preflight` for ordinary absent-input and already-fenced reset/position/trim/step controls. It creates no model/native context and injects no backend failure. Source error branches still require separate native acceptance; a passing preflight cannot certify them. Execution status/signal/error metadata is saved before assertions; retain failed private state rather than treating a missing old status as a specific signal.
+
+
+`check-platform-current-llama-parent.mjs --construction-preflight` selects ordinary missing-input and already-fenced constructor controls. It is mutually exclusive with `--preflight` and `--expect-missing`. It initializes no model or native context; it cannot certify successful native initialization or initialization-failure retirement. The same finite build/process limits and zero native authority apply.
