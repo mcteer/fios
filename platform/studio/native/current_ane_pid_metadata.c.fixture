@@ -1,0 +1,17 @@
+// Synthetic PID observations only; no process signal, filesystem or ANE call.
+int main(void) {
+#ifdef FIOS_ANE_SOURCE
+    const bool dead_allowed = false;
+#else
+    const bool dead_allowed = true; // Preserve legacy behavior outside private mode.
+#endif
+    if (fios_ane_pid_metadata_allows_reap(12, 34, -1, ESRCH) != dead_allowed) {
+        fprintf(stderr,"FIO_CURRENT_ANE_PID_DEATH_USED_AS_NATIVE_TERMINAL\n");return 1;
+    }
+    if (fios_ane_pid_metadata_allows_reap(0,34,-1,ESRCH) ||
+        fios_ane_pid_metadata_allows_reap(34,34,-1,ESRCH) ||
+        fios_ane_pid_metadata_allows_reap(12,34,0,0) ||
+        fios_ane_pid_metadata_allows_reap(12,34,-1,EPERM)) return 1;
+    fprintf(stderr,"PASS: ANE PID metadata alone grants no private staging deletion\n");
+    return 0;
+}

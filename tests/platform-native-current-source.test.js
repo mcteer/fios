@@ -671,3 +671,13 @@ test('current checked ANE custody preserves exact negative companions and model-
     assert.equal(readFileSync('platform/studio/native/'+name.replace('current_','current_ane_native_'),'utf8'),readFileSync('platform/studio/native/'+name,'utf8').replaceAll('current_backend_uncertainty.zig','current_ane_native_backend_uncertainty.zig'));
   }
 });
+
+
+test('current private ANE PID policy changes only the declared bridge source',()=>{
+  const patch=readFileSync('platform/studio/native/mlx-serve-26.11.2-ane-pid-custody.patch','utf8');
+  const sections=patch.split(/(?=^diff --git )/m).filter(Boolean);assert.equal(sections.length,1);
+  assert(sections[0].startsWith('diff --git a/lib/ane/ane_bridge.m b/lib/ane/ane_bridge.m\n'));
+  const fixture=readFileSync('platform/studio/native/current_ane_pid_metadata.c.fixture','utf8');
+  const calls=new Set([...fixture.replace(/"(?:[^"\\]|\\.)*"/g,'""').matchAll(/\b([A-Za-z_]\w*)\s*\(/g)].map(match=>match[1]));
+  assert.deepEqual([...calls].sort(),['fios_ane_pid_metadata_allows_reap','fprintf','if','main'].sort());
+});
