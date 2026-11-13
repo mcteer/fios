@@ -806,3 +806,16 @@ test('current private ANE bank adoption preserves the exact CPU-only ownership f
   const bytes='\n'+patch.slice(start).split('\n').filter(line=>line.startsWith('+')).map(line=>line.slice(1)).join('\n')+'\n';
   assert.equal(bytes,readFileSync('platform/studio/native/current_ane_bank_adoption_test.zig.fixture','utf8'));
 });
+
+
+test('current private ANE media fallback patch changes only declared guard checks',()=>{
+  const patch=readFileSync('platform/studio/native/mlx-serve-26.11.2-ane-media-fallback-uncertainty.patch','utf8');
+  const sections=patch.split(/(?=^diff --git )/m).filter(Boolean);
+  const expected=new Set(['src/plugins/acestep/acestep.zig','src/plugins/krea/krea.zig','src/plugins/minimax_h3/h3.zig']);
+  for(const section of sections){
+    const h=section.match(/^diff --git a\/(\S+) b\/(\S+)/);assert(h&&h[1]===h[2]&&expected.delete(h[1]));
+    const added=section.split('\n').filter(line=>line.startsWith('+')&&!line.startsWith('+++')).map(line=>line.slice(1).trim());
+    assert.deepEqual(added.filter(line=>line!=='// Known uncertainty cannot authorize a fresh GPU fallback.'),['try ane.source_guard.requireCertain();','try ane.source_guard.requireCertain();']);
+  }
+  assert.equal(expected.size,0);
+});

@@ -5,10 +5,16 @@ Whole tasks: **38/55 complete;17 open**. Partial source/component receipts do no
 ## Branch and delivery
 
 - Use `009-studio-platform-agent`; draft [PR10](https://github.com/mcteer/fios/pull/10) targets `main`.
-- Pushed `5ee5bb2259c79cb6ba32c49e39fe5de50571b8c7` contains54 source layers. [CI43499500420](https://github.com/mcteer/fios/actions/runs/43499500420) is running: five lanes passed, native process lane pending. Let it finish before another push.
-- The next root commit adds verified55th-layer artifacts/evidence. Private native `91f1ded` commits55 layers; its only remaining WIP should be the preserved vendor/build-job changes.
-- Last independently all6 prerequisites+aggregate green: `56e27e6`/[CI43493577533](https://github.com/mcteer/fios/actions/runs/43493577533). Consult the PR for newer exact-head CI; older green runs do not certify newer heads.
+- Last fully green source head:5ee5bb2/[CI43499500420](https://github.com/mcteer/fios/actions/runs/43499500420). Later3d1d44c/43504439668 failed only the mandatory audit/gate; new source+dependency commits need their own exact-head CI.
+- The branch includes verified55th-layer artifacts; the next root commit records56 plus the separate dependency repair. Private native9830df1 has only preserved vendor/build-job WIP.
+- Consult the PR for newer exact-head CI; older green runs do not certify newer heads.
 - No merge, production deployment, Studio installation or native activation occurred. Approved merge must still lead to exact merged-main green CI and verified automatic application delivery with backup/rollback. Native delivery remains separately gated.
+
+## Current56th source layer and dependency repair
+
+Private9830df1 commits56 cumulative layers. The56th changes only three existing media model wrappers: required SDK uncertainty checks at MLP entry and inside catches before GPU fallback. Their owner/constructor/unload gaps remain unrepaired. Actual C→required SDK guard/original-lineage2/2 Debug/ReleaseSafe, native118/118, source63/63, working-tree164 Node/106 installed Python, both full builds/3 runtime checks each, dedicated closure/lint,56-layer/82 declared changed-file equality and DS4154-input verification pass. Exact receipts/hashes are in native-26112-port.md. Current script labels: ane-media-fallback-*; do not overwrite them.
+
+Latest pushed3d1d44c/CI43504439668 passed all functional lanes but audit/aggregate failed for dnspython2.9.0/CVE-2026-128089. Localcb401ad updates only that direct pin/lock version to official2.9.2. Locked noneditable reinstall, both audits,164 Node/106 Python, build/17 Chromium, boundary/Compose/discovery0 inference and ARM64 hardened recovery/backup/upgrade/automatic rollback pass (peak639MiB). DNS logs use dns-patch-*; hashes/scopes are in validation.md. Commit the56th root artifacts/evidence, then push both changes and update/follow fresh exact-head CI. Previous5ee5bb2/43499500420 is all6 prerequisites+aggregate green; do not reclassify the later audit failure.
 
 ## Completed current source increment
 
