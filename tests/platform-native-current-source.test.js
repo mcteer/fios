@@ -492,3 +492,19 @@ test('current MLX teardown propagates plugin refusal through model and registry 
   }
   assert.equal(expected.size,0);
 });
+
+
+test('current served construction checks uncertainty before publication and ANE fallback',()=>{
+  const patch=readFileSync('platform/studio/native/mlx-serve-26.11.2-served-open.patch','utf8');
+  const expected=new Set(['src/host/engines/served.zig','src/engines/mlx/runtime/engine_load.zig']);
+  for(const section of patch.split(/(?=^diff --git )/m).filter(Boolean)){
+    const header=/^diff --git a\/(\S+) b\/(\S+)\n/.exec(section);
+    assert(header);assert.equal(header[1],header[2]);assert(expected.delete(header[1]));
+    if(header[1]==='src/host/engines/served.zig'){
+      const start=section.indexOf('\n+test "fios current served open refuses');assert(start>=0);
+      const fixture=section.slice(start+1).split('\n').filter(line=>line.startsWith('+')).map(line=>line.slice(1)).join('\n')+'\n';
+      assert.equal(fixture,readFileSync('platform/studio/native/current_served_open_test.zig.fixture','utf8').trimStart());
+    }
+  }
+  assert.equal(expected.size,0);
+});

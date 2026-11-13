@@ -1,5 +1,11 @@
 # Resume after macOS updates — 2026-11-12
 
+## Live continuation — 2026-11-13
+
+Whole tasks38/55. Root8020b69 contains completed32-layer cleanup. Current constructor layer33 is privately committed472cbc7: baseline165.345s,87 pass/1 expected published-uncertainty failure; corrected167.667s,88/88 (28 fixtures/60 support imports), binary33b7624a... . Source37/37, closure/lint, working-tree140 Node/106 installed Python and sequential33-layer application pass. Enabled/default full30/30 in197.815s/241.464s, binariesf1f108b5.../6a502ebc..., with matching declared inputs and each variant's separate passing empty-model correlation/startup/authenticated-manager checks. Initial pointer-comparison setup18.102s is separate. Exact inputs/homes/limits are in native-26112-port.md; no inference/installed/positive admission authority.
+
+Exact pushed22ae81d CI43414697326 passes all6 prerequisites and aggregate. Root layer33 assets are ready for selective commit/push together with8020b69; preserve unrelated WIP. Next source layer34 private data (not yet applied): registry-negative-fixture.zig and apply-registry-negative.py under /private/tmp/fios-009-current-sdk-server-h_mvvlhq. Reproduce two normal registry bookkeeping regressions (ready borrow/cold claim despite known uncertainty) before correction. Fixed helper must use existing byte-exact current_locked_cleanup_uncertainty under registry mutex, with no dynamic callbacks. Caller guards propagate refusal (including runtime.loop startup), retain uncertain constructor/CPU/model borrows and refuse retry eviction. Timed waits, full construction/failure accounting/hierarchy, and atomic all-client/native authority remain open. Continue authorized source work, no inference/installation/merge/deployment.
+
 ## Active continuation — 2026-11-13
 
 Whole tasks **38/55 complete;17 open**. Pushed22ae81da018a7665432e836a85003414fb6265cd contains the completed book source layer31; exact CI43414697326 has5 successful prerequisite jobs, native lane still running. Prior2b8b671/43410300337 is green. No merge/install/deployment.
