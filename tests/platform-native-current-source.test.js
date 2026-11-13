@@ -722,3 +722,12 @@ test('current private ANE resident custody changes only the declared bridge sour
   const fixture=readFileSync('platform/studio/native/current_ane_resident_metadata.m.fixture','utf8');
   assert(fixture.includes('FiosResidentMetadata'));assert(!/\b_ANE[A-Za-z]/.test(fixture));
 });
+
+
+test('current private ANE explicit operation custody changes only the declared bridge source',()=>{
+  const patch=readFileSync('platform/studio/native/mlx-serve-26.11.2-ane-operations-custody.patch','utf8');
+  const sections=patch.split(/(?=^diff --git )/m).filter(Boolean);assert.equal(sections.length,1);
+  assert(sections[0].startsWith('diff --git a/lib/ane/ane_bridge.m b/lib/ane/ane_bridge.m\n'));
+  const fixture=readFileSync('platform/studio/native/current_ane_operations_metadata.m.fixture','utf8');
+  assert(fixture.includes('FiosOperationMetadata'));assert(!/\b_ANE[A-Za-z]/.test(fixture));
+});
