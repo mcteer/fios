@@ -346,3 +346,24 @@ test('current registry cleanup preflight stays in the registry and preserves its
   const fixture=sections[0].slice(start+1).split('\n').filter(line=>line.startsWith('+')).map(line=>line.slice(1)).join('\n')+'\n';
   assert.equal(fixture,readFileSync('platform/studio/native/current_registry_cleanup_test.zig.fixture','utf8').trimStart());
 });
+
+
+test('current served close retains its negative cleanup companion and ordinary callback fixture',()=>{
+  const patch=readFileSync('platform/studio/native/mlx-serve-26.11.2-served-close.patch','utf8');
+  const expected=new Set(['src/host/engines/served.zig','src/host/registry/registry.zig','src/fios/current_cleanup_uncertainty.zig']);
+  for(const section of patch.split(/(?=^diff --git )/m).filter(Boolean)){
+    const header=/^diff --git a\/(\S+) b\/(\S+)\n/.exec(section);
+    assert(header);assert.equal(header[1],header[2]);assert(expected.delete(header[1]));
+    if(header[1]==='src/fios/current_cleanup_uncertainty.zig'){
+      assert(section.includes('\nnew file mode 100644\n'));
+      const bytes=section.split('\n').filter(line=>line.startsWith('+')&&!line.startsWith('+++')).map(line=>line.slice(1)).join('\n')+'\n';
+      assert.equal(bytes,readFileSync('platform/studio/native/current_cleanup_uncertainty.zig','utf8'));
+    }
+    if(header[1]==='src/host/engines/served.zig'){
+      const start=section.indexOf('\n+test "fios current served close');assert(start>=0);
+      const fixture=section.slice(start+1).split('\n').filter(line=>line.startsWith('+')).map(line=>line.slice(1)).join('\n')+'\n';
+      assert.equal(fixture,readFileSync('platform/studio/native/current_served_close_test.zig.fixture','utf8').trimStart());
+    }
+  }
+  assert.equal(expected.size,0);
+});
