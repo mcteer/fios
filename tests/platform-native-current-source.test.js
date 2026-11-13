@@ -569,3 +569,12 @@ test('current plugin construction preserves exact publication and cleanup-order 
   const fixture=section.slice(start+1).split('\n').filter(line=>line.startsWith('+')).map(line=>line.slice(1)).join('\n')+'\n';
   assert.equal(fixture,readFileSync('platform/studio/native/current_plugin_load_test.zig.fixture','utf8').trimStart());
 });
+
+
+test('current DS4 request-buffer fixture preserves historical behavior with real current accessors',()=>{
+  const legacy=readFileSync('platform/studio/native/ds4_request_origins.zig.fixture','utf8');
+  const expected=legacy.replaceAll('@import("request_ownership.zig")','@import("fios/request_ownership.zig")')
+    .replaceAll('@import("sdk_request_ownership.zig")','@import("fios/sdk_request_ownership.zig")')
+    .replaceAll('owners.shared.','owners.shared().').replaceAll('owners.current =','owners.current().* =');
+  assert.equal(readFileSync('platform/studio/native/current_ds4_request_origins_test.zig.fixture','utf8'),expected);
+});

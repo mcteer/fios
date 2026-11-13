@@ -1,0 +1,79 @@
+// Native SDK owner contexts + actual DS4 request-buffer adapter/Metal object.
+// No full DS4 initialization/model/backend/auxiliary coverage claim.
+const std = @import("std");
+const owners = @import("fios/request_ownership.zig");
+const sdk = @import("fios/sdk_request_ownership.zig");
+extern "c" fn getenv(name: [*:0]const u8) ?[*:0]const u8;
+extern fn fios_ds4_fixture_enroll() c_int;
+extern fn fios_ds4_fixture_create() ?*anyopaque;
+extern fn fios_ds4_fixture_encode(?*anyopaque, c_uint) c_int;
+extern fn fios_ds4_fixture_submit(?*anyopaque) c_int;
+extern fn fios_ds4_fixture_pending(?*anyopaque) c_int;
+extern fn fios_ds4_fixture_finish(?*anyopaque) c_int;
+extern fn fios_ds4_fixture_release(?*anyopaque) void;
+extern fn ds4_gpu_source_uncertainty() u32;
+fn tick() void {
+    const interval: std.c.timespec = .{ .sec = 0, .nsec = std.time.ns_per_ms };
+    _ = std.c.nanosleep(&interval, null);
+}
+test "fios ordinary DS4 request buffer origins" {
+    const io = std.testing.io;
+    const scenario = std.mem.span(getenv("FIOS_DS4_ORIGIN_SCENARIO") orelse return error.MissingScenario);
+    const cached = std.mem.eql(u8, scenario, "cached");
+    const missing = std.mem.eql(u8, scenario, "missing");
+    try std.testing.expect(cached or missing or std.mem.eql(u8, scenario, "healthy"));
+    try owners.shared().initialize(io, @splat(7));
+    try sdk.initialize(io);
+    const enrolled = fios_ds4_fixture_enroll();
+    const fixture = fios_ds4_fixture_create() orelse return error.FixtureUnavailable;
+    var released = false;
+    defer {
+        if (!released and fios_ds4_fixture_finish(fixture) == 1) fios_ds4_fixture_release(fixture);
+    }
+    if (missing) {
+        try std.testing.expectEqual(@as(c_int, 0), fios_ds4_fixture_encode(fixture, 0));
+        try std.testing.expect(sdk.diagnostic().uncertain and owners.shared().snapshot(io).uncertain);
+        try std.testing.expect(ds4_gpu_source_uncertainty() & 1 != 0);
+        try std.testing.expectEqual(@as(c_int, 0), fios_ds4_fixture_pending(fixture));
+        std.debug.print("PASS: actual DS4 adapter refuses missing request origin before encoding/submission\n", .{});
+        return;
+    }
+    const first = try owners.shared().enter(io);
+    const second = try owners.shared().enter(io);
+    try owners.shared().associate(io, first, @splat(1));
+    try owners.shared().associate(io, second, @splat(2));
+    for ([_]owners.Token{first, second}) |token| {
+        try owners.shared().bind(io, token, "fixture/ds4-origins");
+        try owners.shared().active(io, token);
+    }
+    owners.current().* = first;
+    try std.testing.expectEqual(@as(c_int, 1), fios_ds4_fixture_encode(fixture, 0));
+    owners.current().* = second;
+    try std.testing.expectEqual(@as(c_int, 1), fios_ds4_fixture_encode(fixture, 1));
+    owners.current().* = null;
+    try std.testing.expectEqual(@as(c_int, 1), fios_ds4_fixture_submit(fixture));
+    try owners.shared().leave(io, first);
+    try owners.shared().leave(io, second);
+    try std.testing.expectEqual(@as(c_int, 1), fios_ds4_fixture_pending(fixture));
+    std.debug.print("ds4_buffer_origins scenario={s} roots={d} contexts={d} enrolled={d}\n", .{scenario, owners.shared().snapshot(io).owned, sdk.diagnostic().active_contexts, enrolled});
+    try std.testing.expectEqual(@as(usize, 2), owners.shared().snapshot(io).owned);
+    try std.testing.expectEqual(@as(c_int, 1), enrolled);
+    try std.testing.expectEqual(@as(u32, 1), sdk.diagnostic().active_contexts);
+    try std.testing.expect(owners.shared().correlationSnapshot(io, @splat(1)).found);
+    try std.testing.expect(owners.shared().correlationSnapshot(io, @splat(2)).found);
+    if (cached) owners.shared().fence(io);
+    try std.testing.expectEqual(@as(c_int, 1), fios_ds4_fixture_finish(fixture));
+    var elapsed: u32 = 0;
+    while (elapsed < 1000 and (if (cached) !sdk.diagnostic().uncertain else sdk.diagnostic().active_contexts != 0)) : (elapsed += 1) tick();
+    fios_ds4_fixture_release(fixture);
+    released = true;
+    try std.testing.expectEqual(cached, sdk.diagnostic().uncertain);
+    try std.testing.expectEqual(@as(u32, if (cached) 1 else 0), sdk.diagnostic().active_contexts);
+    try std.testing.expectEqual(@as(usize, if (cached) 2 else 0), owners.shared().snapshot(io).owned);
+    try std.testing.expectEqual(cached, owners.shared().snapshot(io).uncertain);
+    if (cached) {
+        try std.testing.expect(owners.shared().correlationSnapshot(io, @splat(1)).found);
+        try std.testing.expect(owners.shared().correlationSnapshot(io, @splat(2)).found);
+    }
+    std.debug.print("PASS: actual DS4 request-buffer adapter retains every encoding origin until real completion; cached uncertainty preserves original lineage\n", .{});
+}
