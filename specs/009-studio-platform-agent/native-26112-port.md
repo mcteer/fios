@@ -155,3 +155,15 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer ABS_PINNED_CMAKE --buil
 ```
 
 Actual finite orchestration inputs/build/link/client logs remain in that private parent. The component is not composed into the current native server, whose SDK remains genuine and uninstrumented. GPU buffer/shared-event/origin callbacks, current scheduler/model/registry/native ABI bridge, other native backends and all-client acceptance remain unproven. This candidate supplies no native reservation issuer or installation permission. T002/T018–T022 stay open;38/55 whole tasks complete.
+
+## Current SDK/native CPU owner composition
+
+The existing source SDK host-owner driver now has an explicit `--current-sdk` mode. It selects only the separate current-generation reader and permits only the healthy CPU scenario; current Metal, callback-error, cleanup-error and abandoned-buffer variants are rejected. Historical metadata readers/default fixtures remain separate. This opt-in is a development input selector, not native admission or installed enrollment.
+
+Actual current SDK/native ownership composition passes Debug and ReleaseSafe with the genuine retained SDK reviewc158b76f76e0f9c97246a283963f96b8ca35cb3bbe73de5e50453838c315bd18 and canonical actual `request_ownership.zig`/`sdk_request_ownership.zig`. Each mode runs2 genuine CPU callbacks: a parent and another spawned by the original captured object's destructor. The original connection reference is released while the real callback remains held; both original and nested callbacks still see the original native owner/context/root. Normal cleanup retires those contexts afterward. Receipt `/private/tmp/fios-009-sdk-host-owners-6kfFPv/receipt.json`; aggregate log `/private/tmp/fios-009-mlx-c693-port-jhy3gkva/native-owner-composition.log`. Network is denied,0 model/Metal operations,0 installed actions. Fixture PASS text is shared with the historical driver: only `healthy` actually ran here, so it is not current cached-fence/error evidence.
+
+```sh
+node scripts/check-platform-sdk-host-owners.mjs --isolated --sdk ABS_CURRENT_SDK_REVIEW --sha256 REVIEW_SHA256 --source ABS_CURRENT_MLX_SOURCE --zig ABS_REVIEWED_ZIG --developer-dir /Applications/Xcode.app/Contents/Developer --current-sdk
+```
+
+This composes the genuine CPU SDK callback and native tracker implementation, not the current HTTP server/scheduler or all enabled modalities. It does not establish native device/model completion, all-client non-preemption or a reservation issuer. Whole tasks remain38/55; T018/T021/T022 remain open.

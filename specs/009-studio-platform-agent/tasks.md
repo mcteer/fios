@@ -366,3 +366,5 @@ Current host ingress now enrolls before enqueue and associates optional opaque r
 Host-only primary phase attribution now compiles with the shared guard explicitly disabled at startup; metadata components and empty-registry composition pass. Positive model binding and complete native/backend custody are not established by these cases. T018/T020/T022 stay unchecked; count38/55. See native-26112-port.md.
 
 Currentc69303b SDK source ownership component now builds and passes3 ordinary CPU processes, with separate zero-authority data verification. Native server/SDK bridge, GPU/backend/all-client acceptance remain uncomposed/unproven. T002/T018/T020/T022 remain unchecked; whole38/55. See native-26112-port.md.
+
+Current SDK/native tracker parent/destructor-spawned CPU callback composition now passes both client modes under the explicit healthy-only current driver. This is not HTTP/scheduler/Metal/model/all-client composition or completion proof; T018/T021/T022 remain open and count38/55.

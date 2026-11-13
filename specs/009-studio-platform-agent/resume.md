@@ -101,3 +101,5 @@ Next source work is the current MLX dependency ownership port: exactc69303b sour
 Exact2589d9e CI43347606659 has all6 prerequisites plus aggregate green. Later pushed42d0b30 CI43351749179 is running and not yet green evidence. No merge/app deployment/native installation.
 
 Current working-tree application regression after the new current-SDK data reader passes113 Node and106 installed Python tests (`/private/tmp/fios-009-mlx-c693-port-jhy3gkva/application-tests.log`). This includes preserved unrelated frontend/spec003 edits, not exact clean-commit or native inference proof.
+
+Current SDK/native CPU owner composition passes Debug/ReleaseSafe,2 real parent/destructor-spawned callbacks per mode, with canonical native tracker/TLS contexts retained after original connection reference release. Receipt `/private/tmp/fios-009-sdk-host-owners-6kfFPv/receipt.json`; current SDK reviewc158b76f... Only healthy CPU cases ran; no current cached fence/error/Metal case is claimed despite generic historical fixture text. See native-26112-port.md. Not composed into HTTP/scheduler; no native terminal/admission grant.38/55 whole tasks remain complete.
