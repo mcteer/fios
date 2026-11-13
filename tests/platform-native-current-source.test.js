@@ -367,3 +367,14 @@ test('current served close retains its negative cleanup companion and ordinary c
   }
   assert.equal(expected.size,0);
 });
+
+
+test('current registry checked close preserves the two-entry model-free fixture',()=>{
+  const patch=readFileSync('platform/studio/native/mlx-serve-26.11.2-registry-close.patch','utf8');
+  const sections=patch.split(/(?=^diff --git )/m).filter(Boolean);
+  assert.equal(sections.length,1);
+  assert(sections[0].startsWith('diff --git a/src/host/registry/registry.zig b/src/host/registry/registry.zig\n'));
+  const start=sections[0].indexOf('\n+test "fios current registry close');assert(start>=0);
+  const fixture=sections[0].slice(start+1).split('\n').filter(line=>line.startsWith('+')).map(line=>line.slice(1)).join('\n')+'\n';
+  assert.equal(fixture,readFileSync('platform/studio/native/current_registry_close_test.zig.fixture','utf8').trimStart());
+});
