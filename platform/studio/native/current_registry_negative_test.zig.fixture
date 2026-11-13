@@ -1,0 +1,44 @@
+
+test "fios current ready model borrow refuses independent uncertainty" {
+    const io = std.testing.io;
+    const owners = @import("../../fios/request_ownership.zig");
+    owners.shared().primary_guard = false;
+    const reg = try ModelRegistry.init(std.heap.page_allocator, io, null, 2, 0, null);
+    const entry = try makeReadyStub(reg, "fixture/negative-ready", 123);
+    const normal = try reg.ensureLoaded(entry.id);
+    try std.testing.expect(normal == entry and entry.refcount.load(.acquire) == 1);
+    reg.releaseStatus(normal);
+    try owners.shared().initialize(io, @splat(211));
+    owners.shared().fence(io);
+    const result = reg.ensureLoaded(entry.id);
+    if (result) |_| {
+        std.debug.print("FIO_CURRENT_REGISTRY_BORROWED_AFTER_UNCERTAINTY\n", .{});
+        return error.TestExpectedError;
+    } else |err| try std.testing.expectEqual(error.NativeCleanupUncertain, err);
+    try std.testing.expectEqual(@as(u32, 0), entry.refcount.load(.acquire));
+    try std.testing.expect(entry.state == .ready and entry.bytes_resident == 123);
+    try std.testing.expect(owners.shared().knownUncertain(io));
+}
+
+test "fios current cold load claim refuses independent uncertainty" {
+    const io = std.testing.io;
+    const owners = @import("../../fios/request_ownership.zig");
+    owners.shared().primary_guard = false;
+    const reg = try ModelRegistry.init(std.heap.page_allocator, io, null, 2, 0, null);
+    const entry = try reg.registerStub("fixture/negative-cold", "/fixture/no-model", 123);
+    reg.mutex.lockUncancelable(io);
+    try std.testing.expect(reg.tryBeginLoadLocked(entry));
+    reg.markUnloadedLocked(entry);
+    reg.mutex.unlock(io);
+    try owners.shared().initialize(io, @splat(223));
+    owners.shared().fence(io);
+    reg.mutex.lockUncancelable(io);
+    const before = reg.generation.load(.acquire);
+    const claimed = reg.tryBeginLoadLocked(entry);
+    reg.mutex.unlock(io);
+    if (claimed) std.debug.print("FIO_CURRENT_REGISTRY_CLAIMED_AFTER_UNCERTAINTY\n", .{});
+    try std.testing.expect(!claimed);
+    try std.testing.expect(entry.state == .unloaded and reg.reserved_bytes == 0);
+    try std.testing.expectEqual(before, reg.generation.load(.acquire));
+    try std.testing.expect(owners.shared().knownUncertain(io));
+}

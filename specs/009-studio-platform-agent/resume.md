@@ -1,5 +1,17 @@
 # Resume after macOS updates — 2026-11-12
 
+## Running checkpoint — 2026-11-13
+
+Whole tasks38/55. Pushed58bc3a4 CI43419708984 has5 successful prerequisites/native lane running; preceding22ae81d/43414697326 fully green. Layer34 privateb050b28 is complete locally: baseline166.531s88 pass/2 expected reds, corrected167.859s90/90 (7b3f1a0b...), source38/38, closure/lint, working-tree141 Node/106 installed Python and sequential34-layer application/file equality pass. Enabled/default full30/30 in239.029s/195.328s (e2410604.../fb254ce2...), matching declared inputs and3 passing exact-binary empty-model checks each. Canonical root registry-negative assets/evidence ready for selective commit; do not push repeatedly during current CI lane. See native-26112-port.md for exact receipts/limits.
+
+Next35 private DATA ONLY: load-reservation-fixture.zig/apply-load-reservation.py under /private/tmp/fios-009-current-sdk-server-h_mvvlhq. Append fixture on b050b28, reproduce expected1 reservation-refund assertion with prior90 passing, then snapshot baseline/apply correction. It adds sticky per-entry negative state, direct source fence (no callbacks) and preservation across later ready/error/unloaded/reserve bookkeeping, cleanup parents and sender classification. Constructor/hierarchy/atomic all-client/device acceptance remain open. No inference/install/merge/deployment. Continue authorized work, preserve user WIP.
+
+## Current work — 2026-11-13
+
+Pushed58bc3a4f6524f4433dc7e1aa222b973cdc031c9b includes layers32/33; exact CI43419708984 is running. Prior22ae81d/43414697326 green with all prerequisites/aggregate. Whole tasks38/55. Private source472cbc7 now has only appended registry-negative-fixture.zig cases in registry.zig plus preserved vendor/build-job WIP. Native baseline build running via registry-negative-baseline-build.py registry-negative-baseline-build, then run registry-negative-baseline-run.py: expect2 exact assertion regressions and prior88 passing. Do NOT mutate source while building/running.
+
+After baseline archive binary/declared inputs; apply prepared apply-registry-negative.py, inspect ALL edits and errors, then corrected batch (expected90/90). Prepared script changes registry cached/fixed-negative guard, scheduler preflight/retry/CPU+borrow/constructor rollback custody, and runtime.loop startup refusal propagation. Some constructor/failure-accounting/hierarchy and timed waits remain unproven; source coverage/admission still unknown/unsupported. No inference/installation/merge/deployment. Continue authorized work; preserve user WIP.
+
 ## Live continuation — 2026-11-13
 
 Whole tasks38/55. Root8020b69 contains completed32-layer cleanup. Current constructor layer33 is privately committed472cbc7: baseline165.345s,87 pass/1 expected published-uncertainty failure; corrected167.667s,88/88 (28 fixtures/60 support imports), binary33b7624a... . Source37/37, closure/lint, working-tree140 Node/106 installed Python and sequential33-layer application pass. Enabled/default full30/30 in197.815s/241.464s, binariesf1f108b5.../6a502ebc..., with matching declared inputs and each variant's separate passing empty-model correlation/startup/authenticated-manager checks. Initial pointer-comparison setup18.102s is separate. Exact inputs/homes/limits are in native-26112-port.md; no inference/installed/positive admission authority.
