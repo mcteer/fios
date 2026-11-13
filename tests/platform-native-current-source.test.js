@@ -150,3 +150,27 @@ test('current slot custody stays within the existing scheduler and preserves its
   }
   assert.equal(expected.size,0);
 });
+
+test('current actor origins preserve the tested helper and actual finish regression',()=>{
+  const patch=readFileSync('platform/studio/native/mlx-serve-26.11.2-actor-origins.patch','utf8');
+  const sections=patch.split(/(?=^diff --git )/m).filter(Boolean);
+  const expected=new Set(['src/fios/current_slot_origins.zig','src/engines/mlx/scheduler.zig',
+    'src/engines/mlx/decode.zig','src/engines/mlx/finish.zig','src/engines/mlx/step.zig',
+    'src/engines/mlx/prefill_interleave.zig','src/engines/mlx/runtime/loop.zig']);
+  assert.equal(sections.length,expected.size);
+  for(const section of sections){
+    const header=/^diff --git a\/(\S+) b\/(\S+)\n/.exec(section);
+    assert(header);assert.equal(header[1],header[2]);assert(expected.delete(header[1]));
+    if(header[1]==='src/fios/current_slot_origins.zig'){
+      const hunk=section.slice(section.indexOf('\n@@ ')+1).split('\n').slice(1);
+      const bytes=hunk.filter(line=>line.startsWith('+')).map(line=>line.slice(1)).join('\n')+'\n';
+      assert.equal(bytes,readFileSync('platform/studio/native/current_slot_origins.zig','utf8'));
+    }
+    if(header[1]==='src/engines/mlx/scheduler.zig'){
+      const start=section.indexOf('\n+test "fios current actor');assert(start>=0);
+      const fixture=section.slice(start+1).split('\n').filter(line=>line.startsWith('+')).map(line=>line.slice(1)).join('\n')+'\n';
+      assert.equal(fixture,readFileSync('platform/studio/native/current_actor_origins_test.zig.fixture','utf8').trimStart());
+    }
+  }
+  assert.equal(expected.size,0);
+});
