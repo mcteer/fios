@@ -27,6 +27,7 @@ if(args.length===5){
   function checkNativeHealth(release){
     const value=managerStatus(release);
     assert.equal(value?.native_health_source,'unconfigured');assert.equal(value.native_admissions,'unsupported');
+    assert.equal(value.native_ingress_admissions,'unconfigured','FIO_PACKAGED_INGRESS_SCOPE_MISSING');
     assert.equal(value.service_recovery,'disabled');assert.equal(value.services.mlx.observed,'unknown');assert.equal(value.services.mlx.health,undefined);
   }
   try{
