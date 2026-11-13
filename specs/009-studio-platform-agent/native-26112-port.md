@@ -196,3 +196,19 @@ A genuine current-SDK component tests this exact helper across an actual native 
 ```
 
 Full current native build passes30/30 in242.485s, binary SHAda407b25bef9d38c00598e602a98aebb7881c1e3c992f618b87d869ef5f272fa. Declared changed inputs match after build. Empty-registry correlation9-POST/unknown-lineage, startup and actual manager authentication regressions pass (`custody-{correlation,startup,manager}.log` in the current native parent),0 inference/installed actions. Sequential patch application,8 source-input and3 current-metadata tests pass. These empty-registry tests do not enter positive cold-load/ANE paths or establish their cross-compilation-unit/global/context lifetime. The full server still uses its uninstrumented vendor SDK; source SDK/native bridge, slots, model/registry/destructive transitions, other modalities/backends and all-client admission remain uncomposed/unproven. T018/T021/T022 remain open;38/55 whole tasks complete.
+
+## Shared ownership across compilation units
+
+The actual full load-origin binary revealed2 distinct private `request_ownership.shared` data objects. That meant the preceding standalone queue component could pass while host/engine attribution was still partitioned. Those earlier receipts were intentionally not promoted to positive model-load/current-server proof.
+
+The [unit-ownership addition](../../platform/studio/native/mlx-serve-26.11.2-unit-ownership.patch), SHAe7b7f672136e3a65cfbe53bc53e109e36151f685e3d1c2b44d6863458e748744, applies after the7 previous host/load layers. It adopts the exact upstream `Shared`/`SharedThreadLocal` storage mechanism and registers the ledger/current-token/current-group types in `shared_all.zig`. Current callers use pointer getters; engine/plugin objects resolve the host-owned ledger and the current thread's host-owned TLS slot, never a cached other-thread slot. Historical canonical companions and old capsules are unchanged; this is a separate current API/storage adapter, not native authority.
+
+The actual separate-object [fixture](../../scripts/check-platform-native-ownership-units.mjs) reproduces `FIO_NATIVE_LEDGER_PARTITIONED` before the fix (`unit-ownership-prior.log`, retained `/private/tmp/fios-009-ownership-units-YKq3gz`). Corrected Debug/ReleaseSafe pass (`unit-ownership-current.log`, `/private/tmp/fios-009-ownership-units-XUQ3XX/receipt.json`). It compiles the actual current ownership/queue sources and byte-exact upstream shared helper SHA d3154ceda0ba5f2fb5f0ec2c6ddbcb52f6cfe1f7e82e678d21ac3bec0a478338 as genuine host/unit objects; compatibility accessors observe either real API generation, not substitute state. It verifies ledger address identity, host/unit token/group visibility and worker-thread scope/restoration without leaking the parent's TLS. Network denied,0 SDK/model/hardware/installed actions.
+
+```sh
+node scripts/check-platform-native-ownership-units.mjs --isolated --source ABS_CURRENT_NATIVE_SOURCE --zig ABS_REVIEWED_ZIG
+```
+
+Full native build passes30/30 in191.786s; binary SHA8f76a345329485387d1efc18da1bb258a1037631fd2bcf098e914820bbe491f9. Its linked identity check finds1 ledger data object and exactly1 exported host getter for each ledger/token/group namespace (`unit-storage-linked-identity.json`); declared changed inputs match after build. Empty-model correlation9-POST/unknown-lineage, startup and actual authenticated manager checks pass (`unit-storage-{correlation,startup,manager}.log`),0 inference/installed actions. Source-input9 and metadata3 checks pass; fresh sequential patch application passes.
+
+Storage/TLS identity is now directly exercised, but successful model loads, complete SDK/current-server/slot/backend composition and all-client/terminal/admission acceptance remain open. No model policy or public engine ABI changes.38/55 whole tasks complete; T018/T021/T022 stay unchecked.

@@ -372,3 +372,5 @@ Current SDK/native tracker parent/destructor-spawned CPU callback composition no
 Current SDK/native positive empty-Metal and distinct encoding-origin components pass both modes. These scoped core-only results do not complete enabled-modality/current-server/terminal/admission acceptance; T018/T021/T022 remain unchecked;38/55.
 
 Typed load/ANE queue ownership handoff now compiles, with actual queued current-SDK callback component and empty-registry regressions. Positive load/cross-unit/full-lifetime acceptance remains open; T018/T021/T022 unchecked;38/55.
+
+Corrected actual host/engine object partitioning with upstream shared ledger/TLS storage. Separate-object red→both-mode green, full native build/link identity and empty-registry integration pass. Successful current model/SDK/backend composition still unproven; T018/T021/T022 open,38/55.

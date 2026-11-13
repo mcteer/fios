@@ -1,0 +1,249 @@
+diff --git a/src/fios/control_transport.zig b/src/fios/control_transport.zig
+index 993ab8e..59f97a3 100644
+--- a/src/fios/control_transport.zig
++++ b/src/fios/control_transport.zig
+@@ -123,23 +123,23 @@ pub const Bridge = struct {
+         } else return;
+         var storage: [protocol.primary_response_size]u8 = undefined;
+         const response: []const u8 = if (count == protocol.primary_request_size and std.mem.eql(u8, input[0..4], "FIA9")) primary: {
+-            const value = protocol.dispatchPrimaryActivity(&ownership.shared, self.io, input[0..protocol.primary_request_size]);
++            const value = protocol.dispatchPrimaryActivity(ownership.shared(), self.io, input[0..protocol.primary_request_size]);
+             @memcpy(storage[0..protocol.primary_response_size], &value);
+             break :primary &storage;
+         } else if (count == protocol.backend_request_size and std.mem.eql(u8, input[0..4], "FIB9")) fences: {
+-            const value = protocol.dispatchBackendFences(&ownership.shared, self.io, input[0..protocol.backend_request_size], self.backend_fences);
++            const value = protocol.dispatchBackendFences(ownership.shared(), self.io, input[0..protocol.backend_request_size], self.backend_fences);
+             @memcpy(storage[0..protocol.backend_response_size], &value);
+             break :fences storage[0..protocol.backend_response_size];
+         } else if (count == protocol.request_size and input[4] == 3) timestamped: {
+-            const value = protocol.dispatchTimestamped(&ownership.shared, self.io, input[0..protocol.request_size], self.barrier);
++            const value = protocol.dispatchTimestamped(ownership.shared(), self.io, input[0..protocol.request_size], self.barrier);
+             @memcpy(storage[0..protocol.timestamped_response_size], &value);
+             break :timestamped storage[0..protocol.timestamped_response_size];
+         } else if (count == protocol.request_size) legacy: {
+-            const value = protocol.dispatchWithBarrier(&ownership.shared, self.io, input[0..protocol.request_size], self.barrier);
++            const value = protocol.dispatchWithBarrier(ownership.shared(), self.io, input[0..protocol.request_size], self.barrier);
+             @memcpy(storage[0..protocol.response_size], &value);
+             break :legacy storage[0..protocol.response_size];
+         } else if (count == protocol.lineage_request_size and std.mem.eql(u8, input[0..4], "FIQ9")) lineage: {
+-            const value = protocol.dispatchLineage(&ownership.shared, self.io, input[0..protocol.lineage_request_size]);
++            const value = protocol.dispatchLineage(ownership.shared(), self.io, input[0..protocol.lineage_request_size]);
+             @memcpy(storage[0..protocol.lineage_response_size], &value);
+             break :lineage storage[0..protocol.lineage_response_size];
+         } else return;
+diff --git a/src/fios/queued_request_ownership.zig b/src/fios/queued_request_ownership.zig
+index 119933a..82cca63 100644
+--- a/src/fios/queued_request_ownership.zig
++++ b/src/fios/queued_request_ownership.zig
+@@ -11,33 +11,33 @@ pub const Scope = struct {
+     // Clone before the sender can finish its uncancelable handoff. Never
+     // borrow its token-array storage across acknowledgement or cleanup.
+     pub fn retain(io: std.Io, origin: *const owners.Retained) !Scope {
+-        if (origin.tracker != &owners.shared or origin.count == 0 or origin.count > owners.capacity) {
+-            owners.shared.fence(io);
++        if (origin.tracker != owners.shared() or origin.count == 0 or origin.count > owners.capacity) {
++            owners.shared().fence(io);
+             return error.InvalidQueuedOrigins;
+         }
+-        return .{ .retained = try owners.shared.retainTokens(io, origin.tokens[0..origin.count]) };
++        return .{ .retained = try owners.shared().retainTokens(io, origin.tokens[0..origin.count]) };
+     }
+     // Called only after this object has stable storage on its original worker.
+     pub fn enter(self: *Scope, io: std.Io) !void {
+         if (self.state != .captured) {
+-            owners.shared.fence(io);
++            owners.shared().fence(io);
+             self.state = .uncertain;
+             return error.InvalidQueuedScope;
+         }
+-        self.previous = owners.current;
+-        self.previous_group = owners.current_group;
+-        owners.current = null;
+-        owners.current_group = self.retained.tokens[0..self.retained.count];
++        self.previous = owners.current().*;
++        self.previous_group = owners.current_group().*;
++        owners.current().* = null;
++        owners.current_group().* = self.retained.tokens[0..self.retained.count];
+         self.state = .entered;
+     }
+     pub fn finish(self: *Scope, io: std.Io) bool {
+         if (self.state != .entered) {
+-            owners.shared.fence(io);
++            owners.shared().fence(io);
+             self.state = .uncertain;
+             return false;
+         }
+-        owners.current = self.previous;
+-        owners.current_group = self.previous_group;
++        owners.current().* = self.previous;
++        owners.current_group().* = self.previous_group;
+         // Local completion cannot clear an independently known source fence.
+         const released = !self.retained.tracker.backendKnownUncertain(io) and self.retained.releaseIfCertain(io);
+         self.state = if (released) .closed else .uncertain;
+diff --git a/src/fios/request_ownership.zig b/src/fios/request_ownership.zig
+index ed6b086..b7cbb3c 100644
+--- a/src/fios/request_ownership.zig
++++ b/src/fios/request_ownership.zig
+@@ -98,9 +98,13 @@ pub fn renderSnapshot(snapshot: Snapshot, buffer: []u8) ![]const u8 {
+ 
+ // One process-local source, shared by connection and inference threads. TLS
+ // propagates only a native-created token, never client-provided authority.
+-pub var shared: Tracker = .{ .primary_guard = true };
+-pub threadlocal var current: ?Token = null;
+-pub threadlocal var current_group: ?[]const Token = null;
++const shared_util = @import("../sdk/util/shared.zig");
++pub const ledger_storage = shared_util.Shared(Tracker, "fios_request_ownership_ledger", .{ .primary_guard = true });
++pub const current_storage = shared_util.SharedThreadLocal(?Token, "fios_request_owner_current", null);
++pub const group_storage = shared_util.SharedThreadLocal(?[]const Token, "fios_request_owner_group", null);
++pub inline fn shared() *Tracker { return ledger_storage.get(); }
++pub inline fn current() *?Token { return current_storage.get(); }
++pub inline fn current_group() *?[]const Token { return group_storage.get(); }
+ pub const Retained = struct {
+     tracker: *Tracker,
+     tokens: [capacity]Token = undefined,
+@@ -114,20 +118,20 @@ pub const Retained = struct {
+     }
+ };
+ pub fn retainCurrent(io: std.Io) !?Retained {
+-    if (current_group) |tokens| return try shared.retainTokens(io, tokens);
+-    const token = current orelse return null;
+-    return try shared.retainTokens(io, &.{token});
++    if (current_group().*) |tokens| return try shared().retainTokens(io, tokens);
++    const token = current().* orelse return null;
++    return try shared().retainTokens(io, &.{token});
+ }
+ pub fn bindAuxiliaryCurrent(io: std.Io, model: []const u8) !void {
+-    if (current_group) |tokens| {
+-        for (tokens) |token| shared.bindAuxiliary(io, token, model) catch |err| { shared.fence(io); return err; };
++    if (current_group().*) |tokens| {
++        for (tokens) |token| shared().bindAuxiliary(io, token, model) catch |err| { shared().fence(io); return err; };
+         return;
+     }
+-    const token = current orelse {
+-        shared.fence(io);
++    const token = current().* orelse {
++        shared().fence(io);
+         return error.MissingOwner;
+     };
+-    try shared.bindAuxiliary(io, token, model);
++    try shared().bindAuxiliary(io, token, model);
+ }
+ 
+ // Clone an existing caller-held model reference without waiting on eviction:
+diff --git a/src/host/http/request.zig b/src/host/http/request.zig
+index bba432e..8b7f2a2 100644
+--- a/src/host/http/request.zig
++++ b/src/host/http/request.zig
+@@ -37,10 +37,10 @@ pub fn handleConnectionThread(args: *ConnThreadArgs) void {
+     const fios_io = args.io;
+     const fios_allocator = args.allocator;
+     const fios_token = args.ownership;
+-    defer if (fios_token) |token| fios_ownership.shared.leave(fios_io, token) catch { fios_ownership.shared.fence(fios_io); };
++    defer if (fios_token) |token| fios_ownership.shared().leave(fios_io, token) catch { fios_ownership.shared().fence(fios_io); };
+     defer fios_allocator.destroy(args);
+-    fios_ownership.current = fios_token;
+-    defer fios_ownership.current = null;
++    fios_ownership.current().* = fios_token;
++    defer fios_ownership.current().* = null;
+     var conn: Conn = undefined;
+     Conn.init(&conn, args.accepted_stream, args.io);
+     defer conn.close();
+diff --git a/src/host/http/router.zig b/src/host/http/router.zig
+index 32915f1..e5dd250 100644
+--- a/src/host/http/router.zig
++++ b/src/host/http/router.zig
+@@ -279,7 +279,7 @@ pub fn handleConnection(
+         };
+         if (expected_instance) |expected| {
+             fios_process_bound = true;
+-            const actual = fios_ownership.shared.snapshot(stream.io);
++            const actual = fios_ownership.shared().snapshot(stream.io);
+             if (!http_server.fios_connection_tracking.load(.acquire) or !actual.initialized) {
+                 try sendErrorResponse(allocator, stream, "503 Service Unavailable", "native_tracking_unavailable", "Native instance identity is unavailable", 503);
+                 return;
+@@ -294,11 +294,11 @@ pub fn handleConnection(
+             return;
+         };
+         if (correlation) |id| {
+-            const ownership = fios_ownership.current orelse {
++            const ownership = fios_ownership.current().* orelse {
+                 try sendErrorResponse(allocator, stream, "503 Service Unavailable", "native_tracking_unavailable", "Native ownership tracking is unavailable", 503);
+                 return;
+             };
+-            fios_ownership.shared.associate(stream.io, ownership, id) catch |err| {
++            fios_ownership.shared().associate(stream.io, ownership, id) catch |err| {
+                 if (err == error.DuplicateCorrelation or err == error.InvalidCorrelationState)
+                     try sendErrorResponse(allocator, stream, "409 Conflict", "request_identity_conflict", "Request identity is already owned", 409)
+                 else
+@@ -635,9 +635,9 @@ pub fn handleConnection(
+     // Diagnostic primary ownership begins before CPU preparation or cold load.
+     // This is a partial host edge; backend/SDK custody remains unenrolled and
+     // the primary guard is not enabled as native admission authority.
+-    const ownership_token = fios_ownership.current;
++    const ownership_token = fios_ownership.current().*;
+     const ownership_entry = if (ownership_token != null) registry.resolveEntry(requested_model_id) catch null else null;
+-    if (ownership_entry) |entry| fios_ownership.shared.bind(stream.io, ownership_token.?, entry.id) catch |err| {
++    if (ownership_entry) |entry| fios_ownership.shared().bind(stream.io, ownership_token.?, entry.id) catch |err| {
+         try sendEnsureLoadedError(allocator, stream, scheduler, entry.id, err);
+         return;
+     };
+@@ -656,9 +656,9 @@ pub fn handleConnection(
+     // A status read must not look like use — see `isStatusRoute`.
+     const status_read = isStatusRoute(method, path);
+     defer if (status_read) scheduler.releaseStatus(lm) else scheduler.release(lm);
+-    if (ownership_entry != null) try fios_ownership.shared.active(stream.io, ownership_token.?);
++    if (ownership_entry != null) try fios_ownership.shared().active(stream.io, ownership_token.?);
+     defer if (ownership_entry != null) {
+-        fios_ownership.shared.responding(stream.io, ownership_token.?) catch { fios_ownership.shared.fence(stream.io); };
++        fios_ownership.shared().responding(stream.io, ownership_token.?) catch { fios_ownership.shared().fence(stream.io); };
+     };
+ 
+     // A model loaded on demand freezes its own auto-context here, for the same
+diff --git a/src/host/http/server.zig b/src/host/http/server.zig
+index 4de7729..6b0c642 100644
+--- a/src/host/http/server.zig
++++ b/src/host/http/server.zig
+@@ -417,8 +417,8 @@ pub fn serve(
+     // Current host-only attribution is incomplete. The shared companion's
+     // historical serving default must not become a partial model policy here.
+     // Trusted startup only, before any current ingress or tracker operation.
+-    fios_ownership.shared.primary_guard = false;
+-    try fios_ownership.shared.initialize(io, fios_instance);
++    fios_ownership.shared().primary_guard = false;
++    try fios_ownership.shared().initialize(io, fios_instance);
+     const fios_bridge = try fios_control.Bridge.start(io, allocator, @import("build_options").version, null);
+     defer if (fios_bridge) |bridge| bridge.stop();
+     // The ordinary vendor path stays untracked unless the existing private
+@@ -681,7 +681,7 @@ pub fn serve(
+         // Enroll before enqueue/spawn: a delayed connection thread is still
+         // owned. This root is host ingress only, never backend terminal proof.
+         const fios_token: ?fios_ownership.Token = if (fios_connection_tracking.load(.acquire))
+-            fios_ownership.shared.enter(io) catch {
++            fios_ownership.shared().enter(io) catch {
+                 accepted_stream.close(io);
+                 allocator.destroy(args);
+                 continue;
+@@ -701,7 +701,7 @@ pub fn serve(
+             _ = active_conn_threads.fetchSub(1, .acq_rel);
+             accepted_stream.close(io);
+             allocator.destroy(args);
+-            if (fios_token) |token| fios_ownership.shared.leave(io, token) catch { fios_ownership.shared.fence(io); };
++            if (fios_token) |token| fios_ownership.shared().leave(io, token) catch { fios_ownership.shared().fence(io); };
+             continue;
+         };
+         conn_thread.detach();
+diff --git a/src/shared_all.zig b/src/shared_all.zig
+index 19de04e..b9b09db 100644
+--- a/src/shared_all.zig
++++ b/src/shared_all.zig
+@@ -3,6 +3,10 @@
+ //! those exports (`sdk/util/shared.zig`). A new `Shared` goes on this list.
+ 
+ comptime {
++    // One host-owned ledger and current-thread slots across engine/plugin objects.
++    _ = @import("fios/request_ownership.zig").ledger_storage;
++    _ = @import("fios/request_ownership.zig").current_storage;
++    _ = @import("fios/request_ownership.zig").group_storage;
+     _ = @import("sdk/util/err_name.zig").last_tls;
+     if (@import("build_options").mlx_stream) _ = @import("mlx_stream").shared_state;
+     _ = @import("host/plugins/loader.zig").process;
