@@ -1,0 +1,60 @@
+
+test "fios current unload refuses callback uncertainty without releasing accounting" {
+    const a = std.heap.page_allocator;
+    const io = std.testing.io;
+    const owners = @import("../../../fios/request_ownership.zig");
+    const served = @import("../../../host/engines/served.zig");
+    const abi = @import("../../../abi/engine.zig");
+    const fake = @import("../../../testing/fake_engine.zig");
+    owners.shared().primary_guard = false;
+    try owners.shared().initialize(io, @splat(131));
+    const registry = try model_registry_mod.ModelRegistry.init(a, io, null, 2, 0, null);
+    const model = try registry.registerStub("fixture/unload-refusal", "/fixture/never-loaded", null);
+    const root = try owners.shared().enter(io);
+    try owners.shared().bind(io, root, model.id);
+    owners.current().* = root;
+    const original = try a.create(owners.Retained);
+    original.* = (try owners.retainCurrent(io)).?;
+    owners.current().* = null;
+    const Probe = struct {
+        io: std.Io,
+        calls: usize = 0,
+        fn close(raw: *anyopaque) callconv(.c) void {
+            const self: *@This() = @ptrCast(@alignCast(raw));
+            self.calls += 1;
+            owners.shared().fence(self.io);
+        }
+    };
+    const probe = try a.create(Probe);
+    probe.* = .{ .io = io };
+    const engine_table = try a.create(abi.Engine);
+    engine_table.* = fake.own_thread;
+    engine_table.close = Probe.close;
+    const progress = try a.create(@import("../../../host/registry/load_progress.zig").Progress);
+    progress.* = .{};
+    const gauges = try a.create(served.Gauges);
+    gauges.* = .{};
+    const engine = try a.create(served.Served);
+    engine.* = .{ .gpa = a, .kind = .llama, .table = engine_table, .handle = probe, .info = undefined, .host = undefined, .progress = progress, .gauges = gauges, .metrics = null };
+    model.engine = engine;
+    model.state = .evicting;
+    // Synthetic local accounting only: no weights, model or native context.
+    model.bytes_resident = 128;
+    registry.current_resident_bytes = 128;
+    const scheduler = try a.create(Scheduler);
+    scheduler.* = std.mem.zeroInit(Scheduler, .{ .allocator = a, .io = io, .registry = registry });
+    const request = try a.create(UnloadRequest);
+    request.* = .{ .entry = model, .fios_origins = original };
+    runUnloadRequest(scheduler, request);
+    try std.testing.expect(request.done);
+    try std.testing.expectEqual(@as(usize, 1), probe.calls);
+    if (!request.fios_failed or model.state != .evicting) std.debug.print("FIO_CURRENT_UNLOAD_DROPPED_CALLBACK_REFUSAL\n", .{});
+    try std.testing.expect(request.fios_failed and model.state == .evicting);
+    try std.testing.expect(model.engine == engine);
+    try std.testing.expectEqual(@as(u64, 128), model.bytes_resident);
+    try std.testing.expectEqual(@as(u64, 128), registry.current_resident_bytes);
+    try std.testing.expect(owners.current().* == null and owners.current_group().* == null);
+    try std.testing.expect(owners.shared().knownUncertain(io));
+    try std.testing.expect(!original.releaseIfCertain(io));
+    // Retain the entire private diagnostic graph; no uncertainty reset.
+}

@@ -378,3 +378,19 @@ test('current registry checked close preserves the two-entry model-free fixture'
   const fixture=sections[0].slice(start+1).split('\n').filter(line=>line.startsWith('+')).map(line=>line.slice(1)).join('\n')+'\n';
   assert.equal(fixture,readFileSync('platform/studio/native/current_registry_close_test.zig.fixture','utf8').trimStart());
 });
+
+
+test('current unload refusal preserves its existing load call graph and model-free accounting fixture',()=>{
+  const patch=readFileSync('platform/studio/native/mlx-serve-26.11.2-unload-refusal.patch','utf8');
+  const expected=new Set(['src/host/registry/registry.zig','src/engines/mlx/runtime/model_state.zig','src/engines/mlx/runtime/load_requests.zig','src/engines/mlx/load.zig','src/engines/mlx/runtime/engine_load.zig','src/engines/mlx/scheduler.zig','src/host/gpu_thread/requests.zig']);
+  for(const section of patch.split(/(?=^diff --git )/m).filter(Boolean)){
+    const header=/^diff --git a\/(\S+) b\/(\S+)\n/.exec(section);
+    assert(header);assert.equal(header[1],header[2]);assert(expected.delete(header[1]));
+    if(header[1]==='src/engines/mlx/runtime/load_requests.zig'){
+      const start=section.indexOf('\n+test "fios current unload refuses');assert(start>=0);
+      const fixture=section.slice(start+1).split('\n').filter(line=>line.startsWith('+')).map(line=>line.slice(1)).join('\n')+'\n';
+      assert.equal(fixture,readFileSync('platform/studio/native/current_unload_refusal_test.zig.fixture','utf8').trimStart());
+    }
+  }
+  assert.equal(expected.size,0);
+});
