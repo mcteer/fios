@@ -1,0 +1,49 @@
+
+// Existing model-free bridge with metadata callbacks; no native backend/model.
+const FiosConstructorProbe = struct {
+    var opens: usize = 0;
+    var closes: usize = 0;
+    var child_frees: usize = 0;
+    pub fn opened() void {
+        opens += 1;
+        @import("../../fios/request_ownership.zig").shared().fence(testing.io);
+    }
+    pub fn closed() void { closes += 1; }
+    pub fn childFreed() void { child_frees += 1; }
+};
+fn fiosConstructorPublication(preexisting: bool) !void {
+    const owners = @import("../../fios/request_ownership.zig");
+    try owners.shared().initialize(testing.io, @splat(253));
+    if (preexisting) owners.shared().fence(testing.io);
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var path_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const path = try ds4Gguf(&tmp, &path_buf);
+    const host: abi.Host = .{ .ctx = undefined, .log = struct {
+        fn f(_: *anyopaque, _: u8, _: abi.Str) callconv(.c) void {}
+    }.f, .wake = struct { fn f(_: *anyopaque) callconv(.c) void {} }.f };
+    const open: abi.Open = .{ .model_dir = abi.span(u8, path), .model_type = .{}, .config_json = .{},
+        .context = 0, .max_concurrent = 1, .memory_budget = 0, .settings_json = .{}, .options_json = .{}, .host = &host };
+    var info: abi.Info = undefined;
+    var verdict: abi.Verdict = .{};
+    const probe_table = Adapter(FakeBridgeWithObserverFor(std.heap.smp_allocator, FiosConstructorProbe), std.heap.smp_allocator).table;
+    const engine = probe_table.open(&open, &info, &verdict);
+    if (engine != null) std.debug.print("FIO_CURRENT_ds4_CONSTRUCTOR_PUBLISHED_UNCERTAINTY\n", .{});
+    try testing.expect(engine == null);
+    try testing.expectEqual(abi.Verdict.Code.failed, verdict.code);
+    try testing.expectEqualStrings("NativeCleanupUncertain", abi.items(u8, verdict.why));
+    try testing.expectEqual(@as(usize, if (preexisting) 0 else 1), FiosConstructorProbe.opens);
+    try testing.expectEqual(@as(usize, 0), FiosConstructorProbe.closes);
+    try testing.expectEqual(@as(usize, 0), FiosConstructorProbe.child_frees);
+    try testing.expect(owners.shared().knownUncertain(testing.io));
+    try testing.expect(probe_table.open(&open, &info, &verdict) == null);
+    try testing.expectEqual(@as(usize, if (preexisting) 0 else 1), FiosConstructorProbe.opens);
+    try testing.expectEqual(@as(usize, 0), FiosConstructorProbe.closes);
+    try testing.expectEqual(@as(usize, 0), FiosConstructorProbe.child_frees);
+}
+test "fios current ds4 constructor refuses known uncertainty before effects" {
+    try fiosConstructorPublication(true);
+}
+test "fios current ds4 constructor retains uncertainty without publication" {
+    try fiosConstructorPublication(false);
+}

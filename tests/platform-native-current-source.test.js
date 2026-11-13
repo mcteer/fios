@@ -608,3 +608,18 @@ test('current ANE pool publication preserves the exact model-free constructor fi
   const fixture=section.slice(start+1).split('\n').filter(line=>line.startsWith('+')).map(line=>line.slice(1)).join('\n')+'\n';
   assert.equal(fixture,readFileSync('platform/studio/native/current_ane_pool_test.zig.fixture','utf8').trimStart());
 });
+
+
+test('current DS4 and llama constructor patches preserve exact model-free boundary fixtures',()=>{
+  const patch=readFileSync('platform/studio/native/mlx-serve-26.11.2-adapter-constructor-custody.patch','utf8');
+  const expected=new Set(['src/engines/ds4/engine.zig','src/engines/ds4/load.zig','src/engines/llama/engine.zig','src/engines/llama/load.zig']);
+  for(const section of patch.split(/(?=^diff --git )/m).filter(Boolean)){
+    const header=/^diff --git a\/(\S+) b\/(\S+)\n/.exec(section);assert(header);assert.equal(header[1],header[2]);assert(expected.delete(header[1]));
+    if(header[1].endsWith('/engine.zig')){
+      const backend=header[1].split('/')[2];const start=section.indexOf('\n+// Existing model-free bridge with metadata callbacks;');assert(start>=0);
+      const fixture=section.slice(start+1).split('\n').filter(line=>line.startsWith('+')).map(line=>line.slice(1)).join('\n')+'\n';
+      assert.equal(fixture,readFileSync('platform/studio/native/current_'+backend+'_constructor_test.zig.fixture','utf8').trimStart());
+    }
+  }
+  assert.equal(expected.size,0);
+});
