@@ -797,3 +797,12 @@ test('current private ANE SDK cleanup preserves the exact model-free parent fixt
   const bytes='\n'+patch.slice(start).split('\n').filter(line=>line.startsWith('+')).map(line=>line.slice(1)).join('\n')+'\n';
   assert.equal(bytes,readFileSync('platform/studio/native/current_ane_sdk_cleanup_test.zig.fixture','utf8'));
 });
+
+
+test('current private ANE bank adoption preserves the exact CPU-only ownership fixture',()=>{
+  const patch=readFileSync('platform/studio/native/mlx-serve-26.11.2-ane-bank-adoption-custody.patch','utf8');
+  assert.deepEqual(patch.split('\n').filter(line=>line.startsWith('diff --git ')),['diff --git a/src/engines/mlx/ane_prefill.zig b/src/engines/mlx/ane_prefill.zig','diff --git a/src/sdk/ane/offload.zig b/src/sdk/ane/offload.zig']);
+  const start=patch.indexOf('+// CPU-only append/close-result controls;');assert(start>=0);
+  const bytes='\n'+patch.slice(start).split('\n').filter(line=>line.startsWith('+')).map(line=>line.slice(1)).join('\n')+'\n';
+  assert.equal(bytes,readFileSync('platform/studio/native/current_ane_bank_adoption_test.zig.fixture','utf8'));
+});

@@ -435,3 +435,15 @@ A selected9-file source/call-path audit binds private6e1d3dc0549ea42df932f69a28b
 Upstream already defines mlx/ane/ds4/llama engine choices in src/host/registry/model_settings.zig and src/host/engines/served.zig. Per-model engine/ane overrides outrank server defaults; therefore startup flags or current catalog names alone cannot exclude those reachable choices. The existing ANE engine reaches program/request C APIs through src/engines/ane/rt.zig. Existing optional --ane-prefill MLX offload reaches bank APIs through src/sdk/ane/offload.zig, then lib/ane/ane_mlp.m calls the raw model bridge. HostAne plugin callbacks in src/host/plugin_ane.zig expose both families. Its void free callbacks do not themselves acknowledge underlying checked cleanup acceptance. The source work instruments those existing ownership paths; no numerical engine or model policy is added/enabled.
 
 This audit identifies why raw/program/plugin lifetimes matter; it does not prove native completion or all-client admission. Independent TP/auxiliary/opaque producer closure, post-refusal SDK plane reuse/fallback, complete installed profiles and native/device acceptance remain open. No SSH, configuration change, actual model or inference was used for this audit. Whole tasks38/55.
+
+### Existing optional media ANE owner paths — source review only
+
+Readonly current26.11.2 review finds three additional callers of the existing `AnePrefill` implementation:
+
+| Source | Observed ownership gap |
+| --- | --- |
+| `src/plugins/krea/krea.zig` | `Dit.aneDeinit` discards the engine cleanup result and clears/frees its fields; `Engine.deinit` retires the text encoder before Dit. |
+| `src/plugins/acestep/acestep.zig` | `Engine.aneDeinit` discards the result and clears/frees its fields before the remaining engine teardown. |
+| `src/plugins/minimax_h3/h3.zig` | `Model.deinit` retires MLX arrays/blocks before `aneDeinit`, which discards the engine result and clears/frees fields. |
+
+All three builders also use `errdefer eng.deinit()` with independent rest-array cleanup. The three-file receipt is `/private/tmp/fios-009-current-sdk-server-h_mvvlhq/ane-media-owner-audit-receipt.json`, SHA72118da3ed094ec8b75906299db39536f897d000d92b59aebfbc20d5f7377894. These are existing upstream image/audio/video clients, not added model engines. This is source reachability evidence only: it does not claim an installed profile enables them, repair their parent propagation, or establish whole-client/native-terminal coverage. SDK/Transformer partial receipts cannot complete T002/T018/T019/T020/T022 on their behalf. Native admission remains unsupported.
