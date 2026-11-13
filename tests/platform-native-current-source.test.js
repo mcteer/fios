@@ -598,3 +598,13 @@ test('current DS4 private composition preserves canonical negative helpers and e
     assert.equal(readFileSync('platform/studio/native/'+name.replace('current_','current_ds4_'),'utf8'),readFileSync('platform/studio/native/'+name,'utf8').replaceAll('current_backend_uncertainty.zig','current_ds4_backend_uncertainty.zig'));
   }
 });
+
+
+test('current ANE pool publication preserves the exact model-free constructor fixture',()=>{
+  const patch=readFileSync('platform/studio/native/mlx-serve-26.11.2-ane-pool-custody.patch','utf8');
+  const sections=patch.split(/(?=^diff --git )/m).filter(Boolean);assert.equal(sections.length,1);
+  const section=sections[0];assert(section.startsWith('diff --git a/src/engines/ane/engine.zig b/src/engines/ane/engine.zig\n'));
+  const start=section.indexOf('\n+// Existing model-free bridge only;');assert(start>=0);
+  const fixture=section.slice(start+1).split('\n').filter(line=>line.startsWith('+')).map(line=>line.slice(1)).join('\n')+'\n';
+  assert.equal(fixture,readFileSync('platform/studio/native/current_ane_pool_test.zig.fixture','utf8').trimStart());
+});
