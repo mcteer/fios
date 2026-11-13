@@ -237,3 +237,13 @@ test('current llama actor stays in the existing adapter and preserves its model-
   const fixture=sections[0].slice(start+1).split('\n').filter(line=>line.startsWith('+')).map(line=>line.slice(1)).join('\n')+'\n';
   assert.equal(fixture,readFileSync('platform/studio/native/current_llama_actor_test.zig.fixture','utf8').trimStart());
 });
+
+test('current llama batch supplement adds only its executable fixture',()=>{
+  const patch=readFileSync('platform/studio/native/mlx-serve-26.11.2-llama-batch-fixture.patch','utf8');
+  const sections=patch.split(/(?=^diff --git )/m).filter(Boolean);
+  assert.equal(sections.length,1);
+  assert(sections[0].startsWith('diff --git a/src/engines/llama/engine.zig b/src/engines/llama/engine.zig\n'));
+  assert(!sections[0].split('\n').some(line=>line.startsWith('-')&&!line.startsWith('---')));
+  const additions=sections[0].split('\n').filter(line=>line.startsWith('+')&&!line.startsWith('+++')).map(line=>line.slice(1)).join('\n')+'\n';
+  assert.equal(additions.trimStart(),readFileSync('platform/studio/native/current_llama_batch_test.zig.fixture','utf8').trimStart());
+});

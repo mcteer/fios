@@ -1,0 +1,102 @@
+diff --git a/src/engines/llama/engine.zig b/src/engines/llama/engine.zig
+index 5824cc9..2ab9a4f 100644
+--- a/src/engines/llama/engine.zig
++++ b/src/engines/llama/engine.zig
+@@ -786,3 +786,97 @@ test "fios current llama adapter worker restores original request origins" {
+     try testing.expectEqual(@as(usize, 0), owners.shared().snapshot(testing.io).owned);
+     try testing.expect(owners.current().* == null and owners.current_group().* == null);
+ }
++
++test "fios current llama batch retains both original request groups" {
++    const owners = @import("../../fios/request_ownership.zig");
++    try owners.shared().initialize(testing.io, @splat(71));
++    const first = try owners.shared().enter(testing.io);
++    const second = try owners.shared().enter(testing.io);
++    var roots_live = true;
++    defer if (roots_live) {
++        owners.shared().leave(testing.io, first) catch {};
++        owners.shared().leave(testing.io, second) catch {};
++    };
++    try owners.shared().bind(testing.io, first, "fixture/llama-batch");
++    try owners.shared().bind(testing.io, second, "fixture/llama-batch");
++    const Probe = struct {
++        roots: [2]owners.Token,
++        first_prefilled: std.atomic.Value(bool) = .init(false),
++        go: std.atomic.Value(bool) = .init(false),
++        done: std.atomic.Value(u32) = .init(0),
++        tokens: std.atomic.Value(u32) = .init(0),
++        attributed: std.atomic.Value(bool) = .init(true),
++        reasons: [2]Reason = .{ .failed, .failed },
++        fn event(raw: *anyopaque, id: u64, ev: *const abi.Event) callconv(.c) abi.Action {
++            const self: *@This() = @ptrCast(@alignCast(raw));
++            if (ev.kind == .prefilled and id == 1) {
++                self.first_prefilled.store(true, .release);
++                for (0..3000) |_| {
++                    if (self.go.load(.acquire)) break;
++                    io.sleep(.fromMilliseconds(1), .awake) catch {};
++                }
++            }
++            if (ev.kind == .tokens) {
++                _ = self.tokens.fetchAdd(1, .acq_rel);
++                const group = owners.current_group().* orelse {
++                    self.attributed.store(false, .release);return .go;
++                };
++                if (group.len != 2) self.attributed.store(false, .release);
++                for (self.roots) |root| {
++                    var found = false;
++                    for (group) |token| if (std.meta.eql(token, root)) { found = true;break; };
++                    if (!found) self.attributed.store(false, .release);
++                }
++            }
++            if (ev.kind == .finished) {
++                self.reasons[@intCast(id - 1)] = ev.reason;
++                _ = self.done.fetchAdd(1, .acq_rel);
++            }
++            return .go;
++        }
++    };
++    var actor_check: Probe = .{ .roots = .{ first, second } };
++    // Actual adapter/book/thread, existing model-free bridge; no native
++    // llama.cpp computation, device completion or model competence proof.
++    var tmp = testing.tmpDir(.{});
++    defer tmp.cleanup();
++    var buffer: [std.fs.max_path_bytes]u8 = undefined;
++    const path = try llamaGguf(&tmp, &buffer);
++    var info: abi.Info = undefined;
++    const engine = try openFake(path, "{\"seqs\":2,\"mtp_drafts\":0}", &info);
++    var closed = false;
++    defer if (!closed) {
++        actor_check.go.store(true, .release);
++        Fake.table.close(engine);
++    };
++    const prompt = [_]u32{ 5, 6, 7 };
++    const request: abi.Request = .{ .prompt = abi.span(u32, &prompt), .max_tokens = 2,
++        .sampling = .{ .temperature = 0 } };
++    const sink: abi.Sink = .{ .ctx = &actor_check, .event = Probe.event };
++    owners.current().* = first;
++    defer owners.current().* = null;
++    try testing.expectEqual(abi.Verdict.Code.ok, Fake.table.submit(engine, 1, &request, sink).code);
++    for (0..3000) |_| {
++        if (actor_check.first_prefilled.load(.acquire)) break;
++        try testing.io.sleep(.fromMilliseconds(1), .awake);
++    }
++    try testing.expect(actor_check.first_prefilled.load(.acquire));
++    owners.current().* = second;
++    try testing.expectEqual(abi.Verdict.Code.ok, Fake.table.submit(engine, 2, &request, sink).code);
++    try owners.shared().leave(testing.io, first);
++    try owners.shared().leave(testing.io, second);roots_live = false;
++    owners.current().* = null;
++    actor_check.go.store(true, .release);
++    for (0..3000) |_| {
++        if (actor_check.done.load(.acquire) == 2) break;
++        try testing.io.sleep(.fromMilliseconds(1), .awake);
++    }
++    try testing.expectEqual(@as(u32, 2), actor_check.done.load(.acquire));
++    Fake.table.close(engine);closed = true;
++    try testing.expectEqualSlices(Reason, &.{ .length, .length }, &actor_check.reasons);
++    try testing.expect(actor_check.tokens.load(.acquire) >= 2);
++    if (!actor_check.attributed.load(.acquire)) std.debug.print("FIO_CURRENT_LLAMA_BATCH_LOST_ORIGINS\n", .{});
++    try testing.expect(actor_check.attributed.load(.acquire));
++    try testing.expectEqual(@as(usize, 0), owners.shared().snapshot(testing.io).owned);
++    try testing.expect(owners.current().* == null and owners.current_group().* == null);
++}
