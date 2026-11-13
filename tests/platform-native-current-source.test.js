@@ -335,3 +335,14 @@ test('current llama construction custody stays within the existing C shim',()=>{
   assert.equal(paths[0][1],'lib/llama_shim/llama_shim.cpp');
   assert.equal(paths[0][2],paths[0][1]);
 });
+
+
+test('current registry cleanup preflight stays in the registry and preserves its ordinary fixture',()=>{
+  const patch=readFileSync('platform/studio/native/mlx-serve-26.11.2-registry-cleanup.patch','utf8');
+  const sections=patch.split(/(?=^diff --git )/m).filter(Boolean);
+  assert.equal(sections.length,1);
+  assert(sections[0].startsWith('diff --git a/src/host/registry/registry.zig b/src/host/registry/registry.zig\n'));
+  const start=sections[0].indexOf('\n+test "fios current registry cleanup');assert(start>=0);
+  const fixture=sections[0].slice(start+1).split('\n').filter(line=>line.startsWith('+')).map(line=>line.slice(1)).join('\n')+'\n';
+  assert.equal(fixture,readFileSync('platform/studio/native/current_registry_cleanup_test.zig.fixture','utf8').trimStart());
+});

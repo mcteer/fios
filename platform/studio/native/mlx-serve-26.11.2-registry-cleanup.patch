@@ -1,0 +1,93 @@
+diff --git a/src/host/registry/registry.zig b/src/host/registry/registry.zig
+index 34d65c0..c365a27 100644
+--- a/src/host/registry/registry.zig
++++ b/src/host/registry/registry.zig
+@@ -638,6 +638,28 @@ pub const ModelRegistry = struct {
+     /// each entry. Called once at server shutdown after the scheduler has
+     /// joined (so the inference thread isn't mid-load).
+     pub fn deinit(self: *ModelRegistry) void {
++        // Existing shutdown contract excludes new readers. Joining a local
++        // scheduler is not permission to discard independent native uncertainty
++        // or entries still held by original request/status borrowers.
++        const options = @import("build_options");
++        const source = @import("../../fios/request_ownership.zig").shared();
++        source.mutex.lockUncancelable(self.io);
++        const source_started = source.initialized;
++        source.mutex.unlock(self.io);
++        const native_unknown = @import("../../fios/current_backend_uncertainty.zig").known(options.fios_source_sdk, options.llama_engine);
++        if (native_unknown) {
++            if (source_started) source.fence(self.io);
++            return;
++        }
++        if (source_started and source.backendKnownUncertain(self.io)) return;
++        self.mutex.lockUncancelable(self.io);
++        var entries = self.entries.valueIterator();
++        var borrowed = false;
++        while (entries.next()) |entry| {
++            if (entry.*.refcount.load(.acquire) != 0) { borrowed = true; break; }
++        }
++        self.mutex.unlock(self.io);
++        if (borrowed) return;
+         self.deinitInternal();
+         self.allocator.destroy(self);
+     }
+@@ -2599,3 +2621,59 @@ test "UnloadMark: models unloaded together count as one pending release" {
+     m.record(1_200 + UNLOAD_SETTLE_MS + 1, 5);
+     try testing.expectEqual(@as(u64, 5), m.bytes);
+ }
++
++test "fios current registry cleanup preserves borrowers and known uncertainty" {
++    const io = std.testing.io;
++    const a = std.heap.page_allocator; // Intentionally retained diagnostic graph on uncertainty.
++    const owners = @import("../../fios/request_ownership.zig");
++    const abi = @import("../../abi/engine.zig");
++    const served_mod = @import("../engines/served.zig");
++    const fake = @import("../../testing/fake_engine.zig");
++    owners.shared().primary_guard = false;
++    try owners.shared().initialize(io, @splat(107));
++    const Probe = struct {
++        closed: bool = false,
++        fn close(raw: *anyopaque) callconv(.c) void {
++            const self: *@This() = @ptrCast(@alignCast(raw));
++            self.closed = true;
++        }
++    };
++    const table = try a.create(abi.Engine);
++    table.* = fake.own_thread;
++    table.close = Probe.close;
++    for ([_]bool{ false, true }) |uncertain| {
++        const registry = try ModelRegistry.init(a, io, null, 2, 0, null);
++        const model = try registry.registerStub("fixture/registry-cleanup", "/fixture/never-loaded", null);
++        model.state = .ready;
++        const probe = try a.create(Probe);
++        probe.* = .{};
++        const progress = try a.create(load_progress.Progress);
++        progress.* = .{};
++        const gauges = try a.create(served_mod.Gauges);
++        gauges.* = .{};
++        const engine = try a.create(Served);
++        engine.* = .{ .gpa = a, .kind = .llama, .table = table, .handle = probe, .info = undefined, .host = undefined, .progress = progress, .gauges = gauges, .metrics = null };
++        model.engine = engine;
++        const borrowed = if (!uncertain) try registry.ensureLoaded(model.id) else null;
++        if (uncertain) owners.shared().fence(io);
++        registry.deinit();
++        // The close witness is outside the registry allocation. A baseline
++        // failure never dereferences an entry the old destructor already freed.
++        if (probe.closed) std.debug.print("FIO_CURRENT_REGISTRY_DROPPED_OWNED_GRAPH\n", .{});
++        try std.testing.expect(!probe.closed);
++        try std.testing.expectEqual(@as(usize, 1), registry.entries.count());
++        try std.testing.expectEqualStrings("fixture/registry-cleanup", model.id);
++        try std.testing.expect(model.engine == engine);
++        if (borrowed) |held| {
++            registry.release(held);
++            registry.deinit();
++            try std.testing.expect(probe.closed);
++            a.destroy(probe);
++            a.destroy(progress);
++            a.destroy(gauges);
++        } else {
++            try std.testing.expect(owners.shared().knownUncertain(io));
++            try std.testing.expect(!probe.closed);
++        }
++    }
++}
