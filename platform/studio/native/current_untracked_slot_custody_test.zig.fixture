@@ -1,0 +1,36 @@
+
+test "fios current untracked slot retains its model borrow" {
+    const a = std.testing.allocator;
+    const io = std.testing.io;
+    const owners = @import("../../fios/request_ownership.zig");
+    try std.testing.expect(owners.current().* == null and owners.current_group().* == null);
+    // Legacy callers without source enrollment receive no attribution or
+    // native authority, but still require ordinary model memory ownership.
+    const registry = try ModelRegistry.init(a, io, null, 2, 0, null);
+    defer registry.deinit();
+    const model = try registry.registerStub("fixture/untracked-slot", "/fixture/never-loaded", null);
+    var config = std.mem.zeroInit(ModelConfig, .{ .model_type = "llama", .num_hidden_layers = 0 });
+    model.config = &config;
+    defer model.config = null;
+    model.state = .ready;
+    model.refcount.store(1, .release);
+    var caller_held = true;
+    defer if (caller_held) registry.releaseStatus(model);
+    var scheduler = std.mem.zeroInit(Scheduler, .{ .allocator = a, .io = io, .registry = registry, .queue_cap = 2, .kv_quant_config = transformer_mod.KVQuantConfig.dense });
+    defer {
+        for (scheduler.pending.items) |slot| slot.deinit();
+        for (scheduler.cleanup_queue.items) |slot| slot.deinit();
+        scheduler.pending.deinit(a);
+        scheduler.cleanup_queue.deinit(a);
+    }
+    const slot = try submit(&scheduler, .{ .prompt_ids = &.{1}, .sampling = .{}, .eos_token_ids = &.{}, .max_tokens = 1, .model = model });
+    try std.testing.expect(slot.fios_owner == null);
+    complete(&scheduler, slot);
+    registry.releaseStatus(model);
+    caller_held = false;
+    if (model.refcount.load(.acquire) != 1) std.debug.print("FIO_CURRENT_UNTRACKED_SLOT_DROPPED_MODEL_BORROW\n", .{});
+    try std.testing.expectEqual(@as(u32, 1), model.refcount.load(.acquire));
+    const cleanup = scheduler.cleanup_queue.pop().?;
+    cleanup.deinit();
+    try std.testing.expectEqual(@as(u32, 0), model.refcount.load(.acquire));
+}

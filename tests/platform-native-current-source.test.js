@@ -432,3 +432,20 @@ test('current media cleanup keeps wrapper, registry and unload fixtures at the e
   }
   assert.equal(expected.size,0);
 });
+
+
+test('current slot cleanup preserves its original model custody and scheduler quarantine fixtures',()=>{
+  const patch=readFileSync('platform/studio/native/mlx-serve-26.11.2-slot-cleanup.patch','utf8');
+  const expected=new Set(['src/engines/mlx/slot.zig','src/engines/mlx/scheduler.zig','src/engines/mlx/runtime/loop.zig','src/host/gpu_thread/scheduler.zig']);
+  for(const section of patch.split(/(?=^diff --git )/m).filter(Boolean)){
+    const header=/^diff --git a\/(\S+) b\/(\S+)\n/.exec(section);
+    assert(header);assert.equal(header[1],header[2]);assert(expected.delete(header[1]));
+    if(header[1]==='src/engines/mlx/scheduler.zig'){
+      const start=section.indexOf('\n+test "fios current slot cleanup');assert(start>=0);
+      const fixture=section.slice(start+1).split('\n').filter(line=>line.startsWith('+')).map(line=>line.slice(1)).join('\n')+'\n';
+      const files=['current_slot_cleanup_test.zig.fixture','current_scheduler_slot_cleanup_test.zig.fixture','current_side_slot_cleanup_test.zig.fixture','current_untracked_slot_custody_test.zig.fixture'];
+      assert.equal(fixture,files.map((file,i)=>{const data=readFileSync('platform/studio/native/'+file,'utf8');return i===0?data.trimStart():data;}).join(''));
+    }
+  }
+  assert.equal(expected.size,0);
+});

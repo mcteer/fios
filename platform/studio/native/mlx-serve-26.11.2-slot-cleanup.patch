@@ -1,0 +1,571 @@
+diff --git a/src/engines/mlx/runtime/loop.zig b/src/engines/mlx/runtime/loop.zig
+index 3dfd373..f76d9ab 100644
+--- a/src/engines/mlx/runtime/loop.zig
++++ b/src/engines/mlx/runtime/loop.zig
+@@ -1,6 +1,8 @@
+ //! The inference loop: work-pending checks, side-queue drains, the main loop.
+ 
+ const std = @import("std");
++const cleanupUncertain = @import("../../../host/registry/registry.zig").cleanupUncertain;
++const quarantineCleanup = @import("../scheduler.zig").quarantineCleanup;
+ const fios_slots = @import("../../../fios/current_slot_origins.zig");
+ const log = @import("../../../sdk/util/log.zig");
+ const io_util = @import("../../../sdk/util/io_util.zig");
+@@ -190,10 +192,11 @@ pub fn drainSideQueues(sch: *Scheduler) bool {
+         }
+     }
+     for (cleanup_batch[0..cleanup_n]) |s| {
++        if (cleanupUncertain(sch.io)) { quarantineCleanup(sch, s); continue; }
+         // Lost attribution quarantines the original slot/model; never guess
+         // that cancelled, queued or finished metadata retires native work.
+-        var fio_scope = fios_slots.retain(sch.io, @as([]const *Slot, &.{s})) catch continue;
+-        if (fio_scope) |*scope| scope.enter(sch.io) catch continue;
++        var fio_scope = fios_slots.retain(sch.io, @as([]const *Slot, &.{s})) catch { quarantineCleanup(sch, s); continue; };
++        if (fio_scope) |*scope| scope.enter(sch.io) catch { quarantineCleanup(sch, s); continue; };
+         defer if (fio_scope) |*scope| { _ = scope.finish(sch.io); };
+ 
+         // Decode-phase cancel: `complete()` pulled this slot straight
+@@ -213,15 +216,16 @@ pub fn drainSideQueues(sch: *Scheduler) bool {
+                 if (s.model.transformer) |xf| hc.flushPendingDisk(xf.s);
+             }
+         }
++        if (cleanupUncertain(sch.io)) { quarantineCleanup(sch, s); continue; }
+         recordSlotCleanup(sch.metrics, s);
+         // Second slot-end path (a decode-phase cancel never reaches finishSlot); the
+         // record must not outlive the bytes `s.deinit()` frees.
+         if (s.model.prefix_cache) |hc| hc.releaseCheckout(@intFromPtr(s), "slot cleanup");
+         releasePluginSlot(s);
+         if (s.model.transformer) |xfm| if (xfm.qwen4Trunk()) |t| t.resetQsaPooledRope();
+-        s.deinit();
++        if (!s.tryDeinit()) quarantineCleanup(sch, s);
+     }
+-    if (cleanup_n > 0) publishHotCacheResidency(sch);
++    if (cleanup_n > 0 and !cleanupUncertain(sch.io)) publishHotCacheResidency(sch);
+     for (vision_batch[0..vision_n]) |req| runVisionEncode(sch, req);
+     for (embed_batch[0..embed_n]) |req| runEmbedRequest(sch, req);
+     return cleanup_n + vision_n + embed_n > 0;
+diff --git a/src/engines/mlx/scheduler.zig b/src/engines/mlx/scheduler.zig
+index 3d14bf5..50e5932 100644
+--- a/src/engines/mlx/scheduler.zig
++++ b/src/engines/mlx/scheduler.zig
+@@ -353,11 +353,28 @@ test "scheduler: shutdown waits for the inference thread past the flush deadline
+     try std.testing.expectEqual(@as(i64, 90_000 + JOIN_GRACE_MS), joinDeadlineMs(46_000, 90_000));
+ }
+ 
++pub fn hasQuarantinedCleanup(self: *Scheduler) bool {
++    self.queue_mu.lockUncancelable(self.io);
++    defer self.queue_mu.unlock(self.io);
++    return self.fios_cleanup_quarantine != null;
++}
++
++pub fn quarantineCleanup(self: *Scheduler, slot: *Slot) void {
++    self.queue_mu.lockUncancelable(self.io);
++    if (!slot.fios_cleanup_quarantined) {
++        slot.fios_cleanup_quarantined = true;
++        slot.fios_cleanup_next = self.fios_cleanup_quarantine;
++        self.fios_cleanup_quarantine = slot;
++    }
++    self.queue_mu.unlock(self.io);
++    fios_ownership.shared().fence(self.io);
++}
++
+ pub fn deinit(self: *Scheduler) void {
+     // Caller excludes new readers and retains the enclosing reference. Local
+     // joins/void callbacks never clear independent native uncertainty.
+     if (self.fios_deinit_attempted.cmpxchgStrong(false, true, .acq_rel, .acquire) != null) return;
+-    if (model_registry_mod.cleanupUncertain(self.io)) return;
++    if (model_registry_mod.cleanupUncertain(self.io) or hasQuarantinedCleanup(self)) return;
+     self.shutdown.store(true, .release);
+     // Wake inference thread if it's waiting on queue_cond.
+     self.queue_mu.lockUncancelable(self.io);
+@@ -387,6 +404,7 @@ pub fn deinit(self: *Scheduler) void {
+     while (self.ane_builds.load(.acquire) > 0) std.Io.sleep(self.io, .fromMilliseconds(10), .real) catch {};
+ 
+     if (model_registry_mod.cleanupUncertain(self.io)) return;
++    if (hasQuarantinedCleanup(self)) return;
+     // Freed below the join: the publisher is gone, so this is the last writer.
+     if (self.hot_cache_digests.len > 0) {
+         self.allocator.free(self.hot_cache_digests);
+@@ -396,12 +414,21 @@ pub fn deinit(self: *Scheduler) void {
+     // Drain any leftover slots — should be empty if all conn threads
+     // called `complete` properly, but defensive. Inference thread has
+     // already exited by now (joined above), so freeing here is safe.
+-    for (self.pending.items) |slot| slot.deinit();
++    while (self.pending.items.len > 0) {
++        if (!self.pending.items[0].tryDeinit()) return;
++        _ = self.pending.orderedRemove(0);
++    }
+     self.pending.deinit(self.allocator);
+-    for (self.decoding.items) |slot| slot.deinit();
++    while (self.decoding.items.len > 0) {
++        if (!self.decoding.items[0].tryDeinit()) return;
++        _ = self.decoding.orderedRemove(0);
++    }
+     self.decoding.deinit(self.allocator);
+     self.offloaded.deinit(self.allocator);
+-    for (self.cleanup_queue.items) |slot| slot.deinit();
++    while (self.cleanup_queue.items.len > 0) {
++        if (!self.cleanup_queue.items[0].tryDeinit()) return;
++        _ = self.cleanup_queue.orderedRemove(0);
++    }
+     self.cleanup_queue.deinit(self.allocator);
+     // Vision/embed queues should be empty (encodeVision/computeEmbedding
+     // block until done) but guard against shutdown-mid-encode by signaling
+@@ -507,6 +534,7 @@ pub fn hasCompany(self: *Scheduler) bool {
+ /// Blocks if the queue is full (i.e. `in_flight >= queue_cap`). When
+ /// the scheduler is shutting down this returns `error.Shutdown`.
+ pub fn submit(self: *Scheduler, params: SubmitParams) !*Slot {
++    if (model_registry_mod.cleanupUncertain(self.io)) return error.NativeCleanupUncertain;
+     // Construct the slot up front so we don't hold the queue mutex
+     // through any allocation. Per-request `kv_quant_config` override (Wave
+     // 1.A) wins over the process-level default carried on the scheduler.
+@@ -524,12 +552,14 @@ pub fn submit(self: *Scheduler, params: SubmitParams) !*Slot {
+     // Every decode path reads the prompt's last token; `""` on a BOS-less vocab encodes to none.
+     if (params.prompt_ids.len == 0) return error.EmptyPrompt;
+     const eff_kv_quant = params.kv_quant_config orelse slot_config.kv_quant_override orelse self.kv_quant_config;
++    // Memory custody is independent of optional diagnostic attribution.
++    try fios_ownership.retainReference(&params.model.refcount);
++    var model_held = true;
++    errdefer if (model_held and !model_registry_mod.cleanupUncertain(self.io)) self.registry.releaseStatus(params.model);
+     const slot = try Slot.init(self.allocator, self.io, slot_config, params, eff_kv_quant);
+-    errdefer slot.deinit();
+-    if (slot.fios_owner != null) {
+-        try fios_ownership.retainReference(&params.model.refcount);
+-        slot.fios_registry = self.registry;
+-    }
++    slot.fios_registry = self.registry;
++    model_held = false;
++    errdefer if (!slot.tryDeinit()) quarantineCleanup(self, slot);
+ 
+     self.queue_mu.lockUncancelable(self.io);
+     defer self.queue_mu.unlock(self.io);
+@@ -641,11 +671,10 @@ pub fn complete(self: *Scheduler, slot: *Slot) void {
+     }
+ 
+     self.cleanup_queue.append(self.allocator, slot) catch {
+-        // OOM on the cleanup list — fall back to inline deinit. This
+-        // races on mlx but is strictly better than the leak; the slot
+-        // is no longer referenced from pending/decoding above.
++        // Retain original slot/model custody if the cleanup queue cannot
++        // grow. Never free stream-bound native state on the connection thread.
+         self.queue_mu.unlock(self.io);
+-        slot.deinit();
++        quarantineCleanup(self, slot);
+         self.queue_mu.lockUncancelable(self.io);
+     };
+     if (self.in_flight > 0) self.in_flight -= 1;
+@@ -1691,3 +1720,301 @@ test "fios current scheduler cleanup retains callback refusal without replay" {
+         }
+     }
+ }
++
++test "fios current slot cleanup retains callback uncertainty and model" {
++    const io = std.testing.io;
++    const page = std.heap.page_allocator;
++    const abi = @import("../../abi/engine.zig");
++    const owners = @import("../../fios/request_ownership.zig");
++    owners.shared().primary_guard = false;
++    try owners.shared().initialize(io, @splat(163));
++    const Trace = struct {
++        slot: usize = 0,
++        freed: bool = false,
++        fn alloc(_: *anyopaque, n: usize, alignment: std.mem.Alignment, ret: usize) ?[*]u8 {
++            return std.heap.page_allocator.rawAlloc(n, alignment, ret);
++        }
++        fn free(raw: *anyopaque, bytes: []u8, alignment: std.mem.Alignment, ret: usize) void {
++            const self: *@This() = @ptrCast(@alignCast(raw));
++            if (@intFromPtr(bytes.ptr) == self.slot) self.freed = true;
++            std.heap.page_allocator.rawFree(bytes, alignment, ret);
++        }
++        const vtable: std.mem.Allocator.VTable = .{ .alloc = alloc, .resize = std.mem.Allocator.noResize, .remap = std.mem.Allocator.noRemap, .free = free };
++        fn allocator(self: *@This()) std.mem.Allocator { return .{ .ptr = self, .vtable = &vtable }; }
++    };
++    const Probe = struct {
++        io: std.Io,
++        unknown: bool,
++        calls: usize = 0,
++        fn event(raw: *anyopaque, _: u64, ev: *const abi.Event) callconv(.c) abi.Action {
++            const self: *@This() = @ptrCast(@alignCast(raw));
++            if (ev.kind == .finished) {
++                self.calls += 1;
++                if (self.unknown) owners.shared().fence(self.io);
++            }
++            return .go;
++        }
++    };
++    for ([_]bool{ false, true }) |unknown| {
++        const registry = try ModelRegistry.init(page, io, null, 2, 0, null);
++        const model = try registry.registerStub("fixture/slot-cleanup", "/fixture/never-loaded", null);
++        const config = try page.create(ModelConfig);
++        config.* = std.mem.zeroInit(ModelConfig, .{ .model_type = "llama", .num_hidden_layers = 0 });
++        model.config = config;
++        model.state = .ready;
++        model.refcount.store(1, .release);
++        const trace = try page.create(Trace);
++        trace.* = .{};
++        const allocator = trace.allocator();
++        const scheduler = try page.create(Scheduler);
++        scheduler.* = std.mem.zeroInit(Scheduler, .{ .allocator = allocator, .io = io, .registry = registry, .queue_cap = 2, .kv_quant_config = transformer_mod.KVQuantConfig.dense });
++        const root = try owners.shared().enter(io);
++        try owners.shared().bind(io, root, model.id);
++        owners.current().* = root;
++        const slot = try submit(scheduler, .{ .prompt_ids = &.{1}, .sampling = .{}, .eos_token_ids = &.{}, .max_tokens = 1, .model = model });
++        trace.slot = @intFromPtr(slot);
++        complete(scheduler, slot);
++        registry.releaseStatus(model);
++        try owners.shared().leave(io, root);
++        owners.current().* = null;
++        const probe = try page.create(Probe);
++        probe.* = .{ .io = io, .unknown = unknown };
++        slot.sink = .{ .ctx = probe, .event = Probe.event };
++        const cleanup = scheduler.cleanup_queue.pop().?;
++        cleanup.deinit();
++        try std.testing.expectEqual(@as(usize, 1), probe.calls);
++        if (unknown) {
++            if (trace.freed) std.debug.print("FIO_CURRENT_SLOT_DROPPED_CALLBACK_CUSTODY\n", .{});
++            try std.testing.expect(!trace.freed); // Witness before dereference.
++            try std.testing.expectEqual(@as(u32, 1), model.refcount.load(.acquire));
++            cleanup.deinit();
++            try std.testing.expect(!trace.freed);
++            try std.testing.expectEqual(@as(usize, 1), probe.calls);
++            try std.testing.expect(owners.shared().knownUncertain(io));
++        } else {
++            try std.testing.expect(trace.freed);
++            try std.testing.expectEqual(@as(u32, 0), model.refcount.load(.acquire));
++            model.config = null;
++            page.destroy(config);
++            scheduler.pending.deinit(allocator);
++            scheduler.cleanup_queue.deinit(allocator);
++            registry.deinit();
++            page.destroy(scheduler);
++            page.destroy(probe);
++            page.destroy(trace);
++        }
++        try std.testing.expect(owners.current().* == null and owners.current_group().* == null);
++    }
++}
++
++test "fios current scheduler retains refused slot cleanup queue" {
++    const io = std.testing.io;
++    const page = std.heap.page_allocator;
++    const abi = @import("../../abi/engine.zig");
++    const owners = @import("../../fios/request_ownership.zig");
++    owners.shared().primary_guard = false;
++    try owners.shared().initialize(io, @splat(167));
++    const Trace = struct {
++        slot: usize = 0,
++        scheduler: usize = 0,
++        scheduler_freed: bool = false,
++        freed: bool = false,
++        fn alloc(_: *anyopaque, n: usize, alignment: std.mem.Alignment, ret: usize) ?[*]u8 {
++            return std.heap.page_allocator.rawAlloc(n, alignment, ret);
++        }
++        fn free(raw: *anyopaque, bytes: []u8, alignment: std.mem.Alignment, ret: usize) void {
++            const self: *@This() = @ptrCast(@alignCast(raw));
++            if (@intFromPtr(bytes.ptr) == self.slot) self.freed = true;
++            if (@intFromPtr(bytes.ptr) == self.scheduler) self.scheduler_freed = true;
++            std.heap.page_allocator.rawFree(bytes, alignment, ret);
++        }
++        const vtable: std.mem.Allocator.VTable = .{ .alloc = alloc, .resize = std.mem.Allocator.noResize, .remap = std.mem.Allocator.noRemap, .free = free };
++        fn allocator(self: *@This()) std.mem.Allocator { return .{ .ptr = self, .vtable = &vtable }; }
++    };
++    const Probe = struct {
++        io: std.Io,
++        unknown: bool,
++        calls: usize = 0,
++        fn event(raw: *anyopaque, _: u64, ev: *const abi.Event) callconv(.c) abi.Action {
++            const self: *@This() = @ptrCast(@alignCast(raw));
++            if (ev.kind == .finished) {
++                self.calls += 1;
++                if (self.unknown) owners.shared().fence(self.io);
++            }
++            return .go;
++        }
++    };
++    for ([_]bool{ false, true }) |unknown| {
++        const registry = try ModelRegistry.init(page, io, null, 2, 0, null);
++        const model = try registry.registerStub("fixture/scheduler-slot-cleanup", "/fixture/never-loaded", null);
++        const config = try page.create(ModelConfig);
++        config.* = std.mem.zeroInit(ModelConfig, .{ .model_type = "llama", .num_hidden_layers = 0 });
++        model.config = config;
++        model.state = .ready;
++        model.refcount.store(1, .release);
++        const trace = try page.create(Trace);
++        trace.* = .{};
++        const allocator = trace.allocator();
++        const scheduler = try allocator.create(Scheduler);
++        scheduler.* = std.mem.zeroInit(Scheduler, .{ .allocator = allocator, .io = io, .registry = registry, .queue_cap = 2, .kv_quant_config = transformer_mod.KVQuantConfig.dense });
++        trace.scheduler = @intFromPtr(scheduler);
++        const root = try owners.shared().enter(io);
++        try owners.shared().bind(io, root, model.id);
++        owners.current().* = root;
++        const slot = try submit(scheduler, .{ .prompt_ids = &.{1}, .sampling = .{}, .eos_token_ids = &.{}, .max_tokens = 1, .model = model });
++        trace.slot = @intFromPtr(slot);
++        complete(scheduler, slot);
++        registry.releaseStatus(model);
++        try owners.shared().leave(io, root);
++        owners.current().* = null;
++        const probe = try page.create(Probe);
++        probe.* = .{ .io = io, .unknown = unknown };
++        slot.sink = .{ .ctx = probe, .event = Probe.event };
++        scheduler.deinit();
++        try std.testing.expectEqual(@as(usize, 1), probe.calls);
++        if (unknown) {
++            if (trace.freed) std.debug.print("FIO_CURRENT_SCHEDULER_DROPPED_SLOT_CUSTODY\n", .{});
++            try std.testing.expect(!trace.freed); // Witness before dereference.
++            try std.testing.expectEqual(@as(u32, 1), model.refcount.load(.acquire));
++            try std.testing.expect(!trace.scheduler_freed);
++            try std.testing.expectEqual(@as(usize, 1), scheduler.cleanup_queue.items.len);
++            try std.testing.expect(scheduler.cleanup_queue.items[0] == slot);
++            scheduler.deinit();
++            try std.testing.expect(!trace.freed);
++            try std.testing.expectEqual(@as(usize, 1), probe.calls);
++            try std.testing.expect(owners.shared().knownUncertain(io));
++        } else {
++            try std.testing.expect(trace.freed);
++            try std.testing.expectEqual(@as(u32, 0), model.refcount.load(.acquire));
++            model.config = null;
++            page.destroy(config);
++            try std.testing.expect(trace.scheduler_freed);
++            registry.deinit();
++            page.destroy(probe);
++            page.destroy(trace);
++        }
++        try std.testing.expect(owners.current().* == null and owners.current_group().* == null);
++    }
++}
++
++test "fios current side queue retains refused slot cleanup" {
++    const io = std.testing.io;
++    const page = std.heap.page_allocator;
++    const abi = @import("../../abi/engine.zig");
++    const owners = @import("../../fios/request_ownership.zig");
++    owners.shared().primary_guard = false;
++    try owners.shared().initialize(io, @splat(173));
++    const Trace = struct {
++        slot: usize = 0,
++        freed: bool = false,
++        fn alloc(_: *anyopaque, n: usize, alignment: std.mem.Alignment, ret: usize) ?[*]u8 {
++            return std.heap.page_allocator.rawAlloc(n, alignment, ret);
++        }
++        fn free(raw: *anyopaque, bytes: []u8, alignment: std.mem.Alignment, ret: usize) void {
++            const self: *@This() = @ptrCast(@alignCast(raw));
++            if (@intFromPtr(bytes.ptr) == self.slot) self.freed = true;
++            std.heap.page_allocator.rawFree(bytes, alignment, ret);
++        }
++        const vtable: std.mem.Allocator.VTable = .{ .alloc = alloc, .resize = std.mem.Allocator.noResize, .remap = std.mem.Allocator.noRemap, .free = free };
++        fn allocator(self: *@This()) std.mem.Allocator { return .{ .ptr = self, .vtable = &vtable }; }
++    };
++    const Probe = struct {
++        io: std.Io,
++        unknown: bool,
++        calls: usize = 0,
++        fn event(raw: *anyopaque, _: u64, ev: *const abi.Event) callconv(.c) abi.Action {
++            const self: *@This() = @ptrCast(@alignCast(raw));
++            if (ev.kind == .finished) {
++                self.calls += 1;
++                if (self.unknown) owners.shared().fence(self.io);
++            }
++            return .go;
++        }
++    };
++    for ([_]bool{ false, true }) |unknown| {
++        const registry = try ModelRegistry.init(page, io, null, 2, 0, null);
++        const model = try registry.registerStub("fixture/side-slot-cleanup", "/fixture/never-loaded", null);
++        const config = try page.create(ModelConfig);
++        config.* = std.mem.zeroInit(ModelConfig, .{ .model_type = "llama", .num_hidden_layers = 0 });
++        model.config = config;
++        model.state = .ready;
++        model.refcount.store(1, .release);
++        const trace = try page.create(Trace);
++        trace.* = .{};
++        const allocator = trace.allocator();
++        const scheduler = try page.create(Scheduler);
++        scheduler.* = std.mem.zeroInit(Scheduler, .{ .allocator = allocator, .io = io, .registry = registry, .queue_cap = 2, .kv_quant_config = transformer_mod.KVQuantConfig.dense });
++        const root = try owners.shared().enter(io);
++        try owners.shared().bind(io, root, model.id);
++        owners.current().* = root;
++        const slot = try submit(scheduler, .{ .prompt_ids = &.{1}, .sampling = .{}, .eos_token_ids = &.{}, .max_tokens = 1, .model = model });
++        trace.slot = @intFromPtr(slot);
++        complete(scheduler, slot);
++        registry.releaseStatus(model);
++        try owners.shared().leave(io, root);
++        owners.current().* = null;
++        const probe = try page.create(Probe);
++        probe.* = .{ .io = io, .unknown = unknown };
++        slot.sink = .{ .ctx = probe, .event = Probe.event };
++        try std.testing.expect(@import("runtime/loop.zig").drainSideQueues(scheduler));
++        try std.testing.expectEqual(@as(usize, 1), probe.calls);
++        if (unknown) {
++            if (trace.freed) std.debug.print("FIO_CURRENT_SIDE_QUEUE_DROPPED_SLOT_CUSTODY\n", .{});
++            try std.testing.expect(!trace.freed); // Witness before dereference.
++            try std.testing.expectEqual(@as(u32, 1), model.refcount.load(.acquire));
++            if (@hasField(Scheduler, "fios_cleanup_quarantine")) try std.testing.expect(scheduler.fios_cleanup_quarantine == slot);
++            try std.testing.expect(!@import("runtime/loop.zig").drainSideQueues(scheduler));
++            try std.testing.expect(!trace.freed);
++            try std.testing.expectEqual(@as(usize, 1), probe.calls);
++            try std.testing.expect(owners.shared().knownUncertain(io));
++        } else {
++            try std.testing.expect(trace.freed);
++            try std.testing.expectEqual(@as(u32, 0), model.refcount.load(.acquire));
++            model.config = null;
++            page.destroy(config);
++            scheduler.pending.deinit(allocator);
++            scheduler.cleanup_queue.deinit(allocator);
++            registry.deinit();
++            page.destroy(scheduler);
++            page.destroy(probe);
++            page.destroy(trace);
++        }
++        try std.testing.expect(owners.current().* == null and owners.current_group().* == null);
++    }
++}
++
++test "fios current untracked slot retains its model borrow" {
++    const a = std.testing.allocator;
++    const io = std.testing.io;
++    const owners = @import("../../fios/request_ownership.zig");
++    try std.testing.expect(owners.current().* == null and owners.current_group().* == null);
++    // Legacy callers without source enrollment receive no attribution or
++    // native authority, but still require ordinary model memory ownership.
++    const registry = try ModelRegistry.init(a, io, null, 2, 0, null);
++    defer registry.deinit();
++    const model = try registry.registerStub("fixture/untracked-slot", "/fixture/never-loaded", null);
++    var config = std.mem.zeroInit(ModelConfig, .{ .model_type = "llama", .num_hidden_layers = 0 });
++    model.config = &config;
++    defer model.config = null;
++    model.state = .ready;
++    model.refcount.store(1, .release);
++    var caller_held = true;
++    defer if (caller_held) registry.releaseStatus(model);
++    var scheduler = std.mem.zeroInit(Scheduler, .{ .allocator = a, .io = io, .registry = registry, .queue_cap = 2, .kv_quant_config = transformer_mod.KVQuantConfig.dense });
++    defer {
++        for (scheduler.pending.items) |slot| slot.deinit();
++        for (scheduler.cleanup_queue.items) |slot| slot.deinit();
++        scheduler.pending.deinit(a);
++        scheduler.cleanup_queue.deinit(a);
++    }
++    const slot = try submit(&scheduler, .{ .prompt_ids = &.{1}, .sampling = .{}, .eos_token_ids = &.{}, .max_tokens = 1, .model = model });
++    try std.testing.expect(slot.fios_owner == null);
++    complete(&scheduler, slot);
++    registry.releaseStatus(model);
++    caller_held = false;
++    if (model.refcount.load(.acquire) != 1) std.debug.print("FIO_CURRENT_UNTRACKED_SLOT_DROPPED_MODEL_BORROW\n", .{});
++    try std.testing.expectEqual(@as(u32, 1), model.refcount.load(.acquire));
++    const cleanup = scheduler.cleanup_queue.pop().?;
++    cleanup.deinit();
++    try std.testing.expectEqual(@as(u32, 0), model.refcount.load(.acquire));
++}
+diff --git a/src/engines/mlx/slot.zig b/src/engines/mlx/slot.zig
+index d810f17..3f3a7b9 100644
+--- a/src/engines/mlx/slot.zig
++++ b/src/engines/mlx/slot.zig
+@@ -46,6 +46,10 @@ pub const Slot = struct {
+     // Original attribution survives queueing and connection completion.
+     fios_owner: ?fios_ownership.Retained = null,
+     fios_registry: ?*model_registry_mod.ModelRegistry = null,
++    fios_deinit_attempted: std.atomic.Value(bool) = .init(false),
++    // Scheduler-owned intrusive quarantine: no allocation or native authority.
++    fios_cleanup_quarantined: bool = false,
++    fios_cleanup_next: ?*Slot = null,
+     allocator: std.mem.Allocator,
+     /// io reference for Stopwatch / async-eval (captured from Scheduler).
+     io: std.Io,
+@@ -414,42 +418,60 @@ pub const Slot = struct {
+     /// finished/errored it AND the connection thread has consumed the final
+     /// `done`/`err` from `waitNext`).
+     pub fn deinit(self: *Slot) void {
++        _ = self.tryDeinit();
++    }
++
++    /// Local retirement only, never native terminality. Refusal retains this
++    /// shell, its original model borrow and remaining fields without replay.
++    pub fn tryDeinit(self: *Slot) bool {
++        if (self.fios_deinit_attempted.cmpxchgStrong(false, true, .acq_rel, .acquire) != null) return false;
+         const io = self.io;
++        if (model_registry_mod.cleanupUncertain(io)) return false;
+         const owner = self.fios_owner;
+         const registry = self.fios_registry;
+         const model = self.model;
+         // Unknown backend work retains the whole original slot/model custody.
+         // Neither complete(), a session acknowledgement nor an empty queue is
+         // native terminality. Keep uncertainty independently of local cleanup.
+-        if (owner) |held| if (held.tracker.backendKnownUncertain(io)) return;
++        if (owner) |held| if (held.tracker.backendKnownUncertain(io)) return false;
+         var scope: ?fios_queue.Scope = if (owner) |*held|
+-            fios_queue.Scope.retain(io, held) catch return else null;
+-        if (scope) |*work| work.enter(io) catch return;
+-        defer if (scope) |*work| { _ = work.finish(io); };
++            fios_queue.Scope.retain(io, held) catch return false else null;
++        if (scope) |*work| work.enter(io) catch return false;
++        var scope_live = true;
++        defer if (scope_live) if (scope) |*work| { _ = work.finish(io); };
++        var locally_retired = false;
+         // Captured locals survive allocator.destroy(self). A real SDK callback
+         // spawned by cleanup clones these original roots before they leave.
+-        defer if (owner) |held| { _ = held.releaseIfCertain(io); };
+-        defer if (registry) |r| r.releaseStatus(model);
++        defer if (locally_retired) if (owner) |held| { _ = held.releaseIfCertain(io); };
++        defer if (locally_retired and !model_registry_mod.cleanupUncertain(io)) if (registry) |r| r.releaseStatus(model);
+ 
+         // A slot freed before its terminator (a cancel pulled into cleanup) still tells its stream it is done.
+         if (self.sink != null) self.emitFinished(.cancelled, null);
++        if (model_registry_mod.cleanupUncertain(io)) return false;
+         if (self.model.transformer) |xfm| if (xfm.qwen4Trunk()) |t| t.markQsaPooledRopeStale();
+         if (self.legacy_gen) |*gen| {
+             gen.deinit(self.allocator);
+         }
+         // Salvaged-but-never-consumed cancelled-prefill checkpoints.
++        if (model_registry_mod.cleanupUncertain(io)) return false;
+         self.cancelled_prefill.deinit();
++        if (model_registry_mod.cleanupUncertain(io)) return false;
+         self.cache.deinit();
++        if (model_registry_mod.cleanupUncertain(io)) return false;
+         if (self.ssm_entries) |entries| {
+             if (self.model.transformer) |xfm| xfm.ssmGroupDrop(entries);
+             for (entries) |*e| {
+                 _ = mlx.mlx_array_free(e.conv_state);
++                if (model_registry_mod.cleanupUncertain(io)) return false;
+                 _ = mlx.mlx_array_free(e.ssm_state);
++                if (model_registry_mod.cleanupUncertain(io)) return false;
+                 transformer_mod.ssmFreeQsaState(e);
++                if (model_registry_mod.cleanupUncertain(io)) return false;
+             }
+             self.allocator.free(entries);
+         }
+         if (self.vision_embeddings) |ve| _ = mlx.mlx_array_free(ve);
++        if (model_registry_mod.cleanupUncertain(io)) return false;
+         if (self.mrope_pos) |mp| self.allocator.free(mp);
+         self.allocator.free(self.prompt_ids);
+         self.allocator.free(self.full_prompt);
+@@ -465,7 +487,17 @@ pub const Slot = struct {
+         for (self.prompt_logprobs_buf.items) |*lp| self.allocator.free(lp.top_logprobs);
+         self.prompt_logprobs_buf.deinit(self.allocator);
+         self.out_buf.deinit(self.allocator);
++        // End cleanup attribution after the last native-capable operation.
++        // Keep the original slot/model references through final CPU release.
++        if (scope) |*work| {
++            const released = work.finish(io);
++            scope_live = false;
++            if (!released) return false;
++        }
++        if (model_registry_mod.cleanupUncertain(io)) return false;
++        locally_retired = true;
+         self.allocator.destroy(self);
++        return true;
+     }
+ 
+     /// Inference thread: the echo sink, emptied first, since a retried prefill starts over.
+diff --git a/src/host/gpu_thread/scheduler.zig b/src/host/gpu_thread/scheduler.zig
+index 3bf7bb2..3b4b836 100644
+--- a/src/host/gpu_thread/scheduler.zig
++++ b/src/host/gpu_thread/scheduler.zig
+@@ -230,6 +230,8 @@ pub const Scheduler = struct {
+     /// inference thread drains this queue between ticks where it owns the
+     /// stream binding, so all mlx ops stay on one thread.
+     cleanup_queue: std.ArrayList(*Slot),
++    /// Original refused cleanup remains reachable; never a native idle proof.
++    fios_cleanup_quarantine: ?*Slot = null,
+     /// Metrics sink. Null when --metrics is off. Populated from LoadParams.
+     /// Read once per REQUEST in `finishSlot` — never on the per-token path.
+     metrics: ?*metrics_mod.Metrics,
