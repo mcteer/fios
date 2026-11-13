@@ -740,3 +740,13 @@ test('current private ANE program input custody changes only the declared bridge
   const fixture=readFileSync('platform/studio/native/current_ane_program_inputs.m.fixture','utf8');
   assert(fixture.includes('FiosInputMetadata'));assert(!/\b_ANE[A-Za-z]/.test(fixture));
 });
+
+
+test('current private ANE raw binding custody changes only the declared bridge source',()=>{
+  const patch=readFileSync('platform/studio/native/mlx-serve-26.11.2-ane-bindings-custody.patch','utf8');
+  const sections=patch.split(/(?=^diff --git )/m).filter(Boolean);assert.equal(sections.length,1);
+  assert(sections[0].startsWith('diff --git a/lib/ane/ane_bridge.m b/lib/ane/ane_bridge.m\n'));
+  for(const name of ['current_ane_bindings.m.fixture','current_ane_binding_order.m.fixture','current_ane_descriptor_order.m.fixture']){
+    const fixture=readFileSync('platform/studio/native/'+name,'utf8');assert(!/\b_ANE[A-Za-z]/.test(fixture));
+  }
+});
