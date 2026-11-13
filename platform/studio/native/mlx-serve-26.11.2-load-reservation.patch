@@ -1,0 +1,357 @@
+diff --git a/src/engines/mlx/runtime/load_requests.zig b/src/engines/mlx/runtime/load_requests.zig
+index 1d6dbf5..c1f8071 100644
+--- a/src/engines/mlx/runtime/load_requests.zig
++++ b/src/engines/mlx/runtime/load_requests.zig
+@@ -166,8 +166,9 @@ fn failLoadRequest(sch: *Scheduler, req: *LoadRequest, err: anyerror) void {
+         // conn thread reads it back from the entry, not from req.
+         sch.registry.markErrorLocked(req.entry, loadErrorName(err));
+     }
++    const uncertain = req.entry.fios_load_uncertain.load(.acquire);
+     sch.registry.mutex.unlock(sch.io);
+-    finishLoadRequest(sch, req, loadErrorName(err));
++    finishLoadRequest(sch, req, if (uncertain) "NativeCleanupUncertain" else loadErrorName(err));
+ }
+ 
+ /// A refusal the user fixes outside the pack (free memory, start the worker Mac) leaves the entry
+@@ -524,3 +525,110 @@ test "fios current media unload retains callback custody and accounting" {
+     try std.testing.expect(!original.releaseIfCertain(io));
+     // Retain the entire private diagnostic graph; no uncertainty reset.
+ }
++
++test "fios current uncertain load failure retains reservation through later bookkeeping" {
++    const io = std.testing.io;
++    const page = std.heap.page_allocator;
++    const owners = @import("../../../fios/request_ownership.zig");
++    owners.shared().primary_guard = false;
++    try owners.shared().initialize(io, @splat(227));
++    for ([_]bool{ false, true }) |unknown| {
++        const reg = try model_registry_mod.ModelRegistry.init(page, io, null, 2, 0, null);
++        const entry = try reg.registerStub("fixture/load-reservation", "/fixture/no-model", 123);
++        reg.mutex.lockUncancelable(io);
++        try std.testing.expect(reg.tryBeginLoadLocked(entry));
++        reg.reserveLoadLocked(entry, 123);
++        reg.mutex.unlock(io);
++        const sch = try page.create(Scheduler);
++        sch.* = undefined;
++        sch.allocator = page;
++        sch.io = io;
++        sch.registry = reg;
++        var req: LoadRequest = undefined;
++        req.entry = entry;
++        req.allocator = page;
++        req.error_name = null;
++        req.done = false;
++        req.done_mu = .init;
++        req.done_cond = .init;
++        if (unknown) owners.shared().fence(io);
++        failLoadRequest(sch, &req, error.InsufficientMemory);
++        try std.testing.expect(req.done);
++        if (unknown) {
++            if (entry.load_estimate != 123 or reg.reserved_bytes != 123)
++                std.debug.print("FIO_CURRENT_LOAD_FAILURE_REFUNDED_UNCERTAINTY\n", .{});
++            try std.testing.expectEqual(@as(u64, 123), entry.load_estimate);
++            try std.testing.expectEqual(@as(u64, 123), reg.reserved_bytes);
++            try std.testing.expect(entry.state == .error_state);
++            try std.testing.expectEqualStrings("NativeCleanupUncertain", req.error_name.?);
++            reg.mutex.lockUncancelable(io);
++            reg.markUnloadedLocked(entry);
++            reg.markErrorLocked(entry, "LoadFailed");
++            reg.markReadyLocked(entry, 999);
++            reg.reserveLoadLocked(entry, 888);
++            reg.mutex.unlock(io);
++            try std.testing.expect(entry.state == .error_state);
++            try std.testing.expectEqual(@as(u64, 123), entry.load_estimate);
++            try std.testing.expectEqual(@as(u64, 123), reg.reserved_bytes);
++            try std.testing.expectEqual(@as(u64, 0), entry.bytes_resident);
++            try std.testing.expectEqualStrings("NativeCleanupUncertain", entry.error_name.?);
++            try std.testing.expect(owners.shared().knownUncertain(io));
++        } else {
++            try std.testing.expect(entry.state == .unloaded);
++            try std.testing.expectEqual(@as(u64, 0), entry.load_estimate);
++            try std.testing.expectEqual(@as(u64, 0), reg.reserved_bytes);
++            try std.testing.expectEqualStrings("InsufficientMemory", req.error_name.?);
++            page.free(req.error_name.?);
++            reg.deinit();
++            page.destroy(sch);
++        }
++    }
++}
++
++test "fios current per-model uncertainty retains parents before source epoch initialization" {
++    const io = std.testing.io;
++    const page = std.heap.page_allocator;
++    const owners = @import("../../../fios/request_ownership.zig");
++    owners.shared().primary_guard = false;
++    const Trace = struct {
++        model: usize = 0,
++        registry: usize = 0,
++        model_freed: bool = false,
++        registry_freed: bool = false,
++        fn alloc(_: *anyopaque, n: usize, alignment: std.mem.Alignment, ret: usize) ?[*]u8 {
++            return std.heap.page_allocator.rawAlloc(n, alignment, ret);
++        }
++        fn free(raw: *anyopaque, bytes: []u8, alignment: std.mem.Alignment, ret: usize) void {
++            const self: *@This() = @ptrCast(@alignCast(raw));
++            if (@intFromPtr(bytes.ptr) == self.model) self.model_freed = true;
++            if (@intFromPtr(bytes.ptr) == self.registry) self.registry_freed = true;
++            std.heap.page_allocator.rawFree(bytes, alignment, ret);
++        }
++        const vtable: std.mem.Allocator.VTable = .{ .alloc = alloc, .resize = std.mem.Allocator.noResize, .remap = std.mem.Allocator.noRemap, .free = free };
++        fn allocator(self: *@This()) std.mem.Allocator { return .{ .ptr = self, .vtable = &vtable }; }
++    };
++    const trace = try page.create(Trace);
++    trace.* = .{};
++    const reg = try model_registry_mod.ModelRegistry.init(trace.allocator(), io, null, 2, 0, null);
++    const entry = try reg.registerStub("fixture/preinit-reservation", "/fixture/no-model", 123);
++    trace.model = @intFromPtr(entry);
++    trace.registry = @intFromPtr(reg);
++    reg.mutex.lockUncancelable(io);
++    try std.testing.expect(reg.tryBeginLoadLocked(entry));
++    reg.reserveLoadLocked(entry, 123);
++    reg.markLoadUncertainLocked(entry);
++    reg.mutex.unlock(io);
++    // No source epoch exists yet; the individual negative record must still
++    // prevent cleanup. Neither absence nor local retirement is completion.
++    try std.testing.expect(!entry.tryCloseEngine() and !entry.tryCloseMedia());
++    try std.testing.expect(!entry.tryUnloadResident() and !entry.tryReleaseNativeFields());
++    try std.testing.expectError(error.NativeCleanupUncertain, reg.ensureLoaded(entry.id));
++    reg.deinit();
++    try std.testing.expect(!trace.model_freed and !trace.registry_freed);
++    try std.testing.expectEqual(@as(u64, 123), entry.load_estimate);
++    try std.testing.expectEqual(@as(u64, 123), reg.reserved_bytes);
++    try std.testing.expectEqual(@as(usize, 1), reg.entries.count());
++    try owners.shared().initialize(io, @splat(229));
++    try std.testing.expect(owners.shared().knownUncertain(io));
++    try std.testing.expectError(error.NativeCleanupUncertain, reg.ensureLoaded(entry.id));
++}
+diff --git a/src/engines/mlx/scheduler.zig b/src/engines/mlx/scheduler.zig
+index 95a179a..c4f1da2 100644
+--- a/src/engines/mlx/scheduler.zig
++++ b/src/engines/mlx/scheduler.zig
+@@ -231,10 +231,10 @@ pub fn init(
+     params: LoadParams,
+     max_concurrent: u32,
+ ) !*Scheduler {
+-    if (model_registry_mod.cleanupUncertain(io)) return error.NativeCleanupUncertain;
++    if (model_registry_mod.cleanupUncertain(io) or params.entry.fios_load_uncertain.load(.acquire)) return error.NativeCleanupUncertain;
+     const self = try allocator.create(Scheduler);
+     // Open callbacks may retain &engine_gauges/parent fields on uncertainty.
+-    errdefer if (!model_registry_mod.cleanupUncertain(io)) allocator.destroy(self);
++    errdefer if (!params.entry.fios_load_uncertain.load(.acquire) and !model_registry_mod.cleanupUncertain(io)) allocator.destroy(self);
+ 
+     const cap = if (max_concurrent == 0) 1 else max_concurrent;
+     // Phase A7: force-batched test hook. The byte-equivalence test sets
+@@ -821,7 +821,7 @@ fn ensureLoadedOnce(self: *Scheduler, id_or_empty: []const u8) !*LoadedModel {
+     // future ensureLoaded calls fail fast instead of re-tripping the
+     // same parse error). FileNotFound / parse errors land here.
+     var settings = model_settings.overrideFor(self.allocator, self.io, entry.path);
+-    defer if (!model_registry_mod.cleanupUncertain(self.io)) settings.deinit(self.allocator);
++    defer if (!entry.fios_load_uncertain.load(.acquire) and !model_registry_mod.cleanupUncertain(self.io)) settings.deinit(self.allocator);
+     const cpu_state = preloadCpuState(self.allocator, self.io, entry.path, settings.ctx_size orelse self.gguf_ctx_size, settings.ggufEngine()) catch |err| {
+         self.registry.mutex.lockUncancelable(self.io);
+         self.registry.markErrorLocked(entry, @errorName(err));
+@@ -833,12 +833,12 @@ fn ensureLoadedOnce(self: *Scheduler, id_or_empty: []const u8) !*LoadedModel {
+     // them here. Independent uncertainty retains their heap storage.
+     var owned = cpu_state;
+     var owned_active: bool = true;
+-    defer if (owned_active and !model_registry_mod.cleanupUncertain(self.io)) freeCpuState(self.allocator, &owned);
++    defer if (owned_active and !entry.fios_load_uncertain.load(.acquire) and !model_registry_mod.cleanupUncertain(self.io)) freeCpuState(self.allocator, &owned);
+     applyModelSettings(owned.config, owned.chat_config, &settings, self.mtp_enabled);
+     // The resolved .gguf path (when this is a GGUF entry) is borrowed by
+     // the LoadRequest until `done`; the engines dupe what they keep, so
+     // release it here only while cleanup remains known certain.
+-    defer if (!model_registry_mod.cleanupUncertain(self.io)) { if (owned.gguf) |g| self.allocator.free(g.path); };
++    defer if (!entry.fios_load_uncertain.load(.acquire) and !model_registry_mod.cleanupUncertain(self.io)) { if (owned.gguf) |g| self.allocator.free(g.path); };
+ 
+     // Victims selected by the eviction planner (multi-victim: one load may
+     // need to free several models to fit). Lives on this stack frame; the
+@@ -848,7 +848,7 @@ fn ensureLoadedOnce(self: *Scheduler, id_or_empty: []const u8) !*LoadedModel {
+     // The requester's reference, taken when the load is claimed: a model that turns `.ready`
+     // with no reference is another load's free eviction victim before this thread wakes.
+     var pinned = false;
+-    errdefer if (pinned and !model_registry_mod.cleanupUncertain(self.io)) self.registry.releaseStatus(entry);
++    errdefer if (pinned and !entry.fios_load_uncertain.load(.acquire) and !model_registry_mod.cleanupUncertain(self.io)) self.registry.releaseStatus(entry);
+ 
+     // Peeked OUTSIDE the registry mutex — it stats the model dir, and no
+     // other load should block on our filesystem.
+@@ -878,7 +878,7 @@ fn ensureLoadedOnce(self: *Scheduler, id_or_empty: []const u8) !*LoadedModel {
+ 
+         // Wait out any concurrent .loading / .evicting state.
+         wait_loop: while (true) {
+-            if (model_registry_mod.cleanupUncertainLocked(self.io)) return error.NativeCleanupUncertain;
++            if (entry.fios_load_uncertain.load(.acquire) or model_registry_mod.cleanupUncertainLocked(self.io)) return error.NativeCleanupUncertain;
+             switch (entry.state) {
+                 .ready => {
+                     _ = entry.refcount.fetchAdd(1, .acq_rel);
+@@ -919,6 +919,7 @@ fn ensureLoadedOnce(self: *Scheduler, id_or_empty: []const u8) !*LoadedModel {
+         // (one's bytes not yet committed at markReady), both skip eviction,
+         // and oversubscribe GPU memory → Metal OOM → process crash.
+         self.registry.reserveLoadLocked(entry, estimated);
++        if (entry.fios_load_uncertain.load(.acquire) or model_registry_mod.cleanupUncertainLocked(self.io)) return error.NativeCleanupUncertain;
+ 
+         // Evict LRU victims until both caps hold for this reservation
+         // (multi-victim). On failure — every other resident model is pinned
+@@ -1025,7 +1026,7 @@ fn ensureLoadedOnce(self: *Scheduler, id_or_empty: []const u8) !*LoadedModel {
+     while (!req.done) req.done_cond.waitUncancelable(self.io, &req.done_mu);
+     req.done_mu.unlock(self.io);
+ 
+-    if (model_registry_mod.cleanupUncertain(self.io)) return error.NativeCleanupUncertain;
++    if (entry.fios_load_uncertain.load(.acquire) or model_registry_mod.cleanupUncertain(self.io)) return error.NativeCleanupUncertain;
+     if (req.error_name) |name| {
+         // The failure crosses the thread boundary by NAME — map it back
+         // to a typed error so a memory-preflight refusal surfaces as a
+diff --git a/src/host/registry/registry.zig b/src/host/registry/registry.zig
+index 19b0b67..7be38f3 100644
+--- a/src/host/registry/registry.zig
++++ b/src/host/registry/registry.zig
+@@ -306,6 +306,8 @@ pub const LoadedModel = struct {
+     /// Local function completion only: never device/global native terminality.
+     fios_local_free_finished: bool = false,
+     fios_local_cleanup_done: bool = false,
++    /// Sticky local load custody; no completion/admission proof.
++    fios_load_uncertain: std.atomic.Value(bool) = .init(false),
+     fios_teardown_attempted: std.atomic.Value(bool) = .init(false),
+     /// MLX bytes the load added, measured at ready: above `bytes_resident` when the model fills its own cache
+     /// at load (a plugin's streamed-expert cache), so eviction credits what unloading frees.
+@@ -398,6 +400,7 @@ pub const LoadedModel = struct {
+     /// caller must exclude new readers; an original borrow or callback refusal
+     /// retains this model's engine pointer and session accounting.
+     pub fn tryCloseEngine(self: *LoadedModel) bool {
++        if (self.fios_load_uncertain.load(.acquire)) return false;
+         if (self.engine) |e| {
+             if (self.refcount.load(.acquire) != 0) return false;
+             if (!e.tryClose()) return false;
+@@ -412,6 +415,7 @@ pub const LoadedModel = struct {
+     }
+ 
+     pub fn tryCloseMedia(self: *LoadedModel) bool {
++        if (self.fios_load_uncertain.load(.acquire)) return false;
+         if (self.media_plugin) |e| {
+             if (self.refcount.load(.acquire) != 0) return false;
+             if (!e.tryDeinit()) return false;
+@@ -428,6 +432,7 @@ pub const LoadedModel = struct {
+     /// stream); the caller arranges this via `unloadResident` invoked
+     /// from the inference thread before registry teardown.
+     pub fn tryReleaseNativeFields(self: *LoadedModel) bool {
++        if (self.fios_load_uncertain.load(.acquire)) return false;
+         if (self.fios_local_cleanup_done) return true;
+         const io = std.Io.Threaded.global_single_threaded.io();
+         if (cleanupUncertain(io) or self.refcount.load(.acquire) != 0) return false;
+@@ -503,6 +508,7 @@ pub const LoadedModel = struct {
+     /// Free only the MLX-allocating state, leaving CPU-only fields (config/tokenizer/chat_config) and the
+     /// discovery stub intact: eviction keeps the entry `.unloaded` for later listing and reload. Inference thread.
+     pub fn tryUnloadResident(self: *LoadedModel) bool {
++        if (self.fios_load_uncertain.load(.acquire)) return false;
+         const io = std.Io.Threaded.global_single_threaded.io();
+         if (cleanupUncertain(io) or self.refcount.load(.acquire) != 0) return false;
+         self.fios_local_unload_finished = false;
+@@ -1010,7 +1016,7 @@ pub const ModelRegistry = struct {
+         const entry = self.entries.get(id) orelse return error.UnknownModelId;
+ 
+         while (true) {
+-            if (cleanupUncertainLocked(self.io)) return error.NativeCleanupUncertain;
++            if (entry.fios_load_uncertain.load(.acquire) or cleanupUncertainLocked(self.io)) return error.NativeCleanupUncertain;
+             switch (entry.state) {
+                 .ready => {
+                     _ = entry.refcount.fetchAdd(1, .acq_rel);
+@@ -1040,7 +1046,7 @@ pub const ModelRegistry = struct {
+     /// uncertainty is known. Callers must propagate the latter refusal;
+     /// this negative check does not supply atomic native admission.
+     pub fn tryBeginLoadLocked(self: *ModelRegistry, entry: *LoadedModel) bool {
+-        if (cleanupUncertainLocked(self.io) or entry.state != .unloaded) return false;
++        if (entry.fios_load_uncertain.load(.acquire) or cleanupUncertainLocked(self.io) or entry.state != .unloaded) return false;
+         entry.state = .loading;
+         self.stateChanged();
+         return true;
+@@ -1051,6 +1057,10 @@ pub const ModelRegistry = struct {
+     /// fields should already be cleaned up (or never installed) before
+     /// calling.
+     pub fn markUnloadedLocked(self: *ModelRegistry, entry: *LoadedModel) void {
++        if (entry.fios_load_uncertain.load(.acquire) or cleanupUncertainLocked(self.io)) {
++            self.markLoadUncertainLocked(entry);
++            return;
++        }
+         self.releaseReservationLocked(entry);
+         entry.state = .unloaded;
+         entry.bytes_resident = 0;
+@@ -1065,6 +1075,7 @@ pub const ModelRegistry = struct {
+     /// caller MUST call `waitForRefcountZeroLocked` to drain readers
+     /// before freeing GPU memory.
+     pub fn markEvictingLocked(self: *ModelRegistry, entry: *LoadedModel) void {
++        if (entry.fios_load_uncertain.load(.acquire)) return;
+         std.debug.assert(entry.state == .ready);
+         entry.state = .evicting;
+         self.stateChanged();
+@@ -1082,6 +1093,7 @@ pub const ModelRegistry = struct {
+     /// called on the inference thread. Caller holds `mutex`. Updates the
+     /// summed-bytes accounting and flips state to `.unloaded`.
+     pub fn finalizeEvictionLocked(self: *ModelRegistry, entry: *LoadedModel) void {
++        if (entry.fios_load_uncertain.load(.acquire)) return;
+         // bytes_resident was zeroed by unloadResident already; we still
+         // subtract its previous accounting here. Because we already
+         // synced `current_resident_bytes` at markReady time, just clear.
+@@ -1274,6 +1286,10 @@ pub const ModelRegistry = struct {
+     /// populated weights/transformer/etc on `entry`; this just updates
+     /// the bookkeeping + state field.
+     pub fn markReadyLocked(self: *ModelRegistry, entry: *LoadedModel, bytes_resident: u64) void {
++        if (entry.fios_load_uncertain.load(.acquire) or cleanupUncertainLocked(self.io)) {
++            self.markLoadUncertainLocked(entry);
++            return;
++        }
+         _ = generations().load.fetchAdd(1, .monotonic);
+         self.releaseReservationLocked(entry); // pending estimate → actual residency
+         entry.bytes_resident = bytes_resident;
+@@ -1321,6 +1337,10 @@ pub const ModelRegistry = struct {
+     /// loads see this pending allocation. Released by markReady/Error/Unloaded.
+     /// Caller holds `mutex`.
+     pub fn reserveLoadLocked(self: *ModelRegistry, entry: *LoadedModel, estimated: u64) void {
++        if (entry.fios_load_uncertain.load(.acquire) or cleanupUncertainLocked(self.io)) {
++            self.markLoadUncertainLocked(entry);
++            return;
++        }
+         // Release any stale prior reservation first (defensive; should be 0).
+         self.releaseReservationLocked(entry);
+         entry.load_estimate = estimated;
+@@ -1330,6 +1350,7 @@ pub const ModelRegistry = struct {
+     /// Drop an entry's in-flight load reservation (no-op if it never reserved).
+     /// Caller holds `mutex`.
+     fn releaseReservationLocked(self: *ModelRegistry, entry: *LoadedModel) void {
++        if (entry.fios_load_uncertain.load(.acquire)) return;
+         if (entry.load_estimate == 0) return;
+         if (self.reserved_bytes >= entry.load_estimate) {
+             self.reserved_bytes -= entry.load_estimate;
+@@ -1343,6 +1364,7 @@ pub const ModelRegistry = struct {
+     /// eviction back to `.ready` (used when an eviction PLAN can't be fully
+     /// satisfied and must roll back). Caller holds `mutex`.
+     pub fn unmarkEvictingLocked(self: *ModelRegistry, entry: *LoadedModel) void {
++        if (entry.fios_load_uncertain.load(.acquire)) return;
+         std.debug.assert(entry.state == .evicting);
+         entry.state = .ready;
+         self.stateChanged();
+@@ -1510,10 +1532,26 @@ pub const ModelRegistry = struct {
+         }
+     }
+ 
++    /// Preserve the original load reservation/custody while waking waiters.
++    /// Later ordinary ready/error/unloaded bookkeeping cannot refund it.
++    pub fn markLoadUncertainLocked(self: *ModelRegistry, entry: *LoadedModel) void {
++        @import("../../fios/request_ownership.zig").shared().fence(self.io);
++        if (entry.fios_load_uncertain.load(.acquire)) return;
++        entry.fios_load_uncertain.store(true, .release);
++        if (entry.error_name) |old| self.allocator.free(old);
++        entry.error_name = self.allocator.dupe(u8, "NativeCleanupUncertain") catch null;
++        entry.state = .error_state;
++        self.stateChanged();
++    }
++
+     /// Mark an entry as `.error_state` and store `error_name` (duped).
+     /// Future `ensureLoaded` calls fail with `error.LoadFailed` until the
+     /// entry is reset to `.unloaded` (Phase D may add a retry path).
+     pub fn markErrorLocked(self: *ModelRegistry, entry: *LoadedModel, error_name: []const u8) void {
++        if (entry.fios_load_uncertain.load(.acquire) or cleanupUncertainLocked(self.io)) {
++            self.markLoadUncertainLocked(entry);
++            return;
++        }
+         self.releaseReservationLocked(entry);
+         if (entry.error_name) |old| self.allocator.free(old);
+         entry.error_name = self.allocator.dupe(u8, error_name) catch null;

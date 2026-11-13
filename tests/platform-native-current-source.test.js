@@ -524,3 +524,19 @@ test('current registry negative guards preserve ready and cold bookkeeping fixtu
   }
   assert.equal(expected.size,0);
 });
+
+
+test('current load reservation keeps uncertain and pre-epoch parent fixtures together',()=>{
+  const patch=readFileSync('platform/studio/native/mlx-serve-26.11.2-load-reservation.patch','utf8');
+  const expected=new Set(['src/host/registry/registry.zig','src/engines/mlx/scheduler.zig','src/engines/mlx/runtime/load_requests.zig']);
+  for(const section of patch.split(/(?=^diff --git )/m).filter(Boolean)){
+    const header=/^diff --git a\/(\S+) b\/(\S+)\n/.exec(section);
+    assert(header);assert.equal(header[1],header[2]);assert(expected.delete(header[1]));
+    if(header[1]==='src/engines/mlx/runtime/load_requests.zig'){
+      const start=section.indexOf('\n+test "fios current uncertain load failure');assert(start>=0);
+      const fixture=section.slice(start+1).split('\n').filter(line=>line.startsWith('+')).map(line=>line.slice(1)).join('\n')+'\n';
+      assert.equal(fixture,readFileSync('platform/studio/native/current_load_reservation_test.zig.fixture','utf8').trimStart());
+    }
+  }
+  assert.equal(expected.size,0);
+});
