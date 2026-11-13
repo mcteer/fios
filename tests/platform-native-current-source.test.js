@@ -702,3 +702,14 @@ test('current private ANE compile custody changes only the declared bridge sourc
   assert(!/\b_ANE[A-Za-z]/.test(fixture));
   assert(!/\b(?:kill|objc_msgSend)\s*\(/.test(fixture));
 });
+
+
+test('current private legacy ANE custody changes only the declared bridge pair',()=>{
+  const patch=readFileSync('platform/studio/native/mlx-serve-26.11.2-ane-legacy-custody.patch','utf8');
+  const sections=patch.split(/(?=^diff --git )/m).filter(Boolean);assert.equal(sections.length,2);
+  const expected=new Set(['lib/ane/ane_bridge.m','lib/ane/ane_bridge.h']);
+  for(const section of sections){ const name=section.match(/^diff --git a\/(\S+) b\/(\S+)/);assert(name&&name[1]===name[2]&&expected.delete(name[1])); }
+  assert.equal(expected.size,0);
+  const fixture=readFileSync('platform/studio/native/current_ane_legacy_metadata.m.fixture','utf8');
+  assert(fixture.includes('FiosCleanupMetadata'));assert(!/\b_ANE[A-Za-z]/.test(fixture));
+});

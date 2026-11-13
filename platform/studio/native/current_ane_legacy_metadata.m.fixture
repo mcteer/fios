@@ -1,0 +1,58 @@
+// Ordinary CPU metadata object: no ANE framework, model or device call.
+@interface FiosCleanupMetadata : NSObject
+@property unsigned calls;
+@property BOOL accepts;
+@property void *owner;
+@end
+@implementation FiosCleanupMetadata
+- (BOOL)unloadWithQoS:(unsigned)qos error:(NSError **)error {
+    (void)qos;*error=nil;self.calls+=1;return self.accepts;
+}
+#ifdef FIOS_ANE_SOURCE
+- (BOOL)evaluateWithQoS:(unsigned)qos options:(id)options request:(id)request error:(NSError **)error {
+    (void)qos;(void)options;(void)request;*error=nil;self.calls+=1;
+    return !msv_ane_model_try_free(self.owner);
+}
+#endif
+@end
+int main(int argc, char **argv) {
+    if (!msv_ane_model_try_free(NULL)) return 1;
+#ifdef FIOS_ANE_SOURCE
+    if (argc==2 && strcmp(argv[1],"active")==0) {
+        msv_ane_model *h=calloc(1,sizeof(*h));
+        FiosCleanupMetadata *value=[FiosCleanupMetadata new];value.owner=h;
+        h->model=(__bridge_retained void *)value;
+        h->requests=(__bridge_retained void *)@[[NSObject new]];
+        h->options=(__bridge_retained void *)@{};
+        char error[128]={0};
+        if (msv_ane_model_eval(h,0,error,sizeof(error)) || value.calls != 1 ||
+            !msv_ane_source_uncertainty() || h->fios_active || !h->fios_close_attempted ||
+            (__bridge id)h->model != value || msv_ane_model_try_free(h)) return 1;
+        fprintf(stderr,"PASS: private legacy ANE cleanup keeps refused metadata owner\n");return 0;
+    }
+#endif
+    __weak FiosCleanupMetadata *released;
+    @autoreleasepool {
+        FiosCleanupMetadata *value=[FiosCleanupMetadata new];value.accepts=YES;released=value;
+        msv_ane_model *h=calloc(1,sizeof(*h));h->model=(__bridge_retained void *)value;value=nil;
+        msv_ane_model_free(h);
+    }
+    if (released) return 1;
+    __weak FiosCleanupMetadata *retained;
+    msv_ane_model *h=calloc(1,sizeof(*h));
+    @autoreleasepool {
+        FiosCleanupMetadata *value=[FiosCleanupMetadata new];retained=value;
+        h->model=(__bridge_retained void *)value;value=nil;
+        msv_ane_model_free(h);
+    }
+#ifdef FIOS_ANE_SOURCE
+    if (!retained) { fprintf(stderr,"FIO_CURRENT_ANE_LEGACY_RELEASED_REFUSED_OWNER\n");return 1; }
+    if (!msv_ane_source_uncertainty() || retained.calls != 1) return 1;
+    if (msv_ane_model_try_free(h)) return 1;
+    msv_ane_model_free(h);
+    if (!retained || retained.calls != 1) return 1;
+#else
+    if (retained) return 1;
+#endif
+    fprintf(stderr,"PASS: private legacy ANE cleanup keeps refused metadata owner\n");return 0;
+}
