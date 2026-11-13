@@ -421,3 +421,8 @@ retained outer caller scope covers that synchronous lifetime; this is static
 source analysis, not new host/model acceptance. TP exchange and independent
 keepalive/provider contracts remain separately unfinished; no routing/RDMA or
 new worker architecture is introduced by that observation.
+
+
+### Current 26.11.2 DS4 composition ceiling
+
+The current private host can now register its actual seven request-owner hooks with the reviewed DS4 source variant under explicit default-off SDK/DS4 build flags. Existing cleanup/diagnostic boundaries compose fixed host/GPU negative getters without invoking dynamic probes while holding request-book/registry locks. The original canonical SDK/llama helper bytes and default DS4 submodule selection are preserved. Passing empty-model startup and current-host private-buffer components establish only those interfaces. Independent TP/keepalive producers, full DS4 initialization, all enabled modalities and loaded-model/native terminality remain unaccepted; coverage stays unknown and native admission unsupported. T002/T018/T020/T021/T022 remain open. See native-26112-port.md for exact declared-input build/runtime scopes.

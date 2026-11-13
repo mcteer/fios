@@ -578,3 +578,23 @@ test('current DS4 request-buffer fixture preserves historical behavior with real
     .replaceAll('owners.shared.','owners.shared().').replaceAll('owners.current =','owners.current().* =');
   assert.equal(readFileSync('platform/studio/native/current_ds4_request_origins_test.zig.fixture','utf8'),expected);
 });
+
+
+test('current DS4 private composition preserves canonical negative helpers and exact bridge inputs',()=>{
+  const patch=readFileSync('platform/studio/native/mlx-serve-26.11.2-ds4-composition.patch','utf8');
+  const companions=['current_ds4_owners.cpp','current_ds4_backend_uncertainty.zig','current_ds4_cleanup_uncertainty.zig','current_ds4_locked_cleanup_uncertainty.zig'];
+  const expected=new Set(['build/libs.zig','build/macos.zig','src/engines/ane/engine.zig','src/engines/ds4/engine.zig','src/engines/llama/engine.zig','src/engines/mlx/plugin/driver.zig','src/engines/mlx/transformer.zig','src/engines/own_thread/book.zig','src/host/engines/served.zig','src/host/http/server.zig','src/host/media_jobs/plugin/engine.zig','src/host/registry/registry.zig',...companions.map(name=>'src/fios/'+name)]);
+  for(const section of patch.split(/(?=^diff --git )/m).filter(Boolean)){
+    const header=/^diff --git a\/(\S+) b\/(\S+)\n/.exec(section);
+    assert(header);assert.equal(header[1],header[2]);assert(expected.delete(header[1]));
+    if(header[1].startsWith('src/fios/')){
+      assert(section.includes('\nnew file mode 100644\n'));
+      const bytes=section.split('\n').filter(line=>line.startsWith('+')&&!line.startsWith('+++')).map(line=>line.slice(1)).join('\n')+'\n';
+      assert.equal(bytes,readFileSync('platform/studio/native/'+header[1].slice('src/fios/'.length),'utf8'));
+    }
+  }
+  assert.equal(expected.size,0);
+  for(const name of ['current_cleanup_uncertainty.zig','current_locked_cleanup_uncertainty.zig']){
+    assert.equal(readFileSync('platform/studio/native/'+name.replace('current_','current_ds4_'),'utf8'),readFileSync('platform/studio/native/'+name,'utf8').replaceAll('current_backend_uncertainty.zig','current_ds4_backend_uncertainty.zig'));
+  }
+});
