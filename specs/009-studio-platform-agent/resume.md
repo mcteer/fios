@@ -67,3 +67,7 @@ Private source recovery logs are in this base and `/private/tmp/fios-009-resume-
 5. Continue remaining implementation. Source/native acceptance remains incomplete; do not stop merely because this partial change passes. Installed handover/service activation/privileged or disruptive acceptance are separately gated. Core-only small-model inference standing authorization remains; Studios are large-model hosts.
 
 No installed service, native inference process, model policy, RDMA, network or deployment action occurred in this resumed turn. No SSH/Studio action was performed. No build or download process remains intentionally running for the update.
+
+### Current-source exact target checkpoint
+
+38/55 whole tasks complete;17 remain open. Exact26.11.2 host-only target guard now builds30/30 and passes7 empty-registry selection requests with0 inference; source integrity3/3, working-tree app106 Node/106 installed Python/17 Chromium tests pass. See [port evidence](native-26112-port.md#exact-local-target-consistency-slice) for exact hashes, source/build scope, retained receipts and untested provider/positive-dispatch paths. T002/T018–T022 remain open: consistency is not native admission, correlation or backend terminality. No installed change, merge or deployment.

@@ -1,14 +1,17 @@
 # Ordinary core-only source-interface fixture. This executes a caller-reviewed
 # private binary, not a package installer or native admission producer. It reads
 # empty-model health/catalog/control, holds one accepted HTTP connection briefly,
-# then stops only its original private child. No model POST, real service action
+# then stops only its original private child. Optional selection checks use only
+# unregistered fixture IDs in the empty registry. No real service action
 # or native terminality proof; private state is retained on success/failure.
 # Kernel-authenticated manager integration is separate from this wire fixture.
 import pathlib,subprocess,socket,tempfile,os,time,http.client,json,signal,sys,struct,hashlib
 assert sys.platform=="darwin" and os.geteuid()>0
 assert len(sys.argv) in [4,5] and sys.argv[1]=="--isolated"
-check_instance=len(sys.argv)==5
-assert not check_instance or sys.argv[4]=="--expected-instance"
+mode=sys.argv[4] if len(sys.argv)==5 else None
+assert mode in [None,"--expected-instance","--exact-target"]
+check_instance=mode in ["--expected-instance","--exact-target"]
+check_target=mode=="--exact-target"
 binary=pathlib.Path(sys.argv[2]);expected=sys.argv[3]
 assert binary.is_absolute() and str(binary).startswith("/private/tmp/") and binary.name=="mlx-serve"
 info=binary.lstat();assert binary.is_file() and not binary.is_symlink() and info.st_uid==os.geteuid() and info.st_nlink==1 and not info.st_mode&0o022 and 0<info.st_size<=64*1024*1024
@@ -88,16 +91,28 @@ try:
    assert len(reply)<=65536 and response.status==409,"CURRENT_NATIVE_STALE_EPOCH_NOT_REJECTED"
    assert json.loads(reply)["error"]["type"]=="native_instance_changed"
   finally:connection.close()
-  def rejected_with(headers):
+  def rejected_with(headers, payload=None):
    connection=http.client.HTTPConnection("127.0.0.1",port,timeout=2)
    try:
-    connection.request("POST","/v1/chat/completions",body,{"Content-Type":"application/json",**headers})
+    connection.request("POST","/v1/chat/completions",body if payload is None else payload,{"Content-Type":"application/json",**headers})
     response=connection.getresponse();data=response.read(65537);assert len(data)<=65536
     return response.status,json.loads(data)["error"]["type"]
    finally:connection.close()
   legacy=rejected_with({});matching=rejected_with({"X-Fios-Native-Instance":instance})
-  assert legacy==matching and legacy[0]>=400,"CURRENT_NATIVE_MATCHING_EPOCH_CHANGED_LEGACY_SELECTION"
- receipt={"binary_sha256":hashlib.sha256(binary.read_bytes()).hexdigest(),"native_pid":proc.pid,"source_instance":instance,"source_sequence":sequence,"source_sampled_at":stamp,"http_connection_counts":list(counts),"accepted_connection_observed":True,"original_http_connection_retired":True,"private_home":str(home),"models":0,"model_requests":3 if check_instance else 0,"expected_instance_guard_checked":check_instance,"inference_started":False,"coverage":"unknown","native_admission_authority":False,"peer_authentication_proven":False,"installed":False}
+  if check_target:
+   assert matching==(404,"native_target_not_found"),"CURRENT_NATIVE_BOUND_TARGET_USED_LEGACY_SELECTION"
+   assert legacy[0]>=400 and legacy[1]!="native_target_not_found"
+   # Ordinary JSON selection shapes; no registered model can execute here.
+   for payload,expected_result in [
+    ('{"messages":[],"metadata":{"model":"fixture/nested"}}',(404,"native_target_not_found")),
+    ('{"model":17,"messages":[]}',(400,"invalid_request_error")),
+    ('{"model":"fixture\\u002fmissing-model","messages":[]}',(404,"native_target_not_found")),
+    ('{"model":"mlx-serve","messages":[]}',(404,"native_target_not_found")),
+   ]:
+    assert rejected_with({"X-Fios-Native-Instance":instance},payload)==expected_result,"CURRENT_NATIVE_BOUND_JSON_SELECTION_CHANGED"
+  else:
+   assert legacy==matching and legacy[0]>=400,"CURRENT_NATIVE_MATCHING_EPOCH_CHANGED_LEGACY_SELECTION"
+ receipt={"binary_sha256":hashlib.sha256(binary.read_bytes()).hexdigest(),"native_pid":proc.pid,"source_instance":instance,"source_sequence":sequence,"source_sampled_at":stamp,"http_connection_counts":list(counts),"accepted_connection_observed":True,"original_http_connection_retired":True,"private_home":str(home),"models":0,"model_requests":7 if check_target else (3 if check_instance else 0),"expected_instance_guard_checked":check_instance,"exact_target_guard_checked":check_target,"inference_started":False,"coverage":"unknown","native_admission_authority":False,"peer_authentication_proven":False,"installed":False}
  (home/"receipt.json").write_text(json.dumps(receipt,indent=2)+"\n");print(json.dumps(receipt))
 finally:
  if proc.poll() is None:proc.terminate()

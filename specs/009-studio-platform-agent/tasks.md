@@ -356,3 +356,5 @@ Complete a task only when its entire described scope and evidence pass. Thirty-e
 2026-11-12 operator-requested update pause: **38/55 whole tasks complete**. See [resume.md](resume.md) for preserved uncommitted Llama slot-cleanup work, recovered pinned inputs and remaining native compilation/runtime checks. Focused Node24/24 is partial evidence only; no checkbox changes.
 
 2026-11-12 resumed source checkpoint: actual refused-Llama slot destructor case passes3/3, full native executable links, C++ Debug/optimized controls and25 Node checks/boundary pass. Private original-release library inputs retain their six fixed hashes after the installed application advanced. See validation/resume; loaded/native/installed acceptance remains open. **38/55 whole tasks complete**, no checkbox changes.
+
+Current26.11.2 source checkpoint: host-only expected-instance and exact-local-target additions build and pass empty-registry fixtures (7 attempted model POSTs,0 inference). T019/T022 remain unchecked: no positive registered-target/model replacement/native admission proof. See native-26112-port.md for scope, hashes and receipts. Whole count remains38/55.

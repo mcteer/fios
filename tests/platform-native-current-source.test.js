@@ -30,3 +30,11 @@ test('current process-instance addition remains separate from engine implementat
     assert.equal(match[1],match[2]);return match[1];
   })),new Set(['src/fios/instance_header.zig','src/host/http/router.zig']));
 });
+
+test('current local-target addition changes only the host router',()=>{
+  const patch=readFileSync('platform/studio/native/mlx-serve-26.11.2-target.patch','utf8');
+  const paths=[...patch.matchAll(/^diff --git a\/(\S+) b\/(\S+)$/gm)];
+  assert.equal(paths.length,1);
+  assert.equal(paths[0][1],'src/host/http/router.zig');
+  assert.equal(paths[0][2],paths[0][1]);
+});
