@@ -776,3 +776,14 @@ test('current private ANE seam guard preserves declared source and fixture bytes
   }
   assert.equal(expected.size,0);
 });
+
+
+test('current private ANE MLP wrapper custody changes only the declared bridge wrapper pair',()=>{
+  const patch=readFileSync('platform/studio/native/mlx-serve-26.11.2-ane-mlp-wrapper-custody.patch','utf8');
+  const paths=patch.split('\n').filter(line=>line.startsWith('diff --git '));
+  assert.deepEqual(paths,['diff --git a/lib/ane/ane_mlp.h b/lib/ane/ane_mlp.h','diff --git a/lib/ane/ane_mlp.m b/lib/ane/ane_mlp.m']);
+  const fixture=readFileSync('platform/studio/native/current_ane_mlp_wrapper.m.fixture','utf8');
+  assert(fixture.includes('FIO_ANE_MLP_OUTER_SURFACES_DROPPED_AFTER_RAW_REFUSAL'));
+  assert(fixture.includes('wrapper->model==raw && !msv_ane_mlp_try_free(wrapper)'));
+  assert(fixture.includes('CFGetRetainCount(surface)==before'));
+});

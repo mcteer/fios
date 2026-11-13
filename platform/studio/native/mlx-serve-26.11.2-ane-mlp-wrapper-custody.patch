@@ -1,0 +1,50 @@
+diff --git a/lib/ane/ane_mlp.h b/lib/ane/ane_mlp.h
+index a09423d..a9981ed 100644
+--- a/lib/ane/ane_mlp.h
++++ b/lib/ane/ane_mlp.h
+@@ -1,6 +1,7 @@
+ #ifndef MLXSERVE_ANE_MLP_H
+ #define MLXSERVE_ANE_MLP_H
+ 
++#include <stdbool.h>
+ #include <stddef.h>
+ #include <stdint.h>
+ 
+@@ -90,6 +91,8 @@ msv_ane_mlp *msv_ane_bank_finish(msv_ane_bank *b, const char *name,
+                                  msv_ane_plane *output_plane,
+                                  char *error, size_t error_size);
+ 
++/* False retains the original wrapper; true is local disposal, not native idle. */
++bool msv_ane_mlp_try_free(msv_ane_mlp *m);
+ void msv_ane_mlp_free(msv_ane_mlp *m);
+ 
+ __fp16 *msv_ane_mlp_input(msv_ane_mlp *m);
+diff --git a/lib/ane/ane_mlp.m b/lib/ane/ane_mlp.m
+index 208ab04..0dd7eb1 100644
+--- a/lib/ane/ane_mlp.m
++++ b/lib/ane/ane_mlp.m
+@@ -504,13 +504,21 @@ msv_ane_mlp *msv_ane_bank_finish(msv_ane_bank *b, const char *name,
+     return m;
+ }
+ 
+-void msv_ane_mlp_free(msv_ane_mlp *m) {
+-    if (!m) return;
+-    msv_ane_model_free(m->model);
++/* Local custody result only, never native terminality. A refused raw close
++ * retains this original wrapper and its own surface references as well. */
++bool msv_ane_mlp_try_free(msv_ane_mlp *m) {
++    if (!m) return true;
++    if (!msv_ane_model_try_free(m->model)) return false;
++    m->model = NULL;
++#ifdef FIOS_ANE_SOURCE
++    if (msv_ane_source_uncertainty()) return false;
++#endif
+     if (m->input_surface) CFRelease(m->input_surface);
+     if (m->output_surface) CFRelease(m->output_surface);
+     free(m);
++    return true;
+ }
++void msv_ane_mlp_free(msv_ane_mlp *m) { (void)msv_ane_mlp_try_free(m); }
+ 
+ __fp16 *msv_ane_mlp_input(msv_ane_mlp *m) {
+     return m ? m->input_base : NULL;

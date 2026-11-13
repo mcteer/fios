@@ -1,5 +1,12 @@
 # Resume after macOS updates — 2026-11-12
 
+## Current optional ANE wrapper source receipt — 2026-11-13
+
+Whole tasks38/55;17 open. Pushed56e27e6/CI43493577533 is running; do not cancel its native lane with another push. Local53rd layer/private d650e3a adds checked custody to the existing C ANE MLP wrapper: refusal retains original wrapper/surface owners. Baseline2 genuine CPU owner assertions/2 healthy controls becomes4/4; both full builds/3 exact-binary empty-model checks each, source60/60, working-tree161 Node/106 installed Python, closure/lint,53-layer equality and DS4154-input verification pass. Commit root53 next, then continue source engineering while current CI finishes. Layer52 unit109/root2 and layer51C64/root16 are historical exact-input receipts, not rerun53 results. Preserve user frontend003 WIP and private vendor/build-job WIP. No native model/API, inference, installation, activation, merge or deployment. Full hashes/scopes in native-26112-port.md.
+
+Next actual gap: SDK Unit.deinit still calls the wrapper’s void free, drops bank arrays/planes, and AnePrefill.deinit frees its units/self; constructor error paths also use void disposal. Read owner/caller graph before any change. Do not infer native terminality from checked success, join, local bookkeeping or zero counters. External plugin/full producer/native terminal/admission and installed acceptance remain unproven. No new source-scope approval questions or native fault campaigns.
+
+
 ## Current optional ANE seam source receipt — 2026-11-13
 
 Whole tasks38/55;17 open. Pushed3d3fe76/CI43488388641 all6 prerequisites+aggregate green. Local52nd layer blocks the existing optional SDK/host ANE-prefill fallback after independent C uncertainty; adds no engine/numerical implementation. Source59/59, working-tree160 Node/106 installed Python, native109/109 fresh-process tests (before final logging-only tweak), actual C/SDK/root2/2, both full builds/3 exact empty-model runtime checks each, closure/lint,52-layer equality and DS4154-input verification pass. Default full build/3 runtime checks also pass; privatec374606 commits52 layers. Next root commit records this layer; preserve lib/mlx-src, lib/mlxc-src and scripts/build-mlx.sh vendor/job WIP. Preserve user003/frontend WIP and a.out/docs/model-inventory.md. Full evidence/selected-input limits in native-26112-port.md. No model/inference, native installation/activation, merge or deployment. Continue authorized source work; do not re-ask source/inference scope.
