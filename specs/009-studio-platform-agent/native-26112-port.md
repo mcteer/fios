@@ -158,7 +158,7 @@ Actual finite orchestration inputs/build/link/client logs remain in that private
 
 ## Current SDK/native CPU owner composition
 
-The existing source SDK host-owner driver now has an explicit `--current-sdk` mode. It selects only the separate current-generation reader and permits only the healthy CPU scenario; current Metal, callback-error, cleanup-error and abandoned-buffer variants are rejected. Historical metadata readers/default fixtures remain separate. This opt-in is a development input selector, not native admission or installed enrollment.
+The existing source SDK host-owner driver now has an explicit `--current-sdk` mode. The initial CPU checkpoint selected the separate current-generation reader and only the healthy CPU scenario. The ordinary Metal extensions below retain healthy-only execution and continue rejecting callback-error, cleanup-error and abandoned-buffer variants. Historical metadata readers/default fixtures remain separate. This opt-in is a development input selector, not native admission or installed enrollment.
 
 Actual current SDK/native ownership composition passes Debug and ReleaseSafe with the genuine retained SDK reviewc158b76f76e0f9c97246a283963f96b8ca35cb3bbe73de5e50453838c315bd18 and canonical actual `request_ownership.zig`/`sdk_request_ownership.zig`. Each mode runs2 genuine CPU callbacks: a parent and another spawned by the original captured object's destructor. The original connection reference is released while the real callback remains held; both original and nested callbacks still see the original native owner/context/root. Normal cleanup retires those contexts afterward. Receipt `/private/tmp/fios-009-sdk-host-owners-6kfFPv/receipt.json`; aggregate log `/private/tmp/fios-009-mlx-c693-port-jhy3gkva/native-owner-composition.log`. Network is denied,0 model/Metal operations,0 installed actions. Fixture PASS text is shared with the historical driver: only `healthy` actually ran here, so it is not current cached-fence/error evidence.
 
@@ -167,3 +167,19 @@ node scripts/check-platform-sdk-host-owners.mjs --isolated --sdk ABS_CURRENT_SDK
 ```
 
 This composes the genuine CPU SDK callback and native tracker implementation, not the current HTTP server/scheduler or all enabled modalities. It does not establish native device/model completion, all-client non-preemption or a reservation issuer. Whole tasks remain38/55; T018/T021/T022 remain open.
+
+## Current ordinary Metal and distinct-origin composition
+
+The explicit current driver now also accepts the ordinary empty-Metal and separate-encoding-origin fixtures on core. Only `healthy` runs; callback-error/stream-cleanup-error/abandonment and historical cached-fence cases remain excluded. No shader dispatch or model is present. C++ clients use `NDEBUG` to match this genuine Release SDK's conditional Metal class layout; Zig Debug/ReleaseSafe test checks remain active.
+
+Actual ordinary Metal composition passes both modes with1 genuine private command buffer/shared event and1 destructor-enqueued CPU callback per mode. Two original native roots remain retained after their original connection references leave, through the real buffer wait/completion/captured-object cleanup and nested CPU work. Receipt `/private/tmp/fios-009-sdk-host-owners-1TBxZs/receipt.json`, `native-metal-owner-composition.log` in the c693 private parent. This is original participant lifetime, not global GPU completion or native terminal proof.
+
+The distinct-origin fixture separately passes both modes: first-origin encoding retains its original root before any completion callback/commit exists; a later independent request contributes a second origin into that same buffer; both remain through completion and nested cleanup. Receipt `/private/tmp/fios-009-sdk-host-owners-7VRy0w/receipt.json`, `native-buffer-origin-composition.log`. The known current SDK source/artifact review is unchanged and reverified after every run.0 models/installed actions, network denied, no fault/mutation campaign. Core-only component results do not establish Studio inference/resource acceptance.
+
+```sh
+# Same explicit current SDK/source/Zig/developer arguments as the CPU command:
+# add --metal --metal-cpp-zip ABS_VERIFIED_METAL_CPP_ZIP
+# or --buffer-origins --metal-cpp-zip ABS_VERIFIED_METAL_CPP_ZIP
+```
+
+SDK/native callback components are now exercised for these positive paths, but current HTTP/scheduler/load/slot/model/native ABI bridge, other enabled backends/modalities, independently uncertain/cancellation/destructive transitions and all-client admission still remain uncomposed/unproven. Whole count38/55; no whole task is completed by these scoped component receipts.
