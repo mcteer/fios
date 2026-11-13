@@ -623,3 +623,27 @@ test('current DS4 and llama constructor patches preserve exact model-free bounda
   }
   assert.equal(expected.size,0);
 });
+
+
+test('current ANE outcome latch composes exact helpers and bookkeeping fixture without changing canonical probes',()=>{
+  const patch=readFileSync('platform/studio/native/mlx-serve-26.11.2-ane-run-custody.patch','utf8');
+  const expected=new Set(["src/engines/ane/engine.zig", "src/engines/ane/lm.zig", "src/engines/ane/rt.zig", "src/engines/ds4/engine.zig", "src/engines/ds4/load.zig", "src/engines/llama/engine.zig", "src/engines/llama/load.zig", "src/engines/mlx/plugin/driver.zig", "src/engines/mlx/transformer.zig", "src/engines/own_thread/book.zig", "src/fios/current_ane_backend_uncertainty.zig", "src/fios/current_ane_cleanup_uncertainty.zig", "src/fios/current_ane_locked_cleanup_uncertainty.zig", "src/fios/current_ane_run_uncertainty.zig", "src/host/engines/served.zig", "src/host/http/server.zig", "src/host/media_jobs/plugin/engine.zig", "src/host/registry/registry.zig"]);
+  const companions=new Set(['current_ane_run_uncertainty.zig','current_ane_backend_uncertainty.zig','current_ane_cleanup_uncertainty.zig','current_ane_locked_cleanup_uncertainty.zig']);
+  for(const section of patch.split(/(?=^diff --git )/m).filter(Boolean)){
+    const header=/^diff --git a\/(\S+) b\/(\S+)\n/.exec(section);assert(header);assert.equal(header[1],header[2]);assert(expected.delete(header[1]));
+    if(header[1].startsWith('src/fios/')){
+      assert(companions.delete(header[1].slice('src/fios/'.length)));assert(section.includes('\nnew file mode 100644\n'));
+      const bytes=section.split('\n').filter(line=>line.startsWith('+')&&!line.startsWith('+++')).map(line=>line.slice(1)).join('\n')+'\n';
+      assert.equal(bytes,readFileSync('platform/studio/native/'+header[1].slice('src/fios/'.length),'utf8'));
+    }
+    if(header[1]==='src/engines/ane/lm.zig'){
+      const start=section.indexOf('\n+// Direct bookkeeping outcomes only;');assert(start>=0);
+      const fixture=section.slice(start+1).split('\n').filter(line=>line.startsWith('+')).map(line=>line.slice(1)).join('\n')+'\n';
+      assert.equal(fixture,readFileSync('platform/studio/native/current_ane_run_outcome_test.zig.fixture','utf8').trimStart());
+    }
+  }
+  assert.equal(expected.size,0);assert.equal(companions.size,0);
+  for(const name of ['current_cleanup_uncertainty.zig','current_locked_cleanup_uncertainty.zig']){
+    assert.equal(readFileSync('platform/studio/native/'+name.replace('current_','current_ane_'),'utf8'),readFileSync('platform/studio/native/'+name,'utf8').replaceAll('current_backend_uncertainty.zig','current_ane_backend_uncertainty.zig'));
+  }
+});

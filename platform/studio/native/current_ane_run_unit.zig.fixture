@@ -1,0 +1,5 @@
+//! Separate actual unit object: its root resolves Shared through host exports.
+pub const mlx_serve_unit = true;
+const outcome = @import("fios/current_ane_run_uncertainty.zig");
+pub export fn fios_fixture_ane_outcome_failure() void { outcome.observeOutcome(false); }
+pub export fn fios_fixture_ane_outcome_success() void { outcome.observeOutcome(true); }
