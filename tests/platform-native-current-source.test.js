@@ -540,3 +540,22 @@ test('current load reservation keeps uncertain and pre-epoch parent fixtures tog
   }
   assert.equal(expected.size,0);
 });
+
+
+test('current native load custody keeps media publication and raw cleanup fixtures exact',()=>{
+  const patch=readFileSync('platform/studio/native/mlx-serve-26.11.2-native-load-custody.patch','utf8');
+  const fixtures=new Map([
+    ['src/host/media_jobs/plugin/engine.zig',['fios current media load refuses','current_media_load_test.zig.fixture']],
+    ['src/engines/mlx/runtime/model_state.zig',['fios current raw MLX state API','current_raw_model_cleanup_test.zig.fixture']],
+  ]);
+  const expected=new Set(fixtures.keys());
+  for(const section of patch.split(/(?=^diff --git )/m).filter(Boolean)){
+    const header=/^diff --git a\/(\S+) b\/(\S+)\n/.exec(section);
+    assert(header);assert.equal(header[1],header[2]);assert(expected.delete(header[1]));
+    const [name,file]=fixtures.get(header[1]);
+    const start=section.indexOf('\n+test "'+name);assert(start>=0);
+    const fixture=section.slice(start+1).split('\n').filter(line=>line.startsWith('+')).map(line=>line.slice(1)).join('\n')+'\n';
+    assert.equal(fixture,readFileSync('platform/studio/native/'+file,'utf8').trimStart());
+  }
+  assert.equal(expected.size,0);
+});
