@@ -1,0 +1,129 @@
+
+// Actual MiniMax H3 cleanup method with CPU-only callbacks and empty rest metadata.
+// The fake child identity is never dereferenced or passed to native C.
+const FiosH3AneCloseProbe = struct {
+    var calls: usize = 0;
+    var blocked: bool = false;
+    var mode: enum { preexisting, refused, after, healthy } = .healthy;
+    fn negative() bool {
+        return blocked;
+    }
+    fn close(_: *ane.AnePrefill) bool {
+        calls += 1;
+        if (mode == .after) blocked = true;
+        return mode == .after or mode == .healthy;
+    }
+};
+fn fiosH3AneClose(mode: @TypeOf(FiosH3AneCloseProbe.mode)) !void {
+    const P = FiosH3AneCloseProbe;
+    P.mode = mode;
+    P.calls = 0;
+    P.blocked = mode == .preexisting;
+    var d: Model = undefined;
+    d.allocator = std.heap.page_allocator;
+    d.ane_rest = &.{};
+    const original: *ane.AnePrefill = @ptrFromInt(64);
+    d.ane_eng = original;
+    const accepted = d.aneTryDeinitWith(true, P.negative, P.close);
+    if (accepted != (mode == .healthy)) {
+        std.debug.print("FIO_H3_ANE_CLOSE_DROPPED_UNCERTAIN_PARENT\n", .{});
+        try std.testing.expect(false);
+    }
+    try std.testing.expectEqual(@as(usize, if (mode == .preexisting) 0 else 1), P.calls);
+    try std.testing.expect(d.ane_eng == (if (mode == .preexisting or mode == .refused) original else null));
+    try std.testing.expect(d.ane_rest.len == 0);
+}
+test "fios current MiniMax H3 ANE close retains preexisting uncertainty" {
+    try fiosH3AneClose(.preexisting);
+}
+test "fios current MiniMax H3 ANE close retains rejected child" {
+    try fiosH3AneClose(.refused);
+}
+test "fios current MiniMax H3 ANE close retains parent after later uncertainty" {
+    try fiosH3AneClose(.after);
+}
+test "fios current MiniMax H3 ANE close accepts healthy local disposal" {
+    try fiosH3AneClose(.healthy);
+}
+
+// Actual resident/cell methods with inert CPU metadata and callback outcomes.
+// Model/TextEncoder payloads are never dereferenced or passed to MLX/native C.
+const FiosH3ResidentProbe = struct {
+    var mode: enum { preexisting, refuse_prepare, refuse_model, after_model, healthy } = .healthy;
+    var blocked: bool = false;
+    var order: [5]u8 = undefined;
+    var count: usize = 0;
+    fn mark(value: u8) void { order[count] = value; count += 1; }
+    fn negative() bool { return blocked; }
+    fn prepare(_: *Model) bool { mark(0); return mode != .refuse_prepare; }
+    fn text(_: *TextEncoder) void { mark(1); }
+    fn model(_: *Model) bool { mark(2); if (mode == .after_model) blocked = true; return mode != .refuse_model; }
+    fn stack(_: *lora_mod.Stack) void { mark(3); }
+    fn cache() void { mark(4); }
+};
+fn fiosH3ResidentClose(mode: @TypeOf(FiosH3ResidentProbe.mode)) !void {
+    const P = FiosH3ResidentProbe;
+    P.mode = mode;
+    P.blocked = mode == .preexisting;
+    P.count = 0;
+    var r = Resident.init(std.heap.page_allocator);
+    r.te = @as(TextEncoder, undefined);
+    r.dit = @as(Model, undefined);
+    r.bytes = 41;
+    r.lora_bound = true;
+    const original = &r.dit.?;
+    const result = r.tryReleaseWith(true, P.negative, P.prepare, P.text, P.model, P.stack, P.cache);
+    const healthy = mode == .healthy;
+    const expected: ?u64 = if (healthy) 41 else null;
+    try std.testing.expectEqual(expected, result);
+    try std.testing.expectEqual(!healthy, r.lora_bound);
+    try std.testing.expectEqual(@as(u64, if (healthy) 0 else 41), r.bytes);
+    const held_model = mode == .preexisting or mode == .refuse_prepare or mode == .refuse_model;
+    try std.testing.expectEqual(held_model, r.dit != null);
+    if (held_model) try std.testing.expect(original == &r.dit.?);
+    try std.testing.expectEqual(mode == .preexisting or mode == .refuse_prepare, r.te != null);
+    const count: usize = switch (mode) { .preexisting => 0, .refuse_prepare => 1, .refuse_model, .after_model => 3, .healthy => 5 };
+    const ordered = [_]u8{0,1,2,3,4};
+    try std.testing.expectEqualSlices(u8, ordered[0..count], P.order[0..P.count]);
+}
+test "fios current H3 resident close retains preexisting metadata" { try fiosH3ResidentClose(.preexisting); }
+test "fios current H3 resident close checks native child before text sibling" { try fiosH3ResidentClose(.refuse_prepare); }
+test "fios current H3 resident close retains rejected model and adapter metadata" { try fiosH3ResidentClose(.refuse_model); }
+test "fios current H3 resident close retains adapter metadata after later uncertainty" { try fiosH3ResidentClose(.after_model); }
+test "fios current H3 resident close reports healthy local disposal bytes" { try fiosH3ResidentClose(.healthy); }
+
+const FiosH3LocalProbe = struct {
+    var mode: enum { preexisting, refused, healthy } = .healthy;
+    var model_calls: usize = 0;
+    var stack_calls: usize = 0;
+    fn negative() bool { return mode == .preexisting; }
+    fn model(_: *Model) bool { model_calls += 1; return mode == .healthy; }
+    fn stack(_: *lora_mod.Stack) void { stack_calls += 1; }
+};
+fn fiosH3LocalClose(mode: @TypeOf(FiosH3LocalProbe.mode)) !void {
+    const P = FiosH3LocalProbe;
+    P.mode = mode;
+    P.model_calls = 0;
+    P.stack_calls = 0;
+    var trace = std.testing.FailingAllocator.init(std.heap.page_allocator, .{});
+    const a = trace.allocator();
+    const cell = try FiosLocalCustody.create(a);
+    cell.model = @as(Model, undefined);
+    const original = &cell.model.?;
+    const accepted = cell.tryDeinitWith(P.negative, P.model, P.stack);
+    const healthy = mode == .healthy;
+    try std.testing.expectEqual(healthy, accepted);
+    try std.testing.expectEqual(@as(usize, if (mode == .preexisting) 0 else 1), P.model_calls);
+    try std.testing.expectEqual(@as(usize, if (healthy) 1 else 0), P.stack_calls);
+    if (healthy) {
+        try std.testing.expect(trace.allocated_bytes > 0 and trace.freed_bytes == trace.allocated_bytes);
+    } else {
+        try std.testing.expectEqual(@as(usize, 0), trace.freed_bytes);
+        try std.testing.expect(cell.model != null and original == &cell.model.?);
+        // Free only this test's inert CPU cell. No native object was created.
+        a.destroy(cell);
+    }
+}
+test "fios current H3 local cell survives preexisting uncertainty" { try fiosH3LocalClose(.preexisting); }
+test "fios current H3 local cell survives rejected child disposal" { try fiosH3LocalClose(.refused); }
+test "fios current H3 local cell retires after healthy local disposal" { try fiosH3LocalClose(.healthy); }

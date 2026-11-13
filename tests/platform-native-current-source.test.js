@@ -859,3 +859,18 @@ test('current private ACE-Step cleanup retains exact CPU-only method controls an
   assert(sections[1].includes('+    if (ane_cleanup.enabled) {'));
   assert(sections[1].includes('+        // Preserve the default wrapper\'s existing disposal order.'));
 });
+
+
+test('current private H3 cleanup preserves exact model-free owner controls and held result metadata',()=>{
+  const patch=readFileSync('platform/studio/native/mlx-serve-26.11.2-h3-ane-cleanup-custody.patch','utf8');
+  const sections=patch.split(/(?=^diff --git )/m).filter(Boolean);
+  assert.deepEqual(sections.map(section=>section.match(/^diff --git a\/(\S+) b\/(\S+)/)[1]),['src/plugins/minimax_h3/h3.zig','src/plugins/minimax_h3/plugin.zig']);
+  const start=sections[0].indexOf('+// Actual MiniMax H3 cleanup method with CPU-only callbacks');assert(start>=0);
+  const bytes='\n'+sections[0].slice(start).split('\n').filter(line=>line.startsWith('+')).map(line=>line.slice(1)).join('\n')+'\n';
+  assert.equal(bytes,readFileSync('platform/studio/native/current_h3_ane_cleanup_test.zig.fixture','utf8'));
+  assert(sections[0].includes('+                if (!ane.cleanup_guard.known() and eng.tryDeinit()) {'));
+  assert(sections[0].includes('+                break :lb &cell.model.?;'));
+  assert(sections[1].includes('+    fios_pending_result: ?h3.GenResult = null,'));
+  assert(sections[1].includes('+    if (ane_cleanup.enabled) e.fios_pending_result = res;'));
+  assert(sections[1].includes('+        if (e.resident.tryRelease() == null) {'));
+});
