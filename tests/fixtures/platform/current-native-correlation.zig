@@ -26,3 +26,22 @@ test "retained descendants preserve original request lineage and absence stays u
     try std.testing.expect(!absent.found and absent.uncertain);
     // A missing record cannot become completion/not-sent/device-terminal proof.
 }
+
+test "primary phases retain exact model identity until the original last reference" {
+    const io = std.testing.io;
+    var tracker: ownership.Tracker = .{};
+    try tracker.initialize(io, @splat(8));
+    const original = try tracker.enter(io);
+    try tracker.bind(io, original, "fixture/Exact-Case");
+    const preparing = tracker.primarySnapshot(io);
+    try std.testing.expectEqual(@as(usize, 1), preparing.preparing);
+    try std.testing.expectEqualStrings("fixture/Exact-Case", preparing.models[0].id[0..preparing.models[0].len]);
+    const retained = try tracker.retainTokens(io, &.{original});
+    try tracker.active(io, original);
+    try std.testing.expectEqual(@as(usize, 1), tracker.primarySnapshot(io).active);
+    try tracker.responding(io, original);
+    try tracker.leave(io, original);
+    try std.testing.expectEqual(@as(usize, 1), tracker.primarySnapshot(io).responding);
+    retained.release(io);
+    try std.testing.expectEqual(@as(usize, 0), tracker.primarySnapshot(io).owned);
+}

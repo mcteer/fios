@@ -3986,3 +3986,7 @@ Operator is updating both Studios and the development Mac and requested a pause.
 ### Current-source ingress correlation checkpoint
 
 38/55 whole tasks complete. The exact current host now enrolls ingress before enqueue and associates optional opaque request IDs. Corrected full native build30/30,9 empty-registry request checks, actual missing-lineage-is-unknown wire check, startup regression,2 distinct component tests and5 source-input integrity checks pass. See [correlation evidence](native-26112-port.md#ingress-correlation-and-pre-enqueue-custody-slice) for hashes, retained failures,0-test non-evidence and exact scope. Backend/SDK/device origins and complete native admission remain unported; no task completion, installed action, merge or deployment is inferred.
+
+### Current-source primary metadata checkpoint
+
+38/55 whole tasks complete. Host-only exact primary-model phase attribution is compiled, with an explicit startup disable of the canonical shared guard so the partial port imposes no model policy. Final build30/30;2 metadata component tests,6 source-input checks and actual combined empty-registry correlation/startup/manager regressions pass. See [primary evidence](native-26112-port.md#diagnostic-primary-model-phase-slice) for candidate correction, hashes, receipts and the unexercised positive-binding branch. SDK/backend/device origin enrollment and native admission remain absent; no installed activation, task completion, merge or deployment.

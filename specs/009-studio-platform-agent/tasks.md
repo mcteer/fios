@@ -362,3 +362,5 @@ Current26.11.2 source checkpoint: host-only expected-instance and exact-local-ta
 Private26.11.2 startup-exclusion slice builds and passes duplicate-refusal/metadata/reacquisition checks; target regression passes. T027/T049 remain unchecked because installed ownership, actuation, rollback and current installed activation are not supplied by this source lock. Whole count38/55; see native-26112-port.md.
 
 Current host ingress now enrolls before enqueue and associates optional opaque request IDs; actual empty-registry requests/private missing-lineage frames and separate retained-lineage component tests pass. T018/T019/T021 remain unchecked: complete enabled-modality/pre-enqueue timing, native/backend custody and correlated terminal completion are still open. Whole count38/55; see native-26112-port.md.
+
+Host-only primary phase attribution now compiles with the shared guard explicitly disabled at startup; metadata components and empty-registry composition pass. Positive model binding and complete native/backend custody are not established by these cases. T018/T020/T022 stay unchecked; count38/55. See native-26112-port.md.
