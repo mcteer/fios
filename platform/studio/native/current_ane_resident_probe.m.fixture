@@ -1,0 +1,26 @@
+// Ordinary CPU metadata object, no ANE framework/model/device.
+@interface FiosResidentMetadata : NSObject
+@property unsigned calls;
+@property BOOL accepts;
+@end
+@implementation FiosResidentMetadata
+- (BOOL)unloadWithQoS:(unsigned)qos error:(NSError **)error {
+    (void)qos;*error=nil;self.calls+=1;return self.accepts;
+}
+@end
+int fios_fixture_ane_resident_refusal(void) {
+#ifndef FIOS_ANE_SOURCE
+    return 0;
+#else
+    @autoreleasepool {
+        FiosResidentMetadata *value=[FiosResidentMetadata new];
+        msv_ane_model *h=calloc(1,sizeof(*h));h->model=(__bridge_retained void *)value;
+        bridge_mark_resident(value,true);NSError *error=nil;
+        if (bridge_unload(value,&error) || !msv_ane_source_uncertainty() ||
+            msv_ane_resident()!=1 || value.calls!=1 || (__bridge id)h->model != value) return 0;
+        if (bridge_unload(value,&error) || value.calls!=1 || msv_ane_model_try_free(h)) return 0;
+        bridge_mark_resident(value,false);
+        return msv_ane_resident()==0 && msv_ane_source_uncertainty()!=0;
+    }
+#endif
+}

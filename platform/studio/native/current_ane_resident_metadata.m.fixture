@@ -1,0 +1,29 @@
+// Ordinary CPU metadata object, no ANE framework/model/device.
+@interface FiosResidentMetadata : NSObject
+@property unsigned calls;
+@property BOOL accepts;
+@end
+@implementation FiosResidentMetadata
+- (BOOL)unloadWithQoS:(unsigned)qos error:(NSError **)error {
+    (void)qos;*error=nil;self.calls+=1;return self.accepts;
+}
+@end
+int main(void) {
+    @autoreleasepool {
+        FiosResidentMetadata *healthy=[FiosResidentMetadata new];healthy.accepts=YES;
+        bridge_mark_resident(healthy,true);NSError *error=nil;
+        if (msv_ane_resident()!=1 || !bridge_unload(healthy,&error) || msv_ane_resident()!=0) return 1;
+        FiosResidentMetadata *value=[FiosResidentMetadata new];
+        bridge_mark_resident(value,true);
+        if (bridge_unload(value,&error)) return 1;
+#ifdef FIOS_ANE_SOURCE
+        if (msv_ane_resident()!=1) { fprintf(stderr,"FIO_CURRENT_ANE_REFUSED_UNLOAD_CLEARED_RESIDENT\n");return 1; }
+        if (!msv_ane_source_uncertainty() || bridge_unload(value,&error) || value.calls!=1) return 1;
+        bridge_mark_resident(value,false); // CPU metadata control only.
+        if (msv_ane_resident()!=0 || !msv_ane_source_uncertainty()) return 1;
+#else
+        if (msv_ane_resident()!=0 || value.calls!=1) return 1;
+#endif
+        fprintf(stderr,"PASS: private ANE resident metadata preserves refused unload uncertainty\n");return 0;
+    }
+}
