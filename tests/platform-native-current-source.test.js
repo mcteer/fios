@@ -258,3 +258,20 @@ test('current offload submission changes only the existing handoff and preserves
   const fixture=sections[0].slice(start+1).split('\n').filter(line=>line.startsWith('+')).map(line=>line.slice(1)).join('\n')+'\n';
   assert.equal(fixture,readFileSync('platform/studio/native/current_offload_submit_test.zig.fixture','utf8').trimStart());
 });
+
+
+test('current unload origins preserve the existing queue and model-free worker fixture',()=>{
+  const patch=readFileSync('platform/studio/native/mlx-serve-26.11.2-unload-origins.patch','utf8');
+  const sections=patch.split(/(?=^diff --git )/m).filter(Boolean);
+  const expected=new Set(['src/host/gpu_thread/requests.zig','src/engines/mlx/scheduler.zig','src/engines/mlx/runtime/load_requests.zig']);
+  for(const section of sections){
+    const header=/^diff --git a\/(\S+) b\/(\S+)\n/.exec(section);
+    assert(header);assert.equal(header[1],header[2]);assert(expected.delete(header[1]));
+    if(header[1]==='src/engines/mlx/runtime/load_requests.zig'){
+      const start=section.indexOf('\n+test "fios current unload worker');assert(start>=0);
+      const fixture=section.slice(start+1).split('\n').filter(line=>line.startsWith('+')).map(line=>line.slice(1)).join('\n')+'\n';
+      assert.equal(fixture,readFileSync('platform/studio/native/current_unload_origins_test.zig.fixture','utf8').trimStart()+readFileSync('platform/studio/native/current_queued_unload_test.zig.fixture','utf8'));
+    }
+  }
+  assert.equal(expected.size,0);
+});
