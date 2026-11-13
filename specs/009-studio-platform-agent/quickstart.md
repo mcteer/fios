@@ -792,3 +792,12 @@ primitive before error cleanup, and preserves uncertainty on refusal; failed
 partial drafts return before trim/target verification. These controls do not
 certify loaded Llama success/error, all-client/device terminality or native
 admission. Do not substitute a larger core model or Studio inference scenario.
+
+
+### Current CPU media hook component
+
+```sh
+node scripts/check-platform-cpu-media-units.mjs --isolated --source /ABS/PRIVATE/CURRENT_SOURCE --zig /ABS/REVIEWED_ZIG
+```
+
+This compiles actual current host/provider/SDK-hook/Shared sources into separate host and plugin-shaped objects, then runs2 ordinary metadata cycles in Debug and ReleaseSafe with IP networking denied. Each cycle retains2 exact original roots beyond caller release and restores unrelated worker TLS. Builds are bounded to120s each, execution to10s/mode; no model/GPU/native service or installation. It verifies declared source/fixture bytes before/after and canonical companions, not whole-native provenance or terminal/admission authority. Use it separately from full native compilation to preserve the two-compiler-job development bound.

@@ -1,0 +1,47 @@
+
+test "fios current CPU media offload retains the full original group" {
+    const owners = @import("../../fios/request_ownership.zig");
+    const io = std.testing.io;
+    try owners.shared().initialize(io, @splat(83));
+    try @import("../../fios/current_cpu_media_origins.zig").install();
+    const first = try owners.shared().enter(io);
+    const second = try owners.shared().enter(io);
+    var roots_held = true;
+    defer if (roots_held) {
+        owners.shared().leave(io, first) catch {};
+        owners.shared().leave(io, second) catch {};
+    };
+    try owners.shared().bind(io, first, "fixture/cpu-media");
+    try owners.shared().bind(io, second, "fixture/cpu-media");
+    const roots = [_]owners.Token{ first, second };
+    owners.current_group().* = &roots;
+    defer owners.current_group().* = null;
+    const H = struct {
+        const Result = struct { attributed: bool, tid: std.Thread.Id };
+        fn step(_: *anyopaque) void {}
+        fn serve(_: *anyopaque, done: *const std.atomic.Value(bool)) void {
+            while (!done.load(.acquire)) std.atomic.spinLoopHint();
+        }
+        fn wake(_: *anyopaque) void {}
+        fn work(expected: [2]owners.Token) Result {
+            var attributed = false;
+            if (owners.current_group().*) |group| attributed = group.len == 2 and std.meta.eql(group[0], expected[0]) and std.meta.eql(group[1], expected[1]);
+            return .{ .attributed = attributed, .tid = std.Thread.getCurrentId() };
+        }
+    };
+    var dummy: u8 = 0;
+    const hook: Yield = .{ .ctx = &dummy, .step = H.step, .serve_until = H.serve, .wake = H.wake };
+    progress_mod.genYield().* = &hook;
+    defer progress_mod.genYield().* = null;
+    const me = std.Thread.getCurrentId();
+    const result = offload(H.work, .{roots});
+    try std.testing.expect(result.tid != me);
+    try std.testing.expect(owners.current().* == null and owners.current_group().*.?.ptr == &roots);
+    owners.current_group().* = null;
+    try owners.shared().leave(io, first);
+    try owners.shared().leave(io, second);
+    roots_held = false;
+    try std.testing.expectEqual(@as(usize, 0), owners.shared().snapshot(io).owned);
+    if (!result.attributed) std.debug.print("FIO_CURRENT_CPU_MEDIA_LOST_ORIGINS\n", .{});
+    try std.testing.expect(result.attributed);
+}

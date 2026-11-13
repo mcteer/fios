@@ -275,3 +275,29 @@ test('current unload origins preserve the existing queue and model-free worker f
   }
   assert.equal(expected.size,0);
 });
+
+
+test('current CPU media ownership keeps the plugin SDK closed and preserves its opaque companions',()=>{
+  const patch=readFileSync('platform/studio/native/mlx-serve-26.11.2-cpu-media-origins.patch','utf8');
+  const sections=patch.split(/(?=^diff --git )/m).filter(Boolean);
+  const companions=new Map([
+    ['src/fios/current_cpu_media_origins.zig','current_cpu_media_origins.zig'],
+    ['src/sdk/media/offload_origins.zig','current_cpu_media_hooks.zig'],
+  ]);
+  const expected=new Set([...companions.keys(),'src/sdk/media/progress.zig','src/host/http/server.zig','src/host/media_jobs/sse.zig']);
+  for(const section of sections){
+    const header=/^diff --git a\/(\S+) b\/(\S+)\n/.exec(section);
+    assert(header);assert.equal(header[1],header[2]);assert(expected.delete(header[1]));
+    if(companions.has(header[1])){
+      assert(section.includes('\nnew file mode 100644\n'));
+      const bytes=section.split('\n').filter(line=>line.startsWith('+')&&!line.startsWith('+++')).map(line=>line.slice(1)).join('\n')+'\n';
+      assert.equal(bytes,readFileSync('platform/studio/native/'+companions.get(header[1]),'utf8'));
+    }
+    if(header[1]==='src/host/media_jobs/sse.zig'){
+      const start=section.indexOf('\n+test "fios current CPU media');assert(start>=0);
+      const fixture=section.slice(start+1).split('\n').filter(line=>line.startsWith('+')).map(line=>line.slice(1)).join('\n')+'\n';
+      assert.equal(fixture,readFileSync('platform/studio/native/current_cpu_media_origins_test.zig.fixture','utf8').trimStart());
+    }
+  }
+  assert.equal(expected.size,0);
+});
