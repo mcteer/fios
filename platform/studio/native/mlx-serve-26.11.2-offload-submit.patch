@@ -1,0 +1,97 @@
+diff --git a/src/engines/mlx/runtime/offload.zig b/src/engines/mlx/runtime/offload.zig
+index a3e5544..cecc3a7 100644
+--- a/src/engines/mlx/runtime/offload.zig
++++ b/src/engines/mlx/runtime/offload.zig
+@@ -47,6 +47,12 @@ fn defaultMinP(kind: Kind) f32 {
+ /// Hands `slot` to its model's engine; the caller holds the scheduler's `queue_mu` and has put the slot on its
+ /// `offloaded` list. The slot's `in_pass` is held from here to its `finished` event.
+ pub fn submit(slot: *Slot, s: *Served) !void {
++    // Restore the original slot before the backend copies its request into an
++    // independent queue. This scope is submission custody, not native completion.
++    const origins = @import("../../../fios/current_slot_origins.zig");
++    var scope = try origins.retain(slot.io, @as([]const *Slot, &.{slot}));
++    if (scope) |*held| try held.enter(slot.io);
++    defer if (scope) |*held| { _ = held.finish(slot.io); };
+     const sp = slot.sampling;
+     // An engine that owns its vocabulary owns its stop set; the request's own EOS joins it.
+     var eos: std.ArrayList(u32) = .empty;
+@@ -265,3 +271,79 @@ test "submit: the engine's events land in the slot from its thread — prefilled
+     try testing.expectEqual(@as(u64, 3), row.prompt_tokens.load());
+     try testing.expectEqual(@as(u64, 5), row.generation_tokens.load());
+ }
++
++test "fios current offload submission restores retained slot origins" {
++    const owners = @import("../../../fios/request_ownership.zig");
++    try owners.shared().initialize(testing.io, @splat(73));
++    const root = try owners.shared().enter(testing.io);
++    defer owners.shared().leave(testing.io, root) catch {};
++    try owners.shared().bind(testing.io, root, "org/gguf-model");
++    owners.current().* = root;
++    defer owners.current().* = null;
++    const fake = @import("../../../testing/fake_engine.zig");
++    const ModelConfig = @import("../../../sdk/config/model.zig").ModelConfig;
++    const LoadedModel = @import("../../../host/registry/registry.zig").LoadedModel;
++    const Quiet = struct {
++        fn log(_: *anyopaque, _: u8, _: abi.Str) callconv(.c) void {}
++        fn wake(_: *anyopaque) callconv(.c) void {}
++    };
++    var progress: @import("../../../host/registry/load_progress.zig").Progress = .{};
++    var gauges: served_mod.Gauges = .{};
++    var metrics = @import("../../../host/metrics/metrics.zig").Metrics.init();
++    var s: Served = .{ .gpa = testing.allocator, .kind = .llama, .table = &fake.own_thread, .handle = undefined, .info = undefined, .host = undefined, .progress = &progress, .gauges = &gauges, .metrics = &metrics };
++    s.host = .{ .ctx = &s, .log = Quiet.log, .wake = Quiet.wake };
++    const o: abi.Open = .{ .model_dir = .{}, .model_type = .{}, .config_json = .{}, .context = 0, .max_concurrent = 1, .memory_budget = 0, .settings_json = .{}, .options_json = .{}, .host = &s.host };
++    var v: abi.Verdict = .{};
++    s.handle = fake.own_thread.open(&o, &s.info, &v) orelse return error.Open;
++    defer fake.own_thread.close(s.handle);
++
++    var lm: LoadedModel = undefined;
++    lm.engine = &s;
++    lm.transformer = null;
++    lm.id = "org/gguf-model";
++    var cfg: ModelConfig = .{};
++    const slot = try Slot.init(testing.allocator, testing.io, &cfg, .{ .model = &lm, .prompt_ids = &.{ 5, 6, 7 }, .sampling = .{ .temperature = 0 }, .eos_token_ids = &.{}, .max_tokens = 5 }, .dense);
++    defer slot.deinit();
++    const Check = struct {
++        var attributed: bool = false;
++        var expected: owners.Token = undefined;
++        fn call(e: *anyopaque, request_id: u64, r: *const abi.Request, sink: abi.Sink) callconv(.c) abi.Verdict {
++            if (owners.current_group().*) |group| attributed = group.len == 1 and std.meta.eql(group[0], expected);
++            return @import("../../../testing/fake_engine.zig").own_thread.submit(e, request_id, r, sink);
++        }
++    };
++    Check.expected = root;
++    Check.attributed = false;
++    var table = fake.own_thread;
++    table.submit = Check.call;
++    s.table = &table;
++    owners.current().* = null;
++    try submit(slot, &s);
++    try testing.expect(owners.current().* == null and owners.current_group().* == null);
++    var got: [8]u32 = undefined;
++    var n: usize = 0;
++    while (true) switch (slot.waitNext()) {
++        .token => |t| {
++            got[n] = t;
++            n += 1;
++        },
++        .done => break,
++        .err => return error.SlotFailed,
++    };
++    // The fake echoes the prompt, then counts from 1000; `max_tokens` cuts it.
++    try testing.expectEqualSlices(u32, &.{ 5, 6, 7, 1000, 1001 }, got[0..n]);
++    try testing.expectEqualStrings("length", slot.finish_reason);
++    try testing.expectEqual(@as(u32, 3), slot.prompt_tokens);
++    try testing.expectEqual(@as(u32, 5), slot.completion_tokens);
++    while (slot.in_pass.load(.acquire) != 0) testing.io.sleep(.fromMilliseconds(1), .awake) catch {};
++    try testing.expectEqual(@as(u64, 0), gauges.prefilling.load(.monotonic) + gauges.generated.load(.monotonic));
++    // The usage dashboard counts an embedded engine's traffic like MLX's: one row, under the model's id.
++    try testing.expectEqual(@as(u32, 1), metrics.usage_count.load(.acquire));
++    const row = &metrics.usage[0];
++    try testing.expectEqualStrings("org/gguf-model", row.name[0..row.name_len]);
++    try testing.expectEqual(@as(u64, 1), row.requests.load());
++    try testing.expectEqual(@as(u64, 3), row.prompt_tokens.load());
++    try testing.expectEqual(@as(u64, 5), row.generation_tokens.load());
++    if (!Check.attributed) std.debug.print("FIO_CURRENT_OFFLOAD_SUBMIT_LOST_ORIGINS\n", .{});
++    try testing.expect(Check.attributed);
++}

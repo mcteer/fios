@@ -247,3 +247,14 @@ test('current llama batch supplement adds only its executable fixture',()=>{
   const additions=sections[0].split('\n').filter(line=>line.startsWith('+')&&!line.startsWith('+++')).map(line=>line.slice(1)).join('\n')+'\n';
   assert.equal(additions.trimStart(),readFileSync('platform/studio/native/current_llama_batch_test.zig.fixture','utf8').trimStart());
 });
+
+
+test('current offload submission changes only the existing handoff and preserves its model-free fixture',()=>{
+  const patch=readFileSync('platform/studio/native/mlx-serve-26.11.2-offload-submit.patch','utf8');
+  const sections=patch.split(/(?=^diff --git )/m).filter(Boolean);
+  assert.equal(sections.length,1);
+  assert(sections[0].startsWith('diff --git a/src/engines/mlx/runtime/offload.zig b/src/engines/mlx/runtime/offload.zig\n'));
+  const start=sections[0].indexOf('\n+test "fios current offload submission');assert(start>=0);
+  const fixture=sections[0].slice(start+1).split('\n').filter(line=>line.startsWith('+')).map(line=>line.slice(1)).join('\n')+'\n';
+  assert.equal(fixture,readFileSync('platform/studio/native/current_offload_submit_test.zig.fixture','utf8').trimStart());
+});
