@@ -56,3 +56,12 @@ test('current startup addition preserves the existing exclusion companion',()=>{
   }
   assert.equal(expected.size,0);
 });
+
+test('current correlation addition stays within host ingress ownership',()=>{
+  const patch=readFileSync('platform/studio/native/mlx-serve-26.11.2-correlation.patch','utf8');
+  const paths=[...patch.matchAll(/^diff --git a\/(\S+) b\/(\S+)$/gm)];
+  assert.equal(paths.length,4);
+  assert.deepEqual(new Set(paths.map(match=>{
+    assert.equal(match[1],match[2]);return match[1];
+  })),new Set(['src/fios/correlation_header.zig','src/host/http/request.zig','src/host/http/router.zig','src/host/http/server.zig']));
+});

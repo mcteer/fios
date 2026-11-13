@@ -9,9 +9,10 @@ import pathlib,subprocess,socket,tempfile,os,time,http.client,json,signal,sys,st
 assert sys.platform=="darwin" and os.geteuid()>0
 assert len(sys.argv) in [4,5] and sys.argv[1]=="--isolated"
 mode=sys.argv[4] if len(sys.argv)==5 else None
-assert mode in [None,"--expected-instance","--exact-target","--startup"]
-check_instance=mode in ["--expected-instance","--exact-target"]
-check_target=mode=="--exact-target"
+assert mode in [None,"--expected-instance","--exact-target","--startup","--correlation"]
+check_instance=mode in ["--expected-instance","--exact-target","--correlation"]
+check_target=mode in ["--exact-target","--correlation"]
+check_correlation=mode=="--correlation"
 check_startup=mode=="--startup"
 binary=pathlib.Path(sys.argv[2]);expected=sys.argv[3]
 assert binary.is_absolute() and str(binary).startswith("/private/tmp/") and binary.name=="mlx-serve"
@@ -164,9 +165,27 @@ try:
     ('{"model":"mlx-serve","messages":[]}',(404,"native_target_not_found")),
    ]:
     assert rejected_with({"X-Fios-Native-Instance":instance},payload)==expected_result,"CURRENT_NATIVE_BOUND_JSON_SELECTION_CHANGED"
+   if check_correlation:
+    assert rejected_with({"X-Fios-Native-Instance":instance,"X-Fios-Request-ID":"bad-id"})==(400,"invalid_request_identity"),"CURRENT_NATIVE_CORRELATION_HEADER_IGNORED"
+    assert rejected_with({"X-Fios-Native-Instance":instance,"X-Fios-Request-ID":"a"*64})==(404,"native_target_not_found"),"CURRENT_NATIVE_VALID_CORRELATION_CHANGED_TARGET"
+    end=time.monotonic()+2
+    while time.monotonic()<end:
+     current,_=snapshot()
+     if current[0]==0:break
+     time.sleep(.025)
+    assert current[0]==0,"CURRENT_NATIVE_CORRELATION_HTTP_ROOT_NOT_RETIRED"
+    lineage_request=bytearray(64);lineage_request[:4]=b"FIQ9";lineage_request[4]=1;lineage_request[8:24]=bytes.fromhex(instance);lineage_request[24:56]=bytes([0xaa])*32
+    client=socket.socket(socket.AF_UNIX);client.settimeout(2);client.connect(str(control));client.sendall(lineage_request);client.shutdown(socket.SHUT_WR);lineage=b""
+    try:
+     while len(lineage)<112:
+      part=client.recv(112-len(lineage));assert part;lineage+=part
+    finally:client.close()
+    assert lineage[:8]==b"FIP9"+bytes([1,0,0,1]) and lineage[8:24].hex()==instance and lineage[24:56]==bytes([0xaa])*32,"CURRENT_NATIVE_MISSING_LINEAGE_NOT_UNKNOWN"
+    assert 0<struct.unpack(">Q",lineage[56:64])[0]<=9007199254740991 and lineage[64:100]==bytes(36)
+
   else:
    assert legacy==matching and legacy[0]>=400,"CURRENT_NATIVE_MATCHING_EPOCH_CHANGED_LEGACY_SELECTION"
- receipt={"binary_sha256":hashlib.sha256(binary.read_bytes()).hexdigest(),"native_pid":proc.pid,"source_instance":instance,"source_sequence":sequence,"source_sampled_at":stamp,"http_connection_counts":list(counts),"accepted_connection_observed":True,"original_http_connection_retired":True,"private_home":str(home),"models":0,"model_requests":7 if check_target else (3 if check_instance else 0),"expected_instance_guard_checked":check_instance,"exact_target_guard_checked":check_target,"startup_reservation_checked":check_startup,"startup_reacquired_after_original_exit":check_startup,"metadata_available_while_reserved":check_startup,"inference_started":False,"coverage":"unknown","native_admission_authority":False,"peer_authentication_proven":False,"installed":False}
+ receipt={"binary_sha256":hashlib.sha256(binary.read_bytes()).hexdigest(),"native_pid":proc.pid,"source_instance":instance,"source_sequence":sequence,"source_sampled_at":stamp,"http_connection_counts":list(counts),"accepted_connection_observed":True,"original_http_connection_retired":True,"private_home":str(home),"models":0,"model_requests":9 if check_correlation else (7 if check_target else (3 if check_instance else 0)),"expected_instance_guard_checked":check_instance,"exact_target_guard_checked":check_target,"correlation_header_checked":check_correlation,"retired_lineage_is_unknown":check_correlation,"startup_reservation_checked":check_startup,"startup_reacquired_after_original_exit":check_startup,"metadata_available_while_reserved":check_startup,"inference_started":False,"coverage":"unknown","native_admission_authority":False,"peer_authentication_proven":False,"installed":False}
  (home/"receipt.json").write_text(json.dumps(receipt,indent=2)+"\n");print(json.dumps(receipt))
 finally:
  if proc.poll() is None:proc.terminate()

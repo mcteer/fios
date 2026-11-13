@@ -75,3 +75,7 @@ No installed service, native inference process, model policy, RDMA, network or d
 ### Current-source startup checkpoint
 
 38/55 whole tasks complete. The current host entry point now retains private startup exclusion before model-capable effects; actual duplicate refusal, metadata availability, original health and post-exit reacquisition pass against the exact rebuilt empty-model binary. Target guard regression also passes. See [startup evidence](native-26112-port.md#private-startup-exclusion-slice). Current installed activation stays unsupported; native inference uncertainty is independent of this lock. Earlier pushed2a3a7a9 has all6 CI prerequisites plus aggregate green in run43343784441; later additions require their own exact-head checks. No merge/deployment.
+
+### Current-source ingress correlation checkpoint
+
+38/55 whole tasks complete. The exact current host now enrolls ingress before enqueue and associates optional opaque request IDs. Corrected full native build30/30,9 empty-registry request checks, actual missing-lineage-is-unknown wire check, startup regression,2 distinct component tests and5 source-input integrity checks pass. See [correlation evidence](native-26112-port.md#ingress-correlation-and-pre-enqueue-custody-slice) for hashes, retained failures,0-test non-evidence and exact scope. Backend/SDK/device origins and complete native admission remain unported; no task completion, installed action, merge or deployment is inferred.
