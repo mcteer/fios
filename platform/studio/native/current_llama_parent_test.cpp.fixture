@@ -1,0 +1,24 @@
+// Ordinary empty parent/context metadata; no model or native context is made.
+extern "C" void mlx_llama_log(bool, const char *) {}
+int main() {
+    alarm(5);
+    if (mlx_llama_source_uncertainty() != 0) return 10;
+    if (mlx_llama_try_close(nullptr) || mlx_llama_ctx_try_free(nullptr)) return 11;
+    auto *empty = new mlx_llama_engine();
+    if (mlx_llama_try_close(empty) != 1 || mlx_llama_source_uncertainty()) return 12;
+    auto *parent = new mlx_llama_engine();
+    auto *child = new mlx_llama_ctx();
+    if (!fios_llama_retain_parent(child, parent) || parent->fios_children != 1) return 13;
+    // All backend pointers are null: only local metadata retires here.
+    if (mlx_llama_ctx_try_free(child) != 1 || parent->fios_children != 0) return 14;
+    if (mlx_llama_try_close(parent) != 1 || mlx_llama_source_uncertainty()) return 15;
+    auto *held_parent = new mlx_llama_engine();
+    auto *held_child = new mlx_llama_ctx();
+    if (!fios_llama_retain_parent(held_child, held_parent)) return 16;
+    if (mlx_llama_try_close(held_parent) != 0 || mlx_llama_source_uncertainty() != 1) return 17;
+    if (!held_child->fios_parent_owned || held_parent->fios_children != 1) return 18;
+    if (mlx_llama_ctx_try_free(held_child) != 0 || held_parent->fios_children != 1) return 19;
+    mlx_llama_close(held_parent);
+    if (mlx_llama_source_uncertainty() != 1 || held_parent->fios_children != 1) return 20;
+    puts("PASS: actual empty llama parent custody retires locally and retains refused ownership with sticky uncertainty");
+}

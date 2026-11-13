@@ -801,3 +801,13 @@ node scripts/check-platform-cpu-media-units.mjs --isolated --source /ABS/PRIVATE
 ```
 
 This compiles actual current host/provider/SDK-hook/Shared sources into separate host and plugin-shaped objects, then runs2 ordinary metadata cycles in Debug and ReleaseSafe with IP networking denied. Each cycle retains2 exact original roots beyond caller release and restores unrelated worker TLS. Builds are bounded to120s each, execution to10s/mode; no model/GPU/native service or installation. It verifies declared source/fixture bytes before/after and canonical companions, not whole-native provenance or terminal/admission authority. Use it separately from full native compilation to preserve the two-compiler-job development bound.
+
+
+### Current llama parent metadata components
+
+```sh
+node scripts/check-platform-current-llama-parent.mjs --isolated --source /ABS/PRIVATE/CURRENT_SOURCE
+node scripts/check-platform-current-llama-parent-root.mjs --isolated --source /ABS/PRIVATE/CURRENT_SOURCE --zig /ABS/REVIEWED_ZIG
+```
+
+The first compiles the genuine shim with ordinary empty parent/child metadata, checks local retirement and retained live-child refusal, and runs Debug/optimized. The second links the same genuine C module to actual current queue/tracker/Shared and the exact fixed negative probe; a native worker's local completion must retain the original correlated request after the caller releases it. Debug/ReleaseSafe run with networking denied. No model/native llama context, injected backend/hardware error or installation. C builds≤60s for the first; component builds≤120s for the second; executions≤10s/mode. Receipts cover declared bytes and genuine b11429 library identity, not native terminality or all-client admission. Run separately from full native compilation to preserve the two-compiler-job bound. `--expect-missing` is only the pre-port interface baseline and does not run a model or demonstrate a premature free.

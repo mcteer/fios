@@ -301,3 +301,19 @@ test('current CPU media ownership keeps the plugin SDK closed and preserves its 
   }
   assert.equal(expected.size,0);
 });
+
+
+test('current llama parent custody stays in its genuine shim, matching wrappers and fixed negative probe',()=>{
+  const patch=readFileSync('platform/studio/native/mlx-serve-26.11.2-llama-parent.patch','utf8');
+  const expected=new Set(['lib/llama_shim/llama_shim.cpp','lib/llama_shim/llama_shim.h','src/engines/llama/bridge.zig','src/engines/llama/ffi.zig','src/host/http/server.zig','src/fios/current_backend_uncertainty.zig']);
+  for(const section of patch.split(/(?=^diff --git )/m).filter(Boolean)){
+    const header=/^diff --git a\/(\S+) b\/(\S+)\n/.exec(section);
+    assert(header);assert.equal(header[1],header[2]);assert(expected.delete(header[1]));
+    if(header[1]==='src/fios/current_backend_uncertainty.zig'){
+      assert(section.includes('\nnew file mode 100644\n'));
+      const bytes=section.split('\n').filter(line=>line.startsWith('+')&&!line.startsWith('+++')).map(line=>line.slice(1)).join('\n')+'\n';
+      assert.equal(bytes,readFileSync('platform/studio/native/current_backend_uncertainty.zig','utf8'));
+    }
+  }
+  assert.equal(expected.size,0);
+});
