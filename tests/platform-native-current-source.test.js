@@ -410,3 +410,25 @@ test('current scheduler cleanup keeps the host record and existing teardown fixt
   }
   assert.equal(expected.size,0);
 });
+
+
+test('current media cleanup keeps wrapper, registry and unload fixtures at the existing boundaries',()=>{
+  const patch=readFileSync('platform/studio/native/mlx-serve-26.11.2-media-close.patch','utf8');
+  const fixtures=new Map([
+    ['src/host/media_jobs/plugin/engine.zig',['fios current media close','current_media_close_test.zig.fixture']],
+    ['src/host/registry/registry.zig',['fios current registry media close','current_registry_media_close_test.zig.fixture']],
+    ['src/engines/mlx/runtime/load_requests.zig',['fios current media unload','current_media_unload_refusal_test.zig.fixture']],
+  ]);
+  const expected=new Set([...fixtures.keys(),'src/engines/mlx/runtime/model_state.zig']);
+  for(const section of patch.split(/(?=^diff --git )/m).filter(Boolean)){
+    const header=/^diff --git a\/(\S+) b\/(\S+)\n/.exec(section);
+    assert(header);assert.equal(header[1],header[2]);assert(expected.delete(header[1]));
+    if(fixtures.has(header[1])){
+      const [name,file]=fixtures.get(header[1]);
+      const start=section.indexOf('\n+test "'+name);assert(start>=0);
+      const fixture=section.slice(start+1).split('\n').filter(line=>line.startsWith('+')).map(line=>line.slice(1)).join('\n')+'\n';
+      assert.equal(fixture,readFileSync('platform/studio/native/'+file,'utf8').trimStart());
+    }
+  }
+  assert.equal(expected.size,0);
+});

@@ -1,0 +1,316 @@
+diff --git a/src/engines/mlx/runtime/load_requests.zig b/src/engines/mlx/runtime/load_requests.zig
+index 434379d..1d6dbf5 100644
+--- a/src/engines/mlx/runtime/load_requests.zig
++++ b/src/engines/mlx/runtime/load_requests.zig
+@@ -466,3 +466,61 @@ test "fios current unload refuses callback uncertainty without releasing account
+     try std.testing.expect(!original.releaseIfCertain(io));
+     // Retain the entire private diagnostic graph; no uncertainty reset.
+ }
++
++test "fios current media unload retains callback custody and accounting" {
++    const a = std.heap.page_allocator;
++    const io = std.testing.io;
++    const owners = @import("../../../fios/request_ownership.zig");
++    const media_mod = @import("../../../host/media_jobs/plugin/engine.zig");
++    owners.shared().primary_guard = false;
++    try owners.shared().initialize(io, @splat(157));
++    const registry = try model_registry_mod.ModelRegistry.init(a, io, null, 2, 0, null);
++    const model = try registry.registerStub("fixture/media-unload-refusal", "/fixture/never-loaded", null);
++    const root = try owners.shared().enter(io);
++    try owners.shared().bind(io, root, model.id);
++    owners.current().* = root;
++    const original = try a.create(owners.Retained);
++    original.* = (try owners.retainCurrent(io)).?;
++    owners.current().* = null;
++    const Probe = struct {
++        io: std.Io,
++        calls: usize = 0,
++        fn unload(raw: *anyopaque) callconv(.c) void {
++            const self: *@This() = @ptrCast(@alignCast(raw));
++            self.calls += 1;
++            owners.shared().fence(self.io);
++        }
++    };
++    const probe = try a.create(Probe);
++    probe.* = .{ .io = io };
++    const media_table = try a.create(media_mod.MediaTable);
++    media_table.* = undefined;
++    media_table.unload = Probe.unload;
++    const temp = try a.create(std.testing.TmpDir);
++    temp.* = std.testing.tmpDir(.{});
++    const dir = try temp.dir.openDir(io, ".", .{});
++    const engine = try a.create(media_mod.Engine);
++    engine.* = .{ .allocator = a, .io = io, .table = media_table, .handle = probe, .dir = dir, .fs = .{ .io = io, .root = dir }, .pack = undefined };
++    model.media_plugin = engine;
++    model.state = .evicting;
++    // Synthetic local accounting only: no weights, model or native context.
++    model.bytes_resident = 128;
++    registry.current_resident_bytes = 128;
++    const scheduler = try a.create(Scheduler);
++    scheduler.* = std.mem.zeroInit(Scheduler, .{ .allocator = a, .io = io, .registry = registry });
++    const request = try a.create(UnloadRequest);
++    request.* = .{ .entry = model, .fios_origins = original };
++    runUnloadRequest(scheduler, request);
++    try std.testing.expect(request.done);
++    try std.testing.expectEqual(@as(usize, 1), probe.calls);
++    if (model.media_plugin != engine) std.debug.print("FIO_CURRENT_MEDIA_UNLOAD_DROPPED_CALLBACK_CUSTODY\n", .{});
++    try std.testing.expect(request.fios_failed and model.state == .evicting);
++    try std.testing.expect(model.media_plugin == engine);
++    _ = try engine.dir.stat(io);
++    try std.testing.expectEqual(@as(u64, 128), model.bytes_resident);
++    try std.testing.expectEqual(@as(u64, 128), registry.current_resident_bytes);
++    try std.testing.expect(owners.current().* == null and owners.current_group().* == null);
++    try std.testing.expect(owners.shared().knownUncertain(io));
++    try std.testing.expect(!original.releaseIfCertain(io));
++    // Retain the entire private diagnostic graph; no uncertainty reset.
++}
+diff --git a/src/engines/mlx/runtime/model_state.zig b/src/engines/mlx/runtime/model_state.zig
+index dbbac17..71be922 100644
+--- a/src/engines/mlx/runtime/model_state.zig
++++ b/src/engines/mlx/runtime/model_state.zig
+@@ -71,10 +71,7 @@ pub fn unloadResident(self: *LoadedModel) void {
+     // A Thunderbolt pair's model unloads on both Macs; its next load plans again.
+     if (distributed.serves(self.path)) distributed.release();
+     if (registry.cleanupUncertain(io) or !self.tryCloseEngine()) return;
+-    if (self.media_plugin) |e| {
+-        e.deinit();
+-        self.media_plugin = null;
+-    }
++    if (!self.tryCloseMedia()) return;
+     if (registry.cleanupUncertain(io)) return;
+     self.gen_busy = false;
+     freeMlx(self);
+diff --git a/src/host/media_jobs/plugin/engine.zig b/src/host/media_jobs/plugin/engine.zig
+index 7b5cbd5..6bcdfaa 100644
+--- a/src/host/media_jobs/plugin/engine.zig
++++ b/src/host/media_jobs/plugin/engine.zig
+@@ -67,6 +67,7 @@ pub const Engine = struct {
+     machine: abi.Machine = .{},
+     /// Decision plugins: how long a pass waits for more requests to merge.
+     batch_window_us: u32 = 0,
++    fios_deinit_attempted: std.atomic.Value(bool) = .init(false),
+ 
+     /// Loads the pack at `model_dir` through `t` on stream `s`; a refusal is logged with the plugin's reason.
+     pub fn load(io: std.Io, allocator: std.mem.Allocator, model_dir: []const u8, t: *const MediaTable, s: mlx.mlx_stream) !*Engine {
+@@ -102,10 +103,23 @@ pub const Engine = struct {
+         return self;
+     }
+ 
+-    pub fn deinit(self: *Engine) void {
++    /// Checked local wrapper/directory retirement only. The caller retains a
++    /// stable enclosing reference and excludes new readers. A void callback
++    /// may retire its handle even on refusal: never reuse or replay it.
++    pub fn tryDeinit(self: *Engine) bool {
++        if (self.fios_deinit_attempted.cmpxchgStrong(false, true, .acq_rel, .acquire) != null) return false;
++        const options = @import("build_options");
++        const cleanup = @import("../../../fios/current_cleanup_uncertainty.zig");
++        if (cleanup.known(self.io, options.fios_source_sdk, options.llama_engine)) return false;
+         self.table.unload(self.handle);
++        if (cleanup.known(self.io, options.fios_source_sdk, options.llama_engine)) return false;
+         self.dir.close(self.io);
+         self.allocator.destroy(self);
++        return true;
++    }
++
++    pub fn deinit(self: *Engine) void {
++        _ = self.tryDeinit();
+     }
+ 
+     /// The scheduler's reserve for one request (`GenRequest.peak_bytes`): the request's whole peak, or 0 (the load
+@@ -126,3 +140,67 @@ pub const Engine = struct {
+         return p.table.modality == .audio and @field(p.caps.routes, route);
+     }
+ };
++
++test "fios current media close retains callback uncertainty and directory" {
++    const io = std.testing.io;
++    const page = std.heap.page_allocator;
++    const owners = @import("../../../fios/request_ownership.zig");
++    owners.shared().primary_guard = false;
++    try owners.shared().initialize(io, @splat(149));
++    const Trace = struct {
++        freed: bool = false,
++        fn alloc(_: *anyopaque, n: usize, alignment: std.mem.Alignment, ret: usize) ?[*]u8 {
++            return std.heap.page_allocator.rawAlloc(n, alignment, ret);
++        }
++        fn free(raw: *anyopaque, bytes: []u8, alignment: std.mem.Alignment, ret: usize) void {
++            const self: *@This() = @ptrCast(@alignCast(raw));
++            self.freed = true;
++            std.heap.page_allocator.rawFree(bytes, alignment, ret);
++        }
++        const vtable: std.mem.Allocator.VTable = .{ .alloc = alloc, .resize = std.mem.Allocator.noResize, .remap = std.mem.Allocator.noRemap, .free = free };
++        fn allocator(self: *@This()) std.mem.Allocator { return .{ .ptr = self, .vtable = &vtable }; }
++    };
++    const Probe = struct {
++        io: std.Io,
++        unknown: bool,
++        calls: usize = 0,
++        fn unload(raw: *anyopaque) callconv(.c) void {
++            const self: *@This() = @ptrCast(@alignCast(raw));
++            self.calls += 1;
++            if (self.unknown) owners.shared().fence(self.io);
++        }
++    };
++    const media_table = try page.create(MediaTable);
++    media_table.* = undefined;
++    media_table.unload = Probe.unload;
++    for ([_]bool{ false, true }) |unknown| {
++        const temp = try page.create(std.testing.TmpDir);
++        temp.* = std.testing.tmpDir(.{});
++        const dir = try temp.dir.openDir(io, ".", .{});
++        const trace = try page.create(Trace);
++        trace.* = .{};
++        const allocator = trace.allocator();
++        const probe = try page.create(Probe);
++        probe.* = .{ .io = io, .unknown = unknown };
++        const engine = try allocator.create(Engine);
++        engine.* = .{ .allocator = allocator, .io = io, .table = media_table, .handle = probe, .dir = dir, .fs = .{ .io = io, .root = dir }, .pack = undefined };
++        engine.deinit();
++        try std.testing.expectEqual(@as(usize, 1), probe.calls);
++        if (unknown) {
++            if (trace.freed) std.debug.print("FIO_CURRENT_MEDIA_DROPPED_UNCERTAIN_WRAPPER\n", .{});
++            try std.testing.expect(!trace.freed); // Witness before dereference.
++            _ = try engine.dir.stat(io);
++            engine.deinit();
++            try std.testing.expect(!trace.freed);
++            try std.testing.expectEqual(@as(usize, 1), probe.calls);
++            try std.testing.expect(owners.shared().knownUncertain(io));
++            // Retain the owned temporary directory and descriptors too.
++        } else {
++            try std.testing.expect(trace.freed);
++            temp.cleanup();
++            page.destroy(temp);
++            page.destroy(probe);
++            page.destroy(trace);
++        }
++    }
++}
+diff --git a/src/host/registry/registry.zig b/src/host/registry/registry.zig
+index 6c931c2..efba739 100644
+--- a/src/host/registry/registry.zig
++++ b/src/host/registry/registry.zig
+@@ -400,6 +400,15 @@ pub const LoadedModel = struct {
+         _ = self.tryCloseEngine();
+     }
+ 
++    pub fn tryCloseMedia(self: *LoadedModel) bool {
++        if (self.media_plugin) |e| {
++            if (self.refcount.load(.acquire) != 0) return false;
++            if (!e.tryDeinit()) return false;
++            self.media_plugin = null;
++        }
++        return true;
++    }
++
+     /// Free all owned state. Safe to call regardless of `state` — null
+     /// model fields are skipped. Mlx-allocating fields are freed in
+     /// drafter → vision → transformer → weights order to mirror the
+@@ -408,11 +417,7 @@ pub const LoadedModel = struct {
+     /// stream); the caller arranges this via `unloadResident` invoked
+     /// from the inference thread before registry teardown.
+     pub fn deinit(self: *LoadedModel) void {
+-        if (!self.tryCloseEngine()) return;
+-        if (self.media_plugin) |e| {
+-            e.deinit();
+-            self.media_plugin = null;
+-        }
++        if (!self.tryCloseEngine() or !self.tryCloseMedia()) return;
+         self.gen_busy = false;
+         mlx_engine.api().free_model_state(self);
+         if (self.token_bytes) |*tb| {
+@@ -683,7 +688,7 @@ pub const ModelRegistry = struct {
+         // public shutdown phase; other media/MLX destructors remain separate.
+         var closers = self.entries.valueIterator();
+         while (closers.next()) |entry| {
+-            if (!entry.*.tryCloseEngine()) return;
++            if (!entry.*.tryCloseEngine() or !entry.*.tryCloseMedia()) return;
+         }
+         self.deinitInternal();
+         self.allocator.destroy(self);
+@@ -2783,3 +2788,86 @@ test "fios current registry close retains callback refusal through the parent" {
+         }
+     }
+ }
++
++test "fios current registry media close retains callback refusal through the parent" {
++    const io = std.testing.io;
++    const page = std.heap.page_allocator;
++    const owners = @import("../../fios/request_ownership.zig");
++    const media_mod = @import("../media_jobs/plugin/engine.zig");
++    owners.shared().primary_guard = false;
++    try owners.shared().initialize(io, @splat(151));
++    const Trace = struct {
++        model: usize = 0,
++        registry: usize = 0,
++        sibling: usize = 0,
++        wrapper: usize = 0,
++        model_freed: bool = false,
++        registry_freed: bool = false,
++        sibling_freed: bool = false,
++        wrapper_freed: bool = false,
++        fn alloc(_: *anyopaque, n: usize, alignment: std.mem.Alignment, ret: usize) ?[*]u8 {
++            return std.heap.page_allocator.rawAlloc(n, alignment, ret);
++        }
++        fn free(raw: *anyopaque, bytes: []u8, alignment: std.mem.Alignment, ret: usize) void {
++            const self: *@This() = @ptrCast(@alignCast(raw));
++            if (@intFromPtr(bytes.ptr) == self.model) self.model_freed = true;
++            if (@intFromPtr(bytes.ptr) == self.registry) self.registry_freed = true;
++            if (@intFromPtr(bytes.ptr) == self.sibling) self.sibling_freed = true;
++            if (@intFromPtr(bytes.ptr) == self.wrapper) self.wrapper_freed = true;
++            std.heap.page_allocator.rawFree(bytes, alignment, ret);
++        }
++        const vtable: std.mem.Allocator.VTable = .{ .alloc = alloc, .resize = std.mem.Allocator.noResize, .remap = std.mem.Allocator.noRemap, .free = free };
++        fn allocator(self: *@This()) std.mem.Allocator { return .{ .ptr = self, .vtable = &vtable }; }
++    };
++    const Probe = struct {
++        io: std.Io,
++        unknown: bool,
++        calls: usize = 0,
++        fn unload(raw: *anyopaque) callconv(.c) void {
++            const self: *@This() = @ptrCast(@alignCast(raw));
++            self.calls += 1;
++            if (self.unknown) owners.shared().fence(self.io);
++        }
++    };
++    const media_table = try page.create(media_mod.MediaTable);
++    media_table.* = undefined;
++    media_table.unload = Probe.unload;
++    for ([_]bool{ false, true }) |unknown| {
++        const trace = try page.create(Trace);
++        trace.* = .{};
++        const allocator = trace.allocator();
++        const registry = try ModelRegistry.init(allocator, io, null, 2, 0, null);
++        const model = try registry.registerStub("fixture/registry-close", "/fixture/never-loaded", null);
++        const sibling = try registry.registerStub("fixture/registry-sibling", "/fixture/also-never-loaded", null);
++        trace.sibling = @intFromPtr(sibling);
++        trace.registry = @intFromPtr(registry);
++        trace.model = @intFromPtr(model);
++        const probe = try page.create(Probe);
++        probe.* = .{ .io = io, .unknown = unknown };
++        const temp = try page.create(std.testing.TmpDir);
++        temp.* = std.testing.tmpDir(.{});
++        const dir = try temp.dir.openDir(io, ".", .{});
++        const engine = try allocator.create(media_mod.Engine);
++        engine.* = .{ .allocator = allocator, .io = io, .table = media_table, .handle = probe, .dir = dir, .fs = .{ .io = io, .root = dir }, .pack = undefined };
++        trace.wrapper = @intFromPtr(engine);
++        model.media_plugin = engine;
++        registry.deinit();
++        try std.testing.expectEqual(@as(usize, 1), probe.calls);
++        if (unknown) {
++            if (trace.model_freed or trace.registry_freed) std.debug.print("FIO_CURRENT_REGISTRY_MEDIA_DROPPED_CALLBACK_REFUSAL\n", .{});
++            try std.testing.expect(!trace.model_freed and !trace.registry_freed and !trace.sibling_freed and !trace.wrapper_freed);
++            try std.testing.expectEqualStrings("fixture/registry-close", model.id);
++            try std.testing.expect(model.media_plugin == engine);
++            try std.testing.expectEqual(@as(usize, 2), registry.entries.count());
++            _ = try engine.dir.stat(io);
++            registry.deinit();
++            try std.testing.expectEqual(@as(usize, 1), probe.calls);
++        } else {
++            try std.testing.expect(trace.model_freed and trace.registry_freed and trace.sibling_freed and trace.wrapper_freed);
++            page.destroy(probe);
++            temp.cleanup();
++            page.destroy(temp);
++            page.destroy(trace);
++        }
++    }
++}

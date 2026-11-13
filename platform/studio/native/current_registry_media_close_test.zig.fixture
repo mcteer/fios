@@ -1,0 +1,83 @@
+
+test "fios current registry media close retains callback refusal through the parent" {
+    const io = std.testing.io;
+    const page = std.heap.page_allocator;
+    const owners = @import("../../fios/request_ownership.zig");
+    const media_mod = @import("../media_jobs/plugin/engine.zig");
+    owners.shared().primary_guard = false;
+    try owners.shared().initialize(io, @splat(151));
+    const Trace = struct {
+        model: usize = 0,
+        registry: usize = 0,
+        sibling: usize = 0,
+        wrapper: usize = 0,
+        model_freed: bool = false,
+        registry_freed: bool = false,
+        sibling_freed: bool = false,
+        wrapper_freed: bool = false,
+        fn alloc(_: *anyopaque, n: usize, alignment: std.mem.Alignment, ret: usize) ?[*]u8 {
+            return std.heap.page_allocator.rawAlloc(n, alignment, ret);
+        }
+        fn free(raw: *anyopaque, bytes: []u8, alignment: std.mem.Alignment, ret: usize) void {
+            const self: *@This() = @ptrCast(@alignCast(raw));
+            if (@intFromPtr(bytes.ptr) == self.model) self.model_freed = true;
+            if (@intFromPtr(bytes.ptr) == self.registry) self.registry_freed = true;
+            if (@intFromPtr(bytes.ptr) == self.sibling) self.sibling_freed = true;
+            if (@intFromPtr(bytes.ptr) == self.wrapper) self.wrapper_freed = true;
+            std.heap.page_allocator.rawFree(bytes, alignment, ret);
+        }
+        const vtable: std.mem.Allocator.VTable = .{ .alloc = alloc, .resize = std.mem.Allocator.noResize, .remap = std.mem.Allocator.noRemap, .free = free };
+        fn allocator(self: *@This()) std.mem.Allocator { return .{ .ptr = self, .vtable = &vtable }; }
+    };
+    const Probe = struct {
+        io: std.Io,
+        unknown: bool,
+        calls: usize = 0,
+        fn unload(raw: *anyopaque) callconv(.c) void {
+            const self: *@This() = @ptrCast(@alignCast(raw));
+            self.calls += 1;
+            if (self.unknown) owners.shared().fence(self.io);
+        }
+    };
+    const media_table = try page.create(media_mod.MediaTable);
+    media_table.* = undefined;
+    media_table.unload = Probe.unload;
+    for ([_]bool{ false, true }) |unknown| {
+        const trace = try page.create(Trace);
+        trace.* = .{};
+        const allocator = trace.allocator();
+        const registry = try ModelRegistry.init(allocator, io, null, 2, 0, null);
+        const model = try registry.registerStub("fixture/registry-close", "/fixture/never-loaded", null);
+        const sibling = try registry.registerStub("fixture/registry-sibling", "/fixture/also-never-loaded", null);
+        trace.sibling = @intFromPtr(sibling);
+        trace.registry = @intFromPtr(registry);
+        trace.model = @intFromPtr(model);
+        const probe = try page.create(Probe);
+        probe.* = .{ .io = io, .unknown = unknown };
+        const temp = try page.create(std.testing.TmpDir);
+        temp.* = std.testing.tmpDir(.{});
+        const dir = try temp.dir.openDir(io, ".", .{});
+        const engine = try allocator.create(media_mod.Engine);
+        engine.* = .{ .allocator = allocator, .io = io, .table = media_table, .handle = probe, .dir = dir, .fs = .{ .io = io, .root = dir }, .pack = undefined };
+        trace.wrapper = @intFromPtr(engine);
+        model.media_plugin = engine;
+        registry.deinit();
+        try std.testing.expectEqual(@as(usize, 1), probe.calls);
+        if (unknown) {
+            if (trace.model_freed or trace.registry_freed) std.debug.print("FIO_CURRENT_REGISTRY_MEDIA_DROPPED_CALLBACK_REFUSAL\n", .{});
+            try std.testing.expect(!trace.model_freed and !trace.registry_freed and !trace.sibling_freed and !trace.wrapper_freed);
+            try std.testing.expectEqualStrings("fixture/registry-close", model.id);
+            try std.testing.expect(model.media_plugin == engine);
+            try std.testing.expectEqual(@as(usize, 2), registry.entries.count());
+            _ = try engine.dir.stat(io);
+            registry.deinit();
+            try std.testing.expectEqual(@as(usize, 1), probe.calls);
+        } else {
+            try std.testing.expect(trace.model_freed and trace.registry_freed and trace.sibling_freed and trace.wrapper_freed);
+            page.destroy(probe);
+            temp.cleanup();
+            page.destroy(temp);
+            page.destroy(trace);
+        }
+    }
+}
