@@ -21,3 +21,12 @@ test('current ingress patch changes only host integration and exact shared compa
   }
   assert.equal(expected.size,0);
 });
+
+test('current process-instance addition remains separate from engine implementation',()=>{
+  const patch=readFileSync('platform/studio/native/mlx-serve-26.11.2-instance.patch','utf8');
+  const paths=[...patch.matchAll(/^diff --git a\/(\S+) b\/(\S+)$/gm)];
+  assert.equal(paths.length,2);
+  assert.deepEqual(new Set(paths.map(match=>{
+    assert.equal(match[1],match[2]);return match[1];
+  })),new Set(['src/fios/instance_header.zig','src/host/http/router.zig']));
+});

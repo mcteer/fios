@@ -6,7 +6,9 @@
 # Kernel-authenticated manager integration is separate from this wire fixture.
 import pathlib,subprocess,socket,tempfile,os,time,http.client,json,signal,sys,struct,hashlib
 assert sys.platform=="darwin" and os.geteuid()>0
-assert len(sys.argv)==4 and sys.argv[1]=="--isolated"
+assert len(sys.argv) in [4,5] and sys.argv[1]=="--isolated"
+check_instance=len(sys.argv)==5
+assert not check_instance or sys.argv[4]=="--expected-instance"
 binary=pathlib.Path(sys.argv[2]);expected=sys.argv[3]
 assert binary.is_absolute() and str(binary).startswith("/private/tmp/") and binary.name=="mlx-serve"
 info=binary.lstat();assert binary.is_file() and not binary.is_symlink() and info.st_uid==os.geteuid() and info.st_nlink==1 and not info.st_mode&0o022 and 0<info.st_size<=64*1024*1024
@@ -76,7 +78,26 @@ try:
   if current[0]==0:released=True;break
   time.sleep(.025)
  assert released,"CURRENT_NATIVE_HTTP_CONNECTION_NOT_RETIRED"
- receipt={"binary_sha256":hashlib.sha256(binary.read_bytes()).hexdigest(),"native_pid":proc.pid,"source_instance":instance,"source_sequence":sequence,"source_sampled_at":stamp,"http_connection_counts":list(counts),"accepted_connection_observed":True,"original_http_connection_retired":True,"private_home":str(home),"models":0,"model_requests":0,"coverage":"unknown","native_admission_authority":False,"peer_authentication_proven":False,"installed":False}
+ if check_instance:
+  wrong=("0" if instance[0]!="0" else "1")+instance[1:]
+  connection=http.client.HTTPConnection("127.0.0.1",port,timeout=2)
+  try:
+   body=json.dumps({"model":"fixture/missing-model","messages":[{"role":"user","content":"fixture only"}],"max_tokens":1})
+   connection.request("POST","/v1/chat/completions",body,{"Content-Type":"application/json","X-Fios-Native-Instance":wrong})
+   response=connection.getresponse();reply=response.read(65537)
+   assert len(reply)<=65536 and response.status==409,"CURRENT_NATIVE_STALE_EPOCH_NOT_REJECTED"
+   assert json.loads(reply)["error"]["type"]=="native_instance_changed"
+  finally:connection.close()
+  def rejected_with(headers):
+   connection=http.client.HTTPConnection("127.0.0.1",port,timeout=2)
+   try:
+    connection.request("POST","/v1/chat/completions",body,{"Content-Type":"application/json",**headers})
+    response=connection.getresponse();data=response.read(65537);assert len(data)<=65536
+    return response.status,json.loads(data)["error"]["type"]
+   finally:connection.close()
+  legacy=rejected_with({});matching=rejected_with({"X-Fios-Native-Instance":instance})
+  assert legacy==matching and legacy[0]>=400,"CURRENT_NATIVE_MATCHING_EPOCH_CHANGED_LEGACY_SELECTION"
+ receipt={"binary_sha256":hashlib.sha256(binary.read_bytes()).hexdigest(),"native_pid":proc.pid,"source_instance":instance,"source_sequence":sequence,"source_sampled_at":stamp,"http_connection_counts":list(counts),"accepted_connection_observed":True,"original_http_connection_retired":True,"private_home":str(home),"models":0,"model_requests":3 if check_instance else 0,"expected_instance_guard_checked":check_instance,"inference_started":False,"coverage":"unknown","native_admission_authority":False,"peer_authentication_proven":False,"installed":False}
  (home/"receipt.json").write_text(json.dumps(receipt,indent=2)+"\n");print(json.dumps(receipt))
 finally:
  if proc.poll() is None:proc.terminate()

@@ -47,7 +47,7 @@ The old18-path patch fails a read-only applicability check. A path rename is ins
 - Version source-build/capsule declarations around actual new inputs. Retain old26.10.3 artifacts as historical candidates. No old dependency receipt, empty-model fixture, backend flag or uninstrumented vendor baseline is promoted to current all-client/installed acceptance.
 - Continue ordinary correctness checks only. Installed activation, privileged/disruptive acceptance and both-Studio scenarios remain separately gated. Small-model tests belong only on core; there is no Studio small-model substitution or cybersecurity campaign.
 
-These are implementation requirements, not completed checks. T002/T018–T022 and the dependent runtime/lifecycle/release tasks remain open. Only the HTTP connection/control slice is ported. Backend/model/device custody, startup reservation, bound local-target/process guards and the complete native contract remain unported.
+These are implementation requirements, not completed checks. T002/T018–T022 and the dependent runtime/lifecycle/release tasks remain open. Only the HTTP connection/control slice is ported. Backend/model/device custody, startup reservation, bound local-target/correlation guards and the complete native contract remain unported.
 
 ## Reproduce the first slice
 
@@ -66,3 +66,16 @@ On core, execute the bounded wire fixture against the reviewed private binary:
 ```
 
 The fixture is not a build/source attestor, a package installer or a native admission issuer. It explicitly reports no kernel peer authentication proof; the separate actual Swift manager receipt supplies that transport check. Health, connection retirement and local child reaping never clear native inference uncertainty. All private state is retained; original children are stopped without touching installed services. No model POST is issued.
+
+## Expected-process consistency slice
+
+The separate [instance addition](../../platform/studio/native/mlx-serve-26.11.2-instance.patch), SHA2e998f1f1fa2d3f98bb5708ed3ab351e8d5f1b454dcb077219bdd11e21d94e3a, applies after the ingress patch on the exact current base. It changes only the router and a private header parser. The parser preserves the existing optional lowercase32-hex/nonzero/duplicate refusal rules. A supplied stale instance returns409 before model resolution or provider/LAN forwarding; unavailable tracking returns503. A matching instance is consistency metadata, not admission. Header-absent behavior stays unchanged.
+
+Actual pre-change empty-model failure is `CURRENT_NATIVE_STALE_EPOCH_NOT_REJECTED` (`instance-prior-final.log`). Full native rebuild passes30/30 in177.268s; binary SHA95c8dc54b56c2bd48e892c37bc2259bca1c3ebebd8ca8f186f4fc871d14df98c. Canonical core-only fixture passes with `--expected-instance`:3 POSTs for the same unregistered fixture model,0 inference, stale409 and matching-vs-legacy missing-model control (`/private/tmp/f9-cur-ingress-yxvcjr56/receipt.json`, `instance-canonical.log`). This is not model competence, correlation, safe model replacement, startup reservation, backend retirement or atomic admission. Exact local-target/alias binding is still unported.
+
+```sh
+# In a fresh exact source tree, apply ingress then instance additions.
+.venv/bin/python -I -B tests/fixtures/platform/current-native-ingress.py --isolated ABS_PRIVATE_BINARY REVIEWED_BINARY_SHA256 --expected-instance
+```
+
+The optional flag records all3 actual model POST attempts; they reject against an empty model directory and do not invoke a model. Source integrity2/2 and exact sequential patch application pass. No installed service or Studio inference is exercised.
