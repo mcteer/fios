@@ -760,3 +760,19 @@ test('current private ANE request owner custody changes only the declared bridge
     const fixture=readFileSync('platform/studio/native/'+name,'utf8');assert(!/\b_ANE[A-Za-z]/.test(fixture));
   }
 });
+
+
+test('current private ANE seam guard preserves declared source and fixture bytes',()=>{
+  const patch=readFileSync('platform/studio/native/mlx-serve-26.11.2-ane-seam-uncertainty.patch','utf8');
+  const sections=patch.split(/(?=^diff --git )/m).filter(Boolean);
+  const expected=new Set(['src/sdk/ane/source_guard.zig','src/sdk/ane/offload.zig','src/engines/mlx/ane_prefill.zig','src/sdk/bases/block.zig']);
+  for(const section of sections){
+    const h=section.match(/^diff --git a\/(\S+) b\/(\S+)/);assert(h&&h[1]===h[2]&&expected.delete(h[1]));
+    if(h[1]==='src/sdk/ane/source_guard.zig'){
+      const bytes=section.split('\n').filter(line=>line.startsWith('+')&&!line.startsWith('+++')).map(line=>line.slice(1)).join('\n')+'\n';
+      assert.equal(bytes,readFileSync('platform/studio/native/current_ane_sdk_source_guard.zig','utf8'));
+      assert.equal(bytes.slice(bytes.indexOf('// Ordinary metadata callback spy:')),readFileSync('platform/studio/native/current_ane_seam_test.zig.fixture','utf8'));
+    }
+  }
+  assert.equal(expected.size,0);
+});

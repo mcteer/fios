@@ -1,0 +1,41 @@
+//! Actual empty C bookkeeping request-owner refusal -> fixed negative getter -> original lineage.
+const std = @import("std");
+const owners = @import("fios/request_ownership.zig");
+const outcome = @import("fios/current_ane_run_uncertainty.zig");
+const guard = @import("sdk/ane/source_guard.zig");
+const locked = @import("fios/current_ane_native_locked_cleanup_uncertainty.zig");
+extern fn fios_fixture_ane_request_owners_refusal() c_int;
+const Spy = struct {
+    calls: *usize,
+    pub fn full(self: @This(), x: usize) !usize { self.calls.* += 1;return x + 1; }
+};
+pub fn main(init: std.process.Init) !void {
+    const io = init.io;
+    if (outcome.known()) return error.InitialFence;
+    owners.shared().primary_guard = false;
+    try owners.shared().initialize(io, @splat(119));
+    const root = try owners.shared().enter(io);
+    const correlation: owners.CorrelationID = @splat(120);
+    try owners.shared().associate(io, root, correlation);
+    try owners.shared().bind(io, root, "fixture/ane-reported-outcome");
+    owners.current().* = root;
+    const retained = (try owners.retainCurrent(io)).?;
+    if (fios_fixture_ane_request_owners_refusal() != 1) return error.CRequestOwnersRefusalMissing;
+    if (!locked.known(io, false, false)) return error.CRequestOwnersNegativeNotComposed;
+    if (!guard.known()) return error.SDKGetterMissedCUncertainty;
+    var calls: usize = 0;
+    const result = guard.fallback(Spy{ .calls = &calls }, @as(usize, 1));
+    if (result) |_| return error.SDKFallbackWasInvoked else |err| {
+        if (err != error.FiosAneSourceUncertain) return err;
+    }
+    if (calls != 0) return error.SDKFallbackCallbackRan;
+    owners.current().* = null;
+    try owners.shared().leave(io, root);
+    if (retained.releaseIfCertain(io)) return error.OriginalMetadataReleased;
+    if (outcome.known()) return error.RunLatchIncorrectlySubstituted;
+    const snapshot = owners.shared().snapshot(io);
+    const lineage = owners.shared().correlationSnapshot(io, correlation);
+    if (!snapshot.uncertain or snapshot.owned != 1 or !lineage.found or !lineage.uncertain or lineage.references != 1)
+        return error.OriginalLineageLost;
+    std.debug.print("PASS: actual ANE C refusal blocks SDK fallback and preserves original lineage, models0\n", .{});
+}
