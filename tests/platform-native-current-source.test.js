@@ -110,3 +110,25 @@ test('current shared ownership adapter stays within storage and its existing cal
     assert.equal(match[1],match[2]);return match[1];
   })),new Set(['src/fios/request_ownership.zig','src/fios/queued_request_ownership.zig','src/fios/control_transport.zig','src/host/http/request.zig','src/host/http/router.zig','src/host/http/server.zig','src/shared_all.zig']));
 });
+
+test('current optional SDK bridge preserves canonical native owner logic with shared accessors',()=>{
+  const patch=readFileSync('platform/studio/native/mlx-serve-26.11.2-sdk-ownership.patch','utf8');
+  const sections=patch.split(/(?=^diff --git )/m).filter(Boolean);
+  assert.equal(sections.length,5);
+  const expected=new Set(['build/macos.zig','src/fios/current_sdk_owners.cpp','src/fios/sdk_request_ownership.zig','src/fios/request_ownership.zig','src/host/http/server.zig']);
+  for(const section of sections){
+    const header=/^diff --git a\/(\S+) b\/(\S+)\n/.exec(section);
+    assert(header);assert.equal(header[1],header[2]);assert(expected.delete(header[1]));
+    if(header[1]==='src/fios/sdk_request_ownership.zig'){
+      const hunk=section.slice(section.indexOf('\n@@ ')+1).split('\n').slice(1);
+      const bytes=hunk.filter(line=>line.startsWith('+')).map(line=>line.slice(1)).join('\n')+'\n';
+      const original=readFileSync('platform/studio/native/sdk_request_ownership.zig','utf8')
+        .replace(/&owners\.shared\b/g,'owners.shared()')
+        .replace(/owners\.shared\b(?!\()/g,'owners.shared()')
+        .replace(/owners\.current_group\b(?!\()/g,'owners.current_group().*')
+        .replace(/owners\.current\b(?!\()/g,'owners.current().*');
+      assert.equal(bytes,original);
+    }
+  }
+  assert.equal(expected.size,0);
+});
