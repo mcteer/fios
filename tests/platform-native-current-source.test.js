@@ -83,3 +83,21 @@ test('current MLX dependency ownership addition stays within the seven reviewed 
     assert.equal(match[1],match[2]);return match[1];
   })),new Set(['mlx/backend/cpu/eval.cpp','mlx/backend/metal/device.cpp','mlx/backend/metal/device.h','mlx/backend/metal/eval.cpp','mlx/scheduler.cpp','mlx/stream.cpp','mlx/stream.h']));
 });
+
+test('current load handoff adds only scheduling metadata and the exact queue companion',()=>{
+  const patch=readFileSync('platform/studio/native/mlx-serve-26.11.2-load-origins.patch','utf8');
+  const sections=patch.split(/(?=^diff --git )/m).filter(Boolean);
+  assert.equal(sections.length,4);
+  const expected=new Set(['src/host/gpu_thread/requests.zig','src/engines/mlx/scheduler.zig','src/engines/mlx/runtime/load_requests.zig','src/fios/queued_request_ownership.zig']);
+  for(const section of sections){
+    const header=/^diff --git a\/(\S+) b\/(\S+)\n/.exec(section);
+    assert(header);assert.equal(header[1],header[2]);assert(expected.delete(header[1]));
+    if(header[1]==='src/fios/queued_request_ownership.zig'){
+      assert(section.includes('\nnew file mode 100644\n'));
+      const hunk=section.slice(section.indexOf('\n@@ ')+1).split('\n').slice(1);
+      const bytes=hunk.filter(line=>line.startsWith('+')).map(line=>line.slice(1)).join('\n')+'\n';
+      assert.equal(bytes,readFileSync('platform/studio/native/queued_request_ownership.zig','utf8'));
+    }
+  }
+  assert.equal(expected.size,0);
+});

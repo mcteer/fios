@@ -183,3 +183,16 @@ The distinct-origin fixture separately passes both modes: first-origin encoding 
 ```
 
 SDK/native callback components are now exercised for these positive paths, but current HTTP/scheduler/load/slot/model/native ABI bridge, other enabled backends/modalities, independently uncertain/cancellation/destructive transitions and all-client admission still remain uncomposed/unproven. Whole count38/55; no whole task is completed by these scoped component receipts.
+
+## Load queue ownership handoff
+
+The [load-origin addition](../../platform/studio/native/mlx-serve-26.11.2-load-origins.patch), SHA71dfecc82f899d39b0d66b176bee763c8f75a30924748121d6755be1f88c030d, applies after the6 host layers. It adds a byte-identical [queued scope](../../platform/studio/native/queued_request_ownership.zig) and changes existing request/scheduler/load-worker metadata only. It implements no model engine or new load/eviction policy. Sender origin storage survives the existing uncancelable `done` wait; GPU/ANE workers clone original references before effects, keep worker-local token storage through cleanup and restore prior TLS. ANE requeue/fallback retains the sender while `done` is false. Known native uncertainty prevents conditional metadata release. No acknowledgement is native terminal proof.
+
+A genuine current-SDK component tests this exact helper across an actual native thread: sender references finish after worker capture, work acknowledgement precedes worker exit, and original roots remain through genuine SDK parent/destructor-enqueued callbacks. Debug and ReleaseSafe pass (`/private/tmp/fios-009-sdk-host-owners-wlryWr/receipt.json`, c693 parent `native-queued-owner-composition.log`);0 models/Metal/installed actions. The explicit current driver `--queued` is healthy CPU-only and cannot select error/Metal/abandonment variants.
+
+```sh
+# Same reviewed current SDK/source/Zig/developer arguments as other components:
+# add --current-sdk --queued
+```
+
+Full current native build passes30/30 in242.485s, binary SHAda407b25bef9d38c00598e602a98aebb7881c1e3c992f618b87d869ef5f272fa. Declared changed inputs match after build. Empty-registry correlation9-POST/unknown-lineage, startup and actual manager authentication regressions pass (`custody-{correlation,startup,manager}.log` in the current native parent),0 inference/installed actions. Sequential patch application,8 source-input and3 current-metadata tests pass. These empty-registry tests do not enter positive cold-load/ANE paths or establish their cross-compilation-unit/global/context lifetime. The full server still uses its uninstrumented vendor SDK; source SDK/native bridge, slots, model/registry/destructive transitions, other modalities/backends and all-client admission remain uncomposed/unproven. T018/T021/T022 remain open;38/55 whole tasks complete.

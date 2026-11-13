@@ -370,3 +370,5 @@ Currentc69303b SDK source ownership component now builds and passes3 ordinary CP
 Current SDK/native tracker parent/destructor-spawned CPU callback composition now passes both client modes under the explicit healthy-only current driver. This is not HTTP/scheduler/Metal/model/all-client composition or completion proof; T018/T021/T022 remain open and count38/55.
 
 Current SDK/native positive empty-Metal and distinct encoding-origin components pass both modes. These scoped core-only results do not complete enabled-modality/current-server/terminal/admission acceptance; T018/T021/T022 remain unchecked;38/55.
+
+Typed load/ANE queue ownership handoff now compiles, with actual queued current-SDK callback component and empty-registry regressions. Positive load/cross-unit/full-lifetime acceptance remains open; T018/T021/T022 unchecked;38/55.
