@@ -1,5 +1,13 @@
 # Resume after macOS updates — 2026-11-12
 
+## Active continuation — 2026-11-13
+
+Whole tasks **38/55 complete;17 open**. Pushed22ae81da018a7665432e836a85003414fb6265cd contains the completed book source layer31; exact CI43414697326 has5 successful prerequisite jobs, native lane still running. Prior2b8b671/43410300337 is green. No merge/install/deployment.
+
+MLX registry cleanup layer32 is privately committed546e3fa. Its actual baseline86 pass/1 expected assertion failure is corrected to87/87 fresh-process tests. Source/current metadata36/36, closure/lint, working-tree139 Node/106 installed Python, app build and17 Chromium tests pass. Enabled/default full builds30/30 in242.199s/239.912s (cd97b43f.../0cb3d098...) have matching declared inputs and separate passing empty-model correlation/startup/authenticated-manager checks. Archives are source/zig-out/fios-mlx-registry-{enabled,default}; unit6ea0d4b1... at source/zig-out/fios-mlx-registry-tests/test. Sequential32-layer application/file equality passes. Exact inputs/receipt homes/limits are in native-26112-port.md. Root assets are ready for selective commit; CI for pushed22ae81d is still running. Prepared next fixture/script served-open-fixture.zig and prepare-served-open-baseline.py are private parent data only, not yet applied.
+
+Continue authorized source work after this slice. Remaining constructor/error rollback (including Served.open's unconditional wrapper errdefer and ANE open fallback), internal native writers/device lifetimes, and atomic/all-client authority remain open. No new model engine, backend/hardware fault campaign, inference, installed authority or positive native admission is supplied by these metadata tests. Preserve user WIP and008 parked.
+
 ## Latest resumed checkpoint — 2026-11-13
 
 Whole tasks **38/55 complete;17 open**. Latest pushed2b8b67125f677bc9e3c037f43577eb2031dcd78e exact CI43410300337 now passes all prerequisites and aggregate; previous4050826/43403388172 also green. Cumulative30-layer media/slot closure has84/84 fresh-process unit cases, source/current metadata34/34, closure/lint, working-tree137 Node/106 installed Python and both full build/runtime variants passing. Native admission stays unsupported/coverage unknown.
