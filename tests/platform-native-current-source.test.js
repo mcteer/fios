@@ -197,3 +197,13 @@ test('current media origins preserve the queued adapter and actual sender regres
   }
   assert.equal(expected.size,0);
 });
+
+test('current request-book custody stays within existing request metadata and preserves its fixture',()=>{
+  const patch=readFileSync('platform/studio/native/mlx-serve-26.11.2-book-custody.patch','utf8');
+  const sections=patch.split(/(?=^diff --git )/m).filter(Boolean);
+  assert.equal(sections.length,1);
+  assert(sections[0].startsWith('diff --git a/src/engines/own_thread/book.zig b/src/engines/own_thread/book.zig\n'));
+  const start=sections[0].indexOf('\n+test "fios current book');assert(start>=0);
+  const fixture=sections[0].slice(start+1).split('\n').filter(line=>line.startsWith('+')).map(line=>line.slice(1)).join('\n')+'\n';
+  assert.equal(fixture,readFileSync('platform/studio/native/current_book_custody_test.zig.fixture','utf8').trimStart());
+});
