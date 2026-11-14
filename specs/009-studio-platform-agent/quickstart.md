@@ -857,3 +857,12 @@ SDK callback scope compatibility can run without any native SDK or model:
 ```
 
 This CI mode compiles exact previous/current callback helpers with modeled CPU ownership metadata; baseline error cases must fail with their explicit markers and corrected cases pass. It is compatibility evidence only. The separate `--isolated` source mode additionally requires the exact original/candidate SDK trees, current host sources, pinned Zig and an independently reviewed library digest; it checks actual SDK scope/host callback composition using modeled capture holders, never the real Metal producer. Use `--help` for its exact inputs. Neither mode provides native terminality, all-client coverage or installation/admission authority.
+
+
+For the separately published SDK callback correction, select the additional exact overlay explicitly:
+
+```sh
+node scripts/check-platform-current-cxx.mjs --isolated --source /private/tmp/REVIEWED_CURRENT_SOURCE --zig /private/tmp/PINNED_ZIG --mlx-sha256 REVIEWED_NEW_LIBRARY_SHA256 --metal-callback-fence --sdk-source /private/tmp/REVIEWED_CORRECTED_SDK_SOURCE --sdk-library /private/tmp/REVIEWED_NEW_SDK/lib/libmlx.dylib
+```
+
+This reconstructs and byte-checks the canonical patch plus the callback correction before compiling. Omitted or additional source changes refuse. The receipt adds separate source/library and incremental-patch identities; the unchanged strict model-review reader does not accept this receipt format. Keep the new SDK capsule's model prerequisites invalid. No inference or installed/native authority follows. The original command and canonical-only check remain available.

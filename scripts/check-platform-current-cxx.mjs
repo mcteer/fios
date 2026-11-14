@@ -2,7 +2,7 @@
 // Finite CPU-only source compatibility check. No model, installed operation,
 // native admission, lifecycle permission or whole-native provenance is issued.
 import assert from 'node:assert/strict';
-import {mkdtempSync,readFileSync,writeFileSync,lstatSync,realpathSync} from 'node:fs';
+import {mkdtempSync,mkdirSync,readFileSync,writeFileSync,lstatSync,realpathSync} from 'node:fs';
 import {execFileSync,spawnSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
 import path from 'node:path';
@@ -10,8 +10,9 @@ import {fileURLToPath} from 'node:url';
 
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const args=process.argv.slice(2);
-assert(args.length===7&&args[0]==='--isolated'&&args[1]==='--source'&&args[3]==='--zig'&&args[5]==='--mlx-sha256',
-  'Use --isolated --source ABS_CURRENT_NATIVE_SOURCE --zig ABS_PINNED_ZIG --mlx-sha256 REVIEWED_MLX_SHA256');
+const callbackFence=args.length===12&&args[7]==='--metal-callback-fence'&&args[8]==='--sdk-source'&&args[10]==='--sdk-library';
+assert((args.length===7||callbackFence)&&args[0]==='--isolated'&&args[1]==='--source'&&args[3]==='--zig'&&args[5]==='--mlx-sha256',
+  'Use --isolated --source ABS_CURRENT_NATIVE_SOURCE --zig ABS_PINNED_ZIG --mlx-sha256 REVIEWED_MLX_SHA256 [--metal-callback-fence --sdk-source ABS_SDK_SOURCE --sdk-library ABS_LIBRARY]');
 assert(process.platform==='darwin'&&process.arch==='arm64'&&process.getuid()>0);
 const sha=bytes=>createHash('sha256').update(bytes).digest('hex');
 const [source,zig]=[args[2],args[4]].map(value=>{
@@ -24,7 +25,11 @@ function bytes(file,maximum){
 }
 assert.equal(sha(bytes(zig,512<<20)),'1c5f706db0ed6d55451940f31dc05a6177d05696bc1fa5d853696d04c718b523');
 assert(/^[0-9a-f]{64}$/.test(args[6]));
-const library=path.join(source,'lib/mlx/lib/libmlx.dylib');
+function privateInput(value){
+  assert(path.isAbsolute(value)&&realpathSync(value)===value&&value.startsWith('/private/tmp/'));
+  const info=lstatSync(value);assert(info.uid===process.getuid()&&(info.mode&0o022)===0);return value;
+}
+const library=callbackFence?privateInput(args[11]):path.join(source,'lib/mlx/lib/libmlx.dylib');
 assert.equal(sha(bytes(library,256<<20)),args[6]);
 const helper=readFileSync(path.join(root,'platform/studio/native/current_system_cxx_build.zig.fixture'),'utf8');
 const config=bytes(path.join(source,'build/config.zig'),1<<20),suffix=Buffer.from('\n'+helper);
@@ -34,13 +39,27 @@ const directory=mkdtempSync('/private/tmp/fios-009-current-cxx-check-');
 const env={PATH:'/usr/bin:/bin',HOME:directory,LANG:'C',LC_ALL:'C',DEVELOPER_DIR:'/Applications/Xcode.app/Contents/Developer',
   GIT_CONFIG_GLOBAL:'/dev/null',GIT_CONFIG_SYSTEM:'/dev/null',GIT_CONFIG_NOSYSTEM:'1',GIT_NO_REPLACE_OBJECTS:'1'};
 const run=(program,argv)=>execFileSync(program,argv,{env,encoding:'utf8',timeout:15000,maxBuffer:4<<20});
-const mlx=path.join(source,'lib/mlx-src');
+const mlx=callbackFence?privateInput(args[9]):path.join(source,'lib/mlx-src');
 const git=(...argv)=>run('/usr/bin/git',['--no-replace-objects','-c','core.fsmonitor=false','-C',mlx,...argv]);
 assert.equal(git('rev-parse','HEAD').trim(),'c69303b00f5f61860436e832f23fa8c34b96f93a');
 const sourcePatch=readFileSync(path.join(root,'platform/studio/native/mlx-c69303b-owner-uncertainty.patch'),'utf8');
-assert.equal(git('diff','--no-ext-diff','--no-textconv','HEAD'),sourcePatch);
+const observedPatch=git('diff','--no-ext-diff','--no-textconv','HEAD');
 const paths=['mlx/backend/cpu/eval.cpp','mlx/backend/metal/device.cpp','mlx/backend/metal/device.h','mlx/backend/metal/eval.cpp','mlx/scheduler.cpp','mlx/stream.cpp','mlx/stream.h'];
 assert.deepEqual(git('status','--porcelain','--untracked-files=all','--ignored=matching').trimEnd().split('\n'),paths.map(name=>' M '+name));
+let incrementalPatch=null;
+if(callbackFence){
+  incrementalPatch=readFileSync(path.join(root,'platform/studio/native/mlx-c69303b-metal-callback-fence.patch'),'utf8');
+  const composed=path.join(directory,'reviewed-sdk-source');mkdirSync(composed);
+  for(const name of paths){
+    const destination=path.join(composed,name);mkdirSync(path.dirname(destination),{recursive:true});
+    writeFileSync(destination,execFileSync('/usr/bin/git',['--no-replace-objects','-C',mlx,'show','HEAD:'+name],{env,timeout:15000,maxBuffer:4<<20}));
+  }
+  for(const [name,patch] of [['base.patch',sourcePatch],['increment.patch',incrementalPatch]]){
+    const file=path.join(directory,name);writeFileSync(file,patch);
+    execFileSync('/usr/bin/git',['apply',file],{cwd:composed,env,timeout:15000,maxBuffer:4<<20});
+  }
+  for(const name of paths)assert(readFileSync(path.join(composed,name)).equals(bytes(path.join(mlx,name),4<<20)),'SDK differs from exact reviewed patch composition');
+}else assert.equal(observedPatch,sourcePatch);
 assert.equal(run('/usr/bin/xcrun',['--sdk','macosx','--show-sdk-version']).trim(),'27.2');
 const sdk=realpathSync(run('/usr/bin/xcrun',['--sdk','macosx','--show-sdk-path']).trim());
 assert(path.isAbsolute(sdk));
@@ -69,7 +88,8 @@ pub fn build(b:*std.Build) void {
 `);
 const receipt={version:1,scope:'current_build_helper_CPU_callback_compatibility_not_native_authority',
   source,library_sha256:args[6],config_sha256:sha(config),helper_sha256:sha(helper),fixture_sha256:sha(fixture),
-  runner_sha256:sha(readFileSync(fileURLToPath(import.meta.url))),sdk:'27.2',selected_sdk_inputs:selectedSDK,source_patch_sha256:sha(sourcePatch),results:[],models:0,inference:false,
+  runner_sha256:sha(readFileSync(fileURLToPath(import.meta.url))),sdk:'27.2',selected_sdk_inputs:selectedSDK,source_patch_sha256:sha(sourcePatch),
+  ...(callbackFence?{sdk_source:mlx,sdk_library:library,incremental_patch_sha256:sha(incrementalPatch),observed_source_patch_sha256:sha(observedPatch)}:{}),results:[],models:0,inference:false,
   source_fixture_only:true,installed:false,activation:false,native_authority:false,whole_native_provenance:false};
 function save(){writeFileSync(path.join(directory,'receipt.json'),JSON.stringify(receipt,null,2)+'\n');}
 save();
@@ -83,7 +103,9 @@ for(const mode of ['Debug','ReleaseFast']){
     run_signal:execution?.signal??null,passed:build.status===0&&execution?.status===0&&execution.stdout.includes('PASS: actual system C++ SDK callback error channel and completed CPU cleanup')});
   save();
 }
-receipt.declared_inputs_unchanged=bytes(path.join(source,'build/config.zig'),1<<20).equals(config)&&sha(bytes(library,256<<20))===args[6]&&git('diff','--no-ext-diff','--no-textconv','HEAD')===sourcePatch&&
+receipt.declared_inputs_unchanged=bytes(path.join(source,'build/config.zig'),1<<20).equals(config)&&sha(bytes(library,256<<20))===args[6]&&git('diff','--no-ext-diff','--no-textconv','HEAD')===observedPatch&&
+  readFileSync(path.join(root,'platform/studio/native/mlx-c69303b-owner-uncertainty.patch'),'utf8')===sourcePatch&&
+  (incrementalPatch===null||readFileSync(path.join(root,'platform/studio/native/mlx-c69303b-metal-callback-fence.patch'),'utf8')===incrementalPatch)&&
   Object.entries(selectedSDK).every(([file,expected])=>sha(bytes(file,64<<20))===expected)&&
   sha(readFileSync(fileURLToPath(import.meta.url)))===receipt.runner_sha256&&
   sha(readFileSync(path.join(root,'platform/studio/native/current_system_cxx_build.zig.fixture')))===receipt.helper_sha256&&

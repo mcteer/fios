@@ -504,3 +504,9 @@ T028 source ledger minimum: actual journal/cache ordering first reproduces both 
 T049 bounded-package follow-up: actual two-job clean3e9f1b9 development build publishes9 artifacts and passes both blocked/no-privileged-command Studio reviews; source projection, manifest and clean-worktree verification are recorded in validation.md. This remains package-declared data rather than complete interpreter/native enrollment or installation authority. Whole38/55 unchanged.
 
 T002/T018/T019 partial SDK callback ordering: original ordinary CPU callback error cases reproduce an owner fence after captured-input cleanup; corrected exact helper, actual SDK scope/host callbacks and first-error precedence controls pass Debug/optimized. Fresh unchanged-input SDK build and four private empty-model dependency-composition checks pass; CI adds only the CPU mock mode. No real Metal producer/payload quarantine/all-client authority or model prerequisites follow. Whole38/55 unchanged; see validation.md.
+
+
+T028/T030 recovery regression: journal reopen preserves a possible sandbox create and exact independent uncertain request; omitted retained-job scope refuses drain/force before intent write, and missing runtime ID cannot establish absence. Debug/optimized policy suites pass; no runtime/native/model action. Whole38/55 unchanged; see validation.md.
+
+
+T002/T018/T019 SDK follow-up: explicit published-overlay C++ source compatibility passes2/2 CPU modes and refuses a wrong overlay before compilation. Original model-review reader remains unchanged and does not accept the new receipt; SDK capsule stays ineligible for model planning. Targeted source/intent tests86/86 pass. Whole38/55 unchanged; see validation.md.
