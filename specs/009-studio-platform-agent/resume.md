@@ -1,5 +1,9 @@
 # Spec 009 continuation — 2026-11-14
 
+## Current rebuilt development package
+
+Clean f682b10c7930d8d80194b631afb49a7058a95c23 package build and independent validation pass at `/private/tmp/fios-009-service-clock-package-j668inph`. Nine-artifact manifest c65fb9d3950e6a8651479ebf4e23f1962623e363a66e4aa6fb02aefd17719299, projection fea34402dd72bd31632e1e82a489fc99197573ccd697e0183bc0d8c0239fa856, verification2a725e2a92ebcc8ea88006522384d0eb6ea43c531beed13602227c7525b33293. Both Studio plans remain five-blocker/no-privileged-commands. Packaged standalone CLI checks pass. Supersedes061e489 declared package inputs only. No native/whole-repository provenance or installation/activation authority. Whole39/55 unchanged.
+
 ## Current service timestamp source increment
 
 Whole39/55 unchanged. Services.swift adds the missing observation maximum timestamp check before launch eligibility. ServiceTests covers both fixed services and invalid/future/stale/inclusive valid edges. Debug and optimized full mock suites pass;131 platform Node tests/boundary/whitespace pass. Private `--mutate-service-time-range` compiles then fails at the expected FIO_SERVICE_INVALID_OBSERVATION_ALLOWED_ACTION. Initial red compile-input-change failure is setup evidence only. Logs `/private/tmp/fios-009-service-time-{red,green,mutation,release,node}.log`. No operational action or new model request.
