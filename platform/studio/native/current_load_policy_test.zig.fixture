@@ -1,0 +1,40 @@
+const std=@import("std");const owners=@import("fios/request_ownership.zig");const fios_queued=@import("fios/queued_request_ownership.zig");const scenario=@import("build_options").scenario;
+var source_io:std.Io=undefined;var loads:usize=0;var policies:usize=0;var policy_logs:usize=0;var ready_logs:usize=0;var opens:usize=0;var inserts:usize=0;
+const Entry=struct {id:[]const u8="fixture/load-policy",bytes_resident:u64=4096,fios_owner_guard:bool=true};
+const LoadRequest=struct {entry:*Entry,fios_origins:?*const owners.Retained=null,ane_declined:bool=false,done:bool=false,failed:bool=false,error_name:?[]const u8=null};
+const Queue=struct {fn insert(_: *@This(),_:std.mem.Allocator,_:usize,_:*LoadRequest)!void {inserts+=1;}};
+const Condition=struct {fn broadcast(_: *@This(),_:std.Io)void {}};
+const Scheduler=struct {io:std.Io,allocator:std.mem.Allocator=std.heap.page_allocator,ane_builds:std.atomic.Value(u32)=.init(1),queue_mu:std.Io.Mutex=.init,queue_cond:Condition=.{} ,shutdown:std.atomic.Value(bool)=.init(false),load_queue:Queue=.{} };
+const model_registry_mod=struct {fn cleanupUncertain(io:std.Io)bool {return owners.shared().knownUncertain(io);}};
+const mlx=struct {fn errorPending()bool {return false;}fn dropLatchedErrorUnless(_:bool)void {}fn applyWiredPolicy()u8 {policies+=1;if(scenario==2)owners.shared().fence(source_io);return 1;}};
+fn logWiredPolicy(_:u8)void {policy_logs+=1;}
+const log=struct {fn info(comptime _:[]const u8,_:anytype)void {ready_logs+=1;}};
+fn doLoadOnInferenceThread(_: *Scheduler,_:*LoadRequest)!void {if(model_registry_mod.cleanupUncertain(source_io)) return error.NativeCleanupUncertain;loads+=1;if(scenario==1)owners.shared().fence(source_io);}
+fn finishLoadRequest(_: *Scheduler,req:*LoadRequest,name:?[]const u8)void {req.done=true;req.failed=name!=null;req.error_name=name;}
+fn failLoadRequest(sch:*Scheduler,req:*LoadRequest,err:anyerror)void {finishLoadRequest(sch,req,@errorName(err));}
+const engines_load=struct {fn aneOpen(_: *Scheduler,_:*LoadRequest)!bool {opens+=1;if(scenario==5 or scenario==6)owners.shared().fence(source_io);return scenario==5 or scenario==7;}};
+// ACTUAL_LOAD_TAIL
+// ACTUAL_ANE_WORKER
+// ACTUAL_READY
+pub fn main(init:std.process.Init)!void {
+ const io=init.io;source_io=io;try owners.shared().initialize(io,@splat(94));const root=try owners.shared().enter(io);try owners.shared().bind(io,root,"fixture/load-policy");owners.current().*=root;var held=(try owners.retainCurrent(io)).?;owners.current().*=null;
+ var entry=Entry{};var req=LoadRequest{.entry=&entry,.fios_origins=&held};var sch=Scheduler{.io=io};
+ if(scenario<=4) {
+  var scope=(try fios_queued.Scope.retainRequest(io,&held,true)).?;try scope.enter(io);
+  if(scenario==3 or scenario==4)owners.shared().fence(io);
+  if(scenario==4)readyLoadRequest(&sch,&req) else runLoadTail(&sch,&req);
+  _=scope.finish(io);
+ } else aneBuildThread(&sch,&req);
+ const retained=owners.shared().snapshot(io);
+ if(retained.owned!=1 or retained.model_count!=1 or !std.mem.eql(u8,retained.models[0].id[0..retained.models[0].len],entry.id) or owners.current().*!=null or owners.current_group().*!=null) return error.OriginalCustodyLost;
+ if(scenario==0 or scenario==7 or scenario==8) {
+  const load_count:usize=if(scenario==0) 1 else 0;const open_count:usize=if(scenario>=7) 1 else 0;const queued:usize=if(scenario==8) 1 else 0;const ready:usize=if(scenario==8) 0 else 1;
+  if(loads!=load_count or policies!=load_count or policy_logs!=load_count or opens!=open_count or inserts!=queued or ready_logs!=ready or req.done!=(scenario!=8) or req.failed or req.ane_declined!=(scenario==8) or retained.uncertain) return error.HealthyControl;
+  if(!held.releaseIfCertain(io)) return error.HealthyRelease;try owners.shared().leave(io,root);if(owners.shared().snapshot(io).owned!=0)return error.LocalReferenceLeak;
+ } else {
+  const expected_loads:usize=if(scenario==1 or scenario==2) 1 else 0;const expected_policy:usize=if(scenario==2) 1 else 0;const expected_opens:usize=if(scenario==5 or scenario==6) 1 else 0;
+  if(!retained.uncertain or !req.done or !req.failed or req.error_name==null or !std.mem.eql(u8,req.error_name.?,"NativeCleanupUncertain") or loads!=expected_loads or policies!=expected_policy or policy_logs!=0 or ready_logs!=0 or opens!=expected_opens or inserts!=0 or req.ane_declined) {std.debug.print("FIO_LOAD_READY_AFTER_KNOWN_UNCERTAINTY\n",.{});return error.LoadUncertaintyIgnored;}
+ }
+ if(scenario>=5 and sch.ane_builds.load(.acquire)!=0)return error.ANEBuildCounter;
+ std.debug.print("PASS: actual load completion preserves negative evidence and original ownership\n",.{});
+}

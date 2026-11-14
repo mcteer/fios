@@ -983,3 +983,11 @@ node scripts/check-platform-current-unload-policy.mjs --isolated --source /ABSOL
 ```
 
 This reconstructs the required-origin layer followed by the unload-policy layer against private parent3736ed55. Actual native custody modules and unload control flow use explicit CPU lifecycle/policy substitutes. See [unload policy custody](contracts/unload-policy-custody.md); no native authority or activation follows.
+
+Current source load-completion uncertainty, CPU-only (no models/service actions):
+
+```sh
+node scripts/check-platform-current-load-policy.mjs --isolated --source /ABSOLUTE/PRIVATE_CURRENT_SOURCE --zig /ABSOLUTE/PINNED_ZIG
+```
+
+This reconstructs required-origin, unload-policy and load-policy layers against private parent3736ed55. Actual load-tail/ANE/ready control flow uses the real custody modules with explicit CPU effects/completion substitutes, including the loader's existing entry rejection. See [load policy custody](contracts/load-policy-custody.md); no native authority or activation follows.

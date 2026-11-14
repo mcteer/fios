@@ -97,3 +97,6 @@ Unload-tail source checkpoint: actual-function checker31d04b1d… passes12 origi
 
 
 Unload-tail final source checks: repository31d04b1d… passes12 original failures/2 controls/14 candidate cases; enabled semantic35/35 (370.268s), link32/32 (12.301s), four empty-model runtime checks38c66b5d… and fresh default-backend ReleaseSafe160/160a8360621… pass. Fresh188 Node/106 installed Python/boundary/syntax/whitespace pass. All local unload-tail sessions complete. Whole39/55; no native/installed/Studio acceptance or activation, no new model plan/POST. See validation.md for exact scopes/receipts.
+
+
+Load-completion final source increment: checker a95c202c… passes10 original failures/8 controls/18 candidate cases, preserving actual pre-existing loader-entry refusal. Enabled semantic35/35 (458.784s), link32/32 (16.953s), four empty-model runtime checkse8d514f3… and fresh default-backend ReleaseSafe160/1605084f612… pass. Fresh188 Node/106 installed Python/boundary/syntax/whitespace pass. Source `/private/tmp/fios-009-load-policy-work-dppv_3tn/source`; all local load-policy sessions complete. Whole39/55; no new model plan/POST, native/installed acceptance, activation, merge or deployment. Exact72147e6 CI43614607388 running; e9d9bca all7 green. See validation.md for scopes and initial stub correction.
