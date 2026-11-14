@@ -1055,3 +1055,11 @@ node scripts/check-platform-current-queued-phase.mjs --isolated --source /privat
 ```
 
 This validates the exact five-file parent projection/overlay, two old-helper failures and twelve candidate tests per Debug/ReleaseSafe mode with IP networking denied. It runs actual tracker/actor code with metadata slots, no models or installed actions. The separately recorded native enclosure exercises real zero-layer queue-capacity waits, target validation and cleanup. Embedded/media queue integration, authenticated five-phase wire and all-client authority remain unfinished; see [queued custody](contracts/queued-operation-custody.md). A component receipt cannot enable model admission or installation.
+
+## Shared native request-book queue metadata
+
+```sh
+node scripts/check-platform-current-book-queue.mjs --isolated --source /private/tmp/REVIEWED_SOURCE --zig /private/tmp/PINNED_ZIG
+```
+
+This checks the exact parent projection/overlay and actual book/tracker/actor metadata in finite, IP-denied, fresh processes. Parent missing-queue cases fail as expected; five candidate cases per mode pass. Real adapter-worker fixtures and enabled native builds are separately recorded in [the contract](contracts/shared-book-queued-custody.md). No numerical model, enrolled coverage/admission, native terminality, installation or task completion follows.
