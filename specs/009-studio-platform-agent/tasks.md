@@ -517,3 +517,6 @@ T019/T021/T045 source-retention partial repair: a coherent foreign busy-model ob
 Busy-model source follow-up: final optimized policy suite also passes, including post-dispatch revocation/reap and exact uncertain request preservation. Debug/optimized integration complete; native/all-client acceptance and whole38/55 count unchanged.
 
 T049/T055 package/consistency follow-up: clean a70b570 produces9 development artifacts with independent blocked/no-command plans for both Studios; exact manifest/source-projection/verification identities are recorded in validation.md. Historical media audit table now points to subsequent existing-client source repairs. No installation, activation, native acceptance, merge or deployment; whole38/55 unchanged.
+
+
+T002/T018/T019 partial SDK status propagation: three existing completion callbacks pass known command failure into the private owner scope before callback work, preserving first Error-channel text and independent uncertainty. Modeled/actual SDK controls reproduce the previous gap; corrected fresh-library74-record and new mock32-case checks pass expected outcomes, while original modes stay green. Fresh two-job SDK build and four empty-model recomposition checks pass; model planning stays refused.188 Node/106 Python pass. Whole38/55 unchanged; see validation.md/native-26112-port.md.

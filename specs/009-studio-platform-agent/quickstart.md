@@ -866,3 +866,12 @@ node scripts/check-platform-current-cxx.mjs --isolated --source /private/tmp/REV
 ```
 
 This reconstructs and byte-checks the canonical patch plus the callback correction before compiling. Omitted or additional source changes refuse. The receipt adds separate source/library and incremental-patch identities; the unchanged strict model-review reader does not accept this receipt format. Keep the new SDK capsule's model prerequisites invalid. No inference or installed/native authority follows. The original command and canonical-only check remain available.
+
+
+The next published SDK overlay additionally carries command-buffer failure status into the callback owner before work. Its CPU-only compatibility mode is:
+
+```sh
+.venv/bin/python -I -B scripts/check-platform-current-metal-callback.py --mock --command-status
+```
+
+Actual source mode uses `--isolated --command-status` with the same required path/digest arguments; its baseline is the exact first callback-fence SDK tree, and its candidate adds `mlx-c69303b-metal-callback-status.patch`. It reconstructs both earlier overlays, checks exact helper/source bytes and tests modeled status/capture holders with actual SDK/host scopes. Neither mode creates Metal objects, injects driver failures, runs a model or grants terminal/admission/installation authority. Keep the resulting SDK capsule's model prerequisites invalid.

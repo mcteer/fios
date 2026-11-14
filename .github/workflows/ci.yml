@@ -198,6 +198,7 @@ jobs:
           node scripts/check-platform-observability.mjs --isolated
           node scripts/check-platform-supervisor-observability.mjs --isolated
           .venv/bin/python -I -B scripts/check-platform-current-metal-callback.py --mock
+          .venv/bin/python -I -B scripts/check-platform-current-metal-callback.py --mock --command-status
           node scripts/check-platform.mjs --mock
           node scripts/check-platform.mjs --mock --release
           node scripts/check-platform-process.mjs --isolated

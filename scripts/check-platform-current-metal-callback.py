@@ -24,7 +24,7 @@ def helper(text):
     begin = text.index('template <class Work, class Cleanup>')
     return text[begin:text.index('\n\n\nconst std::string& metal_gpu_arch()', begin)]
 
-def mock():
+def mock(command_status=False):
     assert platform.python_implementation() == 'CPython' and sys.version_info[:3] == (3, 11, 17)
     assert platform.system() == 'Darwin' and os.getuid() > 0
     directory = pathlib.Path(tempfile.mkdtemp(prefix='fios-009-metal-callback-mock-', dir='/private/tmp'))
@@ -35,8 +35,9 @@ def mock():
     cxx = subprocess.check_output(['/usr/bin/xcrun', '--find', 'clang++'], env=env, timeout=15).decode().strip()
     sdk = subprocess.check_output(['/usr/bin/xcrun', '--sdk', 'macosx', '--show-sdk-path'], env=env, timeout=15).decode().strip()
     base = ROOT / 'platform/studio/native'
-    fixture = (base / 'current_mlx_metal_callback_control.cpp.fixture').read_bytes()
-    variants = {name: (base / ('current_mlx_metal_callback_' + suffix + '.inc')).read_bytes()
+    prefix = 'current_mlx_metal_status_callback_' if command_status else 'current_mlx_metal_callback_'
+    fixture = (base / (prefix + 'control.cpp.fixture')).read_bytes()
+    variants = {name: (base / (prefix + suffix + '.inc')).read_bytes()
                 for name, suffix in [('baseline', 'previous'), ('current', 'scope')]}
     results = []
     for name, body in variants.items():
@@ -48,34 +49,40 @@ def mock():
             r = subprocess.run([cxx, '-std=c++17', '-isysroot', sdk, optimization, str(file), '-o', str(binary)], env=env, capture_output=True, timeout=30)
             (directory / (name + optimization + '-build.log')).write_bytes(r.stdout + r.stderr)
             assert r.returncode == 0
-            for case in ['healthy', 'work-error', 'nonstd-error', 'preexisting-error', 'cleanup-error', 'work-and-cleanup-error']:
+            cases = ['healthy', 'work-error', 'nonstd-error', 'preexisting-error', 'cleanup-error', 'work-and-cleanup-error']
+            if command_status:
+                cases += ['command-error', 'command-and-existing-error']
+            for case in cases:
                 r = subprocess.run(['/usr/bin/sandbox-exec', '-p', '(version 1)(allow default)(deny network*)', str(binary), case],
                                    env=env, capture_output=True, timeout=5)
                 log = r.stdout + r.stderr
                 (directory / (name + optimization + '-' + case + '.log')).write_bytes(log)
-                expected = 77 if name == 'baseline' and case != 'healthy' else 0
+                fails = case.startswith('command-') if command_status else case != 'healthy'
+                expected = 77 if name == 'baseline' and fails else 0
                 assert r.returncode == expected
                 if expected:
                     assert b'FIO_METAL_' in log
                 results.append({'variant': name, 'optimization': optimization, 'case': case, 'status': r.returncode, 'expected': expected})
-    assert fixture == (base / 'current_mlx_metal_callback_control.cpp.fixture').read_bytes()
-    assert variants['baseline'] == (base / 'current_mlx_metal_callback_previous.inc').read_bytes()
-    assert variants['current'] == (base / 'current_mlx_metal_callback_scope.inc').read_bytes()
+    assert fixture == (base / (prefix + 'control.cpp.fixture')).read_bytes()
+    assert variants['baseline'] == (base / (prefix + 'previous.inc')).read_bytes()
+    assert variants['current'] == (base / (prefix + 'scope.inc')).read_bytes()
     receipt = {'scope': 'CPU_mock_callback_scope_compatibility_only_not_native_SDK_or_release_evidence',
                'helper_sha256': {n: sha(b) for n, b in variants.items()}, 'fixture_sha256': sha(fixture), 'results': results,
-               'models': 0, 'native_SDK_loaded': False, 'Metal_objects': 0, 'native_authority': False, 'installed': False}
+               'models': 0, 'native_SDK_loaded': False, 'Metal_objects': 0, 'native_authority': False, 'installed': False,
+               'command_status_controls': command_status}
     file = directory / 'receipt.json'
     file.write_text(json.dumps(receipt, indent=2) + '\n')
     print(json.dumps({'receipt': str(file), 'sha256': sha(file.read_bytes()), 'passed': True, 'models': 0}), flush=True)
 
 def main():
-    if sys.argv[1:] == ['--mock']:
-        return mock()
+    if sys.argv[1:] in [['--mock'], ['--mock', '--command-status']]:
+        return mock('--command-status' in sys.argv[1:])
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--isolated', action='store_true', required=True)
     for name in ['baseline', 'source', 'host', 'library', 'zig']:
         parser.add_argument('--' + name, type=pathlib.Path, required=True)
     parser.add_argument('--library-sha256', required=True)
+    parser.add_argument('--command-status', action='store_true')
     a = parser.parse_args()
     assert platform.python_implementation() == 'CPython' and sys.version_info[:3] == (3, 11, 17)
     assert platform.system() == 'Darwin' and os.getuid() > 0
@@ -99,18 +106,32 @@ def main():
         names = list(filter(None, git(source, 'ls-files', '-z').split('\0')))
         source_inputs[str(source)] = {n: sha((source / n).read_bytes()) for n in names}
     canonical = (ROOT / 'platform/studio/native/mlx-c69303b-owner-uncertainty.patch').read_text()
-    assert git(a.baseline, 'diff', '--no-ext-diff', '--no-textconv', 'HEAD', '--', *PATHS) == canonical
+    if a.command_status:
+        composed = directory / 'reviewed-baseline'
+        composed.mkdir()
+        for name in PATHS:
+            file = composed / name
+            file.parent.mkdir(parents=True, exist_ok=True)
+            file.write_text(git(a.baseline, 'show', 'HEAD:' + name))
+        for index, patch_name in enumerate(['mlx-c69303b-owner-uncertainty.patch', 'mlx-c69303b-metal-callback-fence.patch']):
+            patch_path = ROOT / 'platform/studio/native' / patch_name
+            subprocess.run(['/usr/bin/git', 'apply', str(patch_path)], cwd=composed, env=env, check=True, timeout=15, capture_output=True)
+        for name in PATHS:
+            assert (composed / name).read_bytes() == (a.baseline / name).read_bytes()
+    else:
+        assert git(a.baseline, 'diff', '--no-ext-diff', '--no-textconv', 'HEAD', '--', *PATHS) == canonical
     for name, digest in source_inputs[str(a.baseline)].items():
         if name != 'mlx/backend/metal/device.cpp':
             assert source_inputs[str(a.source)][name] == digest
     old = (a.baseline / 'mlx/backend/metal/device.cpp').read_text()
     current = (a.source / 'mlx/backend/metal/device.cpp').read_text()
-    assert helper(old) == (ROOT / 'platform/studio/native/current_mlx_metal_callback_previous.inc').read_text()
-    assert helper(current) == (ROOT / 'platform/studio/native/current_mlx_metal_callback_scope.inc').read_text()
-    patch_file = ROOT / 'platform/studio/native/mlx-c69303b-metal-callback-fence.patch'
+    prefix = 'current_mlx_metal_status_callback_' if a.command_status else 'current_mlx_metal_callback_'
+    assert helper(old) == (ROOT / ('platform/studio/native/' + prefix + 'previous.inc')).read_text()
+    assert helper(current) == (ROOT / ('platform/studio/native/' + prefix + 'scope.inc')).read_text()
+    patch_file = ROOT / ('platform/studio/native/mlx-c69303b-metal-callback-status.patch' if a.command_status else 'platform/studio/native/mlx-c69303b-metal-callback-fence.patch')
     patch = patch_file.read_text()
     assert ''.join(difflib.unified_diff(old.splitlines(True), current.splitlines(True), fromfile='a/mlx/backend/metal/device.cpp', tofile='b/mlx/backend/metal/device.cpp')) == patch
-    files = {name: ROOT / ('platform/studio/native/current_mlx_metal_callback_' + name) for name in ['control.cpp.fixture', 'host.cpp.fixture', 'host_test.zig.fixture']}
+    files = {name: ROOT / ('platform/studio/native/' + prefix + name) for name in ['control.cpp.fixture', 'host.cpp.fixture', 'host_test.zig.fixture']}
     fixtures = {n: f.read_bytes() for n, f in files.items()}
     host = directory / 'host'
     host.mkdir(mode=0o700)
@@ -157,8 +178,11 @@ def main():
                     args += [file, '-o', output]
                 run(name + '-' + kind + '-' + mode + '-build', args)
                 generated[kind] = output
-            for case, title in enumerate(['healthy', 'work-error', 'nonstd-error', 'preexisting-error', 'cleanup-error', 'work-and-cleanup-error']):
-                expected = name == 'baseline' and case != 0
+            cases = ['healthy', 'work-error', 'nonstd-error', 'preexisting-error', 'cleanup-error', 'work-and-cleanup-error']
+            if a.command_status:
+                cases += ['command-error', 'command-and-existing-error']
+            for case, title in enumerate(cases):
+                expected = name == 'baseline' and (case >= 6 if a.command_status else case != 0)
                 sandbox = ['/usr/bin/sandbox-exec', '-p', '(version 1)(allow default)(deny network*)']
                 run(name + '-modeled-' + mode + '-' + title, sandbox + [generated['control'], title], 77 if expected else 0,
                     marker=b'FIO_METAL_' if expected else None)
@@ -176,7 +200,8 @@ def main():
         'source_inputs_before_after': source_inputs, 'host_copied_Zig_inputs': host_inputs, 'patch_sha256': sha(patch.encode()),
         'fixture_sha256': {n: sha(b) for n, b in fixtures.items()}, 'library_sha256': a.library_sha256, 'results': results,
         'models': 0, 'Metal_objects': 0, 'backend_initialized': False, 'native_authority': False, 'installed': False,
-        'host_profile_scope': 'CPU_callbacks_ANE_disabled_not_full_server_profile', 'whole_native_provenance': False}
+        'host_profile_scope': 'CPU_callbacks_ANE_disabled_not_full_server_profile', 'whole_native_provenance': False,
+        'command_status_controls': a.command_status}
     file = directory / 'receipt.json'
     file.write_text(json.dumps(receipt, indent=2) + '\n')
     print(json.dumps({'receipt': str(file), 'sha256': sha(file.read_bytes()), 'passed': True, 'models': 0}), flush=True)
