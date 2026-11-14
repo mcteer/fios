@@ -8,9 +8,9 @@ func runNativeAdmissionBindingTests() throws {
     let tasks=TaskController(journal:journal,broker:ModelBroker(journal:journal))
     let base="http://127.0.0.1:1/v1",host="fixture-host",hash=PythonWorkerFactory.digest("http://127.0.0.1:1/v1")
     let epoch=UUID().uuidString.lowercased(),owner=String(repeating:"a",count:64)
-    func binding(host observedHost:String,hash observedHash:String)->WorkerDispatchBinding {
+    func binding(host observedHost:String,hash observedHash:String,resident:String?=nil,owners:Int=0,loading:Bool=false)->WorkerDispatchBinding {
         let snapshot=NativeSnapshot(host:observedHost,endpointHash:observedHash,nativeEpoch:"fixture-native",sequence:1,sampledAt:1000,
-            allClientLifecycleCoverage:true,residentModel:nil,outstandingOwners:0,loading:false)
+            allClientLifecycleCoverage:true,residentModel:resident,outstandingOwners:owners,loading:loading)
         return WorkerDispatchBinding(baseURL:base,guardPath:"/fixture/observe.sock",host:host,profileHash:String(repeating:"b",count:64),
             managerEpoch:epoch,canonicalModel:"fixture/model",nativeModel:"fixture/model",nativeSnapshot:snapshot,nativeCompatibilityAccepted:true,apiKey:nil)
     }
@@ -27,5 +27,12 @@ func runNativeAdmissionBindingTests() throws {
     let accepted=try tasks.reserveModelUpload(owner:owner,idempotency:UUID().uuidString.lowercased(),requestHash:String(repeating:"d",count:64),
         binding:binding(host:host,hash:hash),nativeCapacityProven:true,sample:sample,admission:&admission,now:1000)
     guard accepted.state == .reserved,try journal.jobs().count==1,try journal.unresolvedCount()==0 else {throw PolicyError.invalidObservation}
+    let foreign=binding(host:host,hash:hash,resident:"fixture/other-model",owners:1)
+    guard !(try NativeAdmission.retainsSource(foreign,now:1000)) else {
+        fatalError("NATIVE_SOURCE_ACCEPTED_FOREIGN_BUSY_MODEL")
+    }
+    guard try NativeAdmission.retainsSource(binding(host:host,hash:hash,resident:"fixture/model",owners:1),now:1000),
+          try NativeAdmission.retainsSource(binding(host:host,hash:hash,loading:true),now:1000),
+          try NativeAdmission.retainsSource(binding(host:host,hash:hash),now:1000) else {throw PolicyError.invalidObservation}
     print("PASS: selected host/endpoint source binding refuses before durable job reservation; coherent synthetic upload remains available")
 }

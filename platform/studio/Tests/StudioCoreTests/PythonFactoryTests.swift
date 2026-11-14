@@ -254,8 +254,10 @@ func runPythonFactoryTests() throws {
     guard broker.activeWorkers==0,try journal.unresolvedCount()==2,try journal.workerGrants().isEmpty,
           try journal.jobs().filter({active.contains($0.id)}).allSatisfy({$0.state == .revoking}) else { fatalError("Source loss did not revoke/reap without clearing native uncertainty") }
     progress("source-loss workers reaped")
+    let conflictReports=try runBusySourceWorkerTests(directory:directory.appendingPathComponent("busy-source"),factory:factory,
+        original:freshBinding(),postReports:fd)
     // Mock fixture reports only aggregate POST counts, never headers/prompts.
-    var counts=Data()
+    var counts=conflictReports
     while true {
         var bytes=[UInt8](repeating:0,count:4096)
         let n=Darwin.read(fd,&bytes,bytes.count)
@@ -263,8 +265,8 @@ func runPythonFactoryTests() throws {
         guard counts.count<4096 else { throw RuntimeError.outputLimit }
     }
     let reports=String(decoding:counts,as:UTF8.self).split(separator:"\n")
-    guard reports.count==9,let last=reports.last,
-          let summary=try JSONSerialization.jsonObject(with:Data(last.utf8)) as? [String:Int],summary["posts"]==9 else { fatalError("Pre-send source loss dispatched or replayed a model POST") }
+    guard reports.count==1,let last=reports.last,
+          let summary=try JSONSerialization.jsonObject(with:Data(last.utf8)) as? [String:Int],summary["posts"]==10 else { fatalError("Source conflict dispatched or replayed an extra model POST") }
     let reaped=HostResources.nowMilliseconds()
     try admission.reserveWorker(key:"reaped-one",sample:resources(reaped),now:reaped)
     try admission.reserveWorker(key:"reaped-two",sample:resources(reaped),now:reaped)

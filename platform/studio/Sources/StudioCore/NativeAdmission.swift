@@ -20,6 +20,10 @@ enum NativeAdmission {
         guard bindingIsCoherent(binding) else {return false}
         // The original request may itself be preparing/loading. This check
         // retains source quality, rather than granting another dispatch.
-        return try ActivityPolicy.evaluate(binding.nativeSnapshot,now:now) != .unknown
+        switch try ActivityPolicy.evaluate(binding.nativeSnapshot,now:now) {
+        case .busy(let model):return WireScalar.exactModel(model,binding.canonicalModel)
+        case .idle,.preparing:return true
+        case .unknown:return false
+        }
     }
 }

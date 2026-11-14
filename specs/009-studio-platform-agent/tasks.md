@@ -510,3 +510,8 @@ T028/T030 recovery regression: journal reopen preserves a possible sandbox creat
 
 
 T002/T018/T019 SDK follow-up: explicit published-overlay C++ source compatibility passes2/2 CPU modes and refuses a wrong overlay before compilation. Original model-review reader remains unchanged and does not accept the new receipt; SDK capsule stays ineligible for model planning. Targeted source/intent tests86/86 pass. Whole38/55 unchanged; see validation.md.
+
+
+T019/T021/T045 source-retention partial repair: a coherent foreign busy-model observation now revokes an in-flight selected-model worker rather than retaining authorization. Exact mismatch baseline reproduces; corrected Debug and installed-pipe/mock-HTTP post-dispatch regression preserve exact independent native uncertainty after local reap.188 Node/106 Python pass; optimized regression pending. Whole38/55 unchanged; native/all-client acceptance remains open.
+
+Busy-model source follow-up: final optimized policy suite also passes, including post-dispatch revocation/reap and exact uncertain request preservation. Debug/optimized integration complete; native/all-client acceptance and whole38/55 count unchanged.

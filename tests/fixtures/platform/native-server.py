@@ -72,6 +72,10 @@ async def main():
                     value = json.loads(data)
                     assert value['model'] == 'fixture/model' and not value.get('tools')
                     assert value['stream'] is True and value['max_tokens'] <= 8192
+                    # Finite mock-only window to revoke an already-dispatched
+                    # request. The fixture reports counts, never prompt text.
+                    if any(item.get('content') == 'fixture-source-conflict' for item in value['messages']):
+                        await asyncio.sleep(2)
                     chunk = {'id': 'mock-fixture', 'object': 'chat.completion.chunk', 'created': 1, 'model': 'fixture/model',
                              'choices': [{'index': 0, 'delta': {'content': 'MOCK_ONLY'}, 'finish_reason': None}]}
                     result = b'data: ' + body(chunk) + b'\n\ndata: [DONE]\n\n'
