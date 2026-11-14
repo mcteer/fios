@@ -875,3 +875,12 @@ The next published SDK overlay additionally carries command-buffer failure statu
 ```
 
 Actual source mode uses `--isolated --command-status` with the same required path/digest arguments; its baseline is the exact first callback-fence SDK tree, and its candidate adds `mlx-c69303b-metal-callback-status.patch`. It reconstructs both earlier overlays, checks exact helper/source bytes and tests modeled status/capture holders with actual SDK/host scopes. Neither mode creates Metal objects, injects driver failures, runs a model or grants terminal/admission/installation authority. Keep the resulting SDK capsule's model prerequisites invalid.
+
+
+The existing worker-runtime fixture now performs native declared-tree byte review before factory metadata, with Python review before/after:
+
+```sh
+node scripts/check-platform-worker-runtime.mjs --isolated --candidate /ABSOLUTE/PRIVATE_RUNTIME --sha256 REVIEWED_CANDIDATE_SHA256
+```
+
+It uses two compiler jobs, a120s cooperative tree bound and145s outer execution bound. It exercises only development-owned data and fixed metadata startup; root protection/enrollment, model eligibility and installed acceptance remain separate. See contracts/python-runtime-review.md.
