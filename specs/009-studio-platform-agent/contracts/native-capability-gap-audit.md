@@ -26,3 +26,15 @@ The current host source's serving calls to `ensureLoaded` are the normal router,
 ## Upstream capability refresh
 
 On2026-11-14, the public [latest release](https://github.com/ddalcu/mlx-serve/releases/latest) still resolves to26.11.2/4e231ce. The public comparison then reported93 commits ahead at main218c76640228e3860f8a4a67075c9fcd1fa29cae. A bounded read of that exact revision's `src/host/api/admission.zig` and `src/host/registry/registry.zig` found prompt/context memory admission and registry load-memory reservations respectively. Those functions are not the required all-client ownership/device-terminal/atomic dispatch contract. This two-file review is not an exhaustive absence claim about upstream main, and neither upgrades the pinned candidate nor authorizes importing those changes.
+
+## Persistent response and CPU worker boundaries
+
+A subsequent seven-file source read is bound by `/private/tmp/fios-009-cpu-boundary-review-ianuagxs/review.json`, SHA2567687d3a71f80e4670d4860f9cc1b727e72f6b726564ecf1db7892f1c81a18b78. This is a source-read record, not a test or positive coverage receipt.
+
+- The response WebSocket route reaches the existing exact-target bind/load/active edge before the upgrade. Its model borrow and original connection owner remain retained while the handler processes successive turns, until the connection handler returns. An idle socket therefore cannot be treated as an unowned resident model eligible for replacement while that borrow exists. This read does not establish per-turn terminal proof or whole slow-reader acceptance.
+- `sdk/media/progress.zig` retains/enters the existing CPU offload origin, joins the job and optional keepalive thread, and uses an inline pure-CPU path after capture/spawn/entry refusal. The keepalive is transport work. This is not authority to execute GPU work on those CPU helpers or clear uncertainty.
+- The inspected GGUF affine-conversion and NVFP4 bank-fill workers operate on host buffers and join before the caller creates/copies MLX arrays. Their normal join ordering does not by itself establish terminality for the subsequent MLX work.
+- `RowGather.init` and `PrefetchPool.create` retain their successful thread count and join those workers on partial-start failure before freeing storage. Their ordinary destructors also join before free. No missing partial-start cleanup was found in these reads.
+- The n-gram poster drains already queued host gathers before its loop exits; destruction joins before freeing the poster. This is not all concurrent callers, parent lifetime or native-device acceptance.
+
+No source repair is justified solely by these reads. Backend/registry/process-generation proof issuance and the positive all-client compatibility ceiling remain unfinished; no task checkbox changes.
