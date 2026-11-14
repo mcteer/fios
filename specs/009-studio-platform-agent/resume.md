@@ -1,5 +1,15 @@
 # Spec 009 continuation — 2026-11-14
 
+## Latest streamed watchdog source validation
+
+Whole39/55,16 open. Preceding published5beda153b17d83aeec08d3b782bee14fe2489fb1/CI43633794994 all7 green. New watchdog source batch is locally complete and ready to publish; update PR10 with its own exact head/CI. Protected user catalog/UI work remains unstaged.
+
+Private `/private/tmp/fios-009-stream-watchdog-work-0vmbwb32/source` preserves p13/all preceding layers, adding the C negative before a nonterminal gate's forced prefix. Event/read/numerical behavior preserved; independent uncertainty survives local watchdog return. Source primary_guard=false, all-client/admission unknown/unsupported, model prerequisites false. No proof/profile/authority invention.
+
+Final checked-in `--watchdog` mode94 cases passes36706114ec53bcc6fa62973a823866bfc7eba096a40f150fbd3bf69975d9c04a (private check2xbzkjip), separate watchdog16-case0f1cf6e9… validates before-event visibility/ordinary controls.26 original failures/20 controls/48 candidate passes total. Omitted mode refuses before compilation. Final enabled35/35 semantic478.532s7d2c6204…, link32/32 13.895s0c0a35f4…, rawea3b86e8…, normalized100e1eba…, capsule44329548…, four empty-model checks4884ccee… pass. Fresh default native build204.397s/160 separate-process tests pass zero skips, binarydc3b4e98…, buildda533ff5e4a6e5a0d8453590d65e9cd48267116e08726b0550eb79845d8b8515, run60f67e9e54e02e52c3e0ba817aed7d10e8093134e1574031c72d32d4a248a313. Locked noneditable reinstall188 Node/API106 Python/boundary/whitespace pass. All local sessions complete.
+
+No new real model plan/POST, physical Metal/hardware fault, installation/activation, native service action, merge or deployment. Native producer/admission/proof issuer and installed/Studio/whole-spec tasks remain open. Continue authorized source engineering from the bounded capability audit without another scope question. Do not equate local writer/component receipts with native terminality or completion. Keep package061e489 declared-input scope separate from whole native/repository provenance; preserve all previous candidates/failures. Do not repeat completed checks without changes or unresolved concerns.
+
 ## Latest streamed read-pool local validation
 
 Whole39/55,16 open. Published preceding head a20dc395732c67f405028f1458de26b1571144dd/CI43626763933 all7 green. New complete locally validated source batch is ready for publication; then update PR10 with its new exact head and own CI. All protected user catalog/UI work remains unstaged.

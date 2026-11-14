@@ -93,10 +93,27 @@ def rows_matrix(p,source,baseline,root,zig,compiler):
     e=subprocess.run(['/usr/bin/sandbox-exec','-p','(version 1)(allow default)(deny network*)',str(binary)],env=env,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,timeout=10);(directory/(key+'-run.log')).write_bytes(e.stdout);item['run_status']=e.returncode;item['binary_sha256']=sha(binary.read_bytes());item['expected']=(e.returncode==1 and b'FIO_STREAM_POOL_ROWS_RELEASED_AFTER_REFUSAL' in e.stdout) if label=='baseline' and scenario!=2 else (e.returncode==0 and b'PASS: actual generic stream' in e.stdout);save();assert item['expected'],(key,e.stdout.decode())
  r['unchanged']=all(sha(Path(n).read_bytes())==h for n,h in r['declared_inputs'].items()) and fixture.read_bytes()==body and sha(Path(__file__).read_bytes())==r['runner_sha256'];save();assert r['unchanged'];return {'receipt':str(p/'rows-zig-matrix-receipt.json'),'sha256':sha((p/'rows-zig-matrix-receipt.json').read_bytes()),'records':len(r['results']),'baseline_failures':4,'baseline_controls':2,'candidate_passes':6}
 
+def watchdog_matrix(directory,source,before,compiler,env):
+ fixture=ROOT/"platform/studio/native/current_stream_watchdog_test.c.fixture";body=checked(fixture);name="src/sdk/weights/streamed/csrc/q3_lookahead4_exl3.c";after=checked(source/name)
+ work=directory/"watchdog-matrix";work.mkdir(mode=0o700);results=[]
+ for label,data in [("baseline",before),("candidate",after)]:
+  unit=work/label;unit.mkdir(mode=0o700);(unit/"pool.c").write_bytes(data);(unit/"main.c").write_bytes(body)
+  for opt in ["-O0","-O3"]:
+   for scenario in range(4):
+    key=label+"-"+opt[1:]+"-"+str(scenario);binary=work/key
+    build=subprocess.run([str(compiler),"-std=c11",opt,"-pthread","-DFIO_SCENARIO="+str(scenario),str(unit/"main.c"),"-o",str(binary)],env=env,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,timeout=30);(work/(key+"-build.log")).write_bytes(build.stdout)
+    assert build.returncode==0,(key,build.stdout.decode()[-2000:])
+    run=subprocess.run(["/usr/bin/sandbox-exec","-p","(version 1)(allow default)(deny network*)",str(binary)],env=env,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,timeout=10);(work/(key+"-run.log")).write_bytes(run.stdout)
+    expected=(run.returncode==1 and b"FIO_STREAM_WATCHDOG_FORCED_BEFORE_NEGATIVE" in run.stdout) if label=="baseline" and scenario==0 else (run.returncode==0 and b"PASS: watchdog force preserves negative" in run.stdout)
+    results.append({"label":label,"optimize":opt,"scenario":scenario,"build_status":build.returncode,"run_status":run.returncode,"binary_sha256":digest(binary.read_bytes()),"expected":expected});assert expected,(key,run.stdout.decode())
+ receipt={"scope":"actual_C_watchdog_host_event_forced_gate_negative_not_native_terminal_proof","before_sha256":digest(before),"candidate_sha256":digest(after),"fixture_sha256":digest(body),"results":results,"models":0,"inference":False,"Metal":False,"hardware_faults":False,"installed":False,"native_authority":False,"substitutions":["synthetic missing/satisfied/empty gates","final parked condition wait ends local loop","unexpected Metal signal aborts"]}
+ path=work/"receipt.json";path.write_text(json.dumps(receipt,indent=2)+"\n");assert checked(source/name)==after and checked(fixture)==body
+ return {"receipt":str(path),"sha256":digest(path.read_bytes()),"records":16,"baseline_failures":2,"baseline_controls":6,"candidate_passes":8}
+
 def main():
  assert sys.version_info[:3]==(3,11,17),"Use the locked CPython3.11.17"
  assert platform.system()=="Darwin" and platform.machine()=="arm64" and os.geteuid()>0
- parser=argparse.ArgumentParser(description=__doc__);parser.add_argument("--isolated",action="store_true",required=True);parser.add_argument("--source",type=Path,required=True);parser.add_argument("--zig",type=Path,required=True);args=parser.parse_args()
+ parser=argparse.ArgumentParser(description=__doc__);parser.add_argument("--isolated",action="store_true",required=True);parser.add_argument("--source",type=Path,required=True);parser.add_argument("--zig",type=Path,required=True);parser.add_argument("--watchdog",action="store_true");args=parser.parse_args()
  source=args.source;zig=args.zig
  for path in [source,zig]:assert path.is_absolute() and str(path).startswith("/private/tmp/") and path.resolve()==path
  assert digest(zig.read_bytes())==ZIG_SHA
@@ -106,6 +123,7 @@ def main():
  assert command(git+["rev-parse","HEAD"],directory,env).decode().strip()==BASE
  patch=ROOT/"platform/studio/native/mlx-serve-current-stream-pool-stop.patch";helper=ROOT/"platform/studio/native/current_streamed_pool_uncertainty.zig"
  artifact_paths=[patch,helper,Path(__file__).resolve()]+[ROOT/"platform/studio/native"/n for n in ["current_stream_pool_stop_test.c.fixture","current_stream_pool_parent_test.zig.fixture","current_stream_pool_rows_test.zig.fixture"]]
+ if args.watchdog:artifact_paths += [ROOT/"platform/studio/native/mlx-serve-current-stream-watchdog.patch",ROOT/"platform/studio/native/current_stream_watchdog_test.c.fixture"]
  artifacts={str(f):digest(checked(f)) for f in artifact_paths};current={}
  baseline=directory/"baseline-source";review=directory/"review"
  for path in [baseline,review]:path.mkdir(mode=0o700)
@@ -115,6 +133,8 @@ def main():
    dest=path/name;dest.parent.mkdir(parents=True,exist_ok=True);dest.write_bytes(data)
   current[name]=digest(checked(source/name))
  command(["/usr/bin/git","apply",str(patch)],review,env)
+ watchdog_before=(review/"src/sdk/weights/streamed/csrc/q3_lookahead4_exl3.c").read_bytes()
+ if args.watchdog:command(["/usr/bin/git","apply",str(ROOT/"platform/studio/native/mlx-serve-current-stream-watchdog.patch")],review,env)
  for name in NAMES:assert (review/name).read_bytes()==checked(source/name),name
  helper_name="src/fios/current_streamed_pool_uncertainty.zig";assert checked(source/helper_name)==checked(helper);current[helper_name]=digest(checked(helper))
  # Unchanged dependencies retain current original ingress layers; only the19
@@ -141,9 +161,12 @@ def main():
    if (source/next_name).is_file():pending.append(next_name)
  compiler=Path(command(["/usr/bin/xcrun","--find","clang"],directory,env).decode().strip());assert str(compiler).startswith("/Applications/Xcode.app/Contents/Developer/")
  suites={"C":c_matrix(directory,source,baseline,ROOT,str(zig),compiler),"Pool":pool_matrix(directory,source,baseline,ROOT,str(zig),compiler),"Rows":rows_matrix(directory,source,baseline,ROOT,str(zig),compiler)}
+ if args.watchdog:
+  watchdog_env=env|{"SDKROOT":command(["/usr/bin/xcrun","--show-sdk-path"],directory,env).decode().strip()}
+  suites["Watchdog"]=watchdog_matrix(directory,source,watchdog_before,compiler,watchdog_env)
  assert all(digest(checked(source/name))==h for name,h in current.items())
  assert all(digest(checked(Path(name)))==h for name,h in artifacts.items())
- receipt={"version":1,"scope":"selected_actual_C_and_Zig_pool_parent_refusal_only_not_native_authority","directory":str(directory),"source":str(source),"base":BASE,"patch_sha256":artifacts[str(patch)],"artifacts":artifacts,"selected_current_inputs":current,"clang":{"path":str(compiler),"sha256":digest(compiler.read_bytes())},"zig_sha256":ZIG_SHA,"suites":suites,"inputs_unchanged":True,"models":0,"inference":False,"Metal":False,"hardware_faults":False,"installed":False,"activation":False,"native_authority":False,"all_client_coverage":False,"whole_native_provenance":False}
+ receipt={"version":1,"watchdog_overlay":args.watchdog,"scope":"selected_actual_C_and_Zig_pool_parent_refusal_only_not_native_authority","directory":str(directory),"source":str(source),"base":BASE,"patch_sha256":artifacts[str(patch)],"artifacts":artifacts,"selected_current_inputs":current,"clang":{"path":str(compiler),"sha256":digest(compiler.read_bytes())},"zig_sha256":ZIG_SHA,"suites":suites,"inputs_unchanged":True,"models":0,"inference":False,"Metal":False,"hardware_faults":False,"installed":False,"activation":False,"native_authority":False,"all_client_coverage":False,"whole_native_provenance":False}
  path=directory/"receipt.json";path.write_text(json.dumps(receipt,indent=2)+"\n")
- print(json.dumps({"directory":str(directory),"receipt_sha256":digest(path.read_bytes()),"records":78,"expected_original_failures":24,"original_controls":14,"candidate_passes":40,"models":0,"native_authority":False}))
+ print(json.dumps({"directory":str(directory),"receipt_sha256":digest(path.read_bytes()),"records":94 if args.watchdog else 78,"expected_original_failures":26 if args.watchdog else 24,"original_controls":20 if args.watchdog else 14,"candidate_passes":48 if args.watchdog else 40,"models":0,"native_authority":False}))
 if __name__=="__main__":main()

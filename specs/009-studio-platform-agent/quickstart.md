@@ -1045,3 +1045,5 @@ uv sync --locked --no-editable --reinstall-package fios-agent
 ```
 
 Requires the existing CPython3.11.17, ARM64 development host, reviewed Xcode and pinned Zig. Source/helper/patch and tool inputs are checked; tests are finite CPU-only processes with network denied. The suite exercises78 cases across original/candidate C and Zig modes, including healthy real pthread controls and explicit metadata failure substitutes. It grants no model-plan, native admission, installation or service authority. See [the contract](contracts/stream-pool-custody.md) and exact evidence in validation.md.
+
+To check the separately selected streamed-watchdog overlay, add `--watchdog` to the streamed-pool command. It composes both reviewed source patches and runs94 cases, including the16-case watchdog/host-event matrix. Omitting selection on that source refuses before compilation. See [the watchdog contract](contracts/stream-watchdog-uncertainty.md).
