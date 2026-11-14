@@ -876,6 +876,8 @@ The next published SDK overlay additionally carries command-buffer failure statu
 
 Actual source mode uses `--isolated --command-status` with the same required path/digest arguments; its baseline is the exact first callback-fence SDK tree, and its candidate adds `mlx-c69303b-metal-callback-status.patch`. It reconstructs both earlier overlays, checks exact helper/source bytes and tests modeled status/capture holders with actual SDK/host scopes. Neither mode creates Metal objects, injects driver failures, runs a model or grants terminal/admission/installation authority. Keep the resulting SDK capsule's model prerequisites invalid.
 
+For CPU C++ compatibility against that three-patch SDK, append `--metal-command-status` to the explicit `--metal-callback-fence --sdk-source ... --sdk-library ...` command above. The checker reconstructs all three exact patches and records the command-status patch digest separately. Omitting the status flag still requires the earlier two-patch tree; it does not silently accept the newer overlay. Canonical-only and two-patch receipts keep their existing field sets. The additional receipt field is not accepted by the strict model prerequisite reader; this check does not authorize another model request.
+
 
 The existing worker-runtime fixture now performs native declared-tree byte review before factory metadata, with Python review before/after:
 
