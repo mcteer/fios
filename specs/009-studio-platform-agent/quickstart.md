@@ -915,3 +915,11 @@ node scripts/check-platform-current-startup-origin.mjs --isolated --source /priv
 ```
 
 This checks the exact current-source startup patch and helper against checkpoint3736ed55, with actual loop/publication fragments and ledger dependencies. Debug/ReleaseFast must reproduce missing origins in the original prefix, then preserve exact-model ownership and delayed callback custody with the candidate. Registry/loader/spawn refusal are CPU substitutes; there is no model, serving process, installation or native authority. See [startup custody contract](contracts/startup-load-custody.md).
+
+### Shutdown stream-close CPU regression
+
+```sh
+node scripts/check-platform-current-shutdown-cleanup.mjs --isolated --source /private/tmp/REVIEWED_STARTUP_AND_SHUTDOWN_CANDIDATE --zig /private/tmp/PINNED_ZIG
+```
+
+The actual close function uses CPU-only registry/close and negative-evidence substitutes. Each healthy/pre-existing/during-close scenario starts a separate process; uncertainty is never cleared within a scenario. Required outcomes are4 original failures,2 original healthy successes and6 candidate successes across Debug/ReleaseFast. No hardware, model, installation or native authority. See [shutdown contract](contracts/shutdown-stream-cleanup.md).

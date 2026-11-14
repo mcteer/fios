@@ -1,0 +1,44 @@
+// Each scenario is a separate process; simulated uncertainty is never cleared.
+const std = @import("std");
+const scenario = @import("build_options").scenario;
+var uncertain = scenario == 1;
+var closed: usize = 0;
+fn cleanupUncertain(_: std.Io) bool { return uncertain; }
+fn cleanupUncertainLocked(_: std.Io) bool { return uncertain; }
+const mlx_stream = struct { fn close(_: usize) void { closed += 1; if (scenario == 2) uncertain = true; } };
+const Transformer = struct { config: struct { glm_stream: bool = true } = .{}, mlx_stream_ext: ?usize = 11 };
+const Entry = struct { transformer: ?*Transformer };
+const Entries = struct {
+    values: [2]*Entry,
+    const Iterator = struct {
+        values: *[2]*Entry, index: usize = 0,
+        fn next(self: *@This()) ?**Entry {
+            if (self.index == 2) return null;
+            defer self.index += 1;
+            return &self.values[self.index];
+        }
+    };
+    fn valueIterator(self: *@This()) Iterator { return .{ .values = &self.values }; }
+};
+const Mutex = struct { fn lockUncancelable(_: *@This(), _: std.Io) void {} fn unlock(_: *@This(), _: std.Io) void {} };
+const Registry = struct { mutex: Mutex = .{}, entries: Entries };
+const Scheduler = struct { io: std.Io, registry: *Registry };
+// ACTUAL_SHUTDOWN_CLOSE
+pub fn main(init: std.process.Init) !void {
+    var a: Transformer = .{}; var b: Transformer = .{};
+    var ea: Entry = .{ .transformer = &a }; var eb: Entry = .{ .transformer = &b };
+    var registry: Registry = .{ .entries = .{ .values = .{ &ea, &eb } } };
+    var sch: Scheduler = .{ .io = init.io, .registry = &registry };
+    closeGlmModels(&sch);
+    if (scenario == 0) {
+        if (closed != 2 or a.mlx_stream_ext != null or b.mlx_stream_ext != null) return error.HealthyCleanupChanged;
+    } else {
+        if (closed != @as(usize, if (scenario == 1) 0 else 1) or a.mlx_stream_ext == null or b.mlx_stream_ext == null) {
+            std.debug.print("FIO_SHUTDOWN_UNCERTAIN_CLOSE_OR_HANDLE_CLEAR\n", .{});
+            return error.UncertainCleanup;
+        }
+        closeGlmModels(&sch);
+        if (closed != @as(usize, if (scenario == 1) 0 else 1)) return error.RepeatedUncertainClose;
+    }
+    std.debug.print("PASS: actual shutdown close respects negative evidence; CPU substitutes only\n", .{});
+}
