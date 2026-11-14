@@ -923,3 +923,11 @@ node scripts/check-platform-current-shutdown-cleanup.mjs --isolated --source /pr
 ```
 
 The actual close function uses CPU-only registry/close and negative-evidence substitutes. Each healthy/pre-existing/during-close scenario starts a separate process; uncertainty is never cleared within a scenario. Required outcomes are4 original failures,2 original healthy successes and6 candidate successes across Debug/ReleaseFast. No hardware, model, installation or native authority. See [shutdown contract](contracts/shutdown-stream-cleanup.md).
+
+### Shutdown persistence CPU regression
+
+```sh
+node scripts/check-platform-current-shutdown-persist.mjs --isolated --source /private/tmp/REVIEWED_SHUTDOWN_PERSIST_CANDIDATE --zig /private/tmp/PINNED_ZIG
+```
+
+The actual persistence function runs with CPU-only drain/cache/clock/negative-getter substitutes. Independent healthy, pre-existing/drain/enumeration uncertainty and zero-deadline processes require6 original failures,4 original healthy/deadline successes and10 candidate successes across Debug/ReleaseFast. No simulated latch is cleared. See [persistence contract](contracts/shutdown-persistence.md); this grants no native proof or installation/activation authority.

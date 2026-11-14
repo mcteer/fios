@@ -1,0 +1,18 @@
+--- a/src/engines/mlx/cache/budget.zig
++++ b/src/engines/mlx/cache/budget.zig
+@@ -248,12 +248,14 @@
+ pub fn persistAtShutdown(sch: *Scheduler) void {
+     const deadline_ms = sch.shutdown_deadline_ms.load(.acquire);
+     if (deadline_ms == 0) return;
++    if (model_registry_mod.cleanupUncertain(sch.io)) return;
+     // A slot cancelled as `shutdown` flipped can still sit in the cleanup queue: commit it and
+     // return its checkout, or its session reads as checked out.
+     _ = drainSideQueues(sch);
++    if (model_registry_mod.cleanupUncertain(sch.io)) return;
+     var targets: [16]prefix_cache_mod.FlushTarget = undefined;
+     const n = diskCaches(sch, &targets, false);
+-    if (n == 0) return;
++    if (n == 0 or model_registry_mod.cleanupUncertain(sch.io)) return;
+     const sw = io_util.Stopwatch.init(sch.io);
+     const t = prefix_cache_mod.shutdownPersist(targets[0..n], io_util.MonotonicClock{ .io = sch.io }, deadline_ms);
+     const mb = 1024.0 * 1024.0;
