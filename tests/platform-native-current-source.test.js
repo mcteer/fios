@@ -2,6 +2,17 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 
+test('current worker eviction checkpoints preserve exact CPU-only refusal controls',()=>{
+  const patch=readFileSync('platform/studio/native/mlx-serve-26.11.2-worker-eviction-checkpoints.patch','utf8');
+  const sections=patch.split(/(?=^diff --git )/m).filter(Boolean);
+  assert.deepEqual(sections.map(section=>section.match(/^diff --git a\/(\S+) b\/(\S+)/)[1]),['src/engines/mlx/runtime/load_requests.zig','src/host/gpu_thread/requests.zig']);
+  const start=sections[0].indexOf('+// Published worker refusal controls:');assert(start>=0);
+  const fixture='\n'+sections[0].slice(start).split('\n').filter(line=>line.startsWith('+')).map(line=>line.slice(1)).join('\n')+'\n';
+  assert.equal(fixture,readFileSync('platform/studio/native/current_worker_eviction_checkpoint_test.zig.fixture','utf8'));
+  assert(sections[1].includes('+    fios_eviction_attempted: u16 = 0,'));
+  assert(!patch.includes('+    fios_ownership.shared().primary_guard = true;'));
+});
+
 test('current cold-load publication preserves its exact model-free controls and metadata boundary',()=>{
   const patch=readFileSync('platform/studio/native/mlx-serve-26.11.2-cold-load-publication.patch','utf8');
   const sections=patch.split(/(?=^diff --git )/m).filter(Boolean);
