@@ -1,5 +1,19 @@
 # Spec 009 continuation — 2026-11-14
 
+## Wire source checkpoint for clean package rebuild — 23:12 UTC
+
+Whole39/55 unchanged. Published83cbd48 CI43649252053 now all7 green (exact head independently checked). Local media3f91056 not pushed yet; avoid a transient CI run while wire source is completed. Current wire source is ready for a local source commit with honest pending native qualification, so a CLEAN declared-input platform package can be built from that commit. Full Debug and optimized root mock suites pass,131 platform Node pass, strict root checker9544acd6… at checkprnLDi passes3 named candidates/mode plus2 parent unsupported-v2 controls. Actual Zig→Swift cross-frame receipt binds both binary modes and raw frame hashes; source Swift receipt625601b5…. Final native default261.195s/160 all pass (binarybd3fdf39…). Enabled check-native.py session78790 started23:06 and is still running; then build-native/compose/empty-model checks plus actual v2 primary manager and raw socket lengths are required. No source changes to private jcvplkte until input-stability checks finish. New private check-wire-socket.py is prepared but not run (expects normalized final binary).
+
+Root Swift changes make f682/c65fb9d3 package historical. Next clean worktree at the new SOURCE commit → package-platform.mjs --output NEW_PRIVATE_PATH → adapt prior j668inph/verify.mjs with exact revision/paths → both host plans must stay5 blockers/no privileged commands; standalone packaged CLI only. No current package/installation/whole-native claim until done. Native overlays outside collectSources remain separate. Do not infer current whole provenance from the package source_revision.
+
+Root new wire artifacts/docs,3 Swift files,2 tests and native status checker are the ONLY intended source checkpoint paths; protect user UI/catalog WIP. No sixth model plan/POST, native installed/activation action, merge or deployment. Do not end with status-only final; continue authorized source work.
+
+## Active root five-phase source — 23:01 UTC
+
+Media increment committed locally3f9105697077e10a8d846ec28ee46b9d12262c24; not pushed while83cbd48 CI43649252053 still runs. Whole39/55 unchanged. All media qualification complete, source unchanged afterward.
+
+Three reviewed private Swift candidates now copied into root: NativePrimaryActivity, NativeControlClient, NativePrimaryActivityDiagnostics. New QueuedPrimaryActivityTests registered through NativeControlTests; native status checker expects explicit primary frame2 and queued count. This CHANGES declared platform-package inputs: f682/c65fb9d3 package is now historical, NOT current for these new Swift sources. Rebuild a clean declared-input development package after source qualification; no package/native activation or authority follows. Root full mock suites, actual authenticated empty-model v2 manager check and native p19 qualification remain pending. Protect user catalog/UI WIP.
+
 ## Qualified media increment — 22:59 UTC
 
 Whole39/55 unchanged. Media source /private/tmp/fios-009-media-queue-work-ngdv64gd/source is now fully qualified within its partial scope: default181.114s/160 native tests,35/35 enabled semantic380.126s,32/32 link12.446s and4 empty-model checks all pass. Runtime991bc365… capsule3ac5f834…. Root artifacts/docs ready for explicit009 commit. No new package required for declared platform-package inputs (only native overlays/checkers/docs changed); no whole-native claim. No app/Python source changed. Previous published83cbd48 CI43649252053 still running at last check; f4a5dc6 CI43646372602 green. Avoid cancelling the previous exact-head native run while it still runs; local commit can wait to publish while next isolated wire work continues.

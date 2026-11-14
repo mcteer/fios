@@ -1,0 +1,72 @@
+const std = @import("std");
+const owners = @import("fios/request_ownership.zig");
+const wire = @import("fios/control_protocol.zig");
+test "fios current queued wire retains five phases and legacy version" {
+    const io = std.testing.io;
+    var tracker: owners.Tracker = .{ .primary_guard = false };
+    try tracker.initialize(io, @splat(111));
+    const root = try tracker.enter(io);try tracker.bind(io, root, "fixture/queued-wire");
+    const held = try tracker.retainTokens(io, &.{root});
+    const ticket = try tracker.beginQueued(io, &held);try tracker.leave(io, root);
+    var request: [32]u8 = @splat(0);@memcpy(request[0..4], "FIA9");request[4] = 2;@memcpy(request[8..24], &@as([16]u8,@splat(111)));
+    const queued = wire.dispatchQueuedActivity(&tracker, io, &request);
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = "queued-wire-native-frame.bin", .data = &queued });
+    try std.testing.expectEqual(@as(usize, 66888), queued.len);
+    try std.testing.expect(std.mem.eql(u8, queued[0..4], "FIT9") and queued[4] == 2 and queued[5] == 0);
+    try std.testing.expectEqual(@as(u32, 1), std.mem.readInt(u32, queued[52..56], .big));
+    try std.testing.expectEqual(@as(u32, 0), std.mem.readInt(u32, queued[56..60], .big));
+    try std.testing.expectEqual(@as(u32, 1), std.mem.readInt(u32, queued[80..84], .big));
+    try std.testing.expect(std.mem.eql(u8, queued[92..111], "fixture/queued-wire"));
+    request[4] = 1;const legacy = wire.dispatchPrimaryActivity(&tracker, io, &request);
+    try std.testing.expectEqual(@as(usize, 66624), legacy.len);
+    try std.testing.expect(legacy[4] == 1 and legacy[5] == 0);
+    request[4] = 2;try tracker.activateQueued(io, ticket);
+    const active = wire.dispatchQueuedActivity(&tracker, io, &request);
+    try std.testing.expectEqual(@as(u32, 0), std.mem.readInt(u32, active[52..56], .big));
+    try std.testing.expectEqual(@as(u32, 1), std.mem.readInt(u32, active[56..60], .big));
+    request[31] = 1;const invalid = wire.dispatchQueuedActivity(&tracker, io, &request);
+    try std.testing.expectEqual(@intFromEnum(wire.Status.invalid), invalid[5]);
+    request[31] = 0;request[8] = 0;const wrong = wire.dispatchQueuedActivity(&tracker, io, &request);
+    try std.testing.expectEqual(@intFromEnum(wire.Status.wrong_instance), wrong[5]);
+    request[8] = 111;tracker.fence(io);const uncertain = wire.dispatchQueuedActivity(&tracker, io, &request);
+    try std.testing.expectEqual(@as(u8, 1), uncertain[7]);
+}
+test "fios current queued wire maximum model set retains exact identities" {
+    const io = std.testing.io;var tracker: owners.Tracker = .{ .primary_guard = false };
+    try tracker.initialize(io, @splat(111));
+    for (0..64) |index| {
+        const root = try tracker.enter(io);var buffer: [64]u8 = undefined;
+        const model = try std.fmt.bufPrint(&buffer, "fixture/model-{d}", .{index});
+        try tracker.bind(io, root, model);
+        const held = try tracker.retainTokens(io, &.{root});
+        _ = try tracker.beginQueued(io, &held);
+        try std.testing.expect(held.releaseIfCertain(io));try tracker.leave(io, root);
+    }
+    var request: [32]u8 = @splat(0);@memcpy(request[0..4], "FIA9");request[4] = 2;@memcpy(request[8..24], &@as([16]u8,@splat(111)));
+    const frame = wire.dispatchQueuedActivity(&tracker, io, &request);
+    try std.testing.expectEqual(@as(u32, 64), std.mem.readInt(u32, frame[40..44], .big));
+    try std.testing.expectEqual(@as(u32, 64), std.mem.readInt(u32, frame[52..56], .big));
+    try std.testing.expectEqual(@as(u32, 64), std.mem.readInt(u32, frame[64..68], .big));
+    for (0..64) |index| {
+        const offset = 72 + index * 1044;var buffer: [64]u8 = undefined;
+        const model = try std.fmt.bufPrint(&buffer, "fixture/model-{d}", .{index});
+        try std.testing.expectEqual(model.len, std.mem.readInt(u16, frame[offset..][0..2], .big));
+        try std.testing.expect(std.mem.eql(u8, frame[offset + 20 ..][0..model.len], model));
+    }
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = "queued-wire-native-max.bin", .data = &frame });
+}
+test "fios current queued wire invalid requests do not invoke source probes" {
+    const io = std.testing.io;var tracker: owners.Tracker = .{ .primary_guard = false };
+    try tracker.initialize(io, @splat(111));
+    const Probe = struct { var count: usize = 0;fn read() bool { count += 1;return false; } };
+    try tracker.enrollDiagnosticUncertaintyProbe(io, Probe.read);
+    var request: [32]u8 = @splat(0);@memcpy(request[0..4], "FIA9");request[4] = 2;@memcpy(request[8..24], &@as([16]u8,@splat(111)));
+    for ([_]usize{ 0, 4, 5, 6, 7, 24, 31 }) |index| {
+        var bad = request;bad[index] = 255;const before = Probe.count;
+        const response = wire.dispatchQueuedActivity(&tracker, io, &bad);
+        try std.testing.expectEqual(@intFromEnum(wire.Status.invalid), response[5]);
+        try std.testing.expectEqual(before, Probe.count);
+    }
+    const response = wire.dispatchQueuedActivity(&tracker, io, &request);
+    try std.testing.expectEqual(@as(u8, 0), response[5]);try std.testing.expect(Probe.count > 0);
+}

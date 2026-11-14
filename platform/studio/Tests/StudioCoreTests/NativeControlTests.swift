@@ -2,6 +2,7 @@ import Foundation
 
 func runNativeControlTests() throws {
     try runNativePrimaryActivityWireTests()
+    try runQueuedPrimaryActivityWireTests()
     try runNativeBackendFenceWireTests()
     let instance=String(repeating:"07",count:16)
     let request=try NativeControlWire.request(operation:.pause,instance:instance,sequence:0)

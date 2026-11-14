@@ -1,0 +1,19 @@
+# Versioned queued activity observation — partial source integration
+
+Whole39/55 unchanged. T020 remains open. This increment transports partial ownership accounting from the existing MLX-Serve tracker to the authenticated manager observer. It supplies no residency, native terminal proof, all-client coverage or atomic admission. The independent coverage ceiling remains unknown; `primary_guard` and activation gates are unchanged.
+
+The existing 32-byte `FIA9` request explicitly selects version2. `FIT9` version2 has a72-byte header and at most64 fixed1044-byte records, totaling66888 bytes. The header carries instance, monotonic sample sequence, source timestamp, uncertainty, owner count, five disjoint phases and model count. A record carries an exact UTF-8 model ID and preparing/queued/active/responding counts. All reserved and unused bytes remain zero. Version1 retains its exact66624-byte response and four-phase interpretation; transport slices the enlarged backing storage to the selected response length.
+
+The manager requests version2 without fallback. Its decoder independently checks version, exact length/instance, bounded counters, sequence, source clock, UTF-8 IDs, uniqueness, phase totals and zero padding. Existing peer identity, deadlines and freshness checks remain. Typed observations retain their phase format. Legacy diagnostic queued counts are unavailable, never synthetic zero; changing phase format within a process epoch fences continuity. Neither authenticated transport nor a zero count changes unknown coverage or grants lifecycle/admission authority.
+
+The strict two-file overlay checker reverses/reapplies against its exact parent projection and copies only the actual protocol/tracker dependency closure. Two parent controls confirm that version1 explicitly rejects version2 and has no v2 dispatcher; these are unsupported-version controls, not historical behavioral failures. Three named candidate cases per Debug/ReleaseSafe mode cover five phases/legacy length, all64 exact model IDs and invalid request/probe separation. Each fresh process also runs one imported support test. Final receipt `/private/tmp/fios-009-queued-wire-check-prnLDi/receipt.json`, SHA2569544acd6987f1fe14819bbb49f88a488f020b24a575f4a5fc06e312f251b5595. Earlier EYYk3e records the same functional scope before runner label cleanup. Missing-overlay source refuses before compiler entry.
+
+Actual Zig-emitted single-model and64-model frames are decoded by actual manager-core Swift binaries in debug and optimized modes, with binary/frame hashes checked before/after. The private cross-frame receipt binds its compiler/source receipt and frame inputs; it does not establish whole-repository/native provenance. Full debug and optimized policy/mock suites and131 focused platform Node tests pass. The complete default native build261.195s succeeds; all160 fresh-process native tests pass with zero skips. Enabled-backend/link/actual authenticated manager integration remains in progress/pending.
+
+The first private wire runner mislabeled a passing test by reusing a loop variable for frame names. Its source/log/receipt are retained under `initial-wire-driver-label-error`; it is setup evidence, not a native code failure. The corrected runner passes all six named runs. Earlier one-case and pre-format-continuity results remain narrower checkpoints.
+
+Root Swift source changes make the f682/c65fb9d3 development package historical. A fresh clean declared-input package is required after qualification; package completion, interpreter/native enrollment and installation/activation remain gated. No model request, installed lifecycle action, merge or deployment occurs. Positive all-client producer/proof/atomic admission and Studio acceptance remain unfinished. No whole task closes.
+
+```sh
+node scripts/check-platform-current-queued-wire.mjs --isolated --source /private/tmp/REVIEWED_SOURCE --zig /private/tmp/PINNED_ZIG
+```

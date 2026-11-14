@@ -1071,3 +1071,11 @@ node scripts/check-platform-current-media-queue.mjs --isolated --source /private
 ```
 
 See [media queued custody](contracts/media-queued-custody.md) for the six-case scope and separate full native qualification.
+
+Finite versioned partial ownership wire check (version1 compatibility and explicit version2; no model or native admission authority):
+
+```sh
+node scripts/check-platform-current-queued-wire.mjs --isolated --source /private/tmp/REVIEWED_SOURCE --zig /private/tmp/PINNED_ZIG
+```
+
+See [queued activity wire](contracts/queued-activity-wire.md) for exact lengths, partial coverage and separate native/manager qualification.

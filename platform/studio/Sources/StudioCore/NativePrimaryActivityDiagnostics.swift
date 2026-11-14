@@ -26,7 +26,7 @@ struct NativePrimaryActivityDiagnostics {
         if let old=checkpoint {
             guard sample.peer.pid==old.peer.pid,sample.peer.start==old.peer.start,
                   sample.peer.executable.path.utf8.elementsEqual(old.peer.executable.path.utf8),sample.peer.executable.sha256==old.peer.executable.sha256,
-                  activity.instance==old.activity.instance,stamp>=old.activity.sampledAt!,now>=previousNow,
+                  activity.instance==old.activity.instance,activity.phaseVersion==old.activity.phaseVersion,stamp>=old.activity.sampledAt!,now>=previousNow,
                   !(seenUncertainty && !activity.uncertain) else {fenced=true;failed();return}
             guard activity.sampleSequence>old.activity.sampleSequence else {failed();return}
         }
@@ -44,8 +44,8 @@ struct NativePrimaryActivityDiagnostics {
         result["received_at"]=sample.receivedAt;result["receipt_age_ms"]=now-sample.receivedAt
         guard now>=previousNow,fresh(stamp,now:now),fresh(sample.receivedAt,now:now) else {result["state"]="stale";return result}
         let activity=sample.activity
-        result["state"]="received";result["source_instance"]=activity.instance
-        result["reported_counts"]=["owners":activity.owners,"ingress":activity.ingress,"preparing":activity.preparing,"active":activity.active,"responding":activity.responding]
+        result["state"]="received";result["source_instance"]=activity.instance;result["phase_version"]=activity.phaseVersion
+        result["reported_counts"]=["owners":activity.owners,"ingress":activity.ingress,"preparing":activity.preparing,"queued":activity.phaseVersion==2 ? activity.queued as Any:NSNull(),"active":activity.active,"responding":activity.responding]
         result["model_identities"]=activity.models.count;result["tracker_uncertain"]=activity.uncertain
         // IDs stay in the typed observation. Exporting all64x1024 bytes would
         // exceed the existing bounded status envelope; never truncate that set.

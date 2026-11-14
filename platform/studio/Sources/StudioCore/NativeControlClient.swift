@@ -151,7 +151,7 @@ struct NativeControlClient:Sendable {
     }
     func primaryActivity(instance:String,after sequence:UInt64=0)throws->NativePrimaryActivitySample {
         let began=HostResources.nowMilliseconds()
-        let value=try NativePrimaryActivityWire.reply(exchange(NativePrimaryActivityWire.request(instance:instance),maximum:NativePrimaryActivityWire.responseSize),instance:instance,after:sequence)
+        let value=try NativePrimaryActivityWire.queuedReply(exchange(NativePrimaryActivityWire.queuedRequest(instance:instance),maximum:NativePrimaryActivityWire.queuedResponseSize),instance:instance,after:sequence)
         let completed=HostResources.nowMilliseconds()
         guard (0...ActivityPolicy.maximumTimestamp).contains(began),completed>=began,
               completed<=ActivityPolicy.maximumTimestamp,completed-began<=5000,
@@ -159,7 +159,7 @@ struct NativeControlClient:Sendable {
         return NativePrimaryActivitySample(peer:peer,receivedAt:completed,activity:value)
     }
     private func exchange(_ data:Data,maximum:Int)throws->Data {
-        guard [32,64].contains(data.count),[64,80,112,NativePrimaryActivityWire.responseSize].contains(maximum) else {throw NativeControlError.invalid}
+        guard [32,64].contains(data.count),[64,80,112,NativePrimaryActivityWire.responseSize,NativePrimaryActivityWire.queuedResponseSize].contains(maximum) else {throw NativeControlError.invalid}
         guard path.hasPrefix("/"),path.utf8.count<104,!path.contains("\0") else {throw NativeControlError.invalid}
         var parent=stat(),socketInfo=stat()
         let directory=URL(fileURLWithPath:path).deletingLastPathComponent().path
