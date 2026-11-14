@@ -533,3 +533,5 @@ T049 bounded-metadata package follow-up: clean53e3de6 produces9 development arti
 T045/T049 byte-tree review partial implementation: native readonly review now binds existing Python candidate manifest/file bytes, names/modes/owners and complete named-tree membership. Private development data cannot pass the root-protection entry point. Missing-API red precedes Debug/optimized green and genuine4461-file copied-runtime/native/factory metadata integration; no model or enrolled authority. Whole38/55 unchanged; see validation.md and contracts/python-runtime-review.md.
 
 Python tree follow-up: close-on-exec enumeration and final fresh Debug/optimized/copied-runtime integration pass.188 Node/106 Python pass. Byte/protection observations remain separate from installed policy and authority;38/55 unchanged.
+
+T049 Python tree package follow-up: cleanb5d94df produces9 development artifacts and both blocked/no-command Studio plans verify. Exact identities in validation.md; whole38/55 unchanged, with no native/installation authority.
