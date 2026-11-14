@@ -2,6 +2,16 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 
+test('current source-SDK Jinja graph uses its exact shared source helper',()=>{
+  const patch=readFileSync('platform/studio/native/mlx-serve-26.11.2-jinja-source-build.patch','utf8');
+  const sections=patch.split(/(?=^diff --git )/m).filter(Boolean);
+  assert.deepEqual(sections.map(section=>section.match(/^diff --git a\/(\S+) b\/(\S+)/)[1]),['build/fios_jinja.zig','build/macos.zig']);
+  const helper=sections[0].split('\n').filter(line=>line.startsWith('+')&&!line.startsWith('+++')).map(line=>line.slice(1)).join('\n')+'\n';
+  assert.equal(helper,readFileSync('platform/studio/native/current_jinja_source_build.zig','utf8'));
+  assert(sections[1].includes('+            .source_jinja = if (fios_source_sdk) fios_jinja.create('));
+  assert(sections[1].includes('+        else mod.addObjectFile(b.path("lib/jinja_cpp/libjinja.a"));'));
+});
+
 test('current worker eviction checkpoints preserve exact CPU-only refusal controls',()=>{
   const patch=readFileSync('platform/studio/native/mlx-serve-26.11.2-worker-eviction-checkpoints.patch','utf8');
   const sections=patch.split(/(?=^diff --git )/m).filter(Boolean);
