@@ -907,3 +907,11 @@ node scripts/check-platform-current-cxx.mjs --isolated --source /private/tmp/REV
 Only this explicit option creates Metal objects. It requires successful Debug/ReleaseFast CPU controls first, the existing pinned Metal-C++ archive and metallib, then compiles one small fixed fixture. The controls exercise normal callback execution and payload destruction in empty command buffers: zero arrays, kernels, models, inference or hardware failure injection; one process at a time,20s wall bound per control, IP networking denied. Do not run the historical foreign/fault/exhaustion matrix as a substitute. This is a local development component check, not installed/Studio/resource/all-client or native terminal acceptance. No CI command enables it.
 
 The current SDK retains commit completion as a capture in addition to explicit handlers. The fixture checks that a held callback/payload retains its capture and buffer, then observes bounded local retirement after release; it does not infer callback cleanup solely from Metal completion status. Extended physical-control receipts remain ineligible for the unchanged strict model prerequisite reader. Existing consumed inference plans stay consumed.
+
+### Startup-load custody CPU regression
+
+```sh
+node scripts/check-platform-current-startup-origin.mjs --isolated --source /private/tmp/REVIEWED_STARTUP_CANDIDATE --zig /private/tmp/PINNED_ZIG
+```
+
+This checks the exact current-source startup patch and helper against checkpoint3736ed55, with actual loop/publication fragments and ledger dependencies. Debug/ReleaseFast must reproduce missing origins in the original prefix, then preserve exact-model ownership and delayed callback custody with the candidate. Registry/loader/spawn refusal are CPU substitutes; there is no model, serving process, installation or native authority. See [startup custody contract](contracts/startup-load-custody.md).

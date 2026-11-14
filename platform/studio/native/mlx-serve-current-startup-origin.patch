@@ -1,0 +1,63 @@
+diff --git a/src/engines/mlx/runtime/loop.zig b/src/engines/mlx/runtime/loop.zig
+index 2daca09..82490f7 100644
+--- a/src/engines/mlx/runtime/loop.zig
++++ b/src/engines/mlx/runtime/loop.zig
+@@ -57,6 +57,16 @@ pub fn inferenceLoop(ctx: ThreadCtx) void {
+     // Covers shutdown and startup-load failure.
+     defer sleep_inhibit.release();
+ 
++    var startup_origin = ctx.fios_startup;
++    if (startup_origin) |*origin| origin.enter(sch.io) catch {
++        recordLoadError(sch, "NativeCleanupUncertain");
++        signalStarted(sch);
++        return;
++    };
++    // End before the ordinary loop. Delayed SDK callbacks retain their own
++    // original references; no local return clears independent uncertainty.
++    defer if (startup_origin) |*origin| { _ = origin.finish(sch.io); };
++
+     if (cleanupUncertain(sch.io)) {
+         recordLoadError(sch, "NativeCleanupUncertain");
+         signalStarted(sch);
+@@ -100,6 +110,9 @@ pub fn inferenceLoop(ctx: ThreadCtx) void {
+         }
+     }
+ 
++    if (startup_origin) |*origin| { _ = origin.finish(sch.io); }
++    startup_origin = null;
++
+     while (!sch.shutdown.load(.acquire)) {
+         // Phase D: cold-load drain. Process ONE load per tick — loading a
+         // model is heavy (~seconds; weight read + JIT compile + warmup)
+diff --git a/src/engines/mlx/runtime/thread.zig b/src/engines/mlx/runtime/thread.zig
+index 15e0465..dabcd63 100644
+--- a/src/engines/mlx/runtime/thread.zig
++++ b/src/engines/mlx/runtime/thread.zig
+@@ -9,6 +9,7 @@ const LoadParams = @import("../scheduler/params.zig").LoadParams;
+ pub const ThreadCtx = struct {
+     scheduler: *Scheduler,
+     params: LoadParams,
++    fios_startup: ?@import("../../../fios/current_startup_origin.zig").Scope = null,
+ };
+ 
+ /// Signal to the parent waiting in `init()` that the inference thread is done
+diff --git a/src/engines/mlx/scheduler.zig b/src/engines/mlx/scheduler.zig
+index 67df5e8..a4aa041 100644
+--- a/src/engines/mlx/scheduler.zig
++++ b/src/engines/mlx/scheduler.zig
+@@ -319,8 +319,13 @@ pub fn init(
+         .load_error_name = null,
+     };
+ 
+-    const ctx = ThreadCtx{ .scheduler = self, .params = params };
+-    self.inference_thread = try std.Thread.spawn(.{}, inferenceLoop, .{ctx});
++    var ctx = ThreadCtx{ .scheduler = self, .params = params };
++    if (!params.no_initial_load and params.entry.fios_owner_guard)
++        ctx.fios_startup = try @import("../../fios/current_startup_origin.zig").Scope.capture(io, params.entry.id);
++    self.inference_thread = std.Thread.spawn(.{}, inferenceLoop, .{ctx}) catch |err| {
++        if (ctx.fios_startup) |*origin| _ = origin.unpublished(io);
++        return err;
++    };
+ 
+     // Wait until inference thread has loaded the model and (optionally)
+     // warmed up. submit() relies on xfm/weights being live.
