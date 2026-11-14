@@ -1,0 +1,62 @@
+diff --git a/src/fios/queued_request_ownership.zig b/src/fios/queued_request_ownership.zig
+--- a/src/fios/queued_request_ownership.zig
++++ b/src/fios/queued_request_ownership.zig
+@@ -17,6 +17,17 @@ pub const Scope = struct {
+         }
+         return .{ .retained = try owners.shared().retainTokens(io, origin.tokens[0..origin.count]) };
+     }
++    // An opted-in entry must carry its original queue custody. Reject before
++    // native effects or sender acknowledgement; do not manufacture a new root.
++    // Standalone unenrolled callers preserve their existing optional behavior.
++    pub fn retainRequest(io: std.Io, origin: ?*const owners.Retained, required: bool) !?Scope {
++        if (origin) |held| return try retain(io, held);
++        if (required) {
++            owners.shared().fence(io);
++            return error.InvalidQueuedOrigins;
++        }
++        return null;
++    }
+     // Called only after this object has stable storage on its original worker.
+     pub fn enter(self: *Scope, io: std.Io) !void {
+         if (self.state != .captured) {
+diff --git a/src/engines/mlx/runtime/load_requests.zig b/src/engines/mlx/runtime/load_requests.zig
+--- a/src/engines/mlx/runtime/load_requests.zig
++++ b/src/engines/mlx/runtime/load_requests.zig
+@@ -158,9 +158,9 @@ pub fn makeRoomInRam(sch: *Scheduler, keep_id: []const u8, weights: u64) !void {
+ pub fn runLoadRequest(sch: *Scheduler, req: *LoadRequest) void {
+     // Own a separate origin copy before effects or sender acknowledgement.
+     // This attributes existing work; it supplies no native admission policy.
+-    var fios_scope = if (req.fios_origins) |origin| fios_queued.Scope.retain(sch.io, origin) catch |err| {
++    var fios_scope = fios_queued.Scope.retainRequest(sch.io, req.fios_origins, req.entry.fios_owner_guard) catch |err| {
+         return failLoadRequest(sch, req, err);
+-    } else null;
++    };
+     if (fios_scope) |*scope| scope.enter(sch.io) catch |err| { return failLoadRequest(sch, req, err); };
+     defer if (fios_scope) |*scope| { _ = scope.finish(sch.io); };
+     sch.registry.mutex.lockUncancelable(sch.io);
+@@ -209,9 +209,9 @@ fn aneBuildThread(sch: *Scheduler, req: *LoadRequest) void {
+     defer _ = sch.ane_builds.fetchSub(1, .acq_rel);
+     // Own a separate origin copy before effects or sender acknowledgement.
+     // This attributes existing work; it supplies no native admission policy.
+-    var fios_scope = if (req.fios_origins) |origin| fios_queued.Scope.retain(sch.io, origin) catch |err| {
++    var fios_scope = fios_queued.Scope.retainRequest(sch.io, req.fios_origins, req.entry.fios_owner_guard) catch |err| {
+         return failLoadRequest(sch, req, err);
+-    } else null;
++    };
+     if (fios_scope) |*scope| scope.enter(sch.io) catch |err| { return failLoadRequest(sch, req, err); };
+     defer if (fios_scope) |*scope| { _ = scope.finish(sch.io); };
+     const built = engines_load.aneOpen(sch, req) catch |err| return failLoadRequest(sch, req, err);
+@@ -281,11 +281,11 @@ fn finishLoadRequest(sch: *Scheduler, req: *LoadRequest, err_name: ?[]const u8)
+ pub fn runUnloadRequest(sch: *Scheduler, req: *UnloadRequest) void {
+     // Clone before native effects; the sender may free its request immediately
+     // after done. Keep stable independent storage through all local cleanup.
+-    var fios_scope = if (req.fios_origins) |origin| fios_queued.Scope.retain(sch.io, origin) catch {
++    var fios_scope = fios_queued.Scope.retainRequest(sch.io, req.fios_origins, req.entry.fios_owner_guard) catch {
+         req.fios_failed = true;
+         finishUnloadRequest(sch, req);
+         return;
+-    } else null;
++    };
+     if (fios_scope) |*scope| scope.enter(sch.io) catch {
+         req.fios_failed = true;
+         finishUnloadRequest(sch, req);

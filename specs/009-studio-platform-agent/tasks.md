@@ -579,3 +579,9 @@ SDK auxiliary bookkeeping follow-up: current actual slot/queued-batch helpers pr
 
 
 SDK capture-refusal increment: actual registered nil capture now refuses publication and retains independent uncertainty; no-hooks SDK behavior unchanged. Exact16-case checker74911888… and rebuilt private SDK2c918d96… pass; final canonical/four-overlay origin matrices and four empty-model capsule checks94a82702… pass. Fresh188 Node/106 installed Python/boundary/syntax/whitespace pass. See validation.md SDK capture refusal for paths and scope. Whole39/55,16 open; T033 image-only approval complete, enrollment/activation still gated. No sixth model POST/plan, native installation, merge or deployment; no model prerequisites/all-client authority. Pushed b6707fa CI43606954758 fully green; new increment requires exact-head CI.
+
+
+Required queued-origin source checkpoint: actual load/ANE/unload prefixes refuse opted-in missing custody before effects/acknowledgement; no replacement root. Exact checkerf1b610d7… passes6 original failures/12 original controls/18 candidate modes. Full native compilation pending; fresh188 Node/106 installed Python/boundary/syntax/whitespace pass. Whole39/55 unchanged. See validation.md and contracts/required-queued-origins.md for CPU substitutes and remaining native/maintenance/installed gates.
+
+
+Required queued-origin final source increment: exact-ID checkerad688ae2… passes6 original failures/12 controls/18 candidate cases. Full enabled semantic35/35 (369.018s), link32/32 (12.428s), four empty-model runtime checks1d94ad31… and fresh default-backend ReleaseSafe native160/160 suitea4235ad8… pass.188 Node/API106 installed Python/boundary/syntax/whitespace pass. All local sessions complete. Scope distinctions and exact receipts are in validation.md. Whole39/55; no native/installed acceptance or activation and no new model plan/POST.

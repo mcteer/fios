@@ -967,3 +967,11 @@ node scripts/check-platform-current-sdk-capture-refusal.mjs --isolated --source 
 ```
 
 Actual native capture hooks/SDK CPU queues require4 original failures,4 original healthy controls and8 candidate passes across Debug/ReleaseSafe. Existing original uncertainty stays retained; no hooks remains ordinary SDK behavior.0 models/Metal buffers, no hardware faults. For healthy owned chains with the new library, append `--owner-capture-refusal` to the SDK-origins command and select its exact source/library/hash; startup becomes candidate-only, with slot/batch/auxiliary modes unchanged. Default canonical selection remains explicit and separate. See [capture-refusal contract](contracts/sdk-capture-refusal.md).
+
+Current source queued-origin refusal, CPU-only (no models/service actions):
+
+```sh
+node scripts/check-platform-current-required-queued-origin.mjs --isolated --source /ABSOLUTE/PRIVATE_CURRENT_SOURCE --zig /ABSOLUTE/PINNED_ZIG
+```
+
+The source must match the declared two-file patch at private parent3736ed55. The checker exercises actual load/ANE/unload prefixes with real custody modules and explicit post-prefix CPU substitutes. It does not grant maintenance attribution, native admission, installation or activation. See [required queued origins](contracts/required-queued-origins.md).
