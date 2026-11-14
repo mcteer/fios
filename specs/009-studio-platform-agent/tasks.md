@@ -535,3 +535,6 @@ T045/T049 byte-tree review partial implementation: native readonly review now bi
 Python tree follow-up: close-on-exec enumeration and final fresh Debug/optimized/copied-runtime integration pass.188 Node/106 Python pass. Byte/protection observations remain separate from installed policy and authority;38/55 unchanged.
 
 T049 Python tree package follow-up: cleanb5d94df produces9 development artifacts and both blocked/no-command Studio plans verify. Exact identities in validation.md; whole38/55 unchanged, with no native/installation authority.
+
+
+T045/T049 protected factory partial composition: strict fixed-path root policy, installed manager kernel/image/context binding and root-tree/provenance checks now precede metadata factory construction through an opaque code-only type. Development image refusal, metadata configuration and genuine private-runtime/digest regressions pass Debug/optimized,188 Node/106 Python. No public startup wiring or positive installed/native acceptance; whole38/55 unchanged. See contracts/python-runtime-enrollment.md and validation.md.

@@ -9,6 +9,10 @@ struct PythonRuntimeTreeObservation {
     let files:Int
     let bytes:Int64
     let rootProtected:Bool
+    let lockSHA256:String
+    let producerSHA256:String
+    let templateSHA256:String
+    let interpreterSHA256:String?
 }
 
 enum PythonRuntimeTreeReview {
@@ -128,6 +132,8 @@ enum PythonRuntimeTreeReview {
         try walk(root,"",0)
         var held=stat(),named=stat()
         guard observed==Set(records.keys),fstat(root,&held)==0,lstat(directory.path,&named)==0,same(held,named) else {throw ControlError.unauthorized}
-        return PythonRuntimeTreeObservation(files:count,bytes:total,rootProtected:rootProtected)
+        return PythonRuntimeTreeObservation(files:count,bytes:total,rootProtected:rootProtected,
+            lockSHA256:value["uv_lock_sha256"] as! String,producerSHA256:value["producer_sha256"] as! String,
+            templateSHA256:value["release_template_sha256"] as! String,interpreterSHA256:records[Data("bin/python".utf8)]?.hash)
     }
 }

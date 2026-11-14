@@ -26,6 +26,7 @@ writeFileSync(entry,`import Foundation
   let a=CommandLine.arguments
   let tree=try PythonRuntimeTreeReview.privateCandidate(directory:URL(fileURLWithPath:a[6]),manifestSHA256:a[7])
   guard !tree.rootProtected,tree.files==Int(a[8]),tree.bytes==Int64(a[9]) else {throw RuntimeError.identity}
+  guard tree.interpreterSHA256==a[2],tree.lockSHA256==a[10],tree.producerSHA256==a[11],tree.templateSHA256==a[12] else {throw RuntimeError.identity}
   let factory=try PythonWorkerFactory(invocation:a[1],executableSHA256:a[2],policySHA256:a[3],packageVersion:a[4])
   guard factory.metadata.python_version=="3.11.17",factory.metadata.policy_input_units==Int(a[5]) else {throw RuntimeError.identity}
   print("PASS: actual Swift worker factory accepts copied runtime metadata without model dispatch")
@@ -34,7 +35,7 @@ writeFileSync(entry,`import Foundation
 `,{mode:0o600});
 run('swiftc',['-swift-version','6','-warnings-as-errors','-j2','-I',join(root,'platform/studio/Sources/CSQLite'),...sources,entry,'-o',binary],180000);
 assert.equal(digest(),sourceSHA);
-const output=run('/usr/bin/sandbox-exec',['-p','(version 1)(allow default)(deny network*)',binary,executable,executableSHA,release.python.policy_sha256,release.python.package_version,String(release.python.policy_input_utf16),args[2],args[4],String(Object.keys(candidate.files).length),String(candidate.bytes)],145000);
+const output=run('/usr/bin/sandbox-exec',['-p','(version 1)(allow default)(deny network*)',binary,executable,executableSHA,release.python.policy_sha256,release.python.package_version,String(release.python.policy_input_utf16),args[2],args[4],String(Object.keys(candidate.files).length),String(candidate.bytes),candidate.uv_lock_sha256,candidate.producer_sha256,candidate.release_template_sha256],145000);
 review();
 const receipt={ok:true,candidate_sha256:args[4],core_source_sha256:sourceSHA,actual_factory:true,copied_runtime:true,native_byte_tree_review:true,root_protection_proven:false,model_posts:0,immutable_tree_enrolled:false,activation:false,review_directory:directory};
 writeFileSync(join(directory,'receipt.json'),JSON.stringify(receipt,null,2)+'\n',{mode:0o600});

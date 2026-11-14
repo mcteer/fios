@@ -43,6 +43,7 @@ struct PolicyTestRunner {
             ("VM footprint",runVMHostFootprintTests),
             ("command slots",runCommandSlotTests),
             ("Python tree review",runPythonTreeTests),
+            ("Python enrollment",runPythonEnrollmentTests),
             ("async VM resources",runAsyncVMResourceTests),
             ("owned VM resources",runOwnedVMResourceTests),
             ("VM probe permission",runVMProbePermissionTests),
