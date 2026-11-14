@@ -1,0 +1,34 @@
+diff --git a/src/host/api/models.zig b/src/host/api/models.zig
+index 46fa1e4..cf720a7 100644
+--- a/src/host/api/models.zig
++++ b/src/host/api/models.zig
+@@ -26,8 +26,18 @@ const nowSecs = io_util.nowSecs;
+ const testing = std.testing;
+ const http_server = @import("../http/server.zig");
+ const request_model = @import("request_model.zig");
++const fios_ownership = @import("../../fios/request_ownership.zig");
+ const row_facts = @import("model_row_facts.zig");
+ 
++// Resolve once and bind the original admin ingress before CPU preparation.
++// Diagnostic request custody only; this is not a native admission grant.
++fn loadTargetWithOwnership(scheduler: *@import("../gpu_thread/scheduler.zig").Scheduler, id: []const u8) ![]const u8 {
++    const token = fios_ownership.current().* orelse return id;
++    const entry = try scheduler.registry.resolveEntry(id);
++    try fios_ownership.shared().bind(scheduler.io, token, entry.id);
++    return entry.id;
++}
++
+ const Conn = @import("../http/conn.zig").Conn;
+ const configuredKvQuantFor = @import("../http/server.zig").configuredKvQuantFor;
+ const parseModelFromBody = @import("request_model.zig").parseModelFromBody;
+@@ -752,6 +762,10 @@ pub fn handleLoadModelStrict(allocator: std.mem.Allocator, stream: *Conn, reques
+         .id => |id| requested_id = id,
+         else => {},
+     };
++    requested_id = loadTargetWithOwnership(scheduler, requested_id) catch |err| {
++        try sendEnsureLoadedError(allocator, stream, scheduler, requested_id, err);
++        return;
++    };
+     const lm = scheduler.ensureLoaded(requested_id) catch |err| {
+         try sendEnsureLoadedError(allocator, stream, scheduler, requested_id, err);
+         return;

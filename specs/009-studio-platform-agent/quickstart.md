@@ -1028,3 +1028,11 @@ node scripts/check-platform-current-audio-companion.mjs --isolated --source /pri
 ```
 
 The checker applies the audio-only patch to its fixed parent for comparison, verifies both original loader call sites were replaced, runs original/candidate CPU cases under Debug/ReleaseSafe and checks declared inputs unchanged. It loads no models and grants no native admission, installation or whole-native provenance. See [the contract](contracts/audio-companion-custody.md) and [the remaining capability audit](contracts/native-capability-gap-audit.md).
+
+### Isolated administrative-load ingress
+
+```sh
+node scripts/check-platform-current-admin-load-origin.mjs --isolated --source /private/tmp/REVIEWED_SOURCE --zig /private/tmp/PINNED_ZIG
+```
+
+Uses the existing isolated ARM64/pinned-tool rules. The helper is extracted from the actual models handler; only its scheduler type, registry and loader are substituted. The original target expression is checked against the unchanged parent and projected as an identity helper for comparison. No model, native admission/proof, installation or lifecycle action. See [the contract](contracts/admin-load-custody.md).
