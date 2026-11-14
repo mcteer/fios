@@ -957,3 +957,13 @@ node scripts/check-platform-current-sdk-origins.mjs --isolated --source /private
 This explicit canonical-SDK check reconstructs the startup patch and matches the actual prefix/native hooks. The fixture loader queues a real CPU callback whose payload destructor queues a second callback. Both must retain the exact startup model after its thread exits. Required results:2 original missing-origin failures and2 candidate passes, Debug/ReleaseSafe. Selected library path is checked with dladdr/realpath; source/library/fixture inputs remain unchanged. No Metal buffers, model, inference, native server, installation or authority; this is not the command-status SDK or model-prerequisite path. See [startup contract](contracts/startup-load-custody.md).
 
 Append `--slot-origins` or `--queued-batch` to the SDK-origins command to characterize those existing native unions with the same selected library. Flags are mutually exclusive. Each mode runs2 client configurations; each expects the named functional test and current native module's anonymous import test,2 genuine CPU callbacks and both original roots retained after sender/actor exit. These metadata shapes are not full scheduler/modality or model acceptance.
+
+For slot/batch component bookkeeping, also append `--auxiliary-components`. The copied fixture binds distinct auxiliary metadata IDs to both roots and checks all three IDs at each held callback and local retirement. Startup mode refuses this flag. These are metadata identities, not loaded models or multimodal competence.
+
+### SDK capture refusal before publication
+
+```sh
+node scripts/check-platform-current-sdk-capture-refusal.mjs --isolated --source /private/tmp/REVIEWED_NATIVE_SOURCE --zig /private/tmp/PINNED_ZIG --sdk-source /private/tmp/REVIEWED_FOUR_OVERLAY_SDK_SOURCE --sdk-library /private/tmp/REVIEWED_NEW_SDK/lib/libmlx.dylib --sdk-sha256 NEW_LIBRARY_SHA256 --baseline-library /private/tmp/REVIEWED_THREE_OVERLAY_SDK/lib/libmlx.dylib --baseline-sha256 BASELINE_LIBRARY_SHA256
+```
+
+Actual native capture hooks/SDK CPU queues require4 original failures,4 original healthy controls and8 candidate passes across Debug/ReleaseSafe. Existing original uncertainty stays retained; no hooks remains ordinary SDK behavior.0 models/Metal buffers, no hardware faults. For healthy owned chains with the new library, append `--owner-capture-refusal` to the SDK-origins command and select its exact source/library/hash; startup becomes candidate-only, with slot/batch/auxiliary modes unchanged. Default canonical selection remains explicit and separate. See [capture-refusal contract](contracts/sdk-capture-refusal.md).

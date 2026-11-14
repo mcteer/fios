@@ -1,0 +1,11 @@
+# SDK owner-capture refusal
+
+The genuine SDK previously treated a nil result from registered native capture hooks as unattributed work and continued publication. This also happened when the actual native SDK hooks were already fenced: the original native uncertainty remained set, but the CPU callback still executed without custody.
+
+The candidate changes only `fios_capture_request_owners` in SDK `mlx/stream.cpp`. No registered hooks preserves existing ordinary SDK behavior. With registered hooks, nil capture now calls the native uncertainty hook outside the SDK registry mutex, latches SDK uncertainty under that mutex and throws before publication. Missing context, prior native failure and allocation/context refusal cannot become unowned work. Existing uncertainty/original references remain retained; no cleanup, process result or zero observation clears them.
+
+This is a private source opt-in boundary, not a new numerical engine, model selection/loading algorithm or native admission grant. Public ABI headers and layouts remain unchanged. It layers after the canonical ownership, Metal callback and command-status overlays. No installation/activation follows from its build or tests.
+
+`check-platform-current-sdk-capture-refusal.mjs` reconstructs all four exact SDK overlays and binds actual native hook dependencies, source/library/fixture/runtime-stub inputs and client modes. Independent Debug/ReleaseSafe processes cover no hooks, healthy owned work, an already-fenced native origin and registered missing context. Required outcomes: four original failures, four original healthy controls and eight candidate passes. Negative cases use actual native fence exports/absent context; no hardware fault, model or Metal buffer is involved.
+
+The SDK-origins checker has explicit `--owner-capture-refusal` for healthy current callbacks/unions using this composition. Original-prefix startup controls belong to the older canonical SDK, because this SDK now rejects their absent ownership before callback publication. The new SDK selection runs candidate-only startup/slot/batch/auxiliary controls and leaves canonical selection unchanged. Extended results are not model prerequisites, all-client/native terminality, whole-native provenance or installed/Studio acceptance.

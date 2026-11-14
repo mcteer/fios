@@ -4575,3 +4575,32 @@ Operator explicitly answered “Approve image only” for immutable0406a8451a382
 This resolves T033’s remaining approved-artifact requirement together with its existing implementation/functional receipts: **39/55 whole tasks complete;16 open**. Enrollment/installation/activation/native admission and Studio acceptance are not approved; no such action occurred, no protected policy was written and production approved_sandbox_images remains empty. See [decision and exact evidence](sandbox-image-approval.md). Historical38/55 and pending-approval statements above remain dated checkpoints, not the current decision state.
 
 Exact CI follow-up:9d87b820bd77ae3ee0b6d3f667af8a4abeeca2da / [CI43602606288](https://github.com/mcteer/fios/actions/runs/43602606288) has all six prerequisites plus aggregate green, independently verified. This certifies the pushed maintenance-source revision; SDK fixture/approval-record follow-up requires fresh exact-head CI after publication. Current whole39/55 reflects the explicit image-only approval, not a CI/native authority inference.
+
+## SDK auxiliary-component bookkeeping — 2026-11-14
+
+The SDK-origins checker now has explicit `--auxiliary-components`, only for slot or queued-batch modes. Copied fixtures call the actual tracker’s `bindAuxiliary` once per original root, then require the exact primary plus both auxiliary metadata IDs at each held genuine callback after sender metadata/actor exit. All three retire only after local SDK cleanup. The original source/module implementations are unchanged; these are no-weight metadata identities, not loaded models or modality competence. No new failing product baseline is claimed.
+
+Final expanded checker matrix, selected inputs unchanged:
+
+- Startup `/private/tmp/fios-009-startup-sdk-check-pj8avZ/receipt.json`, SHA `b0ba6a2af7ad4cb0c027130900f1cfa0cf9a14c8386b378338fd9483a9b9dbb1`:2 expected original-prefix failures and2 candidate client passes.
+- Slot `/private/tmp/fios-009-startup-sdk-check-TjX8a1/receipt.json`, SHA `20c14f4fed797cb9c88d9821b55711afeec3f50dd9121399352d9b842d65210c`:2 client passes.
+- Batch `/private/tmp/fios-009-startup-sdk-check-MGZ972/receipt.json`, SHA `119e757bab2798bfe2fe91d9cefed6780e30ba13460c86d053c6898df0ad0e13`:2 client passes.
+- Slot auxiliaries `/private/tmp/fios-009-startup-sdk-check-ZWZoBp/receipt.json`, SHA `a3fb387c45627c2c8882860c8dac11538979dc22244662b93b4cb1440419c93c`:2 client passes, both roots/3 exact IDs retained.
+- Batch auxiliaries `/private/tmp/fios-009-startup-sdk-check-Keka0k/receipt.json`, SHA `7b53a8e075556cc4fb8452d7db3dab772d302f5ed6b0174276eaa8e1ddf1a1dc`:2 client passes, both roots/3 exact IDs retained.
+
+All use Debug/ReleaseSafe clients, the same existing mapped canonical SDK library and2 genuine CPU callbacks/execution;0 Metal buffers/models/inference. Earlier three-mode receipts bind their earlier checker bytes, preserved at `/private/tmp/fios-009-startup-sdk-work/repository-three-mode-checker.mjs`; they are not relabeled as this version. No native implementation, package input, model prerequisite, native/installed/Studio authority, activation or deployment changes. Whole39/55,16 open; exact9d87b82 CI is fully green and currentb6707fa CI is running.
+
+
+## SDK capture refusal — 2026-11-14
+
+Registered native capture returning nil previously published unowned CPU work even after the actual native hook was fenced. The four-overlay candidate now latches SDK/native uncertainty and throws before publication; ordinary SDK use without registered hooks remains unchanged. Public ABI/layout and numerical/model algorithms are unchanged. See [contract](contracts/sdk-capture-refusal.md).
+
+Exact repository checker receipt `/private/tmp/fios-009-sdk-capture-check-AsJgoG/receipt.json`, SHA `749118881cfe4e4b968b94b89a798ef5c1aec831d927f661681ce15cd84f65e5`, passes four original negative failures, four original healthy controls and eight candidate cases across Debug/ReleaseSafe clients. Actual hooks cover already-fenced and absent-context cases; no hardware fault, model or Metal buffer is involved.
+
+Fresh private SDK build: `/private/tmp/fios-009-sdk-capture-refusal-work/mlx-portable-build-receipt.json`, SHA `2c918d96904ed4d68189eb9e801344e56c7c92b09dc1c477d29ba82144e90882`; all six configure/build/stage phases pass in224.903s. Declared1123 source and333 fetched-dependency inputs remain unchanged: source inventory `9e681b8a4ee546a35b5f29f60a66e6f28d6d1ad44f1398f18744948385f70a13`, postbuild review `4bb282ec146096442f72747457d1abad8b17ef5ecd1a3a1b5e044cfc47f1fac5`. Candidate libmlx SHA `b1ab22fad4048da5837007cbdd8af55f228786373e67e2fa7d31a910ffba705b`; this is private staged data, not installed provenance.
+
+Explicit four-overlay SDK-origins controls all pass: startup receipt c21bb0a4… (yGEOaD), slot43bd6cea… (7d1jM8), batchfebbba5e… (GBBVfj), slot auxiliariesb1a71d95… (xxmbEz), batch auxiliariesf8f423f8… (kLvZgW), under `/private/tmp/fios-009-startup-sdk-check-*/receipt.json`. Ten healthy client runs, two genuine CPU callbacks each. Canonical selection also passes with final checker bytes: startup e5470971… (WTn9yI), slot95906ad2… (KcOzUP), batch69d4171c… (1JwiY3), slot auxiliariesa199a4f1… (VLHB4V), batch auxiliarieseb4ecb70… (YTBjg9); startup includes two expected original-prefix failures. Earlier receipts retain their original checker-byte scope.
+
+Recomposed unchanged budget-native executable plus new SDK passes all four empty-model correlation/activity/startup/authenticated-manager checks. Runtime receipt `/private/tmp/fios-009-sdk-capture-refusal-work/capsule-runtime-receipt.json`, SHA `94a82702a443b33a88fee17c4ddf80813db2d3e9d9e8384adfe98796758f136f`; final capsule review `e7f6bf227b6eac991d9d3c54bd848a09302e91aab6dd030b7df6ab90c0d26ed4`. Initial partial capsule rejected a missing versioned WebP alias before runtime; preserved, corrected with original versioned libraries without relaxing the allowlist. Fresh188 Node/API and106 installed noneditable Python tests, boundary, syntax and whitespace checks pass.
+
+Whole39/55,16 open. Model prerequisites remain false; all-client coverage unknown, native admission unsupported. No new model plan/POST, installation/activation, policy enrollment, Studio acceptance, merge or deployment. No package-declared input changed from061e489. Exact pushed b6707fad91de77a8fb6a07426726d524f5c2ecf3 / CI43606954758 has all six prerequisites and aggregate green; this new increment requires fresh exact-head CI.

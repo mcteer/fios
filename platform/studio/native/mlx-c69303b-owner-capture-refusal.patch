@@ -1,0 +1,21 @@
+--- a/mlx/stream.cpp
++++ b/mlx/stream.cpp
+@@ -236,7 +236,17 @@
+   const auto hooks = fios_request_hooks.load(std::memory_order_acquire);
+   if (!hooks) return {};
+   const auto context = hooks->capture();
+-  if (!context) return {};
++  if (!context) {
++    // Hooks are an explicit source opt-in. Missing/failed capture cannot
++    // become unattributed work after a native fence or allocation refusal.
++    // No native callback runs while the SDK registry mutex is held.
++    hooks->uncertain();
++    {
++      std::lock_guard lock(fios_registry.mutex);
++      fios_mark_uncertain(38);
++    }
++    throw std::runtime_error("Native request owner capture unavailable");
++  }
+   try { return std::make_shared<FiosRequestOwners>(hooks, context); }
+   catch (...) { hooks->uncertain(); hooks->release(context); throw; }
+ }
