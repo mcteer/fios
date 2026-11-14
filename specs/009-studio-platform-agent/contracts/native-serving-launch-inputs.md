@@ -1,0 +1,213 @@
+# Reviewed native serving launch inputs
+
+`NativeServingLaunchDocument` decodes bounded configuration metadata only.
+Installed manager startup may load its protected metadata for read-only health
+through the one-shot worker described below. Successful decoding issues no
+credential reader, native reservation or process actuator.
+
+Version1 has exactly these fields:
+
+| Field | Meaning |
+| --- | --- |
+| `version`, `purpose` | `1`, `reviewed_native_serving_launch` |
+| `host`, `uid` | Approved Studio name and nonroot service account |
+| `review_sha256` | Separately reviewed configuration evidence identity |
+| `manager_sha256`, `supervisor_sha256` | Separate exact manager and supervisor executable identities |
+| `server_sha256`, `application_sha256` | Separate native server and GUI executable identities |
+| `revision`, `state_path` | Canonical UUID revision and exact private manager state directory |
+| `working_directory` | Explicit absolute normalized cwd, including `/` |
+| `arguments` | Ordered preserved server arguments, at most128 entries |
+| `environment` | Preserved bounded noncredential framework/home/locale inputs |
+| `credential_channel` | `argument` or `environment` |
+
+Version2 adds exactly `server_artifact: "reviewed_fios_native"` to that schema.
+It preserves all other fields and selects a fixed separately reviewed native
+artifact, without accepting an executable path from the document:
+
+| Document | Server image | GUI image |
+| --- | --- | --- |
+| Version1 | `/Applications/MLX-Serve.app/Contents/MacOS/mlx-serve` | `/Applications/MLX-Serve.app/Contents/MacOS/MLXCore` |
+| Version2 | `/Library/Application Support/Fios/Studio/native/bin/mlx-serve` | `/Applications/MLX-Serve.app/Contents/MacOS/MLXCore` |
+
+This separates the agent-owned source artifact from the existing signed GUI
+bundle. It does not replace/patch that bundle or create an installed native
+release. Version2 requires its exact flavor; missing/unknown flavors refuse.
+Version1 does not accept the additional field. The selected policy bytes remain
+part of the existing recovery fingerprint, so changing flavor cannot reuse old
+history. Document schema version2 is distinct from the existing launch-input
+fingerprint domain version2; recovery file version3 is unchanged.
+
+The managed profile's readonly census includes both fixed native and GUI roots.
+A vendor server, live GUI companion or unknown executable in those roots cannot
+be mistaken for absence or silently adopted. Current GUI image/tree checks
+still apply separately; the managed server receives its own root-protected
+image check. Its dependencies/mapped code, immutable release lifetime, exclusive
+GUI handover, native namespace/reservations and complete admission remain
+independent enrollment requirements. Neither the flavor name nor successful
+metadata decoding proves any of them. Public native issuers remain absent.
+
+The complete document is at most32KiB. Unknown/duplicate keys, coercions,
+unsupported versions/hosts, malformed identities and unbounded inputs refuse.
+The preserved argument list must contain exactly one two-token `--host <IP>`
+and `--port <decimal>` pair. Addresses are explicit IPv4/IPv6 literals, not a
+DNS lookup; ports are canonical decimal1..65535. Missing/duplicate/equals forms
+refuse rather than inferring the native CLI's `0.0.0.0:11234` defaults. Explicit
+wildcard values remain reviewable configuration; parsing one does not approve
+new exposure. Installation must independently prove it preserves the existing
+reviewed listener. Arguments remain byte-preserved, with no address substitution.
+
+Only `PATH`, `HOME`, `LANG`, `LC_ALL`, `DYLD_LIBRARY_PATH` and `MLX_METAL_PATH`
+are environment keys. PATH and locale retain the fixed runtime values; HOME
+must satisfy the existing sanitized command environment. No model, path,
+listener, authentication policy or framework value is inferred from defaults.
+
+Argument mode stores exactly one `<fios-serving-credential>` placeholder after
+`--api-key`, never the key itself. Environment mode preserves
+`--api-key-env FIOS_MLX_SERVING_API_KEY` and stores no credential environment
+entry. Code-only in-memory resolution supplies a nonempty bounded credential
+and returns launch data; it neither persists nor logs the value. This preserves
+the selected channel rather than silently converting argument authentication to
+environment authentication. The constructor refuses literal argument credentials,
+missing/empty resolution, conflicting channels and unsupported equals forms.
+
+`NativeServingReviewedConfiguration.load` reads only the fixed installed
+`/Library/Application Support/Fios/Studio/native-serving-launch.json`. Its code-only
+role selects the fixed installed manager or supervisor image; a packet cannot
+select that role. Development/wrong-role images return no configuration before
+reading installed metadata. Root-protected file/tree checks, exact host/UID/state
+binding, both manager/supervisor image pins and the caller's kernel/image identity
+precede returning the document and fixed separate server/GUI process profile. It verifies the two
+current executable pins without starting a service or reading credentials.
+
+This is protected configuration metadata, not complete native enrollment.
+Current root-protected files and image pins do not attest mapped code,
+framework dependencies, immutable upgrade lifetime or exclusive handover. The
+positive installed branch remains unexecuted; no root policy is created by
+source fixtures. Native enrollment must independently bind configuration
+review and immutable dependency provenance.
+Exclusive GUI-to-agent handover, native namespace/start reservations and retained
+native drain authority remain required. A decoded document, credential value or
+configuration fingerprint supplies none of those permissions. This contract
+changes no interface login or network binding and authorizes no installation.
+
+The code-only native runtime constructor now takes only supervisor-role opaque
+protected configuration, resolves its credential in memory and requires both start/stop
+reservation validators. A bare process-profile constructor is private to the
+same-file fixtures. Construction does not invoke a validator or start a child;
+public startup still has no native credential/control/lifecycle authority producer.
+
+Recovery correlation additionally includes the SHA256 of the exact credential-free
+reviewed document bytes, under the version2 launch-input fingerprint domain.
+Host/account/state/revision/review/image changes therefore cannot consume old
+history even when argument values are unchanged. Credential rotation leaves
+that fingerprint stable. Private helper fixtures retain the original unreviewed
+version1 fingerprint domain; they supply no installed configuration proof.
+Recovery file version3 is unchanged. Incompatible profile history refuses
+unchanged and must not be deleted or dropped to permit an upgrade.
+
+The manager role can derive the expected version2 control profile using a
+synthetic credential slot, without reading the serving key. Its code-only
+`makeCustodyClient` reads the fixed private descriptor under the reviewed state
+directory, checks boot/profile/UID/canonical identity and independently verifies
+the pinned supervisor kernel/image before returning a fixed transport. Missing
+metadata returns no client; invalid metadata refuses. The descriptor is read
+through a held directory descriptor with exact-file identity checks; unrelated
+progress writes do not invalidate directory identity. This factory is still
+unwired from public startup and grants no native reservation or capacity. Its
+positive installed-manager/supervisor branches remain unexecuted.
+
+Argument-channel credential values are consumed literally, including a leading
+`--`, as in the pinned native parser. Fingerprint redaction consumes that value
+once and never interprets it as another option. Rotation therefore cannot redact
+a following configuration field or change the journal profile. This changes no
+credential value, source, interface login or live server configuration.
+
+
+Source launch parsing also retains the validated listener address and port as
+nonsecret fields. A credential which equals --host remains a credential value;
+it cannot retarget health observation. The reviewed document's health factory
+uses only synthetic credential-slot validation, retaining no serving key in the
+probe. Local IPv4/IPv6 family and exact port selection precede every metadata
+request; no DNS, redirects, inference or remote endpoint fallback is added.
+
+
+## Preserved GUI argument-credential source
+
+The explicit code-only `guiCredentialConfiguration` runtime constructor selects
+the pinned GUI's existing argument-key source: `serverOptions` JSON Data in
+`com.dalcu.mlx-core` for the reviewed current user. The pinned Info.plist and
+ServerOptions source establish that domain/key, JSON representation and
+whitespace/newline trimming before `--api-key VALUE`. Other GUI settings remain
+opaque and cannot replace the reviewed launch arguments. Missing/empty/invalid
+keys are unavailable, never generated/default credentials. Environment-channel
+configuration is unsupported by this specific reader; it does not infer another
+source. The existing explicit credential constructor remains separate.
+
+Only an opaque protected supervisor-role configuration with the exact host/UID
+can read the setting. Manager-role configuration refuses before Preferences
+access. The constructor itself resolves only a non-dispatched template for
+profile correlation. The actual Preferences read runs on the runtime's retained
+launch worker for each attempt. Its result must reproduce the exact reviewed
+profile after credential-value redaction; configuration drift refuses before
+spawn. The separately retained native reservation is revalidated after this I/O
+and before the existing dispatch gate. A blocked source retains the real worker
+slot; deadline/cancellation cannot dispatch the template or rearm another worker.
+No Preferences value is written, logged or sent to the manager.
+
+This is a source-only reader/factory, with no public startup activation, new
+credential store, root policy creation or installed handover. Live Preferences
+access and the installed domain/setting branch remain unexecuted and require
+reviewed native installation/acceptance. Synthetic JSON and actual private C
+children test decoding/preparation; they are not credential-source enrollment,
+whole-native provenance or native admission authority.
+
+
+## Read-only manager health startup
+
+The public manager starts one retained metadata-loading worker. Only the fixed
+installed manager image can pass the protected loader; development images return
+unconfigured before reading installed policy. Loading and collector construction
+run off the heartbeat/control loop. A blocked load retains its original worker;
+completion is consumed once, with no retry or fallback to another image/profile.
+The fixed status state is loading/configured/unconfigured/unavailable; raw policy
+errors are not exposed. Native and runtime service control remain separate.
+
+A valid result supplies only the existing identity/listener-bound health
+collector. Collection remains bounded and off-loop at the existing2s cadence.
+No serving credential or GUI Preferences are read. Credential/session readiness
+remain independently false in this public path. Present fresh health is exposed
+separately from the observed service state: healthy can coexist with
+waiting_credentials. Stale/invalid/identity-missing observations expose no health
+value. This is monitoring, not absence, all-client idle, admission or a lifecycle
+permit; public recovery/native-control/start/stop issuers remain absent.
+Positive installed configuration/collector behavior remains separately gated and
+unexecuted. A development package or this source wiring creates no installation.
+
+### Connection-drain retention in the source server
+
+A stop signal ends the native accept loop. The source server gives its existing
+connection threads a30s observation using monotonic elapsed time, rather than
+counting requested sleep intervals. A remaining original thread sets the
+independent request uncertainty fence. The serving frame, response storage,
+globals and deferred scheduler teardown remain retained until those actual
+threads and the tracker's retained owners/model-mutation tickets finish. The
+local retained-work predicate takes only its original metadata lock; it does
+not call backends, advance observation sequence/time or change uncertainty.
+Independent idle eviction stops before this wait; its original deferred join
+still protects an already-running iteration. These tracked lifetimes are not
+an atomic reservation of every possible native producer. A supervisor stop deadline may therefore remain uncertain; it
+must retain the original child and may not infer exit or launch a replacement.
+This is local connection custody, not complete backend/device terminality or
+all-client native enrollment. No age, cleanup or local reap clears independent
+inference uncertainty.
+
+The isolated source command `node scripts/check-platform-native-connection-drain.mjs
+--isolated --release ABS_CAPSULE --sha256 REVIEW_SHA` uses one private empty-model
+server, one incomplete128-byte GET body, loopback/private Unix only, no model
+POSTs and no installed actions. It drips fewer than128 bytes for31.5s around an
+ordinary stop signal, observes the original ingress still owned and uncertain,
+then closes its own connection and waits at most5s for the original process.
+A forced private cleanup is reported as failure, not accepted exit or native
+quiescence. The capsule marker native_connection_drain_retention_version1 covers connection
+retention; version2 adds tracked owner/mutation lifetime checks. Each is
+source-format metadata, not installed authority.

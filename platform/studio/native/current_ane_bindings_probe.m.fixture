@@ -1,0 +1,36 @@
+// Tiny healthy IOSurface ownership + ordinary CPU objects; no ANE model/API.
+#ifndef FIOS_ANE_SOURCE
+#error "Private source fixture required"
+#endif
+@interface FiosBindingModel : NSObject
+@property unsigned calls;
+@end
+@implementation FiosBindingModel
+- (BOOL)unloadWithQoS:(unsigned)qos error:(NSError **)error { (void)qos;*error=nil;self.calls+=1;return YES; }
+@end
+static bool fio_child_saw_parent;
+@interface FiosBindingChild : NSObject
+@property (weak) FiosBindingModel *parent;
+@end
+@implementation FiosBindingChild
+- (void)dealloc { fio_child_saw_parent=self.parent!=nil; }
+@end
+int fios_fixture_ane_bindings_refusal(void) {
+    @autoreleasepool {
+        IOSurfaceRef surface=msv_ane_bridge_surface(16);if (!surface) return 0;
+        msv_ane_model *h=calloc(1,sizeof(*h));IOSurfaceRef surfaces[]={surface};
+        if (!fios_ane_model_capture_surfaces(h,surfaces,1,surface)) return 0;
+        NSMutableData *program=[NSMutableData dataWithLength:8],*weights=[NSMutableData dataWithLength:16];
+        NSMutableArray *ins=[NSMutableArray array],*outs=[NSMutableArray array],*metadata=[NSMutableArray array],*requests=[NSMutableArray array];
+        FiosBindingModel *model=[FiosBindingModel new];FiosBindingChild *child=[FiosBindingChild new];child.parent=model;
+        NSObject *descriptor=[NSObject new];
+        fios_ane_model_capture_inputs(h,program,weights,ins,outs,metadata,requests,@{});
+        h->model=(__bridge_retained void *)model;h->fios_descriptor=(__bridge_retained void *)descriptor;
+        h->fios_pending_binding=(__bridge_retained void *)child;
+        if (msv_ane_model_try_free(h) || !msv_ane_source_uncertainty() || model.calls ||
+            (__bridge id)h->fios_pending_binding!=child || h->fios_surfaces[0]!=surface ||
+            h->fios_surfaces[1]!=surface || (__bridge id)h->fios_descriptor!=descriptor ||
+            msv_ane_model_try_free(h)) return 0;
+        CFRelease(surface);return 1;
+    }
+}

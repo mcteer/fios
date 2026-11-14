@@ -1,0 +1,28 @@
+// CPU owner-lifetime controls only; no ANE framework/model/device.
+#ifndef FIOS_ANE_SOURCE
+#error "Private source fixture required"
+#endif
+@interface FiosInputMetadata : NSObject
+@property unsigned calls;
+@end
+@implementation FiosInputMetadata
+- (BOOL)unloadWithQoS:(unsigned)qos error:(NSError **)error {
+    (void)qos;*error=nil;self.calls+=1;return YES;
+}
+@end
+int fios_fixture_ane_inputs_refusal(void) {
+    @autoreleasepool {
+        msv_ane_program *p=calloc(1,sizeof(*p));
+        NSMutableData *program=[NSMutableData dataWithLength:8],*weights=[NSMutableData dataWithLength:16];
+        NSMutableArray *models=[NSMutableArray array],*options=[NSMutableArray array];
+        NSObject *descriptor=[NSObject new];FiosInputMetadata *model=[FiosInputMetadata new];
+        fios_ane_program_capture_inputs(p,program,weights,models,options);
+        p->fios_descriptor=(__bridge_retained void *)descriptor;
+        p->fios_pending_model=(__bridge_retained void *)model;
+        if (msv_ane_program_try_free(p) || !msv_ane_source_uncertainty() || model.calls ||
+            (__bridge id)p->fios_pending_model!=model || (__bridge id)p->fios_descriptor!=descriptor) return 0;
+        NSArray *inputs=(__bridge NSArray *)p->fios_constructor_inputs;
+        if (inputs.count!=2 || inputs[0]!=program || inputs[1]!=weights || msv_ane_program_try_free(p)) return 0;
+        return true;
+    }
+}

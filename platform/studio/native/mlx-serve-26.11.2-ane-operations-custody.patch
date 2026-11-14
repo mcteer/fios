@@ -1,0 +1,121 @@
+diff --git a/lib/ane/ane_bridge.m b/lib/ane/ane_bridge.m
+index 983f027..5519022 100644
+--- a/lib/ane/ane_bridge.m
++++ b/lib/ane/ane_bridge.m
+@@ -53,7 +53,7 @@ uint32_t msv_ane_source_uncertainty(void) {
+ 
+ struct msv_ane_model {
+ #ifdef FIOS_ANE_SOURCE
+-    bool fios_active, fios_close_attempted;
++    bool fios_active, fios_close_attempted, fios_unload_accepted;
+ #endif
+     void *model;
+     void *requests; /* NSArray<_ANERequest *>, one per procedure */
+@@ -797,6 +797,10 @@ int msv_ane_model_eval(msv_ane_model *handle, uint32_t procedure, char *error,
+             fios_ane_fence(FIOS_ANE_REQUEST);pthread_mutex_unlock(&fios_ane_mutex);
+             bridge_fail(error,error_size,"ANE evaluation ownership unavailable");return 0;
+         }
++        if (handle->fios_unload_accepted) {
++            pthread_mutex_unlock(&fios_ane_mutex);
++            bridge_fail(error,error_size,"ANE local unload requires reload before evaluation");return 0;
++        }
+         handle->fios_active=true;
+         pthread_mutex_unlock(&fios_ane_mutex);
+ #endif
+@@ -821,14 +825,44 @@ int msv_ane_model_eval(msv_ane_model *handle, uint32_t procedure, char *error,
+     return ok;
+ }
+ 
++#ifdef FIOS_ANE_SOURCE
++/* Accepted local operation bookkeeping only. It never denotes native
++ * terminality, device idle or an admission lease. Owning callers keep the
++ * handle alive for API entry; arbitrary new readers remain outside contract. */
++static bool fios_ane_model_finish_operation(msv_ane_model *handle, bool accepted, bool unload) {
++    pthread_mutex_lock(&fios_ane_mutex);
++    const bool certain_local_result=accepted && !msv_ane_source_uncertainty();
++    if (certain_local_result) handle->fios_unload_accepted=unload;
++    handle->fios_active=false;
++    pthread_mutex_unlock(&fios_ane_mutex);
++    return certain_local_result;
++}
++#endif
++
+ int msv_ane_model_unload(msv_ane_model *handle, char *error, size_t error_size) {
+     if (!handle || !handle->model) {
+         bridge_fail(error, error_size, "no ANE model to unload");
+         return 0;
+     }
++#ifdef FIOS_ANE_SOURCE
++    pthread_mutex_lock(&fios_ane_mutex);
++    if (msv_ane_source_uncertainty() || handle->fios_active || handle->fios_close_attempted) {
++        fios_ane_fence(FIOS_ANE_PARENT);pthread_mutex_unlock(&fios_ane_mutex);
++        bridge_fail(error,error_size,"ANE unload ownership unavailable");return 0;
++    }
++    if (handle->fios_unload_accepted) { pthread_mutex_unlock(&fios_ane_mutex);return 1; }
++    handle->fios_active=true;
++    pthread_mutex_unlock(&fios_ane_mutex);
++#endif
+     @autoreleasepool {
+         NSError *failure = nil;
+-        if (!bridge_unload((__bridge id)handle->model, &failure)) {
++        const bool accepted=bridge_unload((__bridge id)handle->model, &failure);
++#ifdef FIOS_ANE_SOURCE
++        const bool local_result=fios_ane_model_finish_operation(handle,accepted,true);
++#else
++        const bool local_result=accepted;
++#endif
++        if (!local_result) {
+             bridge_fail(error, error_size, "ANE unload failed: %s",
+                         failure ?
+                         failure.localizedDescription.UTF8String : "?");
+@@ -843,12 +877,39 @@ int msv_ane_model_reload(msv_ane_model *handle, char *error, size_t error_size)
+         bridge_fail(error, error_size, "no ANE model to reload");
+         return 0;
+     }
++#ifdef FIOS_ANE_SOURCE
++    pthread_mutex_lock(&fios_ane_mutex);
++    if (msv_ane_source_uncertainty() || handle->fios_active || handle->fios_close_attempted) {
++        fios_ane_fence(FIOS_ANE_PARENT);pthread_mutex_unlock(&fios_ane_mutex);
++        bridge_fail(error,error_size,"ANE reload ownership unavailable");return 0;
++    }
++    if (!handle->fios_unload_accepted) {
++        pthread_mutex_unlock(&fios_ane_mutex);
++        bridge_fail(error,error_size,"ANE reload requires accepted local unload");return 0;
++    }
++    handle->fios_active=true;
++    pthread_mutex_unlock(&fios_ane_mutex);
++#endif
+     @autoreleasepool {
+         NSString *directory = @(handle->staging_directory);
++#ifdef FIOS_ANE_SOURCE
++        if (!bridge_cache_restore(directory.lastPathComponent,directory)) {
++            fios_ane_fence(FIOS_ANE_CONSTRUCTOR);
++            (void)fios_ane_model_finish_operation(handle,false,false);
++            bridge_fail(error,error_size,"ANE reload staging unavailable; existing tree retained");return 0;
++        }
++#else
+         bridge_cache_restore(directory.lastPathComponent, directory);
++#endif
+         NSError *failure = nil;
+-        if (!bridge_load((__bridge id)handle->model,
+-                         handle->options ? (__bridge id)handle->options : @{}, &failure)) {
++        const bool accepted=bridge_load((__bridge id)handle->model,
++                         handle->options ? (__bridge id)handle->options : @{}, &failure);
++#ifdef FIOS_ANE_SOURCE
++        const bool local_result=fios_ane_model_finish_operation(handle,accepted,false);
++#else
++        const bool local_result=accepted;
++#endif
++        if (!local_result) {
+             bridge_fail(error, error_size, "ANE reload failed: %s",
+                         failure ?
+                         failure.localizedDescription.UTF8String : "?");
+@@ -900,7 +961,7 @@ bool msv_ane_model_try_free(msv_ane_model *handle) {
+     pthread_mutex_unlock(&fios_ane_mutex);
+     @autoreleasepool {
+         if (msv_ane_source_uncertainty()) return false;
+-        if (handle->model) {
++        if (handle->model && !handle->fios_unload_accepted) {
+             id model=(__bridge id)handle->model;
+             NSError *failure=nil;
+             if (!bridge_unload(model,&failure)) { fios_ane_fence(FIOS_ANE_UNLOAD);return false; }

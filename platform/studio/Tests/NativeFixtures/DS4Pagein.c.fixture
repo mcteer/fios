@@ -1,0 +1,165 @@
+#include <assert.h>
+// Genuine private workers, empty ranges. Inject EIO only AFTER real joins.
+static void *fios_pagein_empty(void *p) {
+    metal_graph_stream_pagein_job *job = p;
+    job->ok = true;
+    return NULL;
+}
+#ifdef FIOS_PAGEIN_HEAP_CUSTODY
+static void fios_pagein_escape_owner(void) {
+    metal_graph_stream_pagein_job owner={0};
+    owner.ranges=calloc(1,sizeof(*owner.ranges));owner.n_threads=1;
+    assert(metal_graph_stream_pagein_launch(&owner));
+    assert(owner.custody && owner.custody!=&owner);
+}
+#endif
+#ifdef FIOS_PAGEIN_HEAP_CUSTODY
+static bool fios_pagein_foreign_result,fios_pagein_foreign_initialize;
+#ifdef FIOS_PAGEIN_CREATOR_CUSTODY
+static uint64_t fios_pagein_churn_owner;
+static void *fios_pagein_new_creator(void *arg) {
+    (void)arg;metal_graph_stream_pagein_job own={0};
+    own.ranges=calloc(1,sizeof(*own.ranges));own.n_threads=1;
+    assert(metal_graph_stream_pagein_launch(&own));fios_pagein_churn_owner=own.creator;
+    assert(metal_graph_stream_prefill_selected_pagein_join(&own));return NULL;
+}
+#endif
+static void *fios_pagein_foreign_join(void *arg) {
+#ifdef FIOS_PAGEIN_CREATOR_CUSTODY
+    if(fios_pagein_foreign_initialize) {
+        metal_graph_stream_pagein_job own={0};own.ranges=calloc(1,sizeof(*own.ranges));own.n_threads=1;
+        assert(metal_graph_stream_pagein_launch(&own));
+        assert(own.creator!=((metal_graph_stream_pagein_job *)arg)->creator);
+        assert(metal_graph_stream_prefill_selected_pagein_join(&own));
+    }
+#endif
+    fios_pagein_foreign_result=metal_graph_stream_prefill_selected_pagein_join(arg);
+    return NULL;
+}
+#endif
+int main(int argc, char **argv) {
+    assert(argc == 2);
+    const bool failure = strstr(argv[1], "failure") != NULL;
+    const bool layer = strstr(argv[1], "layer") != NULL;
+    metal_graph_stream_pagein_job job = {0};
+    job.ranges = calloc(1, sizeof(*job.ranges));
+    assert(job.ranges);
+    const bool partial = strstr(argv[1], "partial") != NULL;
+    const bool parallel = partial || strstr(argv[1], "parallel") != NULL;
+    job.n_threads = parallel ? 3 : 1;
+#ifdef FIOS_PAGEIN_HEAP_CUSTODY
+    if (strcmp(argv[1], "--foreign-owner") == 0 || strcmp(argv[1], "--foreign-initialized-owner") == 0) {
+        fios_pagein_foreign_initialize=strcmp(argv[1], "--foreign-initialized-owner")==0;
+        assert(metal_graph_stream_pagein_launch(&job));
+        const metal_graph_stream_pagein_job before=job;
+        pthread_t foreign;assert(pthread_create(&foreign,NULL,fios_pagein_foreign_join,&job)==0);
+        assert(pthread_join(foreign,NULL)==0);
+        if(fios_pagein_foreign_result || fios_pagein_real_joins!=(fios_pagein_foreign_initialize?1u:0u) || memcmp(&job,&before,sizeof(job)) || !job.custody || !metal_graph_stream_pagein_busy()) {
+            fputs("FIO_DS4_PAGEIN_FOREIGN_THREAD_RETIRED_OWNER_JOB\n",stderr);return 77;
+        }
+        assert(metal_graph_stream_prefill_selected_pagein_join(&job));
+        assert(!metal_graph_stream_pagein_busy());return 0;
+    }
+#ifdef FIOS_PAGEIN_CREATOR_CUSTODY
+    if (strcmp(argv[1], "--owner-exhaustion")==0 || strcmp(argv[1], "--ticket-exhaustion")==0) {
+        if(strcmp(argv[1],"--owner-exhaustion")==0)g_fios_pagein_next_owner=UINT64_MAX;
+        else g_fios_pagein_next_job=UINT64_MAX;
+        assert(!metal_graph_stream_pagein_launch(&job));
+        assert(!job.custody && !fios_pagein_create_calls && !g_fios_pagein_count);
+        assert(g_fios_pagein_uncertain && metal_graph_stream_pagein_busy());return 0;
+    }
+    if (strcmp(argv[1], "--thread-churn")==0) {
+        free(job.ranges);uint64_t previous=0;
+        for(unsigned i=0;i<16;++i) {
+            pthread_t fresh;assert(pthread_create(&fresh,NULL,fios_pagein_new_creator,NULL)==0);
+            assert(pthread_join(fresh,NULL)==0);assert(fios_pagein_churn_owner>previous);previous=fios_pagein_churn_owner;
+        }
+        assert(!metal_graph_stream_pagein_busy());return 0;
+    }
+    if (strcmp(argv[1], "--stale-copy")==0) {
+        assert(metal_graph_stream_pagein_launch(&job));metal_graph_stream_pagein_job stale=job;
+        assert(metal_graph_stream_prefill_selected_pagein_join(&job));
+        job.ranges=calloc(1,sizeof(*job.ranges));job.n_threads=1;
+        assert(metal_graph_stream_pagein_launch(&job));assert(job.custody_id>stale.custody_id);
+        printf("stale_heap_address_reused=%d\n",job.custody==stale.custody?1:0);
+        if(metal_graph_stream_prefill_selected_pagein_join(&stale) || fios_pagein_real_joins!=1 || g_fios_pagein_count!=1 || g_fios_pagein_uncertain) {
+            fputs("FIO_DS4_PAGEIN_STALE_TICKET_RETIRED_NEW_JOB\n",stderr);return 77;
+        }
+        assert(metal_graph_stream_prefill_selected_pagein_join(&job));assert(!metal_graph_stream_pagein_busy());return 0;
+    }
+#endif
+    if (strcmp(argv[1], "--escaped-owner") == 0) {
+        free(job.ranges);fios_pagein_hold=1;
+        fios_pagein_escape_owner();
+        for(unsigned i=0;i<10000&&!__atomic_load_n(&fios_pagein_entered,__ATOMIC_ACQUIRE);++i)usleep(100);
+        assert(__atomic_load_n(&fios_pagein_entered,__ATOMIC_ACQUIRE));
+        assert(metal_graph_stream_pagein_busy() && g_fios_pagein_count==1);
+        // Recover the real anchored record only inside this private fixture.
+        metal_graph_stream_pagein_job owner={0};owner.custody=g_fios_pagein_jobs;owner.started=true;
+#ifdef FIOS_PAGEIN_CREATOR_CUSTODY
+        owner.custody_id=owner.custody->custody_id;owner.creator=owner.custody->creator;
+#endif
+        __atomic_store_n(&fios_pagein_release,1,__ATOMIC_RELEASE);
+        assert(metal_graph_stream_prefill_selected_pagein_join(&owner));
+        assert(!metal_graph_stream_pagein_busy());return 0;
+    }
+    if (strcmp(argv[1], "--capacity") == 0) {
+        free(job.ranges);
+        metal_graph_stream_pagein_job jobs[65] = {0};
+        for (unsigned i=0;i<65;++i) {
+            jobs[i].ranges = calloc(1,sizeof(*jobs[i].ranges));jobs[i].n_threads=1;
+            const bool started=metal_graph_stream_pagein_launch(&jobs[i]);
+            assert(started == (i<64));
+        }
+        assert(metal_graph_stream_pagein_busy() && g_fios_pagein_count==64);
+        for(unsigned i=0;i<64;++i)assert(metal_graph_stream_prefill_selected_pagein_join(&jobs[i]));
+        assert(!metal_graph_stream_pagein_busy());return 0;
+    }
+    if (partial) {
+        fios_pagein_fail_create=2;fios_pagein_inject_failure=failure;
+        assert(!metal_graph_stream_pagein_launch(&job));assert(fios_pagein_real_joins==1);
+        if(failure) {
+            assert(job.custody && job.custody->created==1 && !job.custody->joined);
+            assert(job.custody->workers[0].job==job.custody && metal_graph_stream_pagein_busy());
+        } else assert(!job.custody && !metal_graph_stream_pagein_busy());
+        return 0;
+    }
+#endif
+#ifdef FIOS_PAGEIN_HEAP_CUSTODY
+    assert(metal_graph_stream_pagein_launch(&job));
+    assert(job.custody != &job && metal_graph_stream_pagein_busy());
+    if(parallel)assert(job.custody->workers[0].job==job.custody);
+#else
+    assert(pthread_create(&job.thread, NULL, fios_pagein_empty, &job) == 0);
+    job.started = true;
+#endif
+    fios_pagein_inject_failure = failure;
+    const bool result = layer ? metal_graph_stream_prefill_layer_pagein_join(&job) : metal_graph_stream_prefill_selected_pagein_join(&job);
+    assert(fios_pagein_real_joins == (parallel ? 3u : 1u));
+    if (failure) {
+#ifdef FIOS_PAGEIN_HEAP_CUSTODY
+        const bool retained = job.custody && job.custody->ranges && metal_graph_stream_pagein_busy();
+#else
+        const bool retained = job.ranges != NULL;
+#endif
+        if (result || !retained) {
+            fprintf(stderr, "FIO_DS4_PAGEIN_JOIN_FAILURE_RELEASED_CUSTODY\n");
+            return 77;
+        }
+#ifdef FIOS_PAGEIN_HEAP_CUSTODY
+        fios_pagein_inject_failure=0;
+        assert(!metal_graph_stream_prefill_selected_pagein_join(&job));
+        assert(metal_graph_stream_pagein_busy());
+        metal_graph_stream_pagein_job refused={0};refused.ranges=calloc(1,sizeof(*refused.ranges));
+        assert(!metal_graph_stream_pagein_launch(&refused));assert(!refused.custody);
+        assert(g_fios_pagein_count==1);
+#endif
+    } else {
+        assert(result);
+#ifdef FIOS_PAGEIN_HEAP_CUSTODY
+        assert(!job.custody && !metal_graph_stream_pagein_busy());
+#endif
+    }
+    puts("PASS: actual empty-range page-in worker join/result custody");
+    return 0;
+}

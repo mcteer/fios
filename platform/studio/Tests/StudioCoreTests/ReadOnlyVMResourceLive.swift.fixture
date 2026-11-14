@@ -1,0 +1,66 @@
+import Foundation
+import Darwin
+
+private final class LiveVMObservationWork:VMObservationWork,@unchecked Sendable {
+    let executor:SandboxExecutor
+    init(executor:SandboxExecutor) {self.executor=executor}
+    func submit(configuration:SandboxConfiguration,id:String,leaseUntil:Int64)throws {
+        try executor.submitResources(configuration:configuration,id:id,leaseUntil:leaseUntil)
+    }
+    func drain()->[VMReadResult] {executor.drainResources()}
+}
+
+// Explicit one-shot core resource experiment. Runtime/container ownership is
+// real; journal metadata and shared-kernel review identity are fixture inputs.
+// This cannot issue installed enrollment, task/native admission or lifecycle.
+@main struct ReadOnlyVMResourceLive {
+    static func main() {
+        do {try run()}
+        catch {FileHandle.standardError.write(Data("Readonly VM collector fixture failed; retain original resources.\n".utf8));exit(1)}
+    }
+    static func run()throws {
+        let a=CommandLine.arguments
+        guard a.count==10 else {throw RuntimeError.invalid}
+        let runtime=try DockerRuntime(executable:VerifiedExecutable(path:a[1],sha256:a[2]),socket:a[3])
+        let native=try VerifiedExecutable(path:a[4],sha256:a[5])
+        let configuration=try SandboxConfiguration(job:a[7],nonce:a[8],image:a[6],memory:512<<20,cpus:1)
+        let id=a[9],hash=String(repeating:"a",count:64)
+        guard WireScalar.sha256(id) else {throw RuntimeError.identity}
+        let kernel=try OwnedVMResourceReader(runtime:runtime,approvedImages:[configuration.image],directMetadata:true)
+        let profile=VMResourceProfileReader(kernel:kernel,cap:VerifiedVMCap(executable:native,home:NSHomeDirectory()),
+            profileHash:hash,reviewDigest:hash,physical:ProcessInfo.processInfo.physicalMemory)
+        let reader=RunningVMResourceReader(kernel:profile,running:VerifiedVMRunningProbe(executable:native,home:NSHomeDirectory()),expectedCLIHash:native.sha256)
+        let executor=try SandboxExecutor(runtime:runtime,allowedImages:[configuration.image],resourceReader:reader)
+        let collector=ReadOnlyVMResources(work:LiveVMObservationWork(executor:executor))
+        let began=HostResources.nowMilliseconds()
+        var job=try DurableJob(id:configuration.job,idempotency:UUID().uuidString.lowercased(),ownerHash:hash,requestHash:hash,created:began,lifetime:30000)
+        job.state = .running
+        let record=SandboxRecord(configuration:configuration,runtimeID:id,createIssued:true,startIssued:true)
+        var samples:[Int64]=[],maximumAge:Int64=0
+        let deadline=ProcessInfo.processInfo.systemUptime+12
+        while samples.count<3,ProcessInfo.processInfo.systemUptime<deadline {
+            let now=HostResources.nowMilliseconds(),host=HostResources.sample(statePath:NSTemporaryDirectory())
+            collector.tick(records:[record],jobs:[job],physical:host.physical,now:now)
+            let value=collector.applying(to:host,now:now)
+            if let time=value.vmSampledAt,let epoch=collector.epoch(now:now),!samples.contains(time) {
+                guard value.vmAvailable != nil,now-time>=0,now-time<=5000 else {throw RuntimeError.identity}
+                let exported=try ResourceObservationExport.encode(sample:value,gpu:nil,gpuSampledAt:nil,now:now,
+                    epoch:UUID().uuidString.lowercased(),sequence:Int64(samples.count+1),vmEpoch:epoch)
+                guard exported.observation["vm_coverage"] as? String=="verified_envelope" else {throw RuntimeError.identity}
+                maximumAge=max(maximumAge,now-time);samples.append(time)
+            }
+            Thread.sleep(forTimeInterval:0.01)
+        }
+        guard samples.count==3,zip(samples,samples.dropFirst()).allSatisfy({$0.0<$0.1}),executor.active==0 else {throw RuntimeError.deadline}
+        job.state = .revoking
+        let now=HostResources.nowMilliseconds()
+        collector.tick(records:[record],jobs:[job],physical:ProcessInfo.processInfo.physicalMemory,now:now)
+        guard collector.epoch(now:now)==nil,
+              collector.applying(to:HostResources.sample(statePath:NSTemporaryDirectory()),now:now).vmAvailable==nil else {throw RuntimeError.identity}
+        let receipt:[String:Any]=["ok":true,"samples":samples.count,"maximum_sample_age_ms":maximumAge,
+            "elapsed_ms":now-began,"observed_target_revocation_invalidates_cache":true,
+            "runtime_container_real":true,"journal_and_profile_review":"fixture_only",
+            "installed":false,"native_authority":false,"model_requests":0]
+        print(String(decoding:try JSONSerialization.data(withJSONObject:receipt,options:[.sortedKeys]),as:UTF8.self))
+    }
+}

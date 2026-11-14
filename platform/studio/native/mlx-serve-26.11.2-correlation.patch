@@ -1,0 +1,136 @@
+diff --git a/src/fios/correlation_header.zig b/src/fios/correlation_header.zig
+new file mode 100644
+index 0000000..95c8b4a
+--- /dev/null
++++ b/src/fios/correlation_header.zig
+@@ -0,0 +1,24 @@
++// Opaque correlation metadata only; not authentication or terminal proof.
++const std = @import("std");
++const fios_ownership = @import("request_ownership.zig");
++pub fn parse(headers: []const u8) !?fios_ownership.CorrelationID {
++    var found: ?fios_ownership.CorrelationID = null;
++    var lines = std.mem.splitSequence(u8, headers, "\r\n");
++    while (lines.next()) |line| {
++        const colon = std.mem.indexOfScalar(u8, line, ':') orelse continue;
++        if (!std.ascii.eqlIgnoreCase(line[0..colon], "x-fios-request-id")) continue;
++        if (found != null) return error.DuplicateCorrelationHeader;
++        found = try fios_ownership.parseCorrelationHex(std.mem.trim(u8, line[colon + 1 ..], " \t"));
++    }
++    return found;
++}
++
++test "optional correlation header is exact and rejects ambiguous identity" {
++    const testing = std.testing;
++    try testing.expectEqual(@as(?fios_ownership.CorrelationID, null), try parse("POST /v1/chat/completions HTTP/1.1\r\nHost: localhost\r\n"));
++    const valid = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
++    const identity = (try parse("X-Fios-Request-ID: " ++ valid ++ "\r\n")).?;
++    try testing.expectEqual(@as([32]u8, @splat(0xaa)), identity);
++    try testing.expectError(error.InvalidCorrelation, parse("X-Fios-Request-ID: bad-id\r\n"));
++    try testing.expectError(error.DuplicateCorrelationHeader, parse("X-Fios-Request-ID: " ++ valid ++ "\r\nx-fios-request-id: " ++ valid ++ "\r\n"));
++}
+diff --git a/src/host/http/request.zig b/src/host/http/request.zig
+index 10fdfbb..bba432e 100644
+--- a/src/host/http/request.zig
++++ b/src/host/http/request.zig
+@@ -21,6 +21,7 @@ const sendErrorResponse = @import("errors.zig").sendErrorResponse;
+ /// returns. The accepted stream is moved into a stack-allocated `Conn`
+ /// inside the thread.
+ pub const ConnThreadArgs = struct {
++    ownership: ?fios_ownership.Token,
+     allocator: std.mem.Allocator,
+     accepted_stream: std.Io.net.Stream,
+     io: std.Io,
+@@ -31,21 +32,15 @@ pub fn handleConnectionThread(args: *ConnThreadArgs) void {
+     // shutdown drain in `serve` only sees this thread leave once it has fully
+     // returned from `complete()` and closed its socket.
+     defer _ = http_server.active_conn_threads.fetchSub(1, .acq_rel);
++    // The original accept loop enrolled this root before enqueue/spawn.
++    // Copy custody before args deallocation; retain through socket cleanup.
+     const fios_io = args.io;
+     const fios_allocator = args.allocator;
+-    defer fios_allocator.destroy(args);
+-    const fios_token: ?fios_ownership.Token = if (http_server.fios_connection_tracking.load(.acquire))
+-        fios_ownership.shared.enter(fios_io) catch {
+-            var refused: Conn = undefined;
+-            Conn.init(&refused, args.accepted_stream, fios_io);
+-            defer refused.close();
+-            sendErrorResponse(fios_allocator, &refused, "503 Service Unavailable", "native_tracking_unavailable", "Source fixture ingress is unavailable", null) catch {};
+-            return;
+-        }
+-    else null;
+-    // Declared before conn.close(): retain this root through original response
+-    // handling/socket cleanup. A refused retirement keeps tracker uncertainty.
++    const fios_token = args.ownership;
+     defer if (fios_token) |token| fios_ownership.shared.leave(fios_io, token) catch { fios_ownership.shared.fence(fios_io); };
++    defer fios_allocator.destroy(args);
++    fios_ownership.current = fios_token;
++    defer fios_ownership.current = null;
+     var conn: Conn = undefined;
+     Conn.init(&conn, args.accepted_stream, args.io);
+     defer conn.close();
+diff --git a/src/host/http/router.zig b/src/host/http/router.zig
+index 3952ab9..dde6a22 100644
+--- a/src/host/http/router.zig
++++ b/src/host/http/router.zig
+@@ -1,6 +1,7 @@
+ //! ROUTE_PATHS, routeExists, request size limits; handleConnection (route dispatch); isStatusRoute, isTextGenRoute
+ 
+ const request_options = @import("../api/request_options.zig");
++const fios_correlation_header = @import("../../fios/correlation_header.zig");
+ const std = @import("std");
+ const fios_ownership = @import("../../fios/request_ownership.zig");
+ const fios_instance_header = @import("../../fios/instance_header.zig");
+@@ -288,6 +289,23 @@ pub fn handleConnection(
+                 return;
+             }
+         }
++        const correlation = fios_correlation_header.parse(request[0..header_end_pos]) catch {
++            try sendErrorResponse(allocator, stream, "400 Bad Request", "invalid_request_identity", "Invalid request identity", 400);
++            return;
++        };
++        if (correlation) |id| {
++            const ownership = fios_ownership.current orelse {
++                try sendErrorResponse(allocator, stream, "503 Service Unavailable", "native_tracking_unavailable", "Native ownership tracking is unavailable", 503);
++                return;
++            };
++            fios_ownership.shared.associate(stream.io, ownership, id) catch |err| {
++                if (err == error.DuplicateCorrelation or err == error.InvalidCorrelationState)
++                    try sendErrorResponse(allocator, stream, "409 Conflict", "request_identity_conflict", "Request identity is already owned", 409)
++                else
++                    try sendErrorResponse(allocator, stream, "503 Service Unavailable", "native_tracking_unavailable", "Native ownership tracking is unavailable", 503);
++                return;
++            };
++        }
+     }
+ 
+     // ── Plan 05: routes that don't depend on a loaded model (connectivity
+diff --git a/src/host/http/server.zig b/src/host/http/server.zig
+index b463b1e..b6130f8 100644
+--- a/src/host/http/server.zig
++++ b/src/host/http/server.zig
+@@ -674,7 +674,17 @@ pub fn serve(
+             accepted_stream.close(io);
+             continue;
+         };
++        // Enroll before enqueue/spawn: a delayed connection thread is still
++        // owned. This root is host ingress only, never backend terminal proof.
++        const fios_token: ?fios_ownership.Token = if (fios_connection_tracking.load(.acquire))
++            fios_ownership.shared.enter(io) catch {
++                accepted_stream.close(io);
++                allocator.destroy(args);
++                continue;
++            }
++        else null;
+         args.* = .{
++            .ownership = fios_token,
+             .allocator = allocator,
+             .accepted_stream = accepted_stream,
+             .io = io,
+@@ -687,6 +697,7 @@ pub fn serve(
+             _ = active_conn_threads.fetchSub(1, .acq_rel);
+             accepted_stream.close(io);
+             allocator.destroy(args);
++            if (fios_token) |token| fios_ownership.shared.leave(io, token) catch { fios_ownership.shared.fence(io); };
+             continue;
+         };
+         conn_thread.detach();

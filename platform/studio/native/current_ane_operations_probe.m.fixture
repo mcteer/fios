@@ -1,0 +1,38 @@
+// Ordinary CPU bookkeeping object; no native ANE framework/model/device.
+@interface FiosOperationMetadata : NSObject
+@property unsigned calls;
+@property void *owner;
+@property BOOL reload_conflict;
+@end
+@implementation FiosOperationMetadata
+- (BOOL)unloadWithQoS:(unsigned)qos error:(NSError **)error {
+    (void)qos;*error=nil;self.calls+=1;return YES;
+}
+- (BOOL)loadWithQoS:(unsigned)qos options:(id)options error:(NSError **)error {
+    (void)qos;(void)options;*error=nil;self.calls+=1;return YES;
+}
+#ifdef FIOS_ANE_SOURCE
+- (BOOL)evaluateWithQoS:(unsigned)qos options:(id)options request:(id)request error:(NSError **)error {
+    (void)qos;(void)options;(void)request;*error=nil;self.calls+=1;
+    char text[128]={0};
+    return self.reload_conflict ? !msv_ane_model_reload(self.owner,text,sizeof(text)) : !msv_ane_model_unload(self.owner,text,sizeof(text));
+}
+#endif
+@end
+int fios_fixture_ane_operations_refusal(void) {
+#ifndef FIOS_ANE_SOURCE
+    return 0;
+#else
+    @autoreleasepool {
+        FiosOperationMetadata *value=[FiosOperationMetadata new];
+        msv_ane_model *h=calloc(1,sizeof(*h));value.owner=h;
+        h->model=(__bridge_retained void *)value;
+        h->requests=(__bridge_retained void *)@[[NSObject new]];
+        h->options=(__bridge_retained void *)@{};char error[128]={0};
+        if (msv_ane_model_eval(h,0,error,sizeof(error)) || value.calls!=1 ||
+            !msv_ane_source_uncertainty() || h->fios_active || h->fios_unload_accepted ||
+            (__bridge id)h->model!=value || msv_ane_model_try_free(h)) return 0;
+        return 1;
+    }
+#endif
+}

@@ -1,0 +1,73 @@
+
+test "fios current scheduler cleanup retains callback refusal without replay" {
+    const io = std.testing.io;
+    const page = std.heap.page_allocator;
+    const owners = @import("../../fios/request_ownership.zig");
+    const abi = @import("../../abi/engine.zig");
+    const served_mod = @import("../../host/engines/served.zig");
+    const fake = @import("../../testing/fake_engine.zig");
+    owners.shared().primary_guard = false;
+    try owners.shared().initialize(io, @splat(137));
+    const Trace = struct {
+        scheduler: usize = 0,
+        freed: bool = false,
+        fn alloc(_: *anyopaque, n: usize, alignment: std.mem.Alignment, ret: usize) ?[*]u8 {
+            return std.heap.page_allocator.rawAlloc(n, alignment, ret);
+        }
+        fn free(raw: *anyopaque, bytes: []u8, alignment: std.mem.Alignment, ret: usize) void {
+            const self: *@This() = @ptrCast(@alignCast(raw));
+            if (@intFromPtr(bytes.ptr) == self.scheduler) self.freed = true;
+            std.heap.page_allocator.rawFree(bytes, alignment, ret);
+        }
+        const vtable: std.mem.Allocator.VTable = .{ .alloc = alloc, .resize = std.mem.Allocator.noResize, .remap = std.mem.Allocator.noRemap, .free = free };
+        fn allocator(self: *@This()) std.mem.Allocator { return .{ .ptr = self, .vtable = &vtable }; }
+    };
+    const Probe = struct {
+        io: std.Io,
+        unknown: bool,
+        calls: usize = 0,
+        fn close(raw: *anyopaque) callconv(.c) void {
+            const self: *@This() = @ptrCast(@alignCast(raw));
+            self.calls += 1;
+            if (self.unknown) owners.shared().fence(self.io);
+        }
+    };
+    const engine_table = try page.create(abi.Engine);
+    engine_table.* = fake.own_thread;
+    engine_table.close = Probe.close;
+    for ([_]bool{ false, true }) |unknown| {
+        const registry = try ModelRegistry.init(page, io, null, 2, 0, null);
+        const model = try registry.registerStub("fixture/scheduler-cleanup", "/fixture/never-loaded", null);
+        const trace = try page.create(Trace);
+        trace.* = .{};
+        const allocator = trace.allocator();
+        const scheduler = try allocator.create(Scheduler);
+        scheduler.* = std.mem.zeroInit(Scheduler, .{ .allocator = allocator, .io = io, .registry = registry, .current_model = model });
+        trace.scheduler = @intFromPtr(scheduler);
+        // Empty owned storage makes a repeated destructor observable too.
+        try scheduler.unload_queue.ensureTotalCapacity(allocator, 1);
+        const probe = try page.create(Probe);
+        probe.* = .{ .io = io, .unknown = unknown };
+        const engine = try page.create(served_mod.Served);
+        engine.* = .{ .gpa = page, .kind = .llama, .table = engine_table, .handle = probe, .info = undefined, .host = undefined, .progress = &model.load_progress, .gauges = &scheduler.engine_gauges, .metrics = null };
+        model.engine = engine;
+        model.state = .ready;
+        scheduler.deinit();
+        try std.testing.expectEqual(@as(usize, 1), probe.calls);
+        if (unknown) {
+            if (trace.freed) std.debug.print("FIO_CURRENT_SCHEDULER_DROPPED_CALLBACK_REFUSAL\n", .{});
+            try std.testing.expect(!trace.freed); // External witness before dereference.
+            try std.testing.expect(scheduler.current_model == model and model.engine == engine);
+            scheduler.deinit();
+            try std.testing.expect(!trace.freed);
+            try std.testing.expectEqual(@as(usize, 1), probe.calls);
+            try std.testing.expect(owners.shared().knownUncertain(io));
+        } else {
+            try std.testing.expect(trace.freed);
+            try std.testing.expect(model.engine == null and model.state == .unloaded);
+            registry.deinit();
+            page.destroy(probe);
+            page.destroy(trace);
+        }
+    }
+}

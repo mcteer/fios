@@ -1,0 +1,330 @@
+diff --git a/src/plugins/acestep/acestep.zig b/src/plugins/acestep/acestep.zig
+index 976f62f..9efc780 100644
+--- a/src/plugins/acestep/acestep.zig
++++ b/src/plugins/acestep/acestep.zig
+@@ -576,9 +576,11 @@ const AneCalib = struct {
+     dtype: mlx.mlx_dtype = .float32,
+     pub fn buildBlock0(self: AneCalib, k: u32, units: u32, share: f32) !*ane.AnePrefill {
+         try self.e.aneBuildInner(self.rows, k, units, share, 1);
++        try ane.cleanup_guard.requireCertain();
+         return self.e.ane_eng.?;
+     }
+     pub fn complement(self: AneCalib, x: mlx.mlx_array) !mlx.mlx_array {
++        try ane.cleanup_guard.requireCertain();
+         return aneRestForward(&self.e.ane_rest[0], x, self.e.s);
+     }
+     pub fn teardown(self: AneCalib) void {
+@@ -1862,9 +1864,10 @@ pub const Engine = struct {
+     ane_rest: []AceRest = &.{},
+ 
+     pub fn load(io: std.Io, allocator: std.mem.Allocator, model_dir: []const u8, low_mem: bool) !*Engine {
++        try ane.cleanup_guard.requireCertain();
+         var cfg_buf: [64 * 1024]u8 = undefined;
+         const self = try allocator.create(Engine);
+-        errdefer allocator.destroy(self);
++        errdefer if (!ane.cleanup_guard.known()) allocator.destroy(self);
+         self.allocator = allocator;
+         self.io = io;
+         self.ane_eng = null;
+@@ -1875,7 +1878,7 @@ pub const Engine = struct {
+         self.low_mem = low_mem;
+ 
+         self.w = try loadFileWeights(allocator, model_dir, "model.safetensors");
+-        errdefer self.w.deinit();
++        errdefer if (!ane.cleanup_guard.known()) self.w.deinit();
+         if (self.w.get("silence_latent") == null) return error.MissingAceStepWeight;
+         // The ANE seam reads the packed DiT weights; the packs are 8-bit g64.
+         if (w8a8.w8a8State().enabled and !ane.aneState().media_offload.audio) {
+@@ -1883,35 +1886,45 @@ pub const Engine = struct {
+             log.info("[acestep] int8: {d} DiT linears\n", .{n});
+         }
+         self.vae_w = try loadFileWeights(allocator, model_dir, "vae.safetensors");
+-        errdefer self.vae_w.deinit();
++        errdefer if (!ane.cleanup_guard.known()) self.vae_w.deinit();
+         self.fsq_w = null;
+         self.model_dir = try allocator.dupe(u8, model_dir);
+-        errdefer allocator.free(self.model_dir);
++        errdefer if (!ane.cleanup_guard.known()) allocator.free(self.model_dir);
+ 
+         self.te_dir = try std.fmt.allocPrint(allocator, "{s}/text_encoder", .{model_dir});
+-        errdefer allocator.free(self.te_dir);
++        errdefer if (!ane.cleanup_guard.known()) allocator.free(self.te_dir);
+         if (low_mem) {
+             self.te_w = null;
+             log.info("[acestep] low-mem mode: text encoder loads per request\n", .{});
+         } else {
+             self.te_w = try model_mod.loadWeights(io, allocator, self.te_dir);
+         }
+-        errdefer if (self.te_w) |*t| t.deinit();
++        errdefer if (!ane.cleanup_guard.known()) { if (self.te_w) |*t| t.deinit(); };
+         self.tok = try tok_mod.loadTokenizerAny(io, allocator, self.te_dir);
+         log.info("[acestep] engine ready (model {d} + vae {d} + text_encoder {d} tensors, fsq {s})\n", .{ self.w.count(), self.vae_w.count(), if (self.te_w) |t| t.count() else 0, if (self.fsqAvailable()) "present" else "absent" });
+         return self;
+     }
+ 
+     pub fn deinit(self: *Engine) void {
+-        self.aneDeinit();
++        _ = self.tryDeinit();
++    }
++    pub fn tryDeinit(self: *Engine) bool {
++        if (ane.cleanup_guard.retainIfKnown()) return false;
++        if (!self.aneTryDeinit()) return false;
+         self.w.deinit();
++        if (ane.cleanup_guard.retainIfKnown()) return false;
+         self.vae_w.deinit();
++        if (ane.cleanup_guard.retainIfKnown()) return false;
+         if (self.fsq_w) |*f| f.deinit();
++        if (ane.cleanup_guard.retainIfKnown()) return false;
+         self.allocator.free(self.model_dir);
+         if (self.te_w) |*t| t.deinit();
++        if (ane.cleanup_guard.retainIfKnown()) return false;
+         self.allocator.free(self.te_dir);
+         self.tok.deinit();
++        if (ane.cleanup_guard.retainIfKnown()) return false;
+         self.allocator.destroy(self);
++        return true;
+     }
+ 
+     /// Whether the pack carries the cover-mode tokenizer (`fsq.safetensors`).
+@@ -2063,16 +2076,44 @@ pub const Engine = struct {
+     /// prompt/lyrics (+ source clip for cover/complete) → 48 kHz stereo PCM16
+     /// WAV bytes (owned).
+     fn aneDeinit(self: *Engine) void {
+-        if (self.ane_eng) |e| e.deinit();
+-        self.ane_eng = null;
+-        for (self.ane_rest) |*r| r.deinit();
++        _ = self.aneTryDeinit();
++    }
++    fn aneTryDeinit(self: *Engine) bool {
++        return self.aneTryDeinitWith(ane.fios_ane_cleanup, ane.cleanup_guard.known, ane.AnePrefill.tryDeinit);
++    }
++    fn aneTryDeinitWith(self: *Engine, comptime enabled: bool, comptime negative: fn () bool, comptime close: anytype) bool {
++        if (enabled and negative()) {
++            ane.cleanup_guard.retainUncertain();
++            return false;
++        }
++        if (self.ane_eng) |e| {
++            const accepted = close(e);
++            if (enabled and !accepted) {
++                ane.cleanup_guard.retainUncertain();
++                return false;
++            }
++            self.ane_eng = null;
++            if (enabled and negative()) {
++                ane.cleanup_guard.retainUncertain();
++                return false;
++            }
++        }
++        for (self.ane_rest) |*r| {
++            r.deinit();
++            if (enabled and negative()) {
++                ane.cleanup_guard.retainUncertain();
++                return false;
++            }
++        }
+         if (self.ane_rest.len > 0) self.allocator.free(self.ane_rest);
+         self.ane_rest = &.{};
++        return true;
+     }
+ 
+     /// Build the per-DiT-block ANE programs for a run of `seq_len` tokens.
+     /// Never fails the request: every refusal is a NAMED `[ane]` line.
+     pub fn buildAne(self: *Engine, seq_len: u32) void {
++        if (ane.cleanup_guard.retainIfKnown()) return;
+         if (self.ane_eng != null or !ane.aneState().media_offload.audio) return;
+         if (!ane.available()) {
+             log.warn("[ane] audio offload: AppleNeuralEngine framework not present — GPU only\n", .{});
+@@ -2092,7 +2133,9 @@ pub const Engine = struct {
+         defer g0.deinit();
+         const probe: ane.QuantWeight = .{ .w = g0.w, .scales = g0.scales, .biases = g0.biases, .bits = g0.bits, .group_size = g0.gs, .in_dim = hidden, .out_dim = ffn };
+         const plan = ane.planMediaOffload(self.io, self.s, "audio", self.cfg.layers, hidden, ffn, rows, probe, AneCalib{ .e = self, .rows = rows }) orelse return;
++        if (ane.cleanup_guard.retainIfKnown()) return;
+         self.aneBuildInner(rows, plan.k, plan.units, plan.share, self.cfg.layers) catch |err| {
++            if (ane.cleanup_guard.retainIfKnown()) return;
+             log.warn("[ane] audio offload build failed ({s}) — GPU only\n", .{@errorName(err)});
+             self.aneDeinit();
+         };
+@@ -2100,16 +2143,50 @@ pub const Engine = struct {
+ 
+     /// Builds blocks [0, n); fewer than all is the calibration build.
+     fn aneBuildInner(self: *Engine, rows: u32, k: u32, units: u32, share: f32, n: usize) !void {
++        try ane.cleanup_guard.requireCertain();
++        if (ane.fios_ane_cleanup and (self.ane_eng != null or self.ane_rest.len != 0)) return error.AneOwnerOccupied;
+         const a = self.allocator;
+         const s = self.s;
+         const hidden = self.cfg.hidden;
+         const ffn = self.cfg.intermediate;
+         const eng = try ane.AnePrefill.init(a, self.io, self.cfg.layers, hidden, k, rows, rows, 0, 0, units);
+-        errdefer eng.deinit();
+-        const rests = try a.alloc(AceRest, n);
+-        errdefer a.free(rests);
++        if (ane.fios_ane_cleanup) self.ane_eng = eng;
++        var rest_allocation: ?[]AceRest = null;
+         var built: usize = 0;
+-        errdefer for (rests[0..built]) |*r| r.deinit();
++        // Private unwind closes native ownership first. A refused close or
++        // later independent fence retains the original allocation/container.
++        errdefer {
++            if (ane.fios_ane_cleanup) {
++                if (!ane.cleanup_guard.known() and eng.tryDeinit()) {
++                    self.ane_eng = null;
++                    if (!ane.cleanup_guard.retainIfKnown()) {
++                        if (rest_allocation) |rs| {
++                            var disposed = true;
++                            for (rs[0..built]) |*r| {
++                                r.deinit();
++                                if (ane.cleanup_guard.retainIfKnown()) {
++                                    disposed = false;
++                                    break;
++                                }
++                            }
++                            if (disposed) {
++                                a.free(rs);
++                                self.ane_rest = &.{};
++                            }
++                        }
++                    }
++                } else ane.cleanup_guard.retainUncertain();
++            } else {
++                if (rest_allocation) |rs| {
++                    for (rs[0..built]) |*r| r.deinit();
++                    a.free(rs);
++                }
++                eng.deinit();
++            }
++        }
++        const rests = try a.alloc(AceRest, n);
++        rest_allocation = rests;
++        if (ane.fios_ane_cleanup) self.ane_rest = rests;
+ 
+         const start = std.Io.Timestamp.now(self.io, .awake);
+         const kh: usize = @as(usize, k) * hidden;
+@@ -2119,6 +2196,7 @@ pub const Engine = struct {
+         defer a.free(up_slice);
+         var buf: [96]u8 = undefined;
+         for (0..n) |i| {
++            try ane.cleanup_guard.requireCertain();
+             const gq = try aneQFromKey(&self.w, a, try std.fmt.bufPrint(&buf, "decoder.layers.{d}.mlp.gate_proj", .{i}), hidden);
+             var gq_m = gq;
+             defer gq_m.deinit();
+@@ -2144,6 +2222,7 @@ pub const Engine = struct {
+             const down = try ane.dequantToHostF32(a, s, dq.w, dq.scales, dq.biases, dq.bits, dq.gs, ffn, hidden);
+             defer a.free(down);
+             for (0..units) |u| {
++                try ane.cleanup_guard.requireCertain();
+                 const c0: usize = u * @as(usize, k);
+                 for (0..hidden) |r| @memcpy(down_slice[r * k ..][0..k], down[r * ffn + c0 ..][0..k]);
+                 // `up` carries the fp16 range scale for the whole program.
+@@ -2154,7 +2233,9 @@ pub const Engine = struct {
+                 };
+             }
+         }
++        try ane.cleanup_guard.requireCertain();
+         eng.finishPending();
++        try ane.cleanup_guard.requireCertain();
+         const ready = eng.coveredLayers();
+         if (ready == 0) return error.AneNoProgram;
+         const secs: f64 = @as(f64, @floatFromInt(@as(u64, @intCast(start.untilNow(self.io, .awake).nanoseconds)))) / 1e9;
+@@ -2166,6 +2247,7 @@ pub const Engine = struct {
+     }
+ 
+     pub fn generateWav(self: *Engine, allocator: std.mem.Allocator, req: MusicRequest, progress: ?sse.Progress) ![]u8 {
++        try ane.cleanup_guard.requireCertain();
+         const s = self.s;
+         if (progress) |p| p.emit("encode", 0, 1);
+ 
+@@ -2331,7 +2413,9 @@ pub const Engine = struct {
+         // ANE MLP offload for this run's DiT token count (patch_size folds
+         // `frames` down); opt-in, declines by name.
+         self.buildAne(@intCast(frames / self.cfg.patch_size));
++        try ane.cleanup_guard.requireCertain();
+         for (start_step..NUM_STEPS) |step| {
++            try ane.cleanup_guard.requireCertain();
+             if (progress) |p| {
+                 if (p.boundary()) return error.Cancelled;
+                 p.emit("diffuse", @intCast(step - start_step), @intCast(remaining));
+@@ -3371,3 +3455,50 @@ test "acestep config: the published config.json and text encoder config are the
+     try std.testing.expectError(error.BadPackConfig, parseCfg(a, "{\"vae_hop\":960}"));
+     try std.testing.expectError(error.BadPackConfig, parseCfg(a, "{\"num_key_value_heads\":0}"));
+ }
++
++// Actual ACE-Step cleanup method with CPU-only callbacks and empty rest metadata.
++// The fake child identity is never dereferenced or passed to native C.
++const FiosAceAneCloseProbe = struct {
++    var calls: usize = 0;
++    var blocked: bool = false;
++    var mode: enum { preexisting, refused, after, healthy } = .healthy;
++    fn negative() bool {
++        return blocked;
++    }
++    fn close(_: *ane.AnePrefill) bool {
++        calls += 1;
++        if (mode == .after) blocked = true;
++        return mode == .after or mode == .healthy;
++    }
++};
++fn fiosAceAneClose(mode: @TypeOf(FiosAceAneCloseProbe.mode)) !void {
++    const P = FiosAceAneCloseProbe;
++    P.mode = mode;
++    P.calls = 0;
++    P.blocked = mode == .preexisting;
++    var d: Engine = undefined;
++    d.allocator = std.heap.page_allocator;
++    d.ane_rest = &.{};
++    const original: *ane.AnePrefill = @ptrFromInt(64);
++    d.ane_eng = original;
++    const accepted = d.aneTryDeinitWith(true, P.negative, P.close);
++    if (accepted != (mode == .healthy)) {
++        std.debug.print("FIO_ACE_ANE_CLOSE_DROPPED_UNCERTAIN_PARENT\n", .{});
++        try std.testing.expect(false);
++    }
++    try std.testing.expectEqual(@as(usize, if (mode == .preexisting) 0 else 1), P.calls);
++    try std.testing.expect(d.ane_eng == (if (mode == .preexisting or mode == .refused) original else null));
++    try std.testing.expect(d.ane_rest.len == 0);
++}
++test "fios current ACE-Step ANE close retains preexisting uncertainty" {
++    try fiosAceAneClose(.preexisting);
++}
++test "fios current ACE-Step ANE close retains rejected child" {
++    try fiosAceAneClose(.refused);
++}
++test "fios current ACE-Step ANE close retains parent after later uncertainty" {
++    try fiosAceAneClose(.after);
++}
++test "fios current ACE-Step ANE close accepts healthy local disposal" {
++    try fiosAceAneClose(.healthy);
++}
+diff --git a/src/plugins/acestep/plugin.zig b/src/plugins/acestep/plugin.zig
+index 4629007..feb7cf2 100644
+--- a/src/plugins/acestep/plugin.zig
++++ b/src/plugins/acestep/plugin.zig
+@@ -8,6 +8,7 @@ const job = @import("../../sdk/media/job.zig");
+ const wav = @import("../../sdk/media/wav.zig");
+ const mlx = @import("../../mlx/ffi.zig");
+ const acestep = @import("acestep.zig");
++const ane_cleanup = @import("../../sdk/ane/cleanup_guard.zig");
+ pub const config = @import("config.zig");
+ 
+ pub const plugin = config.plugin;
+@@ -51,8 +52,19 @@ fn load(ctx: *const abi.LoadCtx, out: *Verdict) callconv(.c) ?*anyopaque {
+ 
+ fn unload(ep: *anyopaque) callconv(.c) void {
+     const self: *Engine = @ptrCast(@alignCast(ep));
+-    gpa.free(self.wav);
+-    self.e.deinit();
++    if (ane_cleanup.enabled) {
++        if (ane_cleanup.retainIfKnown()) return;
++        if (!self.e.tryDeinit()) {
++            ane_cleanup.retainUncertain();
++            return;
++        }
++        if (ane_cleanup.retainIfKnown()) return;
++        gpa.free(self.wav);
++    } else {
++        // Preserve the default wrapper's existing disposal order.
++        gpa.free(self.wav);
++        self.e.deinit();
++    }
+     gpa.destroy(self);
+ }
+ 

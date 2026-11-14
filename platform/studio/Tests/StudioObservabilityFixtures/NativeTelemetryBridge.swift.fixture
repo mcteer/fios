@@ -1,0 +1,10 @@
+import Foundation
+
+// Compiled only into a copied test package, never the product's Core target.
+public enum NativeTelemetryBridge {
+    public static func run(directory:URL,socket:String,binary:String,sha256:String,pid:Int32,telemetry:any PlatformTelemetry)throws {
+        let peer=NativeControlPeer(pid:pid,start:try WorkerResources.startIdentifier(pid:pid),
+            executable:try VerifiedExecutable(path:binary,sha256:sha256))
+        try ManagerRuntime.run(directory:directory,nativeControl:NativeControlClient(path:socket,peer:peer,version:3),telemetry:telemetry)
+    }
+}

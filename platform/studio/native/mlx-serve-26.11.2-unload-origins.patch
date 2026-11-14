@@ -1,0 +1,221 @@
+diff --git a/src/engines/mlx/runtime/load_requests.zig b/src/engines/mlx/runtime/load_requests.zig
+index 589774b..1e9aa99 100644
+--- a/src/engines/mlx/runtime/load_requests.zig
++++ b/src/engines/mlx/runtime/load_requests.zig
+@@ -189,6 +189,19 @@ fn finishLoadRequest(sch: *Scheduler, req: *LoadRequest, err_name: ?[]const u8)
+ /// accounting. The conn thread already marked the entry `.evicting` and
+ /// drained its refcount in `unloadModel`.
+ pub fn runUnloadRequest(sch: *Scheduler, req: *UnloadRequest) void {
++    // Clone before native effects; the sender may free its request immediately
++    // after done. Keep stable independent storage through all local cleanup.
++    var fios_scope = if (req.fios_origins) |origin| fios_queued.Scope.retain(sch.io, origin) catch {
++        req.fios_failed = true;
++        finishUnloadRequest(sch, req);
++        return;
++    } else null;
++    if (fios_scope) |*scope| scope.enter(sch.io) catch {
++        req.fios_failed = true;
++        finishUnloadRequest(sch, req);
++        return;
++    };
++    defer if (fios_scope) |*scope| { _ = scope.finish(sch.io); };
+     const entry = req.entry;
+     const bytes = entry.bytes_resident; // unloadResident zeroes it
+     log.info("[registry] unloading model id={s} ({d:.2} GB resident)\n", .{
+@@ -224,6 +237,10 @@ pub fn runUnloadRequest(sch: *Scheduler, req: *UnloadRequest) void {
+     // configuration the policy exists to avoid.
+     logWiredPolicy(mlx.applyWiredPolicy());
+ 
++    finishUnloadRequest(sch, req);
++}
++
++fn finishUnloadRequest(sch: *Scheduler, req: *UnloadRequest) void {
+     req.done_mu.lockUncancelable(sch.io);
+     req.done = true;
+     req.done_cond.broadcast(sch.io);
+@@ -237,3 +254,135 @@ test "a load refused for memory or an absent worker Mac is retried by the next r
+     try std.testing.expect(!failureRetries("MissingWeight"));
+     try std.testing.expect(!failureRetries("DistWorkerMissingModel"));
+ }
++
++test "fios current unload worker restores original requester" {
++    const a = std.testing.allocator;
++    const io = std.testing.io;
++    const owners = @import("../../../fios/request_ownership.zig");
++    const served = @import("../../../host/engines/served.zig");
++    const abi = @import("../../../abi/engine.zig");
++    const fake = @import("../../../testing/fake_engine.zig");
++    const registry = try model_registry_mod.ModelRegistry.init(a, io, null, 2, 0, null);
++    defer registry.deinit();
++    const model = try registry.registerStub("fixture/unload-metadata", "/fixture/never-loaded", null);
++    try owners.shared().initialize(io, @splat(79));
++    const root = try owners.shared().enter(io);
++    defer owners.shared().leave(io, root) catch {};
++    try owners.shared().bind(io, root, model.id);
++    owners.current().* = root;
++    defer owners.current().* = null;
++    const original = (try owners.retainCurrent(io)).?;
++    defer _ = original.releaseIfCertain(io);
++    const Probe = struct {
++        var expected: owners.Token = undefined;
++        var attributed: bool = false;
++        fn close(raw: *anyopaque) callconv(.c) void {
++            if (owners.current_group().*) |group| attributed = group.len == 1 and std.meta.eql(group[0], expected);
++            @import("../../../testing/fake_engine.zig").own_thread.close(raw);
++        }
++        fn log(_: *anyopaque, _: u8, _: abi.Str) callconv(.c) void {}
++        fn wake(_: *anyopaque) callconv(.c) void {}
++    };
++    Probe.expected = root;
++    Probe.attributed = false;
++    var table = fake.own_thread;
++    table.close = Probe.close;
++    var progress: @import("../../../host/registry/load_progress.zig").Progress = .{};
++    var gauges: served.Gauges = .{};
++    const engine = try a.create(served.Served);
++    engine.* = .{ .gpa = a, .kind = .llama, .table = &table, .handle = undefined, .info = undefined, .host = undefined, .progress = &progress, .gauges = &gauges, .metrics = null };
++    engine.host = .{ .ctx = engine, .log = Probe.log, .wake = Probe.wake };
++    const options: abi.Open = .{ .model_dir = .{}, .model_type = .{}, .config_json = .{}, .context = 0, .max_concurrent = 1, .memory_budget = 0, .settings_json = .{}, .options_json = .{}, .host = &engine.host };
++    var verdict: abi.Verdict = .{};
++    engine.handle = fake.own_thread.open(&options, &engine.info, &verdict) orelse return error.Open;
++    model.engine = engine;
++    model.state = .evicting;
++    var scheduler = std.mem.zeroInit(Scheduler, .{ .allocator = a, .io = io, .registry = registry });
++    var request: UnloadRequest = .{ .entry = model };
++    if (@hasField(UnloadRequest, "fios_origins")) request.fios_origins = &original;
++    owners.current().* = null;
++    runUnloadRequest(&scheduler, &request);
++    try std.testing.expect(request.done);
++    try std.testing.expect(model.engine == null and model.state == .unloaded);
++    try std.testing.expect(owners.current().* == null and owners.current_group().* == null);
++    if (!Probe.attributed) std.debug.print("FIO_CURRENT_UNLOAD_LOST_ORIGINS\n", .{});
++    try std.testing.expect(Probe.attributed);
++}
++
++test "fios current queued unload preserves sender and worker origins" {
++    const a = std.testing.allocator;
++    const io = std.testing.io;
++    const owners = @import("../../../fios/request_ownership.zig");
++    const served = @import("../../../host/engines/served.zig");
++    const abi = @import("../../../abi/engine.zig");
++    const fake = @import("../../../testing/fake_engine.zig");
++    const registry = try model_registry_mod.ModelRegistry.init(a, io, null, 2, 0, null);
++    defer registry.deinit();
++    const model = try registry.registerStub("fixture/unload-metadata", "/fixture/never-loaded", null);
++    try owners.shared().initialize(io, @splat(79));
++    const root = try owners.shared().enter(io);
++    defer owners.shared().leave(io, root) catch {};
++    try owners.shared().bind(io, root, model.id);
++    owners.current().* = root;
++    defer owners.current().* = null;
++    const original = (try owners.retainCurrent(io)).?;
++    defer _ = original.releaseIfCertain(io);
++    const Probe = struct {
++        var expected: owners.Token = undefined;
++        var attributed: bool = false;
++        fn close(raw: *anyopaque) callconv(.c) void {
++            if (owners.current_group().*) |group| attributed = group.len == 1 and std.meta.eql(group[0], expected);
++            @import("../../../testing/fake_engine.zig").own_thread.close(raw);
++        }
++        fn log(_: *anyopaque, _: u8, _: abi.Str) callconv(.c) void {}
++        fn wake(_: *anyopaque) callconv(.c) void {}
++    };
++    Probe.expected = root;
++    Probe.attributed = false;
++    var table = fake.own_thread;
++    table.close = Probe.close;
++    var progress: @import("../../../host/registry/load_progress.zig").Progress = .{};
++    var gauges: served.Gauges = .{};
++    const engine = try a.create(served.Served);
++    engine.* = .{ .gpa = a, .kind = .llama, .table = &table, .handle = undefined, .info = undefined, .host = undefined, .progress = &progress, .gauges = &gauges, .metrics = null };
++    engine.host = .{ .ctx = engine, .log = Probe.log, .wake = Probe.wake };
++    const options: abi.Open = .{ .model_dir = .{}, .model_type = .{}, .config_json = .{}, .context = 0, .max_concurrent = 1, .memory_budget = 0, .settings_json = .{}, .options_json = .{}, .host = &engine.host };
++    var verdict: abi.Verdict = .{};
++    engine.handle = fake.own_thread.open(&options, &engine.info, &verdict) orelse return error.Open;
++    model.engine = engine;
++    model.state = .ready;
++    var scheduler = std.mem.zeroInit(Scheduler, .{ .allocator = a, .io = io, .registry = registry });
++    const Sender = struct {
++        scheduler: *Scheduler,
++        root: owners.Token,
++        failed: bool = false,
++        restored: bool = false,
++        fn run(self: *@This()) void {
++            owners.current().* = self.root;
++            defer owners.current().* = null;
++            self.scheduler.unloadModelIfIdle("fixture/unload-metadata", null) catch { self.failed = true; };
++            self.restored = owners.current_group().* == null and std.meta.eql(owners.current().*.?, self.root);
++        }
++    };
++    var sender: Sender = .{ .scheduler = &scheduler, .root = root };
++    owners.current().* = null;
++    const thread = try std.Thread.spawn(.{}, Sender.run, .{&sender});
++    var request: ?*UnloadRequest = null;
++    for (0..2000) |_| {
++        scheduler.queue_mu.lockUncancelable(io);
++        if (scheduler.unload_queue.items.len > 0) request = scheduler.unload_queue.orderedRemove(0);
++        scheduler.queue_mu.unlock(io);
++        if (request != null) break;
++        io.sleep(.fromMilliseconds(1), .awake) catch {};
++    }
++    const queued = request orelse @panic("FIO_CURRENT_UNLOAD_QUEUE_NOT_PUBLISHED");
++    runUnloadRequest(&scheduler, queued);
++    // The sender owns the stack request; never dereference it after done.
++    thread.join();
++    scheduler.unload_queue.deinit(a);
++    try std.testing.expect(!sender.failed and sender.restored);
++    try std.testing.expect(model.engine == null and model.state == .unloaded);
++    try std.testing.expect(owners.current().* == null and owners.current_group().* == null);
++    if (!Probe.attributed) std.debug.print("FIO_CURRENT_QUEUED_UNLOAD_LOST_ORIGINS\n", .{});
++    try std.testing.expect(Probe.attributed);
++}
+diff --git a/src/engines/mlx/scheduler.zig b/src/engines/mlx/scheduler.zig
+index d593fef..de0d45f 100644
+--- a/src/engines/mlx/scheduler.zig
++++ b/src/engines/mlx/scheduler.zig
+@@ -1067,6 +1067,12 @@ pub fn unloadModel(self: *Scheduler, id_or_empty: []const u8) !void {
+ /// before committing. (`planEvictionsLocked` picks and marks under one
+ /// hold instead; the sweep cannot, because the unload itself is slow.)
+ pub fn unloadModelIfIdle(self: *Scheduler, id_or_empty: []const u8, idle_window_ms: ?i64) !void {
++    // Retain the caller before registry transitions and queue publication.
++    // Acknowledgement is local operation custody, never device terminality.
++    const fios_origins = try fios_ownership.retainCurrent(self.io);
++    defer if (fios_origins) |held| {
++        if (!held.tracker.backendKnownUncertain(self.io)) _ = held.releaseIfCertain(self.io);
++    };
+     const entry = try self.registry.resolveEntry(id_or_empty);
+     {
+         self.registry.mutex.lockUncancelable(self.io);
+@@ -1098,7 +1104,10 @@ pub fn unloadModelIfIdle(self: *Scheduler, id_or_empty: []const u8, idle_window_
+         self.registry.mutex.unlock(self.io);
+     }
+ 
+-    var req = UnloadRequest{ .entry = entry };
++    var req = UnloadRequest{
++        .entry = entry,
++        .fios_origins = if (fios_origins) |*held| held else null,
++    };
+     {
+         self.queue_mu.lockUncancelable(self.io);
+         defer self.queue_mu.unlock(self.io);
+@@ -1111,6 +1120,7 @@ pub fn unloadModelIfIdle(self: *Scheduler, id_or_empty: []const u8, idle_window_
+     req.done_mu.lockUncancelable(self.io);
+     while (!req.done) req.done_cond.waitUncancelable(self.io, &req.done_mu);
+     req.done_mu.unlock(self.io);
++    if (req.fios_failed) return error.InvalidQueuedOrigins;
+ }
+ 
+ /// The least recently used resident model nobody is holding, other than `keep`; its id
+diff --git a/src/host/gpu_thread/requests.zig b/src/host/gpu_thread/requests.zig
+index b2d1909..72398d8 100644
+--- a/src/host/gpu_thread/requests.zig
++++ b/src/host/gpu_thread/requests.zig
+@@ -200,6 +200,8 @@ pub fn takeMergeable(queue: *std.ArrayList(*GenRequest), batch: []*GenRequest, n
+ /// eviction accounting, then the entry returns to `.unloaded` (the stub stays
+ /// in the registry so it can reload later).
+ pub const UnloadRequest = struct {
++    fios_origins: ?*const fios_ownership.Retained = null,
++    fios_failed: bool = false,
+     entry: *model_registry_mod.LoadedModel,
+     done: bool = false,
+     done_mu: std.Io.Mutex = .init,

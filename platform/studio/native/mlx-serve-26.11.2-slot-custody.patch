@@ -1,0 +1,137 @@
+diff --git a/src/engines/mlx/scheduler.zig b/src/engines/mlx/scheduler.zig
+index 4b299ab..044886c 100644
+--- a/src/engines/mlx/scheduler.zig
++++ b/src/engines/mlx/scheduler.zig
+@@ -517,6 +517,10 @@ pub fn submit(self: *Scheduler, params: SubmitParams) !*Slot {
+     const eff_kv_quant = params.kv_quant_config orelse slot_config.kv_quant_override orelse self.kv_quant_config;
+     const slot = try Slot.init(self.allocator, self.io, slot_config, params, eff_kv_quant);
+     errdefer slot.deinit();
++    if (slot.fios_owner != null) {
++        try fios_ownership.retainReference(&params.model.refcount);
++        slot.fios_registry = self.registry;
++    }
+ 
+     self.queue_mu.lockUncancelable(self.io);
+     defer self.queue_mu.unlock(self.io);
+@@ -1357,3 +1361,55 @@ test "cancelAllInFlight: a request being prefilled at a chunk boundary is cancel
+     cancelAllInFlight(&sch);
+     try testing.expect(slot.cancelled.load(.acquire));
+ }
++
++test "fios current slot retains request and model through queued cleanup" {
++    const a = std.testing.allocator;
++    const io = std.testing.io;
++    const registry = try ModelRegistry.init(a, io, null, 2, 0, null);
++    defer registry.deinit();
++    const model = try registry.registerStub("fixture/current-slot", "/fixture/never-loaded", null);
++    var config = std.mem.zeroInit(ModelConfig, .{ .model_type = "llama", .num_hidden_layers = 0 });
++    model.config = &config;
++    defer model.config = null;
++    model.state = .ready;
++    model.refcount.store(1, .release);
++    var model_held = true;
++    defer if (model_held) registry.releaseStatus(model);
++    var scheduler = std.mem.zeroInit(Scheduler, .{
++        .allocator = a, .io = io, .registry = registry, .queue_cap = 2,
++        .kv_quant_config = transformer_mod.KVQuantConfig.dense,
++    });
++    defer {
++        for (scheduler.pending.items) |pending| pending.deinit();
++        for (scheduler.cleanup_queue.items) |pending| pending.deinit();
++        scheduler.pending.deinit(a);
++        scheduler.cleanup_queue.deinit(a);
++    }
++    try fios_ownership.shared().initialize(io, @splat(19));
++    const root = try fios_ownership.shared().enter(io);
++    var root_held = true;
++    defer if (root_held) fios_ownership.shared().leave(io, root) catch {};
++    try fios_ownership.shared().bind(io, root, model.id);
++    fios_ownership.current().* = root;
++    defer fios_ownership.current().* = null;
++    const slot = try submit(&scheduler, .{
++        .prompt_ids = &.{1}, .sampling = .{}, .eos_token_ids = &.{},
++        .max_tokens = 1, .model = model,
++    });
++    complete(&scheduler, slot);
++    try std.testing.expectEqual(@as(usize, 1), scheduler.cleanup_queue.items.len);
++    registry.releaseStatus(model);
++    model_held = false;
++    try fios_ownership.shared().leave(io, root);
++    root_held = false;
++    fios_ownership.current().* = null;
++    const pending = fios_ownership.shared().snapshot(io);
++    if (pending.owned != 1) std.debug.print("FIO_CURRENT_SLOT_LOST_REQUEST_CUSTODY\n", .{});
++    try std.testing.expectEqual(@as(usize, 1), pending.owned);
++    try std.testing.expectEqual(@as(u32, 1), model.refcount.load(.acquire));
++    const cleanup = scheduler.cleanup_queue.pop().?;
++    cleanup.deinit();
++    try std.testing.expectEqual(@as(u32, 0), model.refcount.load(.acquire));
++    try std.testing.expectEqual(@as(usize, 0), fios_ownership.shared().snapshot(io).owned);
++    try std.testing.expect(fios_ownership.current().* == null and fios_ownership.current_group().* == null);
++}
+diff --git a/src/engines/mlx/slot.zig b/src/engines/mlx/slot.zig
+index 056dc2b..d810f17 100644
+--- a/src/engines/mlx/slot.zig
++++ b/src/engines/mlx/slot.zig
+@@ -1,6 +1,8 @@
+ //! A request slot: per-request state the inference thread drives and the connection thread drains.
+ 
+ const std = @import("std");
++const fios_ownership = @import("../../fios/request_ownership.zig");
++const fios_queue = @import("../../fios/queued_request_ownership.zig");
+ const abi = @import("../../abi/engine.zig");
+ const mlx = @import("../../mlx/ffi.zig");
+ const transformer_mod = @import("transformer.zig");
+@@ -41,6 +43,9 @@ pub const NextResult = union(enum) {
+ 
+ /// Per-request state. Owned by the Scheduler from `submit` until `complete`.
+ pub const Slot = struct {
++    // Original attribution survives queueing and connection completion.
++    fios_owner: ?fios_ownership.Retained = null,
++    fios_registry: ?*model_registry_mod.ModelRegistry = null,
+     allocator: std.mem.Allocator,
+     /// io reference for Stopwatch / async-eval (captured from Scheduler).
+     io: std.Io,
+@@ -240,6 +245,10 @@ pub const Slot = struct {
+         params: SubmitParams,
+         kv_quant_config: transformer_mod.KVQuantConfig,
+     ) !*Slot {
++        const fios_owner = try fios_ownership.retainCurrent(io);
++        errdefer if (fios_owner) |held| {
++            if (!held.tracker.backendKnownUncertain(io)) _ = held.releaseIfCertain(io);
++        };
+         const slot = try allocator.create(Slot);
+         errdefer allocator.destroy(slot);
+ 
+@@ -298,6 +307,7 @@ pub const Slot = struct {
+         errdefer allocator.free(eos_owned);
+ 
+         slot.* = .{
++            .fios_owner = fios_owner,
+             .allocator = allocator,
+             .io = io,
+             .model = params.model,
+@@ -404,6 +414,23 @@ pub const Slot = struct {
+     /// finished/errored it AND the connection thread has consumed the final
+     /// `done`/`err` from `waitNext`).
+     pub fn deinit(self: *Slot) void {
++        const io = self.io;
++        const owner = self.fios_owner;
++        const registry = self.fios_registry;
++        const model = self.model;
++        // Unknown backend work retains the whole original slot/model custody.
++        // Neither complete(), a session acknowledgement nor an empty queue is
++        // native terminality. Keep uncertainty independently of local cleanup.
++        if (owner) |held| if (held.tracker.backendKnownUncertain(io)) return;
++        var scope: ?fios_queue.Scope = if (owner) |*held|
++            fios_queue.Scope.retain(io, held) catch return else null;
++        if (scope) |*work| work.enter(io) catch return;
++        defer if (scope) |*work| { _ = work.finish(io); };
++        // Captured locals survive allocator.destroy(self). A real SDK callback
++        // spawned by cleanup clones these original roots before they leave.
++        defer if (owner) |held| { _ = held.releaseIfCertain(io); };
++        defer if (registry) |r| r.releaseStatus(model);
++
+         // A slot freed before its terminator (a cancel pulled into cleanup) still tells its stream it is done.
+         if (self.sink != null) self.emitFinished(.cancelled, null);
+         if (self.model.transformer) |xfm| if (xfm.qwen4Trunk()) |t| t.markQsaPooledRopeStale();

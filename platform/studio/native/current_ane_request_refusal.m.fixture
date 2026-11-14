@@ -1,0 +1,28 @@
+// Ordinary CPU destructor observation only; no ANE framework/model/API.
+#ifndef FIOS_ANE_SOURCE
+#error "Private source fixture required"
+#endif
+@interface FiosRequestFenceChild : NSObject
+@end
+@implementation FiosRequestFenceChild
+- (void)dealloc { fios_ane_fence(FIOS_ANE_REQUEST); }
+@end
+int main(void) {
+    msv_ane_program *p=calloc(1,sizeof(*p));msv_ane_request *r=calloc(1,sizeof(*r));
+    __weak NSObject *input_seen;
+    __weak NSObject *output_seen;
+    @autoreleasepool {
+        NSObject *input=[NSObject new],*output=[NSObject new];input_seen=input;output_seen=output;
+        FiosRequestFenceChild *child=[FiosRequestFenceChild new];
+        if (!fios_ane_parent_acquire(p,r)) return 1;
+        r->request=(__bridge_retained void *)child;
+        r->fios_inputs=(__bridge_retained void *)@[input];
+        r->fios_outputs=(__bridge_retained void *)@[output];
+    }
+    if (msv_ane_request_try_free(r) || !msv_ane_source_uncertainty()) return 1;
+    if (!input_seen || !output_seen || !r->fios_inputs || !r->fios_outputs) {
+        fprintf(stderr,"FIO_CURRENT_ANE_REQUEST_DROPPED_FENCED_INPUTS\n");return 1;
+    }
+    if (r->fios_parent!=p || p->fios_children!=1 || msv_ane_request_try_free(r)) return 1;
+    fprintf(stderr,"PASS: private ANE request close retains inputs after destructor fence\n");return 0;
+}

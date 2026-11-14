@@ -1,0 +1,17 @@
+// Ordinary constructor preflight only; no backend/model/context is initialized.
+extern "C" void mlx_llama_log(bool, const char *) {}
+int main() {
+    alarm(5);
+    char message[128] = {};
+    if (mlx_llama_source_uncertainty()) return 10;
+    if (mlx_llama_open(nullptr, 0, nullptr, false, message, sizeof(message)) != nullptr || mlx_llama_source_uncertainty()) return 11;
+    if (std::strcmp(message, "llama source custody unavailable") != 0) return 12;
+    if (mlx_llama_ctx_create(nullptr, nullptr, message, sizeof(message)) != nullptr || mlx_llama_source_uncertainty()) return 13;
+    auto *parent = new mlx_llama_engine();
+    auto *child = new mlx_llama_ctx();
+    if (!fios_llama_retain_parent(child, parent) || mlx_llama_try_close(parent) != 0) return 14;
+    if (mlx_llama_open("fixture/never-opened.gguf", 0, nullptr, false, message, sizeof(message)) != nullptr || std::strcmp(message, "llama source custody unavailable") != 0) return 15;
+    if (mlx_llama_ctx_create(parent, nullptr, message, sizeof(message)) != nullptr) return 16;
+    if (mlx_llama_source_uncertainty() != 1 || !child->fios_parent_owned || parent->fios_children != 1) return 17;
+    puts("PASS: ordinary llama constructor preflight creates no model and preserves prior custody uncertainty");
+}

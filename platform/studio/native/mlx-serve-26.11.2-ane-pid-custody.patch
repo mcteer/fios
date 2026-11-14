@@ -1,0 +1,43 @@
+diff --git a/lib/ane/ane_bridge.m b/lib/ane/ane_bridge.m
+index cb21f53..972567e 100644
+--- a/lib/ane/ane_bridge.m
++++ b/lib/ane/ane_bridge.m
+@@ -418,6 +418,19 @@ static BOOL bridge_load(id model, NSDictionary *options, NSError **failure) {
+     }
+ }
+ 
++/* Process metadata is not a native terminal issuer. This helper's private
++ * policy is tested separately without signaling/reaping any real process. */
++static bool fios_ane_pid_metadata_allows_reap(pid_t owner, pid_t self,
++                                             int signal_result, int signal_errno) {
++#ifdef FIOS_ANE_SOURCE
++    /* PID/ESRCH cannot prove native terminality or release a staging lease. */
++    (void)owner;(void)self;(void)signal_result;(void)signal_errno;
++    return false;
++#else
++    return owner > 0 && owner != self && signal_result != 0 && signal_errno == ESRCH;
++#endif
++}
++
+ /* Compile (or restore from the compile cache) and load the program in `descriptor` as `model`;
+  * the staging directory it serves from is returned in `staging` (the framework's contract: it
+  * stays for the model's life). Returns false with `error` set and nothing left on disk. */
+@@ -447,6 +460,7 @@ static bool bridge_compile_load(const char *name, id model, NSData *program,
+     // (live 2026-08-18: 112 -> 63 -> 36 -> 29 programs as the orphans
+     // accumulated). So each dir gets a pid MARKER file, and the first
+     // create of a process reaps any marked dir whose owner is dead.
++    // Private guarded mode never authorizes deletion from these PID observations.
+     static dispatch_once_t reap_once;
+     dispatch_once(&reap_once, ^{
+         NSFileManager *fm = [NSFileManager defaultManager];
+@@ -462,7 +476,9 @@ static bool bridge_compile_load(const char *name, id model, NSData *program,
+             if (owner <= 0 || owner == getpid()) continue;
+             // ESRCH = the owning process is gone; EPERM = alive but
+             // not ours to signal — keep those.
+-            if (kill(owner, 0) != 0 && errno == ESRCH)
++            const int observed = kill(owner, 0);
++            const int observed_errno = errno;
++            if (fios_ane_pid_metadata_allows_reap(owner, getpid(), observed, observed_errno))
+                 [fm removeItemAtPath:dir error:nil];
+         }
+     });

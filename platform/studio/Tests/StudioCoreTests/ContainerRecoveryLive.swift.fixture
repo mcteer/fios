@@ -1,0 +1,92 @@
+import Foundation
+import Darwin
+
+// Finite trusted-host rehearsal. Real CLI/daemon and journal; no service
+// restart, host mount, model call, production state or installed enrollment.
+@main struct ContainerRecoveryLive {
+    static func main() {
+        do {try run()}
+        catch {FileHandle.standardError.write(Data("Container recovery rehearsal refused; retain owned state/resources.\n".utf8));exit(1)}
+    }
+    static func result(_ executor:SandboxExecutor,job:String,command:SandboxCommand)throws->SandboxExecutionValue {
+        try executor.submit(job:job,command:command)
+        let end=ProcessInfo.processInfo.systemUptime+14
+        while ProcessInfo.processInfo.systemUptime<end {
+            let values=executor.drain()
+            if !values.isEmpty {
+                guard values.count==1,values[0].job==job else {throw RuntimeError.identity}
+                return try values[0].result.get()
+            }
+            Thread.sleep(forTimeInterval:0.005)
+        }
+        throw RuntimeError.deadline
+    }
+    static func run()throws {
+        let a=CommandLine.arguments
+        guard a.count==9,["create-lost","recover-create","recover-remove"].contains(a[1]),
+              a[2].hasPrefix("/"),UUID(uuidString:a[8])?.uuidString.lowercased()==a[8] else {throw RuntimeError.invalid}
+        let state=URL(fileURLWithPath:a[2]),journal=try Journal(directory:state)
+        let runtime=try DockerRuntime(executable:VerifiedExecutable(path:a[3],sha256:a[4]),socket:a[5])
+        let config=try SandboxConfiguration(job:a[8],nonce:a[7],image:a[6],memory:512<<20,cpus:1)
+        let now=HostResources.nowMilliseconds(),lifecycle=SandboxLifecycle(journal:journal)
+        if a[1]=="create-lost" {
+            let native=UUID().uuidString.lowercased()
+            try journal.claim(job:native,attempt:0,model:"fixture/never-dispatched")
+            let job=try DurableJob(id:config.job,idempotency:UUID().uuidString.lowercased(),ownerHash:String(repeating:"a",count:64),requestHash:String(repeating:"b",count:64),created:now)
+            _=try journal.reserveSandbox(job:job,configuration:config)
+            guard case .create=try lifecycle.next(job:job.id,now:now,resourcesSafe:true),
+                  try journal.sandboxRecords().first?.createIssued==true else {throw JournalError.invalid}
+            // The real create completes, but its result is deliberately never
+            // delivered to lifecycle.created. Parent records this ID only for
+            // diagnosis; recovery must discover and authenticate it itself.
+            let id=try runtime.create(config)
+            guard try journal.sandboxRecords().first?.runtimeID==nil else {throw JournalError.invalid}
+            print("{\"created_id\":\"\(id)\",\"create_result_delivered\":false}")
+            return
+        }
+        guard try journal.jobs().first?.state == .reconciling,
+              try journal.unresolvedCount()==1,try journal.uncertainCount()==1 else {throw JournalError.invalid}
+        let executor=try SandboxExecutor(runtime:runtime,allowedImages:[config.image])
+        if a[1]=="recover-create" {
+            guard try journal.sandboxRecords().first?.runtimeID==nil,
+                  case .inspect=try lifecycle.next(job:config.job,now:now,resourcesSafe:true) else {throw JournalError.invalid}
+            // Actual CLI against an absent private endpoint simulates transport
+            // loss; no daemon is stopped and no absence may be inferred.
+            let offline=try DockerRuntime(executable:VerifiedExecutable(path:a[3],sha256:a[4]),socket:state.appendingPathComponent("absent-runtime.sock").path)
+            let unavailable=try SandboxExecutor(runtime:offline,allowedImages:[config.image])
+            do {
+                _=try result(unavailable,job:config.job,command:.inspect(config,nil))
+                throw JournalError.invalid
+            }catch SandboxExecutionFailure.unavailable {}
+            guard try journal.sandboxRecords().first?.runtimeID==nil,
+                  try journal.sandboxRecords().first?.removalProven==false,
+                  try journal.jobs().first?.state != .removed else {throw JournalError.invalid}
+            guard case .observed(let presence,_,_)=try result(executor,job:config.job,command:.inspect(config,nil)),
+                  case .present(let id,_,_,_,false)=presence else {throw RuntimeError.identity}
+            // Same full ID/name/image with a foreign nonce must still refuse.
+            let foreign=try SandboxConfiguration(job:config.job,nonce:String(repeating:"f",count:64),image:config.image,memory:config.memory,cpus:config.cpus)
+            do {
+                _=try result(executor,job:config.job,command:.inspect(foreign,id))
+                throw JournalError.invalid
+            }catch SandboxExecutionFailure.identity {}
+            guard case .remove(let owned,let saved)=try lifecycle.observed(job:config.job,presence:presence,now:HostResources.nowMilliseconds(),resourcesSafe:true),saved==id else {throw JournalError.invalid}
+            guard case .acknowledged=try result(executor,job:config.job,command:.remove(owned,saved)) else {throw RuntimeError.invalid}
+            // Deliberately lose the removal acknowledgement at the journal
+            // boundary. No local success is promoted to daemon absence.
+            guard try journal.sandboxRecords().first?.runtimeID==id,
+                  try journal.sandboxRecords().first?.removalProven==false,
+                  try journal.jobs().first?.state == .removing else {throw JournalError.invalid}
+            print("PASS: real lost-create adoption, unavailable-endpoint retention, foreign-nonce refusal and lost-remove result; restart required")
+            return
+        }
+        guard let saved=try journal.sandboxRecords().first?.runtimeID,
+              case .inspect=try lifecycle.next(job:config.job,now:now,resourcesSafe:true),
+              case .observed(let presence,_,_)=try result(executor,job:config.job,command:.inspect(config,saved)),
+              case .absent=presence else {throw RuntimeError.identity}
+        _=try lifecycle.observed(job:config.job,presence:presence,now:HostResources.nowMilliseconds(),resourcesSafe:true)
+        guard try journal.jobs().first?.state == .removed,
+              try journal.sandboxRecords().first?.removalProven==true,
+              try journal.unresolvedCount()==1,try journal.uncertainCount()==1 else {throw JournalError.invalid}
+        print("PASS: actual second process restart and exact full-ID daemon absence release sandbox ownership while native uncertainty remains1")
+    }
+}

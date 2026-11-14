@@ -1,0 +1,68 @@
+
+test "fios current ane adapter worker restores original request origins" {
+    const owners = @import("../../fios/request_ownership.zig");
+    try owners.shared().initialize(testing.io, @splat(61));
+    const root = try owners.shared().enter(testing.io);
+    var root_live = true;
+    defer if (root_live) owners.shared().leave(testing.io, root) catch {};
+    try owners.shared().bind(testing.io, root, "fixture/ane-adapter");
+    owners.current().* = root;
+    defer owners.current().* = null;
+    const Probe = struct {
+        root: owners.Token,
+        done: std.atomic.Value(bool) = .init(false),
+        attributed: std.atomic.Value(bool) = .init(false),
+        reason: Reason = .failed,
+        fn event(raw: *anyopaque, _: u64, ev: *const abi.Event) callconv(.c) abi.Action {
+            const self: *@This() = @ptrCast(@alignCast(raw));
+            if (ev.kind == .prefilled) {
+                if (owners.current_group().*) |group| {
+                    self.attributed.store(group.len == 1 and std.meta.eql(group[0], self.root), .release);
+                }
+            }
+            if (ev.kind == .finished) {
+                self.reason = ev.reason;
+                self.done.store(true, .release);
+            }
+            return .go;
+        }
+    };
+    var actor_check: Probe = .{ .root = root };
+    // The real adapter/book/worker with the existing model-free bridge only:
+    // no ANE compilation, execution, weights or model competence is claimed.
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var buffer: [std.fs.max_path_bytes]u8 = undefined;
+    const path = try qwen3Pack(&tmp, &buffer);
+    var host: abi.Host = .{ .ctx = &actor_check, .log = struct {
+        fn f(_: *anyopaque, _: u8, _: abi.Str) callconv(.c) void {}
+    }.f, .wake = struct {
+        fn f(_: *anyopaque) callconv(.c) void {}
+    }.f };
+    const settings = "{\"slots\":1}";
+    const open: abi.Open = .{ .model_dir = abi.span(u8, path), .model_type = .{}, .config_json = .{},
+        .context = 0, .max_concurrent = 1, .memory_budget = 0, .settings_json = abi.span(u8, settings),
+        .options_json = .{}, .host = &host };
+    var info: abi.Info = undefined;
+    var verdict: abi.Verdict = .{};
+    const engine = Fake.table.open(&open, &info, &verdict) orelse return error.Open;
+    var closed = false;
+    defer if (!closed) Fake.table.close(engine);
+    const prompt = [_]u32{ 5, 6, 7 };
+    try testing.expectEqual(abi.Verdict.Code.ok, Fake.table.submit(engine, 1,
+        &.{ .prompt = abi.span(u32, &prompt), .max_tokens = 1, .sampling = .{ .temperature = 0 } },
+        .{ .ctx = &actor_check, .event = Probe.event }).code);
+    try owners.shared().leave(testing.io, root);root_live = false;
+    owners.current().* = null;
+    for (0..3000) |_| {
+        if (actor_check.done.load(.acquire)) break;
+        try testing.io.sleep(.fromMilliseconds(1), .awake);
+    }
+    try testing.expect(actor_check.done.load(.acquire));
+    Fake.table.close(engine);closed = true;
+    try testing.expectEqual(Reason.length, actor_check.reason);
+    if (!actor_check.attributed.load(.acquire)) std.debug.print("FIO_CURRENT_ANE_WORKER_LOST_ORIGINS\n", .{});
+    try testing.expect(actor_check.attributed.load(.acquire));
+    try testing.expectEqual(@as(usize, 0), owners.shared().snapshot(testing.io).owned);
+    try testing.expect(owners.current().* == null and owners.current_group().* == null);
+}

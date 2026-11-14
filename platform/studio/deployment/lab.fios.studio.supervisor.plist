@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>lab.fios.studio.supervisor</string>
+  <key>UserName</key><string>mcteer</string>
+  <key>ProgramArguments</key><array>
+    <string>/Library/Application Support/Fios/Studio/bin/studio-supervisor</string>
+    <string>--state</string><string>/Users/mcteer/Library/Application Support/Fios/Studio</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ThrottleInterval</key><integer>10</integer>
+  <key>ProcessType</key><string>Background</string>
+  <key>Umask</key><integer>63</integer>
+  <key>StandardOutPath</key><string>/dev/null</string>
+  <key>StandardErrorPath</key><string>/dev/null</string>
+</dict></plist>

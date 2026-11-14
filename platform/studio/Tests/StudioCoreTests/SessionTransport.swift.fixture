@@ -1,0 +1,64 @@
+import Foundation
+import Darwin
+import CryptoKit
+
+@main struct SessionTransportFixture {
+    static func main() throws {
+        let args=CommandLine.arguments
+        guard args.count>=3,args[2].hasPrefix("/tmp/fios009-session-rpc-") else {throw ControlError.invalid_request}
+        var pathBytes=[CChar](repeating:0,count:4096)
+        guard proc_pidpath(getpid(),&pathBytes,UInt32(pathBytes.count))>0 else {throw RuntimeError.identity}
+        let path=String(decoding:pathBytes.prefix(while:{$0 != 0}).map {UInt8(bitPattern:$0)},as:UTF8.self)
+        let hash=SHA256.hash(data:try Data(contentsOf:URL(fileURLWithPath:path))).map {String(format:"%02x",$0)}.joined()
+        let image=try VerifiedExecutable(path:path,sha256:hash),directory=URL(fileURLWithPath:args[2])
+        let pins:[ManagedService:String]=[.mlx:String(repeating:"a",count:64),.orbstack:String(repeating:"b",count:64)]
+        if args[1]=="server" {
+            let server=try SessionControlServer(directory:directory,manager:image,approvedApplications:try pins.mapValues {try VerifiedExecutable(path:path,sha256:$0)})
+            let stop=Termination();var count=0
+            while !stop.requested {
+                try autoreleasepool {
+                    try server.poll(consoleReady:true,now:Int64(ProcessInfo.processInfo.systemUptime*1000)) {_,_ in
+                        count+=1
+                        try AtomicState.write(Data(String(count).utf8),to:directory.appendingPathComponent("calls"))
+                        return .notSent // Trusted fake; no application API is called.
+                    }
+                }
+                Thread.sleep(forTimeInterval:0.005)
+            }
+            return
+        }
+        guard args[1]=="client",args.count==5 else {throw ControlError.invalid_request}
+        let descriptor=try JSONSerialization.jsonObject(with:Data(contentsOf:directory.appendingPathComponent("session-control.json"))) as! [String:Any]
+        if ["partial","trailing"].contains(args[3]) {
+            let path=directory.appendingPathComponent("session-control.sock").path
+            let fd=socket(AF_UNIX,SOCK_STREAM,0);guard fd>=0 else {throw RuntimeError.launch};defer {close(fd)}
+            var address=sockaddr_un();address.sun_family=sa_family_t(AF_UNIX);address.sun_len=UInt8(MemoryLayout<sockaddr_un>.size)
+            withUnsafeMutableBytes(of:&address.sun_path) {$0.initializeMemory(as:UInt8.self,repeating:0);$0.copyBytes(from:Array(path.utf8))}
+            guard withUnsafePointer(to:&address,{$0.withMemoryRebound(to:sockaddr.self,capacity:1){connect(fd,$0,socklen_t(MemoryLayout<sockaddr_un>.size))}})==0 else {throw RuntimeError.launch}
+            guard fcntl(fd,F_SETFL,O_NONBLOCK)==0 else {throw RuntimeError.launch}
+            let body=try JSONSerialization.data(withJSONObject:["version":1,"id":args[4],"operation":"launch","service":"mlx","instance":descriptor["instance"]!,"profile":descriptor["profile"]!])
+            let before=try Data(contentsOf:directory.appendingPathComponent("calls"))
+            try ControlFrames.write(fd:fd,data:body,deadline:ProcessInfo.processInfo.systemUptime+2)
+            if args[3]=="partial" {
+                Thread.sleep(forTimeInterval:0.2)
+                guard try Data(contentsOf:directory.appendingPathComponent("calls"))==before else {fatalError("Action executed before authenticated stream EOF")}
+            } else {var byte:UInt8=1;guard Darwin.write(fd,&byte,1)==1 else {throw RuntimeError.launch}}
+            guard shutdown(fd,SHUT_WR)==0 else {throw RuntimeError.launch}
+            if args[3]=="partial" {
+                let reply=try ControlFrames.read(fd:fd,deadline:ProcessInfo.processInfo.systemUptime+2)
+                let value=try JSONSerialization.jsonObject(with:reply) as! [String:Any]
+                guard value["status"] as? String=="not_sent" else {throw ControlError.invalid_request}
+            } else {
+                do {_=try ControlFrames.read(fd:fd,deadline:ProcessInfo.processInfo.systemUptime+2);fatalError("Trailing-byte request acknowledged")}catch ControlError.invalid_request {}
+            }
+            print(args[3]+"_pass");return
+        }
+        guard let operation=SessionClientOperation(rawValue:args[3]) else {throw ControlError.invalid_request}
+        let pid=(descriptor["pid"] as! NSNumber).int32Value,start=UInt64(descriptor["process_start"] as! String)!
+        let peer=NativeControlPeer(pid:pid,start:start,executable:image)
+        let client=try SessionControlClient(directory:directory,peer:peer,instance:descriptor["instance"] as! String,profile:descriptor["profile"] as! String,approvedHashes:pins)
+        let result=try client.request(operation:operation,service:.mlx,id:args[4])
+        guard result == .notSent || result == .uncertain else {throw ControlError.invalid_request}
+        print(result == .notSent ? "not_sent":"uncertain")
+    }
+}

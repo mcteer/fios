@@ -1,0 +1,43 @@
+// Actual SDK owner scope; modeled capture metadata only. No Metal object or backend call.
+#include <memory>
+#include <string>
+#include <stdexcept>
+#include "mlx/stream.h"
+#include "mlx/error.h"
+namespace fixture {
+using Error=mlx::core::Error;
+using FiosRequestOwnerScope=mlx::core::FiosRequestOwnerScope;
+struct FiosMetalCapture {std::shared_ptr<mlx::core::FiosRequestOwners> owners;unsigned ended=0;bool failed=false;};
+static auto fios_take_metal_request_owners(const std::shared_ptr<FiosMetalCapture>& value) {return value->owners;}
+static void fios_metal_capture_end(const std::shared_ptr<FiosMetalCapture>& value,bool failed) {value->ended++;value->failed=failed;}
+// FIOS_GENUINE_CALLBACK_HELPER
+static std::shared_ptr<FiosMetalCapture> capture;
+static int (*observer)(int);
+}
+extern "C" int fios_fixture_register(const mlx::core::FiosRequestOwnerHooks *hooks,int (*observer)(int)) {
+ fixture::observer=observer;return mlx::core::fios_register_request_owner_hooks(hooks)?1:0;
+}
+extern "C" int fios_fixture_prepare() {
+ fixture::capture=std::make_shared<fixture::FiosMetalCapture>();
+ fixture::capture->owners=mlx::core::fios_capture_request_owners();
+ return fixture::capture->owners?1:0;
+}
+extern "C" int fios_fixture_run(int mode) {
+ fixture::Error error;
+ if(mode==3)error.set_message(std::make_shared<std::string>("existing bounded CPU error"));
+ fixture::fios_owned_metal_callback(fixture::capture,error,[&] {
+  if(mode==1||mode==5)throw std::runtime_error("bounded ordinary CPU work error");
+  if(mode==2)throw 7;
+ },[&] {
+  fixture::observer(0);
+  if(mode==4||mode==5)throw std::runtime_error("bounded ordinary CPU cleanup error");
+  fixture::fios_metal_capture_end(fixture::capture,error.valid());
+ });
+ fixture::observer(1);
+ const bool failed=error.valid();
+ const char *expected=mode==3?"existing bounded CPU error":(mode==1||mode==5)?"bounded ordinary CPU work error":mode==2?"Native Metal callback failed":"bounded ordinary CPU cleanup error";
+ try {error.check();if(failed)return 32;}
+ catch(const std::exception& message) {if(!failed||std::string(message.what())!=expected)return 64;}
+ return (failed?2:0)|(fixture::capture->failed?4:0)|(fixture::capture->ended==1?8:0);
+}
+extern "C" void fios_fixture_release() {fixture::capture.reset();}

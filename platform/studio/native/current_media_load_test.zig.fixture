@@ -1,0 +1,98 @@
+
+test "fios current media load refuses uncertainty before publication and retains directory" {
+    const io = std.testing.io;
+    const page = std.heap.page_allocator;
+    const owners = @import("../../../fios/request_ownership.zig");
+    owners.shared().primary_guard = false;
+    try owners.shared().initialize(io, @splat(233));
+    const Trace = struct {
+        wrapper: usize = 0,
+        freed: bool = false,
+        allocations: usize = 0,
+        fn alloc(raw: *anyopaque, n: usize, alignment: std.mem.Alignment, ret: usize) ?[*]u8 {
+            const self: *@This() = @ptrCast(@alignCast(raw));
+            const result = std.heap.page_allocator.rawAlloc(n, alignment, ret);
+            self.allocations += 1;
+            if (result) |memory| {
+                if (n == @sizeOf(Engine)) self.wrapper = @intFromPtr(memory);
+            }
+            return result;
+        }
+        fn free(raw: *anyopaque, bytes: []u8, alignment: std.mem.Alignment, ret: usize) void {
+            const self: *@This() = @ptrCast(@alignCast(raw));
+            if (@intFromPtr(bytes.ptr) == self.wrapper) self.freed = true;
+            std.heap.page_allocator.rawFree(bytes, alignment, ret);
+        }
+        const vtable: std.mem.Allocator.VTable = .{ .alloc = alloc, .resize = std.mem.Allocator.noResize, .remap = std.mem.Allocator.noRemap, .free = free };
+        fn allocator(self: *@This()) std.mem.Allocator { return .{ .ptr = self, .vtable = &vtable }; }
+    };
+    const Probe = struct {
+        var current: ?*@This() = null;
+        io: std.Io,
+        unknown: bool,
+        loads: usize = 0,
+        unloads: usize = 0,
+        caps_calls: usize = 0,
+        fn load(_: *const abi.LoadCtx, _: *abi.Verdict) callconv(.c) ?*anyopaque {
+            const self = current.?;
+            self.loads += 1;
+            if (self.unknown) owners.shared().fence(self.io);
+            return self;
+        }
+        fn unload(raw: *anyopaque) callconv(.c) void {
+            const self: *@This() = @ptrCast(@alignCast(raw));
+            self.unloads += 1;
+        }
+        fn caps(_: *const abi.PackDir, out: *abi.MediaCaps) callconv(.c) void {
+            current.?.caps_calls += 1;
+            out.* = .{};
+        }
+    };
+    const media_table = try page.create(MediaTable);
+    media_table.* = undefined;
+    media_table.name = .of("fixture-media-metadata");
+    media_table.modality = .image;
+    media_table.load = Probe.load;
+    media_table.unload = Probe.unload;
+    media_table.caps = Probe.caps;
+    for ([_]bool{ false, true }) |unknown| {
+        const temp = try page.create(std.testing.TmpDir);
+        temp.* = std.testing.tmpDir(.{});
+        const path = try temp.dir.realPathFileAlloc(io, ".", page);
+        const trace = try page.create(Trace);
+        trace.* = .{};
+        const probe = try page.create(Probe);
+        probe.* = .{ .io = io, .unknown = unknown };
+        Probe.current = probe;
+        const result = Engine.load(io, trace.allocator(), path, media_table, .{ .ctx = null });
+        if (unknown) {
+            if (result) |_| {
+                std.debug.print("FIO_CURRENT_MEDIA_PUBLISHED_UNCERTAIN_LOAD\n", .{});
+                return error.TestExpectedError;
+            } else |err| try std.testing.expectEqual(error.NativeCleanupUncertain, err);
+            try std.testing.expect(!trace.freed and trace.wrapper != 0);
+            const engine: *Engine = @ptrFromInt(trace.wrapper);
+            _ = try engine.dir.stat(io);
+            try std.testing.expectEqual(@as(usize, 1), probe.loads);
+            try std.testing.expectEqual(@as(usize, 0), probe.caps_calls);
+            try std.testing.expectEqual(@as(usize, 0), probe.unloads);
+            try std.testing.expect(!engine.tryDeinit());
+            const before = trace.allocations;
+            try std.testing.expectError(error.NativeCleanupUncertain, Engine.load(io, trace.allocator(), path, media_table, .{ .ctx = null }));
+            try std.testing.expectEqual(before, trace.allocations);
+            try std.testing.expectEqual(@as(usize, 1), probe.loads);
+            try std.testing.expect(!trace.freed);
+            // Keep the unknown wrapper, directory, temp parent and path.
+        } else {
+            const engine = try result;
+            _ = try engine.dir.stat(io);
+            try std.testing.expect(engine.tryDeinit());
+            try std.testing.expect(trace.freed and probe.loads == 1 and probe.caps_calls == 1 and probe.unloads == 1);
+            page.free(path);
+            temp.cleanup();
+            page.destroy(temp);
+            page.destroy(probe);
+            page.destroy(trace);
+        }
+    }
+}

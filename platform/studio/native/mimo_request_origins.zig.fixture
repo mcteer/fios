@@ -1,0 +1,111 @@
+// Actual serving warm engine/Metal chunks and native SDK owner descriptors.
+// Private finite event waits only; no models or fabricated device completion.
+const std = @import("std");
+const host = @import("mlx_host");
+const mlx = @import("sdk").mlx;
+const owners = host.fios_warm_request_tracker;
+const sdk = host.fios_warm_request_owners;
+const warm = @import("arch/mimo_v2/gpu_warm.zig");
+extern "c" fn getenv(name: [*:0]const u8) ?[*:0]const u8;
+extern fn fios_join_event_create() u64;
+extern fn fios_join_event_release(u64) void;
+extern fn fios_join_gate_create(?*anyopaque) ?*anyopaque;
+extern fn fios_join_gate_finish(?*anyopaque) c_int;
+extern fn fios_join_gate_release(?*anyopaque) void;
+fn tick() void {
+    const interval: std.c.timespec = .{ .sec = 0, .nsec = std.time.ns_per_ms };
+    _ = std.c.nanosleep(&interval, null);
+}
+test "fios ordinary serving warm request origins" {
+    const io = std.testing.io;
+    const scenario = std.mem.span(getenv("FIOS_WARM_ORIGIN_SCENARIO") orelse return error.MissingScenario);
+    const cached = std.mem.eql(u8, scenario, "cached");
+    const missing = std.mem.eql(u8, scenario, "missing");
+    try std.testing.expect(cached or missing or std.mem.eql(u8, scenario, "healthy"));
+    try owners.shared.initialize(io, @splat(7));
+    try sdk.initialize(io);
+    const event = fios_join_event_create();
+    try std.testing.expect(event != 0);
+    defer fios_join_event_release(event);
+    const device = mlx.mlx_device_new_type(.gpu, 0);
+    defer _ = mlx.mlx_device_free(device);
+    const stream = mlx.mlx_stream_new_device(device);
+    defer _ = mlx.mlx_stream_free(stream);
+    const engine = (try warm.install(std.testing.allocator, .waits, stream, event)) orelse return error.MissingWarm;
+    var alive = true;
+    if (missing) {
+        defer { if (alive) _ = engine.tryDestroy(); }
+        engine.arm(1);
+        try std.testing.expect(engine.failed.load(.acquire));
+        try std.testing.expectEqual(@as(u64, 0), engine.n_chunks.load(.acquire));
+        try std.testing.expect(warm.fiosSourceUncertain() and sdk.diagnostic().uncertain);
+        alive = !engine.tryDestroy();
+        try std.testing.expect(!alive);
+        try std.testing.expect(owners.shared.snapshot(io).uncertain);
+        std.debug.print("PASS: serving warm missing origin refuses before chunk submission and preserves source uncertainty\n", .{});
+        return;
+    }
+    const gate = fios_join_gate_create(engine.backend.h) orelse {engine.destroy();return error.GateUnavailable;};
+    defer {
+        if (fios_join_gate_finish(gate) == 1) {
+            if (alive) _ = engine.tryDestroy();
+            fios_join_gate_release(gate);
+        }
+    }
+    const first = try owners.shared.enter(io);
+    const second = try owners.shared.enter(io);
+    try owners.shared.associate(io, first, @splat(1));
+    try owners.shared.associate(io, second, @splat(2));
+    for ([_]owners.Token{first, second}) |token| {
+        try owners.shared.bind(io, token, "fixture/warm-origins");
+        try owners.shared.active(io, token);
+    }
+    owners.current = first;
+    engine.arm(1);
+    owners.current = second;
+    engine.hold(true);
+    engine.hold(false);
+    owners.current = null;
+    const dispatched = warm.nowNs() + std.time.ns_per_s;
+    while (engine.n_chunks.load(.acquire) < 2 and warm.nowNs() < dispatched) tick();
+    try std.testing.expectEqual(@as(u64, 2), engine.n_chunks.load(.acquire));
+    try owners.shared.leave(io, first);
+    try owners.shared.leave(io, second);
+    const held = owners.shared.snapshot(io);
+    std.debug.print("warm_origins scenario={s} roots={d} contexts={d}\n", .{scenario, held.owned, sdk.diagnostic().active_contexts});
+    try std.testing.expectEqual(@as(usize, 2), held.owned);
+    try std.testing.expect(sdk.diagnostic().active_contexts >= 3);
+    try std.testing.expect(owners.shared.correlationSnapshot(io, @splat(1)).found);
+    try std.testing.expect(owners.shared.correlationSnapshot(io, @splat(2)).found);
+    if (cached) {
+        const began = warm.nowNs();
+        const destroyed = engine.tryDestroy();
+        if (destroyed) alive = false;
+        try std.testing.expect(!destroyed);
+        try std.testing.expect(warm.nowNs() - began < 1500 * std.time.ns_per_ms);
+        try std.testing.expect(owners.shared.snapshot(io).uncertain and sdk.diagnostic().uncertain);
+    }
+    try std.testing.expectEqual(@as(c_int, 1), fios_join_gate_finish(gate));
+    const deadline = warm.nowNs() + std.time.ns_per_s;
+    if (!cached) {
+        // The original worker must retire its final idle chunks and descriptor;
+        // waiting for model destruction would indefinitely retain old requests.
+        while (sdk.diagnostic().active_contexts != 0 and warm.nowNs() < deadline) tick();
+        try std.testing.expectEqual(@as(u32, 0), sdk.diagnostic().active_contexts);
+        try std.testing.expectEqual(@as(usize, 0), owners.shared.snapshot(io).owned);
+        try std.testing.expect(!sdk.diagnostic().uncertain and !warm.fiosSourceUncertain());
+    }
+    while (alive and warm.nowNs() < deadline) {
+        if (engine.fiosCanDestroy()) alive = !engine.tryDestroy();
+        if (alive) tick();
+    }
+    try std.testing.expect(!alive);
+    if (cached) {
+        try std.testing.expectEqual(@as(usize, 2), owners.shared.snapshot(io).owned);
+        try std.testing.expect(sdk.diagnostic().active_contexts >= 3);
+        try std.testing.expect(owners.shared.correlationSnapshot(io, @splat(1)).found);
+        try std.testing.expect(owners.shared.correlationSnapshot(io, @splat(2)).found);
+        try std.testing.expect(owners.shared.snapshot(io).uncertain and warm.fiosSourceUncertain());
+    }
+    std.debug.print("PASS: serving warm actual request origins survive caller release; healthy idle cleanup releases and cached uncertainty quarantines original lineage\n", .{});
+}

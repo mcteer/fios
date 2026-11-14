@@ -1,0 +1,126 @@
+// Model-free actual registry policy controls. No native model/backend exists.
+test "fios current registry retained response excludes LRU and idle victims" {
+    const io = std.testing.io;
+    const owners = @import("../../fios/request_ownership.zig");
+    owners.shared().primary_guard = false;
+    try owners.shared().initialize(io, @splat(201));
+    const reg = try ModelRegistry.init(std.heap.page_allocator, io, null, 1, 0, null);
+    defer reg.deinit();
+    const entry = try makeReadyStub(reg, "fixture/retained-response", 1024);
+    entry.fios_owner_guard = true;
+    const token = try owners.shared().enter(io);
+    try owners.shared().bind(io, token, entry.id);
+    try owners.shared().active(io, token);
+    try owners.shared().responding(io, token);
+    try owners.shared().retain(io, token);
+    try owners.shared().leave(io, token); // Connection exits; response capture remains.
+    defer owners.shared().leave(io, token) catch unreachable;
+    try testing.expectEqual(@as(u32, 0), entry.refcount.load(.acquire));
+    reg.mutex.lockUncancelable(io);
+    defer reg.mutex.unlock(io);
+    try testing.expect(reg.pickLruEvictable("fixture/incoming", false) == null);
+    try testing.expect(!ModelRegistry.idleEvictable(entry, entry.last_used_ms.load(.acquire) + 900_000, 900_000));
+    try testing.expect(reg.pickIdleEvictable(entry.last_used_ms.load(.acquire) + 900_000, 900_000) == null);
+}
+
+test "fios current registry forced planning retains known request ownership" {
+    const io = std.testing.io;
+    const owners = @import("../../fios/request_ownership.zig");
+    owners.shared().primary_guard = false;
+    try owners.shared().initialize(io, @splat(202));
+    const reg = try ModelRegistry.init(std.heap.page_allocator, io, null, 1, 0, null);
+    defer reg.deinit();
+    const entry = try makeReadyStub(reg, "fixture/forced-owner", 1024);
+    entry.fios_owner_guard = true;
+    const token = try owners.shared().enter(io);
+    defer owners.shared().leave(io, token) catch unreachable;
+    try owners.shared().bind(io, token, entry.id);
+    try owners.shared().active(io, token);
+    var out: [2]*LoadedModel = undefined;
+    reg.mutex.lockUncancelable(io);
+    defer reg.mutex.unlock(io);
+    try testing.expect(reg.planEvictionsLocked("fixture/incoming", entry, &out, 1024) == null);
+    try testing.expectEqual(LoadState.ready, entry.state);
+    try testing.expectEqual(@as(u64, 1024), reg.current_resident_bytes);
+}
+
+test "fios current registry transition excludes binding until exact rollback" {
+    const io = std.testing.io;
+    const owners = @import("../../fios/request_ownership.zig");
+    owners.shared().primary_guard = false;
+    try owners.shared().initialize(io, @splat(203));
+    const reg = try ModelRegistry.init(std.heap.page_allocator, io, null, 1, 0, null);
+    defer reg.deinit();
+    const entry = try makeReadyStub(reg, "fixture/transition", 1024);
+    entry.fios_owner_guard = true;
+    reg.mutex.lockUncancelable(io);
+    defer reg.mutex.unlock(io);
+    _ = reg.markEvictingLocked(entry);
+    var marked = true;
+    defer if (marked) reg.unmarkEvictingLocked(entry);
+    try testing.expectEqual(@as(usize, 1), owners.shared().snapshot(io).model_mutations);
+    const token = try owners.shared().enter(io);
+    defer owners.shared().leave(io, token) catch unreachable;
+    try testing.expectError(error.ModelTransition, owners.shared().bind(io, token, entry.id));
+    reg.unmarkEvictingLocked(entry);
+    marked = false;
+    try testing.expectEqual(@as(usize, 0), owners.shared().snapshot(io).model_mutations);
+    try owners.shared().bind(io, token, entry.id);
+    try testing.expectEqual(LoadState.ready, entry.state);
+}
+
+test "fios current registry RAM planning retains known owned resident bytes" {
+    const io = std.testing.io;
+    const owners = @import("../../fios/request_ownership.zig");
+    owners.shared().primary_guard = false;
+    try owners.shared().initialize(io, @splat(204));
+    const reg = try ModelRegistry.init(std.heap.page_allocator, io, null, 2, 0, null);
+    defer reg.deinit();
+    const first = try makeReadyStub(reg, "fixture/ram-first", 1024);
+    const second = try makeReadyStub(reg, "fixture/ram-owned", 1024);
+    first.fios_owner_guard = true;
+    second.fios_owner_guard = true;
+    const token = try owners.shared().enter(io);
+    defer owners.shared().leave(io, token) catch unreachable;
+    try owners.shared().bind(io, token, second.id);
+    try owners.shared().active(io, token);
+    try owners.shared().responding(io, token);
+    var out: [2]*LoadedModel = undefined;
+    reg.mutex.lockUncancelable(io);
+    defer reg.mutex.unlock(io);
+    try testing.expectEqual(@as(usize, 0), reg.planRamEvictionsLocked("fixture/incoming", &out, 0, 1536));
+    try testing.expectEqual(LoadState.ready, first.state);
+    try testing.expectEqual(LoadState.ready, second.state);
+    try testing.expectEqual(@as(u64, 2048), reg.current_resident_bytes);
+}
+
+
+test "fios current registry transition uses cached metadata under its mutex" {
+    const io = std.testing.io;
+    const owners = @import("../../fios/request_ownership.zig");
+    const Probe = struct {
+        var calls = std.atomic.Value(u32).init(0);
+        fn check() bool {
+            _ = calls.fetchAdd(1, .monotonic);
+            return false;
+        }
+    };
+    owners.shared().primary_guard = false;
+    try owners.shared().initialize(io, @splat(205));
+    const reg = try ModelRegistry.init(std.heap.page_allocator, io, null, 1, 0, null);
+    defer reg.deinit();
+    const entry = try makeReadyStub(reg, "fixture/cached-transition", 1024);
+    entry.fios_owner_guard = true;
+    try owners.shared().enrollDiagnosticUncertaintyProbe(io, &Probe.check);
+    const before = Probe.calls.load(.monotonic);
+    reg.mutex.lockUncancelable(io);
+    const marked = reg.markEvictingLocked(entry);
+    if (marked) reg.unmarkEvictingLocked(entry);
+    reg.mutex.unlock(io);
+    try testing.expect(marked);
+    try testing.expectEqual(before, Probe.calls.load(.monotonic));
+    // The ordinary outer entry still observes its independently enrolled source.
+    const ticket = try owners.shared().beginModelMutation(io, "fixture/outside-registry");
+    defer owners.shared().endModelMutation(io, ticket) catch unreachable;
+    try testing.expect(Probe.calls.load(.monotonic) > before);
+}

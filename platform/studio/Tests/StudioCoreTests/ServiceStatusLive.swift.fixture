@@ -1,0 +1,41 @@
+import Foundation
+import Darwin
+
+// Ordinary status integration only. Observations are synthetic metadata;
+// no session/native recovery adapter or lifecycle operation is configured.
+@main struct ServiceStatusLive {
+    static func main() throws {
+        let args=CommandLine.arguments
+        guard args.count==3,geteuid()>0 else {throw ServiceError.invalid}
+        if args[2] == "unconfigured" {
+            try ManagerRuntime.run(directory:URL(fileURLWithPath:args[1]))
+            return
+        }
+        let cache=ServiceObservationCache(),now=HostResources.nowMilliseconds()
+        var mlxHealth:ServiceHealthCollector?,orbstackHealth:ServiceHealthCollector?
+        for service in ManagedService.allCases {
+            let identity=ServiceIdentity(pid:42,start:1,sha256:String(repeating:"a",count:64))
+            var sample:ServiceObservation?
+            switch args[2] {
+            case "unknown":sample=nil
+            case "waiting_session":sample=ServiceObservation(identity:nil,responding:false,sessionReady:false,credentialsReady:true,nativeIdle:nil,runtimeUnmanaged:nil,sampledAt:now)
+            case "waiting_credentials":sample=ServiceObservation(identity:nil,responding:false,sessionReady:true,credentialsReady:false,nativeIdle:nil,runtimeUnmanaged:nil,sampledAt:now)
+            case "stopped":sample=ServiceObservation(identity:nil,responding:false,sessionReady:true,credentialsReady:true,nativeIdle:nil,runtimeUnmanaged:nil,sampledAt:now)
+            case "ready":sample=ServiceObservation(identity:identity,responding:true,sessionReady:true,credentialsReady:true,nativeIdle:nil,runtimeUnmanaged:nil,sampledAt:now)
+            case "mixed","loading":sample=nil
+            case "degraded":sample=ServiceObservation(identity:identity,responding:false,sessionReady:true,credentialsReady:true,nativeIdle:nil,runtimeUnmanaged:nil,sampledAt:now)
+            default:throw ServiceError.invalid
+            }
+            if ["ready","degraded","mixed","loading"].contains(args[2]) {
+                let process=ServiceProcessSample(presence:.present(identity),sampledAt:now,
+                    reviewDigest:String(repeating:"b",count:64),uid:geteuid(),diagnostic:"fixture_present")
+                let state:ServiceHealthState=args[2]=="loading" ? (service == .mlx ? .loading:.healthy):(args[2]=="ready" || (args[2]=="mixed" && service == .mlx)) ? .healthy:.unavailable
+                let collector=ServiceHealthCollector(service:service,presence:{process},health:{state},now:{now},uptime:{1})
+                if service == .mlx {mlxHealth=collector}else {orbstackHealth=collector}
+                sample=nil // Actual manager background collection publishes it.
+            }
+            cache.publish(sample,for:service)
+        }
+        try ManagerRuntime.run(directory:URL(fileURLWithPath:args[1]),nativeControl:nil,serviceObservations:cache,serviceHealth:mlxHealth,serviceHealthReadiness:{(true,true)},orbstackHealth:orbstackHealth,orbstackHealthReadiness:{(true,true)})
+    }
+}

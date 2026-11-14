@@ -1,0 +1,76 @@
+diff --git a/app/Sources/MLXServe/Services/ServerManager.swift b/app/Sources/MLXServe/Services/ServerManager.swift
+index e826b26..65d664d 100644
+--- a/app/Sources/MLXServe/Services/ServerManager.swift
++++ b/app/Sources/MLXServe/Services/ServerManager.swift
+@@ -213,6 +213,13 @@ class ServerManager: ObservableObject {
+     /// carries `--model`/`--model-dir`; this wires the env, stderr capture,
+     /// termination handler, and health polling.
+     private func launch(args: [String], options: ServerOptions) {
++        // A listener belongs to its launcher, not to another process with the
++        // same executable name. Refuse before changing defaults or spawning.
++        guard pidsListening(on: options.port).isEmpty else {
++            lastError = "Port \(options.port) is already in use. Stop its server through its owner before starting another."
++            status = .error(lastError)
++            return
++        }
+         do { try GenerationDefaultsFile.migrate(options) }
+         catch {
+             lastError = "Could not save generation defaults: \(error.localizedDescription)"
+@@ -225,12 +232,6 @@ class ServerManager: ObservableObject {
+         lastError = ""
+         clearServerLog()
+ 
+-        // Reap orphaned mlx-serve processes still bound to our port (e.g. left
+-        // behind after a crash). We only target processes whose command name is
+-        // `mlx-serve` so we never kill an unrelated app that happens to be on
+-        // the port.
+-        killOrphanedServers(on: port)
+-
+         let binaryPath = Self.resolveBinaryPath()
+         guard FileManager.default.fileExists(atPath: binaryPath) else {
+             status = .error("Binary not found at: \(binaryPath)")
+@@ -916,29 +917,6 @@ class ServerManager: ObservableObject {
+         return dir
+     }
+ 
+-    private func killOrphanedServers(on port: UInt16) {
+-        let pids = pidsListening(on: port)
+-        let myPid = ProcessInfo.processInfo.processIdentifier
+-        for pid in pids where pid != myPid {
+-            guard processName(pid: pid).hasPrefix("mlx-serve") else { continue }
+-            kill(pid, SIGTERM)
+-            if !waitForExit(pid) {
+-                // A large resident model can take seconds to tear down after SIGKILL too;
+-                // launching before it is gone fails the new server's port check.
+-                kill(pid, SIGKILL)
+-                _ = waitForExit(pid)
+-            }
+-        }
+-    }
+-
+-    private func waitForExit(_ pid: pid_t, seconds: Double = 2) -> Bool {
+-        for _ in 0..<Int(seconds * 10) {
+-            if kill(pid, 0) != 0 { return true }
+-            Thread.sleep(forTimeInterval: 0.1)
+-        }
+-        return kill(pid, 0) != 0
+-    }
+-
+     /// Was `/usr/sbin/lsof -nP -iTCP:<port> -sTCP:LISTEN -t`; now libproc, which
+     /// is what lsof itself reads. `lsof` is not reachable from inside the App
+     /// Sandbox container. See `SystemMetrics`.
+@@ -946,14 +924,6 @@ class ServerManager: ObservableObject {
+         SystemMetrics.pidsListening(onTCPPort: port)
+     }
+ 
+-    /// Was `/bin/ps -p <pid> -o comm=` plus `lastPathComponent`; now
+-    /// `proc_pidpath`. Note the two can report different *paths* for the same
+-    /// process (ps reports the launch path, proc_pidpath resolves symlinks) —
+-    /// the last component, which is all this compares, agrees.
+-    private func processName(pid: pid_t) -> String {
+-        SystemMetrics.processName(pid: pid)
+-    }
+-
+     /// Resolve the `mlx-serve` binary the app runs — bundled beside the Swift
+     /// executable, else the dev `zig-out/bin/mlx-serve`, else the bare name.
+     /// `nonisolated static` so version probing (`EngineVersions.probe`) can find

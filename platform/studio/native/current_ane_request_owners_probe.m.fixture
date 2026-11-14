@@ -1,0 +1,49 @@
+// Tiny healthy IOSurface + CPU request/parent bookkeeping; no ANE model/API.
+#ifndef FIOS_ANE_SOURCE
+#error "Private source fixture required"
+#endif
+static bool fio_request_parent_alive;
+static unsigned fio_request_destroyed, fio_parent_unloaded;
+@interface FiosRequestOwnerParent : NSObject
+@end
+@implementation FiosRequestOwnerParent
+- (BOOL)unloadWithQoS:(unsigned)qos error:(NSError **)error { (void)qos;*error=nil;fio_parent_unloaded+=1;return YES; }
+@end
+@interface FiosRequestOwnerChild : NSObject
+@property (weak) FiosRequestOwnerParent *model;
+@property void *parent;
+@property IOSurfaceRef surface;
+@property CFIndex expected_refs;
+@property BOOL fence;
+@end
+@implementation FiosRequestOwnerChild
+- (void)dealloc {
+    fio_request_destroyed+=1;
+    fio_request_parent_alive=self.model!=nil && ((msv_ane_program *)self.parent)->fios_children==1 && CFGetRetainCount(self.surface)==self.expected_refs;
+    if (self.fence) fios_ane_fence(FIOS_ANE_REQUEST);
+}
+@end
+int fios_fixture_ane_request_owners_refusal(void) {
+    @autoreleasepool {
+        IOSurfaceRef surface=msv_ane_bridge_surface(16);if (!surface) return 0;
+        CFIndex original=CFGetRetainCount(surface);
+        msv_ane_program *p=calloc(1,sizeof(*p));msv_ane_request *q=calloc(1,sizeof(*q));
+        FiosRequestOwnerParent *model=[FiosRequestOwnerParent new];
+        p->models=(__bridge_retained void *)@[model];p->options=(__bridge_retained void *)@[@{}];
+        if (!fios_ane_parent_acquire(p,q)) return 0;
+        IOSurfaceRef ins[]={surface},outs[]={surface};
+        if (!fios_ane_capture_surface_owners(&q->fios_surfaces,&q->fios_surface_count,ins,1,outs,1)) return 0;
+        NSMutableArray *inputs=[NSMutableArray new],*outputs=[NSMutableArray new];
+        fios_ane_request_capture_inputs(q,model,@{},inputs,outputs,@[@0],@[@0]);
+        NSObject *input=[NSObject new],*output=[NSObject new];
+        fios_ane_request_adopt_binding(q,inputs,input);fios_ane_request_adopt_binding(q,outputs,output);
+        FiosRequestOwnerChild *child=[FiosRequestOwnerChild new];child.model=model;child.parent=p;
+        child.surface=surface;child.expected_refs=original+2;child.fence=YES;
+        q->request=(__bridge_retained void *)child;child=nil;
+        if (msv_ane_request_try_free(q) || !msv_ane_source_uncertainty() ||
+            !fio_request_parent_alive || fio_request_destroyed!=1 || p->fios_children!=1 ||
+            (__bridge id)q->fios_inputs!=inputs || (__bridge id)q->fios_outputs!=outputs ||
+            CFGetRetainCount(surface)!=original+2 || msv_ane_request_try_free(q)) return 0;
+        CFRelease(surface);return 1;
+    }
+}

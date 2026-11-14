@@ -1,0 +1,53 @@
+// CPU owner-lifetime controls only; no ANE framework/model/device.
+#ifndef FIOS_ANE_SOURCE
+#error "Private source fixture required"
+#endif
+@interface FiosInputMetadata : NSObject
+@property unsigned calls;
+@end
+@implementation FiosInputMetadata
+- (BOOL)unloadWithQoS:(unsigned)qos error:(NSError **)error {
+    (void)qos;*error=nil;self.calls+=1;return YES;
+}
+@end
+int main(int argc, char **argv) {
+    if (argc!=2) return 2;
+    bool healthy=strcmp(argv[1],"healthy")==0;
+    bool pending=strcmp(argv[1],"pending")==0;
+    if (!healthy && !pending && strcmp(argv[1],"uncertain")!=0) return 2;
+    __weak NSData *program_seen;
+    __weak NSData *weights_seen;
+    __weak NSObject *descriptor_seen;
+    __weak FiosInputMetadata *model_seen;
+    msv_ane_program *p=calloc(1,sizeof(*p));
+    @autoreleasepool {
+        NSMutableData *program=[NSMutableData dataWithLength:8];program_seen=program;
+        NSMutableData *weights=[NSMutableData dataWithLength:16];weights_seen=weights;
+        NSObject *descriptor=[NSObject new];descriptor_seen=descriptor;
+        FiosInputMetadata *model=[FiosInputMetadata new];model_seen=model;
+        NSMutableArray *models=[NSMutableArray array],*options=[NSMutableArray array];
+        fios_ane_program_capture_inputs(p,program,weights,models,options);
+        p->fios_descriptor=(__bridge_retained void *)descriptor;
+        if (pending) p->fios_pending_model=(__bridge_retained void *)model;
+        else fios_ane_program_adopt_model(p,models,model);
+        NSArray *inputs=(__bridge NSArray *)p->fios_constructor_inputs;
+        if (inputs.count!=2 || inputs[0]!=program || inputs[1]!=weights ||
+            (__bridge id)p->models!=models || (__bridge id)p->options!=options ||
+            (__bridge id)p->fios_descriptor!=descriptor ||
+            (!pending && (p->fios_pending_model || models.count!=1 || models[0]!=model))) return 1;
+        if (!healthy && !pending) fios_ane_fence(FIOS_ANE_CONSTRUCTOR); // CPU metadata observation only.
+        bool accepted=msv_ane_program_try_free(p);
+        if (accepted!=healthy || model.calls!=(healthy ? 1u : 0u)) { fprintf(stderr,"close result %d calls %u healthy %d\n",accepted,model.calls,healthy);return 1; }
+        if (!healthy && (!msv_ane_source_uncertainty() ||
+            (__bridge id)p->fios_constructor_inputs!=inputs ||
+            (__bridge id)p->fios_descriptor!=descriptor ||
+            (pending && (__bridge id)p->fios_pending_model!=model))) return 1;
+    }
+    if (healthy) {
+        if (program_seen || weights_seen || descriptor_seen || model_seen) { fprintf(stderr,"healthy weak owners %d %d %d %d\n",program_seen!=nil,weights_seen!=nil,descriptor_seen!=nil,model_seen!=nil);return 1; }
+    } else {
+        if (!program_seen || !weights_seen || !descriptor_seen || !model_seen ||
+            msv_ane_program_try_free(p) || !msv_ane_source_uncertainty()) return 1;
+    }
+    fprintf(stderr,"PASS: private ANE declared program inputs retain original lifetime\n");return 0;
+}

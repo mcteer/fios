@@ -1,0 +1,418 @@
+diff --git a/build/libs.zig b/build/libs.zig
+index 147775b..6cb7497 100644
+--- a/build/libs.zig
++++ b/build/libs.zig
+@@ -67,7 +67,14 @@ pub fn addCHeaderModule(
+     return translate.createModule();
+ }
+ 
+-pub fn addDs4Sources(b: *std.Build, module: *std.Build.Module) void {
++/// Development-only source selection. The caller verifies the declared
++/// source receipt before building; a path/compiled artifact grants no authority.
++pub fn ds4SourcePath(b: *std.Build, selected: ?[]const u8, suffix: []const u8) std.Build.LazyPath {
++    if (selected) |root| return .{ .cwd_relative = if (suffix.len == 0) root else b.fmt("{s}/{s}", .{root, suffix}) };
++    return b.path(if (suffix.len == 0) "lib/ds4" else b.fmt("lib/ds4/{s}", .{suffix}));
++}
++
++pub fn addDs4Sources(b: *std.Build, module: *std.Build.Module, selected: ?[]const u8) void {
+     // Match ds4's Makefile flags (lib/ds4/Makefile lines 10–11). We drop
+     // `-mcpu=native` so the produced binary stays portable across Apple
+     // Silicon generations — ds4 itself ships portable IR for its Metal
+@@ -84,23 +91,23 @@ pub fn addDs4Sources(b: *std.Build, module: *std.Build.Module) void {
+         "-Wno-unused-function",
+         "-Wno-deprecated-declarations",
+     };
+-    module.addCSourceFile(.{ .file = b.path("lib/ds4/ds4.c"), .flags = c_flags });
++    module.addCSourceFile(.{ .file = ds4SourcePath(b, selected, "ds4.c"), .flags = c_flags });
+     // ds4.c #includes ds4_distributed.h; the engine/session path links its impl.
+     // ds4_gpu.h is implemented in ds4_metal.m; ds4_kvstore/web/help/agent.c and
+     // ds4_gpu_args.c are CLI/server-only and not part of the library path
+     // mlx-serve embeds (upstream Makefile CORE_OBJS is the authority).
+-    module.addCSourceFile(.{ .file = b.path("lib/ds4/ds4_distributed.c"), .flags = c_flags });
++    module.addCSourceFile(.{ .file = ds4SourcePath(b, selected, "ds4_distributed.c"), .flags = c_flags });
+     // SSD weight-streaming (issue #39): ds4_ssd.c is a standalone TU (#includes
+     // only ds4_ssd.h) implementing the streaming expert cache the engine_options
+     // ssd_streaming_* fields drive. Added upstream after the previous pin.
+-    module.addCSourceFile(.{ .file = b.path("lib/ds4/ds4_ssd.c"), .flags = c_flags });
++    module.addCSourceFile(.{ .file = ds4SourcePath(b, selected, "ds4_ssd.c"), .flags = c_flags });
+     // Two-machine tensor parallelism + multi-GPU layer placement (pin 9139e2a):
+     // ds4.c references ds4_tp_* and ds4_compute_layer_placement/ds4_layer_pack_print
+     // unconditionally, so both TUs must link even though we never enable TP.
+-    module.addCSourceFile(.{ .file = b.path("lib/ds4/ds4_tp.c"), .flags = c_flags });
+-    module.addCSourceFile(.{ .file = b.path("lib/ds4/ds4_layer_pack.c"), .flags = c_flags });
+-    module.addCSourceFile(.{ .file = b.path("lib/ds4/ds4_image.c"), .flags = c_flags });
+-    module.addCSourceFile(.{ .file = b.path("lib/ds4/ds4_engram.c"), .flags = c_flags });
++    module.addCSourceFile(.{ .file = ds4SourcePath(b, selected, "ds4_tp.c"), .flags = c_flags });
++    module.addCSourceFile(.{ .file = ds4SourcePath(b, selected, "ds4_layer_pack.c"), .flags = c_flags });
++    module.addCSourceFile(.{ .file = ds4SourcePath(b, selected, "ds4_image.c"), .flags = c_flags });
++    module.addCSourceFile(.{ .file = ds4SourcePath(b, selected, "ds4_engram.c"), .flags = c_flags });
+     // Our own shim: exports sizeof/offsetof of the real C structs so the
+     // ds4_ffi.zig layout test catches mirror drift (mid-struct-insert class).
+     module.addCSourceFile(.{ .file = b.path("src/ds4_layout_check.c"), .flags = c_flags });
+@@ -115,7 +122,7 @@ pub fn addDs4Sources(b: *std.Build, module: *std.Build.Module) void {
+         "-Wno-unused-function",
+         "-Wno-deprecated-declarations",
+     };
+-    module.addCSourceFile(.{ .file = b.path("lib/ds4/ds4_metal.m"), .flags = objc_flags });
++    module.addCSourceFile(.{ .file = ds4SourcePath(b, selected, "ds4_metal.m"), .flags = objc_flags });
+ }
+ 
+ /// ds4 on its CUDA backend: scripts/build-ds4-linux.sh links upstream's library objects
+diff --git a/build/macos.zig b/build/macos.zig
+index bf1715a..7e411e8 100644
+--- a/build/macos.zig
++++ b/build/macos.zig
+@@ -15,6 +15,7 @@ pub const Graph = struct {
+     version: []const u8,
+     units: bool,
+     fios_source_sdk: bool,
++    fios_source_ds4: bool,
+     /// The server's module (`src/main.zig`; `src/exe.zig` under `-Dunits`) and the unit tests' (`src/tests.zig`).
+     exe_mod: *std.Build.Module,
+     test_mod: *std.Build.Module,
+@@ -32,6 +33,15 @@ pub const Graph = struct {
+ 
+         const mas = b.option(bool, "mas", "MAS build (no curl/model-pull subprocess)") orelse false;
+         const fios_source_sdk = b.option(bool, "fios-source-sdk", "Private source SDK ownership composition only") orelse false;
++        const fios_source_ds4 = b.option(bool, "fios-source-ds4", "Private reviewed DS4 ownership composition only") orelse false;
++        if (fios_source_ds4 and !fios_source_sdk)
++            @panic("Fios DS4 composition requires the private source SDK bridge");
++        const fios_ds4_root = b.option([]const u8, "fios-ds4-source-root", "Verified private DS4 source data only");
++        if (fios_source_ds4) {
++            const selected = fios_ds4_root orelse @panic("Private DS4 source root is required");
++            if (!std.fs.path.isAbsolute(selected) or !std.mem.startsWith(u8, selected, "/private/tmp/"))
++                @panic("Private DS4 source root must be an absolute development path");
++        } else if (fios_ds4_root != null) @panic("Private DS4 source flag is required for source selection");
+         if (fios_source_sdk and !std.mem.endsWith(u8, version, "-fios-source-fixture"))
+             @panic("Fios SDK composition requires the private source-fixture version");
+ 
+@@ -54,6 +64,7 @@ pub const Graph = struct {
+         build_options.addOption([]const u8, "version", version);
+         build_options.addOption(bool, "mas", mas);
+         build_options.addOption(bool, "fios_source_sdk", fios_source_sdk);
++        build_options.addOption(bool, "fios_source_ds4", fios_source_ds4);
+         build_options.addOption([]const u8, "mlx_c_version", mlx_c_version);
+         build_options.addOption([]const u8, "ds4_commit", ds4_commit);
+         build_options.addOption([]const u8, "llama_tag", llama_tag);
+@@ -79,6 +90,7 @@ pub const Graph = struct {
+         build_options.addOption(bool, "slow_tests", b.option(bool, "slow-tests", "Also run the slow corpus-replay and benchmark tests") orelse false);
+ 
+         const shared: Shared = .{
++            .fios_ds4_root = fios_ds4_root,
+             .build_options = build_options,
+             .mlx_stamp = config.mlxStampModule(b, "lib/mlx/.version"),
+             // ds4 Metal kernel sources embedded via @embedFile and exposed as a
+@@ -99,6 +111,7 @@ pub const Graph = struct {
+             .version = version,
+             .units = units,
+             .fios_source_sdk = fios_source_sdk,
++            .fios_source_ds4 = fios_source_ds4,
+             .exe_mod = blk: {
+                 const m = shared.engineModule(b, target, optimize, host, "src/main.zig");
+                 // CI and release pass -Dstrip: debug info is most of the ReleaseFast compile's peak memory, which
+@@ -113,6 +126,7 @@ pub const Graph = struct {
+ 
+ /// What the server's and the unit tests' modules import alike.
+ const Shared = struct {
++    fios_ds4_root: ?[]const u8,
+     build_options: *std.Build.Step.Options,
+     mlx_stamp: *std.Build.Module,
+     ds4_metal_sources: *std.Build.Module,
+@@ -148,8 +162,8 @@ const Shared = struct {
+         // `lib/ds4/` submodule pinned at 9139e2a and `src/engines/ds4/bridge.zig`. Kernel
+         // sources are embedded via `lib/ds4_metal_sources.zig` and extracted at
+         // runtime to ~/.mlx-serve/ds4-metal/<hash>/.
+-        libs.addDs4Sources(b, mod);
+-        mod.addIncludePath(b.path("lib/ds4"));
++        libs.addDs4Sources(b, mod, s.fios_ds4_root);
++        mod.addIncludePath(libs.ds4SourcePath(b, s.fios_ds4_root, ""));
+ 
+         // ANE prefill-MLP offload (perf-plan-aug-17 P5): objc bridge to the
+         // private AppleNeuralEngine framework (dlopen'd at runtime — the probe
+@@ -191,6 +205,10 @@ pub fn addServer(g: *const Graph, plugin_names: []const []const u8) void {
+         .file = b.path("src/fios/current_sdk_owners.cpp"),
+         .flags = &.{ "-std=c++20", "-DNDEBUG" },
+     });
++    if (g.fios_source_ds4) mod.addCSourceFile(.{
++        .file = b.path("src/fios/current_ds4_owners.cpp"),
++        .flags = &.{ "-std=c++20", "-DNDEBUG" },
++    });
+     const exe = b.addExecutable(.{
+         .name = "mlx-serve",
+         .root_module = mod,
+diff --git a/src/engines/ane/engine.zig b/src/engines/ane/engine.zig
+index c9755a3..2efa7b8 100644
+--- a/src/engines/ane/engine.zig
++++ b/src/engines/ane/engine.zig
+@@ -178,7 +178,7 @@ pub fn Adapter(comptime B: type, comptime gpa: std.mem.Allocator) type {
+ 
+         fn sourceCleanupUnknown() bool {
+             const options = @import("build_options");
+-            return @import("../../fios/current_cleanup_uncertainty.zig").known(io, options.fios_source_sdk, options.llama_engine);
++            return @import("../../fios/current_ds4_cleanup_uncertainty.zig").known(io, options.fios_source_sdk, options.llama_engine);
+         }
+ 
+         fn close(e: *anyopaque) callconv(.c) void {
+diff --git a/src/engines/ds4/engine.zig b/src/engines/ds4/engine.zig
+index 57ddb01..2b0f766 100644
+--- a/src/engines/ds4/engine.zig
++++ b/src/engines/ds4/engine.zig
+@@ -185,7 +185,7 @@ pub fn Adapter(comptime B: type, comptime gpa: std.mem.Allocator) type {
+ 
+         fn sourceCleanupUnknown() bool {
+             const options = @import("build_options");
+-            return @import("../../fios/current_cleanup_uncertainty.zig").known(io, options.fios_source_sdk, options.llama_engine);
++            return @import("../../fios/current_ds4_cleanup_uncertainty.zig").known(io, options.fios_source_sdk, options.llama_engine);
+         }
+ 
+         fn close(e: *anyopaque) callconv(.c) void {
+diff --git a/src/engines/llama/engine.zig b/src/engines/llama/engine.zig
+index 6e9f579..2c4d6d4 100644
+--- a/src/engines/llama/engine.zig
++++ b/src/engines/llama/engine.zig
+@@ -222,7 +222,7 @@ pub fn Adapter(comptime B: type, comptime gpa: std.mem.Allocator) type {
+ 
+         fn sourceCleanupUnknown() bool {
+             const options = @import("build_options");
+-            return @import("../../fios/current_cleanup_uncertainty.zig").known(io, options.fios_source_sdk, options.llama_engine);
++            return @import("../../fios/current_ds4_cleanup_uncertainty.zig").known(io, options.fios_source_sdk, options.llama_engine);
+         }
+ 
+         fn close(e: *anyopaque) callconv(.c) void {
+diff --git a/src/engines/mlx/plugin/driver.zig b/src/engines/mlx/plugin/driver.zig
+index c0a4a1d..00ebb0c 100644
+--- a/src/engines/mlx/plugin/driver.zig
++++ b/src/engines/mlx/plugin/driver.zig
+@@ -275,7 +275,7 @@ pub fn loadMap(io: std.Io, a: std.mem.Allocator, config: *ModelConfig, model_dir
+ 
+ fn fiosLoadUncertain(io: std.Io) bool {
+     const options = @import("build_options");
+-    return @import("../../../fios/current_cleanup_uncertainty.zig").known(io, options.fios_source_sdk, options.llama_engine);
++    return @import("../../../fios/current_ds4_cleanup_uncertainty.zig").known(io, options.fios_source_sdk, options.llama_engine);
+ }
+ 
+ // Local resource retirement only, never native terminal/admission proof.
+@@ -451,7 +451,7 @@ fn adoptRotations(xfm: *Transformer, table: *const abi.ModelTable, m: *anyopaque
+ pub fn tryUnbind(b: *Bound, a: std.mem.Allocator) bool {
+     if (b.fios_unbind_attempted.cmpxchgStrong(false, true, .acq_rel, .acquire) != null) return false;
+     const options = @import("build_options");
+-    const cleanup = @import("../../../fios/current_cleanup_uncertainty.zig");
++    const cleanup = @import("../../../fios/current_ds4_cleanup_uncertainty.zig");
+     const io = std.Io.Threaded.global_single_threaded.io();
+     if (cleanup.known(io, options.fios_source_sdk, options.llama_engine)) return false;
+     b.table.unload(b.model);
+diff --git a/src/engines/mlx/transformer.zig b/src/engines/mlx/transformer.zig
+index 1228e05..922139e 100644
+--- a/src/engines/mlx/transformer.zig
++++ b/src/engines/mlx/transformer.zig
+@@ -808,7 +808,7 @@ pub const Transformer = struct {
+ 
+     fn fiosCleanupUnknown() bool {
+         const options = @import("build_options");
+-        return @import("../../fios/current_cleanup_uncertainty.zig").known(std.Io.Threaded.global_single_threaded.io(), options.fios_source_sdk, options.llama_engine);
++        return @import("../../fios/current_ds4_cleanup_uncertainty.zig").known(std.Io.Threaded.global_single_threaded.io(), options.fios_source_sdk, options.llama_engine);
+     }
+ 
+     pub fn deinit(self: *Transformer) void {
+diff --git a/src/engines/own_thread/book.zig b/src/engines/own_thread/book.zig
+index 2d4b18a..0615bcf 100644
+--- a/src/engines/own_thread/book.zig
++++ b/src/engines/own_thread/book.zig
+@@ -4,8 +4,8 @@
+ 
+ const std = @import("std");
+ const build_options = @import("build_options");
+-const cleanup = @import("../../fios/current_cleanup_uncertainty.zig");
+-const locked_cleanup = @import("../../fios/current_locked_cleanup_uncertainty.zig");
++const cleanup = @import("../../fios/current_ds4_cleanup_uncertainty.zig");
++const locked_cleanup = @import("../../fios/current_ds4_locked_cleanup_uncertainty.zig");
+ const fios_ownership = @import("../../fios/request_ownership.zig");
+ const abi = @import("../../abi/engine.zig");
+ 
+diff --git a/src/fios/current_ds4_backend_uncertainty.zig b/src/fios/current_ds4_backend_uncertainty.zig
+new file mode 100644
+index 0000000..727b4e9
+--- /dev/null
++++ b/src/fios/current_ds4_backend_uncertainty.zig
+@@ -0,0 +1,14 @@
++//! Fixed negative-only composition. Zero never proves native completion,
++//! resource idle, all-client coverage or admission. No dynamic callback.
++const base = @import("current_backend_uncertainty.zig");
++pub fn known(comptime sdk_enabled: bool, comptime llama_enabled: bool) bool {
++    const options = @import("build_options");
++    const Source = struct {
++        extern "c" fn ds4_host_source_uncertainty() u32;
++        extern "c" fn ds4_gpu_source_uncertainty() u32;
++    };
++    const ds4 = if (@hasDecl(options, "fios_source_ds4") and options.fios_source_ds4)
++        Source.ds4_host_source_uncertainty() != 0 or Source.ds4_gpu_source_uncertainty() != 0
++    else false;
++    return ds4 or base.known(sdk_enabled, llama_enabled);
++}
+diff --git a/src/fios/current_ds4_cleanup_uncertainty.zig b/src/fios/current_ds4_cleanup_uncertainty.zig
+new file mode 100644
+index 0000000..58b3dbf
+--- /dev/null
++++ b/src/fios/current_ds4_cleanup_uncertainty.zig
+@@ -0,0 +1,19 @@
++//! Negative cleanup evidence only; no native completion or admission authority.
++const std = @import("std");
++const owners = @import("request_ownership.zig");
++const backend = @import("current_ds4_backend_uncertainty.zig");
++
++pub fn known(io: std.Io, comptime sdk_enabled: bool, comptime llama_enabled: bool) bool {
++    const native_unknown = backend.known(sdk_enabled, llama_enabled);
++    const source = owners.shared();
++    source.mutex.lockUncancelable(io);
++    const started = source.initialized;
++    source.mutex.unlock(io);
++    if (native_unknown) {
++        if (started) source.fence(io);
++        return true;
++    }
++    // Legacy metadata-only callers can precede source startup. Missing startup
++    // is never positive native authority, and cannot hide an actual fence.
++    return started and source.backendKnownUncertain(io);
++}
+diff --git a/src/fios/current_ds4_locked_cleanup_uncertainty.zig b/src/fios/current_ds4_locked_cleanup_uncertainty.zig
+new file mode 100644
+index 0000000..9ebfd5e
+--- /dev/null
++++ b/src/fios/current_ds4_locked_cleanup_uncertainty.zig
+@@ -0,0 +1,21 @@
++//! Negative cleanup evidence under an existing engine/book mutex. The fixed
++//! backend getters and cached source state invoke no dynamic source callback.
++//! This supplies neither native completion nor admission authority.
++const std = @import("std");
++const owners = @import("request_ownership.zig");
++const backend = @import("current_ds4_backend_uncertainty.zig");
++
++pub fn known(io: std.Io, comptime sdk_enabled: bool, comptime llama_enabled: bool) bool {
++    const native_unknown = backend.known(sdk_enabled, llama_enabled);
++    const source = owners.shared();
++    source.mutex.lockUncancelable(io);
++    const started = source.initialized;
++    source.mutex.unlock(io);
++    if (native_unknown) {
++        if (started) source.fence(io);
++        return true;
++    }
++    // Legacy metadata-only callers may precede startup; absence is never
++    // positive authority and cannot hide the independent native flags.
++    return started and source.knownUncertain(io);
++}
+diff --git a/src/fios/current_ds4_owners.cpp b/src/fios/current_ds4_owners.cpp
+new file mode 100644
+index 0000000..69da5c3
+--- /dev/null
++++ b/src/fios/current_ds4_owners.cpp
+@@ -0,0 +1,24 @@
++// Private reviewed-source composition only. Registration is not enrollment,
++// native terminality, all-client coverage or admission authority.
++#include "ds4_gpu.h"
++#include <cstdlib>
++#ifndef DS4_GPU_REQUEST_OWNER_HOOKS
++#error "Reviewed DS4 request-owner hooks are required"
++#endif
++extern "C" void* fios_native_request_owners_capture();
++extern "C" uint64_t fios_native_request_owners_enter(void*);
++extern "C" int fios_native_request_owners_leave(uint64_t);
++extern "C" void fios_native_request_owners_release(void*);
++extern "C" void* fios_native_request_owners_merge(void*,void*);
++extern "C" int fios_native_request_owners_covers_current(void*);
++extern "C" void fios_native_request_owners_uncertain();
++namespace {
++__attribute__((constructor)) void register_current_source_ds4_owners() {
++    static const ds4_gpu_request_owner_hooks hooks{
++        fios_native_request_owners_capture,fios_native_request_owners_enter,
++        fios_native_request_owners_leave,fios_native_request_owners_release,
++        fios_native_request_owners_merge,fios_native_request_owners_covers_current,
++        fios_native_request_owners_uncertain};
++    if (!ds4_gpu_register_request_owner_hooks(&hooks)) std::_Exit(78);
++}
++}
+diff --git a/src/host/engines/served.zig b/src/host/engines/served.zig
+index 65ddecf..424f63c 100644
+--- a/src/host/engines/served.zig
++++ b/src/host/engines/served.zig
+@@ -114,7 +114,7 @@ pub const Served = struct {
+     // helper also lets ordinary metadata tests exercise the exact open body.
+     fn openWithTable(gpa: std.mem.Allocator, kind: Kind, t: *const abi.Engine, spec: Spec, progress: *load_progress.Progress, gauges: *Gauges, metrics: ?*metrics_mod.Metrics) !*Served {
+         const io = std.Io.Threaded.global_single_threaded.io();
+-        const cleanup = @import("../../fios/current_cleanup_uncertainty.zig");
++        const cleanup = @import("../../fios/current_ds4_cleanup_uncertainty.zig");
+         if (cleanup.known(io, build_options.fios_source_sdk, build_options.llama_engine)) return error.NativeCleanupUncertain;
+         const s = try gpa.create(Served);
+         // The callback receives &s.host. An uncertain open cannot prove that
+@@ -164,7 +164,7 @@ pub const Served = struct {
+     pub fn tryClose(s: *Served) bool {
+         if (s.fios_close_attempted.cmpxchgStrong(false, true, .acq_rel, .acquire) != null) return false;
+         const io = std.Io.Threaded.global_single_threaded.io();
+-        const cleanup = @import("../../fios/current_cleanup_uncertainty.zig");
++        const cleanup = @import("../../fios/current_ds4_cleanup_uncertainty.zig");
+         if (cleanup.known(io, build_options.fios_source_sdk, build_options.llama_engine)) return false;
+         s.table.close(s.handle);
+         if (cleanup.known(io, build_options.fios_source_sdk, build_options.llama_engine)) return false;
+diff --git a/src/host/http/server.zig b/src/host/http/server.zig
+index e4c6d04..0c88a68 100644
+--- a/src/host/http/server.zig
++++ b/src/host/http/server.zig
+@@ -1000,5 +1000,5 @@ test "idleEvictTickMs: sweeps well inside the window without spinning" {
+ // neither a missing/false fence nor a local destructor is terminal proof.
+ fn fiosKnownBackendUncertain() bool {
+     const options = @import("build_options");
+-    return @import("../../fios/current_backend_uncertainty.zig").known(options.fios_source_sdk, options.llama_engine);
++    return @import("../../fios/current_ds4_backend_uncertainty.zig").known(options.fios_source_sdk, options.llama_engine);
+ }
+diff --git a/src/host/media_jobs/plugin/engine.zig b/src/host/media_jobs/plugin/engine.zig
+index 81bb595..75549b1 100644
+--- a/src/host/media_jobs/plugin/engine.zig
++++ b/src/host/media_jobs/plugin/engine.zig
+@@ -72,7 +72,7 @@ pub const Engine = struct {
+     /// Loads the pack at `model_dir` through `t` on stream `s`; a refusal is logged with the plugin's reason.
+     pub fn load(io: std.Io, allocator: std.mem.Allocator, model_dir: []const u8, t: *const MediaTable, s: mlx.mlx_stream) !*Engine {
+         const options = @import("build_options");
+-        const cleanup = @import("../../../fios/current_cleanup_uncertainty.zig");
++        const cleanup = @import("../../../fios/current_ds4_cleanup_uncertainty.zig");
+         if (cleanup.known(io, options.fios_source_sdk, options.llama_engine)) return error.NativeCleanupUncertain;
+         if (model_dir.len == 0 or !std.fs.path.isAbsolute(model_dir)) return error.FileNotFound;
+         var dir = try std.Io.Dir.openDirAbsolute(io, model_dir, .{});
+@@ -117,7 +117,7 @@ pub const Engine = struct {
+     pub fn tryDeinit(self: *Engine) bool {
+         if (self.fios_deinit_attempted.cmpxchgStrong(false, true, .acq_rel, .acquire) != null) return false;
+         const options = @import("build_options");
+-        const cleanup = @import("../../../fios/current_cleanup_uncertainty.zig");
++        const cleanup = @import("../../../fios/current_ds4_cleanup_uncertainty.zig");
+         if (cleanup.known(self.io, options.fios_source_sdk, options.llama_engine)) return false;
+         self.table.unload(self.handle);
+         if (cleanup.known(self.io, options.fios_source_sdk, options.llama_engine)) return false;
+diff --git a/src/host/registry/registry.zig b/src/host/registry/registry.zig
+index 7be38f3..f537cff 100644
+--- a/src/host/registry/registry.zig
++++ b/src/host/registry/registry.zig
+@@ -37,14 +37,14 @@ const mlx_engine = @import("../engines/mlx.zig");
+ /// Negative cleanup evidence only; never native completion or admission.
+ pub fn cleanupUncertain(io: std.Io) bool {
+     const options = @import("build_options");
+-    return @import("../../fios/current_cleanup_uncertainty.zig").known(io, options.fios_source_sdk, options.llama_engine);
++    return @import("../../fios/current_ds4_cleanup_uncertainty.zig").known(io, options.fios_source_sdk, options.llama_engine);
+ }
+ 
+ /// Cached/fixed negative evidence under the registry mutex. No dynamic
+ /// source callback is invoked here; this is not an atomic native admission.
+ pub fn cleanupUncertainLocked(io: std.Io) bool {
+     const options = @import("build_options");
+-    return @import("../../fios/current_locked_cleanup_uncertainty.zig").known(io, options.fios_source_sdk, options.llama_engine);
++    return @import("../../fios/current_ds4_locked_cleanup_uncertainty.zig").known(io, options.fios_source_sdk, options.llama_engine);
+ }
+ 
+ /// Bumped every time a model becomes `.ready`; readers compare against the value they last acted on.
+@@ -707,7 +707,7 @@ pub const ModelRegistry = struct {
+         // scheduler is not permission to discard independent native uncertainty
+         // or entries still held by original request/status borrowers.
+         const options = @import("build_options");
+-        if (@import("../../fios/current_cleanup_uncertainty.zig").known(self.io, options.fios_source_sdk, options.llama_engine)) return;
++        if (@import("../../fios/current_ds4_cleanup_uncertainty.zig").known(self.io, options.fios_source_sdk, options.llama_engine)) return;
+         self.mutex.lockUncancelable(self.io);
+         var entries = self.entries.valueIterator();
+         var borrowed = false;

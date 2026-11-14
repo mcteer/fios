@@ -1,0 +1,111 @@
+diff --git a/build/config.zig b/build/config.zig
+index 1466984..ca9e47d 100644
+--- a/build/config.zig
++++ b/build/config.zig
+@@ -222,3 +222,51 @@ fn verifyBrewDeps(b: *std.Build) void {
+         }
+     }
+ }
++
++// Source-fixture composition only. The SDK-built MLX dependency and every
++// reachable C++ module must use the same Apple headers/runtime, including
++// std::function destruction and the existing exception/error channel.
++// A successful link with Zig's bundled libc++ is not this ABI guarantee.
++pub fn sourceSystemCxx(b: *std.Build, root: *std.Build.Module, host: Host) void {
++    const frameworks = host.frameworks orelse @panic("Fios source SDK needs an explicit Apple SDK");
++    const suffix = "/System/Library/Frameworks";
++    if (!std.mem.endsWith(u8, frameworks, suffix) or frameworks.len <= suffix.len)
++        @panic("Fios source SDK framework path is invalid");
++    const sdk = frameworks[0 .. frameworks.len - suffix.len];
++    if (!std.fs.path.isAbsolute(sdk)) @panic("Fios source SDK path must be absolute");
++    const runtime = b.fmt("{s}/usr/lib/libc++.1.tbd", .{sdk});
++    var needs_runtime = false;
++    var runtime_inputs: usize = 0;
++    var visited = std.AutoHashMap(*std.Build.Module, void).init(b.allocator);
++    defer visited.deinit();
++    var pending: std.ArrayList(*std.Build.Module) = .empty;
++    defer pending.deinit(b.allocator);
++    pending.append(b.allocator, root) catch @panic("OOM");
++    while (pending.pop()) |module| {
++        const entry = visited.getOrPut(module) catch @panic("OOM");
++        if (entry.found_existing) continue;
++        if (visited.count() > 4096) @panic("Fios source SDK module graph is too large");
++        module.addIncludePath(.{ .cwd_relative = b.fmt("{s}/usr/include/c++/v1", .{sdk}) });
++        if (module.link_libcpp orelse false) {
++            module.link_libcpp = false;
++            module.link_libc = true;
++            needs_runtime = true;
++        }
++        for (module.link_objects.items) |object| switch (object) {
++            .static_path => |file| switch (file) {
++                .cwd_relative => |name| {
++                    if (std.mem.eql(u8, name, runtime)) runtime_inputs += 1;
++                },
++                else => {},
++            },
++            else => {},
++        };
++        for (module.import_table.values()) |child| {
++            pending.append(b.allocator, child) catch @panic("OOM");
++        }
++    }
++    // Zig's Mach-O linker does not coalesce repeated dylib stub inputs.
++    // One reachable runtime serves the whole import graph, including cycles.
++    if (runtime_inputs > 1) @panic("Duplicate Fios source C++ runtime inputs");
++    if (needs_runtime and runtime_inputs == 0) root.addObjectFile(.{ .cwd_relative = runtime });
++}
+diff --git a/build/macos.zig b/build/macos.zig
+index 40a8690..1dc2374 100644
+--- a/build/macos.zig
++++ b/build/macos.zig
+@@ -94,6 +94,7 @@ pub const Graph = struct {
+         build_options.addOption(bool, "slow_tests", b.option(bool, "slow-tests", "Also run the slow corpus-replay and benchmark tests") orelse false);
+ 
+         const shared: Shared = .{
++            .fios_source_sdk = fios_source_sdk,
+             .fios_ds4_root = fios_ds4_root,
+             .fios_source_ane = fios_source_ane,
+             .build_options = build_options,
+@@ -131,6 +132,7 @@ pub const Graph = struct {
+ 
+ /// What the server's and the unit tests' modules import alike.
+ const Shared = struct {
++    fios_source_sdk: bool,
+     fios_ds4_root: ?[]const u8,
+     fios_source_ane: bool,
+     build_options: *std.Build.Step.Options,
+@@ -200,6 +202,7 @@ const Shared = struct {
+ 
+         if (host.frameworks) |fw_path| mod.addFrameworkPath(.{ .cwd_relative = fw_path });
+         for ([_][]const u8{ "IOKit", "CoreFoundation", "Foundation", "Metal", "IOSurface" }) |f| mod.linkFramework(f, .{});
++        if (s.fios_source_sdk) config.sourceSystemCxx(b, mod, host);
+         return mod;
+     }
+ };
+@@ -288,6 +291,7 @@ fn unitModule(g: *const Graph, includes: []const std.Build.Module.IncludeDir, ro
+     libs.addMlxLib(b, m);
+     _ = libs.addExl3Module(b, m, g.target, g.optimize);
+     m.addImport("mlx_stream", libs.mlxStreamPkg(b, m, "src/mlx_stream.zig", g.target, g.optimize, false, false));
++    if (g.fios_source_sdk) config.sourceSystemCxx(b, m, g.host);
+     return m;
+ }
+ 
+@@ -368,7 +372,9 @@ pub fn addPluginTests(g: *const Graph, tests: Tests) void {
+         libs.addMlxLib(b, host);
+         if (g.host.frameworks) |fw| host.addFrameworkPath(.{ .cwd_relative = fw });
+         for ([_][]const u8{ "IOKit", "CoreFoundation", "Foundation", "Metal", "IOSurface" }) |f| host.linkFramework(f, .{});
+-        const t = b.addTest(.{ .name = "exl3-test", .root_module = libs.addExl3Module(b, host, g.target, opt), .filters = if (tests.filter) |f| &.{f} else &.{} });
++        const exl3 = libs.addExl3Module(b, host, g.target, opt);
++        if (g.fios_source_sdk) config.sourceSystemCxx(b, exl3, g.host);
++        const t = b.addTest(.{ .name = "exl3-test", .root_module = exl3, .filters = if (tests.filter) |f| &.{f} else &.{} });
+         tests.build.dependOn(&b.addInstallArtifact(t, .{ .dest_dir = .{ .override = .{ .custom = "tests" } } }).step);
+         // ~13 min and 14 GB: its own step, run at phase gates, outside `zig build test`.
+         b.step("exl3-test", "Run the in-tree EXL3/STQ (sushi) tests").dependOn(&b.addRunArtifact(t).step);
+@@ -397,6 +403,7 @@ fn addMlxStreamTests(g: *const Graph, filter: ?[]const u8, root: []const u8, nam
+     if (g.host.frameworks) |fw| host.addFrameworkPath(.{ .cwd_relative = fw });
+     for ([_][]const u8{ "IOKit", "CoreFoundation", "Foundation", "Metal", "IOSurface" }) |f| host.linkFramework(f, .{});
+     const m = libs.mlxStreamPkg(b, host, root, g.target, g.optimize, true, true);
++    if (g.fios_source_sdk) config.sourceSystemCxx(b, m, g.host);
+     return b.addTest(.{ .name = name, .root_module = m, .filters = if (filter) |f| &.{f} else &.{} });
+ }
+ 

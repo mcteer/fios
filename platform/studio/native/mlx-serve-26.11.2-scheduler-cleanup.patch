@@ -1,0 +1,134 @@
+diff --git a/src/engines/mlx/scheduler.zig b/src/engines/mlx/scheduler.zig
+index 6c92ced..3d14bf5 100644
+--- a/src/engines/mlx/scheduler.zig
++++ b/src/engines/mlx/scheduler.zig
+@@ -354,6 +354,10 @@ test "scheduler: shutdown waits for the inference thread past the flush deadline
+ }
+ 
+ pub fn deinit(self: *Scheduler) void {
++    // Caller excludes new readers and retains the enclosing reference. Local
++    // joins/void callbacks never clear independent native uncertainty.
++    if (self.fios_deinit_attempted.cmpxchgStrong(false, true, .acq_rel, .acquire) != null) return;
++    if (model_registry_mod.cleanupUncertain(self.io)) return;
+     self.shutdown.store(true, .release);
+     // Wake inference thread if it's waiting on queue_cond.
+     self.queue_mu.lockUncancelable(self.io);
+@@ -375,11 +379,14 @@ pub fn deinit(self: *Scheduler) void {
+         }
+         t.join();
+     }
++    if (model_registry_mod.cleanupUncertain(self.io)) return;
+     // Past the join: the cluster's last message is this process's last MLX call on the link.
+     @import("cluster/distributed.zig").shutdown();
++    if (model_registry_mod.cleanupUncertain(self.io)) return;
+     // A build in flight still writes its entry and request.
+     while (self.ane_builds.load(.acquire) > 0) std.Io.sleep(self.io, .fromMilliseconds(10), .real) catch {};
+ 
++    if (model_registry_mod.cleanupUncertain(self.io)) return;
+     // Freed below the join: the publisher is gone, so this is the last writer.
+     if (self.hot_cache_digests.len > 0) {
+         self.allocator.free(self.hot_cache_digests);
+@@ -459,10 +466,12 @@ pub fn deinit(self: *Scheduler) void {
+         while (it.next()) |entry_ptr| {
+             const entry = entry_ptr.*;
+             if (entry.state == .ready or entry.state == .evicting) {
+-                entry.unloadResident();
++                if (!entry.tryUnloadResident()) return;
++                entry.state = .unloaded;
+             }
+         }
+     }
++    if (model_registry_mod.cleanupUncertain(self.io)) return;
+     self.current_model = null;
+     // Clear the borrowed views so post-shutdown reads (defensive) see
+     // null rather than dangling pointers.
+@@ -1609,3 +1618,76 @@ test "fios current media queue retains both sender origins" {
+     try std.testing.expect(fios_ownership.current().* == null and fios_ownership.current_group().* == null);
+     try std.testing.expectEqual(@as(usize, 0), fios_ownership.shared().snapshot(io).owned);
+ }
++
++test "fios current scheduler cleanup retains callback refusal without replay" {
++    const io = std.testing.io;
++    const page = std.heap.page_allocator;
++    const owners = @import("../../fios/request_ownership.zig");
++    const abi = @import("../../abi/engine.zig");
++    const served_mod = @import("../../host/engines/served.zig");
++    const fake = @import("../../testing/fake_engine.zig");
++    owners.shared().primary_guard = false;
++    try owners.shared().initialize(io, @splat(137));
++    const Trace = struct {
++        scheduler: usize = 0,
++        freed: bool = false,
++        fn alloc(_: *anyopaque, n: usize, alignment: std.mem.Alignment, ret: usize) ?[*]u8 {
++            return std.heap.page_allocator.rawAlloc(n, alignment, ret);
++        }
++        fn free(raw: *anyopaque, bytes: []u8, alignment: std.mem.Alignment, ret: usize) void {
++            const self: *@This() = @ptrCast(@alignCast(raw));
++            if (@intFromPtr(bytes.ptr) == self.scheduler) self.freed = true;
++            std.heap.page_allocator.rawFree(bytes, alignment, ret);
++        }
++        const vtable: std.mem.Allocator.VTable = .{ .alloc = alloc, .resize = std.mem.Allocator.noResize, .remap = std.mem.Allocator.noRemap, .free = free };
++        fn allocator(self: *@This()) std.mem.Allocator { return .{ .ptr = self, .vtable = &vtable }; }
++    };
++    const Probe = struct {
++        io: std.Io,
++        unknown: bool,
++        calls: usize = 0,
++        fn close(raw: *anyopaque) callconv(.c) void {
++            const self: *@This() = @ptrCast(@alignCast(raw));
++            self.calls += 1;
++            if (self.unknown) owners.shared().fence(self.io);
++        }
++    };
++    const engine_table = try page.create(abi.Engine);
++    engine_table.* = fake.own_thread;
++    engine_table.close = Probe.close;
++    for ([_]bool{ false, true }) |unknown| {
++        const registry = try ModelRegistry.init(page, io, null, 2, 0, null);
++        const model = try registry.registerStub("fixture/scheduler-cleanup", "/fixture/never-loaded", null);
++        const trace = try page.create(Trace);
++        trace.* = .{};
++        const allocator = trace.allocator();
++        const scheduler = try allocator.create(Scheduler);
++        scheduler.* = std.mem.zeroInit(Scheduler, .{ .allocator = allocator, .io = io, .registry = registry, .current_model = model });
++        trace.scheduler = @intFromPtr(scheduler);
++        // Empty owned storage makes a repeated destructor observable too.
++        try scheduler.unload_queue.ensureTotalCapacity(allocator, 1);
++        const probe = try page.create(Probe);
++        probe.* = .{ .io = io, .unknown = unknown };
++        const engine = try page.create(served_mod.Served);
++        engine.* = .{ .gpa = page, .kind = .llama, .table = engine_table, .handle = probe, .info = undefined, .host = undefined, .progress = &model.load_progress, .gauges = &scheduler.engine_gauges, .metrics = null };
++        model.engine = engine;
++        model.state = .ready;
++        scheduler.deinit();
++        try std.testing.expectEqual(@as(usize, 1), probe.calls);
++        if (unknown) {
++            if (trace.freed) std.debug.print("FIO_CURRENT_SCHEDULER_DROPPED_CALLBACK_REFUSAL\n", .{});
++            try std.testing.expect(!trace.freed); // External witness before dereference.
++            try std.testing.expect(scheduler.current_model == model and model.engine == engine);
++            scheduler.deinit();
++            try std.testing.expect(!trace.freed);
++            try std.testing.expectEqual(@as(usize, 1), probe.calls);
++            try std.testing.expect(owners.shared().knownUncertain(io));
++        } else {
++            try std.testing.expect(trace.freed);
++            try std.testing.expect(model.engine == null and model.state == .unloaded);
++            registry.deinit();
++            page.destroy(probe);
++            page.destroy(trace);
++        }
++    }
++}
+diff --git a/src/host/gpu_thread/scheduler.zig b/src/host/gpu_thread/scheduler.zig
+index 547ff8f..3bf7bb2 100644
+--- a/src/host/gpu_thread/scheduler.zig
++++ b/src/host/gpu_thread/scheduler.zig
+@@ -269,6 +269,8 @@ pub const Scheduler = struct {
+     /// Set as the inference thread returns: `deinit` joins only a thread that has.
+     inference_done: std.atomic.Value(bool) = .init(false),
+     shutdown: std.atomic.Value(bool),
++    /// One local teardown attempt; no callback replay after retained refusal.
++    fios_deinit_attempted: std.atomic.Value(bool) = .init(false),
+     /// The shutdown flush's deadline on the `nowMsMonotonic` clock; 0 = off. Set before `shutdown`.
+     shutdown_deadline_ms: std.atomic.Value(i64) = .init(0),
+     /// The batch the inference thread took out of `pending` and is prefilling (`queue_mu`): in

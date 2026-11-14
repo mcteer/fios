@@ -1,0 +1,31 @@
+// Ordinary CPU metadata object: no ANE framework, model or device call.
+@interface FiosCleanupMetadata : NSObject
+@property unsigned calls;
+@property BOOL accepts;
+@property void *owner;
+@end
+@implementation FiosCleanupMetadata
+- (BOOL)unloadWithQoS:(unsigned)qos error:(NSError **)error {
+    (void)qos;*error=nil;self.calls+=1;return self.accepts;
+}
+#ifdef FIOS_ANE_SOURCE
+- (BOOL)evaluateWithQoS:(unsigned)qos options:(id)options request:(id)request error:(NSError **)error {
+    (void)qos;(void)options;(void)request;*error=nil;self.calls+=1;
+    return !msv_ane_model_try_free(self.owner);
+}
+#endif
+@end
+int fios_fixture_ane_legacy_refusal(void) {
+#ifndef FIOS_ANE_SOURCE
+    return 0;
+#else
+    @autoreleasepool {
+        FiosCleanupMetadata *value=[FiosCleanupMetadata new];
+        msv_ane_model *h=calloc(1,sizeof(*h));h->model=(__bridge_retained void *)value;
+        if (msv_ane_model_try_free(h) || !msv_ane_source_uncertainty() || value.calls != 1 ||
+            (__bridge id)h->model != value) return 0;
+        if (msv_ane_model_try_free(h) || value.calls != 1) return 0;
+        return 1;
+    }
+#endif
+}

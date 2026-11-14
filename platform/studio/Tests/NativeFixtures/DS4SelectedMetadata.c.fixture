@@ -1,0 +1,34 @@
+// Ordinary selected-loader metadata publication; uses genuine shared join fixture helpers.
+static void *selected_mailbox_publication(void *context) {
+    selected_join_work *work=context;
+    if (pthread_mutex_lock(&g_metal_graph_selected_async_load_mutex)!=0) abort();
+    if (pthread_mutex_lock(&work->mutex)!=0) abort();
+    work->entered=1;
+    if (pthread_cond_broadcast(&work->condition)!=0 || pthread_mutex_unlock(&work->mutex)!=0) abort();
+    usleep(250000); // Finite ordinary metadata publication, no injected error.
+    if (pthread_mutex_unlock(&g_metal_graph_selected_async_load_mutex)!=0) abort();
+    return NULL;
+}
+static int selected_mailbox_probe_case(void) {
+    for (unsigned operation=0;operation<2;++operation) {
+        selected_join_work work={PTHREAD_MUTEX_INITIALIZER,PTHREAD_COND_INITIALIZER,0,0,0};
+        pthread_t publisher;
+        JOIN_REQUIRE(pthread_create(&publisher,NULL,selected_mailbox_publication,&work)==0,"Ordinary metadata publisher did not start");
+        JOIN_REQUIRE(pthread_mutex_lock(&work.mutex)==0,"Metadata handoff mutex unavailable");
+        while (!work.entered)
+            JOIN_REQUIRE(pthread_cond_wait(&work.condition,&work.mutex)==0,"Metadata publication handoff failed");
+        JOIN_REQUIRE(pthread_mutex_unlock(&work.mutex)==0,"Metadata handoff release failed");
+        struct timespec before,after;
+        JOIN_REQUIRE(clock_gettime(CLOCK_MONOTONIC,&before)==0,"Metadata probe clock unavailable");
+        const bool accepted=operation==0 ? metal_graph_selected_async_load_idle():metal_graph_selected_async_load_shutdown_checked();
+        JOIN_REQUIRE(clock_gettime(CLOCK_MONOTONIC,&after)==0,"Metadata probe completion clock unavailable");
+        JOIN_REQUIRE(pthread_join(publisher,NULL)==0,"Ordinary metadata publisher did not finish");
+        const double elapsed=(double)(after.tv_sec-before.tv_sec)+(double)(after.tv_nsec-before.tv_nsec)/1000000000.0;
+        JOIN_REQUIRE(!accepted && elapsed>=0 && elapsed<0.1,"Selected-loader preflight waited for a held metadata mutex");
+        JOIN_REQUIRE(!g_fios_selected_shutdown_uncertain && !g_fios_selected_shutdown_requested,"Ordinary metadata contention poisoned worker custody");
+        JOIN_REQUIRE(pthread_cond_destroy(&work.condition)==0 && pthread_mutex_destroy(&work.mutex)==0,"Metadata publisher remained in use");
+    }
+    JOIN_REQUIRE(metal_graph_selected_async_load_idle() && metal_graph_selected_async_load_shutdown_checked(),"Healthy cold lifecycle did not recover after publication");
+    puts("PASS: selected-loader idle/retirement preflights refuse ordinary metadata contention without blocking or poisoning custody");
+    return 0;
+}

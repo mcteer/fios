@@ -1,0 +1,13 @@
+# Startup-load custody source candidate
+
+The current MLX-Serve startup load precedes the ordinary queued-load loop. Tracker initialization already occurs before scheduler construction; moving initialization does not fix missing inference-thread origins.
+
+The candidate reserves the exact startup entry ID before thread publication, only for a non-headless entry with the existing source ownership guard. `ThreadCtx` transfers that reservation by value. The worker installs TLS from stable local scope storage before calling the existing loader. It finishes the startup scope on every return and before entering the ordinary loop. SDK callbacks clone their own original references; startup return does not release those clones. No numerical engine, loading algorithm, model selection, memory policy or model ID changes.
+
+A failed thread spawn has no receiver and may retire its unused reservation only while the existing tracker/backend certainty checks permit it. Once published, the sender must not retire the worker's reservation. Independent uncertainty retains the exact original owner on both paths. This diagnostic ownership is neither device-terminal proof nor admission authority; current all-client coverage remains unknown and the primary guard remains disabled by existing startup configuration.
+
+Source composition consists of `platform/studio/native/mlx-serve-current-startup-origin.patch` over private current-source checkpoint3736ed55, plus `current_startup_origin.zig` copied into `src/fios/`. Do not apply it directly to a different upstream layout or replace the prior candidate/dependencies. This is an uninstalled review candidate.
+
+`check-platform-current-startup-origin.mjs` reconstructs and byte-compares all three patched files and the helper, copies the actual ledger/shared/queue dependency closure, then compiles the actual startup-loop prefix in Debug and ReleaseFast. CPU-only registry/loader substitutes check the original exact model and retain a delayed callback. The actual scheduler publication fragment is relocated to the fixture root; its spawn wrapper can refuse before publication. Receipts explicitly declare these substitutions and selected input hashes. Two baseline missing-origin failures must precede two passing candidate runs. These tests do not start a serving process, load weights, create Metal/ANE objects or prove whole-native provenance.
+
+Whole task completion still requires the remaining native producer, enabled modality, installed lifecycle and separately approved Studio acceptance criteria. No fixture or semantic check enables installation, runtime management, native admission, model planning or additional inference.

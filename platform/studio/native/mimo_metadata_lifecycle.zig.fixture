@@ -1,0 +1,54 @@
+// Ordinary metadata publication around a real idle Engine thread. No backend
+// dispatch, SDK substitution, source rewrite or injected driver/scheduler error.
+const std = @import("std");
+const warm = @import("warm");
+var backend_calls = std.atomic.Value(u32).init(0);
+const Idle = struct {
+    pub const Chunk = u64;
+    pub fn eventValue(_: *const @This()) u64 { return 0; }
+    pub fn commit(_: *@This(), _: u32) !Chunk { _ = backend_calls.fetchAdd(1, .monotonic);return error.UnexpectedBackendDispatch; }
+    pub fn retire(_: *@This(), _: Chunk) !u64 { _ = backend_calls.fetchAdd(1, .monotonic);return error.UnexpectedBackendDispatch; }
+};
+const E = warm.Engine(Idle);
+const Publication = struct {
+    engine: *E,
+    ready: std.atomic.Value(bool) = .init(false),
+    fn run(self: *@This()) void {
+        if (std.c.pthread_mutex_lock(&self.engine.mu) != .SUCCESS) @panic("Metadata lock unavailable");
+        self.ready.store(true, .release);
+        const interval: std.c.timespec = .{ .sec = 0, .nsec = 250 * std.time.ns_per_ms };
+        _ = std.c.nanosleep(&interval, null);
+        if (std.c.pthread_mutex_unlock(&self.engine.mu) != .SUCCESS) @panic("Metadata unlock unavailable");
+    }
+};
+fn tick() void {
+    const interval: std.c.timespec = .{ .sec = 0, .nsec = std.time.ns_per_ms };
+    _ = std.c.nanosleep(&interval, null);
+}
+pub fn main() !void {
+    const engine = try E.create(std.heap.page_allocator, .{}, .{ .fios_fixture_control = true });
+    var alive = true;
+    defer if (alive) engine.destroy();
+    for (0..2) |operation| {
+        var publication: Publication = .{ .engine = engine };
+        const publisher = try std.Thread.spawn(.{}, Publication.run, .{&publication});
+        const deadline = warm.nowNs() + std.time.ns_per_s;
+        while (!publication.ready.load(.acquire) and warm.nowNs() < deadline) tick();
+        if (!publication.ready.load(.acquire)) {publisher.join();return error.PublicationDeadline;}
+        const began = warm.nowNs();
+        const allowed = if (operation == 0) engine.fiosCanDestroy() else engine.tryDestroy();
+        const elapsed = warm.nowNs() - began;
+        if (operation == 1 and allowed) alive = false;
+        publisher.join();
+        std.debug.print("metadata_cleanup_preflight operation={d} elapsed_ns={d} allowed={}\n", .{operation, elapsed, allowed});
+        try std.testing.expect(!allowed);
+        try std.testing.expect(elapsed < 100 * std.time.ns_per_ms);
+        try std.testing.expect(!engine.quit.load(.seq_cst));
+        try std.testing.expect(!warm.fiosSourceUncertain());
+    }
+    try std.testing.expect(engine.fiosCanDestroy());
+    alive = !engine.tryDestroy();try std.testing.expect(!alive);
+    try std.testing.expect(!warm.fiosSourceUncertain());
+    try std.testing.expectEqual(@as(u32, 0), backend_calls.load(.acquire));
+    std.debug.print("PASS: actual idle warm metadata cleanup preflights are nonblocking, retain the original engine and permit later healthy local cleanup; no backend/model work\n", .{});
+}

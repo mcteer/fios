@@ -41,5 +41,5 @@ test('support containers have no host checkout/config mounts or listener; only c
   for(const section of [observer,controller]){assert.ok(!section.includes('ports:'));assert.ok(section.includes('read_only: true'));assert.ok(section.includes('cap_drop: [ALL]'));}
   assert.ok(app.includes('fios-readiness:/run/fios-readiness:ro'));
   assert.ok(!source.includes('FIOS_READINESS_DIR'));assert.ok(!controller.includes('GITHUB_TOKEN'));assert.ok(!controller.includes('.env:'));
-  const deployer=readFileSync('Dockerfile.deployer','utf8');assert.match(deployer,/FROM node:24\.15\.0-alpine@sha256:[a-f0-9]{64}/);assert.match(deployer,/git=2\.52\.0-r0/);
+  const deployer=readFileSync('Dockerfile.deployer','utf8');assert.match(deployer,/FROM node:24\.15\.0-alpine@sha256:[a-f0-9]{64}/);assert.match(deployer,/git=2\.52\.1-r0/);
 });

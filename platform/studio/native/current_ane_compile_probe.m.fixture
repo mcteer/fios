@@ -1,0 +1,24 @@
+// Ordinary Objective-C bookkeeping object, not an ANE model/framework.
+@interface FiosCompileMetadata : NSObject
+@property unsigned calls;
+@end
+@implementation FiosCompileMetadata
+- (BOOL)loadWithQoS:(unsigned)qos options:(id)options error:(NSError **)error {
+    (void)qos;(void)options;*error=nil;
+    self.calls += 1;
+    return self.calls > 1;
+}
+@end
+int fios_fixture_ane_compile_refusal(void) {
+#ifndef FIOS_ANE_SOURCE
+    return 0;
+#else
+    @autoreleasepool {
+        FiosCompileMetadata *value=[FiosCompileMetadata new];NSError *error=nil;
+        if (bridge_load(value,@{},&error) || value.calls != 1) return 0;
+        if (!msv_ane_source_uncertainty()) return 0;
+        if (bridge_load(value,@{},&error) || value.calls != 1) return 0;
+        return fios_ane_compile_quarantine().lastObject[0] == value;
+    }
+#endif
+}

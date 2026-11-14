@@ -1,0 +1,31 @@
+// Actual C custody bookkeeping with empty objects; no ANE class/API/model.
+#ifndef FIOS_ANE_SOURCE
+#error "Private source guard is required"
+#endif
+#define FIOS_META_CHECK(value) do { if (!(value)) { fprintf(stderr,"metadata check failed: %s\n",#value); return 1; } } while (0)
+int main(int argc, char **argv) {
+    FIOS_META_CHECK(argc==2);
+    const bool healthy=strcmp(argv[1],"healthy")==0;
+    FIOS_META_CHECK(healthy || strcmp(argv[1],"parent-refusal")==0);
+    FIOS_META_CHECK(fios_fixture_ane_checked_null_preflight());
+    FIOS_META_CHECK(msv_ane_source_uncertainty()==0);
+    msv_ane_program *p=calloc(1,sizeof(*p));
+    msv_ane_request *r=calloc(1,sizeof(*r));
+    FIOS_META_CHECK(p && r && fios_ane_parent_acquire(p,r));
+    FIOS_META_CHECK(p->fios_children==1 && p->fios_requests==r && r->fios_parent==p);
+    if (healthy) {
+        FIOS_META_CHECK(msv_ane_request_try_free(r));
+        FIOS_META_CHECK(p->fios_children==0 && p->fios_requests==NULL);
+        FIOS_META_CHECK(msv_ane_program_try_free(p));
+        FIOS_META_CHECK(msv_ane_source_uncertainty()==0);
+    } else {
+        FIOS_META_CHECK(!msv_ane_program_try_free(p));
+        FIOS_META_CHECK(msv_ane_source_uncertainty()!=0);
+        FIOS_META_CHECK(p->fios_children==1 && p->fios_requests==r && r->fios_parent==p);
+        FIOS_META_CHECK(!msv_ane_program_try_free(p));
+        FIOS_META_CHECK(!msv_ane_request_try_free(r));
+        FIOS_META_CHECK(p->fios_children==1 && p->fios_requests==r && r->fios_parent==p);
+    }
+    fprintf(stderr,"PASS: actual ANE C metadata parent control, models0\n");
+    return 0;
+}

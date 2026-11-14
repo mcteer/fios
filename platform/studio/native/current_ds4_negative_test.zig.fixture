@@ -1,0 +1,45 @@
+// Pure metadata boundary controls; these exported getters replace no backend.
+// No DS4/SDK/device initialization or native authority is exercised here.
+const std = @import("std");
+const owners = @import("fios/request_ownership.zig");
+const cleanup = @import("fios/current_ds4_cleanup_uncertainty.zig");
+const locked = @import("fios/current_ds4_locked_cleanup_uncertainty.zig");
+extern "c" fn getenv([*:0]const u8) ?[*:0]const u8;
+var host_flag: u32 = 0;
+var gpu_flag: u32 = 0;
+var probe_calls: usize = 0;
+pub export fn ds4_host_source_uncertainty() u32 { return host_flag; }
+pub export fn ds4_gpu_source_uncertainty() u32 { return gpu_flag; }
+fn diagnosticProbe() bool { probe_calls += 1;return false; }
+test "fios current DS4 fixed negative composition" {
+    const io = std.testing.io;
+    const scenario = std.mem.span(getenv("FIOS_DS4_NEGATIVE_SCENARIO") orelse return error.MissingScenario);
+    const host = std.mem.eql(u8, scenario, "host");
+    const gpu = std.mem.eql(u8, scenario, "gpu");
+    const healthy = std.mem.eql(u8, scenario, "healthy");
+    try std.testing.expect(host or gpu or healthy);
+    owners.shared().primary_guard = false;
+    try owners.shared().initialize(io, @splat(251));
+    try owners.shared().enrollDiagnosticUncertaintyProbe(io, &diagnosticProbe);
+    if (host) host_flag = 1;
+    if (gpu) gpu_flag = 1;
+    // The locked path must not invoke the dynamic source callback.
+    try std.testing.expectEqual(host or gpu, locked.known(io, false, false));
+    try std.testing.expectEqual(@as(usize, 0), probe_calls);
+    if (healthy) {
+        try std.testing.expect(!cleanup.known(io, false, false));
+        try std.testing.expectEqual(@as(usize, 1), probe_calls);
+        var wire: [1024]u8 = undefined;
+        const packet = try owners.renderSnapshot(owners.shared().snapshot(io), &wire);
+        try std.testing.expect(std.mem.indexOf(u8, packet, "\"coverage\":\"unknown\"") != null);
+    } else {
+        try std.testing.expect(owners.shared().knownUncertain(io));
+        // Metadata-only later readings do not reset the process's recorded
+        // uncertainty. No native flag or native state is changed here.
+        host_flag = 0;gpu_flag = 0;
+        try std.testing.expect(locked.known(io, false, false));
+        try std.testing.expect(cleanup.known(io, false, false));
+        try std.testing.expect(owners.shared().knownUncertain(io));
+    }
+    std.debug.print("PASS: fixed DS4 metadata probe composition, no native authority\n", .{});
+}

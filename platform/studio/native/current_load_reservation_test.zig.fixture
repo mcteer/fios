@@ -1,0 +1,107 @@
+
+test "fios current uncertain load failure retains reservation through later bookkeeping" {
+    const io = std.testing.io;
+    const page = std.heap.page_allocator;
+    const owners = @import("../../../fios/request_ownership.zig");
+    owners.shared().primary_guard = false;
+    try owners.shared().initialize(io, @splat(227));
+    for ([_]bool{ false, true }) |unknown| {
+        const reg = try model_registry_mod.ModelRegistry.init(page, io, null, 2, 0, null);
+        const entry = try reg.registerStub("fixture/load-reservation", "/fixture/no-model", 123);
+        reg.mutex.lockUncancelable(io);
+        try std.testing.expect(reg.tryBeginLoadLocked(entry));
+        reg.reserveLoadLocked(entry, 123);
+        reg.mutex.unlock(io);
+        const sch = try page.create(Scheduler);
+        sch.* = undefined;
+        sch.allocator = page;
+        sch.io = io;
+        sch.registry = reg;
+        var req: LoadRequest = undefined;
+        req.entry = entry;
+        req.allocator = page;
+        req.error_name = null;
+        req.done = false;
+        req.done_mu = .init;
+        req.done_cond = .init;
+        if (unknown) owners.shared().fence(io);
+        failLoadRequest(sch, &req, error.InsufficientMemory);
+        try std.testing.expect(req.done);
+        if (unknown) {
+            if (entry.load_estimate != 123 or reg.reserved_bytes != 123)
+                std.debug.print("FIO_CURRENT_LOAD_FAILURE_REFUNDED_UNCERTAINTY\n", .{});
+            try std.testing.expectEqual(@as(u64, 123), entry.load_estimate);
+            try std.testing.expectEqual(@as(u64, 123), reg.reserved_bytes);
+            try std.testing.expect(entry.state == .error_state);
+            try std.testing.expectEqualStrings("NativeCleanupUncertain", req.error_name.?);
+            reg.mutex.lockUncancelable(io);
+            reg.markUnloadedLocked(entry);
+            reg.markErrorLocked(entry, "LoadFailed");
+            reg.markReadyLocked(entry, 999);
+            reg.reserveLoadLocked(entry, 888);
+            reg.mutex.unlock(io);
+            try std.testing.expect(entry.state == .error_state);
+            try std.testing.expectEqual(@as(u64, 123), entry.load_estimate);
+            try std.testing.expectEqual(@as(u64, 123), reg.reserved_bytes);
+            try std.testing.expectEqual(@as(u64, 0), entry.bytes_resident);
+            try std.testing.expectEqualStrings("NativeCleanupUncertain", entry.error_name.?);
+            try std.testing.expect(owners.shared().knownUncertain(io));
+        } else {
+            try std.testing.expect(entry.state == .unloaded);
+            try std.testing.expectEqual(@as(u64, 0), entry.load_estimate);
+            try std.testing.expectEqual(@as(u64, 0), reg.reserved_bytes);
+            try std.testing.expectEqualStrings("InsufficientMemory", req.error_name.?);
+            page.free(req.error_name.?);
+            reg.deinit();
+            page.destroy(sch);
+        }
+    }
+}
+
+test "fios current per-model uncertainty retains parents before source epoch initialization" {
+    const io = std.testing.io;
+    const page = std.heap.page_allocator;
+    const owners = @import("../../../fios/request_ownership.zig");
+    owners.shared().primary_guard = false;
+    const Trace = struct {
+        model: usize = 0,
+        registry: usize = 0,
+        model_freed: bool = false,
+        registry_freed: bool = false,
+        fn alloc(_: *anyopaque, n: usize, alignment: std.mem.Alignment, ret: usize) ?[*]u8 {
+            return std.heap.page_allocator.rawAlloc(n, alignment, ret);
+        }
+        fn free(raw: *anyopaque, bytes: []u8, alignment: std.mem.Alignment, ret: usize) void {
+            const self: *@This() = @ptrCast(@alignCast(raw));
+            if (@intFromPtr(bytes.ptr) == self.model) self.model_freed = true;
+            if (@intFromPtr(bytes.ptr) == self.registry) self.registry_freed = true;
+            std.heap.page_allocator.rawFree(bytes, alignment, ret);
+        }
+        const vtable: std.mem.Allocator.VTable = .{ .alloc = alloc, .resize = std.mem.Allocator.noResize, .remap = std.mem.Allocator.noRemap, .free = free };
+        fn allocator(self: *@This()) std.mem.Allocator { return .{ .ptr = self, .vtable = &vtable }; }
+    };
+    const trace = try page.create(Trace);
+    trace.* = .{};
+    const reg = try model_registry_mod.ModelRegistry.init(trace.allocator(), io, null, 2, 0, null);
+    const entry = try reg.registerStub("fixture/preinit-reservation", "/fixture/no-model", 123);
+    trace.model = @intFromPtr(entry);
+    trace.registry = @intFromPtr(reg);
+    reg.mutex.lockUncancelable(io);
+    try std.testing.expect(reg.tryBeginLoadLocked(entry));
+    reg.reserveLoadLocked(entry, 123);
+    reg.markLoadUncertainLocked(entry);
+    reg.mutex.unlock(io);
+    // No source epoch exists yet; the individual negative record must still
+    // prevent cleanup. Neither absence nor local retirement is completion.
+    try std.testing.expect(!entry.tryCloseEngine() and !entry.tryCloseMedia());
+    try std.testing.expect(!entry.tryUnloadResident() and !entry.tryReleaseNativeFields());
+    try std.testing.expectError(error.NativeCleanupUncertain, reg.ensureLoaded(entry.id));
+    reg.deinit();
+    try std.testing.expect(!trace.model_freed and !trace.registry_freed);
+    try std.testing.expectEqual(@as(u64, 123), entry.load_estimate);
+    try std.testing.expectEqual(@as(u64, 123), reg.reserved_bytes);
+    try std.testing.expectEqual(@as(usize, 1), reg.entries.count());
+    try owners.shared().initialize(io, @splat(229));
+    try std.testing.expect(owners.shared().knownUncertain(io));
+    try std.testing.expectError(error.NativeCleanupUncertain, reg.ensureLoaded(entry.id));
+}

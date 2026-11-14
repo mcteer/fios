@@ -1,0 +1,313 @@
+diff --git a/src/engines/mlx/media_encode.zig b/src/engines/mlx/media_encode.zig
+index 51d408a..20091dd 100644
+--- a/src/engines/mlx/media_encode.zig
++++ b/src/engines/mlx/media_encode.zig
+@@ -1,6 +1,7 @@
+ //! Vision and embedding work items, encoded on the inference thread.
+ 
+ const std = @import("std");
++const fio_queued = @import("../../fios/current_queued_origins.zig");
+ const mlx = @import("../../mlx/ffi.zig");
+ const generate_mod = @import("generate.zig");
+ const model_mod = @import("../../sdk/config/model.zig");
+@@ -29,6 +30,16 @@ pub const EmbedRequest = @import("../../host/gpu_thread/requests.zig").EmbedRequ
+ /// not the scheduler's borrowed-view singleton — each LoadedModel has its
+ /// own vision encoder when applicable.
+ pub fn runVisionEncode(sch: *Scheduler, req: *VisionEncodeRequest) void {
++    const fio_io = sch.io;
++    var fio_scope = fio_queued.retain(fio_io, @as([]const *VisionEncodeRequest, &.{req})) catch {
++        finishVisionRequest(sch, req, "InvalidQueuedOrigins");return;
++    };
++    if (fio_scope) |*scope| scope.enter(fio_io) catch {
++        finishVisionRequest(sch, req, "InvalidQueuedOrigins");return;
++    };
++    // Captured worker storage outlives the sender's done acknowledgement.
++    defer if (fio_scope) |*scope| { _ = scope.finish(fio_io); };
++
+     const vision_enc = req.model.vision_encoder orelse {
+         finishVisionRequest(sch, req, "VisionEncoderNotLoaded");
+         return;
+@@ -273,6 +284,16 @@ fn finishVisionRequest(sch: *Scheduler, req: *VisionEncodeRequest, err_name: []c
+ /// forward pass via `generate.computeEmbeddingsBatch(xfm, ...)`, which resets
+ /// the global xfm.cache before every sub-batch, and wakes the conn thread.
+ pub fn runEmbedRequest(sch: *Scheduler, req: *EmbedRequest) void {
++    const fio_io = sch.io;
++    var fio_scope = fio_queued.retain(fio_io, @as([]const *EmbedRequest, &.{req})) catch {
++        finishEmbedRequest(sch, req, "InvalidQueuedOrigins");return;
++    };
++    if (fio_scope) |*scope| scope.enter(fio_io) catch {
++        finishEmbedRequest(sch, req, "InvalidQueuedOrigins");return;
++    };
++    // Captured worker storage outlives the sender's done acknowledgement.
++    defer if (fio_scope) |*scope| { _ = scope.finish(fio_io); };
++
+     const xfm_ptr = req.model.transformer.?;
+     // Held in a local: the request lives on the waiting thread's stack and is gone once `done` is observed.
+     const vision = req.vision_embeddings;
+diff --git a/src/engines/mlx/runtime/media_runner.zig b/src/engines/mlx/runtime/media_runner.zig
+index 86d65b0..41eb990 100644
+--- a/src/engines/mlx/runtime/media_runner.zig
++++ b/src/engines/mlx/runtime/media_runner.zig
+@@ -1,6 +1,7 @@
+ //! Media-gen jobs on the inference thread, and chat yielding between their steps.
+ 
+ const std = @import("std");
++const fio_queued = @import("../../../fios/current_queued_origins.zig");
+ const mlx = @import("../../../mlx/ffi.zig");
+ const gen_sse = @import("../../../host/media_jobs/sse.zig");
+ const media_progress = @import("../../../sdk/media/progress.zig");
+@@ -87,6 +88,14 @@ pub fn genYieldEnabled(cuda: bool) bool {
+ /// and signal `done` so the conn thread in `runGeneration` wakes. Several
+ /// merged jobs (`takeMergeable`) run as one `run_many` call.
+ pub fn runGenRequests(sch: *Scheduler, reqs: []*GenRequest) void {
++    var fio_scope = fio_queued.retain(sch.io, reqs) catch {
++        failFioOrigins(sch, reqs);return;
++    };
++    if (fio_scope) |*scope| scope.enter(sch.io) catch {
++        failFioOrigins(sch, reqs);return;
++    };
++    defer if (fio_scope) |*scope| { _ = scope.finish(sch.io); };
++
+     const req = reqs[0];
+     req.model.gen_busy = true;
+     var gy = GenYield{ .sch = sch, .step_sw = io_util.Stopwatch.init(sch.io) };
+@@ -221,3 +230,15 @@ test "genYieldEnabled: off on CUDA, on elsewhere" {
+     try std.testing.expect(!genYieldEnabled(true));
+     try std.testing.expect(genYieldEnabled(false));
+ }
++
++// A refused handoff is an error, never native completion or permission to
++// refund independently uncertain roots. Wake only these original senders.
++fn failFioOrigins(sch: *Scheduler, reqs: []*GenRequest) void {
++    for (reqs) |req| {
++        req.done_mu.lockUncancelable(sch.io);
++        req.fios_failed = true;
++        req.done = true;
++        req.done_cond.broadcast(sch.io);
++        req.done_mu.unlock(sch.io);
++    }
++}
+diff --git a/src/engines/mlx/scheduler.zig b/src/engines/mlx/scheduler.zig
+index c29f632..d593fef 100644
+--- a/src/engines/mlx/scheduler.zig
++++ b/src/engines/mlx/scheduler.zig
+@@ -1029,6 +1029,14 @@ pub fn loadErrorName(self: *Scheduler, alloc: std.mem.Allocator, id_or_empty: []
+ /// inference thread has run the job body to completion. The job writes its
+ /// own HTTP/SSE response to the connection; this just synchronizes.
+ pub fn runGeneration(self: *Scheduler, req: *GenRequest) !void {
++    const fio_origins = try fios_ownership.retainCurrent(self.io);
++    defer if (fio_origins) |held| {
++        if (!held.tracker.backendKnownUncertain(self.io)) _ = held.releaseIfCertain(self.io);
++    };
++    const fio_previous = req.fios_origins;
++    req.fios_origins = if (fio_origins) |*held| held else null;
++    defer req.fios_origins = fio_previous;
++
+     {
+         self.queue_mu.lockUncancelable(self.io);
+         defer self.queue_mu.unlock(self.io);
+@@ -1039,6 +1047,7 @@ pub fn runGeneration(self: *Scheduler, req: *GenRequest) !void {
+     req.done_mu.lockUncancelable(self.io);
+     while (!req.done) req.done_cond.waitUncancelable(self.io, &req.done_mu);
+     req.done_mu.unlock(self.io);
++    if (req.fios_failed) return error.InvalidQueuedOrigins;
+ }
+ 
+ /// Free a model's resident GPU state, returning its registry stub to
+@@ -1118,6 +1127,14 @@ pub fn idleModelToUnload(self: *Scheduler, keep: []const u8) ?[]const u8 {
+ /// as `encodeVision`: post + block + return results. Caller frees the
+ /// returned rows + outer slice (allocated with `req.allocator`).
+ pub fn computeEmbeddings(self: *Scheduler, req: *EmbedRequest) ![][]f32 {
++    const fio_origins = try fios_ownership.retainCurrent(self.io);
++    defer if (fio_origins) |held| {
++        if (!held.tracker.backendKnownUncertain(self.io)) _ = held.releaseIfCertain(self.io);
++    };
++    const fio_previous = req.fios_origins;
++    req.fios_origins = if (fio_origins) |*held| held else null;
++    defer req.fios_origins = fio_previous;
++
+     self.queue_mu.lockUncancelable(self.io);
+     self.embed_queue.append(self.allocator, req) catch |err| {
+         self.queue_mu.unlock(self.io);
+@@ -1148,6 +1165,14 @@ pub fn computeEmbeddings(self: *Scheduler, req: *EmbedRequest) ![][]f32 {
+ /// The request struct must outlive this call, but since the call blocks,
+ /// a stack allocation in the caller works.
+ pub fn encodeVision(self: *Scheduler, req: *VisionEncodeRequest) !mlx.mlx_array {
++    const fio_origins = try fios_ownership.retainCurrent(self.io);
++    defer if (fio_origins) |held| {
++        if (!held.tracker.backendKnownUncertain(self.io)) _ = held.releaseIfCertain(self.io);
++    };
++    const fio_previous = req.fios_origins;
++    req.fios_origins = if (fio_origins) |*held| held else null;
++    defer req.fios_origins = fio_previous;
++
+     // Post + wake.
+     self.queue_mu.lockUncancelable(self.io);
+     self.vision_queue.append(self.allocator, req) catch |err| {
+@@ -1471,3 +1496,105 @@ test "fios current actor finish restores original slot attribution" {
+     try std.testing.expect(probe.attributed);
+     try std.testing.expect(fios_ownership.current().* == null and fios_ownership.current_group().* == null);
+ }
++
++test "fios current media queue retains both sender origins" {
++    const io = std.testing.io;
++    const a = std.testing.allocator;
++    const registry = try ModelRegistry.init(a, io, null, 2, 0, null);
++    defer registry.deinit();
++    const model = try registry.registerStub("fixture/media-origins", "/fixture/never-loaded", null);
++    var scheduler = std.mem.zeroInit(Scheduler, .{
++        .allocator = a, .io = io, .registry = registry,
++    });
++    defer scheduler.gen_queue.deinit(a);
++    try fios_ownership.shared().initialize(io, @splat(43));
++    const first = try fios_ownership.shared().enter(io);
++    const second = try fios_ownership.shared().enter(io);
++    var roots_live = true;
++    defer if (roots_live) {
++        fios_ownership.shared().leave(io, first) catch {};
++        fios_ownership.shared().leave(io, second) catch {};
++    };
++    try fios_ownership.shared().bind(io, first, model.id);
++    try fios_ownership.shared().bind(io, second, model.id);
++    const Probe = struct {
++        roots: [2]fios_ownership.Token,
++        called: bool = false,
++        attributed: bool = false,
++        fn one(raw: *anyopaque) void {
++            const self: *@This() = @ptrCast(@alignCast(raw));
++            self.called = true;self.attributed = false;
++        }
++        fn many(ctxs: []const *anyopaque) void {
++            const self: *@This() = @ptrCast(@alignCast(ctxs[0]));
++            self.called = true;
++            const group = fios_ownership.current_group().* orelse return;
++            if (group.len != 2 or ctxs.len != 2) return;
++            for (self.roots) |root| {
++                var found = false;
++                for (group) |token| if (std.meta.eql(token, root)) { found = true;break; };
++                if (!found) return;
++            }
++            self.attributed = fios_ownership.shared().snapshot(std.testing.io).owned == 2;
++        }
++    };
++    const Sender = struct {
++        sch: *Scheduler,
++        root: fios_ownership.Token,
++        req: GenRequest,
++        failed: std.atomic.Value(bool) = .init(false),
++        fn run(self: *@This()) void {
++            fios_ownership.current().* = self.root;
++            defer fios_ownership.current().* = null;
++            runGeneration(self.sch, &self.req) catch { self.failed.store(true, .release); };
++        }
++        fn wake(self: *@This()) void {
++            // Disposable fixture teardown only. No native request/body is
++            // running after the synchronous runner above has returned.
++            self.req.done_mu.lockUncancelable(self.sch.io);
++            self.req.done = true;
++            self.req.done_cond.broadcast(self.sch.io);
++            self.req.done_mu.unlock(self.sch.io);
++        }
++    };
++    var probe: Probe = .{ .roots = .{ first, second } };
++    var senders = [_]Sender{
++        .{ .sch = &scheduler, .root = first, .req = .{ .ctx = &probe, .run = Probe.one, .model = model,
++            .peak_bytes = 1, .merge = .{ .run_many = Probe.many, .weight = 1 } } },
++        .{ .sch = &scheduler, .root = second, .req = .{ .ctx = &probe, .run = Probe.one, .model = model,
++            .peak_bytes = 1, .merge = .{ .run_many = Probe.many, .weight = 1 } } },
++    };
++    const one = try std.Thread.spawn(.{}, Sender.run, .{&senders[0]});
++    var one_joined = false;
++    defer if (!one_joined) { senders[0].wake();one.join(); };
++    const two = try std.Thread.spawn(.{}, Sender.run, .{&senders[1]});
++    var two_joined = false;
++    defer if (!two_joined) { senders[1].wake();two.join(); };
++    var ready = false;
++    for (0..2000) |_| {
++        scheduler.queue_mu.lockUncancelable(io);
++        ready = scheduler.gen_queue.items.len == 2;
++        scheduler.queue_mu.unlock(io);
++        if (ready) break;
++        try std.Io.sleep(io, .fromMilliseconds(1), .real);
++    }
++    try std.testing.expect(ready);
++    // The actual sender must have acquired custody before queue publication.
++    try fios_ownership.shared().leave(io, first);
++    try fios_ownership.shared().leave(io, second);
++    roots_live = false;
++    var batch: [2]*GenRequest = undefined;
++    scheduler.queue_mu.lockUncancelable(io);
++    @memcpy(&batch, scheduler.gen_queue.items[0..2]);
++    scheduler.gen_queue.clearRetainingCapacity();
++    scheduler.queue_mu.unlock(io);
++    @import("runtime/media_runner.zig").runGenRequests(&scheduler, &batch);
++    one.join();one_joined = true;
++    two.join();two_joined = true;
++    try std.testing.expect(!senders[0].failed.load(.acquire) and !senders[1].failed.load(.acquire));
++    try std.testing.expect(probe.called);
++    if (!probe.attributed) std.debug.print("FIO_CURRENT_MEDIA_LOST_ORIGINS\n", .{});
++    try std.testing.expect(probe.attributed);
++    try std.testing.expect(fios_ownership.current().* == null and fios_ownership.current_group().* == null);
++    try std.testing.expectEqual(@as(usize, 0), fios_ownership.shared().snapshot(io).owned);
++}
+diff --git a/src/fios/current_queued_origins.zig b/src/fios/current_queued_origins.zig
+new file mode 100644
+index 0000000..a607733
+--- /dev/null
++++ b/src/fios/current_queued_origins.zig
+@@ -0,0 +1,23 @@
++//! Current queued-request attribution. No admission or terminal authority.
++const std = @import("std");
++const owners = @import("request_ownership.zig");
++const slots = @import("current_slot_origins.zig");
++pub const Scope = slots.Scope;
++
++// Pointer views keep this adapter bounded without copying 256 complete token
++// arrays onto the worker stack. The tested union helper clones before return;
++// no sender/view storage is borrowed by the returned scope or by worker TLS.
++pub fn retain(io: std.Io, requests: anytype) !?Scope {
++    if (requests.len > owners.capacity) {
++        owners.shared().fence(io);
++        return error.InvalidQueuedOrigins;
++    }
++    const View = struct { fios_owner: ?*const owners.Retained };
++    var views: [owners.capacity]View = undefined;
++    var pointers: [owners.capacity]*View = undefined;
++    for (requests, 0..) |request, index| {
++        views[index] = .{ .fios_owner = request.fios_origins };
++        pointers[index] = &views[index];
++    }
++    return try slots.retain(io, pointers[0..requests.len]);
++}
+diff --git a/src/host/gpu_thread/requests.zig b/src/host/gpu_thread/requests.zig
+index 4463c36..b2d1909 100644
+--- a/src/host/gpu_thread/requests.zig
++++ b/src/host/gpu_thread/requests.zig
+@@ -137,6 +137,9 @@ pub const LoadRequest = struct {
+ /// owning thread. Decoupled via an opaque ctx + runner so this module needs
+ /// no dependency on `server.zig`/`gen.zig` — `server.zig` owns the job body.
+ pub const GenRequest = struct {
++    // Sender-owned storage survives the uncancelable completion wait.
++    fios_origins: ?*const fios_ownership.Retained = null,
++    fios_failed: bool = false,
+     /// Opaque job payload (a `*GenJob` in server.zig).
+     ctx: *anyopaque,
+     /// Runs the job body on the inference thread. Must not return an error
+@@ -304,6 +307,8 @@ pub const VisionItem = union(enum) {
+ /// to `scheduler.submit(.{ .vision_embeddings = arr, ... })` and the slot's
+ /// `deinit` will free it.
+ pub const VisionEncodeRequest = struct {
++    // Sender-owned storage survives the uncancelable completion wait.
++    fios_origins: ?*const fios_ownership.Retained = null,
+     /// Plan 05 Phase D: target model whose `vision_encoder` services this
+     /// request. The conn thread holds a refcount (via `ensureLoaded`) for
+     /// the duration of the call.
+@@ -342,6 +347,8 @@ pub const VisionEncodeRequest = struct {
+ /// the float vectors into `results` (caller frees). Mirrors the
+ /// VisionEncodeRequest pattern.
+ pub const EmbedRequest = struct {
++    // Sender-owned storage survives the uncancelable completion wait.
++    fios_origins: ?*const fios_ownership.Retained = null,
+     /// Plan 05 Phase D: target model whose `transformer` services this
+     /// request. The conn thread holds a refcount for the duration.
+     model: *LoadedModel,

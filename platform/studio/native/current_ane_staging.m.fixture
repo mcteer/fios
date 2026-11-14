@@ -1,0 +1,39 @@
+// Only disposable fixture-owned paths are passed; no ANE API or model.
+int main(int argc, char **argv) {
+    @autoreleasepool {
+        if (argc != 2) return 2;
+        NSString *root = @(argv[1]);
+        NSFileManager *fm = [NSFileManager defaultManager];
+        NSString *from = [root stringByAppendingPathComponent:@"from"];
+        NSString *to = [root stringByAppendingPathComponent:@"to"];
+        [fm createDirectoryAtPath:from withIntermediateDirectories:NO attributes:nil error:nil];
+        [fm createDirectoryAtPath:to withIntermediateDirectories:NO attributes:nil error:nil];
+        [@"original" writeToFile:[to stringByAppendingPathComponent:@"sentinel"] atomically:YES encoding:NSUTF8StringEncoding error:nil];
+        [@"artifact" writeToFile:[from stringByAppendingPathComponent:@"artifact"] atomically:YES encoding:NSUTF8StringEncoding error:nil];
+        bool replaced = bridge_mirror(from,to);
+#ifdef FIOS_ANE_SOURCE
+        if (replaced || ![[@"original" description] isEqualToString:[NSString stringWithContentsOfFile:[to stringByAppendingPathComponent:@"sentinel"] encoding:NSUTF8StringEncoding error:nil]]) {
+            fprintf(stderr,"FIO_CURRENT_ANE_REPLACED_EXISTING_STAGING\n");return 1;
+        }
+        NSString *cache = [root stringByAppendingPathComponent:@"cache"];
+        setenv("MLX_SERVE_ANE_CACHE_DIR",cache.fileSystemRepresentation,1);
+        NSString *cold = [root stringByAppendingPathComponent:@"cold"];
+        bool cached = true;
+        if (!fios_ane_prepare_staging(@"cold-id",cold,&cached) || cached) return 1;
+        if (fios_ane_prepare_staging(@"cold-id",cold,&cached) || cached) return 1;
+        NSString *entry = bridge_cache_entry(@"warm-id");
+        [fm createDirectoryAtPath:entry withIntermediateDirectories:YES attributes:nil error:nil];
+        [[NSData data] writeToFile:[entry stringByAppendingPathComponent:@"compiled.ok"] atomically:YES];
+        [@"compiled-artifact" writeToFile:[entry stringByAppendingPathComponent:@"artifact"] atomically:YES encoding:NSUTF8StringEncoding error:nil];
+        NSString *warm = [root stringByAppendingPathComponent:@"warm"];
+        if (!fios_ane_prepare_staging(@"warm-id",warm,&cached) || !cached) return 1;
+        if ([fm fileExistsAtPath:[warm stringByAppendingPathComponent:@"compiled.ok"]] ||
+            ![fm fileExistsAtPath:[warm stringByAppendingPathComponent:@"artifact"]]) return 1;
+        if (fios_ane_prepare_staging(@"warm-id",warm,&cached) || cached ||
+            ![fm fileExistsAtPath:[warm stringByAppendingPathComponent:@"artifact"]]) return 1;
+#else
+        if (!replaced || ![fm fileExistsAtPath:[to stringByAppendingPathComponent:@"artifact"]]) return 1;
+#endif
+        fprintf(stderr,"PASS: private staging refuses existing destination; legacy control preserved\n");return 0;
+    }
+}

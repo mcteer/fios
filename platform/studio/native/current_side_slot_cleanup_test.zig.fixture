@@ -1,0 +1,86 @@
+
+test "fios current side queue retains refused slot cleanup" {
+    const io = std.testing.io;
+    const page = std.heap.page_allocator;
+    const abi = @import("../../abi/engine.zig");
+    const owners = @import("../../fios/request_ownership.zig");
+    owners.shared().primary_guard = false;
+    try owners.shared().initialize(io, @splat(173));
+    const Trace = struct {
+        slot: usize = 0,
+        freed: bool = false,
+        fn alloc(_: *anyopaque, n: usize, alignment: std.mem.Alignment, ret: usize) ?[*]u8 {
+            return std.heap.page_allocator.rawAlloc(n, alignment, ret);
+        }
+        fn free(raw: *anyopaque, bytes: []u8, alignment: std.mem.Alignment, ret: usize) void {
+            const self: *@This() = @ptrCast(@alignCast(raw));
+            if (@intFromPtr(bytes.ptr) == self.slot) self.freed = true;
+            std.heap.page_allocator.rawFree(bytes, alignment, ret);
+        }
+        const vtable: std.mem.Allocator.VTable = .{ .alloc = alloc, .resize = std.mem.Allocator.noResize, .remap = std.mem.Allocator.noRemap, .free = free };
+        fn allocator(self: *@This()) std.mem.Allocator { return .{ .ptr = self, .vtable = &vtable }; }
+    };
+    const Probe = struct {
+        io: std.Io,
+        unknown: bool,
+        calls: usize = 0,
+        fn event(raw: *anyopaque, _: u64, ev: *const abi.Event) callconv(.c) abi.Action {
+            const self: *@This() = @ptrCast(@alignCast(raw));
+            if (ev.kind == .finished) {
+                self.calls += 1;
+                if (self.unknown) owners.shared().fence(self.io);
+            }
+            return .go;
+        }
+    };
+    for ([_]bool{ false, true }) |unknown| {
+        const registry = try ModelRegistry.init(page, io, null, 2, 0, null);
+        const model = try registry.registerStub("fixture/side-slot-cleanup", "/fixture/never-loaded", null);
+        const config = try page.create(ModelConfig);
+        config.* = std.mem.zeroInit(ModelConfig, .{ .model_type = "llama", .num_hidden_layers = 0 });
+        model.config = config;
+        model.state = .ready;
+        model.refcount.store(1, .release);
+        const trace = try page.create(Trace);
+        trace.* = .{};
+        const allocator = trace.allocator();
+        const scheduler = try page.create(Scheduler);
+        scheduler.* = std.mem.zeroInit(Scheduler, .{ .allocator = allocator, .io = io, .registry = registry, .queue_cap = 2, .kv_quant_config = transformer_mod.KVQuantConfig.dense });
+        const root = try owners.shared().enter(io);
+        try owners.shared().bind(io, root, model.id);
+        owners.current().* = root;
+        const slot = try submit(scheduler, .{ .prompt_ids = &.{1}, .sampling = .{}, .eos_token_ids = &.{}, .max_tokens = 1, .model = model });
+        trace.slot = @intFromPtr(slot);
+        complete(scheduler, slot);
+        registry.releaseStatus(model);
+        try owners.shared().leave(io, root);
+        owners.current().* = null;
+        const probe = try page.create(Probe);
+        probe.* = .{ .io = io, .unknown = unknown };
+        slot.sink = .{ .ctx = probe, .event = Probe.event };
+        try std.testing.expect(@import("runtime/loop.zig").drainSideQueues(scheduler));
+        try std.testing.expectEqual(@as(usize, 1), probe.calls);
+        if (unknown) {
+            if (trace.freed) std.debug.print("FIO_CURRENT_SIDE_QUEUE_DROPPED_SLOT_CUSTODY\n", .{});
+            try std.testing.expect(!trace.freed); // Witness before dereference.
+            try std.testing.expectEqual(@as(u32, 1), model.refcount.load(.acquire));
+            if (@hasField(Scheduler, "fios_cleanup_quarantine")) try std.testing.expect(scheduler.fios_cleanup_quarantine == slot);
+            try std.testing.expect(!@import("runtime/loop.zig").drainSideQueues(scheduler));
+            try std.testing.expect(!trace.freed);
+            try std.testing.expectEqual(@as(usize, 1), probe.calls);
+            try std.testing.expect(owners.shared().knownUncertain(io));
+        } else {
+            try std.testing.expect(trace.freed);
+            try std.testing.expectEqual(@as(u32, 0), model.refcount.load(.acquire));
+            model.config = null;
+            page.destroy(config);
+            scheduler.pending.deinit(allocator);
+            scheduler.cleanup_queue.deinit(allocator);
+            registry.deinit();
+            page.destroy(scheduler);
+            page.destroy(probe);
+            page.destroy(trace);
+        }
+        try std.testing.expect(owners.current().* == null and owners.current_group().* == null);
+    }
+}

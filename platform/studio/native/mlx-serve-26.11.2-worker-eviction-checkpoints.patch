@@ -1,0 +1,509 @@
+diff --git a/src/engines/mlx/runtime/load_requests.zig b/src/engines/mlx/runtime/load_requests.zig
+index c1f8071..35d09c5 100644
+--- a/src/engines/mlx/runtime/load_requests.zig
++++ b/src/engines/mlx/runtime/load_requests.zig
+@@ -2,6 +2,7 @@
+ 
+ const std = @import("std");
+ const fios_queued = @import("../../../fios/queued_request_ownership.zig");
++const fios_owners = @import("../../../fios/request_ownership.zig");
+ const mlx = @import("../../../mlx/ffi.zig");
+ const model_registry_mod = @import("../../../host/registry/registry.zig");
+ const log = @import("../../../sdk/util/log.zig");
+@@ -40,10 +41,75 @@ pub fn logWiredPolicy(r: mlx.WiredPolicyResult) void {
+     }
+ }
+ 
++
++// Called only under registry.mutex. No callbacks, native effects or completion proof.
++fn originalLoadingClaimLocked(req: *const LoadRequest) bool {
++    if (!req.entry.fios_owner_guard) return true;
++    const original = req.fios_plan.claim_sequence orelse return true;
++    return req.entry.fios_owner_guard and req.entry.state == .loading and
++        req.entry.fios_load_claim_sequence == original and !req.entry.fios_load_uncertain.load(.acquire);
++}
++
++fn captureEvictionMutationsLocked(sch: *Scheduler, victims: []const *LoadedModel) ![16]?fios_owners.ModelMutation {
++    if (victims.len > 16) {
++        fios_owners.shared().fence(sch.io);
++        return error.NativeCleanupUncertain;
++    }
++    var originals: [16]?fios_owners.ModelMutation = @splat(null);
++    for (victims, 0..) |victim, index| {
++        if (!victim.fios_owner_guard) continue;
++        if (victim.state != .evicting or victim.fios_model_mutation == null) {
++            fios_owners.shared().fence(sch.io);
++            return error.NativeCleanupUncertain;
++        }
++        originals[index] = victim.fios_model_mutation;
++    }
++    return originals;
++}
++
++fn releaseUntouchedVictimsLocked(sch: *Scheduler, victims: []const *LoadedModel, originals: *const [16]?fios_owners.ModelMutation, attempted: u16) void {
++    if (victims.len > 16) {
++        fios_owners.shared().fence(sch.io);
++        return;
++    }
++    for (victims, 0..) |victim, index| {
++        if ((attempted & (@as(u16, 1) << @intCast(index))) != 0) continue;
++        const original = originals[index] orelse continue;
++        if (victim.fios_model_mutation) |current| {
++            if (victim.state == .evicting and std.meta.eql(original, current)) sch.registry.unmarkEvictingLocked(victim);
++        }
++    }
++}
++
+ /// Free `victims` (each marked `.evicting`, nobody holding it) on this thread.
+-fn evictResident(sch: *Scheduler, victims: []const *LoadedModel) !void {
++fn evictResident(sch: *Scheduler, victims: []const *LoadedModel, originals: *const [16]?fios_owners.ModelMutation, attempted: *u16) !void {
++    errdefer {
++        sch.registry.mutex.lockUncancelable(sch.io);
++        releaseUntouchedVictimsLocked(sch, victims, originals, attempted.*);
++        sch.registry.mutex.unlock(sch.io);
++    }
++    if (victims.len > 16) {
++        fios_owners.shared().fence(sch.io);
++        return error.NativeCleanupUncertain;
++    }
+     if (model_registry_mod.cleanupUncertain(sch.io)) return error.NativeCleanupUncertain;
+-    for (victims) |victim| {
++    for (victims, 0..) |victim, index| {
++        if (victim.fios_owner_guard and originals[index] == null) {
++            fios_owners.shared().fence(sch.io);
++            return error.NativeCleanupUncertain;
++        }
++        if (originals[index]) |original| {
++            sch.registry.mutex.lockUncancelable(sch.io);
++            const valid = victim.fios_owner_guard and victim.state == .evicting and victim.fios_model_mutation != null and std.meta.eql(original, victim.fios_model_mutation.?);
++            sch.registry.mutex.unlock(sch.io);
++            if (!valid) {
++                fios_owners.shared().fence(sch.io);
++                return error.NativeCleanupUncertain;
++            }
++        }
++        // Before borrowed views or native cleanup: a refusal never refunds an
++        // attempted victim merely because a later source sample is quiet.
++        attempted.* |= @as(u16, 1) << @intCast(index);
+         const victim_bytes = victim.bytes_resident; // unloadResident zeroes it
+         log.info("[registry] evicting model id={s} ({d:.2} GB resident)\n", .{
+             victim.id,
+@@ -73,6 +139,10 @@ pub fn makeRoomInRam(sch: *Scheduler, keep_id: []const u8, weights: u64) !void {
+     var victims: [16]*LoadedModel = undefined;
+     sch.registry.mutex.lockUncancelable(sch.io);
+     const n = sch.registry.planRamEvictionsLocked(keep_id, &victims, room, need);
++    const originals = captureEvictionMutationsLocked(sch, victims[0..n]) catch |err| {
++        sch.registry.mutex.unlock(sch.io);
++        return err;
++    };
+     sch.registry.mutex.unlock(sch.io);
+     if (n == 0) return;
+     log.info("[registry] {s} needs ~{d:.1} GB beside {d:.1} GB of free RAM: unloading {d} idle model(s)\n", .{
+@@ -81,7 +151,8 @@ pub fn makeRoomInRam(sch: *Scheduler, keep_id: []const u8, weights: u64) !void {
+         @as(f64, @floatFromInt(room)) / 1_073_741_824.0,
+         n,
+     });
+-    try evictResident(sch, victims[0..n]);
++    var attempted: u16 = 0;
++    try evictResident(sch, victims[0..n], &originals, &attempted);
+ }
+ 
+ pub fn runLoadRequest(sch: *Scheduler, req: *LoadRequest) void {
+@@ -92,10 +163,17 @@ pub fn runLoadRequest(sch: *Scheduler, req: *LoadRequest) void {
+     } else null;
+     if (fios_scope) |*scope| scope.enter(sch.io) catch |err| { return failLoadRequest(sch, req, err); };
+     defer if (fios_scope) |*scope| { _ = scope.finish(sch.io); };
++    sch.registry.mutex.lockUncancelable(sch.io);
++    const original_claim = originalLoadingClaimLocked(req);
++    sch.registry.mutex.unlock(sch.io);
++    if (!original_claim) {
++        fios_owners.shared().fence(sch.io);
++        return failLoadRequest(sch, req, error.NativeCleanupUncertain);
++    }
+     // Step 1: evict victims (if any) BEFORE the load, so peak GPU residency
+     // never holds the old + new model at once. unloadResident() drops
+     // mlx_arrays — same thread-stream invariant as cleanup_queue drain.
+-    evictResident(sch, req.evict_entries) catch |err| return failLoadRequest(sch, req, err);
++    evictResident(sch, req.evict_entries, &req.fios_plan.victim_mutations, &req.fios_eviction_attempted) catch |err| return failLoadRequest(sch, req, err);
+     req.evict_entries = &.{};
+ 
+     // A Neural Engine build runs on its own thread while the GPU keeps serving.
+@@ -159,6 +237,14 @@ fn readyLoadRequest(sch: *Scheduler, req: *LoadRequest) void {
+ fn failLoadRequest(sch: *Scheduler, req: *LoadRequest, err: anyerror) void {
+     log.err("[registry] load failed for model id={s}: {s}\n", .{ req.entry.id, loadErrorName(err) });
+     sch.registry.mutex.lockUncancelable(sch.io);
++    if (req.entry.fios_owner_guard)
++        releaseUntouchedVictimsLocked(sch, req.evict_entries, &req.fios_plan.victim_mutations, req.fios_eviction_attempted);
++    if (!originalLoadingClaimLocked(req)) {
++        // The original sender cannot change a later claim's state/accounting.
++        fios_owners.shared().fence(sch.io);
++        sch.registry.mutex.unlock(sch.io);
++        return finishLoadRequest(sch, req, "NativeCleanupUncertain");
++    }
+     if (failureRetries(loadErrorName(err))) {
+         sch.registry.markUnloadedLocked(req.entry);
+     } else {
+@@ -632,3 +718,350 @@ test "fios current per-model uncertainty retains parents before source epoch ini
+     try std.testing.expect(owners.shared().knownUncertain(io));
+     try std.testing.expectError(error.NativeCleanupUncertain, reg.ensureLoaded(entry.id));
+ }
++
++// Published worker refusal controls: CPU-only metadata/fake callbacks, no native model.
++test "fios current published load refusal releases untouched victim reservations" {
++    const a = std.heap.page_allocator;
++    const io = std.testing.io;
++    const owners = @import("../../../fios/request_ownership.zig");
++    owners.shared().primary_guard = false;
++    try owners.shared().initialize(io, @splat(251));
++    const registry = try model_registry_mod.ModelRegistry.init(a, io, null, 3, 0, null);
++    const entry = try registry.registerStub("fixture/worker-target", "/fixture/no-model", null);
++    const first = try registry.registerStub("fixture/worker-first", "/fixture/no-first", null);
++    const second = try registry.registerStub("fixture/worker-second", "/fixture/no-second", null);
++    entry.fios_owner_guard = true;
++    first.fios_owner_guard = true;
++    second.fios_owner_guard = true;
++    first.state = .ready;
++    second.state = .ready;
++    var victims = [_]*LoadedModel{ first, second };
++    const root = try owners.shared().enter(io);
++    try owners.shared().bind(io, root, entry.id);
++    owners.current().* = root;
++    const original = try a.create(owners.Retained);
++    original.* = (try owners.retainCurrent(io)).?;
++    owners.current().* = null;
++    var scheduler = std.mem.zeroInit(Scheduler, .{ .allocator = a, .io = io, .registry = registry });
++    var req = std.mem.zeroInit(LoadRequest, .{ .entry = entry, .config = undefined, .tok = undefined, .chat_config = undefined, .model_dir = entry.path, .evict_entries = &victims, .fios_origins = original, .allocator = a });
++    {
++        registry.mutex.lockUncancelable(io);
++        defer registry.mutex.unlock(io);
++        try std.testing.expect(registry.tryBeginLoadLocked(entry));
++        registry.reserveLoadLocked(entry, 4096);
++        req.fios_plan.claim_sequence = entry.fios_load_claim_sequence;
++        for (victims, 0..) |victim, index| {
++            try std.testing.expect(registry.markEvictingLocked(victim));
++            req.fios_plan.victim_mutations[index] = victim.fios_model_mutation;
++        }
++    }
++    owners.shared().fence(io);
++    runLoadRequest(&scheduler, &req);
++    try std.testing.expect(req.done and owners.shared().knownUncertain(io));
++    try std.testing.expect(entry.state == .error_state and entry.fios_load_uncertain.load(.acquire));
++    try std.testing.expectEqual(@as(u64, 4096), registry.reserved_bytes);
++    try std.testing.expect(first.state == .ready and first.fios_model_mutation == null);
++    try std.testing.expect(second.state == .ready and second.fios_model_mutation == null);
++    try std.testing.expectEqual(@as(usize, 0), owners.shared().snapshot(io).model_mutations);
++    try std.testing.expect(!original.releaseIfCertain(io));
++}
++
++test "fios current attempted worker eviction retains custody while untouched siblings release" {
++    const a = std.heap.page_allocator;
++    const io = std.testing.io;
++    const owners = @import("../../../fios/request_ownership.zig");
++    owners.shared().primary_guard = false;
++    try owners.shared().initialize(io, @splat(253));
++    const registry = try model_registry_mod.ModelRegistry.init(a, io, null, 3, 0, null);
++    const entry = try registry.registerStub("fixture/worker-target", "/fixture/no-model", null);
++    const first = try registry.registerStub("fixture/worker-first", "/fixture/no-first", null);
++    const second = try registry.registerStub("fixture/worker-second", "/fixture/no-second", null);
++    entry.fios_owner_guard = true;
++    first.fios_owner_guard = true;
++    second.fios_owner_guard = true;
++    first.state = .ready;
++    second.state = .ready;
++    var victims = [_]*LoadedModel{ first, second };
++    const root = try owners.shared().enter(io);
++    try owners.shared().bind(io, root, entry.id);
++    owners.current().* = root;
++    const original = try a.create(owners.Retained);
++    original.* = (try owners.retainCurrent(io)).?;
++    owners.current().* = null;
++    var scheduler = std.mem.zeroInit(Scheduler, .{ .allocator = a, .io = io, .registry = registry });
++    var req = std.mem.zeroInit(LoadRequest, .{ .entry = entry, .config = undefined, .tok = undefined, .chat_config = undefined, .model_dir = entry.path, .evict_entries = &victims, .fios_origins = original, .allocator = a });
++    {
++        registry.mutex.lockUncancelable(io);
++        defer registry.mutex.unlock(io);
++        try std.testing.expect(registry.tryBeginLoadLocked(entry));
++        registry.reserveLoadLocked(entry, 4096);
++        req.fios_plan.claim_sequence = entry.fios_load_claim_sequence;
++        for (victims, 0..) |victim, index| {
++            try std.testing.expect(registry.markEvictingLocked(victim));
++            req.fios_plan.victim_mutations[index] = victim.fios_model_mutation;
++        }
++    }
++    const served = @import("../../../host/engines/served.zig");
++    const abi = @import("../../../abi/engine.zig");
++    const fake = @import("../../../testing/fake_engine.zig");
++    const Probe = struct {
++        io: std.Io,
++        calls: usize = 0,
++        request: *LoadRequest,
++        attempt_seen: bool = false,
++        fn close(raw: *anyopaque) callconv(.c) void {
++            const self: *@This() = @ptrCast(@alignCast(raw));
++            self.calls += 1;
++            self.attempt_seen = self.request.fios_eviction_attempted == 1;
++            owners.shared().fence(self.io);
++        }
++    };
++    const probe = try a.create(Probe);
++    probe.* = .{ .io = io, .request = &req };
++    const table = try a.create(abi.Engine);
++    table.* = fake.own_thread;
++    table.close = Probe.close;
++    const progress = try a.create(@import("../../../host/registry/load_progress.zig").Progress);
++    progress.* = .{};
++    const gauges = try a.create(served.Gauges);
++    gauges.* = .{};
++    const engine = try a.create(served.Served);
++    engine.* = .{ .gpa = a, .kind = .llama, .table = table, .handle = probe, .info = undefined, .host = undefined, .progress = progress, .gauges = gauges, .metrics = null };
++    first.engine = engine;
++    first.bytes_resident = 128;
++    registry.current_resident_bytes = 128;
++    runLoadRequest(&scheduler, &req);
++    try std.testing.expect(req.done and owners.shared().knownUncertain(io));
++    try std.testing.expectEqual(@as(usize, 1), probe.calls);
++    try std.testing.expect(probe.attempt_seen);
++    try std.testing.expect(first.state == .evicting and first.fios_model_mutation != null and first.engine == engine);
++    try std.testing.expectEqual(@as(u64, 128), first.bytes_resident);
++    try std.testing.expectEqual(@as(u64, 128), registry.current_resident_bytes);
++    try std.testing.expect(second.state == .ready and second.fios_model_mutation == null);
++    try std.testing.expectEqual(@as(usize, 1), owners.shared().snapshot(io).model_mutations);
++    try std.testing.expect(entry.state == .error_state and entry.fios_load_uncertain.load(.acquire));
++    try std.testing.expectEqual(@as(u64, 4096), registry.reserved_bytes);
++    try std.testing.expect(!original.releaseIfCertain(io));
++}
++
++test "fios current stale published target cannot evict or change a later cold claim" {
++    const a = std.heap.page_allocator;
++    const io = std.testing.io;
++    const owners = @import("../../../fios/request_ownership.zig");
++    owners.shared().primary_guard = false;
++    try owners.shared().initialize(io, @splat(69));
++    const registry = try model_registry_mod.ModelRegistry.init(a, io, null, 3, 0, null);
++    const entry = try registry.registerStub("fixture/worker-target", "/fixture/no-model", null);
++    const first = try registry.registerStub("fixture/worker-first", "/fixture/no-first", null);
++    const second = try registry.registerStub("fixture/worker-second", "/fixture/no-second", null);
++    entry.fios_owner_guard = true;
++    first.fios_owner_guard = true;
++    second.fios_owner_guard = true;
++    first.state = .ready;
++    second.state = .ready;
++    var victims = [_]*LoadedModel{ first, second };
++    const root = try owners.shared().enter(io);
++    try owners.shared().bind(io, root, entry.id);
++    owners.current().* = root;
++    const original = try a.create(owners.Retained);
++    original.* = (try owners.retainCurrent(io)).?;
++    owners.current().* = null;
++    var scheduler = std.mem.zeroInit(Scheduler, .{ .allocator = a, .io = io, .registry = registry });
++    var req = std.mem.zeroInit(LoadRequest, .{ .entry = entry, .config = undefined, .tok = undefined, .chat_config = undefined, .model_dir = entry.path, .evict_entries = &victims, .fios_origins = original, .allocator = a });
++    {
++        registry.mutex.lockUncancelable(io);
++        defer registry.mutex.unlock(io);
++        try std.testing.expect(registry.tryBeginLoadLocked(entry));
++        registry.reserveLoadLocked(entry, 4096);
++        req.fios_plan.claim_sequence = entry.fios_load_claim_sequence;
++        for (victims, 0..) |victim, index| {
++            try std.testing.expect(registry.markEvictingLocked(victim));
++            req.fios_plan.victim_mutations[index] = victim.fios_model_mutation;
++        }
++    }
++    const served = @import("../../../host/engines/served.zig");
++    const abi = @import("../../../abi/engine.zig");
++    const fake = @import("../../../testing/fake_engine.zig");
++    const Probe = struct {
++        io: std.Io,
++        calls: usize = 0,
++        request: *LoadRequest,
++        attempt_seen: bool = false,
++        fn close(raw: *anyopaque) callconv(.c) void {
++            const self: *@This() = @ptrCast(@alignCast(raw));
++            self.calls += 1;
++            self.attempt_seen = self.request.fios_eviction_attempted == 1;
++            owners.shared().fence(self.io);
++        }
++    };
++    const probe = try a.create(Probe);
++    probe.* = .{ .io = io, .request = &req };
++    const table = try a.create(abi.Engine);
++    table.* = fake.own_thread;
++    table.close = Probe.close;
++    const progress = try a.create(@import("../../../host/registry/load_progress.zig").Progress);
++    progress.* = .{};
++    const gauges = try a.create(served.Gauges);
++    gauges.* = .{};
++    const engine = try a.create(served.Served);
++    engine.* = .{ .gpa = a, .kind = .llama, .table = table, .handle = probe, .info = undefined, .host = undefined, .progress = progress, .gauges = gauges, .metrics = null };
++    first.engine = engine;
++    first.bytes_resident = 128;
++    registry.current_resident_bytes = 128;
++    {
++        registry.mutex.lockUncancelable(io);
++        defer registry.mutex.unlock(io);
++        registry.markUnloadedLocked(entry);
++        try std.testing.expect(registry.tryBeginLoadLocked(entry));
++        registry.reserveLoadLocked(entry, 8192);
++    }
++    runLoadRequest(&scheduler, &req);
++    try std.testing.expect(req.done and owners.shared().knownUncertain(io));
++    try std.testing.expectEqual(@as(usize, 0), probe.calls);
++    try std.testing.expectEqual(@as(u16, 0), req.fios_eviction_attempted);
++    try std.testing.expect(entry.state == .loading and !entry.fios_load_uncertain.load(.acquire));
++    try std.testing.expect(entry.fios_load_claim_sequence != req.fios_plan.claim_sequence.?);
++    try std.testing.expectEqual(@as(u64, 8192), registry.reserved_bytes);
++    try std.testing.expect(first.state == .ready and first.fios_model_mutation == null and first.engine == engine);
++    try std.testing.expect(second.state == .ready and second.fios_model_mutation == null);
++    try std.testing.expectEqual(@as(u64, 128), first.bytes_resident);
++    try std.testing.expectEqual(@as(u64, 128), registry.current_resident_bytes);
++    try std.testing.expectEqual(@as(usize, 0), owners.shared().snapshot(io).model_mutations);
++}
++
++test "fios current old victim snapshot cannot unload or refund a later ticket" {
++    const a = std.heap.page_allocator;
++    const io = std.testing.io;
++    const owners = @import("../../../fios/request_ownership.zig");
++    owners.shared().primary_guard = false;
++    try owners.shared().initialize(io, @splat(71));
++    const registry = try model_registry_mod.ModelRegistry.init(a, io, null, 3, 0, null);
++    const entry = try registry.registerStub("fixture/worker-target", "/fixture/no-model", null);
++    const first = try registry.registerStub("fixture/worker-first", "/fixture/no-first", null);
++    const second = try registry.registerStub("fixture/worker-second", "/fixture/no-second", null);
++    entry.fios_owner_guard = true;
++    first.fios_owner_guard = true;
++    second.fios_owner_guard = true;
++    first.state = .ready;
++    second.state = .ready;
++    var victims = [_]*LoadedModel{ first, second };
++    const root = try owners.shared().enter(io);
++    try owners.shared().bind(io, root, entry.id);
++    owners.current().* = root;
++    const original = try a.create(owners.Retained);
++    original.* = (try owners.retainCurrent(io)).?;
++    owners.current().* = null;
++    var scheduler = std.mem.zeroInit(Scheduler, .{ .allocator = a, .io = io, .registry = registry });
++    var req = std.mem.zeroInit(LoadRequest, .{ .entry = entry, .config = undefined, .tok = undefined, .chat_config = undefined, .model_dir = entry.path, .evict_entries = &victims, .fios_origins = original, .allocator = a });
++    {
++        registry.mutex.lockUncancelable(io);
++        defer registry.mutex.unlock(io);
++        try std.testing.expect(registry.tryBeginLoadLocked(entry));
++        registry.reserveLoadLocked(entry, 4096);
++        req.fios_plan.claim_sequence = entry.fios_load_claim_sequence;
++        for (victims, 0..) |victim, index| {
++            try std.testing.expect(registry.markEvictingLocked(victim));
++            req.fios_plan.victim_mutations[index] = victim.fios_model_mutation;
++        }
++    }
++    const served = @import("../../../host/engines/served.zig");
++    const abi = @import("../../../abi/engine.zig");
++    const fake = @import("../../../testing/fake_engine.zig");
++    const Probe = struct {
++        io: std.Io,
++        calls: usize = 0,
++        request: *LoadRequest,
++        attempt_seen: bool = false,
++        fn close(raw: *anyopaque) callconv(.c) void {
++            const self: *@This() = @ptrCast(@alignCast(raw));
++            self.calls += 1;
++            self.attempt_seen = self.request.fios_eviction_attempted == 1;
++            owners.shared().fence(self.io);
++        }
++    };
++    const probe = try a.create(Probe);
++    probe.* = .{ .io = io, .request = &req };
++    const table = try a.create(abi.Engine);
++    table.* = fake.own_thread;
++    table.close = Probe.close;
++    const progress = try a.create(@import("../../../host/registry/load_progress.zig").Progress);
++    progress.* = .{};
++    const gauges = try a.create(served.Gauges);
++    gauges.* = .{};
++    const engine = try a.create(served.Served);
++    engine.* = .{ .gpa = a, .kind = .llama, .table = table, .handle = probe, .info = undefined, .host = undefined, .progress = progress, .gauges = gauges, .metrics = null };
++    first.engine = engine;
++    first.bytes_resident = 128;
++    registry.current_resident_bytes = 128;
++    var later: owners.ModelMutation = undefined;
++    {
++        registry.mutex.lockUncancelable(io);
++        defer registry.mutex.unlock(io);
++        registry.unmarkEvictingLocked(first);
++        try std.testing.expect(registry.markEvictingLocked(first));
++        later = first.fios_model_mutation.?;
++    }
++    runLoadRequest(&scheduler, &req);
++    try std.testing.expect(req.done and owners.shared().knownUncertain(io));
++    try std.testing.expectEqual(@as(usize, 0), probe.calls);
++    try std.testing.expectEqual(@as(u16, 0), req.fios_eviction_attempted);
++    try std.testing.expect(first.state == .evicting and std.meta.eql(later, first.fios_model_mutation.?) and first.engine == engine);
++    try std.testing.expectEqual(@as(u64, 128), first.bytes_resident);
++    try std.testing.expectEqual(@as(u64, 128), registry.current_resident_bytes);
++    try std.testing.expect(second.state == .ready and second.fios_model_mutation == null);
++    try std.testing.expectEqual(@as(usize, 1), owners.shared().snapshot(io).model_mutations);
++    try std.testing.expect(entry.state == .error_state and entry.fios_load_uncertain.load(.acquire));
++    try std.testing.expectEqual(@as(u64, 4096), registry.reserved_bytes);
++}
++
++test "fios current standalone eviction helper releases only untouched metadata" {
++    const a = std.heap.page_allocator;
++    const io = std.testing.io;
++    const owners = @import("../../../fios/request_ownership.zig");
++    owners.shared().primary_guard = false;
++    try owners.shared().initialize(io, @splat(73));
++    const registry = try model_registry_mod.ModelRegistry.init(a, io, null, 3, 0, null);
++    const entry = try registry.registerStub("fixture/worker-target", "/fixture/no-model", null);
++    const first = try registry.registerStub("fixture/worker-first", "/fixture/no-first", null);
++    const second = try registry.registerStub("fixture/worker-second", "/fixture/no-second", null);
++    entry.fios_owner_guard = true;
++    first.fios_owner_guard = true;
++    second.fios_owner_guard = true;
++    first.state = .ready;
++    second.state = .ready;
++    var victims = [_]*LoadedModel{ first, second };
++    const root = try owners.shared().enter(io);
++    try owners.shared().bind(io, root, entry.id);
++    owners.current().* = root;
++    const original = try a.create(owners.Retained);
++    original.* = (try owners.retainCurrent(io)).?;
++    owners.current().* = null;
++    var scheduler = std.mem.zeroInit(Scheduler, .{ .allocator = a, .io = io, .registry = registry });
++    var req = std.mem.zeroInit(LoadRequest, .{ .entry = entry, .config = undefined, .tok = undefined, .chat_config = undefined, .model_dir = entry.path, .evict_entries = &victims, .fios_origins = original, .allocator = a });
++    {
++        registry.mutex.lockUncancelable(io);
++        defer registry.mutex.unlock(io);
++        try std.testing.expect(registry.tryBeginLoadLocked(entry));
++        registry.reserveLoadLocked(entry, 4096);
++        req.fios_plan.claim_sequence = entry.fios_load_claim_sequence;
++        for (victims, 0..) |victim, index| {
++            try std.testing.expect(registry.markEvictingLocked(victim));
++            req.fios_plan.victim_mutations[index] = victim.fios_model_mutation;
++        }
++    }
++    registry.mutex.lockUncancelable(io);
++    const originals = try captureEvictionMutationsLocked(&scheduler, &victims);
++    registry.mutex.unlock(io);
++    owners.shared().fence(io);
++    var attempted: u16 = 0;
++    try std.testing.expectError(error.NativeCleanupUncertain, evictResident(&scheduler, &victims, &originals, &attempted));
++    try std.testing.expectEqual(@as(u16, 0), attempted);
++    try std.testing.expect(owners.shared().knownUncertain(io));
++    try std.testing.expect(first.state == .ready and first.fios_model_mutation == null);
++    try std.testing.expect(second.state == .ready and second.fios_model_mutation == null);
++    try std.testing.expectEqual(@as(usize, 0), owners.shared().snapshot(io).model_mutations);
++    // This RAM-used helper owns no target failure transition or completion.
++    try std.testing.expect(entry.state == .loading and !entry.fios_load_uncertain.load(.acquire));
++    try std.testing.expectEqual(@as(u64, 4096), registry.reserved_bytes);
++    try std.testing.expect(!original.releaseIfCertain(io));
++}
+diff --git a/src/host/gpu_thread/requests.zig b/src/host/gpu_thread/requests.zig
+index 765c38d..e2adcc9 100644
+--- a/src/host/gpu_thread/requests.zig
++++ b/src/host/gpu_thread/requests.zig
+@@ -38,6 +38,8 @@ pub const FiosLoadPlan = struct {
+ 
+ pub const LoadRequest = struct {
+     fios_plan: FiosLoadPlan = .{},
++    // Set before any victim effect; never a device-completion observation.
++    fios_eviction_attempted: u16 = 0,
+     // Trusted sender metadata remains alive until the uncancelable done wait.
+     // Workers clone references before entering; no model/admission capability.
+     fios_origins: ?*const fios_ownership.Retained = null,

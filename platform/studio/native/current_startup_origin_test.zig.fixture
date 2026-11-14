@@ -1,0 +1,111 @@
+// Actual startup-loop prefix with CPU-only loader/registry substitutes.
+const std = @import("std");
+const owners = @import("fios/request_ownership.zig");
+const startup = @import("fios/current_startup_origin.zig");
+const io_util = struct {};
+const log = struct { fn info(comptime _: []const u8, _: anytype) void {} };
+const sleep_inhibit = struct { fn release() void {} fn setActive(_: bool) void {} };
+const Entry = struct { id: []const u8 = "fixture/exact-startup", fios_owner_guard: bool = true };
+const Mutex = struct { fn lockUncancelable(_: *@This(), _: std.Io) void {} fn unlock(_: *@This(), _: std.Io) void {} };
+const Registry = struct {
+    mutex: Mutex = .{}, claimed: bool = true,
+    fn tryBeginLoadLocked(self: *@This(), _: *Entry) bool { return self.claimed; }
+    fn markErrorLocked(_: *@This(), _: *Entry, _: []const u8) void {}
+};
+const Params = struct { no_initial_load: bool = false, entry: *Entry };
+const Scheduler = struct {
+    io: std.Io, registry: *Registry,
+    inference_thread: ?std.Thread = null,
+    inference_done: std.atomic.Value(bool) = .init(false),
+    failed: bool = false, started: bool = false,
+};
+const ThreadCtx = struct {
+    scheduler: *Scheduler, params: Params, fios_startup: ?startup.Scope = null,
+};
+fn cleanupUncertain(_: std.Io) bool { return false; }
+fn recordLoadError(sch: *Scheduler, _: []const u8) void { sch.failed = true; }
+fn signalStarted(sch: *Scheduler) void { sch.started = true; }
+fn loadErrorName(_: anyerror) []const u8 { return "FixtureLoadFailed"; }
+var loaded: usize = 0;
+var delayed: ?owners.Retained = null;
+var fail_load = false;
+fn doLoadOnInferenceThread(sch: *Scheduler, params: Params) !void {
+    if (!params.entry.fios_owner_guard) {
+        if ((try owners.retainCurrent(sch.io)) != null) return error.LegacyOriginChanged;
+        loaded += 1;
+        return;
+    }
+    const retained = (try owners.retainCurrent(sch.io)) orelse {
+        std.debug.print("FIO_STARTUP_LOAD_WITHOUT_ORIGIN\n", .{});
+        return error.MissingOrigin;
+    };
+    delayed = retained;
+    const snapshot = owners.shared().snapshot(sch.io);
+    if (snapshot.model_count != 1 or !std.mem.eql(u8, snapshot.models[0].id[0..snapshot.models[0].len], params.entry.id)) return error.WrongModel;
+    loaded += 1;
+    if (fail_load) return error.FixtureLoadFailed;
+}
+var refuse_spawn = false;
+const FixtureThread = struct {
+    fn spawn(config: std.Thread.SpawnConfig, comptime function: anytype, arguments: anytype) !std.Thread {
+        if (!arguments[0].params.no_initial_load and arguments[0].params.entry.fios_owner_guard and
+            (arguments[0].fios_startup == null or owners.shared().snapshot(arguments[0].scheduler.io).owned == 0))
+            return error.PublishedWithoutOrigin;
+        if (refuse_spawn) return error.FixtureSpawnFailed;
+        return std.Thread.spawn(config, function, arguments);
+    }
+};
+fn publish(self: *Scheduler, io: std.Io, params: Params) !void {
+    // ACTUAL_STARTUP_PUBLICATION
+}
+// ACTUAL_STARTUP_PREFIX
+fn run(io: std.Io, headless: bool, claimed: bool, failure: bool, guarded: bool) !void {
+    var registry: Registry = .{ .claimed = claimed };
+    var entry: Entry = .{ .fios_owner_guard = guarded };
+    var sch: Scheduler = .{ .io = io, .registry = &registry };
+    var ctx: ThreadCtx = .{ .scheduler = &sch, .params = .{ .entry = &entry, .no_initial_load = headless } };
+    if (!headless and guarded) ctx.fios_startup = try startup.Scope.capture(io, entry.id);
+    loaded = 0; delayed = null; fail_load = failure;
+    const thread = try std.Thread.spawn(.{}, inferenceLoop, .{ctx});
+    thread.join();
+    const expect_load = !headless and claimed;
+    if (loaded != @as(usize, if (expect_load) 1 else 0) or sch.failed != (!headless and (!claimed or failure)) or !sch.started)
+        return error.StartupOriginMissing;
+    if (!sch.inference_done.load(.acquire)) return error.ThreadExitMissing;
+    if (owners.current().* != null or owners.current_group().* != null) return error.ParentTLSChanged;
+    if (owners.shared().snapshot(io).owned != @as(usize, if (expect_load and guarded) 1 else 0)) return error.CallbackOriginLost;
+    if (delayed) |held| if (!held.releaseIfCertain(io)) { return error.CallbackReleaseFailed; };
+    if (owners.shared().snapshot(io).owned != 0) return error.LeakedStartup;
+}
+pub fn main(init: std.process.Init) !void {
+    const io = init.io;
+    try owners.shared().initialize(io, @splat(8));
+    try run(io, false, true, false, true);
+    try run(io, false, true, true, true);
+    try run(io, false, false, false, true);
+    const before = owners.shared().snapshot(io).sequence;
+    try run(io, true, true, false, true);
+    try run(io, false, true, false, false);
+    if (owners.shared().snapshot(io).sequence != before) return error.HeadlessReservation;
+    var registry: Registry = .{};
+    var entry: Entry = .{};
+    var sch: Scheduler = .{ .io = io, .registry = &registry };
+    refuse_spawn = true;
+    if (publish(&sch, io, .{ .entry = &entry })) |_| return error.ExpectedSpawnRefusal else |err| {
+        if (err != error.FixtureSpawnFailed) return err;
+    }
+    if (sch.inference_thread != null or owners.shared().snapshot(io).owned != 0) return error.SpawnFailureLeaked;
+    var unpublished = try startup.Scope.capture(io, "fixture/unpublished");
+    if (!unpublished.unpublished(io) or owners.shared().snapshot(io).owned != 0) return error.UnpublishedRelease;
+    var uncertain = try startup.Scope.capture(io, "fixture/uncertain");
+    try uncertain.enter(io);
+    const callback = (try owners.retainCurrent(io)).?;
+    var pending = try startup.Scope.capture(io, "fixture/uncertain");
+    owners.shared().fence(io);
+    if (uncertain.finish(io) or callback.releaseIfCertain(io) or pending.unpublished(io)) return error.ClearedUncertainty;
+    if (owners.current().* != null or owners.current_group().* != null or owners.shared().snapshot(io).owned != 2)
+        return error.UncertainOriginLost;
+    var never_published = uncertain;
+    if (never_published.unpublished(io)) return error.InvalidUnpublishedRelease;
+    std.debug.print("PASS: actual startup prefix preserves exact model, delayed callbacks, errors, headless and uncertainty; no native authority\n", .{});
+}

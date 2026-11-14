@@ -1,0 +1,882 @@
+diff --git a/mlx/backend/cpu/eval.cpp b/mlx/backend/cpu/eval.cpp
+index 354820f..e643737 100644
+--- a/mlx/backend/cpu/eval.cpp
++++ b/mlx/backend/cpu/eval.cpp
+@@ -3,6 +3,7 @@
+ #include "mlx/backend/cpu/encoder.h"
+ #include "mlx/primitives.h"
+ #include "mlx/scheduler.h"
++#include "mlx/stream.h"
+ #include "mlx/utils.h"
+ 
+ namespace mlx::core::cpu {
+@@ -18,6 +19,7 @@ void new_thread_unsafe_stream(Stream s) {
+ }
+ 
+ void clear_streams() {
++  fios_before_clear_streams();
+   get_command_encoders().clear();
+ }
+ 
+diff --git a/mlx/backend/metal/device.cpp b/mlx/backend/metal/device.cpp
+index d3f435a..f8673f2 100644
+--- a/mlx/backend/metal/device.cpp
++++ b/mlx/backend/metal/device.cpp
+@@ -310,7 +310,7 @@ CommandEncoder::CommandEncoder(
+     Device& d,
+     int index,
+     ResidencySets& residency_sets)
+-    : device_(d), residency_sets_(residency_sets) {
++    : device_(d), fios_stream_index_(index), residency_sets_(residency_sets) {
+   auto pool = new_scoped_memory_pool();
+   queue_ = NS::TransferPtr(device_.mtl_device()->newCommandQueue());
+   if (!queue_) {
+@@ -335,6 +335,7 @@ void CommandEncoder::set_buffer(
+     const MTL::Buffer* buf,
+     int idx,
+     int64_t offset /* = 0 */) {
++  fios_reserve_buffer();
+   // Record as both input and output to ensure synchronization between command
+   // buffers
+   all_inputs_.insert((void*)buf);
+@@ -346,6 +347,7 @@ void CommandEncoder::set_input_array(
+     const array& a,
+     int idx,
+     int64_t offset /* = 0 */) {
++  fios_reserve_buffer();
+   if (all_inputs_.insert(a.buffer().ptr()).second) {
+     buffer_sizes_ += a.data_size();
+   }
+@@ -367,6 +369,7 @@ void CommandEncoder::set_output_array(
+ }
+ 
+ void CommandEncoder::register_output_array(const array& a) {
++  fios_reserve_buffer();
+   all_outputs_.insert(a.buffer().ptr());
+ 
+   auto buf = static_cast<MTL::Resource*>(const_cast<void*>(a.buffer().ptr()));
+@@ -380,17 +383,54 @@ void CommandEncoder::register_output_array(const array& a) {
+ }
+ 
+ void CommandEncoder::add_temporary(array arr) {
++  fios_reserve_buffer();
+   temporaries_.push_back(std::move(arr));
+ }
+ 
+ void CommandEncoder::add_temporaries(std::vector<array> arrays) {
++  fios_reserve_buffer();
+   temporaries_.insert(
+       temporaries_.end(),
+       std::make_move_iterator(arrays.begin()),
+       std::make_move_iterator(arrays.end()));
+ }
+ 
++void CommandEncoder::label_primitive(Primitive& primitive) {
++  fios_reserve_buffer();
++  debug_set_primitive_buffer_label(buffer_.get(), primitive);
++}
++void CommandEncoder::fios_encode_shared_event(MTL::SharedEvent* event, uint64_t value, bool wait) {
++  if (!event) throw std::invalid_argument("null shared Metal event");
++  fios_reserve_buffer();
++  end_encoding();
++  // Retain the actual SDK object in the existing exact capture receipt.
++  // Its owning callable is destroyed before capture retirement, outside locks.
++  add_completed_handler([retained = NS::RetainPtr(event)](MTL::CommandBuffer*) { (void)retained; });
++  if (wait) buffer_->encodeWait(event, value);
++  else buffer_->encodeSignalEvent(event, value);
++}
++
++void CommandEncoder::fios_encode_shared_wait(MTL::SharedEvent* event, uint64_t value) {
++  fios_encode_shared_event(event, value, true);
++}
++void CommandEncoder::fios_encode_shared_signal(MTL::SharedEvent* event, uint64_t value) {
++  fios_encode_shared_event(event, value, false);
++}
++
++void CommandEncoder::add_completed_handler(std::function<void(MTL::CommandBuffer*)> function) {
++  fios_reserve_buffer();
++  const auto capture = fios_metal_capture_begin(fios_buffer_);
++  buffer_->addCompletedHandler([capture, function = std::move(function)](MTL::CommandBuffer* cbuf) mutable {
++    if (function) function(cbuf);
++    if (capture) {
++      function = nullptr;
++      fios_metal_capture_end(capture, cbuf->status() == MTL::CommandBufferStatusError);
++    }
++  });
++}
++
+ void CommandEncoder::maybeInsertBarrier() {
++  fios_reserve_buffer();
+   if (needs_barrier_) {
+     get_command_encoder()->memoryBarrier(MTL::BarrierScopeBuffers);
+     needs_barrier_ = false;
+@@ -468,20 +508,28 @@ void CommandEncoder::end_encoding() {
+   }
+ 
+   encoder_->updateFence(fence_.get());
+-  buffer_->addCompletedHandler([this,
++  const auto fios_capture = fios_metal_capture_begin(fios_buffer_);
++  buffer_->addCompletedHandler([this, fios_capture,
+                                 fence = std::move(fence_),
+                                 temporaries = std::move(temporaries_),
+                                 all_outputs = std::move(all_outputs_),
+                                 waiting_on = std::move(waiting_on)](
+-                                   MTL::CommandBuffer*) mutable {
+-    std::lock_guard lk(outputs_mtx_);
+-    for (auto& o : all_outputs) {
+-      if (auto it = prev_ce_outputs_.find(o); it != prev_ce_outputs_.end()) {
+-        if (it->second == fence) {
+-          prev_ce_outputs_.erase(it);
++                                   MTL::CommandBuffer* cbuf) mutable {
++    {
++      std::lock_guard lk(outputs_mtx_);
++      for (auto& o : all_outputs) {
++        if (auto it = prev_ce_outputs_.find(o); it != prev_ce_outputs_.end()) {
++          if (it->second == fence) {
++            prev_ce_outputs_.erase(it);
++          }
+         }
+       }
+     }
++    if (fios_capture) {
++      // Destroy actual retained payloads OUTSIDE outputs/metadata mutexes.
++      temporaries.clear();all_outputs.clear();waiting_on.clear();fence.reset();
++      fios_metal_capture_end(fios_capture, cbuf->status() == MTL::CommandBufferStatusError);
++    }
+   });
+ 
+   encoder_->endEncoding();
+@@ -497,12 +545,14 @@ void CommandEncoder::end_encoding() {
+ }
+ 
+ void CommandEncoder::signal_event(Event event, uint64_t value) {
++  fios_reserve_buffer();
+   end_encoding();
+   buffer_->encodeSignalEvent(event.cast<EventImpl>().mtl_event(), value);
+   signal_events_.push_back({std::move(event), value});
+ }
+ 
+ void CommandEncoder::wait_event(Event event, uint64_t value) {
++  fios_reserve_buffer();
+   end_encoding();
+   buffer_->encodeWait(event.cast<EventImpl>().mtl_event(), value);
+   wait_events_.push_back(std::move(event));
+@@ -514,14 +564,23 @@ bool CommandEncoder::needs_commit() const {
+ }
+ 
+ void CommandEncoder::commit(std::function<void()> completion) {
++  fios_reserve_buffer();
++  const auto fios_custody = fios_buffer_;
++  fios_metal_submitted(fios_custody);
++  struct Failure {
++    std::shared_ptr<FiosMetalBuffer> task;
++    bool done = false;
++    ~Failure() {if (!done) fios_metal_failed(task);}
++  };
+   // Metal locks a command buffer's residency at commit time, so attach any
+   // sets created since the last commit first.
+   residency_sets_.attach_new_sets(queue_.get(), sets_attached_);
+   buffer_->addCompletedHandler(
+-      [&error_ = error_,
++      [&error_ = error_, fios_custody,
+        wait_events = std::move(wait_events_),
+        signal_events = std::move(signal_events_),
+        completion = std::move(completion)](MTL::CommandBuffer* cbuf) mutable {
++        Failure guard{fios_custody};
+         if (completion) {
+           completion();
+         }
+@@ -554,8 +613,14 @@ void CommandEncoder::commit(std::function<void()> completion) {
+             event.cast<EventImpl>().signal(value);
+           }
+         }
++        if (fios_custody) {
++          completion = nullptr;wait_events.clear();signal_events.clear();
++          fios_metal_completed(fios_custody, has_error);
++        }
++        guard.done = true;
+       });
+   buffer_->commit();
++  fios_buffer_.reset();
+   buffer_ = NS::RetainPtr(queue_->commandBufferWithUnretainedReferences());
+   buffer_ops_ = 0;
+   buffer_sizes_ = 0;
+@@ -573,7 +638,11 @@ void CommandEncoder::synchronize() {
+   }
+ }
+ 
++void CommandEncoder::fios_reserve_buffer() {
++  if (!fios_buffer_) fios_buffer_ = fios_reserve_metal_buffer(fios_stream_index_);
++}
+ MTL::ComputeCommandEncoder* CommandEncoder::get_command_encoder() {
++  fios_reserve_buffer();
+   if (!encoder_) {
+     error_.check();
+     encoder_ = NS::RetainPtr(
+diff --git a/mlx/backend/metal/device.h b/mlx/backend/metal/device.h
+index 2d22283..0856acc 100644
+--- a/mlx/backend/metal/device.h
++++ b/mlx/backend/metal/device.h
+@@ -13,6 +13,7 @@
+ #include "mlx/backend/common/metal_kernel.h"
+ #include "mlx/backend/metal/resident.h"
+ #include "mlx/device.h"
++#include "mlx/stream.h"
+ 
+ namespace mlx::core::metal {
+ 
+@@ -51,6 +52,10 @@ class MLX_API CommandEncoder {
+ 
+   void add_temporary(array arr);
+   void add_temporaries(std::vector<array> arrays);
++  void label_primitive(Primitive& primitive);
++  void add_completed_handler(std::function<void(MTL::CommandBuffer*)> function);
++  void fios_encode_shared_wait(MTL::SharedEvent* event, uint64_t value);
++  void fios_encode_shared_signal(MTL::SharedEvent* event, uint64_t value);
+ 
+   void dispatch_threadgroups(MTL::Size grid_dims, MTL::Size group_dims);
+   void dispatch_threads(MTL::Size grid_dims, MTL::Size group_dims);
+@@ -97,11 +102,14 @@ class MLX_API CommandEncoder {
+   void synchronize();
+ 
+   MTL::CommandBuffer* get_command_buffer() const {
++    fios_note_raw_metal_alias();
+     return buffer_.get();
+   }
+ 
+  private:
+   MTL::ComputeCommandEncoder* get_command_encoder();
++  void fios_reserve_buffer();
++  void fios_encode_shared_event(MTL::SharedEvent* event, uint64_t value, bool wait);
+ 
+   Device& device_;
+   bool exiting_{false};
+@@ -111,6 +119,8 @@ class MLX_API CommandEncoder {
+   NS::SharedPtr<MTL::CommandBuffer> buffer_;
+   int buffer_ops_{0};
+   size_t buffer_sizes_{0};
++  int fios_stream_index_;
++  std::shared_ptr<FiosMetalBuffer> fios_buffer_;
+ 
+   // The residency set and how many of its sets this queue has attached.
+   ResidencySets& residency_sets_;
+diff --git a/mlx/backend/metal/eval.cpp b/mlx/backend/metal/eval.cpp
+index 43a6fb9..0150ac1 100644
+--- a/mlx/backend/metal/eval.cpp
++++ b/mlx/backend/metal/eval.cpp
+@@ -30,7 +30,6 @@ void eval(array& arr) {
+   auto pool = metal::new_scoped_memory_pool();
+   auto s = arr.primitive().stream();
+   auto& encoder = metal::get_command_encoder(s);
+-  auto* command_buffer = encoder.get_command_buffer();
+ 
+   auto outputs = arr.outputs();
+   {
+@@ -41,7 +40,7 @@ void eval(array& arr) {
+       inputs = arr.inputs();
+     }
+ 
+-    debug_set_primitive_buffer_label(command_buffer, arr.primitive());
++    encoder.label_primitive(arr.primitive());
+     arr.primitive().eval_gpu(arr.inputs(), outputs);
+   }
+   std::unordered_set<std::shared_ptr<array::Data>> buffers;
+@@ -63,7 +62,7 @@ void eval(array& arr) {
+       scheduler::notify_task_completion(s);
+     });
+   } else {
+-    command_buffer->addCompletedHandler(
++    encoder.add_completed_handler(
+         [buffers = std::move(buffers)](MTL::CommandBuffer* cbuf) {});
+   }
+ }
+@@ -71,7 +70,6 @@ void eval(array& arr) {
+ void finalize(Stream s) {
+   auto pool = metal::new_scoped_memory_pool();
+   auto& encoder = metal::get_command_encoder(s);
+-  auto* cb = encoder.get_command_buffer();
+   encoder.end_encoding();
+   encoder.commit();
+ }
+@@ -81,6 +79,7 @@ void synchronize(Stream s) {
+ }
+ 
+ void clear_streams() {
++  fios_before_clear_streams();
+   metal::get_command_encoders().clear();
+   if (is_main_thread()) {
+     metal::get_global_command_encoders().clear();
+diff --git a/mlx/scheduler.cpp b/mlx/scheduler.cpp
+index 572e236..9507626 100644
+--- a/mlx/scheduler.cpp
++++ b/mlx/scheduler.cpp
+@@ -32,6 +32,7 @@ void synchronize() {
+ }
+ 
+ void clear_streams() {
++  fios_before_clear_streams();
+   detail::compile_clear_cache(detail::compile_cache());
+   cpu::clear_streams();
+   gpu::clear_streams();
+@@ -40,6 +41,7 @@ void clear_streams() {
+ namespace scheduler {
+ 
+ struct StreamThread {
++  Stream stream;
+   std::mutex mtx;
+   std::queue<std::function<void()>> q;
+   std::condition_variable cond;
+@@ -47,7 +49,7 @@ struct StreamThread {
+   std::thread thread;
+   Error error;
+ 
+-  StreamThread() : stop(false), thread(&StreamThread::thread_fn, this) {}
++  StreamThread(Stream s) : stream(s), stop(false), thread(&StreamThread::thread_fn, this) {}
+ 
+   ~StreamThread() {
+     {
+@@ -76,6 +78,20 @@ struct StreamThread {
+   }
+ 
+   void enqueue(std::function<void()> f) {
++    if (auto custody = fios_reserve_host_task(stream)) {
++      f = [this, task = std::move(f), custody = std::move(custody)]() mutable {
++        fios_start_host_task(custody);
++        try {
++          task();
++        } catch (...) {
++          task = nullptr;
++          fios_finish_host_task(custody, true);
++          throw;
++        }
++        task = nullptr;
++        fios_finish_host_task(custody, error.valid());
++      };
++    }
+     if (is_main_thread()) {
+       error.check();
+     }
+@@ -156,7 +172,7 @@ StreamThread& Scheduler::get_thread(Stream s) {
+   std::unique_lock lock(threads_mtx_);
+   auto it = threads_.find(s.index);
+   if (it == threads_.end()) {
+-    it = threads_.emplace(s.index, std::make_unique<StreamThread>()).first;
++    it = threads_.emplace(s.index, std::make_unique<StreamThread>(s)).first;
+   }
+   return *it->second.get();
+ }
+diff --git a/mlx/stream.cpp b/mlx/stream.cpp
+index 902015c..dcfc68a 100644
+--- a/mlx/stream.cpp
++++ b/mlx/stream.cpp
+@@ -8,8 +8,11 @@
+ 
+ #include <array>
+ #include <map>
++#include <limits>
+ #include <optional>
++#include <stdexcept>
+ #include <shared_mutex>
++#include <thread>
+ 
+ namespace mlx::core {
+ 
+@@ -31,6 +34,97 @@ auto& all_streams() {
+   return streams_and_mtx;
+ }
+ 
++constexpr size_t fios_limit = 256;
++// Capture records are independent of stream/buffer slots: a valid model may
++// retain hundreds of callbacks on a few buffers. Keep both dimensions finite.
++constexpr uint64_t fios_capture_per_buffer_limit = 4096;
++constexpr uint64_t fios_capture_global_limit = 16384;
++struct FiosEntry {
++  Stream stream;
++  uint64_t owner;
++};
++struct FiosRegistry {
++  std::mutex mutex;
++  std::array<std::optional<FiosEntry>, fios_limit> entries;
++  size_t count = 0;
++  uint32_t pending = 0;
++  uint64_t epoch = 1, next_owner = 0, next_hold = 0;
++  uint64_t held = 0, held_owner = 0;
++  uint64_t host_pending = 0, host_active = 0, next_host_hold = 0;
++  uint64_t host_held = 0, host_owner = 0, host_creation = 0;
++  uint64_t metal_pending = 0, metal_captures = 0, next_metal_hold = 0;
++  uint64_t metal_held = 0, metal_owner = 0;
++  bool ever_metal = false;
++  bool ever_host = false, ever_clear = false;
++  bool enabled = false, ever_created = false, uncertain = false, shared = false;
++  uint32_t first_uncertainty_site = 0;
++};
++constinit FiosRegistry fios_registry;
++thread_local uint64_t fios_owner = 0;
++
++// Caller already owns the original metadata mutex. Diagnostic-only state;
++// preserve existing sticky failure/epoch behavior, with no I/O or reset API.
++void fios_mark_uncertain(uint32_t site) {
++  if (!fios_registry.uncertain) fios_registry.first_uncertainty_site = site;
++  fios_registry.uncertain = true;
++}
++
++bool fios_bump() {
++  if (fios_registry.uncertain) return false;
++  if (fios_registry.epoch == std::numeric_limits<uint64_t>::max()) {
++    fios_mark_uncertain(1);
++    return false;
++  }
++  ++fios_registry.epoch;
++  return true;
++}
++uint64_t fios_owner_locked() {
++  if (fios_owner) return fios_owner;
++  if (fios_registry.next_owner == std::numeric_limits<uint64_t>::max()) {
++    fios_mark_uncertain(2);
++    return 0;
++  }
++  fios_owner = ++fios_registry.next_owner;
++  return fios_bump() ? fios_owner : 0;
++}
++
++struct FiosCreation {
++  uint64_t owner = 0;
++  bool tracked = false, done = false;
++  FiosCreation(const FiosCreation&) = delete;
++  FiosCreation& operator=(const FiosCreation&) = delete;
++  FiosCreation() {
++    std::lock_guard lock(fios_registry.mutex);
++    fios_registry.ever_created = true;
++    if (!fios_registry.enabled) return;
++    if (fios_registry.held) throw std::runtime_error("Stream creation held");
++    if (fios_registry.uncertain) return;
++    if (fios_registry.count + fios_registry.pending >= fios_limit) {
++      fios_mark_uncertain(3);
++      return;
++    }
++    owner = fios_owner_locked();
++    if (!owner || !fios_bump()) return;
++    ++fios_registry.pending;
++    tracked = true;
++  }
++  ~FiosCreation() {
++    if (!tracked || done) return;
++    std::lock_guard lock(fios_registry.mutex);
++    --fios_registry.pending;
++    fios_mark_uncertain(4);
++  }
++  void finish(Stream stream, bool shared) {
++    if (!tracked || done) return;
++    std::lock_guard lock(fios_registry.mutex);
++    fios_registry.entries[fios_registry.count++].emplace(FiosEntry{stream, owner});
++    fios_registry.shared |= shared;
++    --fios_registry.pending;
++    fios_bump();
++    done = true;
++  }
++};
++
+ auto& thread_local_streams() {
+   static std::tuple<std::vector<ThreadLocalStream>, std::mutex> streams_and_mtx;
+   return streams_and_mtx;
+@@ -38,6 +132,297 @@ auto& thread_local_streams() {
+ 
+ } // namespace
+ 
++uint32_t fios_first_uncertainty_site() {
++  std::lock_guard lock(fios_registry.mutex);
++  return fios_registry.first_uncertainty_site;
++}
++
++bool fios_enable_stream_custody_fixture() {
++  std::lock_guard lock(fios_registry.mutex);
++  if (fios_registry.enabled || fios_registry.ever_created || fios_registry.pending || fios_registry.ever_host || fios_registry.ever_clear || fios_registry.ever_metal)
++    return false;
++  fios_registry.enabled = true;
++  return fios_bump();
++}
++void fios_before_clear_streams() {
++  std::lock_guard lock(fios_registry.mutex);
++  if (fios_registry.enabled && (fios_registry.held || fios_registry.host_held))
++    throw std::runtime_error("Stream teardown held");
++  fios_registry.ever_clear = true;
++  if (!fios_registry.enabled) return;
++  // Invalidate BEFORE physical cache/backend teardown, closing the race with
++  // new holds. Raw clear cannot establish retirement or recycle ownership.
++  fios_bump();
++  fios_mark_uncertain(5);
++}
++uint64_t fios_current_stream_owner() {
++  std::lock_guard lock(fios_registry.mutex);
++  if (!fios_registry.enabled || fios_registry.uncertain ||
++      (fios_registry.held && !fios_owner)) return 0;
++  return fios_owner_locked();
++}
++FiosStreamCustodyState fios_stream_custody_state() {
++  std::lock_guard lock(fios_registry.mutex);
++  return {fios_registry.epoch, static_cast<uint32_t>(fios_registry.count),
++          fios_registry.pending, fios_registry.enabled, fios_registry.uncertain,
++          fios_registry.held != 0, fios_registry.shared};
++}
++std::vector<Stream> fios_owned_streams() {
++  std::lock_guard lock(fios_registry.mutex);
++  if (!fios_registry.enabled || fios_registry.uncertain || fios_registry.pending ||
++      fios_registry.shared || !fios_owner)
++    throw std::runtime_error("Stream custody unavailable");
++  std::vector<Stream> result;
++  result.reserve(fios_registry.count);
++  for (size_t i = 0; i < fios_registry.count; ++i) {
++    const auto& entry = *fios_registry.entries[i];
++    if (entry.owner == fios_owner) result.push_back(entry.stream);
++  }
++  return result;
++}
++uint64_t fios_hold_stream_creation(uint64_t expected_epoch) {
++  std::lock_guard lock(fios_registry.mutex);
++  if (!fios_registry.enabled || fios_registry.uncertain || fios_registry.pending ||
++      fios_registry.held || !fios_owner || fios_registry.epoch != expected_epoch)
++    return 0;
++  if (fios_registry.next_hold == std::numeric_limits<uint64_t>::max()) {
++    fios_mark_uncertain(6);
++    return 0;
++  }
++  if (!fios_bump()) return 0;
++  fios_registry.held_owner = fios_owner;
++  fios_registry.held = ++fios_registry.next_hold;
++  return fios_registry.held;
++}
++bool fios_release_stream_creation(uint64_t ticket) {
++  std::lock_guard lock(fios_registry.mutex);
++  if (fios_registry.metal_held || fios_registry.host_held || !ticket || fios_registry.held != ticket || !fios_owner ||
++      fios_registry.held_owner != fios_owner) return false;
++  if (!fios_bump()) return false;
++  fios_registry.held = 0;
++  fios_registry.held_owner = 0;
++  return true;
++}
++
++struct FiosHostTask {
++  bool tracked = false, started = false, done = false;
++  std::thread::id worker;
++  ~FiosHostTask() {
++    if (!tracked || done) return;
++    std::lock_guard lock(fios_registry.mutex);
++    fios_mark_uncertain(7);
++  }
++};
++
++std::shared_ptr<FiosHostTask> fios_reserve_host_task(Stream stream) {
++  std::lock_guard lock(fios_registry.mutex);
++  fios_registry.ever_host = true;
++  if (!fios_registry.enabled) return {};
++  if (fios_registry.host_held) throw std::runtime_error("Host queues held");
++  if (fios_registry.uncertain) return {};
++  bool owned = false;
++  for (size_t i = 0; i < fios_registry.count; ++i) {
++    const auto& entry = *fios_registry.entries[i];
++    if (entry.stream == stream && entry.owner == fios_owner && fios_owner) owned = true;
++  }
++  if (!owned || fios_registry.host_pending == std::numeric_limits<uint64_t>::max()) {
++    fios_mark_uncertain(8);
++    return {};
++  }
++  auto task = std::make_shared<FiosHostTask>();
++  if (!fios_bump()) return {};
++  ++fios_registry.host_pending;
++  task->tracked = true;
++  return task;
++}
++void fios_start_host_task(const std::shared_ptr<FiosHostTask>& task) {
++  std::lock_guard lock(fios_registry.mutex);
++  if (!task || !task->tracked || task->started || task->done) {
++    fios_mark_uncertain(9);
++    throw std::runtime_error("Invalid host task start");
++  }
++  task->started = true;
++  task->worker = std::this_thread::get_id();
++  ++fios_registry.host_active;
++  fios_bump();
++}
++void fios_finish_host_task(const std::shared_ptr<FiosHostTask>& task, bool failed) {
++  std::lock_guard lock(fios_registry.mutex);
++  if (!task || !task->tracked || !task->started || task->done ||
++      task->worker != std::this_thread::get_id() || !fios_registry.host_pending || !fios_registry.host_active) {
++    fios_mark_uncertain(10);
++    return;
++  }
++  --fios_registry.host_pending;
++  --fios_registry.host_active;
++  task->done = true;
++  fios_registry.uncertain |= failed;
++  fios_bump();
++}
++FiosHostQueueState fios_host_queue_state() {
++  std::lock_guard lock(fios_registry.mutex);
++  return {fios_registry.epoch, fios_registry.host_pending, fios_registry.host_active,
++          fios_registry.enabled, fios_registry.uncertain, fios_registry.host_held != 0};
++}
++uint64_t fios_hold_host_queues(uint64_t creation_ticket, uint64_t expected_epoch) {
++  std::lock_guard lock(fios_registry.mutex);
++  if (!fios_registry.enabled || fios_registry.uncertain || fios_registry.shared ||
++      fios_registry.pending || fios_registry.host_pending || fios_registry.host_active ||
++      fios_registry.host_held || !creation_ticket || fios_registry.held != creation_ticket ||
++      !fios_owner || fios_registry.held_owner != fios_owner || fios_registry.epoch != expected_epoch) return 0;
++  if (fios_registry.next_host_hold == std::numeric_limits<uint64_t>::max()) {
++    fios_mark_uncertain(11);
++    return 0;
++  }
++  if (!fios_bump()) return 0;
++  fios_registry.host_held = ++fios_registry.next_host_hold;
++  fios_registry.host_owner = fios_owner;
++  fios_registry.host_creation = creation_ticket;
++  return fios_registry.host_held;
++}
++bool fios_release_host_queues(uint64_t ticket) {
++  std::lock_guard lock(fios_registry.mutex);
++  if (fios_registry.metal_held || !ticket || fios_registry.host_held != ticket || !fios_owner ||
++      fios_registry.host_owner != fios_owner || fios_registry.held_owner != fios_owner ||
++      fios_registry.host_creation != fios_registry.held) return false;
++  if (!fios_bump()) return false;
++  fios_registry.host_held = fios_registry.host_owner = fios_registry.host_creation = 0;
++  fios_registry.held = fios_registry.held_owner = 0;
++  return true;
++}
++
++struct FiosMetalBuffer {
++  bool tracked = false, submitted = false, completed = false, retired = false;
++  uint64_t captures = 0;
++  ~FiosMetalBuffer() {
++    if (!tracked || retired) return;
++    std::lock_guard lock(fios_registry.mutex);
++    // Abandonment never refunds an unproven physical reservation.
++    fios_mark_uncertain(12);
++  }
++};
++struct FiosMetalCapture {
++  std::shared_ptr<FiosMetalBuffer> task;
++  bool done = false;
++  ~FiosMetalCapture() {
++    if (!task || done) return;
++    std::lock_guard lock(fios_registry.mutex);
++    fios_mark_uncertain(13);
++  }
++};
++static void fios_retire_metal_locked(FiosMetalBuffer& task) {
++  if (task.retired || !task.completed || task.captures) return;
++  if (!fios_registry.metal_pending) {fios_mark_uncertain(14);return;}
++  task.retired = true;
++  --fios_registry.metal_pending;
++  fios_bump();
++}
++std::shared_ptr<FiosMetalBuffer> fios_reserve_metal_buffer(int stream_index) {
++  std::lock_guard lock(fios_registry.mutex);
++  if (fios_registry.enabled && fios_registry.metal_held)
++    throw std::runtime_error("Metal buffers held");
++  fios_registry.ever_metal = true;
++  if (!fios_registry.enabled || fios_registry.uncertain) return {};
++  bool owned = false;
++  for (size_t i = 0; i < fios_registry.count; ++i) {
++    const auto& entry = *fios_registry.entries[i];
++    if (entry.stream.index == stream_index && entry.stream.device.type == Device::gpu &&
++        entry.owner == fios_owner && fios_owner) {owned = true;break;}
++  }
++  if (!owned || fios_registry.metal_pending >= fios_limit) {
++    fios_mark_uncertain(15);return {};
++  }
++  auto task = std::make_shared<FiosMetalBuffer>();
++  if (!fios_bump()) return {};
++  ++fios_registry.metal_pending;
++  task->tracked = true;
++  return task;
++}
++std::shared_ptr<FiosMetalCapture> fios_metal_capture_begin(const std::shared_ptr<FiosMetalBuffer>& task) {
++  if (!task) return {};
++  std::lock_guard lock(fios_registry.mutex);
++  if (task->retired) {fios_mark_uncertain(16);return {};}
++  if (task->submitted) {fios_mark_uncertain(25);return {};}
++  if (task->captures >= fios_capture_per_buffer_limit) {fios_mark_uncertain(26);return {};}
++  if (fios_registry.metal_captures >= fios_capture_global_limit) {fios_mark_uncertain(27);return {};}
++  auto capture = std::make_shared<FiosMetalCapture>();
++  capture->task = task;
++  ++task->captures;++fios_registry.metal_captures;fios_bump();
++  return capture;
++}
++void fios_metal_capture_end(const std::shared_ptr<FiosMetalCapture>& capture, bool failed) {
++  if (!capture) return;
++  std::lock_guard lock(fios_registry.mutex);
++  if (capture->done) return;
++  auto& task = *capture->task;
++  if (task.retired || !task.captures || !fios_registry.metal_captures) {
++    fios_mark_uncertain(17);return;
++  }
++  capture->done = true;
++  --task.captures;--fios_registry.metal_captures;
++  if (failed) fios_mark_uncertain(18);
++  fios_bump();fios_retire_metal_locked(task);
++}
++void fios_metal_submitted(const std::shared_ptr<FiosMetalBuffer>& task) {
++  if (!task) return;
++  std::lock_guard lock(fios_registry.mutex);
++  if (task->retired || task->submitted) {fios_mark_uncertain(19);return;}
++  task->submitted = true;fios_bump();
++}
++void fios_metal_completed(const std::shared_ptr<FiosMetalBuffer>& task, bool failed) {
++  if (!task) return;
++  std::lock_guard lock(fios_registry.mutex);
++  if (task->retired || task->completed) return;
++  if (!task->submitted) {fios_mark_uncertain(20);return;}
++  if (failed) fios_mark_uncertain(21);
++  task->completed = true;fios_bump();fios_retire_metal_locked(*task);
++}
++void fios_metal_failed(const std::shared_ptr<FiosMetalBuffer>& task) {
++  if (!task) return;
++  std::lock_guard lock(fios_registry.mutex);
++  if (!task->retired) fios_mark_uncertain(22);
++}
++void fios_note_raw_metal_alias() {
++  std::lock_guard lock(fios_registry.mutex);
++  if (fios_registry.enabled && fios_registry.metal_held)
++    throw std::runtime_error("Raw Metal alias held");
++  fios_registry.ever_metal = true;
++  if (!fios_registry.enabled) return;
++  fios_bump();fios_mark_uncertain(23);
++}
++FiosMetalBufferState fios_metal_buffer_state() {
++  std::lock_guard lock(fios_registry.mutex);
++  return {fios_registry.epoch, fios_registry.metal_pending, fios_registry.metal_captures,
++          fios_registry.enabled, fios_registry.uncertain, fios_registry.metal_held != 0};
++}
++uint64_t fios_hold_metal_buffers(uint64_t creation, uint64_t host, uint64_t epoch) {
++  std::lock_guard lock(fios_registry.mutex);
++  if (!fios_registry.enabled || fios_registry.uncertain || !fios_owner || !creation || !host ||
++      fios_registry.epoch != epoch || fios_registry.metal_held || fios_registry.metal_pending ||
++      fios_registry.metal_captures || fios_registry.held != creation || fios_registry.host_held != host ||
++      fios_registry.host_creation != creation || fios_registry.held_owner != fios_owner ||
++      fios_registry.host_owner != fios_owner) return 0;
++  if (fios_registry.next_metal_hold == std::numeric_limits<uint64_t>::max()) {
++    fios_mark_uncertain(24);return 0;
++  }
++  if (!fios_bump()) return 0;
++  fios_registry.metal_held = ++fios_registry.next_metal_hold;
++  fios_registry.metal_owner = fios_owner;
++  return fios_registry.metal_held;
++}
++bool fios_release_metal_buffers(uint64_t ticket) {
++  std::lock_guard lock(fios_registry.mutex);
++  if (!ticket || fios_registry.metal_held != ticket || !fios_owner ||
++      fios_registry.metal_owner != fios_owner || fios_registry.host_owner != fios_owner ||
++      fios_registry.held_owner != fios_owner || !fios_registry.host_held || !fios_registry.held ||
++      fios_registry.metal_pending || fios_registry.metal_captures) return false;
++  if (!fios_bump()) return false;
++  fios_registry.metal_held = fios_registry.metal_owner = 0;
++  fios_registry.host_held = fios_registry.host_owner = fios_registry.host_creation = 0;
++  fios_registry.held = fios_registry.held_owner = 0;
++  return true;
++}
++
+ Stream default_stream(Device d) {
+   if (!gpu::is_available() && d.type == Device::gpu) {
+     throw std::invalid_argument(
+@@ -69,6 +454,7 @@ std::vector<Stream> get_streams() {
+ }
+ 
+ Stream new_stream(Device d) {
++  FiosCreation creation;
+   auto& [streams, mtx] = all_streams();
+   std::unique_lock lock(mtx);
+   int index = streams.size();
+@@ -78,10 +464,12 @@ Stream new_stream(Device d) {
+   } else {
+     cpu::new_stream(s);
+   }
++  creation.finish(s, false);
+   return s;
+ }
+ 
+ Stream new_thread_unsafe_stream(Device d) {
++  FiosCreation creation;
+   auto& [streams, mtx] = all_streams();
+   std::unique_lock lock(mtx);
+   int index = streams.size();
+@@ -91,6 +479,7 @@ Stream new_thread_unsafe_stream(Device d) {
+   } else {
+     cpu::new_thread_unsafe_stream(s);
+   }
++  creation.finish(s, true);
+   return s;
+ }
+ 
+diff --git a/mlx/stream.h b/mlx/stream.h
+index 331af60..eb2a7ea 100644
+--- a/mlx/stream.h
++++ b/mlx/stream.h
+@@ -2,7 +2,9 @@
+ 
+ #pragma once
+ 
++#include <cstdint>
+ #include <optional>
++#include <memory>
+ #include <tuple>
+ #include <vector>
+ 
+@@ -27,6 +29,59 @@ struct MLX_API ThreadLocalStream : public Stream {
+   using Stream::Stream;
+ };
+ 
++// Source fixture only. Creation custody is not device or model completion.
++struct MLX_API FiosStreamCustodyState {
++  uint64_t epoch;
++  uint32_t registered;
++  uint32_t pending;
++  bool enabled;
++  bool uncertain;
++  bool held;
++  bool shared;
++};
++#define MLX_FIOS_UNCERTAINTY_DIAGNOSTICS 1
++MLX_API uint32_t fios_first_uncertainty_site();
++MLX_API bool fios_enable_stream_custody_fixture();
++MLX_API uint64_t fios_current_stream_owner();
++MLX_API FiosStreamCustodyState fios_stream_custody_state();
++MLX_API std::vector<Stream> fios_owned_streams();
++MLX_API uint64_t fios_hold_stream_creation(uint64_t expected_epoch);
++MLX_API bool fios_release_stream_creation(uint64_t ticket);
++
++// Host scheduler tasks only, not device command buffers or model lifetime.
++struct MLX_API FiosHostQueueState {
++  uint64_t epoch, pending, active;
++  bool enabled, uncertain, held;
++};
++struct MLX_API FiosHostTask;
++MLX_API std::shared_ptr<FiosHostTask> fios_reserve_host_task(Stream stream);
++MLX_API void fios_start_host_task(const std::shared_ptr<FiosHostTask>& task);
++MLX_API void fios_finish_host_task(const std::shared_ptr<FiosHostTask>& task, bool failed);
++MLX_API FiosHostQueueState fios_host_queue_state();
++MLX_API uint64_t fios_hold_host_queues(uint64_t creation_ticket, uint64_t expected_epoch);
++MLX_API bool fios_release_host_queues(uint64_t ticket);
++// Called before actual cache/backend teardown. Refuses under either gate;
++// otherwise preserves default behavior but makes enabled custody uncertain.
++MLX_API void fios_before_clear_streams();
++
++// Actual Metal buffer/callback captures ONLY; not all contexts or lifecycle.
++struct MLX_API FiosMetalBufferState {
++  uint64_t epoch, pending, captures;
++  bool enabled, uncertain, held;
++};
++struct MLX_API FiosMetalBuffer;
++MLX_API std::shared_ptr<FiosMetalBuffer> fios_reserve_metal_buffer(int stream_index);
++struct MLX_API FiosMetalCapture;
++MLX_API std::shared_ptr<FiosMetalCapture> fios_metal_capture_begin(const std::shared_ptr<FiosMetalBuffer>& task);
++MLX_API void fios_metal_capture_end(const std::shared_ptr<FiosMetalCapture>& capture, bool failed);
++MLX_API void fios_metal_submitted(const std::shared_ptr<FiosMetalBuffer>& task);
++MLX_API void fios_metal_completed(const std::shared_ptr<FiosMetalBuffer>& task, bool failed);
++MLX_API void fios_metal_failed(const std::shared_ptr<FiosMetalBuffer>& task);
++MLX_API void fios_note_raw_metal_alias();
++MLX_API FiosMetalBufferState fios_metal_buffer_state();
++MLX_API uint64_t fios_hold_metal_buffers(uint64_t creation, uint64_t host, uint64_t epoch);
++MLX_API bool fios_release_metal_buffers(uint64_t ticket);
++
+ /** Get the default stream of current thread for the given device. */
+ MLX_API Stream default_stream(Device d);
+ 

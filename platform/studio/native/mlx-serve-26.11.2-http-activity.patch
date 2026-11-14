@@ -1,0 +1,28 @@
+diff --git a/src/host/http/router.zig b/src/host/http/router.zig
+index e5dd250..10a25c3 100644
+--- a/src/host/http/router.zig
++++ b/src/host/http/router.zig
+@@ -120,6 +120,7 @@ const ROUTE_PATHS = [_][]const u8{
+     "/v1/decisions",
+     "/v1/systemone",
+     "/v1/embeddings",
++    "/v1/fios/activity",
+     "/v1/images/edits",
+     "/v1/images/generations",
+     "/v1/load-model",
+@@ -325,6 +326,15 @@ pub fn handleConnection(
+         try sendResponse(stream, "200 OK", "application/json", "{\"status\":\"ok\"}");
+         return;
+     }
++    // Legacy source diagnostic only: the observer is counted and coverage
++    // remains unknown. No model resolution, device proof or native admission.
++    if (std.mem.eql(u8, method, "GET") and isRoute(path, "/v1/fios/activity")) {
++        if (!http_server.fios_connection_tracking.load(.acquire))
++            return sendResponseQuiet(stream, "404 Not Found", "application/json", "{\"error\":{\"type\":\"not_found\",\"message\":\"Not found\"}}");
++        var buffer: [1024]u8 = undefined;
++        const body = try fios_ownership.renderSnapshot(fios_ownership.shared().snapshot(stream.io), &buffer);
++        return sendResponseQuiet(stream, "200 OK", "application/json", body);
++    }
+     // The console. It belongs here, above resolution, for the same reason
+     // /v1/models does: it IS the model picker, so it has to render before
+     // anything is loaded. Dispatched after resolution it rendered one

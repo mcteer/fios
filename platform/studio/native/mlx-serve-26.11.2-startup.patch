@@ -1,0 +1,260 @@
+diff --git a/src/fios/startup_guard.zig b/src/fios/startup_guard.zig
+new file mode 100644
+index 0000000..71b8bc9
+--- /dev/null
++++ b/src/fios/startup_guard.zig
+@@ -0,0 +1,127 @@
++// Process startup exclusion only. Never native terminality, backend readiness,
++// all-client coverage or permission to launch an application.
++const std = @import("std");
++const c = std.c;
++extern "c" fn acl_get_fd_np(fd: c_int, kind: c_int) ?*anyopaque;
++extern "c" fn acl_free(value: *anyopaque) c_int;
++extern "c" fn __error() *c_int;
++
++pub const Guard = struct {
++    fd: c_int,
++    retain_until_exit: bool = false,
++    pub fn start(version: []const u8) !?Guard {
++        if (std.mem.endsWith(u8, version, "-fios-platform")) {
++            if (!std.mem.eql(u8, version, "26.10.3-fios-platform") or c.getenv("FIOS_NATIVE_STARTUP") != null)
++                return error.StartupGuardUnavailable;
++            return try installed();
++        }
++        const flag = c.getenv("FIOS_NATIVE_STARTUP") orelse return null;
++        if (!std.mem.eql(u8, std.mem.span(flag), "isolated-source-fixture") or
++            !std.mem.endsWith(u8, version, "-fios-source-fixture") or
++            c.getuid() == 0 or c.getuid() != c.geteuid()) return error.StartupGuardUnavailable;
++        const home = c.getenv("HOME") orelse return error.StartupGuardUnavailable;
++        if (home[0] != '/') return error.StartupGuardUnavailable;
++        const home_fd = c.openat(c.AT.FDCWD, home, .{ .DIRECTORY = true, .NOFOLLOW = true, .CLOEXEC = true });
++        if (home_fd < 0) return error.StartupGuardUnavailable;
++        defer _ = c.close(home_fd);
++        if (!private(home_fd, c.S.IFDIR, 0o700, false)) return error.StartupGuardUnavailable;
++        _ = c.mkdirat(home_fd, ".fios-native-startup", @as(c.mode_t, 0o700));
++        const directory = c.openat(home_fd, ".fios-native-startup", .{ .DIRECTORY = true, .NOFOLLOW = true, .CLOEXEC = true });
++        if (directory < 0) return error.StartupGuardUnavailable;
++        defer _ = c.close(directory);
++        if (!private(directory, c.S.IFDIR, 0o700, false)) return error.StartupGuardUnavailable;
++        const fd = c.openat(directory, "server.lock", .{ .ACCMODE = .RDWR, .CREAT = true, .NOFOLLOW = true, .CLOEXEC = true, .NONBLOCK = true }, @as(c.mode_t, 0o600));
++        if (fd < 0) return error.StartupGuardUnavailable;
++        errdefer _ = c.close(fd);
++        if (!private(fd, c.S.IFREG, 0o600, true) or c.flock(fd, c.LOCK.EX | c.LOCK.NB) != 0)
++            return error.StartupGuardUnavailable;
++        return .{ .fd = fd };
++    }
++    pub fn close(self: *Guard) void {
++        // Production ownership lasts until kernel process exit, including
++        // after main returns/errors while runtime teardown is still pending.
++        if (self.retain_until_exit) return;
++        const fd = self.fd;
++        self.fd = -1;
++        if (fd >= 0) _ = c.close(fd);
++        // Never unlink: another process may already hold this same inode.
++    }
++    // Fixed root-protected installed namespace, independent of HOME/argv.
++    // Installer must serialize updates and never replace a held lock inode.
++    // FSG9/version1/reserved-zero/UID is a strict12-byte non-secret record.
++    fn installed() !Guard {
++        if (c.getuid() == 0 or c.getuid() != c.geteuid()) return error.StartupGuardUnavailable;
++        var parent = c.openat(c.AT.FDCWD, "/", .{ .DIRECTORY = true, .NOFOLLOW = true, .CLOEXEC = true });
++        if (parent < 0) return error.StartupGuardUnavailable;
++        defer _ = c.close(parent);
++        if (!protectedDirectory(parent)) return error.StartupGuardUnavailable;
++        for ([_][*:0]const u8{ "Library", "Application Support", "Fios", "Studio", "native" }) |component| {
++            const next = c.openat(parent, component, .{ .DIRECTORY = true, .NOFOLLOW = true, .CLOEXEC = true });
++            if (next < 0) return error.StartupGuardUnavailable;
++            if (!protectedDirectory(next)) {
++                _ = c.close(next);
++                return error.StartupGuardUnavailable;
++            }
++            _ = c.close(parent);
++            parent = next;
++        }
++        const fd = c.openat(parent, "startup.lock", .{ .ACCMODE = .RDONLY, .NOFOLLOW = true, .CLOEXEC = true, .NONBLOCK = true });
++        if (fd < 0) return error.StartupGuardUnavailable;
++        errdefer _ = c.close(fd);
++        var before: c.Stat = undefined;
++        if (c.fstat(fd, &before) != 0 or before.uid != 0 or (before.mode & c.S.IFMT) != c.S.IFREG or
++            (before.mode & 0o7777 != 0o444 and before.mode & 0o7777 != 0o644) or
++            before.nlink != 1 or before.size != 12 or !noACL(fd)) return error.StartupGuardUnavailable;
++        var bytes: [13]u8 = undefined;
++        var offset: usize = 0;
++        while (offset < bytes.len) {
++            const count = c.read(fd, bytes[offset..].ptr, bytes.len - offset);
++            if (count < 0 and __error().* == @intFromEnum(c.E.INTR)) continue;
++            if (count < 0) return error.StartupGuardUnavailable;
++            if (count == 0) break;
++            offset += @intCast(count);
++        }
++        if (offset != 12 or !std.mem.eql(u8, bytes[0..4], "FSG9") or bytes[4] != 1 or
++            !std.mem.eql(u8, bytes[5..8], &.{ 0, 0, 0 }) or
++            std.mem.readInt(u32, bytes[8..12], .big) != c.getuid()) return error.StartupGuardUnavailable;
++        if (c.flock(fd, c.LOCK.EX | c.LOCK.NB) != 0) return error.StartupGuardUnavailable;
++        var after: c.Stat = undefined;
++        var named: c.Stat = undefined;
++        if (c.fstat(fd, &after) != 0 or c.fstatat(parent, "startup.lock", &named, c.AT.SYMLINK_NOFOLLOW) != 0 or
++            !same(before, after) or !same(after, named) or !noACL(fd)) return error.StartupGuardUnavailable;
++        return .{ .fd = fd, .retain_until_exit = true };
++    }
++    fn same(a: c.Stat, b: c.Stat) bool {
++        return a.dev == b.dev and a.ino == b.ino and a.uid == b.uid and a.gid == b.gid and
++            a.mode == b.mode and a.nlink == b.nlink and a.size == b.size and
++            a.mtimespec.sec == b.mtimespec.sec and a.mtimespec.nsec == b.mtimespec.nsec and
++            a.ctimespec.sec == b.ctimespec.sec and a.ctimespec.nsec == b.ctimespec.nsec;
++    }
++    fn protectedDirectory(fd: c_int) bool {
++        var info: c.Stat = undefined;
++        return c.fstat(fd, &info) == 0 and info.uid == 0 and (info.mode & c.S.IFMT) == c.S.IFDIR and
++            info.mode & 0o7022 == 0 and noACL(fd);
++    }
++    fn noACL(fd: c_int) bool {
++        __error().* = 0;
++        const acl = acl_get_fd_np(fd, 0x100);
++        if (acl) |value| {
++            _ = acl_free(value);
++            return false;
++        }
++        return __error().* == @intFromEnum(c.E.NOENT);
++    }
++    fn private(fd: c_int, kind: c.mode_t, mode: c.mode_t, single: bool) bool {
++        var info: c.Stat = undefined;
++        if (c.fstat(fd, &info) != 0 or info.uid != c.getuid() or
++            (info.mode & c.S.IFMT) != kind or (info.mode & 0o7777) != mode or
++            (single and info.nlink != 1)) return false;
++        __error().* = 0;
++        const acl = acl_get_fd_np(fd, 0x100);
++        if (acl) |value| {
++            _ = acl_free(value);
++            return false;
++        }
++        return __error().* == @intFromEnum(c.E.NOENT);
++    }
++};
+diff --git a/src/main.zig b/src/main.zig
+index a3f09fa..70b57e9 100644
+--- a/src/main.zig
++++ b/src/main.zig
+@@ -550,28 +550,36 @@ fn printUsage(io: std.Io) void {
+     stdout_w.interface.flush() catch {};
+ }
+ 
++fn printVersion(io: std.Io) void {
++    // Report app + every embedded engine version WITHOUT booting the
++    // server (the macOS app spawns this and parses it — src/version.zig,
++    // Swift EngineVersions). MLX + ggml self-report at runtime; mlx-c /
++    // ds4 / the llama.cpp tag have no runtime API and ride build options.
++    var mlx_ver = mlx.mlx_string_new();
++    defer _ = mlx.mlx_string_free(mlx_ver);
++    _ = mlx.mlx_version(&mlx_ver);
++    const info = version_mod.Info{
++        // The build mode rides the app line: the bench scripts refuse a Debug binary by it.
++        .app = VERSION ++ " (" ++ @tagName(@import("builtin").mode) ++ ")",
++        .mlx = std.mem.span(mlx.mlx_string_data(mlx_ver)),
++        .mlx_c = build_options.mlx_c_version,
++        .nax = @import("mlx/device.zig").naxStatus(),
++        .ggml = ggmlEngineVersion(),
++        .ggml_commit = ggmlEngineCommit(),
++        .llama_tag = build_options.llama_tag,
++        .gguf_format = GGUF_FORMAT_VERSION,
++        .ds4_commit = build_options.ds4_commit,
++    };
++    var ver_buf: [512]u8 = undefined;
++    var ver_w = std.Io.File.stdout().writer(io, &ver_buf);
++    version_mod.writeReport(&ver_w.interface, info) catch {};
++    ver_w.interface.flush() catch {};
++}
++
+ pub fn main(init: std.process.Init) !void {
+-    crt.exportHomeDefault();
+-    env.init();
+-    // Referenced, or the linker strips the unreferenced section.
+-    if (@import("builtin").os.tag == .macos) std.mem.doNotOptimizeAway(&info_plist);
+     const allocator = init.gpa;
+     const io = init.io;
+ 
+-    // Bound MLX's reclaimable buffer pool before anything can allocate. ONCE,
+-    // above every subcommand branch — a per-serve-path call is how
+-    // `runHeadlessServe` (the mode the app always launches) silently ate the
+-    // --pld* flags. See server.mlxCacheLimitBytes for why MLX's own default
+-    // (~121 GB on a 128 GB Mac) is no defense.
+-    mlx.exportResidencyRefresh();
+-    server_mod.applyMlxCacheLimit();
+-    server_mod.applyGpuCeilingEnv();
+-    mlx.exportCudaHome();
+-    mlx.exportPtxCacheDir(@import("mlx_stamp").bytes);
+-
+-    // mlx-c's default handler exits the process; latch MLX failures instead (#353).
+-    mlx.installErrorHandler();
+-
+     // Materialize CLI args from the iterator API into a flat slice
+     var args_iter = try std.process.Args.Iterator.initAllocator(init.minimal.args, allocator);
+     defer args_iter.deinit();
+@@ -590,6 +598,36 @@ pub fn main(init: std.process.Init) !void {
+         return;
+     }
+ 
++    // Exact metadata-only calls precede startup reservation and backend effects.
++    if (args.len == 2 and std.mem.eql(u8, args[1], "--version")) {
++        printVersion(io);
++        return;
++    }
++    if (args.len == 2 and (std.mem.eql(u8, args[1], "--help") or std.mem.eql(u8, args[1], "-h"))) {
++        printUsage(io);
++        return;
++    }
++    // Startup exclusion only; not launch permission or native terminal proof.
++    var fios_startup_guard = try @import("fios/startup_guard.zig").Guard.start(VERSION);
++    defer if (fios_startup_guard) |*held| held.close();
++    crt.exportHomeDefault();
++    env.init();
++    // Referenced, or the linker strips the unreferenced section.
++    if (@import("builtin").os.tag == .macos) std.mem.doNotOptimizeAway(&info_plist);
++    // Bound MLX's reclaimable buffer pool before anything can allocate. ONCE,
++    // above every subcommand branch — a per-serve-path call is how
++    // `runHeadlessServe` (the mode the app always launches) silently ate the
++    // --pld* flags. See server.mlxCacheLimitBytes for why MLX's own default
++    // (~121 GB on a 128 GB Mac) is no defense.
++    mlx.exportResidencyRefresh();
++    server_mod.applyMlxCacheLimit();
++    server_mod.applyGpuCeilingEnv();
++    mlx.exportCudaHome();
++    mlx.exportPtxCacheDir(@import("mlx_stamp").bytes);
++
++    // mlx-c's default handler exits the process; latch MLX failures instead (#353).
++    mlx.installErrorHandler();
++
+     // ── Subcommands (Ollama-grade CLI): `mlx-serve run|pull|list|serve` ──
+     // `pull` and `list` finish here; `run` and `serve` fall through into the
+     // normal flag parse (skipping the consumed positionals) and serve path.
+@@ -738,29 +776,7 @@ pub fn main(init: std.process.Init) !void {
+     var i: usize = arg_start;
+     while (i < args.len) : (i += 1) {
+         if (std.mem.eql(u8, args[i], "--version")) {
+-            // Report app + every embedded engine version WITHOUT booting the
+-            // server (the macOS app spawns this and parses it — src/version.zig,
+-            // Swift EngineVersions). MLX + ggml self-report at runtime; mlx-c /
+-            // ds4 / the llama.cpp tag have no runtime API and ride build options.
+-            var mlx_ver = mlx.mlx_string_new();
+-            defer _ = mlx.mlx_string_free(mlx_ver);
+-            _ = mlx.mlx_version(&mlx_ver);
+-            const info = version_mod.Info{
+-                // The build mode rides the app line: the bench scripts refuse a Debug binary by it.
+-                .app = VERSION ++ " (" ++ @tagName(@import("builtin").mode) ++ ")",
+-                .mlx = std.mem.span(mlx.mlx_string_data(mlx_ver)),
+-                .mlx_c = build_options.mlx_c_version,
+-                .nax = @import("mlx/device.zig").naxStatus(),
+-                .ggml = ggmlEngineVersion(),
+-                .ggml_commit = ggmlEngineCommit(),
+-                .llama_tag = build_options.llama_tag,
+-                .gguf_format = GGUF_FORMAT_VERSION,
+-                .ds4_commit = build_options.ds4_commit,
+-            };
+-            var ver_buf: [512]u8 = undefined;
+-            var ver_w = std.Io.File.stdout().writer(io, &ver_buf);
+-            version_mod.writeReport(&ver_w.interface, info) catch {};
+-            ver_w.interface.flush() catch {};
++            printVersion(io);
+             return;
+         } else if (std.mem.eql(u8, args[i], "--help") or std.mem.eql(u8, args[i], "-h")) {
+             printUsage(io);

@@ -1,0 +1,55 @@
+// Ordinary Objective-C bookkeeping object, not an ANE model/framework.
+@interface FiosCompileMetadata : NSObject
+@property unsigned calls;
+@end
+@implementation FiosCompileMetadata
+- (BOOL)loadWithQoS:(unsigned)qos options:(id)options error:(NSError **)error {
+    (void)qos;(void)options;*error=nil;
+    self.calls += 1;
+    return self.calls > 1;
+}
+@end
+int main(void) {
+    @autoreleasepool {
+#ifdef FIOS_ANE_SOURCE
+        __weak NSObject *released;
+        @autoreleasepool {
+            NSObject *input=[NSObject new];released=input;
+            msv_ane_program *p=calloc(1,sizeof(*p));
+            p->models=(__bridge_retained void *)@[];
+            p->options=(__bridge_retained void *)@[];
+            p->fios_constructor_inputs=(__bridge_retained void *)@[input];
+            if (!msv_ane_program_try_free(p)) return 1;
+        }
+        if (released) return 1;
+        NSUInteger before=fios_ane_compile_quarantine().count;
+        FiosCompileMetadata *healthy=[FiosCompileMetadata new];healthy.calls=1;
+        NSError *healthy_error=nil;
+        if (!bridge_load(healthy,@{},&healthy_error) || healthy.calls != 2 ||
+            msv_ane_source_uncertainty() || fios_ane_compile_quarantine().count != before) return 1;
+#endif
+        FiosCompileMetadata *value=[FiosCompileMetadata new];
+        NSError *error=nil;
+        bool loaded=bridge_load(value,@{},&error);
+#ifdef FIOS_ANE_SOURCE
+        if (loaded || value.calls != 1 || !msv_ane_source_uncertainty()) {
+            fprintf(stderr,"FIO_CURRENT_ANE_RETRIED_REPORTED_LOAD_REFUSAL\n");return 1;
+        }
+        NSArray *owners=fios_ane_compile_quarantine().lastObject;
+        if (owners.count != 2 || owners[0] != value) return 1;
+        NSUInteger held=fios_ane_compile_quarantine().count;
+        if (bridge_load(value,@{},&error) || value.calls != 1) return 1;
+        if (fios_ane_compile_quarantine().count != held) {
+            fprintf(stderr,"FIO_CURRENT_ANE_REPEATED_RESERVATION_FOR_KNOWN_REFUSAL\n");return 1;
+        }
+        if (fios_ane_compile_quarantine().lastObject[0] != value) return 1;
+        msv_ane_program *p=calloc(1,sizeof(*p));
+        NSArray *original=@[value];
+        p->fios_constructor_inputs=(__bridge_retained void *)original;
+        if (msv_ane_program_try_free(p) || (__bridge id)p->fios_constructor_inputs != original) return 1;
+#else
+        if (!loaded || value.calls != 2) return 1;
+#endif
+        fprintf(stderr,"PASS: private ANE load bookkeeping refuses replay; no native API\n");return 0;
+    }
+}

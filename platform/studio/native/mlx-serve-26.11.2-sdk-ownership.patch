@@ -1,0 +1,300 @@
+diff --git a/build/macos.zig b/build/macos.zig
+index 50ff534..bf1715a 100644
+--- a/build/macos.zig
++++ b/build/macos.zig
+@@ -14,6 +14,7 @@ pub const Graph = struct {
+     host: config.Host,
+     version: []const u8,
+     units: bool,
++    fios_source_sdk: bool,
+     /// The server's module (`src/main.zig`; `src/exe.zig` under `-Dunits`) and the unit tests' (`src/tests.zig`).
+     exe_mod: *std.Build.Module,
+     test_mod: *std.Build.Module,
+@@ -30,6 +31,10 @@ pub const Graph = struct {
+         const version = b.option([]const u8, "version", "Version string") orelse config.readAppVersion(b) orelse "0.0.0-dev";
+ 
+         const mas = b.option(bool, "mas", "MAS build (no curl/model-pull subprocess)") orelse false;
++        const fios_source_sdk = b.option(bool, "fios-source-sdk", "Private source SDK ownership composition only") orelse false;
++        if (fios_source_sdk and !std.mem.endsWith(u8, version, "-fios-source-fixture"))
++            @panic("Fios SDK composition requires the private source-fixture version");
++
+ 
+         // Engine-version pins surfaced by `mlx-serve --version` (the macOS app spawns
+         // it and parses the output — see src/version.zig). These are the versions
+@@ -48,6 +53,7 @@ pub const Graph = struct {
+         const build_options = b.addOptions();
+         build_options.addOption([]const u8, "version", version);
+         build_options.addOption(bool, "mas", mas);
++        build_options.addOption(bool, "fios_source_sdk", fios_source_sdk);
+         build_options.addOption([]const u8, "mlx_c_version", mlx_c_version);
+         build_options.addOption([]const u8, "ds4_commit", ds4_commit);
+         build_options.addOption([]const u8, "llama_tag", llama_tag);
+@@ -92,6 +98,7 @@ pub const Graph = struct {
+             .host = host,
+             .version = version,
+             .units = units,
++            .fios_source_sdk = fios_source_sdk,
+             .exe_mod = blk: {
+                 const m = shared.engineModule(b, target, optimize, host, "src/main.zig");
+                 // CI and release pass -Dstrip: debug info is most of the ReleaseFast compile's peak memory, which
+@@ -180,6 +187,10 @@ const Shared = struct {
+ pub fn addServer(g: *const Graph, plugin_names: []const []const u8) void {
+     const b = g.b;
+     const mod = g.exe_mod;
++    if (g.fios_source_sdk) mod.addCSourceFile(.{
++        .file = b.path("src/fios/current_sdk_owners.cpp"),
++        .flags = &.{ "-std=c++20", "-DNDEBUG" },
++    });
+     const exe = b.addExecutable(.{
+         .name = "mlx-serve",
+         .root_module = mod,
+diff --git a/src/fios/current_sdk_owners.cpp b/src/fios/current_sdk_owners.cpp
+new file mode 100644
+index 0000000..b6dfb54
+--- /dev/null
++++ b/src/fios/current_sdk_owners.cpp
+@@ -0,0 +1,27 @@
++// Private source composition only. Real SDK hooks, never a substitute API.
++#include "mlx/stream.h"
++#include <cstdlib>
++#ifndef MLX_FIOS_REQUEST_OWNER_GROUPS
++#error "Current source SDK ownership hooks are required"
++#endif
++extern "C" void* fios_native_request_owners_capture();
++extern "C" uint64_t fios_native_request_owners_enter(void*);
++extern "C" int fios_native_request_owners_leave(uint64_t);
++extern "C" void fios_native_request_owners_release(void*);
++extern "C" void* fios_native_request_owners_merge(void*,void*);
++extern "C" int fios_native_request_owners_covers_current(void*);
++extern "C" void fios_native_request_owners_uncertain();
++namespace {
++__attribute__((constructor)) void enable_current_source_sdk_owners() {
++    static const mlx::core::FiosRequestOwnerHooks hooks{
++        fios_native_request_owners_capture,fios_native_request_owners_enter,
++        fios_native_request_owners_leave,fios_native_request_owners_release,
++        fios_native_request_owners_merge,fios_native_request_owners_covers_current,
++        fios_native_request_owners_uncertain};
++    if (!mlx::core::fios_register_request_owner_hooks(&hooks) ||
++        !mlx::core::fios_enable_stream_custody_fixture()) std::_Exit(78);
++}
++}
++extern "C" int fios_current_sdk_known_uncertain() {
++    return mlx::core::fios_known_source_uncertain() ? 1 : 0;
++}
+diff --git a/src/fios/request_ownership.zig b/src/fios/request_ownership.zig
+index b7cbb3c..8e72580 100644
+--- a/src/fios/request_ownership.zig
++++ b/src/fios/request_ownership.zig
+@@ -191,6 +191,18 @@ pub const Tracker = struct {
+         }
+         self.backend_uncertainty_probe = probe;
+     }
++    // Immutable negative evidence for this diagnostic-only current source.
++    // Never enables the primary guard or supplies positive admission evidence.
++    pub fn enrollDiagnosticUncertaintyProbe(self: *Tracker, io: std.Io, probe: BackendUncertaintyProbe) !void {
++        self.mutex.lockUncancelable(io);
++        defer self.mutex.unlock(io);
++        if (!self.initialized or self.primary_guard or self.backend_uncertainty_probe != null or
++            self.sequence != 0 or self.mutation_sequence != 0) {
++            self.uncertain = true;
++            return error.InvalidProbeEnrollment;
++        }
++        self.backend_uncertainty_probe = probe;
++    }
+     fn observeBackendUncertainty(self: *Tracker, io: std.Io) void {
+         _ = self.backendKnownUncertain(io);
+     }
+diff --git a/src/fios/sdk_request_ownership.zig b/src/fios/sdk_request_ownership.zig
+new file mode 100644
+index 0000000..037b696
+--- /dev/null
++++ b/src/fios/sdk_request_ownership.zig
+@@ -0,0 +1,142 @@
++//! Optional trusted source-SDK host callback ownership. Local reference/TLS
++//! custody only, never all-client coverage, device completion or a wire API.
++const std = @import("std");
++const owners = @import("request_ownership.zig");
++pub const maximum_contexts = 4096;
++const maximum_depth = 64;
++const Context = struct { retained: owners.Retained };
++const Frame = struct { previous: ?owners.Token, group: ?[]const owners.Token, sequence: u64 };
++var state: std.atomic.Value(u8) = .init(0); // absent, configuring, ready; never reset
++var source_io: ?std.Io = null;
++var contexts: std.atomic.Value(u32) = .init(0);
++var next_scope: std.atomic.Value(u64) = .init(0);
++var failed: std.atomic.Value(bool) = .init(false);
++threadlocal var frames: [maximum_depth]Frame = undefined;
++threadlocal var depth: usize = 0;
++
++pub fn initialize(io: std.Io) !void {
++    if (state.cmpxchgStrong(0, 1, .acq_rel, .acquire) != null) return error.AlreadyConfigured;
++    source_io = io;
++    if (!owners.shared().initialized or failed.load(.acquire)) {
++        failed.store(true, .release);
++        owners.shared().fence(io);
++        return error.Unavailable;
++    }
++    state.store(2, .release);
++}
++fn fence() void {
++    failed.store(true, .release);
++    if (state.load(.acquire) == 2) owners.shared().fence(source_io.?);
++}
++pub const Diagnostic = struct { active_contexts: u32, uncertain: bool };
++pub fn diagnostic() Diagnostic {
++    return .{ .active_contexts = contexts.load(.acquire), .uncertain = failed.load(.acquire) };
++}
++
++// Called only by an immutable compiled SDK hook. A nil result outside an
++// attributed native scope is unavailable, not evidence of zero model work.
++pub export fn fios_native_request_owners_capture() ?*anyopaque {
++    if (state.load(.acquire) != 2 or failed.load(.acquire)) return null;
++    const io = source_io.?;
++    const retained = owners.retainCurrent(io) catch { fence(); return null; } orelse return null;
++    return createContext(retained);
++}
++fn createContext(retained: owners.Retained) ?*anyopaque {
++    var count = contexts.load(.acquire);
++    while (true) {
++        if (count >= maximum_contexts) {
++            // Retain the already-acquired original references on uncertainty.
++            // No age, queue count or local cleanup can refund a lost context.
++            fence(); return null;
++        }
++        if (contexts.cmpxchgWeak(count, count + 1, .acq_rel, .acquire)) |actual| count = actual else break;
++    }
++    const context = std.heap.c_allocator.create(Context) catch {
++        // Preserve original references even when no descriptor can allocate.
++        _ = contexts.fetchSub(1, .acq_rel);
++        fence();
++        return null;
++    };
++    context.* = .{ .retained = retained };
++    return @ptrCast(context);
++}
++fn sameToken(a: owners.Token, b: owners.Token) bool {
++    return a.slot == b.slot and a.sequence == b.sequence and std.mem.eql(u8, &a.instance, &b.instance);
++}
++fn contains(tokens: []const owners.Token, token: owners.Token) bool {
++    for (tokens) |value| if (sameToken(value, token)) return true;
++    return false;
++}
++// Immutable token comparison only: no IO, allocation, tracker/SDK lock or
++// inference. A missing current source is unavailable, never an empty set.
++pub export fn fios_native_request_owners_covers_current(raw: ?*anyopaque) c_int {
++    if (state.load(.acquire) != 2 or failed.load(.acquire)) return -1;
++    const context: *Context = @ptrCast(@alignCast(raw orelse return -1));
++    const held = context.retained.tokens[0..context.retained.count];
++    if (owners.current_group().*) |group| {
++        if (group.len == 0 or group.len > owners.capacity) return -1;
++        for (group) |token| if (!contains(held, token)) return 0;
++        return 1;
++    }
++    const token = owners.current().* orelse return -1;
++    return @intFromBool(contains(held, token));
++}
++// Buffer origins accumulate before submission. Keep the complete bounded
++// union, never only its most recent origin or a sampled aggregate count.
++pub export fn fios_native_request_owners_merge(first: ?*anyopaque, second: ?*anyopaque) ?*anyopaque {
++    if (state.load(.acquire) != 2 or failed.load(.acquire)) return null;
++    const left: *Context = @ptrCast(@alignCast(first orelse { fence(); return null; }));
++    const right: *Context = @ptrCast(@alignCast(second orelse { fence(); return null; }));
++    if (left.retained.tracker != owners.shared() or right.retained.tracker != owners.shared()) { fence(); return null; }
++    var tokens: [owners.capacity]owners.Token = undefined;
++    var count: usize = 0;
++    for ([_]*Context{ left, right }) |context| {
++        if (context.retained.count == 0 or context.retained.count > owners.capacity) { fence(); return null; }
++        for (context.retained.tokens[0..context.retained.count]) |token| {
++            if (contains(tokens[0..count], token)) continue;
++            if (count == tokens.len) { fence(); return null; }
++            tokens[count] = token;
++            count += 1;
++        }
++    }
++    const retained = owners.shared().retainTokens(source_io.?, tokens[0..count]) catch { fence(); return null; };
++    return createContext(retained);
++}
++pub export fn fios_native_request_owners_uncertain() void { fence(); }
++// Context addresses are private compiled-SDK values, never wire/model input.
++// The SDK owns their shared lifetime through the complete callback cleanup.
++pub export fn fios_native_request_owners_release(raw: ?*anyopaque) void {
++    const context: *Context = @ptrCast(@alignCast(raw orelse { fence(); return; }));
++    if (state.load(.acquire) != 2) { fence(); return; }
++    if (failed.load(.acquire)) return; // Quarantine original descriptor/references.
++    // Descriptor cleanup cannot retire original request references after an
++    // independently cached source fence. Check and release the whole group
++    // under the tracker's lock; do not invoke a backend probe from cleanup.
++    if (!context.retained.releaseIfCertain(source_io.?)) { fence(); return; }
++    std.heap.c_allocator.destroy(context);
++    _ = contexts.fetchSub(1, .acq_rel);
++}
++pub export fn fios_native_request_owners_enter(raw: ?*anyopaque) u64 {
++    if (state.load(.acquire) != 2 or failed.load(.acquire) or depth == maximum_depth) { fence(); return 0; }
++    const context: *Context = @ptrCast(@alignCast(raw orelse { fence(); return 0; }));
++    if (context.retained.tracker != owners.shared() or context.retained.count == 0 or context.retained.count > owners.capacity) { fence(); return 0; }
++    var sequence = next_scope.load(.acquire);
++    while (true) {
++        if (sequence == std.math.maxInt(u64)) { fence(); return 0; }
++        if (next_scope.cmpxchgWeak(sequence, sequence + 1, .acq_rel, .acquire)) |actual| sequence = actual else break;
++    }
++    sequence += 1;
++    frames[depth] = .{ .previous = owners.current().*, .group = owners.current_group().*, .sequence = sequence };
++    depth += 1;
++    owners.current().* = context.retained.tokens[0];
++    owners.current_group().* = context.retained.tokens[0..context.retained.count];
++    return sequence;
++}
++pub export fn fios_native_request_owners_leave(sequence: u64) c_int {
++    if (state.load(.acquire) != 2 or depth == 0 or sequence == 0 or frames[depth - 1].sequence != sequence) { fence(); return 1; }
++    const original = frames[depth - 1];
++    depth -= 1;
++    owners.current().* = original.previous;
++    owners.current_group().* = original.group;
++    return 0;
++}
+diff --git a/src/host/http/server.zig b/src/host/http/server.zig
+index 6b0c642..9923d6c 100644
+--- a/src/host/http/server.zig
++++ b/src/host/http/server.zig
+@@ -393,6 +393,17 @@ pub fn serve(
+     launch().configured_kv_quant = load_params.kv_quant_config;
+     defer launch().configured_kv_quant = null;
+ 
++    var fios_instance: [16]u8 = undefined;
++    std.Io.random(io, &fios_instance);
++    // Current host-only attribution is incomplete. The shared companion's
++    // historical serving default must not become a partial model policy here.
++    // Trusted startup only, before any current ingress or tracker operation.
++    fios_ownership.shared().primary_guard = false;
++    try fios_ownership.shared().initialize(io, fios_instance);
++    if (comptime @import("build_options").fios_source_sdk) {
++        try @import("../../fios/sdk_request_ownership.zig").initialize(io);
++        try fios_ownership.shared().enrollDiagnosticUncertaintyProbe(io, &fiosKnownSdkUncertain);
++    }
+     // ── Phase A1: spin up the scheduler. Its inference thread does the
+     //    Transformer/vision/drafter load, JIT compile, and warmup before
+     //    `Scheduler.init` returns. From this point on, mlx ops are bound
+@@ -412,13 +423,6 @@ pub fn serve(
+     var scheduler = try mlx_engine.start(allocator, io, load_params, max_concurrent);
+     defer scheduler.deinit();
+     startup.stop();
+-    var fios_instance: [16]u8 = undefined;
+-    std.Io.random(io, &fios_instance);
+-    // Current host-only attribution is incomplete. The shared companion's
+-    // historical serving default must not become a partial model policy here.
+-    // Trusted startup only, before any current ingress or tracker operation.
+-    fios_ownership.shared().primary_guard = false;
+-    try fios_ownership.shared().initialize(io, fios_instance);
+     const fios_bridge = try fios_control.Bridge.start(io, allocator, @import("build_options").version, null);
+     defer if (fios_bridge) |bridge| bridge.stop();
+     // The ordinary vendor path stays untracked unless the existing private
+@@ -990,3 +994,9 @@ test "idleEvictTickMs: sweeps well inside the window without spinning" {
+     try testing.expectEqual(@as(i64, 30_000), idleEvictTickMs(28_800_000));
+     try testing.expect(idleEvictTickMs(0) >= 1000);
+ }
++
++// Fixed metadata-only SDK getter; false is not completion or all-client proof.
++fn fiosKnownSdkUncertain() bool {
++    const Source = struct { extern "c" fn fios_current_sdk_known_uncertain() c_int; };
++    return Source.fios_current_sdk_known_uncertain() != 0;
++}

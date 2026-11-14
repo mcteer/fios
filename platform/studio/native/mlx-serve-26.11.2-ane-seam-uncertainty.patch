@@ -1,0 +1,353 @@
+diff --git a/src/engines/mlx/ane_prefill.zig b/src/engines/mlx/ane_prefill.zig
+index 94b2ac9..bfaf2d3 100644
+--- a/src/engines/mlx/ane_prefill.zig
++++ b/src/engines/mlx/ane_prefill.zig
+@@ -8,6 +8,7 @@ const mlx = @import("../../mlx/ffi.zig");
+ const model_mod = @import("../../sdk/config/model.zig");
+ const log = @import("../../sdk/util/log.zig");
+ const ane_offload = @import("../../sdk/ane/offload.zig");
++const source_guard = ane_offload.source_guard;
+ const materializedOwnedCopy = @import("../../mlx/array.zig").materializedOwnedCopy;
+ const totalMemBytes = @import("../../mlx/device.zig").totalMemBytes;
+ const attn256RandBf16 = @import("../../sdk/blocks/attention/attn256.zig").attn256RandBf16;
+@@ -66,7 +67,13 @@ pub const AneChanRest = struct {
+ /// plain GPU chain. Fixed shapes are an ANE constraint — the compiled
+ /// programs only accept exactly `eng.rows` rows.
+ pub fn denseMLPMaybeAne(self: *Transformer, x: mlx.mlx_array, dw: *const DenseMlpWeights, layer_idx: usize, is_prefill: bool, seq_len: c_int) !mlx.mlx_array {
+-    if (is_prefill) if (self.aneMlp(x, layer_idx, seq_len)) |y| return y;
++    try source_guard.requireCertain();
++    if (is_prefill) {
++        const candidate = self.aneMlp(x, layer_idx, seq_len);
++        try source_guard.requireCertain();
++        if (candidate) |y| return y;
++    }
++    try source_guard.requireCertain();
+     return self.denseMLP(x, dw);
+ }
+ 
+@@ -82,6 +89,7 @@ pub fn aneMlp(self: *Transformer, x: mlx.mlx_array, layer_idx: usize, seq_len: c
+     const rest = if (rests[layer_idx].mlp) |*m| m else return null;
+     // An ANE failure is never a request failure — whole chunk on GPU.
+     return self.denseMLPAneChannel(eng, x, rest, layer_idx) catch |err| {
++        if (source_guard.known()) return null;
+         log.warn("[ane] channel split failed on layer {d} ({s}) — GPU fallback\n", .{ layer_idx, @errorName(err) });
+         return null;
+     };
+@@ -92,7 +100,13 @@ pub fn aneMlp(self: *Transformer, x: mlx.mlx_array, layer_idx: usize, seq_len: c
+ /// full-width prefill chunk of a covered layer; everything else runs the
+ /// plain GPU projections.
+ pub fn gdnProjMaybeAne(self: *Transformer, x: mlx.mlx_array, la: *const LinearAttnWeights, layer_idx: usize, is_prefill: bool, seq_len: c_int) !GdnProj {
+-    if (is_prefill) if (self.aneGdnProj(x, layer_idx, seq_len)) |p| return p;
++    try source_guard.requireCertain();
++    if (is_prefill) {
++        const candidate = self.aneGdnProj(x, layer_idx, seq_len);
++        try source_guard.requireCertain();
++        if (candidate) |p| return p;
++    }
++    try source_guard.requireCertain();
+     return self.gdnProjGpu(x, la);
+ }
+ 
+@@ -107,6 +121,7 @@ pub fn aneGdnProj(self: *Transformer, x: mlx.mlx_array, layer_idx: usize, seq_le
+     const rest = &rests[layer_idx];
+     if (rest.gdn_qkv_w.ctx == null or rest.gdn_z_w.ctx == null) return null;
+     return self.gdnProjAneChannel(eng, x, rest, layer_idx) catch |err| {
++        if (source_guard.known()) return null;
+         log.warn("[ane] gdn channel split failed on layer {d} ({s}) — GPU fallback\n", .{ layer_idx, @errorName(err) });
+         return null;
+     };
+@@ -162,6 +177,7 @@ pub fn aneReadPlane(self: *Transformer, plane: [*]f16, width: c_int, rows: c_int
+ /// pack/kick/async/join discipline as the row split. null = a unit
+ /// failed: the caller recomputes the whole layer on the GPU.
+ pub fn denseMLPAneChannel(self: *Transformer, eng: *ane_offload.AnePrefill, x: mlx.mlx_array, rest: *const DenseMlpWeights, layer_idx: usize) !?mlx.mlx_array {
++    try source_guard.requireCertain();
+     try self.anePackUnitPlanes(eng, x);
+     eng.kickMlp(layer_idx);
+     var waited = false;
+@@ -171,6 +187,7 @@ pub fn denseMLPAneChannel(self: *Transformer, eng: *ane_offload.AnePrefill, x: m
+ 
+     // GPU rest-channel partial: build AND submit so it computes while
+     // the ANE runs.
++    try source_guard.requireCertain();
+     const y_gpu = try self.denseMLP(x, rest);
+     defer _ = mlx.mlx_array_free(y_gpu);
+     {
+@@ -182,6 +199,7 @@ pub fn denseMLPAneChannel(self: *Transformer, eng: *ane_offload.AnePrefill, x: m
+ 
+     const ok = eng.waitAll();
+     waited = true;
++    try source_guard.requireCertain();
+     // Failed eval on ANY unit: a subset of the partials is not an
+     // answer — the whole layer recomputes on the GPU from the original
+     // weights.
+@@ -220,6 +238,7 @@ pub fn gdnProjAneChannel(self: *Transformer, eng: *ane_offload.AnePrefill, x: ml
+     const kq: c_int = @intCast(eng.gdn_qkv_out);
+     const kz: c_int = @intCast(eng.gdn_z_out);
+     const out_w: c_int = kq + kz;
++    try source_guard.requireCertain();
+     try self.anePackUnitPlanes(eng, x);
+     eng.kickGdn(layer_idx);
+     var waited = false;
+@@ -227,6 +246,7 @@ pub fn gdnProjAneChannel(self: *Transformer, eng: *ane_offload.AnePrefill, x: ml
+         _ = eng.waitAll();
+     };
+ 
++    try source_guard.requireCertain();
+     const gpu = try self.gdnProjArrays(x, rest.gdn_qkv_w, rest.gdn_qkv_s, rest.gdn_qkv_b, rest.gdn_z_w, rest.gdn_z_s, rest.gdn_z_b);
+     defer _ = mlx.mlx_array_free(gpu.qkv);
+     defer _ = mlx.mlx_array_free(gpu.z);
+@@ -240,6 +260,7 @@ pub fn gdnProjAneChannel(self: *Transformer, eng: *ane_offload.AnePrefill, x: ml
+ 
+     const ok = eng.waitAll();
+     waited = true;
++    try source_guard.requireCertain();
+     if (!ok) return null;
+     // Unit u holds channels [u*kq, (u+1)*kq) of qkv and [u*kz, (u+1)*kz)
+     // of z, so the units' slices are contiguous and each tensor
+@@ -540,7 +561,7 @@ pub fn buildAnePrefill(
+         if (!ane_offload.gateAllows(total_mem, resident, bill, headroom)) {
+             const gib = 1024 * 1024 * 1024;
+             log.warn("[ane] --ane-prefill: the offload bills ~{d:.1} GB (int8 copies + I/O planes{s}) on top of {d:.1} GB resident + {d:.1} GB headroom (KV for {d} tokens + the chunk-{d} prefill envelope + baseline), exceeding {d} GB total RAM — disabled\n", .{
+-                                @as(f64, @floatFromInt(bill)) / gib,
++                @as(f64, @floatFromInt(bill)) / gib,
+                 " + GPU rest slices",
+                 @as(f64, @floatFromInt(resident)) / gib,
+                 @as(f64, @floatFromInt(headroom)) / gib,
+diff --git a/src/sdk/ane/offload.zig b/src/sdk/ane/offload.zig
+index 5917582..be925e0 100644
+--- a/src/sdk/ane/offload.zig
++++ b/src/sdk/ane/offload.zig
+@@ -27,6 +27,7 @@
+ //! (1/16 .. x16) down-conv wrap.
+ 
+ const std = @import("std");
++pub const source_guard = @import("source_guard.zig");
+ const env = @import("../../env.zig");
+ const builtin = @import("builtin");
+ const log = @import("../util/log.zig");
+@@ -828,14 +829,17 @@ pub const Unit = struct {
+     }
+ 
+     pub fn inputBase(self: *Unit) ?[*]f16 {
++        if (source_guard.known()) return null;
+         return msv_ane_plane_base(self.plane_in);
+     }
+ 
+     pub fn mlpOutputBase(self: *Unit) ?[*]f16 {
++        if (source_guard.known()) return null;
+         return msv_ane_plane_base(self.plane_mlp_out);
+     }
+ 
+     pub fn gdnOutputBase(self: *Unit) ?[*]f16 {
++        if (source_guard.known()) return null;
+         return msv_ane_plane_base(self.plane_gdn_out);
+     }
+ 
+@@ -844,6 +848,15 @@ pub const Unit = struct {
+     pub fn kick(self: *Unit, ref: ProgramRef) void {
+         self.mu.lockUncancelable(self.parent.io);
+         std.debug.assert(self.state == .idle);
++        if (source_guard.known()) {
++            // A local refusal still acknowledges this kick so wait() cannot
++            // hang. It neither submits native work nor clears the fence.
++            self.eval_ok = false;
++            self.state = .done;
++            self.cond.broadcast(self.parent.io);
++            self.mu.unlock(self.parent.io);
++            return;
++        }
+         self.pending_bank = ref.bank;
+         self.pending_proc = ref.proc;
+         self.state = .requested;
+@@ -875,12 +888,13 @@ pub const Unit = struct {
+             const proc = self.pending_proc;
+             self.mu.unlock(self.parent.io);
+ 
+-            const ok = msv_ane_mlp_eval(bank, proc, &self.eval_err, self.eval_err.len) != 0;
++            const blocked = source_guard.known();
++            const ok = !blocked and msv_ane_mlp_eval(bank, proc, &self.eval_err, self.eval_err.len) != 0;
+             if (ok) {
+                 _ = self.evals_ok.fetchAdd(1, .monotonic);
+             } else {
+                 _ = self.evals_failed.fetchAdd(1, .monotonic);
+-                log.warn("[ane] unit {d} eval failed: {s}\n", .{ self.instance, std.mem.sliceTo(&self.eval_err, 0) });
++                if (!blocked) log.warn("[ane] unit {d} eval failed: {s}\n", .{ self.instance, std.mem.sliceTo(&self.eval_err, 0) });
+             }
+ 
+             self.mu.lockUncancelable(self.parent.io);
+@@ -1290,6 +1304,7 @@ pub const AnePrefill = struct {
+ /// fp16's normal range and the graph computes fp16 anyway. Blocks on the eval:
+ /// the caller is the sole MLX caller and the plane must be filled before kick.
+ pub fn packPlane(s: mlx.mlx_stream, x_rows: mlx.mlx_array, plane: [*]f16) !void {
++    try source_guard.requireCertain();
+     const sh = mlx.getShape(x_rows); // [1, R, W]
+     const rows = sh[1];
+     const width = sh[2];
+@@ -1313,12 +1328,14 @@ pub fn packPlane(s: mlx.mlx_stream, x_rows: mlx.mlx_array, plane: [*]f16) !void
+     try mlx.check(mlx.mlx_array_eval(x_flat));
+     const src = mlx.mlx_array_data_float16(x_flat) orelse return error.AnePackReadFailed;
+     const count: usize = @intCast(width * rows);
++    try source_guard.requireCertain();
+     @memcpy(plane[0..count], src[0..count]);
+ }
+ 
+ /// Read an ANE output plane ([width][R] fp16 channel-major) back as a
+ /// [1, R, width] tensor in `dtype`.
+ pub fn readPlane(s: mlx.mlx_stream, plane: [*]f16, width: c_int, rows: c_int, dtype: mlx.mlx_dtype) !mlx.mlx_array {
++    try source_guard.requireCertain();
+     const t_shape = [_]c_int{ width, rows };
+     // mlx_array_new_data COPIES at construction, so the plane is free for the
+     // next program the moment this returns.
+@@ -1400,12 +1417,14 @@ pub fn dequantToHostF32(
+ /// moving it to a worker, or launching the ANE from the Metal completion
+ /// callback, destroyed device overlap (a fused layer 47.5 -> 71.0 ms).
+ pub fn packUnitPlanes(s: mlx.mlx_stream, eng: *AnePrefill, x: mlx.mlx_array) !void {
++    try source_guard.requireCertain();
+     const first = eng.units[0].inputBase() orelse return error.AnePlaneMissing;
+     try packPlane(s, x, first);
+     if (eng.units.len == 1) return;
+     const count: usize = @as(usize, eng.hidden) * eng.rows;
+     for (eng.units[1..]) |*u| {
+         const plane = u.inputBase() orelse return error.AnePlaneMissing;
++        try source_guard.requireCertain();
+         @memcpy(plane[0..count], first[0..count]);
+     }
+ }
+@@ -1432,6 +1451,7 @@ pub fn mediaTilePlan(seq: u32, t: u32, share: f32) TilePlan {
+ /// the rest run the full GPU MLP `ctx.full`. A failed eval recomputes the
+ /// block on the GPU: a subset of the partials is not an answer.
+ pub fn mediaMlp(s: mlx.mlx_stream, eng: *AnePrefill, layer: usize, what: []const u8, x: mlx.mlx_array, ctx: anytype) !mlx.mlx_array {
++    try source_guard.requireCertain();
+     const shape = mlx.getShape(x);
+     const w: c_int = @intCast(eng.hidden);
+     var numel: c_int = 1;
+@@ -1463,6 +1483,7 @@ pub fn mediaMlp(s: mlx.mlx_stream, eng: *AnePrefill, layer: usize, what: []const
+         _ = eng.waitAll();
+     };
+     // Every GPU piece goes out before the tile loop so it overlaps all of it.
++    try source_guard.requireCertain();
+     const y_gpu = try ctx.complement(head);
+     defer _ = mlx.mlx_array_free(y_gpu);
+     var tail_out: ?mlx.mlx_array = null;
+@@ -1492,7 +1513,8 @@ pub fn mediaMlp(s: mlx.mlx_stream, eng: *AnePrefill, layer: usize, what: []const
+     for (0..n) |i| {
+         const ok = eng.waitAll();
+         in_flight = false;
+-        if (!ok) return ctx.full(x);
++        try source_guard.requireCertain();
++        if (!ok) return source_guard.fallback(ctx, x);
+         for (eng.units, outs[0..units]) |*u, v| {
+             const plane = u.mlpOutputBase() orelse return error.AnePlaneMissing;
+             // COPIES, so the plane is free for the next tile on return.
+@@ -1599,10 +1621,12 @@ fn packTiles(s: mlx.mlx_stream, head: mlx.mlx_array, n: c_int, t: c_int, w: c_in
+ }
+ 
+ fn fillInputs(eng: *AnePrefill, tile: []const f16) !void {
++    try source_guard.requireCertain();
+     var last: ?[*]f16 = null;
+     for (eng.units) |*u| {
+         const plane = u.inputBase() orelse return error.AnePlaneMissing;
+         if (plane == last) continue; // shared input surface
++        try source_guard.requireCertain();
+         @memcpy(plane[0..tile.len], tile);
+         last = plane;
+     }
+diff --git a/src/sdk/ane/source_guard.zig b/src/sdk/ane/source_guard.zig
+new file mode 100644
+index 0000000..1df865b
+--- /dev/null
++++ b/src/sdk/ane/source_guard.zig
+@@ -0,0 +1,49 @@
++//! Negative-only private ANE seam fence. It never issues native completion.
++const options = @import("build_options");
++extern fn msv_ane_source_uncertainty() u32;
++pub fn known() bool {
++    if (!@hasDecl(options, "fios_source_ane")) return false;
++    if (!options.fios_source_ane) return false;
++    return msv_ane_source_uncertainty() != 0;
++}
++pub fn requireCertain() error{FiosAneSourceUncertain}!void {
++    if (known()) return error.FiosAneSourceUncertain;
++}
++pub fn fallback(ctx: anytype, x: anytype) !@typeInfo(@TypeOf(ctx.full(x))).error_union.payload {
++    return fallbackWith(known, ctx, x);
++}
++pub fn fallbackWith(comptime negative: fn () bool, ctx: anytype, x: anytype) !@typeInfo(@TypeOf(ctx.full(x))).error_union.payload {
++    if (negative()) return error.FiosAneSourceUncertain;
++    return ctx.full(x);
++}
++
++// Ordinary metadata callback spy: no model, ANE API or GPU operation.
++const std = @import("std");
++const FallbackSpy = struct {
++    calls: *usize,
++    pub fn full(self: @This(), x: usize) !usize {
++        self.calls.* += 1;
++        return x + 1;
++    }
++};
++fn metadataBlocked() bool {
++    return true;
++}
++fn metadataHealthy() bool {
++    return false;
++}
++test "fios current ANE seam refuses fallback after independent uncertainty" {
++    var calls: usize = 0;
++    const result = fallbackWith(metadataBlocked, FallbackSpy{ .calls = &calls }, @as(usize, 3));
++    if (result) |_| {
++        std.debug.print("FIO_CURRENT_ANE_FALLBACK_AFTER_KNOWN_UNCERTAINTY\n", .{});
++        try std.testing.expect(false);
++    } else |err| try std.testing.expectEqual(error.FiosAneSourceUncertain, err);
++    try std.testing.expectEqual(@as(usize, 0), calls);
++}
++test "fios current ANE seam preserves legacy healthy fallback callback" {
++    var calls: usize = 0;
++    const result = try fallbackWith(metadataHealthy, FallbackSpy{ .calls = &calls }, @as(usize, 3));
++    try std.testing.expectEqual(@as(usize, 4), result);
++    try std.testing.expectEqual(@as(usize, 1), calls);
++}
+diff --git a/src/sdk/bases/block.zig b/src/sdk/bases/block.zig
+index 43a906f..b7e976c 100644
+--- a/src/sdk/bases/block.zig
++++ b/src/sdk/bases/block.zig
+@@ -5,6 +5,7 @@
+ const std = @import("std");
+ const ops = @import("../../mlx/ops.zig");
+ const abi = @import("../../abi/plugin.zig");
++const ane_source_guard = @import("../ane/source_guard.zig");
+ 
+ pub const Array = ops.Array;
+ pub const Graph = ops.Graph;
+@@ -124,22 +125,28 @@ pub const Ctx = struct {
+     }
+     /// This layer's dense MLP of `x` as the engine's offload computed it, owned by `g`; null = the block computes it.
+     pub fn offloadMlp(c: *const Ctx, x: Array) !?Array {
++        try ane_source_guard.requireCertain();
+         const o = c.offload orelse return null;
+         var y: abi.Array = .{};
+-        if (!o.mlp(o.ctx, c.layer, .{ .ctx = x.ctx }, &y)) return null;
++        const accepted = o.mlp(o.ctx, c.layer, .{ .ctx = x.ctx }, &y);
++        try ane_source_guard.requireCertain();
++        if (!accepted) return null;
+         return try c.g.adopt(.{ .ctx = y.ctx });
+     }
+     /// This layer's GatedDeltaNet q|k|v and z projections of `x` as the engine's offload computed them, owned by `g`.
+     pub fn offloadGdn(c: *const Ctx, x: Array) !?[2]Array {
++        try ane_source_guard.requireCertain();
+         const o = c.offload orelse return null;
+         var qkv: abi.Array = .{};
+         var z: abi.Array = .{};
+-        if (!o.gdn_proj(o.ctx, c.layer, .{ .ctx = x.ctx }, &qkv, &z)) return null;
++        const accepted = o.gdn_proj(o.ctx, c.layer, .{ .ctx = x.ctx }, &qkv, &z);
++        try ane_source_guard.requireCertain();
++        if (!accepted) return null;
+         return .{ try c.g.adopt(.{ .ctx = qkv.ctx }), try c.g.adopt(.{ .ctx = z.ctx }) };
+     }
+     /// `x` as `dt`, cast once per forward.
+     pub fn castOnce(c: *const Ctx, x: Array, dt: ops.Dtype) !Array {
+-        const key: Memo.Key = .{ .what = .cast, .n = .{ @intCast(@intFromPtr(x.ctx)), @intFromEnum(dt), 0, 0, 0, 0, 0 } };
++        const key: Memo.Key = .{ .what = .cast, .n = .{ @intCast(@intFromPtr(x.ctx)), @backingInt(dt), 0, 0, 0, 0, 0 } };
+         if (c.recall(key)) |m| return m;
+         return c.remember(key, try c.g.astype(x, dt));
+     }

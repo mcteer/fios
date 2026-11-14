@@ -1,0 +1,60 @@
+diff --git a/scripts/build-mlx.sh b/scripts/build-mlx.sh
+index cc426ca..23c3347 100755
+--- a/scripts/build-mlx.sh
++++ b/scripts/build-mlx.sh
+@@ -44,16 +44,19 @@ MLXC_PATCH="$REPO_ROOT/patches/mlxc-gather-qmm-global-scale.patch"
+ PATCH_SHA="$(shasum "$MLXC_PATCH" | cut -c1-12)"
+ WANT="mlx=$MLX_SHA mlxc=$MLXC_SHA patch=$PATCH_SHA target=$DEPLOYMENT_TARGET"
+ 
+-# Idempotent: skip when the staged build already matches the pinned SHAs.
+-if [ -f "$STAMP" ] && [ -f "$STAGE/lib/libmlx.dylib" ] \
+-   && [ -f "$STAGE/lib/libmlxc.dylib" ] && [ -f "$STAGE/lib/mlx.metallib" ]; then
+-  if [ "$(cat "$STAMP")" = "$WANT" ]; then
+-    echo "[build-mlx] lib/mlx already at ($WANT) — nothing to do"
+-    exit 0
+-  fi
+-  echo "[build-mlx] staged '$(cat "$STAMP")' != '$WANT' — rebuilding"
++# Never restore tracked dependency files: source overlays are reviewed inputs.
++# Accept an unapplied patch or one already present, retaining disjoint local edits.
++MLXC_APPLY=false
++if git -C "$MLXC_SRC" apply --check -p1 "$MLXC_PATCH" 2>/dev/null; then
++  MLXC_APPLY=true
++elif ! git -C "$MLXC_SRC" apply --reverse --check -p1 "$MLXC_PATCH" 2>/dev/null; then
++  die "mlx-c patch conflicts with source inputs; no files were reset"
+ fi
+ 
++# The historical stamp omits source overlays and toolchain identity. Keep it
++# diagnostic only. Always configure/build so CMake checks current inputs; a
++# matching stamp cannot skip validation or authorize reuse of stale artifacts.
++
+ # ── Toolchain preflight: every one of these failing would otherwise surface
+ # as a silently NAX-less metallib, not an error. ──────────────────────────────
+ xcrun -sdk macosx metal --version >/dev/null 2>&1 \
+@@ -67,7 +70,12 @@ if [ "$SDK_MAJOR" -lt 26 ] || { [ "$SDK_MAJOR" -eq 26 ] && [ "${SDK_MINOR:-0}" -
+ fi
+ echo "[build-mlx] SDK $SDK_VERSION, deployment target $DEPLOYMENT_TARGET, $WANT"
+ 
+-NCPU="$(sysctl -n hw.ncpu)"
++NCPU="${MLX_BUILD_JOBS:-2}"
++case "$NCPU" in 1|2) ;; *) die "MLX_BUILD_JOBS must be 1 or 2" ;; esac
++
++if [ "$MLXC_APPLY" = true ]; then
++  git -C "$MLXC_SRC" apply -p1 "$MLXC_PATCH"
++fi
+ 
+ # ── mlx (C++ core + metallib) ────────────────────────────────────────────────
+ cmake -S "$MLX_SRC" -B "$BUILD_ROOT/mlx" \
+@@ -81,12 +89,7 @@ cmake --build "$BUILD_ROOT/mlx" -j "$NCPU"
+ cmake --install "$BUILD_ROOT/mlx" >/dev/null
+ 
+ # ── mlx-c against the staged mlx (same pairing brew uses: USE_SYSTEM_MLX) ────
+-# MLX 0.32.3's gather_qmm takes a global_scale before sorted_indices; the
+-# pinned mlx-c predates it (the same patch the Linux build applies). The files
+-# the patch touches are reset first, so an edited patch replaces the old one;
+-# local edits anywhere else in the submodule are kept.
+-git -C "$MLXC_SRC" checkout -- $(git -C "$MLXC_SRC" apply --numstat -p1 "$MLXC_PATCH" | cut -f3)
+-git -C "$MLXC_SRC" apply -p1 "$MLXC_PATCH"
++# The patch was checked before any build and applied without resetting source.
+ cmake -S "$MLXC_SRC" -B "$BUILD_ROOT/mlxc" \
+   -DCMAKE_BUILD_TYPE=Release \
+   -DCMAKE_OSX_DEPLOYMENT_TARGET="$DEPLOYMENT_TARGET" \

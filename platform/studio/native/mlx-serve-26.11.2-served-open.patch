@@ -1,0 +1,150 @@
+diff --git a/src/engines/mlx/runtime/engine_load.zig b/src/engines/mlx/runtime/engine_load.zig
+index 6dab720..08c440c 100644
+--- a/src/engines/mlx/runtime/engine_load.zig
++++ b/src/engines/mlx/runtime/engine_load.zig
+@@ -139,7 +139,11 @@ pub fn aneOpen(sch: *Scheduler, params: anytype) !bool {
+         .model_type = params.config.model_type,
+         .max_concurrent = params.ane_slots,
+         .settings_json = settings,
+-    }, &params.entry.load_progress, &sch.engine_gauges, sch.metrics) catch {
++    }, &params.entry.load_progress, &sch.engine_gauges, sch.metrics) catch |err| {
++        // Ordinary unsupported ANE still declines as before. Independent
++        // uncertainty cannot dispatch the same load into another backend.
++        if (@import("../../../host/registry/registry.zig").cleanupUncertain(sch.io)) return error.NativeCleanupUncertain;
++        if (err == error.NativeCleanupUncertain) return err;
+         log.err("[ane] {s} not loaded on the Neural Engine; serving it on the GPU\n", .{params.model_dir});
+         return false;
+     };
+diff --git a/src/host/engines/served.zig b/src/host/engines/served.zig
+index 0c37e7f..65ddecf 100644
+--- a/src/host/engines/served.zig
++++ b/src/host/engines/served.zig
+@@ -107,8 +107,20 @@ pub const Served = struct {
+     /// Opens `kind` on `spec`; a refusal is the engine's own error by name (`OpenError`), logged.
+     pub fn open(gpa: std.mem.Allocator, kind: Kind, spec: Spec, progress: *load_progress.Progress, gauges: *Gauges, metrics: ?*metrics_mod.Metrics) !*Served {
+         const t = table(kind) orelse return error.EngineUnavailable;
++        return openWithTable(gpa, kind, t, spec, progress, gauges, metrics);
++    }
++
++    // The production caller selects its existing fixed table above; a private
++    // helper also lets ordinary metadata tests exercise the exact open body.
++    fn openWithTable(gpa: std.mem.Allocator, kind: Kind, t: *const abi.Engine, spec: Spec, progress: *load_progress.Progress, gauges: *Gauges, metrics: ?*metrics_mod.Metrics) !*Served {
++        const io = std.Io.Threaded.global_single_threaded.io();
++        const cleanup = @import("../../fios/current_cleanup_uncertainty.zig");
++        if (cleanup.known(io, build_options.fios_source_sdk, build_options.llama_engine)) return error.NativeCleanupUncertain;
+         const s = try gpa.create(Served);
+-        errdefer gpa.destroy(s);
++        // The callback receives &s.host. An uncertain open cannot prove that
++        // reference unused, even if no handle was returned. Retain the shell;
++        // a returned/partially initialized handle is never reusable here.
++        errdefer if (!cleanup.known(io, build_options.fios_source_sdk, build_options.llama_engine)) gpa.destroy(s);
+         s.* = .{
+             .gpa = gpa,
+             .kind = kind,
+@@ -132,10 +144,15 @@ pub const Served = struct {
+             .host = &s.host,
+         };
+         var v: abi.Verdict = .{};
+-        s.handle = t.open(&o, &s.info, &v) orelse {
++        const opened = t.open(&o, &s.info, &v);
++        if (opened) |handle| s.handle = handle;
++        // Inspect independent evidence before publishing success, reading
++        // backend-owned info/verdict strings, or invoking another destructor.
++        if (cleanup.known(io, build_options.fios_source_sdk, build_options.llama_engine)) return error.NativeCleanupUncertain;
++        if (opened == null) {
+             log.err("[{s}] engine open failed: {s}\n", .{ @tagName(kind), abi.items(u8, v.why) });
+             return openError(abi.items(u8, v.why));
+-        };
++        }
+         log.info("[{s}] {s}\n", .{ @tagName(kind), abi.items(u8, s.info.startup) });
+         return s;
+     }
+@@ -384,3 +401,88 @@ test "fios current served close retains callback uncertainty without replay" {
+         }
+     }
+ }
++
++test "fios current served open refuses uncertainty before publishing its wrapper" {
++    const io = std.testing.io;
++    const page = std.heap.page_allocator;
++    const owners = @import("../../fios/request_ownership.zig");
++    const fake = @import("../../testing/fake_engine.zig");
++    owners.shared().primary_guard = false;
++    try owners.shared().initialize(io, @splat(207));
++    const Trace = struct {
++        wrapper: usize = 0,
++        wrapper_freed: bool = false,
++        allocations: usize = 0,
++        fn alloc(raw: *anyopaque, n: usize, alignment: std.mem.Alignment, ret: usize) ?[*]u8 {
++            const self: *@This() = @ptrCast(@alignCast(raw));
++            self.allocations += 1;
++            return std.heap.page_allocator.rawAlloc(n, alignment, ret);
++        }
++        fn free(raw: *anyopaque, bytes: []u8, alignment: std.mem.Alignment, ret: usize) void {
++            const self: *@This() = @ptrCast(@alignCast(raw));
++            if (@intFromPtr(bytes.ptr) == self.wrapper) self.wrapper_freed = true;
++            std.heap.page_allocator.rawFree(bytes, alignment, ret);
++        }
++        const vtable: std.mem.Allocator.VTable = .{ .alloc = alloc, .resize = std.mem.Allocator.noResize, .remap = std.mem.Allocator.noRemap, .free = free };
++        fn allocator(self: *@This()) std.mem.Allocator { return .{ .ptr = self, .vtable = &vtable }; }
++    };
++    const Probe = struct {
++        var current: ?*@This() = null;
++        io: std.Io,
++        trace: *Trace,
++        unknown: bool,
++        opens: usize = 0,
++        closes: usize = 0,
++        host: ?*const abi.Host = null,
++        fn open(o: *const abi.Open, info: *abi.Info, _: *abi.Verdict) callconv(.c) ?*anyopaque {
++            const self = current.?;
++            self.opens += 1;
++            self.host = o.host;
++            self.trace.wrapper = @intFromPtr(o.host.ctx);
++            info.* = std.mem.zeroes(abi.Info);
++            if (self.unknown) owners.shared().fence(self.io);
++            return self;
++        }
++        fn close(raw: *anyopaque) callconv(.c) void {
++            const self: *@This() = @ptrCast(@alignCast(raw));
++            self.closes += 1;
++        }
++    };
++    const engine_table = try page.create(abi.Engine);
++    engine_table.* = fake.own_thread;
++    engine_table.open = Probe.open;
++    engine_table.close = Probe.close;
++    for ([_]bool{ false, true }) |unknown| {
++        const trace = try page.create(Trace);
++        trace.* = .{};
++        const probe = try page.create(Probe);
++        probe.* = .{ .io = io, .trace = trace, .unknown = unknown };
++        Probe.current = probe;
++        const progress = try page.create(load_progress.Progress);
++        progress.* = .{};
++        const gauges = try page.create(Gauges);
++        gauges.* = .{};
++        const result = Served.openWithTable(trace.allocator(), .llama, engine_table, .{ .model_dir = "/fixture/no-model", .model_type = "fixture", .settings_json = "{}" }, progress, gauges, null);
++        if (unknown) {
++            if (result) |_| {
++                std.debug.print("FIO_CURRENT_SERVED_PUBLISHED_UNCERTAIN_OPEN\n", .{});
++                return error.TestExpectedError;
++            } else |err| try std.testing.expectEqual(error.NativeCleanupUncertain, err);
++            try std.testing.expect(!trace.wrapper_freed and probe.opens == 1 and probe.closes == 0);
++            const host_wrapper: *Served = @ptrCast(@alignCast(probe.host.?.ctx));
++            try std.testing.expect(host_wrapper.handle == @as(*anyopaque, @ptrCast(probe)));
++            const before = trace.allocations;
++            try std.testing.expectError(error.NativeCleanupUncertain, Served.openWithTable(trace.allocator(), .llama, engine_table, .{ .model_dir = "/fixture/no-model" }, progress, gauges, null));
++            try std.testing.expectEqual(before, trace.allocations);
++            try std.testing.expectEqual(@as(usize, 1), probe.opens);
++        } else {
++            const engine = try result;
++            try std.testing.expect(engine.tryClose());
++            try std.testing.expect(trace.wrapper_freed and probe.opens == 1 and probe.closes == 1);
++            page.destroy(probe);
++            page.destroy(progress);
++            page.destroy(gauges);
++            page.destroy(trace);
++        }
++    }
++}
