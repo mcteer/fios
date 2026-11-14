@@ -849,3 +849,11 @@ Existing dependency source controls (private development data only):
 ```
 
 The first command requires the exact pinned compiler/CMake/SDK, builds with two jobs in fresh private data, compares selected source bytes before/after and runs model-free defaults/CPU batch ABI controls. The second executes the original TP service function with Foundation event fixtures, first reproducing the original missing-context assertion, then testing corrected modeled and actual host callback composition in Debug/optimized modes. It never creates Metal objects or a transport/RDMA connection. Its actual-host CPU profile explicitly disables ANE; full server and native TP production are separate checks. Neither command installs or activates anything, invokes a model, supplies all-client/native terminal authority or authorizes Studio acceptance. Preserve failed/setup receipts and distinguish selected-input observations from whole-native provenance.
+
+SDK callback scope compatibility can run without any native SDK or model:
+
+```sh
+.venv/bin/python -I -B scripts/check-platform-current-metal-callback.py --mock
+```
+
+This CI mode compiles exact previous/current callback helpers with modeled CPU ownership metadata; baseline error cases must fail with their explicit markers and corrected cases pass. It is compatibility evidence only. The separate `--isolated` source mode additionally requires the exact original/candidate SDK trees, current host sources, pinned Zig and an independently reviewed library digest; it checks actual SDK scope/host callback composition using modeled capture holders, never the real Metal producer. Use `--help` for its exact inputs. Neither mode provides native terminality, all-client coverage or installation/admission authority.

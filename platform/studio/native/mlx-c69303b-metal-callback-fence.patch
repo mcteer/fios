@@ -1,0 +1,13 @@
+--- a/mlx/backend/metal/device.cpp
++++ b/mlx/backend/metal/device.cpp
+@@ -52,7 +52,9 @@
+     try { work(); }
+     catch (const std::exception& failure) { record(failure.what()); }
+     catch (...) { record("Native Metal callback failed"); }
+-    cleanup();
++    if (error.valid()) scope.fence();
++    try { cleanup(); }
++    catch (...) { scope.fence(); throw; }
+   } catch (const std::exception& failure) {
+     record(failure.what());fios_metal_capture_end(capture, true);
+   } catch (...) {
