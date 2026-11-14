@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
+import {readFileSync} from 'node:fs';
 import {nativeReviewIntent,nativeReviewHTTPFailure,nativeReviewJSON,nativeReviewActivity,nativeReviewModelInputs,nativeReviewLineage,nativeReviewComponents} from '../scripts/lib/platform-native-review-intent.mjs';
 test('native review JSON is bounded while reading, before parsing',async()=>{
  assert.deepEqual(await nativeReviewJSON(new Response('{"ok":true}'),11),{ok:true});
@@ -146,5 +147,38 @@ test('source SDK model preparation requires the matched C++ compatibility record
  nativeReviewModelInputs({mlx_source_dependency:dependency,system_cxx:cxx});
  for(const system_cxx of [null,{}, {...cxx,version:2},{...cxx,sdk:'27.0'},{...cxx,callback_error_controls:[]},{...cxx,callback_error_controls:['Debug','Debug']},{...cxx,scope:'mapped_runtime_attestation'},{...cxx,declared_inputs:{}},{...cxx,declared_inputs:{...cxx.declared_inputs,[files[0]]:'invalid'}}]){
   assert.throws(()=>nativeReviewModelInputs({mlx_source_dependency:dependency,system_cxx}),/C\+\+/);
+ }
+});
+
+function currentCxxMetadata(){
+ const digest=file=>createHash('sha256').update(readFileSync(new URL('../'+file,import.meta.url))).digest('hex');
+ const source='/private/tmp/fixture/current-source',sdk='/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk';
+ const inputs=[sdk+'/usr/lib/libc++.1.tbd',...['__config','__config_site','cstdint','memory','functional','optional','stdexcept','typeinfo','exception'].map(name=>sdk+'/usr/include/c++/v1/'+name)];
+ const patch=digest('platform/studio/native/mlx-c69303b-owner-uncertainty.patch');
+ const cxx={version:1,scope:'current_build_helper_CPU_callback_compatibility_not_native_authority',source,
+  library_sha256:'b'.repeat(64),config_sha256:'a'.repeat(64),helper_sha256:digest('platform/studio/native/current_system_cxx_build.zig.fixture'),
+  fixture_sha256:digest('platform/studio/native/mlx_cxx_callback_error_test.cpp'),runner_sha256:digest('scripts/check-platform-current-cxx.mjs'),sdk:'27.2',
+  selected_sdk_inputs:Object.fromEntries(inputs.map(file=>[file,'a'.repeat(64)])),source_patch_sha256:patch,
+  results:['Debug','ReleaseFast'].map(mode=>({mode,build_status:0,build_signal:null,run_status:0,run_signal:null,passed:true})),
+  models:0,inference:false,source_fixture_only:true,installed:false,activation:false,native_authority:false,whole_native_provenance:false,declared_inputs_unchanged:true};
+ const dependency={source_fixture_only:true,native_authority:false,sdk:'27.2',source:source+'/lib/mlx-src',patch_sha256:patch,
+  library_inputs:{'libmlx.dylib':{sha256:cxx.library_sha256}},features:{safetensors:true}};
+ return {native_base:'4e231ceebe63308cc038117d40b9f9b64bd0372e',mlx_source_dependency:dependency,system_cxx:cxx};
+}
+test('current source CPU compatibility metadata is accepted only for its own dependency generation',()=>{
+ const value=currentCxxMetadata();nativeReviewModelInputs(value);
+ assert.throws(()=>nativeReviewModelInputs({...value,native_base:'046b647686419df06c6c7132fb1d15d76185c3e5'}),/C\+\+/);
+ assert.throws(()=>nativeReviewModelInputs({...value,mlx_source_dependency:{...value.mlx_source_dependency,source:'/private/tmp/other/lib/mlx-src'}}),/C\+\+/);
+ assert.throws(()=>nativeReviewModelInputs({...value,mlx_source_dependency:{...value.mlx_source_dependency,library_inputs:{'libmlx.dylib':{sha256:'c'.repeat(64)}}}}),/C\+\+/);
+});
+test('current CPU compatibility declarations cannot promote authority or omit a successful mode',()=>{
+ for(const change of [v=>v.system_cxx.native_authority=true,v=>v.system_cxx.activation=true,v=>v.system_cxx.installed=true,
+  v=>v.system_cxx.whole_native_provenance=true,v=>v.system_cxx.models=1,v=>v.system_cxx.inference=true,
+  v=>v.system_cxx.declared_inputs_unchanged=false,v=>v.system_cxx.enrolled=true,v=>v.system_cxx.version=2,
+  v=>v.system_cxx.helper_sha256='a'.repeat(64),v=>v.system_cxx.runner_sha256='a'.repeat(64),
+  v=>v.system_cxx.fixture_sha256='a'.repeat(64),v=>v.system_cxx.source_patch_sha256='a'.repeat(64),
+  v=>v.system_cxx.selected_sdk_inputs={},v=>v.system_cxx.results.pop(),v=>v.system_cxx.results[1].passed=false,
+  v=>v.system_cxx.results[1].mode='Debug',v=>v.system_cxx.results[0].run_signal='SIGABRT',v=>v.system_cxx.results[0].build_status=null]){
+  const value=currentCxxMetadata();change(value);assert.throws(()=>nativeReviewModelInputs(value),/C\+\+/);
  }
 });

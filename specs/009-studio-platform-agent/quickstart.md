@@ -828,3 +828,14 @@ node scripts/check-platform-current-cxx.mjs --isolated --source /private/tmp/REV
 ```
 
 This checks source/tool/library bytes before creating a two-mode CPU callback fixture, including cyclic imports and repeated helper application. Each compile uses two jobs/180s; each IP-denied callback process has10s. The existing ordinary SDK callback error must reach its error handler. Receipts/logs stay in the reported private directory. This does not run models or install/start/manage a service. Selected SDK/header/input observations do not attest every dependency, mapped runtime, native terminality or all-client coverage. Finish any native build and its runtime checks before running this separate compile fixture.
+
+
+The current empty-model wire fixture additionally supports `--activity`:
+
+```sh
+.venv/bin/python -I -B tests/fixtures/platform/current-native-ingress.py --isolated /private/tmp/REVIEWED_NATIVE_IMAGE/mlx-serve REVIEWED_IMAGE_SHA256 --activity
+```
+
+It checks the existing unknown-only/observer-included HTTP diagnostic, original private instance, bounded coherent counters and advancing sample sequence. It loads no model and sends no model POST. Keep it distinct from the normalized version2 all-client consumer or native admission.
+
+Private native review copies now bind the two reviewed versioned WebP install names to the actual supplied libraries before canonicalizing only load commands/rpaths/signatures; code/data section payloads remain identical. Current26.11.2's fixed eight files may total384MiB (observed305.146MiB); historical data and each file stay256MiB. This is the administrative native-review copier, not the platform installer/stager. Failed copies remain private for diagnosis. No installation or inference permission is conveyed by a copy/receipt.

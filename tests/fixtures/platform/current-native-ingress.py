@@ -9,11 +9,12 @@ import pathlib,subprocess,socket,tempfile,os,time,http.client,json,signal,sys,st
 assert sys.platform=="darwin" and os.geteuid()>0
 assert len(sys.argv) in [4,5] and sys.argv[1]=="--isolated"
 mode=sys.argv[4] if len(sys.argv)==5 else None
-assert mode in [None,"--expected-instance","--exact-target","--startup","--correlation"]
+assert mode in [None,"--expected-instance","--exact-target","--startup","--correlation","--activity"]
 check_instance=mode in ["--expected-instance","--exact-target","--correlation"]
 check_target=mode in ["--exact-target","--correlation"]
 check_correlation=mode=="--correlation"
 check_startup=mode=="--startup"
+check_activity=mode=="--activity"
 binary=pathlib.Path(sys.argv[2]);expected=sys.argv[3]
 assert binary.is_absolute() and str(binary).startswith("/private/tmp/") and binary.name=="mlx-serve"
 info=binary.lstat();assert binary.is_file() and not binary.is_symlink() and info.st_uid==os.geteuid() and info.st_nlink==1 and not info.st_mode&0o022 and 0<info.st_size<=64*1024*1024
@@ -83,6 +84,21 @@ try:
   if current[0]==0:released=True;break
   time.sleep(.025)
  assert released,"CURRENT_NATIVE_HTTP_CONNECTION_NOT_RETIRED"
+ if check_activity:
+  previous=0
+  for _ in range(2):
+   status,data=get("/v1/fios/activity")
+   assert status==200,"CURRENT_NATIVE_ACTIVITY_INTERFACE_MISSING"
+   activity=json.loads(data)
+   assert set(activity)=={"schema_version","coverage","reason","observer_included","source_instance","admissions_closed","sequence","sample_sequence","uncertain","owned_requests","ingress","preparing","active","responding"}
+   assert activity["schema_version"]==1 and activity["coverage"]=="unknown" and activity["reason"]=="native_ownership_audit_incomplete"
+   assert activity["observer_included"] is True and activity["source_instance"]==instance
+   assert type(activity["admissions_closed"]) is bool and type(activity["uncertain"]) is bool
+   assert type(activity["sequence"]) is int and activity["sequence"]>0
+   assert type(activity["sample_sequence"]) is int and previous<activity["sample_sequence"]<=9007199254740991
+   previous=activity["sample_sequence"]
+   assert all(type(activity[key]) is int and 0<=activity[key]<=256 for key in ["owned_requests","ingress","preparing","active","responding"])
+   assert 1<=activity["owned_requests"]==sum(activity[key] for key in ["ingress","preparing","active","responding"])
  if check_startup:
   # Metadata-only calls remain available while the original process owns
   # the reservation; these do not enter serving or load a model.
@@ -185,7 +201,7 @@ try:
 
   else:
    assert legacy==matching and legacy[0]>=400,"CURRENT_NATIVE_MATCHING_EPOCH_CHANGED_LEGACY_SELECTION"
- receipt={"binary_sha256":hashlib.sha256(binary.read_bytes()).hexdigest(),"native_pid":proc.pid,"source_instance":instance,"source_sequence":sequence,"source_sampled_at":stamp,"http_connection_counts":list(counts),"accepted_connection_observed":True,"original_http_connection_retired":True,"private_home":str(home),"models":0,"model_requests":9 if check_correlation else (7 if check_target else (3 if check_instance else 0)),"expected_instance_guard_checked":check_instance,"exact_target_guard_checked":check_target,"correlation_header_checked":check_correlation,"retired_lineage_is_unknown":check_correlation,"startup_reservation_checked":check_startup,"startup_reacquired_after_original_exit":check_startup,"metadata_available_while_reserved":check_startup,"inference_started":False,"coverage":"unknown","native_admission_authority":False,"peer_authentication_proven":False,"installed":False}
+ receipt={"binary_sha256":hashlib.sha256(binary.read_bytes()).hexdigest(),"native_pid":proc.pid,"source_instance":instance,"source_sequence":sequence,"source_sampled_at":stamp,"http_connection_counts":list(counts),"accepted_connection_observed":True,"original_http_connection_retired":True,"private_home":str(home),"models":0,"model_requests":9 if check_correlation else (7 if check_target else (3 if check_instance else 0)),"expected_instance_guard_checked":check_instance,"exact_target_guard_checked":check_target,"correlation_header_checked":check_correlation,"retired_lineage_is_unknown":check_correlation,"http_activity_checked":check_activity,"startup_reservation_checked":check_startup,"startup_reacquired_after_original_exit":check_startup,"metadata_available_while_reserved":check_startup,"inference_started":False,"coverage":"unknown","native_admission_authority":False,"peer_authentication_proven":False,"installed":False}
  (home/"receipt.json").write_text(json.dumps(receipt,indent=2)+"\n");print(json.dumps(receipt))
 finally:
  if proc.poll() is None:proc.terminate()

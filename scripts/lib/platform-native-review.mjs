@@ -5,6 +5,11 @@ import {createHash} from 'node:crypto';
 import {mkdirSync,lstatSync,realpathSync,openSync,closeSync,readSync,writeSync,fstatSync,fsyncSync,chmodSync,readFileSync,writeFileSync,readdirSync,constants} from 'node:fs';
 import path from 'node:path';
 const names=['libmlx.dylib','libmlxc.dylib','libjaccl.dylib','mlx.metallib','libwebp.dylib','libsharpyuv.dylib','libllama.dylib'];
+// Eight fixed private review artifacts, not an installed platform release.
+// Current image plus kernel/dependency data totals 305 MiB; each file stays <=256 MiB.
+export function nativeReviewMaximumBytes(inputs){
+ return inputs?.native_base==='4e231ceebe63308cc038117d40b9f9b64bd0372e'?384<<20:256<<20;
+}
 const sha=b=>createHash('sha256').update(b).digest('hex');
 const run=(program,args)=>execFileSync(program,args,{encoding:'utf8',timeout:15000,maxBuffer:1<<20,env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C'}});
 function privateDirectory(directory) {
@@ -34,9 +39,23 @@ function sectionDigest(file) {
   at+=size;
  }return h.digest('hex');
 }
-function normalizePaths(file,wanted,mode,installID) {
+// These two aliases are bound to the actual supplied library's own install
+// name. No search, arbitrary basename/version rule or extra dependency follows.
+export function nativeReviewLibraryAliases(originalIDs) {
+ assert(originalIDs&&typeof originalIDs==='object'&&!Array.isArray(originalIDs));
+ assert.deepEqual(Object.keys(originalIDs).sort(),names.filter(name=>name.endsWith('.dylib')).sort());
+ assert(Object.values(originalIDs).every(value=>typeof value==='string'&&value.length>0&&value.length<=4096&&!value.includes('\0')));
+ const aliases={};
+ for(const [name,alias]of [['libwebp.dylib','@rpath/libwebp.7.dylib'],['libsharpyuv.dylib','@rpath/libsharpyuv.0.dylib']]){
+  if(originalIDs[name]===alias)aliases[alias]='@rpath/'+name;
+ }
+ return Object.freeze(aliases);
+}
+function linkedNames(file){return run('/usr/bin/otool',['-L',file]).split('\n').slice(1).filter(line=>line.trim()).map(line=>line.trim().split(' (')[0]);}
+function normalizePaths(file,wanted,mode,installID,aliases={}) {
  const code=sectionDigest(file);chmodSync(file,0o755);
  if(installID)run('/usr/bin/install_name_tool',['-id',installID,file]);
+ for(const dependency of linkedNames(file))if(Object.hasOwn(aliases,dependency))run('/usr/bin/install_name_tool',['-change',dependency,aliases[dependency],file]);
  for(const value of rpaths(file))run('/usr/bin/install_name_tool',['-delete_rpath',value,file]);
  run('/usr/bin/install_name_tool',['-add_rpath',wanted,file]);run('/usr/bin/codesign',['--force','--sign','-',file]);chmodSync(file,mode);
  assert.deepEqual(rpaths(file),[wanted]);assert.equal(sectionDigest(file),code,'Native code/data section bytes changed');return code;
@@ -46,8 +65,8 @@ function boundedRead(file,maximum) {
  try{const a=fstatSync(fd);assert(a.isFile()&&a.nlink===1&&a.size>0&&a.size<=maximum);const b=Buffer.alloc(a.size);let at=0;while(at<b.length){const n=readSync(fd,b,at,b.length-at,null);assert(n>0);at+=n;}const z=fstatSync(fd),named=lstatSync(file);for(const k of ['dev','ino','uid','mode','size','mtimeMs','ctimeMs'])assert.equal(a[k],z[k]);assert.equal(named.ino,a.ino);assert.equal(named.dev,a.dev);assert(!named.isSymbolicLink());return b;}finally{closeSync(fd);}
 }
 function dependencies(file) {
- for(const line of run('/usr/bin/otool',['-L',file]).split('\n').slice(1).filter(s=>s.trim())) {
-  const dependency=line.trim().split(' (')[0];
+ const linked=linkedNames(file);assert.equal(new Set(linked).size,linked.length,'Duplicate native dependency');
+ for(const dependency of linked) {
   assert(dependency.startsWith('/usr/lib/')||dependency.startsWith('/System/Library/')||names.some(n=>dependency==='@rpath/'+n||dependency==='@loader_path/'+n),'Unreviewed native dependency');
  }
 }
@@ -58,15 +77,26 @@ export function stageNativeReview({directory,binary,libraries,inputs}) {
  mkdirSync(path.join(directory,'bin'),{mode:0o700});mkdirSync(path.join(directory,'Frameworks'),{mode:0o700});
  assert.deepEqual(Object.keys(libraries).sort(),[...names].sort());
  const target=path.join(directory,'bin/mlx-serve'),originalBinarySHA256=copy(binary,target,0o555);
- const libraryPayloads={};
- for(const name of names){const file=path.join(directory,'Frameworks',name);copy(libraries[name],file,0o444);if(name.endsWith('.dylib')){const installID=run('/usr/bin/otool',['-D',file]).split('\n')[1]?.trim();if(installID!=='@rpath/'+name||!rpaths(file).every(p=>p==='@loader_path'))libraryPayloads[name]=normalizePaths(file,'@loader_path',0o444,'@rpath/'+name);dependencies(file);}}
+ const libraryPayloads={},originalIDs={};
+ for(const name of names){
+  const file=path.join(directory,'Frameworks',name);copy(libraries[name],file,0o444);
+  if(name.endsWith('.dylib'))originalIDs[name]=run('/usr/bin/otool',['-D',file]).split('\n')[1]?.trim();
+ }
+ const aliases=nativeReviewLibraryAliases(originalIDs);
+ for(const name of names)if(name.endsWith('.dylib')){
+  const file=path.join(directory,'Frameworks',name);
+  if(originalIDs[name]!=='@rpath/'+name||!rpaths(file).every(p=>p==='@loader_path')||linkedNames(file).some(dependency=>Object.hasOwn(aliases,dependency)))
+   libraryPayloads[name]=normalizePaths(file,'@loader_path',0o444,'@rpath/'+name,aliases);
+  dependencies(file);
+ }
  // Only this new private copy changes. Remove build-tree lookup paths so it
  // cannot silently borrow a library from outside its reviewed Frameworks.
- const binaryPayload=normalizePaths(target,'@executable_path/../Frameworks',0o555);
+ const binaryPayload=normalizePaths(target,'@executable_path/../Frameworks',0o555,undefined,aliases);
  assert.deepEqual(rpaths(target),['@executable_path/../Frameworks']);dependencies(target);
  const files=Object.fromEntries(['bin/mlx-serve',...names.map(n=>'Frameworks/'+n)].map(name=>[name,{sha256:sha(readFileSync(path.join(directory,name))),bytes:lstatSync(path.join(directory,name)).size}]));
- assert(Object.values(files).reduce((n,f)=>n+f.bytes,0)<=256<<20);
- return {directory,binary:target,sha256:files['bin/mlx-serve'].sha256,receipt:{version:1,purpose:'private_native_source_review',source_fixture_only:true,activation:false,native_inference:false,native_admission_authority:false,coverage:'unknown',original_binary_sha256:originalBinarySHA256,binary_change:'private_rpath_and_adhoc_signature_only',unchanged_section_payloads:{binary:binaryPayload,libraries:libraryPayloads},files,declared_inputs:inputs}};
+ const maximumBytes=nativeReviewMaximumBytes(inputs);
+ assert(Object.values(files).reduce((n,f)=>n+f.bytes,0)<=maximumBytes);
+ return {directory,binary:target,sha256:files['bin/mlx-serve'].sha256,receipt:{version:1,purpose:'private_native_source_review',source_fixture_only:true,activation:false,native_inference:false,native_admission_authority:false,coverage:'unknown',artifact_byte_limit:maximumBytes,original_binary_sha256:originalBinarySHA256,binary_change:Object.keys(aliases).length?'private_dependency_load_names_rpaths_and_adhoc_signature_only':'private_rpath_and_adhoc_signature_only',dependency_aliases:aliases,original_library_install_names:originalIDs,unchanged_section_payloads:{binary:binaryPayload,libraries:libraryPayloads},files,declared_inputs:inputs}};
 }
 export function finishNativeReview(review,{emptyModelValidation='passed'}={}) {
  assert(['passed','not_run'].includes(emptyModelValidation));
@@ -80,10 +110,17 @@ export function verifyNativeReview(directory,expected) {
  for(const child of ['bin','Frameworks'])privateDirectory(path.join(directory,child));
  const bytes=boundedRead(path.join(directory,'review.json'),65536);assert(bytes.length<=65536&&sha(bytes)===expected);
  const receipt=JSON.parse(bytes);assert(receipt.version===1&&receipt.purpose==='private_native_source_review'&&receipt.source_fixture_only===true&&receipt.activation===false&&receipt.native_inference===false&&receipt.native_admission_authority===false&&receipt.coverage==='unknown');
+ if(receipt.dependency_aliases!==undefined||receipt.original_library_install_names!==undefined){
+  assert.deepEqual(receipt.dependency_aliases,nativeReviewLibraryAliases(receipt.original_library_install_names));
+  assert.equal(receipt.binary_change,Object.keys(receipt.dependency_aliases).length?'private_dependency_load_names_rpaths_and_adhoc_signature_only':'private_rpath_and_adhoc_signature_only');
+ }
  const buildOnly=receipt.declared_inputs?.verification_mode==='functional_build_only'&&receipt.declared_inputs?.root_tests_rerun===false&&receipt.declared_inputs?.http_checks_rerun===false;
+ const maximumBytes=nativeReviewMaximumBytes(receipt.declared_inputs);
+ if(receipt.artifact_byte_limit!==undefined)assert.equal(receipt.artifact_byte_limit,maximumBytes);
  assert(receipt.empty_model_validation==='passed'||(receipt.empty_model_validation==='not_run'&&buildOnly));
  const wanted=['bin/mlx-serve',...names.map(n=>'Frameworks/'+n)];assert.deepEqual(Object.keys(receipt.files).sort(),wanted.sort());
  assert.deepEqual(readdirSync(directory).sort(),['Frameworks','bin','review.json']);assert.deepEqual(readdirSync(path.join(directory,'bin')),['mlx-serve']);assert.deepEqual(readdirSync(path.join(directory,'Frameworks')).sort(),[...names].sort());
  for(const name of wanted){const file=path.join(directory,name),s=lstatSync(file);assert(s.isFile()&&!s.isSymbolicLink()&&s.nlink===1&&s.uid===process.getuid()&&(s.mode&0o222)===0&&s.size===receipt.files[name].bytes&&s.size>0&&s.size<=256<<20);assert.equal(sha(boundedRead(file,256<<20)),receipt.files[name].sha256);}
+ assert(Object.values(receipt.files).reduce((total,item)=>total+item.bytes,0)<=maximumBytes);
  return {directory,binary:path.join(directory,'bin/mlx-serve'),receipt};
 }

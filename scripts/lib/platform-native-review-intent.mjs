@@ -2,6 +2,40 @@
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import {createHash} from 'node:crypto';
+import {readFileSync} from 'node:fs';
+const currentCxxScope='current_build_helper_CPU_callback_compatibility_not_native_authority';
+const reviewDigest=relative=>createHash('sha256').update(readFileSync(new URL('../../'+relative,import.meta.url))).digest('hex');
+// Current checker result metadata remains distinct from the historical graph
+// declaration. Parsing either record grants no native or installed authority.
+function currentCxxInputs(inputs,dependency,cxx,message){
+ const fields=['version','scope','source','library_sha256','config_sha256','helper_sha256','fixture_sha256','runner_sha256','sdk',
+  'selected_sdk_inputs','source_patch_sha256','results','models','inference','source_fixture_only','installed','activation',
+  'native_authority','whole_native_provenance','declared_inputs_unchanged'];
+ assert.deepEqual(Object.keys(cxx).sort(),fields.sort(),message);
+ assert(cxx.version===1&&cxx.sdk==='27.2'&&dependency.sdk===cxx.sdk&&inputs.native_base==='4e231ceebe63308cc038117d40b9f9b64bd0372e',message);
+ assert(cxx.source_fixture_only===true&&cxx.declared_inputs_unchanged===true&&cxx.models===0,message);
+ for(const key of ['inference','installed','activation','native_authority','whole_native_provenance'])assert(cxx[key]===false,message);
+ assert(typeof cxx.source==='string'&&cxx.source.startsWith('/private/tmp/')&&path.isAbsolute(cxx.source)&&
+  path.normalize(cxx.source)===cxx.source&&!cxx.source.includes('\0')&&cxx.source.length<=4096&&
+  dependency.source===path.join(cxx.source,'lib/mlx-src'),message);
+ for(const key of ['library_sha256','config_sha256','helper_sha256','fixture_sha256','runner_sha256','source_patch_sha256'])assert(typeof cxx[key]==='string'&&/^[a-f0-9]{64}$/.test(cxx[key]),message);
+ assert(cxx.library_sha256===dependency.library_inputs?.['libmlx.dylib']?.sha256&&cxx.source_patch_sha256===dependency.patch_sha256,message);
+ for(const [key,file]of [['helper_sha256','platform/studio/native/current_system_cxx_build.zig.fixture'],
+  ['fixture_sha256','platform/studio/native/mlx_cxx_callback_error_test.cpp'],['runner_sha256','scripts/check-platform-current-cxx.mjs'],
+  ['source_patch_sha256','platform/studio/native/mlx-c69303b-owner-uncertainty.patch']])assert(cxx[key]===reviewDigest(file),message);
+ assert(cxx.selected_sdk_inputs&&typeof cxx.selected_sdk_inputs==='object'&&!Array.isArray(cxx.selected_sdk_inputs),message);
+ const files=Object.keys(cxx.selected_sdk_inputs),suffix='/usr/lib/libc++.1.tbd',stubs=files.filter(file=>file.endsWith(suffix));
+ assert(files.length===10&&stubs.length===1&&files.every(file=>path.isAbsolute(file)&&path.normalize(file)===file&&!file.includes('\0')&&file.length<=4096&&/^[a-f0-9]{64}$/.test(cxx.selected_sdk_inputs[file])),message);
+ const sdk=stubs[0].slice(0,-suffix.length);
+ assert(['__config','__config_site','cstdint','memory','functional','optional','stdexcept','typeinfo','exception'].every(name=>files.includes(sdk+'/usr/include/c++/v1/'+name)),message);
+ assert(Array.isArray(cxx.results)&&cxx.results.length===2,message);
+ for(const [index,result]of cxx.results.entries()){
+  assert(result&&typeof result==='object'&&!Array.isArray(result),message);
+  assert.deepEqual(Object.keys(result).sort(),['mode','build_status','build_signal','run_status','run_signal','passed'].sort(),message);
+  assert(result.mode===['Debug','ReleaseFast'][index]&&result.build_status===0&&result.run_status===0&&
+   result.build_signal===null&&result.run_signal===null&&result.passed===true,message);
+ }
+}
 // An optional source dependency must declare the selected format before any
 // model effect. This is a refusal prerequisite, never an admission grant.
 export function nativeReviewModelInputs(inputs){
@@ -10,6 +44,7 @@ export function nativeReviewModelInputs(inputs){
  if(dependency!==undefined&&dependency!==null){
   assert(dependency.source_fixture_only===true&&dependency.native_authority===false&&dependency.features?.safetensors===true,'Source SDK lacks required Safetensors support');
   const cxx=inputs.system_cxx,message='Source SDK lacks matched C++ runtime compatibility';
+  if(cxx&&typeof cxx==='object'&&!Array.isArray(cxx)&&cxx.scope===currentCxxScope){currentCxxInputs(inputs,dependency,cxx,message);return;}
   assert(cxx&&typeof cxx==='object'&&!Array.isArray(cxx)&&cxx.version===1&&cxx.sdk===dependency.sdk&&cxx.sdk==='27.2'&&
    JSON.stringify(cxx.callback_error_controls)===JSON.stringify(['Debug','ReleaseFast'])&&
    cxx.scope==='selected_SDK_stub_and_header_inputs_not_mapped_OS_runtime_attestation',message);

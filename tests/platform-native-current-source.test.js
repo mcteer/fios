@@ -2,6 +2,15 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 
+test('current legacy activity port stays in the private HTTP diagnostic boundary',()=>{
+  const patch=readFileSync('platform/studio/native/mlx-serve-26.11.2-http-activity.patch','utf8');
+  const paths=[...patch.matchAll(/^diff --git a\/(\S+) b\/(\S+)$/gm)];
+  assert.equal(paths.length,1);assert.equal(paths[0][1],'src/host/http/router.zig');assert.equal(paths[0][2],paths[0][1]);
+  assert(patch.includes('+        if (!http_server.fios_connection_tracking.load(.acquire))'));
+  assert(patch.includes('+        const body = try fios_ownership.renderSnapshot(fios_ownership.shared().snapshot(stream.io), &buffer);'));
+  assert(patch.includes('+        return sendResponseQuiet(stream, "200 OK", "application/json", body);'));
+});
+
 test('current source SDK C++ composition stays within the build graph',()=>{
   const patch=readFileSync('platform/studio/native/mlx-serve-26.11.2-system-cxx.patch','utf8');
   const sections=patch.split(/(?=^diff --git )/m).filter(Boolean);
