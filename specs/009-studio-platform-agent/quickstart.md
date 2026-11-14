@@ -939,3 +939,11 @@ node scripts/check-platform-current-idle-flush.mjs --isolated --source /private/
 ```
 
 The actual idle function runs with CPU-only enumeration/staging/slice and negative-getter substitutes. Eight independent-process scenarios in Debug/ReleaseFast require10 original failures,6 original healthy/busy/empty successes and16 candidate successes. No simulated latch is cleared or hardware/model invoked. See [idle-flush contract](contracts/idle-cache-flush.md); `.busy` preserves pending work, not native terminal/admission authority.
+
+### Cache-budget revision CPU regression
+
+```sh
+node scripts/check-platform-current-cache-budget.mjs --isolated --source /private/tmp/REVIEWED_BUDGET_REVISION_CANDIDATE --zig /private/tmp/PINNED_ZIG
+```
+
+The actual revision function uses declared CPU registry/resolver/cache/publication substitutes. Eight independent-process scenarios in Debug/ReleaseFast require8 original failures,8 original healthy/skip successes and16 candidate successes. Getters assert dynamic/fixed lock context; tests retain current-model order, grow-only/absent-resolver/disabled-cache behavior and release locks on early returns. No latch clearing, hardware or model. See [revision contract](contracts/cache-budget-revision.md).
