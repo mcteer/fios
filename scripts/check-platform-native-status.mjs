@@ -19,7 +19,7 @@ assert(args.length===5&&args[0]==='--isolated'&&args[1]==='--capsule'&&args[3]==
 assert.equal(process.platform,'darwin');assert.notEqual(process.getuid(),0);
 const capsule=verifyNativeReview(args[2],args[4]),binary=capsule.binary;
 if(withBackendFences){assert.equal(protocolVersion,3);assert.equal(capsule.receipt.declared_inputs.native_backend_fences_version,1);}
-if(withPrimaryActivity){assert(withBackendFences);assert.equal(capsule.receipt.declared_inputs.native_primary_activity_version,2);}
+if(withPrimaryActivity){assert.equal(protocolVersion,3);assert.equal(capsule.receipt.declared_inputs.native_primary_activity_version,2);}
 const binarySHA=capsule.receipt.files['bin/mlx-serve'].sha256;
 const root=resolve(import.meta.dirname,'..'),directory=mkdtempSync('/private/tmp/f9-native-status-');
 const models=join(directory,'empty-models'),state=join(directory,'manager');mkdirSync(models,{mode:0o700});
@@ -46,7 +46,7 @@ function health(){return new Promise((accept,reject)=>{
   res.once('error',reject);res.once('end',()=>accept(res.statusCode===200));
  });req.once('error',reject);req.once('timeout',()=>req.destroy(Error('Native health deadline')));req.end();
 });}
-function command(arguments_){const result=spawnSync(cli,['--state',state,...arguments_],{cwd:root,env,encoding:'utf8',timeout:3000});return result.status===0 ? JSON.parse(result.stdout):null;}
+function command(arguments_){const result=spawnSync(cli,['--state',state,...arguments_],{cwd:root,env,encoding:'utf8',timeout:3000});const value=result.status===0 ? JSON.parse(result.stdout):null;if(arguments_[0]==='status'&&value)writeFileSync(join(directory,'last-status.json'),JSON.stringify(value)+'\n',{mode:0o600});return value;}
 try{
  const native=spawn(binary,['serve','--host','127.0.0.1','--port',String(port),'--model-dir',models,'--no-warmup-eager'],{cwd:directory,env,stdio:['ignore','ignore','pipe']});children.push(native);
  let logBytes=0;native.stderr.on('data',part=>{logBytes+=part.length;if(logBytes>128*1024)native.kill('SIGTERM');});
@@ -57,7 +57,7 @@ try{
  await until(()=>existsSync(control));
  const lineageSeed=withLineage?JSON.parse(run(fixture,['--isolated-seed-lineage',state,control,binary,binarySHA,'source-fixture-only',String(native.pid)],5000)):null;
  if(withLineage)assert.deepEqual(lineageSeed,{seeded_unit_scope:true,model_requests:0,native_authority:false});
- const manager=spawn(fixture,[withPrimaryActivity?'--isolated-manager-primary':withBackendFences?'--isolated-manager-fences':protocolVersion===3?'--isolated-manager-v3':'--isolated-manager',state,control,binary,binarySHA,'source-fixture-only',String(native.pid)],{cwd:root,env,stdio:['ignore','ignore','pipe']});children.push(manager);
+ const manager=spawn(fixture,[withPrimaryActivity?(withBackendFences?'--isolated-manager-primary':'--isolated-manager-primary-only'):withBackendFences?'--isolated-manager-fences':protocolVersion===3?'--isolated-manager-v3':'--isolated-manager',state,control,binary,binarySHA,'source-fixture-only',String(native.pid)],{cwd:root,env,stdio:['ignore','ignore','pipe']});children.push(manager);
  let managerErrors='';manager.stderr.on('data',part=>{managerErrors+=part.toString();});
  const initial=await until(()=>{assert(!exited(manager),`Private manager exited: ${managerErrors}`);return command(['status']);});
  assert(['waiting','received'].includes(initial.native_control.state));assert.equal(initial.native_control.authoritative,false);
