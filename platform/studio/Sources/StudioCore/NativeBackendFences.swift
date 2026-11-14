@@ -9,8 +9,17 @@ struct NativeBackendFences:Sendable {
     let mimoWarmUncertain:Bool?
     let ds4MetalUncertainty:UInt32?
     let ds4HostUncertainty:UInt32?
+    let current:NativeCurrentBackendFlags?
+    init(instance:String,sampleSequence:UInt64,sampledAt:Int64?,mimoWarmUncertain:Bool?,ds4MetalUncertainty:UInt32?,ds4HostUncertainty:UInt32?,current:NativeCurrentBackendFlags?=nil) {
+        self.instance=instance;self.sampleSequence=sampleSequence;self.sampledAt=sampledAt
+        self.mimoWarmUncertain=mimoWarmUncertain;self.ds4MetalUncertainty=ds4MetalUncertainty;self.ds4HostUncertainty=ds4HostUncertainty;self.current=current
+    }
     func validate()throws {
         _=try NativeControlWire.instanceBytes(instance)
+        if let current {
+            try current.validate()
+            guard mimoWarmUncertain==nil,ds4MetalUncertainty==nil,ds4HostUncertainty==nil else {throw NativeControlError.invalid}
+        }
         guard sampleSequence>0,sampleSequence<=UInt64(ActivityPolicy.maximumTimestamp),
               sampledAt.map({(1...ActivityPolicy.maximumTimestamp).contains($0)}) ?? true,
               ds4MetalUncertainty.map({$0<=31}) ?? true,
@@ -58,6 +67,7 @@ struct NativeBackendFenceDiagnostics {
     private var previousNow:Int64=0
     private var unavailable=false,fenced=false,seenMimo=false
     private var seenMetal:UInt32=0,seenHost:UInt32=0
+    private var seenCurrent:UInt8=0
     init(configured:Bool) {self.configured=configured}
     private func fresh(_ time:Int64,now:Int64)->Bool {
         (0...ActivityPolicy.maximumTimestamp).contains(time) && (0...ActivityPolicy.maximumTimestamp).contains(now) && (-1000...5000).contains(now-time)
@@ -75,13 +85,14 @@ struct NativeBackendFenceDiagnostics {
         if let old=checkpoint {
             guard sample.peer.pid==old.peer.pid,sample.peer.start==old.peer.start,
                   sample.peer.executable.path.utf8.elementsEqual(old.peer.executable.path.utf8),sample.peer.executable.sha256==old.peer.executable.sha256,
-                  flags.instance==old.fences.instance,stamp>=old.fences.sampledAt!,now>=previousNow else {fenced=true;failed();return}
+                  flags.instance==old.fences.instance,(flags.current==nil)==(old.fences.current==nil),flags.current?.available==old.fences.current?.available,stamp>=old.fences.sampledAt!,now>=previousNow else {fenced=true;failed();return}
             guard flags.sampleSequence>old.fences.sampleSequence else {failed();return}
         }
-        guard !(seenMimo && flags.mimoWarmUncertain==false),
+        guard ((flags.current?.uncertain ?? 0) & seenCurrent)==seenCurrent,!(seenMimo && flags.mimoWarmUncertain==false),
               flags.ds4MetalUncertainty.map({$0&seenMetal==seenMetal}) ?? true,
               flags.ds4HostUncertainty.map({$0&seenHost==seenHost}) ?? true else {fenced=true;failed();return}
         if flags.mimoWarmUncertain==true {seenMimo=true}
+        seenCurrent |= flags.current?.uncertain ?? 0
         seenMetal |= flags.ds4MetalUncertainty ?? 0;seenHost |= flags.ds4HostUncertainty ?? 0
         checkpoint=sample;value=sample;previousNow=now;unavailable=false
     }
@@ -90,14 +101,20 @@ struct NativeBackendFenceDiagnostics {
             "state":configured ? (fenced ? "fenced":unavailable ? "unavailable":"waiting"):"unconfigured",
             "source_instance":NSNull(),"source_sequence":NSNull(),"source_sampled_at":NSNull(),"source_age_ms":NSNull(),
             "received_at":NSNull(),"receipt_age_ms":NSNull(),"mimo_warm_uncertain":NSNull(),"ds4_metal_uncertainty":NSNull(),"ds4_host_uncertainty":NSNull(),
-            "retained_uncertainty":seenMimo || seenMetal != 0 || seenHost != 0]
+            "retained_uncertainty":seenMimo || seenMetal != 0 || seenHost != 0 || seenCurrent != 0,"current_sources":NSNull(),"frame_version":NSNull()]
         guard configured,!fenced,let sample=value,let stamp=sample.fences.sampledAt else {return result}
         guard (0...ActivityPolicy.maximumTimestamp).contains(now) else {result["state"]="stale";return result}
         result["source_sequence"]=sample.fences.sampleSequence;result["source_sampled_at"]=stamp;result["source_age_ms"]=now-stamp
         result["received_at"]=sample.receivedAt;result["receipt_age_ms"]=now-sample.receivedAt
         guard now>=previousNow,fresh(stamp,now:now),fresh(sample.receivedAt,now:now) else {result["state"]="stale";return result}
         let flags=sample.fences
-        result["state"]=flags.mimoWarmUncertain==nil && flags.ds4MetalUncertainty==nil && flags.ds4HostUncertainty==nil ? "unavailable":"received"
+        if let current=flags.current {
+            result["frame_version"]=2;result["current_sources"]=current.dictionary
+            result["state"]=current.available==0 ? "unavailable":"received"
+        } else {
+            result["frame_version"]=1
+            result["state"]=flags.mimoWarmUncertain==nil && flags.ds4MetalUncertainty==nil && flags.ds4HostUncertainty==nil ? "unavailable":"received"
+        }
         result["source_instance"]=flags.instance
         result["mimo_warm_uncertain"]=flags.mimoWarmUncertain.map {$0 as Any} ?? NSNull()
         result["ds4_metal_uncertainty"]=flags.ds4MetalUncertainty.map {Int($0) as Any} ?? NSNull()

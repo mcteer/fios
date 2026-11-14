@@ -142,7 +142,7 @@ struct NativeControlClient:Sendable {
     }
     func backendFences(instance:String,after sequence:UInt64=0)throws->NativeBackendFenceSample {
         let began=HostResources.nowMilliseconds()
-        let value=try NativeBackendFenceWire.reply(exchange(NativeBackendFenceWire.request(instance:instance),maximum:64),instance:instance,after:sequence)
+        let value=try NativeBackendFenceWire.currentReply(exchange(NativeBackendFenceWire.currentRequest(instance:instance),maximum:64),instance:instance,after:sequence)
         let completed=HostResources.nowMilliseconds()
         guard (0...ActivityPolicy.maximumTimestamp).contains(began),completed>=began,
               completed<=ActivityPolicy.maximumTimestamp,completed-began<=5000,

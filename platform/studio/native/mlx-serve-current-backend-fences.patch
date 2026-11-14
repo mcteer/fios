@@ -1,0 +1,146 @@
+diff --git a/src/fios/control_protocol.zig b/src/fios/control_protocol.zig
+index 5a9a81a..d9cd3d0 100644
+--- a/src/fios/control_protocol.zig
++++ b/src/fios/control_protocol.zig
+@@ -48,6 +48,46 @@ pub fn dispatchBackendFences(tracker: *ownership.Tracker, io: std.Io, request: *
+     return response;
+ }
+ 
++// Current backend ABI sources are a separate explicit version. Every optional
++// bit is independent negative evidence; false never grants terminal/admission.
++pub const CurrentBackendFenceReadings = struct {
++    sdk_uncertain: ?bool = null,
++    llama_uncertain: ?bool = null,
++    streamed_pool_uncertain: ?bool = null,
++    ds4_host_uncertain: ?bool = null,
++    ds4_gpu_uncertain: ?bool = null,
++    ane_reported_uncertain: ?bool = null,
++    ane_native_uncertain: ?bool = null,
++};
++pub const CurrentBackendFenceSource = *const fn () CurrentBackendFenceReadings;
++pub fn dispatchCurrentBackendFences(tracker: *ownership.Tracker, io: std.Io, request: *const [backend_request_size]u8, source: ?CurrentBackendFenceSource) [backend_response_size]u8 {
++    var response: [backend_response_size]u8 = @splat(0);
++    @memcpy(response[0..4], "FIF9");response[4] = 2;
++    if (!std.mem.eql(u8, request[0..4], "FIB9") or request[4] != 2 or
++        !std.mem.allEqual(u8, request[5..8], 0) or !std.mem.allEqual(u8, request[24..32], 0)) {
++        response[5] = @intFromEnum(Status.invalid);return response;
++    }
++    const captured_at = std.Io.Clock.real.now(io).toMilliseconds();
++    const snapshot = tracker.snapshot(io);
++    @memcpy(response[8..24], &snapshot.instance);
++    std.mem.writeInt(u64, response[24..32], snapshot.sample_sequence, .big);
++    const stamp: u64 = if (captured_at > 0 and captured_at <= ownership.maximum_sample_sequence)
++        @intCast(captured_at) else std.math.maxInt(u64);
++    std.mem.writeInt(u64, response[32..40], stamp, .big);
++    if (!snapshot.initialized or !std.mem.eql(u8, request[8..24], &snapshot.instance)) {
++        response[5] = @intFromEnum(Status.wrong_instance);return response;
++    }
++    const readings: CurrentBackendFenceReadings = if (source) |read| read() else .{};
++    inline for (@typeInfo(CurrentBackendFenceReadings).@"struct".field_names, 0..) |field, index| {
++        if (@field(readings, field)) |value| {
++            const bit: u8 = @as(u8, 1) << @as(u3, @intCast(index));
++            response[6] |= bit;
++            if (value) response[7] |= bit;
++        }
++    }
++    return response;
++}
++
+ // Primary ownership observation only, never normalized all-client activity.
+ pub const primary_request_size = 32;
+ pub const primary_record_size = 16 + ownership.model_limit;
+diff --git a/src/fios/control_transport.zig b/src/fios/control_transport.zig
+index 428d499..f9c3281 100644
+--- a/src/fios/control_transport.zig
++++ b/src/fios/control_transport.zig
+@@ -7,6 +7,7 @@ const protocol = @import("control_protocol.zig");
+ pub const OwnerBarrier = protocol.OwnerBarrier;
+ pub const BackendFenceReadings = protocol.BackendFenceReadings;
+ pub const BackendFenceSource = protocol.BackendFenceSource;
++pub const CurrentBackendFenceSource = protocol.CurrentBackendFenceSource;
+ const c = std.c;
+ extern "c" fn getpeereid(fd: c_int, uid: *c.uid_t, gid: *c.gid_t) c_int;
+ 
+@@ -16,6 +17,7 @@ pub const Bridge = struct {
+     fd: c_int,
+     barrier: ?OwnerBarrier,
+     backend_fences: ?BackendFenceSource = null,
++    current_backend_fences: ?CurrentBackendFenceSource = null,
+     path: [256:0]u8,
+     identity: c.Stat,
+     stopped: std.atomic.Value(bool) = .init(false),
+@@ -25,6 +27,9 @@ pub const Bridge = struct {
+         return startWithBackendFences(io, allocator, version, barrier, null);
+     }
+     pub fn startWithBackendFences(io: std.Io, allocator: std.mem.Allocator, version: []const u8, barrier: ?OwnerBarrier, backend_fences: ?BackendFenceSource) !?*Bridge {
++        return startWithSources(io, allocator, version, barrier, backend_fences, null);
++    }
++    pub fn startWithSources(io: std.Io, allocator: std.mem.Allocator, version: []const u8, barrier: ?OwnerBarrier, backend_fences: ?BackendFenceSource, current_backend_fences: ?CurrentBackendFenceSource) !?*Bridge {
+         const enabled = c.getenv("FIOS_NATIVE_CONTROL");
+         if (enabled == null) return null;
+         if (!std.mem.eql(u8, std.mem.span(enabled.?), "isolated-source-fixture") or
+@@ -59,7 +64,7 @@ pub const Bridge = struct {
+             return error.ControlUnavailable;
+         const self = try allocator.create(Bridge);
+         errdefer allocator.destroy(self);
+-        self.* = .{ .io = io, .allocator = allocator, .fd = fd, .barrier = barrier, .backend_fences = backend_fences, .path = path_buffer, .identity = info };
++        self.* = .{ .io = io, .allocator = allocator, .fd = fd, .barrier = barrier, .backend_fences = backend_fences, .current_backend_fences = current_backend_fences, .path = path_buffer, .identity = info };
+         self.thread = try std.Thread.spawn(.{}, run, .{self});
+         return self;
+     }
+@@ -130,6 +135,10 @@ pub const Bridge = struct {
+             const value = protocol.dispatchPrimaryActivity(ownership.shared(), self.io, input[0..protocol.primary_request_size]);
+             @memcpy(storage[0..protocol.primary_response_size], &value);
+             break :primary storage[0..protocol.primary_response_size];
++        } else if (count == protocol.backend_request_size and input[4] == 2 and std.mem.eql(u8, input[0..4], "FIB9")) current_fences: {
++            const value = protocol.dispatchCurrentBackendFences(ownership.shared(), self.io, input[0..protocol.backend_request_size], self.current_backend_fences);
++            @memcpy(storage[0..protocol.backend_response_size], &value);
++            break :current_fences storage[0..protocol.backend_response_size];
+         } else if (count == protocol.backend_request_size and std.mem.eql(u8, input[0..4], "FIB9")) fences: {
+             const value = protocol.dispatchBackendFences(ownership.shared(), self.io, input[0..protocol.backend_request_size], self.backend_fences);
+             @memcpy(storage[0..protocol.backend_response_size], &value);
+diff --git a/src/host/http/server.zig b/src/host/http/server.zig
+index 53fc757..5c40f4d 100644
+--- a/src/host/http/server.zig
++++ b/src/host/http/server.zig
+@@ -424,7 +424,7 @@ pub fn serve(
+     var scheduler = try mlx_engine.start(allocator, io, load_params, max_concurrent);
+     defer scheduler.deinit();
+     startup.stop();
+-    const fios_bridge = try fios_control.Bridge.start(io, allocator, @import("build_options").version, null);
++    const fios_bridge = try fios_control.Bridge.startWithSources(io, allocator, @import("build_options").version, null, null, @import("../../fios/current_backend_fences.zig").read);
+     defer if (fios_bridge) |bridge| bridge.stop();
+     // The ordinary vendor path stays untracked unless the existing private
+     // fixture-only transport explicitly starts. No backend barrier is supplied.
+diff --git a/src/fios/current_backend_fences.zig b/src/fios/current_backend_fences.zig
+new file mode 100644
+index 0000000..8fc69b2
+--- /dev/null
++++ b/src/fios/current_backend_fences.zig
+@@ -0,0 +1,26 @@
++//! Readonly current-ABI negative flags. Compilation supplies availability only;
++//! no zero/false bit proves complete custody, model idle or native admission.
++const options = @import("build_options");
++const protocol = @import("control_protocol.zig");
++fn enabled(comptime name: []const u8) bool {
++    return @hasDecl(options, name) and @field(options, name);
++}
++pub fn read() protocol.CurrentBackendFenceReadings {
++    const Source = struct {
++        extern "c" fn fios_current_sdk_known_uncertain() c_int;
++        extern "c" fn mlx_llama_source_uncertainty() c_int;
++        extern "c" fn fios_q3ld_cleanup_uncertain() c_int;
++        extern "c" fn ds4_host_source_uncertainty() u32;
++        extern "c" fn ds4_gpu_source_uncertainty() u32;
++        extern "c" fn msv_ane_source_uncertainty() u32;
++    };
++    return .{
++        .sdk_uncertain = if (comptime enabled("fios_source_sdk")) Source.fios_current_sdk_known_uncertain() != 0 else null,
++        .llama_uncertain = if (comptime enabled("llama_engine")) Source.mlx_llama_source_uncertainty() != 0 else null,
++        .streamed_pool_uncertain = if (comptime enabled("mlx_stream")) Source.fios_q3ld_cleanup_uncertain() != 0 else null,
++        .ds4_host_uncertain = if (comptime enabled("fios_source_ds4")) Source.ds4_host_source_uncertainty() != 0 else null,
++        .ds4_gpu_uncertain = if (comptime enabled("fios_source_ds4")) Source.ds4_gpu_source_uncertainty() != 0 else null,
++        .ane_reported_uncertain = if (comptime enabled("fios_source_ane")) @import("current_ane_run_uncertainty.zig").known() else null,
++        .ane_native_uncertain = if (comptime enabled("fios_source_ane")) Source.msv_ane_source_uncertainty() != 0 else null,
++    };
++}

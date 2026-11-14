@@ -1079,3 +1079,11 @@ node scripts/check-platform-current-queued-wire.mjs --isolated --source /private
 ```
 
 See [queued activity wire](contracts/queued-activity-wire.md) for exact lengths, partial coverage and separate native/manager qualification.
+
+Finite current-ABI negative-flag metadata check (compiled-out sources unavailable; no native model/device action):
+
+```sh
+node scripts/check-platform-current-backend-fences.mjs --isolated --source /private/tmp/REVIEWED_SOURCE --zig /private/tmp/PINNED_ZIG
+```
+
+See [current backend fences](contracts/current-backend-fences.md); flag availability never supplies admission or terminal proof.
