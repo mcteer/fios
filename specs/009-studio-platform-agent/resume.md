@@ -1,5 +1,17 @@
 # Spec 009 continuation — 2026-11-14
 
+## Latest streamed read-pool local validation
+
+Whole39/55,16 open. Published preceding head a20dc395732c67f405028f1458de26b1571144dd/CI43626763933 all7 green. New complete locally validated source batch is ready for publication; then update PR10 with its new exact head and own CI. All protected user catalog/UI work remains unstaged.
+
+Private source `/private/tmp/fios-009-stream-pool-stop-work-kerk_9lp/source` preserves p12/all prior layers.19-path patch + separate negative helper fix ignored C demand/spec/watchdog joins and ignored Zig quiesce/stop results, retain pool/row/event/parent graphs, preserve partial-start/error storage, block allocation/sync after prior refusal and propagate the fixed independent negative through the source guard. No numerical engine/primary guard/policy change. Diagnostic primary_guard=false, all-client unknown, native admission unsupported, model prerequisites false.
+
+Final checked-in development checker78 records passes, `/private/tmp/fios-009-stream-pool-stop-check-n30jba_5/receipt.json`, e15bc25d627a8990ff6d38fc8da6261f4d0c47af8aa82f30d3eebdfb6a76cb7f:24 designated original failures/14 controls/40 candidate. C healthy pthreads + substituted failures; actual Pool/bridge and generic stream release with declared metadata substitutes. Private C14c6480a…, Pool89fef6fc…, row0d0eb805… pass. Setup failures and older semantic/source snapshots retained; see validation.md. Do not follow stale private next-steps.txt as current state.
+
+Final enabled semantic35/35 (416.982s)919c3216221af60121d2ff318beba281894ea91bbcbc1e8d9e9e2dd91c297b13, link32/32 (14.679s)baa5e035c47e89714fb5518fc9084d32b01e3edc20856a3b93821368ef1b3ba6; raw066ef0f8…, normalized26f1f618…, capsulea84b9e3c…, four empty-model checks20969df8… pass. Selected streamed C/header files now bound along with Zig. Fresh default native build202.779s/160 separate-process tests pass zero skips, binary1af54abd…, build89830a57…, run28e0051e…. Locked noneditable reinstall/fresh188 Node/API106 Python/boundary/whitespace pass. All local sessions finished. No model plan/POST, hardware fault/Metal run, install/activation, service action, merge or deployment.
+
+Continue remaining native producer/admission/lifecycle implementation from the functional capability gap audit; do not infer a positive capability from these partial receipts. Package061e489 manifest/projection remains package-declared inputs only, not latest whole-native provenance. Keep008 parked and all operational approvals separate. Do not repeat completed validation without changed inputs/unresolved concerns.
+
 ## Latest administrative-load source validation
 
 Whole39/55,16 open. Private `/private/tmp/fios-009-admin-load-origin-work-0z6_gd4y/source` preserves audio+all prior current layers and changes only `host/api/models.zig`. `/v1/load-model` bypasses normal router binding; the new metadata helper binds original ingress before existing preparation and reuses the exact resolved target through default changes/errors. Actual tracker/helper CPU matrix33c9fbdf… passes8 expected original failures/2 untracked controls/18 candidate cases; exact refusal errors, original lineage/counts and sticky uncertainty checked. Prior narrowerdbac1dd8… receipt retained.

@@ -1036,3 +1036,12 @@ node scripts/check-platform-current-admin-load-origin.mjs --isolated --source /p
 ```
 
 Uses the existing isolated ARM64/pinned-tool rules. The helper is extracted from the actual models handler; only its scheduler type, registry and loader are substituted. The original target expression is checked against the unchanged parent and projected as an identity helper for comparison. No model, native admission/proof, installation or lifecycle action. See [the contract](contracts/admin-load-custody.md).
+
+### Compiled streamed read-pool refusal regression
+
+```sh
+uv sync --locked --no-editable --reinstall-package fios-agent
+.venv/bin/python -I -B scripts/check-platform-current-stream-pool-stop.py --isolated --source /private/tmp/REVIEWED_SOURCE --zig /private/tmp/PINNED_ZIG
+```
+
+Requires the existing CPython3.11.17, ARM64 development host, reviewed Xcode and pinned Zig. Source/helper/patch and tool inputs are checked; tests are finite CPU-only processes with network denied. The suite exercises78 cases across original/candidate C and Zig modes, including healthy real pthread controls and explicit metadata failure substitutes. It grants no model-plan, native admission, installation or service authority. See [the contract](contracts/stream-pool-custody.md) and exact evidence in validation.md.
