@@ -2,6 +2,22 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 
+test('current registry owner exclusion stays within known metadata transitions',()=>{
+  const patch=readFileSync('platform/studio/native/mlx-serve-26.11.2-registry-owner-transitions.patch','utf8');
+  const sections=patch.split(/(?=^diff --git )/m).filter(Boolean);
+  assert.deepEqual(sections.map(section=>section.match(/^diff --git a\/(\S+) b\/(\S+)/)[1]),['src/engines/mlx/scheduler.zig','src/fios/request_ownership.zig','src/host/api/models.zig','src/host/registry/registry.zig','src/sdk/util/err_name.zig']);
+  const start=sections[3].indexOf('+// Model-free actual registry policy controls.');assert(start>=0);
+  const fixture=sections[3].slice(start).split('\n').filter(line=>line.startsWith('+')).map(line=>line.slice(1)).join('\n')+'\n';
+  assert.equal(fixture,readFileSync('platform/studio/native/current_registry_owner_guard_test.zig.fixture','utf8'));
+  assert(sections[1].includes('+    pub fn beginModelMutationKnown('));
+  assert(sections[3].includes('+            entry.fios_model_mutation = fios_owners.shared().beginModelMutationKnown(self.io, entry.id) catch return false;'));
+  const unloadStart=sections[0].indexOf('+// Model-free actual unload publication controls;');assert(unloadStart>=0);
+  const unload='\n'+sections[0].slice(unloadStart).split('\n').filter(line=>line.startsWith('+')).map(line=>line.slice(1)).join('\n')+'\n';
+  assert.equal(unload,readFileSync('platform/studio/native/current_registry_unload_publication_test.zig.fixture','utf8'));
+  assert(sections[4].includes('+test "fios current owner refusal names cross the engine boundary" {'));
+  assert(!patch.includes('+    fios_ownership.shared().primary_guard = true;'));
+});
+
 test('current legacy activity port stays in the private HTTP diagnostic boundary',()=>{
   const patch=readFileSync('platform/studio/native/mlx-serve-26.11.2-http-activity.patch','utf8');
   const paths=[...patch.matchAll(/^diff --git a\/(\S+) b\/(\S+)$/gm)];

@@ -1,0 +1,41 @@
+
+// Model-free actual unload publication controls; no backend or worker exists.
+test "fios current unload publication refusal rolls back its own mutation" {
+    const io = std.testing.io;
+    const owners = fios_ownership;
+    owners.shared().primary_guard = false;
+    try owners.shared().initialize(io, @splat(229));
+    for ([_]bool{ false, true }) |shutdown| {
+        const registry = try model_registry_mod.ModelRegistry.init(std.heap.page_allocator, io, null, 2, 0, null);
+        defer registry.deinit();
+        const entry = try registry.registerStub("fixture/unpublished-unload", "/fixture/no-model", null);
+        entry.state = .ready;
+        entry.fios_owner_guard = true;
+        var fail = std.testing.FailingAllocator.init(std.heap.page_allocator, .{ .fail_index = 0 });
+        var scheduler = std.mem.zeroInit(Scheduler, .{ .allocator = fail.allocator(), .io = io, .registry = registry });
+        scheduler.shutdown.store(shutdown, .release);
+        const result = unloadModelIfIdle(&scheduler, entry.id, null);
+        if (shutdown) try std.testing.expectError(error.Shutdown, result)
+        else try std.testing.expectError(error.OutOfMemory, result);
+        try std.testing.expect(entry.state == .ready and entry.fios_model_mutation == null);
+        try std.testing.expectEqual(@as(usize, 0), owners.shared().snapshot(io).model_mutations);
+        try std.testing.expectEqual(@as(usize, 0), scheduler.unload_queue.items.len);
+        try std.testing.expect(!owners.shared().knownUncertain(io));
+    }
+}
+
+test "fios current unload uncertainty crosses as uncertain not ownership conflict" {
+    const io = std.testing.io;
+    const owners = fios_ownership;
+    owners.shared().primary_guard = false;
+    try owners.shared().initialize(io, @splat(233));
+    const registry = try model_registry_mod.ModelRegistry.init(std.heap.page_allocator, io, null, 2, 0, null);
+    const entry = try registry.registerStub("fixture/uncertain-unload", "/fixture/no-model", null);
+    entry.state = .ready;
+    entry.fios_owner_guard = true;
+    var scheduler = std.mem.zeroInit(Scheduler, .{ .allocator = std.heap.page_allocator, .io = io, .registry = registry });
+    owners.shared().fence(io);
+    try std.testing.expectError(error.NativeCleanupUncertain, unloadModelIfIdle(&scheduler, entry.id, null));
+    try std.testing.expect(entry.state == .ready and entry.fios_model_mutation == null);
+    try std.testing.expect(owners.shared().knownUncertain(io));
+}
