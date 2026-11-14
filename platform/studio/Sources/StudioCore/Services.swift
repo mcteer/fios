@@ -37,6 +37,7 @@ struct ServicePolicy {
     init(uptime:@escaping @Sendable()->TimeInterval={ProcessInfo.processInfo.systemUptime}) {self.uptime=uptime}
     func action(service:ManagedService,desired:ServiceDesired,observation:ServiceObservation,now:Int64) throws -> ServiceAction {
         guard now>=0,now<=ActivityPolicy.maximumTimestamp,observation.sampledAt>=0,
+              observation.sampledAt<=ActivityPolicy.maximumTimestamp,
               (-1000...5000).contains(now-observation.sampledAt) else { throw ServiceError.stale }
         if let identity=observation.identity, !identity.valid { throw ServiceError.invalid }
         guard observation.identity != nil || !observation.responding else {throw ServiceError.invalid}

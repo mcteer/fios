@@ -1,5 +1,11 @@
 # Spec 009 continuation — 2026-11-14
 
+## Current service timestamp source increment
+
+Whole39/55 unchanged. Services.swift adds the missing observation maximum timestamp check before launch eligibility. ServiceTests covers both fixed services and invalid/future/stale/inclusive valid edges. Debug and optimized full mock suites pass;131 platform Node tests/boundary/whitespace pass. Private `--mutate-service-time-range` compiles then fails at the expected FIO_SERVICE_INVALID_OBSERVATION_ALLOWED_ACTION. Initial red compile-input-change failure is setup evidence only. Logs `/private/tmp/fios-009-service-time-{red,green,mutation,release,node}.log`. No operational action or new model request.
+
+Previous watchdog source is published e714643185f148aedee43967470076a1b4d2dced, CI43636728389 still running at this checkpoint (five prerequisites successful, native pending). New service input needs its own exact-head CI. Package061e489 predates Services.swift and is no longer current for declared package inputs; rebuild a private development package before claiming otherwise. Upstream two-file refresh is in native-capability-gap-audit.md, not an exhaustive contract audit.
+
 ## Latest streamed watchdog source validation
 
 Whole39/55,16 open. Preceding published5beda153b17d83aeec08d3b782bee14fe2489fb1/CI43633794994 all7 green. New watchdog source batch is locally complete and ready to publish; update PR10 with its own exact head/CI. Protected user catalog/UI work remains unstaged.
