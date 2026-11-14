@@ -461,3 +461,7 @@ Receipts under `/private/tmp/fios-009-current-sdk-server-h_mvvlhq/`: `studio-pac
 
 
 The development template now records the observed26.11.2 server/GUI pair and current Python lock; the reader also preserves the known26.10.3 pair for historical packages. A genuine new nine-artifact development publication and independently checked Python candidate pass their metadata/data-only workflows; see validation.md. Every approval/enrollment/activation gate stays closed. These declarations and local copies do not establish running-image/native source provenance, all-client contract, idle/admission or protected installation authority.
+
+### GUI handover source follow-up — 2026-11-14
+
+A separate pinned26.11.2 source candidate now removes the `ServerManager` name-based listener reaper and refuses observed occupied ports before defaults migration or launch. Exact previous/current prefix controls reproduce the unwanted signal with a recorder, then pass after correction; complete private GUI Debug compilation and five existing stop/quit tests pass. The [lifecycle contract](contracts/native-server-lifecycle.md#gui-pre-launch-source-candidate-2026-11-14) records scope and limits. No installed GUI or server was modified. This is one source correction toward handover, not satisfaction of G2, reviewed signed packaging, native absence/admission or per-Studio installation/acceptance. The direct-ownership operational gate remains closed.

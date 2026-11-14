@@ -158,3 +158,15 @@ opaque identifiers never enter status/log output. The final socket sample is
 included in the collector's total elapsed/freshness limits. This is positive
 process/listener association only, not global listener exclusivity, response
 cryptographic authentication, all-client activity or native lifecycle authority.
+
+## GUI pre-launch source candidate (2026-11-14)
+
+The pinned26.11.2 GUI source has a separate ownership hazard before native startup: `ServerManager.launch` calls `killOrphanedServers`, which sends signals to listeners selected by executable name. The server startup guard runs too late to prevent those signals.
+
+The [GUI listener patch](../../../platform/studio/native/mlx-serve-26.11.2-gui-listener-ownership.patch) removes that name-based reaper and its unused PID/name/wait helpers. An observed listener makes launch return an explicit error before defaults migration, log reset or child launch. Empty-port preparation retains its existing behavior. The GUI does not adopt the listener or acquire authority to stop it. Existing owned-`Process` stop/quit handling is unchanged.
+
+This source change addresses that specific interference path. A PID inventory is neither atomic port ownership nor native absence/quiescence proof; the existing server bind/startup boundary still controls launch races. It does not supply all-client coverage, a model reservation, service handover or force authority.
+
+`check-platform-current-gui-listener.mjs --mock` compiles the exact previous/current launch prefixes with modeled PID/signal/configuration ports. The signal function records calls; executables must have no direct OS kill import. Four baseline executions produce the designated unwanted-signal/defaults markers, two baseline empty-port controls and all six corrected executions pass, plus four successful compiles. IP networking is denied. Source mode `--isolated --source ABS_PRIVATE_CHECKOUT` additionally pins upstream4e231ceebe63308cc038117d40b9f9b64bd0372e, checks the exact one-file patch and byte-matches both fragments. These are prefix correctness checks, not real kernel listener discovery or whole GUI/native acceptance.
+
+A private complete GUI Debug compile and five existing stop/quit tests also pass with unchanged locked dependencies. No signed GUI/native bundle was produced or installed, no GUI main/server/model was launched, and no installed configuration or service changed. Native handover remains gated until reviewed matching artifacts, per-host installation/rollback and operational acceptance exist. See validation.md and native-26112-port.md for exact evidence and retained setup failures.

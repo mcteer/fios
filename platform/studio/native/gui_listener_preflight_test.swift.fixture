@@ -1,0 +1,30 @@
+import Foundation
+import Darwin
+var signals:[Int32]=[]
+var migrations=0
+func kill(_ pid:pid_t,_ signal:Int32)->Int32 {signals.append(signal);return 0}
+struct ServerOptions {let port:UInt16;let host:String}
+enum GenerationDefaultsFile {static func migrate(_ options:ServerOptions)throws {migrations+=1}}
+enum Status {case stopped,starting,error(String)}
+final class API {var host=""}
+final class Holder {
+ var port:UInt16=0;let api=API();var status:Status = .stopped;var lastError="";var listeners:[pid_t]=[];var name="mlx-serve";var logClears=0
+ func clearServerLog(){logClears+=1}
+ func pidsListening(on port:UInt16)->[pid_t]{listeners}
+ func processName(pid:pid_t)->String{name}
+ func waitForExit(_ pid:pid_t)->Bool{true}
+ func invoke(){launch(args:[],options:ServerOptions(port:11234,host:"127.0.0.1"))}
+@@BODY@@
+}
+let holder=Holder(),mode=CommandLine.arguments[1]
+if mode != "--empty" {holder.listeners=[99999991]}
+if mode == "--other" {holder.name="other-app"}
+holder.invoke()
+if signals.contains(where:{$0 != 0}) {print("GUI_PRELAUNCH_SIGNALED_UNOWNED_LISTENER");exit(77)}
+if mode != "--empty" {
+ if migrations != 0 || holder.logClears != 0 {print("GUI_PRELAUNCH_CHANGED_DEFAULTS_WHILE_OCCUPIED");exit(77)}
+ guard case .error(let message)=holder.status,!message.isEmpty else {print("GUI_PRELAUNCH_DID_NOT_REFUSE_OCCUPIED_PORT");exit(77)}
+} else {
+ guard case .starting=holder.status,migrations==1,holder.port==11234,holder.api.host=="127.0.0.1" else {print("GUI_PRELAUNCH_EMPTY_PORT_REGRESSION");exit(77)}
+}
+print("PASS: actual GUI launch prefix preserves external listener and ordinary empty-port preparation; modeled PID/signal/config ports only")

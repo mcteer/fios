@@ -886,3 +886,12 @@ node scripts/check-platform-worker-runtime.mjs --isolated --candidate /ABSOLUTE/
 ```
 
 It uses two compiler jobs, a120s cooperative tree bound and145s outer execution bound. It exercises only development-owned data and fixed metadata startup; root protection/enrollment, model eligibility and installed acceptance remain separate. See contracts/python-runtime-review.md.
+
+### GUI listener ownership source check
+
+```sh
+node scripts/check-platform-current-gui-listener.mjs --mock
+node scripts/check-platform-current-gui-listener.mjs --isolated --source /private/tmp/REVIEWED_GUI_SOURCE
+```
+
+Mock mode needs only the selected macOS Swift toolchain and checked-in fragments. Source mode requires an owned private26.11.2 checkout at4e231ceebe63308cc038117d40b9f9b64bd0372e with only `mlx-serve-26.11.2-gui-listener-ownership.patch` applied and SDK27.2. Both compile Debug/optimized launch-prefix controls using modeled PID/signal/defaults ports under denied IP networking. No actual OS signal, GUI/server launch, model, installed policy or service action occurs. Prefix checks do not replace a full GUI compile, owned-stop/quit tests, reviewed matching signed bundle or installed native handover acceptance.
