@@ -1,5 +1,13 @@
 # Spec 009 continuation — 2026-11-14
 
+## Latest audio-companion source validation — 2026-11-14
+
+Whole39/55,16 open. The audio-only source patch/helper regression and capability-gap matrix are locally complete and pending publication. Private `/private/tmp/fios-009-audio-companion-work-h6vzmhw0/source` preserves all prior current layers; only `host/api/audio.zig` is new. Both companion loads associate their exact registry ID through the existing native ownership helper before the existing loader; no numerical engine or primary-guard change.
+
+Final unchanged-input CPU matrix4097b18519dd62bdf9ca263b756e64866e3087fca7ddf064c56b91698fd668b3 passes4 expected original failures/2 controls/14 candidate cases. Initial fixture setup failures and changed-input refusal are retained; see validation.md.188 Node/API106 installed Python pass. Enabled semantic35/35 (479.820s)dcd3f2f8… and link32/32 (12.797s)a818e90b… pass. Exact new normalized binary3bc650a3… passes four empty-model checks, runtime61c35dc3…. Fresh default native unit build passes201.127s;160/160 zero-skip separate-process tests pass, binaryf481c505…, run receiptdab05634b77070e0be064fdbb008ebc65661992efc469f3a98dd3e1327211de4. All local validation sessions complete. No native installation, new model POST, merge or deployment. Latest pushed3205e4a9923fa008c9eef3e4f026a9aef5d9201b/CI43623340090 still running;4a6b41a/43619763959 fully green.
+
+Do not rerun completed checks without changed inputs or unresolved concerns. Publish this bounded repair after the preceding exact-head CI completes; update PR10 with the new head and its own CI. Consult contracts/native-capability-gap-audit.md for remaining authoritative producer/admission/lifecycle gaps; do not invent new proof profiles or equate partial custody with all-client coverage.
+
 ## Current state
 
 **39/55 whole tasks complete;16 open.** Branch `009-studio-platform-agent`, draft [PR10](https://github.com/mcteer/fios/pull/10). Continue authorized source engineering and isolated functional tests. No subagents.008 remains parked at3936da2. No merge, app deployment, native installation/activation or Studio acceptance has occurred.

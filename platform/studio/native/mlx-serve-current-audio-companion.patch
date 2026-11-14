@@ -1,0 +1,39 @@
+diff --git a/src/host/api/audio.zig b/src/host/api/audio.zig
+index 528b8b0..d1b5c72 100644
+--- a/src/host/api/audio.zig
++++ b/src/host/api/audio.zig
+@@ -21,6 +21,16 @@ const io_util = @import("../../sdk/util/io_util.zig");
+ const Stopwatch = io_util.Stopwatch;
+ const http_server = @import("../http/server.zig");
+ const mlx_engine = @import("../engines/mlx.zig");
++const fios_ownership = @import("../../fios/request_ownership.zig");
++
++// Retain the exact companion under the original request before any load or
++// ready-model fast path. This association grants no native admission authority.
++fn ensureCompanionLoaded(id: []const u8) !*LoadedModel {
++    const scheduler = http_server.launch().global_scheduler.?;
++    const entry = try scheduler.registry.resolveEntry(id);
++    if (entry.fios_owner_guard) try fios_ownership.bindAuxiliaryCurrent(scheduler.io, entry.id);
++    return scheduler.ensureLoaded(entry.id);
++}
+ 
+ const Conn = @import("../http/conn.zig").Conn;
+ const getTimeoutNs = @import("../http/server.zig").getTimeoutNs;
+@@ -114,7 +124,7 @@ pub fn handleTranscriptions(allocator: std.mem.Allocator, stream: *Conn, body: [
+             try sendErrorResponse(allocator, stream, "400 Bad Request", "invalid_request_error", "diarized_json needs Nemotron 3 Diarization, which is not on disk or did not load: download " ++ DIARIZER_REPO ++ " beside the ASR model", 400);
+             return;
+         }).id;
+-        diarizer = http_server.launch().global_scheduler.?.ensureLoaded(id) catch |err| blk: {
++        diarizer = ensureCompanionLoaded(id) catch |err| blk: {
+             log.warn("  diarizer {s} did not load ({s}): one speaker\n", .{ id, @errorName(err) });
+             break :blk null;
+         };
+@@ -142,7 +152,7 @@ pub fn handleTranscriptions(allocator: std.mem.Allocator, stream: *Conn, body: [
+         }
+         if (aligner) |*al| {
+             if (t.text.len > 0 and al.languages & transcription_mod.languageBit(t.language orelse "") != 0) {
+-                if (al.lm == null) al.lm = http_server.launch().global_scheduler.?.ensureLoaded(al.id) catch |err| blk: {
++                if (al.lm == null) al.lm = ensureCompanionLoaded(al.id) catch |err| blk: {
+                     // verbose_json still answers without times; srt and vtt cannot.
+                     if (form.format != .verbose_json) {
+                         try sendEnsureLoadedError(allocator, stream, http_server.launch().global_scheduler.?, al.id, err);

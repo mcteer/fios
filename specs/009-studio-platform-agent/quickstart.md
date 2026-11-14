@@ -1018,3 +1018,13 @@ node scripts/check-platform-current-ingress-unload-sdk.mjs --isolated --source /
 ```
 
 These checks preserve the original ingress token/correlation while associating the exact reserved target, and retain the unparented constructor as a regression control. They supply no native admission, installation/activation or terminal authority. See [ingress-unload contract](contracts/ingress-unload-origin.md).
+
+### Isolated audio companion association
+
+On the reviewed ARM64 development host, with the private current source layers applied and the exact pinned Zig tool:
+
+```sh
+node scripts/check-platform-current-audio-companion.mjs --isolated --source /private/tmp/REVIEWED_SOURCE --zig /private/tmp/PINNED_ZIG
+```
+
+The checker applies the audio-only patch to its fixed parent for comparison, verifies both original loader call sites were replaced, runs original/candidate CPU cases under Debug/ReleaseSafe and checks declared inputs unchanged. It loads no models and grants no native admission, installation or whole-native provenance. See [the contract](contracts/audio-companion-custody.md) and [the remaining capability audit](contracts/native-capability-gap-audit.md).

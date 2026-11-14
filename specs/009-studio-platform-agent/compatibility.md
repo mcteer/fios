@@ -21,6 +21,8 @@ The public26.11.2 tag resolves to `4e231ceebe63308cc038117d40b9f9b64bd0372e`; a 
 
 ### Current source-port prerequisite
 
+The2026-11-14 [bounded functional capability audit](contracts/native-capability-gap-audit.md) separates actual request/queue/mutation custody from missing normalized all-client coverage, native proof issuance and atomic admission. It identifies an audio-companion association repair under isolated validation, without promoting that repair to G2 or installed compatibility. Source engineering continues; diagnostic primary guard and activation gates remain unchanged.
+
 See [the current source port record](native-26112-port.md) for exact new dependency inputs, build preparation and ownership/ABI relocation requirements. Baseline compilation does not supply an admission contract.
 
 A read-only `git apply --check` against exact26.11.2 source4e231ceebe63308cc038117d40b9f9b64bd0372e rejects the18-path26.10.3 candidate patch (`/private/tmp/fios-009-26112-compatibility-check.log`); the checkout remains clean. This is an explicit compatibility failure, not a model/runtime test. Most old paths no longer exist. The registry is now `src/host/registry/registry.zig`; HTTP is `src/host/http/server.zig`; the former scheduler responsibilities are divided between `src/host/gpu_thread/scheduler.zig` and `src/engines/mlx/scheduler.zig`.
