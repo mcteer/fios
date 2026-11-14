@@ -1,0 +1,47 @@
+const std = @import("std");
+const scenario = @import("build_options").scenario;
+var uncertain = scenario == 1;
+var enumerated: usize = 0;
+var admission_calls: usize = 0;
+var slices: usize = 0;
+const Scheduler = struct { io: std.Io };
+const model_registry_mod = struct { fn cleanupUncertain(_: std.Io) bool { return uncertain; } };
+const Cache = struct {
+    fn flushOwedSlice(_: *@This(), _: usize) prefix_cache_mod.FlushResult {
+        slices += 1;
+        if (scenario == 2 and slices == 1) uncertain = true;
+        return .progress;
+    }
+};
+var cache: Cache = .{};
+const prefix_cache_mod = struct {
+    const FlushResult = enum { done, busy, progress };
+    const FlushTarget = struct { hc: *Cache, s: usize };
+};
+fn diskCaches(_: *Scheduler, out: []prefix_cache_mod.FlushTarget, _: bool) usize {
+    enumerated += 1;
+    if (scenario == 4 or scenario == 7) uncertain = true;
+    if (scenario == 6 or scenario == 7) return 0;
+    out[0] = .{ .hc = &cache, .s = 1 }; out[1] = .{ .hc = &cache, .s = 2 };
+    return 2;
+}
+fn admitModuleStaging(_: *Scheduler, _: *Cache) bool {
+    admission_calls += 1;
+    if (scenario == 3 and admission_calls == 1) uncertain = true;
+    return scenario != 5;
+}
+// ACTUAL_IDLE_FLUSH
+pub fn main(init: std.process.Init) !void {
+    var sch: Scheduler = .{ .io = init.io };
+    const result = flushOwedDiskSlices(&sch);
+    const expected_result: prefix_cache_mod.FlushResult = if (scenario == 0) .progress else if (scenario == 6) .done else .busy;
+    const expected_enumerated: usize = if (scenario == 1) 0 else 1;
+    const expected_admitted: usize = if (scenario == 0 or scenario == 5) 2 else if (scenario == 2 or scenario == 3) 1 else 0;
+    const expected_slices: usize = if (scenario == 0) 2 else if (scenario == 2) 1 else 0;
+    if (result != expected_result or enumerated != expected_enumerated or admission_calls != expected_admitted or slices != expected_slices) {
+        std.debug.print("FIO_IDLE_FLUSH_DURING_UNCERTAINTY\n", .{});
+        return error.UncertainIdleFlush;
+    }
+    if ((scenario >= 1 and scenario <= 4 or scenario == 7) and !uncertain) return error.ClearedUncertainty;
+    std.debug.print("PASS: actual idle flush preserves negative evidence and healthy progress; CPU substitutes only\n", .{});
+}

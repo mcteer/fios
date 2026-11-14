@@ -1,0 +1,9 @@
+# Idle cache-flush negative evidence
+
+`flushOwedDiskSlices` runs on the existing inference thread between request work. Known independent native/source uncertainty must stop cache enumeration, staging admission and new slice flushes. A successful local slice is not native terminal proof.
+
+The candidate reads existing `model_registry_mod.cleanupUncertain` before/after target enumeration, before/after each staging admission and after each slice. A known negative result returns the existing `.busy` value, preserving owed work and the caller's bounded retry wait. It does not report `.done` from a newly uncertain empty enumeration, clear a latch or flush later entries after a callback reports uncertainty. Healthy progress, ordinary staging-busy and empty-work behavior remain unchanged. There is no new retry mechanism, model/cache policy, engine or admission authority.
+
+The patch layers over the shutdown-persistence budget source on checkpoint3736ed55. The isolated checker reconstructs both exact budget overlays, byte-compares the file and extracts the actual idle function. CPU-only enumeration, staging and slice substitutes plus a fixed negative getter exercise eight independent-process scenarios in Debug/ReleaseFast: healthy progress, pre-existing uncertainty, uncertainty during first slice/admission/enumeration, healthy staging-busy, healthy empty enumeration and newly uncertain empty enumeration. Required outcomes: ten designated original failures, six original healthy/busy/empty successes and sixteen candidate successes. Each simulated latch remains set for that process.
+
+No model, Metal/ANE object or hardware fault is involved. This is a known-negative source repair, not a complete all-client/native producer, atomic admission, installed lifecycle or Studio acceptance. Whole tasks stay open until their remaining criteria pass.

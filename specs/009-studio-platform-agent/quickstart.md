@@ -931,3 +931,11 @@ node scripts/check-platform-current-shutdown-persist.mjs --isolated --source /pr
 ```
 
 The actual persistence function runs with CPU-only drain/cache/clock/negative-getter substitutes. Independent healthy, pre-existing/drain/enumeration uncertainty and zero-deadline processes require6 original failures,4 original healthy/deadline successes and10 candidate successes across Debug/ReleaseFast. No simulated latch is cleared. See [persistence contract](contracts/shutdown-persistence.md); this grants no native proof or installation/activation authority.
+
+### Idle cache-flush CPU regression
+
+```sh
+node scripts/check-platform-current-idle-flush.mjs --isolated --source /private/tmp/REVIEWED_IDLE_FLUSH_CANDIDATE --zig /private/tmp/PINNED_ZIG
+```
+
+The actual idle function runs with CPU-only enumeration/staging/slice and negative-getter substitutes. Eight independent-process scenarios in Debug/ReleaseFast require10 original failures,6 original healthy/busy/empty successes and16 candidate successes. No simulated latch is cleared or hardware/model invoked. See [idle-flush contract](contracts/idle-cache-flush.md); `.busy` preserves pending work, not native terminal/admission authority.
