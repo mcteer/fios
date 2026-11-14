@@ -817,3 +817,14 @@ The parent component driver also accepts `--preflight` for ordinary absent-input
 
 
 `check-platform-current-llama-parent.mjs --construction-preflight` selects ordinary missing-input and already-fenced constructor controls. It is mutually exclusive with `--preflight` and `--expect-missing`. It initializes no model or native context; it cannot certify successful native initialization or initialization-failure retirement. The same finite build/process limits and zero native authority apply.
+
+
+### Current SDK C++ compatibility (CPU-only)
+
+For a private26.11.2 source candidate with the reviewed build helper and MLX ownership patch:
+
+```sh
+node scripts/check-platform-current-cxx.mjs --isolated --source /private/tmp/REVIEWED_CURRENT_SOURCE --zig /private/tmp/PINNED_ZIG --mlx-sha256 REVIEWED_MLX_LIBRARY_SHA256
+```
+
+This checks source/tool/library bytes before creating a two-mode CPU callback fixture, including cyclic imports and repeated helper application. Each compile uses two jobs/180s; each IP-denied callback process has10s. The existing ordinary SDK callback error must reach its error handler. Receipts/logs stay in the reported private directory. This does not run models or install/start/manage a service. Selected SDK/header/input observations do not attest every dependency, mapped runtime, native terminality or all-client coverage. Finish any native build and its runtime checks before running this separate compile fixture.

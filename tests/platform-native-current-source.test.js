@@ -2,6 +2,18 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 
+test('current source SDK C++ composition stays within the build graph',()=>{
+  const patch=readFileSync('platform/studio/native/mlx-serve-26.11.2-system-cxx.patch','utf8');
+  const sections=patch.split(/(?=^diff --git )/m).filter(Boolean);
+  assert.deepEqual(sections.map(section=>section.match(/^diff --git a\/(\S+) b\/(\S+)/)[1]),['build/config.zig','build/macos.zig']);
+  const start=sections[0].indexOf('+// Source-fixture composition only.');assert(start>=0);
+  const helper=sections[0].slice(start).split('\n').filter(line=>line.startsWith('+')).map(line=>line.slice(1)).join('\n')+'\n';
+  assert.equal(helper,readFileSync('platform/studio/native/current_system_cxx_build.zig.fixture','utf8'));
+  const calls=sections[1].split('\n').filter(line=>line.startsWith('+')&&line.includes('config.sourceSystemCxx('));
+  assert.equal(calls.length,4);
+  assert(calls.every(line=>line.includes('if (s.fios_source_sdk)')||line.includes('if (g.fios_source_sdk)')));
+});
+
 // Source-input integrity only; actual compilation/HTTP/Unix/manager receipts
 // are separate. This test grants no backend coverage or admission authority.
 test('current ingress patch changes only host integration and exact shared companions',()=>{
