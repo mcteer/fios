@@ -170,3 +170,33 @@ test('reviewed release tree refuses changed bytes, extra files, symlinks and har
     }
   }finally{rmSync(directory,{recursive:true,force:true});rmSync(outside,{recursive:true,force:true});}
 });
+
+
+test('development template matches locked dependencies and current observed Studio files',()=>{
+  const lock=readFileSync(new URL('../uv.lock',import.meta.url));
+  assert.equal(template.python.uv_lock_sha256,createHash('sha256').update(lock).digest('hex'));
+  assert.equal(template.native_inventory.mlx_version,'26.11.2');
+  assert.equal(template.native_inventory.mlx_server_sha256,'6fdef72cfbc88c1ba3cf06546eccbf7fd571d0ec968801e8e4c78dcf03b6009e');
+  assert.equal(template.native_inventory.mlx_application_sha256,'971145725dc1ef933f8b4f502dc7957dde09a75a8fe5cc3fbac9f5c2c42690a1');
+});
+
+test('development native file tuples keep current and historical packages inactive without mixing observations',()=>{
+  const profiles=[
+    ['26.10.3','4c2416121c33011bddd0002f4179b7b0b1a273136a6f2041286c80285d422a62','26a368e8dc05c963ff8521d5ddef36a9103214387f4857ca436dba0e1fa6e3bf'],
+    ['26.11.2','6fdef72cfbc88c1ba3cf06546eccbf7fd571d0ec968801e8e4c78dcf03b6009e','971145725dc1ef933f8b4f502dc7957dde09a75a8fe5cc3fbac9f5c2c42690a1'],
+  ];
+  for(const [version,server,gui] of profiles){
+    const candidate=structuredClone(template);
+    Object.assign(candidate.native_inventory,{mlx_version:version,mlx_server_sha256:server,mlx_application_sha256:gui});
+    assert.equal(validatePlatformManifest(candidate,{template:true}),candidate);
+    assert.deepEqual(Object.values(candidate.activation),[false,false,false,false]);
+    for(const field of ['mlx_server_sha256','mlx_application_sha256']){
+      const mixed=structuredClone(candidate);mixed.native_inventory[field]=profiles.find(row=>row[0]!==version)[field==='mlx_server_sha256'?1:2];
+      assert.throws(()=>validatePlatformManifest(mixed,{template:true}));
+    }
+    for(const change of [{mlx_version:'26.11.3'},{enrolled:true},{all_client_coverage:'complete'}]){
+      const unproved=structuredClone(candidate);Object.assign(unproved.native_inventory,change);
+      assert.throws(()=>validatePlatformManifest(unproved,{template:true}));
+    }
+  }
+});

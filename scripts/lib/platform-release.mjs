@@ -28,7 +28,12 @@ export function validatePlatformManifest(value,{template=false,journalSchema=9}=
   if(value.python.version!=='3.11.17'||value.python.package!=='fios-agent'||value.python.package_version!=='0.1.0'||!digest(value.python.uv_lock_sha256)||!digest(value.python.policy_sha256)||value.python.policy_input_utf16!==504||value.python.immutable_tree_enrolled!==false)fail();
   exact(value.native_inventory,['hosts','mlx_version','mlx_server_sha256','mlx_application_sha256','mlx_application_identifier','mlx_team_identifier','orbstack_version','orbstack_application_sha256','docker_cli_sha256','orbctl_cli_sha256','all_client_coverage','enrolled']);
   const native=value.native_inventory;
-  if(JSON.stringify(native.hosts)!==JSON.stringify(['fios-edge-a.lab','fios-edge-b.lab'])||native.mlx_version!=='26.10.3'||native.mlx_application_identifier!=='com.dalcu.mlx-core'||native.mlx_team_identifier!=='S77TW432YG'||native.orbstack_version!=='2.2.5'||native.all_client_coverage!=='unsupported'||native.enrolled!==false||![native.mlx_server_sha256,native.mlx_application_sha256,native.orbstack_application_sha256,native.docker_cli_sha256,native.orbctl_cli_sha256].every(digest))fail();
+  // On-disk development observations only; neither tuple grants enrollment.
+  const mlxFiles=[
+    ['26.10.3','4c2416121c33011bddd0002f4179b7b0b1a273136a6f2041286c80285d422a62','26a368e8dc05c963ff8521d5ddef36a9103214387f4857ca436dba0e1fa6e3bf'],
+    ['26.11.2','6fdef72cfbc88c1ba3cf06546eccbf7fd571d0ec968801e8e4c78dcf03b6009e','971145725dc1ef933f8b4f502dc7957dde09a75a8fe5cc3fbac9f5c2c42690a1'],
+  ].find(([version])=>native.mlx_version===version);
+  if(JSON.stringify(native.hosts)!==JSON.stringify(['fios-edge-a.lab','fios-edge-b.lab'])||!mlxFiles||native.mlx_server_sha256!==mlxFiles[1]||native.mlx_application_sha256!==mlxFiles[2]||native.mlx_application_identifier!=='com.dalcu.mlx-core'||native.mlx_team_identifier!=='S77TW432YG'||native.orbstack_version!=='2.2.5'||native.all_client_coverage!=='unsupported'||native.enrolled!==false||![native.mlx_server_sha256,native.mlx_application_sha256,native.orbstack_application_sha256,native.docker_cli_sha256,native.orbctl_cli_sha256].every(digest))fail();
   if(!Array.isArray(value.approved_sandbox_images)||value.approved_sandbox_images.length!==0)fail();
   exact(value.activation,['managed_inference','sandbox_tasks','native_lifecycle','launchd_installation']);
   if(Object.values(value.activation).some(flag=>flag!==false))fail();
