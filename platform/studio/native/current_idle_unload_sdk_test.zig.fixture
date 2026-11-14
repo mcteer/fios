@@ -1,0 +1,67 @@
+const std=@import("std");const fios_ownership=@import("fios/request_ownership.zig");const queued=@import("fios/queued_request_ownership.zig");const scenario=@import("build_options").scenario;
+const sdk=@import("fios/sdk_request_ownership.zig");
+extern fn fios_startup_sdk_library_is_selected(expected:[*:0]const u8)c_int;
+extern fn fios_host_owner_fixture_start()c_int;extern fn fios_host_owner_fixture_wait(second:c_int)c_int;extern fn fios_host_owner_fixture_owner(second:c_int)c_int;extern fn fios_host_owner_fixture_release_first()void;extern fn fios_host_owner_fixture_cleanup()c_int;
+var callback_started=false;
+var source_io:std.Io=undefined;var published:usize=0;var worker:?queued.Scope=null;
+const State=enum {unloaded,error_state,loading,evicting,ready};
+const Entry=struct {id:[]const u8="fixture/idle-unload",state:State=.ready,fios_owner_guard:bool=true,fios_load_uncertain:std.atomic.Value(bool)=.init(false),fios_model_mutation:?fios_ownership.ModelMutation=null};
+const Condition=struct {fn broadcast(_: *@This(),_:std.Io)void {}fn waitUncancelable(_: *@This(),_:std.Io,_:*std.Io.Mutex)void {@panic("unexpected fixture wait");}};
+const UnloadRequest=struct {entry:*Entry,fios_origins:?*const fios_ownership.Retained=null,done_mu:std.Io.Mutex=.init,done_cond:Condition=.{} ,done:bool=false,fios_failed:bool=false,fios_cleanup_refused:bool=false};
+const Registry=struct {entry:*Entry,mutex:std.Io.Mutex=.init,state_cond:Condition=.{} ,
+ fn resolveEntry(self:*@This(),id:[]const u8)!*Entry {if(!std.mem.eql(u8,id,self.entry.id))return error.WrongModel;return self.entry;}
+ fn markEvictingLocked(_: *@This(),entry:*Entry)bool {if(entry.state!=.ready)return false;if(entry.fios_owner_guard)entry.fios_model_mutation=fios_ownership.shared().beginModelMutationKnown(source_io,entry.id) catch return false;entry.state=.evicting;return true;}
+ fn waitForRefcountZeroLocked(_: *@This(),_:*Entry)void {}
+ fn unmarkEvictingLocked(_: *@This(),entry:*Entry)void {if(entry.fios_model_mutation)|ticket| {fios_ownership.shared().endModelMutation(source_io,ticket) catch {fios_ownership.shared().fence(source_io);return;};entry.fios_model_mutation=null;}entry.state=.ready;}};
+const model_registry_mod=struct {const ModelRegistry=struct {fn idleEvictable(_:*Entry,_:i64,_:i64)bool{return true;}};fn cleanupUncertainLocked(io:std.Io)bool {return fios_ownership.shared().knownUncertain(io);}};
+const io_util=struct {fn nowMsMonotonic(_:std.Io)i64{return 0;}};
+const Queue=struct {fn append(_: *@This(),_:std.mem.Allocator,req:*UnloadRequest)!void {
+ published+=1;worker=queued.Scope.retainRequest(source_io,req.fios_origins,req.entry.fios_owner_guard) catch {req.fios_failed=true;req.done=true;return;};
+ if(worker)|*scope| {try scope.enter(source_io);if(fios_host_owner_fixture_start()!=1)return error.SDKStart;callback_started=true;if(!scope.finish(source_io))return error.WorkerRelease;}worker=null;
+ if(req.entry.fios_model_mutation)|ticket| {try fios_ownership.shared().endModelMutation(source_io,ticket);req.entry.fios_model_mutation=null;}req.entry.state=.unloaded;req.done=true;
+}};
+const Scheduler=struct {io:std.Io,registry:*Registry,allocator:std.mem.Allocator=std.heap.page_allocator,queue_mu:std.Io.Mutex=.init,queue_cond:Condition=.{} ,shutdown:std.atomic.Value(bool)=.init(false),unload_queue:Queue=.{} };
+// ACTUAL_PRODUCER
+pub fn main(init:std.process.Init)!void {
+ const io=init.io;source_io=io;if(fios_startup_sdk_library_is_selected(@import("build_options").sdk_library)!=1)return error.WrongMappedSDK;
+ try fios_ownership.shared().initialize(io,@splat(95));try sdk.initialize(io);var cleaned=false;defer if(callback_started and !cleaned){_=fios_host_owner_fixture_cleanup();};
+ if(comptime scenario>=4) {
+  const original=try fios_ownership.shared().beginModelMutationKnown(io,"fixture/idle-unload");var supplied=original;var expected_ticket=original;var expected_model:[]const u8="fixture/idle-unload";var supplied_model:[]const u8="fixture/idle-unload";
+  if(scenario==4)supplied_model="fixture/wrong-model";
+  if(scenario==5)supplied.sequence+=1;
+  if(scenario==6)supplied.instance[0]^=1;
+  if(scenario==7){try fios_ownership.shared().endModelMutation(io,original);expected_ticket=try fios_ownership.shared().beginModelMutationKnown(io,"fixture/unrelated-transition");expected_model="fixture/unrelated-transition";}
+  if(scenario==8)fios_ownership.shared().fence(io);
+  var outcome:?anyerror=null;
+  if(fios_ownership.shared().reserveMutationOrigin(io,supplied,supplied_model)) |_| {return error.InvalidTicketCreatedOrigin;} else |err| {outcome=err;}
+  const expected:anyerror=if(scenario==8)error.CoverageUncertain else error.InvalidMutation;
+  const saved=fios_ownership.shared().mutations[expected_ticket.slot];const snap=fios_ownership.shared().snapshot(io);
+  if(outcome==null or outcome.?!=expected or !snap.uncertain or snap.owned!=0 or saved.sequence!=expected_ticket.sequence or !std.mem.eql(u8,saved.id[0..saved.len],expected_model))return error.MutationGuardLostOriginal;
+  std.debug.print("PASS: actual idle-unload producer ticket guards preserve originals without granting authority\n",.{});return;
+ }
+ var prior:?fios_ownership.Token=null;
+ if(scenario==2){prior=try fios_ownership.shared().enter(io);try fios_ownership.shared().bind(io,prior.?,"fixture/other-active");}
+ if(scenario==3)_=try fios_ownership.shared().pauseAdmissions(io);
+ var entry=Entry{.fios_owner_guard=scenario!=1};var registry=Registry{.entry=&entry};var sch=Scheduler{.io=io,.registry=&registry};
+ var outcome:?anyerror=null;unloadModelIfIdle(&sch,entry.id,null) catch |err| {outcome=err;};
+ if(scenario==0) {
+  if(outcome!=null or published!=1 or worker!=null or !callback_started or entry.state!=.unloaded or entry.fios_model_mutation!=null or fios_ownership.shared().snapshot(io).owned!=1 or fios_ownership.shared().knownUncertain(io)) {std.debug.print("FIO_IDLE_UNLOAD_WITHOUT_PUBLISHED_ORIGINS\n",.{});return error.MissingProducerOrigin;}
+  const held=fios_ownership.shared().snapshot(io);if(held.model_count!=1 or !std.mem.eql(u8,held.models[0].id[0..held.models[0].len],entry.id))return error.OriginalModelLost;
+  if(fios_ownership.shared().beginModelMutationKnown(io,entry.id)) |_| {return error.CallbackModelReleasedEarly;} else |err| {if(err!=error.ModelOwned)return err;}
+  if(fios_host_owner_fixture_wait(0)!=1 or fios_host_owner_fixture_owner(0)!=1)return error.FirstSDKOrigin;
+  fios_host_owner_fixture_release_first();
+  if(fios_host_owner_fixture_wait(1)!=1 or fios_host_owner_fixture_owner(1)!=1)return error.NestedSDKOrigin;
+  const nested=fios_ownership.shared().snapshot(io);if(nested.owned!=1 or nested.model_count!=1 or !std.mem.eql(u8,nested.models[0].id[0..nested.models[0].len],entry.id))return error.NestedModelLost;
+  if(fios_host_owner_fixture_cleanup()!=1)return error.SDKCleanup;cleaned=true;
+  if(sdk.diagnostic().uncertain or sdk.diagnostic().active_contexts!=0 or fios_ownership.shared().snapshot(io).owned!=0)return error.SDKLocalReferenceLeak;
+ } else if(scenario==1) {
+  if(outcome!=null or published!=1 or worker!=null or entry.state!=.unloaded or fios_ownership.shared().snapshot(io).owned!=0 or fios_ownership.shared().knownUncertain(io))return error.LegacyControl;
+ } else {
+  const expected:anyerror=if(scenario==2) error.ModelOwned else error.Maintenance;
+  const snap=fios_ownership.shared().snapshot(io);
+  if(outcome==null or outcome.?!=expected or published!=0 or worker!=null or entry.state!=.ready or entry.fios_model_mutation!=null or snap.uncertain or snap.owned!=(if(scenario==2) @as(usize,1) else 0) or snap.admissions_closed!=(scenario==3)) {std.debug.print("FIO_IDLE_UNLOAD_WITHOUT_PUBLISHED_ORIGINS\n",.{});return error.UnsafeProducerRefusal;}
+  if(prior)|token| {if(snap.model_count!=1 or !std.mem.eql(u8,snap.models[0].id[0..snap.models[0].len],"fixture/other-active"))return error.OtherOwnerLost;try fios_ownership.shared().leave(io,token);}
+ }
+ if(fios_ownership.current().*!=null or fios_ownership.current_group().*!=null)return error.CallerTLSChanged;
+ std.debug.print("PASS: actual idle-unload producer retains exact model through genuine SDK CPU callback and destructor child; no terminal authority\n",.{});
+}

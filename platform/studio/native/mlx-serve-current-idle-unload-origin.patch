@@ -1,0 +1,72 @@
+diff --git a/src/fios/request_ownership.zig b/src/fios/request_ownership.zig
+--- a/src/fios/request_ownership.zig
++++ b/src/fios/request_ownership.zig
+@@ -492,6 +492,41 @@ pub const Tracker = struct {
+         self.uncertain = true;
+         return error.ModelCapacity;
+     }
++    // A trusted producer may attribute its own idle cleanup only AFTER its
++    // exact metadata mutation was reserved and before queue publication.
++    // This is a bounded ownership root, not mutation/admission authority.
++    pub fn reserveMutationOrigin(self: *Tracker, io: std.Io, ticket: ModelMutation, expected_model: []const u8) !Retained {
++        self.observeBackendUncertainty(io);
++        self.mutex.lockUncancelable(io);
++        defer self.mutex.unlock(io);
++        if (!self.initialized or self.uncertain) return error.CoverageUncertain;
++        if (ticket.slot >= model_capacity or !std.mem.eql(u8, &ticket.instance, &self.instance)) {
++            self.uncertain = true;
++            return error.InvalidMutation;
++        }
++        const mutation = self.mutations[ticket.slot];
++        if (mutation.len == 0 or mutation.len > model_limit or mutation.sequence != ticket.sequence or
++            !std.mem.eql(u8, mutation.id[0..mutation.len], expected_model)) {
++            self.uncertain = true;
++            return error.InvalidMutation;
++        }
++        // An unparented internal cleanup cannot claim any existing request or
++        // run beside tracked work. Leave those originals and this ticket alone.
++        for (self.slots) |slot| if (slot.phase != .vacant) return error.ModelOwned;
++        // New work still obeys the existing native ingress pause.
++        const token = try self.enterLocked(false);
++        const slot = try self.checked(token);
++        // Only the already validated exact mutation bypasses the ordinary
++        // transition refusal. A failed bind quarantines this unused root.
++        slot.primary = self.addModelLocked(slot, expected_model) catch |err| {
++            self.uncertain = true;
++            return err;
++        };
++        slot.phase = .preparing;
++        var result: Retained = .{ .tracker = self, .count = 1 };
++        result.tokens[0] = token;
++        return result;
++    }
+     pub fn endModelMutation(self: *Tracker, io: std.Io, ticket: ModelMutation) !void {
+         self.mutex.lockUncancelable(io);
+         defer self.mutex.unlock(io);
+diff --git a/src/engines/mlx/scheduler.zig b/src/engines/mlx/scheduler.zig
+--- a/src/engines/mlx/scheduler.zig
++++ b/src/engines/mlx/scheduler.zig
+@@ -1090,7 +1090,7 @@ pub fn unloadModel(self: *Scheduler, id_or_empty: []const u8) !void {
+ pub fn unloadModelIfIdle(self: *Scheduler, id_or_empty: []const u8, idle_window_ms: ?i64) !void {
+     // Retain the caller before registry transitions and queue publication.
+     // Acknowledgement is local operation custody, never device terminality.
+-    const fios_origins = try fios_ownership.retainCurrent(self.io);
++    var fios_origins = try fios_ownership.retainCurrent(self.io);
+     defer if (fios_origins) |held| {
+         if (!held.tracker.backendKnownUncertain(self.io)) _ = held.releaseIfCertain(self.io);
+     };
+@@ -1143,6 +1143,14 @@ pub fn unloadModelIfIdle(self: *Scheduler, id_or_empty: []const u8, idle_window_
+         }
+     };
+ 
++    if (entry.fios_owner_guard and fios_origins == null) {
++        const ticket = fios_unload_mutation orelse {
++            fios_ownership.shared().fence(self.io);
++            return error.NativeCleanupUncertain;
++        };
++        fios_origins = try fios_ownership.shared().reserveMutationOrigin(self.io, ticket, entry.id);
++    }
++
+     var req = UnloadRequest{
+         .entry = entry,
+         .fios_origins = if (fios_origins) |*held| held else null,

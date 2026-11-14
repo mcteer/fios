@@ -1000,3 +1000,12 @@ node scripts/check-platform-current-cxx.mjs --isolated --source /ABS/PRIVATE_NAT
 ```
 
 The capture flag is trailing and requires both earlier SDK selections. Extra receipt fields remain model-ineligible; this command grants no installation/activation or native admission. The private source/library must independently match their reviewed exact bytes.
+
+Current source idle-unload producer metadata and genuine SDK CPU custody (no models/service actions):
+
+```sh
+node scripts/check-platform-current-idle-unload-origin.mjs --isolated --source /ABS/PRIVATE_CURRENT_SOURCE --zig /ABS/PINNED_ZIG
+node scripts/check-platform-current-idle-unload-sdk.mjs --isolated --source /ABS/PRIVATE_CURRENT_SOURCE --zig /ABS/PINNED_ZIG --sdk-source /ABS/PRIVATE_FOUR_OVERLAY_SDK_SOURCE --sdk-library /ABS/PRIVATE_LIBRARY --sdk-sha256 EXACT_LIBRARY_SHA
+```
+
+Only an exact pre-existing mutation ticket can associate the new internal origin before publication. Missing worker custody still refuses. These checks do not grant native idle, mutation/admission, installation or activation authority. See [idle-unload origin contract](contracts/idle-unload-origin.md) for CPU substitutions and retained-reference scope.
