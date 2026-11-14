@@ -526,3 +526,5 @@ T033 reviewable-artifact follow-up: clean437ecbf and a fresh saved cached-base c
 
 
 T009/T045 metadata startup partial repair: actual worker metadata probes now share the existing two-command/identity-checked bounded launcher, preserving the venv alias and fixed non-model operation. Exhausted-slot baseline reproduces; corrected Debug/optimized and188 Node/106 Python pass. Local reservations never release independent native uncertainty. Whole38/55 unchanged; see validation.md.
+
+T049 bounded-metadata package follow-up: clean53e3de6 produces9 development artifacts; both Studio plans remain blocked with no privileged commands. Exact source/manifest/verification identities are recorded in validation.md. No native activation/installation/task closure;38/55 unchanged.
