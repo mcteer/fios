@@ -230,3 +230,5 @@ Positive installed behavior remains unexecuted and requires reviewed installatio
 
 
 The source-only protected Python policy/factory composition is described in [python-runtime-enrollment.md](../../../specs/009-studio-platform-agent/contracts/python-runtime-enrollment.md). It binds the actual fixed installed manager and root-reviewed interpreter/manifest/context at fixed paths. Metadata decoding/private candidate receipts cannot construct that opaque policy. Complete byte review precedes a separate off-loop fixed metadata factory; public startup wiring and positive installed acceptance remain gated. No policy, interpreter tree, service or native admission has been installed/enabled by this source code.
+
+The source-only [sandbox image/runtime factory](../../../specs/009-studio-platform-agent/contracts/sandbox-enrollment.md) binds a fixed protected image policy to the installed runtime and resource policies before constructing the existing executor. No policy writer, public execution startup, image import/pull, installation or native admission is enabled. The development image approval decision and installed positive acceptance remain pending.

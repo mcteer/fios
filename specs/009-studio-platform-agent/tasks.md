@@ -544,3 +544,6 @@ Protected Python policy package follow-up: clean `71c316cae9d1055db8128bd3004a6d
 
 
 C++ checker follow-up: explicit command-status SDK selection now reconstructs all three exact overlays; Debug/ReleaseFast pass for canonical, two-patch and three-patch libraries with unchanged selected inputs.89 source/receipt regressions and supported private status/lineage integration pass. No new model prerequisite, installed/native admission or whole task is granted;38/55 remain complete. Exact receipts and incompatible-selection outcomes are in validation/native port evidence.
+
+
+Sandbox policy source follow-up: fixed installed-role/root-policy image binding and separate executor composition now require matching runtime/resource policy and complete metadata-image coverage. Full Debug/optimized and188 Node/106 Python pass; no policy writer/public startup/native admission is enabled. Positive installed/runtime/Studio acceptance remains open; whole38/55 unchanged. See contracts/sandbox-enrollment.md and validation.md.

@@ -44,6 +44,7 @@ struct PolicyTestRunner {
             ("command slots",runCommandSlotTests),
             ("Python tree review",runPythonTreeTests),
             ("Python enrollment",runPythonEnrollmentTests),
+            ("sandbox enrollment",runSandboxEnrollmentTests),
             ("async VM resources",runAsyncVMResourceTests),
             ("owned VM resources",runOwnedVMResourceTests),
             ("VM probe permission",runVMProbePermissionTests),

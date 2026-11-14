@@ -63,6 +63,11 @@ struct VMResourceEnrolledPolicy {
         let digest=SHA256.hash(data:bytes).map {String(format:"%02x",$0)}.joined()
         return VMResourceEnrolledPolicy(runtime:runtime,document:document,policySHA256:digest)
     }
+    // Context comparison only; this neither expands the metadata image set
+    // nor creates task/runtime/native authority from decoded review data.
+    func supports(runtimePolicySHA256:String,images:Set<String>)->Bool {
+        runtime.policySHA256==runtimePolicySHA256 && !images.isEmpty && document.metadataImages.isSuperset(of:images)
+    }
     func makeReader()throws->any VMResourceReading {
         let kernel=try OwnedVMResourceReader(runtime:runtime.runtime,approvedImages:document.metadataImages,directMetadata:true)
         let profile=VMResourceProfileReader(kernel:kernel,cap:runtime.capacity,profileHash:profileSHA256,reviewDigest:document.reviewSHA256,
