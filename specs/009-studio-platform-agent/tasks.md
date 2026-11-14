@@ -494,3 +494,5 @@ T049 current development declaration partial repair: actual packager first refus
 
 
 T049 exact-revision package follow-up: clean isolated48b0cfc builds/publishes current26.11.2 development metadata; declared source digest and all9 artifact hashes exactly match the prior working-tree build. Install review stays blocked/incomplete/inactive, no privileged commands. See validation.md for manifestb2c28a37…/receipt682dd315… and scope. This is selected-input reproducibility, not whole-native provenance or installed acceptance; whole tasks38/55 unchanged.
+
+Existing llama dependency provenance partial: clean b11429 source build,11 header matches, model-free original/source ABI comparison and four private recomposed empty-model integration checks pass. Original tested candidate remains unchanged; selected postbuild inputs are not whole-native/atomic provenance. No model or installation/activation authority. Whole38/55; T002/T045/T049/T051 remain open. See validation.md.
