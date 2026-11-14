@@ -438,9 +438,9 @@ This audit identifies why raw/program/plugin lifetimes matter; it does not prove
 
 ### Existing optional media ANE owner paths — source review only
 
-Readonly current26.11.2 review finds three additional callers of the existing `AnePrefill` implementation:
+The original readonly26.11.2 review identified three additional callers of the existing `AnePrefill` implementation. This table records that audit checkpoint; subsequent source repairs are listed below:
 
-| Source | Observed ownership gap |
+| Source | Original ownership gap |
 | --- | --- |
 | `src/plugins/krea/krea.zig` | `Dit.aneDeinit` discards the engine cleanup result and clears/frees its fields; `Engine.deinit` retires the text encoder before Dit. |
 | `src/plugins/acestep/acestep.zig` | `Engine.aneDeinit` discards the result and clears/frees its fields before the remaining engine teardown. |
@@ -448,7 +448,9 @@ Readonly current26.11.2 review finds three additional callers of the existing `A
 
 All three builders also use `errdefer eng.deinit()` with independent rest-array cleanup. The three-file receipt is `/private/tmp/fios-009-current-sdk-server-h_mvvlhq/ane-media-owner-audit-receipt.json`, SHA72118da3ed094ec8b75906299db39536f897d000d92b59aebfbc20d5f7377894. These are existing upstream image/audio/video clients, not added model engines. This is source reachability evidence only: it does not claim an installed profile enables them, repair their parent propagation, or establish whole-client/native-terminal coverage. SDK/Transformer partial receipts cannot complete T002/T018/T019/T020/T022 on their behalf. Native admission remains unsupported.
 
-The56th source layer separately closes the three wrappers’ known-uncertainty GPU fallback catches and plain MLP entry paths using the existing required SDK guard. Component C→SDK negative/error propagation and source/full-build evidence are tracked in native-26112-port.md. This does not repair the owner/constructor/unload paths above or complete native media acceptance.
+The56th source layer separately closes the three wrappers’ known-uncertainty GPU fallback catches and plain MLP entry paths using the existing required SDK guard. That layer alone did not repair the owner/constructor/unload paths above.
+
+Subsequent source layers57–59 add checked parent/constructor/result custody for these existing clients: Krea `ca44881`, ACE-Step `56abb93` and MiniMax H3 `4921662`. Their published cleanup-custody patches, failing CPU controls, corrected native unit counts and separate exact-image empty-model builds/checks are recorded in [the current native port evidence](native-26112-port.md#current-private-krea-media-parent-cleanup). These partial source repairs supersede the original unchecked-flow descriptions in this table; they do not establish successful real media initialization, device completion, installed enablement, all-client coverage or native admission. No numerical engine or model policy was introduced or enabled. T002/T018/T019/T020/T022 remain open.
 
 
 ### Current package inventory refresh (2026-11-13)
