@@ -93,7 +93,7 @@ platform/studio/
 │   ├── StudioSession/        # fixed user-session operations only
 │   ├── StudioCLI/            # local operator/read-only export commands
 │   └── CSQLite/              # SDK system module; no bundled SQLite
-├── Tests/StudioTests/        # deterministic unit/contract/recovery tests
+├── Tests/StudioCoreTests/        # deterministic unit/contract/recovery tests
 ├── deployment/              # versioned plists, policy/release manifests
 └── sandbox/                 # pinned Dockerfile and fixed pipe runner
 src/agent/fios_agent/platform_worker.py
