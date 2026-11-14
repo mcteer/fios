@@ -100,3 +100,6 @@ Unload-tail final source checks: repository31d04b1d… passes12 original failure
 
 
 Load-completion final source increment: checker a95c202c… passes10 original failures/8 controls/18 candidate cases, preserving actual pre-existing loader-entry refusal. Enabled semantic35/35 (458.784s), link32/32 (16.953s), four empty-model runtime checkse8d514f3… and fresh default-backend ReleaseSafe160/1605084f612… pass. Fresh188 Node/106 installed Python/boundary/syntax/whitespace pass. Source `/private/tmp/fios-009-load-policy-work-dppv_3tn/source`; all local load-policy sessions complete. Whole39/55; no new model plan/POST, native/installed acceptance, activation, merge or deployment. Exact72147e6 CI43614607388 running; e9d9bca all7 green. See validation.md for scopes and initial stub correction.
+
+
+Current C++ checker now has explicit trailing --owner-capture-refusal requiring the prior two selections; all4 CPU SDK selections pass Debug/optimized, final new receipt aacefe28…. Omitted selection refuses before compile; unchanged model reader rejects the actual extended receipt.89 focused source/library/review tests and boundary/syntax/whitespace pass. No new Metal/model/installed acceptance, SDK build or model plan/POST. Whole39/55 unchanged. See validation.md for exact matrix/old runner scopes.

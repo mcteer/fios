@@ -991,3 +991,12 @@ node scripts/check-platform-current-load-policy.mjs --isolated --source /ABSOLUT
 ```
 
 This reconstructs required-origin, unload-policy and load-policy layers against private parent3736ed55. Actual load-tail/ANE/ready control flow uses the real custody modules with explicit CPU effects/completion substitutes, including the loader's existing entry rejection. See [load policy custody](contracts/load-policy-custody.md); no native authority or activation follows.
+
+
+Four-overlay SDK CPU C++ compatibility (no models/physical Metal controls):
+
+```sh
+node scripts/check-platform-current-cxx.mjs --isolated --source /ABS/PRIVATE_NATIVE_SOURCE --zig /ABS/PINNED_ZIG --mlx-sha256 EXACT_LIBRARY_SHA --metal-callback-fence --sdk-source /ABS/PRIVATE_SDK_SOURCE --sdk-library /ABS/PRIVATE_LIBRARY --metal-command-status --owner-capture-refusal
+```
+
+The capture flag is trailing and requires both earlier SDK selections. Extra receipt fields remain model-ineligible; this command grants no installation/activation or native admission. The private source/library must independently match their reviewed exact bytes.
