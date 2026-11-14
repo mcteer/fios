@@ -895,3 +895,15 @@ node scripts/check-platform-current-gui-listener.mjs --isolated --source /privat
 ```
 
 Mock mode needs only the selected macOS Swift toolchain and checked-in fragments. Source mode requires an owned private26.11.2 checkout at4e231ceebe63308cc038117d40b9f9b64bd0372e with only `mlx-serve-26.11.2-gui-listener-ownership.patch` applied and SDK27.2. Both compile Debug/optimized launch-prefix controls using modeled PID/signal/defaults ports under denied IP networking. No actual OS signal, GUI/server launch, model, installed policy or service action occurs. Prefix checks do not replace a full GUI compile, owned-stop/quit tests, reviewed matching signed bundle or installed native handover acceptance.
+
+### Current SDK healthy empty Metal callbacks (explicit local development)
+
+The current C++ checker remains CPU-only by default. To additionally execute its three fixed healthy empty-buffer controls against the three-patch SDK:
+
+```sh
+node scripts/check-platform-current-cxx.mjs --isolated --source /private/tmp/REVIEWED_CURRENT_SOURCE --zig /private/tmp/PINNED_ZIG --mlx-sha256 REVIEWED_LIBRARY_SHA256 --metal-callback-fence --sdk-source /private/tmp/REVIEWED_SDK_SOURCE --sdk-library /private/tmp/REVIEWED_SDK/lib/libmlx.dylib --metal-command-status --healthy-metal --metal-cpp-zip /private/tmp/PINNED_METAL_CPP_ZIP
+```
+
+Only this explicit option creates Metal objects. It requires successful Debug/ReleaseFast CPU controls first, the existing pinned Metal-C++ archive and metallib, then compiles one small fixed fixture. The controls exercise normal callback execution and payload destruction in empty command buffers: zero arrays, kernels, models, inference or hardware failure injection; one process at a time,20s wall bound per control, IP networking denied. Do not run the historical foreign/fault/exhaustion matrix as a substitute. This is a local development component check, not installed/Studio/resource/all-client or native terminal acceptance. No CI command enables it.
+
+The current SDK retains commit completion as a capture in addition to explicit handlers. The fixture checks that a held callback/payload retains its capture and buffer, then observes bounded local retirement after release; it does not infer callback cleanup solely from Metal completion status. Extended physical-control receipts remain ineligible for the unchanged strict model prerequisite reader. Existing consumed inference plans stay consumed.

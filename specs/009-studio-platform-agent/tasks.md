@@ -553,3 +553,6 @@ Sandbox enrollment package follow-up: clean `061e489d9b3d18f48c884e62d61fc87273f
 
 
 GUI handover source follow-up: the pinned26.11.2 GUI now has a separate one-file candidate removing the name-based listener reaper and refusing observed occupied ports before defaults/launch. Exact-prefix baseline markers reproduce with simulated signals; corrected Debug/optimized, full GUI compile and five existing stop/quit tests pass. No installed app or native policy changes. Packaging/per-Studio handover/all-client/native/installer acceptance remain open; T027/T049/T051/T055 and whole38/55 stay unchanged. See native-server-lifecycle contract and validation/native port evidence.
+
+
+Current SDK healthy callback follow-up: explicit opt-in now verifies current empty Metal callback/payload lifetimes after successful CPU compatibility, with no models or hardware failure matrix. Genuine healthy controls and both default CPU-only modes pass; a copied invalid CPU result is refused before any Metal compile/execution. These subdomain receipts do not complete all-client/Studio/native tasks;38/55 remain. See validation/native port evidence.
