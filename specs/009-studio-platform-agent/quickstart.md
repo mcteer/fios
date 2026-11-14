@@ -1009,3 +1009,12 @@ node scripts/check-platform-current-idle-unload-sdk.mjs --isolated --source /ABS
 ```
 
 Only an exact pre-existing mutation ticket can associate the new internal origin before publication. Missing worker custody still refuses. These checks do not grant native idle, mutation/admission, installation or activation authority. See [idle-unload origin contract](contracts/idle-unload-origin.md) for CPU substitutions and retained-reference scope.
+
+Original ingress unload custody, CPU metadata and genuine SDK callbacks:
+
+```sh
+node scripts/check-platform-current-ingress-unload-origin.mjs --isolated --source /ABS/PRIVATE_CURRENT_SOURCE --zig /ABS/PINNED_ZIG
+node scripts/check-platform-current-ingress-unload-sdk.mjs --isolated --source /ABS/PRIVATE_CURRENT_SOURCE --zig /ABS/PINNED_ZIG --sdk-source /ABS/PRIVATE_FOUR_OVERLAY_SDK_SOURCE --sdk-library /ABS/PRIVATE_LIBRARY --sdk-sha256 EXACT_LIBRARY_SHA
+```
+
+These checks preserve the original ingress token/correlation while associating the exact reserved target, and retain the unparented constructor as a regression control. They supply no native admission, installation/activation or terminal authority. See [ingress-unload contract](contracts/ingress-unload-origin.md).

@@ -1,0 +1,70 @@
+const std=@import("std");const fios_ownership=@import("fios/request_ownership.zig");const queued=@import("fios/queued_request_ownership.zig");const scenario=@import("build_options").scenario;
+const sdk=@import("fios/sdk_request_ownership.zig");
+extern fn fios_startup_sdk_library_is_selected(expected:[*:0]const u8)c_int;
+extern fn fios_host_owner_fixture_start()c_int;extern fn fios_host_owner_fixture_wait(second:c_int)c_int;extern fn fios_host_owner_fixture_owner(second:c_int)c_int;extern fn fios_host_owner_fixture_release_first()void;extern fn fios_host_owner_fixture_cleanup()c_int;
+var callback_started=false;var sdk_origin:?fios_ownership.Token=null;
+var source_io:std.Io=undefined;var published:usize=0;var worker:?queued.Scope=null;
+const State=enum {unloaded,error_state,loading,evicting,ready};
+const Entry=struct {id:[]const u8="fixture/idle-unload",state:State=.ready,fios_owner_guard:bool=true,fios_load_uncertain:std.atomic.Value(bool)=.init(false),fios_model_mutation:?fios_ownership.ModelMutation=null};
+const Condition=struct {fn broadcast(_: *@This(),_:std.Io)void {}fn waitUncancelable(_: *@This(),_:std.Io,_:*std.Io.Mutex)void {@panic("unexpected fixture wait");}};
+const UnloadRequest=struct {entry:*Entry,fios_origins:?*const fios_ownership.Retained=null,done_mu:std.Io.Mutex=.init,done_cond:Condition=.{} ,done:bool=false,fios_failed:bool=false,fios_cleanup_refused:bool=false};
+const Registry=struct {entry:*Entry,mutex:std.Io.Mutex=.init,state_cond:Condition=.{} ,
+ fn resolveEntry(self:*@This(),id:[]const u8)!*Entry {if(!std.mem.eql(u8,id,self.entry.id))return error.WrongModel;return self.entry;}
+ fn markEvictingLocked(_: *@This(),entry:*Entry)bool {if(entry.state!=.ready)return false;if(entry.fios_owner_guard)entry.fios_model_mutation=fios_ownership.shared().beginModelMutationKnown(source_io,entry.id) catch return false;entry.state=.evicting;return true;}
+ fn waitForRefcountZeroLocked(_: *@This(),_:*Entry)void {}
+ fn unmarkEvictingLocked(_: *@This(),entry:*Entry)void {if(entry.fios_model_mutation)|ticket| {fios_ownership.shared().endModelMutation(source_io,ticket) catch {fios_ownership.shared().fence(source_io);return;};entry.fios_model_mutation=null;}entry.state=.ready;}};
+const model_registry_mod=struct {const ModelRegistry=struct {fn idleEvictable(_:*Entry,_:i64,_:i64)bool{return true;}};fn cleanupUncertainLocked(io:std.Io)bool {return fios_ownership.shared().knownUncertain(io);}};
+const io_util=struct {fn nowMsMonotonic(_:std.Io)i64{return 0;}};
+const Queue=struct {fn append(_: *@This(),_:std.mem.Allocator,req:*UnloadRequest)!void {
+ published+=1;worker=queued.Scope.retainRequest(source_io,req.fios_origins,req.entry.fios_owner_guard) catch {req.fios_failed=true;req.done=true;return;};
+ if(worker)|*scope| {sdk_origin=scope.retained.tokens[0];try scope.enter(source_io);if(fios_host_owner_fixture_start()!=1)return error.SDKStart;callback_started=true;if(!scope.finish(source_io))return error.WorkerRelease;}worker=null;
+ if(req.entry.fios_model_mutation)|ticket| {try fios_ownership.shared().endModelMutation(source_io,ticket);req.entry.fios_model_mutation=null;}req.entry.state=.unloaded;req.done=true;
+}};
+const Scheduler=struct {io:std.Io,registry:*Registry,allocator:std.mem.Allocator=std.heap.page_allocator,queue_mu:std.Io.Mutex=.init,queue_cond:Condition=.{} ,shutdown:std.atomic.Value(bool)=.init(false),unload_queue:Queue=.{} };
+// ACTUAL_PRODUCER
+pub fn main(init:std.process.Init)!void {
+ const io=init.io;source_io=io;if(fios_startup_sdk_library_is_selected(@import("build_options").sdk_library)!=1)return error.WrongMappedSDK;
+ try fios_ownership.shared().initialize(io,@splat(96));try sdk.initialize(io);var cleaned=false;defer if(callback_started and !cleaned){_=fios_host_owner_fixture_cleanup();};
+ if(comptime scenario>=4) {
+  const guard_root=try fios_ownership.shared().enter(io);const guard_id:fios_ownership.CorrelationID=@splat(98);try fios_ownership.shared().associate(io,guard_root,guard_id);
+  const guard_ticket=try fios_ownership.shared().beginModelMutationKnown(io,"fixture/idle-unload");var guard_origins:fios_ownership.Retained=.{.tracker=fios_ownership.shared(),.count=1};guard_origins.tokens[0]=guard_root;
+  var guard_model:[]const u8="fixture/idle-unload";var guard_owners:usize=1;
+  if(scenario==4)guard_model="fixture/wrong-model";
+  if(scenario==5)guard_origins.count=0;
+  if(scenario==6)guard_origins.tokens[0].sequence+=1;
+  if(scenario==7){guard_origins.count=2;guard_origins.tokens[1]=guard_root;}
+  if(scenario==8){guard_origins.count=2;guard_origins.tokens[1]=try fios_ownership.shared().enter(io);guard_owners=2;}
+  if(scenario==9)fios_ownership.shared().fence(io);
+  var guard_outcome:?anyerror=null;fios_ownership.shared().bindMutationIngress(io,guard_ticket,guard_model,&guard_origins) catch |err|{guard_outcome=err;};
+  const guard_expected:anyerror=if(scenario==4)error.InvalidMutation else if(scenario==6)error.InvalidToken else if(scenario==9)error.CoverageUncertain else error.InvalidReferenceGroup;
+  const guard_snapshot=fios_ownership.shared().snapshot(io);const guard_lineage=fios_ownership.shared().correlationSnapshot(io,guard_id);const guard_saved=fios_ownership.shared().mutations[guard_ticket.slot];
+  if(guard_outcome==null or guard_outcome.?!=guard_expected or !guard_snapshot.uncertain or guard_snapshot.owned!=guard_owners or guard_snapshot.model_count!=0 or !guard_lineage.found or guard_lineage.root_sequence!=guard_root.sequence or guard_saved.sequence!=guard_ticket.sequence or !std.mem.eql(u8,guard_saved.id[0..guard_saved.len],"fixture/idle-unload"))return error.IngressGuardLostOriginal;
+  std.debug.print("PASS: actual unload producer ingress guards preserve original roots and tickets; no authority\n",.{});return;
+ }
+ const caller=try fios_ownership.shared().enter(io);const correlation:fios_ownership.CorrelationID=@splat(97);try fios_ownership.shared().associate(io,caller,correlation);
+ if(scenario==1)try fios_ownership.shared().bind(io,caller,"fixture/original-primary");
+ var other:?fios_ownership.Token=null;if(scenario==2){other=try fios_ownership.shared().enter(io);try fios_ownership.shared().bind(io,other.?,"fixture/other-active");}
+ fios_ownership.current().*=caller;if(scenario==3)_=try fios_ownership.shared().pauseAdmissions(io);
+ var entry=Entry{};var registry=Registry{.entry=&entry};var sch=Scheduler{.io=io,.registry=&registry};var outcome:?anyerror=null;unloadModelIfIdle(&sch,entry.id,null) catch |err|{outcome=err;};
+ if(fios_ownership.current().*==null or !std.meta.eql(fios_ownership.current().*.?,caller) or fios_ownership.current_group().*!=null)return error.CallerTLSChanged;
+ if(scenario==2) {
+  const snap=fios_ownership.shared().snapshot(io);
+  if(outcome==null or outcome.?!=error.ModelOwned or published!=0 or worker!=null or entry.state!=.ready or entry.fios_model_mutation!=null or snap.uncertain or snap.owned!=2 or snap.model_count!=1 or !std.mem.eql(u8,snap.models[0].id[0..snap.models[0].len],"fixture/other-active")) {std.debug.print("FIO_UNLOAD_INGRESS_MODEL_NOT_BOUND\n",.{});return error.UnsafeIngressAssociation;}
+  fios_ownership.current().*=null;try fios_ownership.shared().leave(io,caller);try fios_ownership.shared().leave(io,other.?);
+ } else {
+  const expected_model:[]const u8=if(scenario==1)"fixture/original-primary" else entry.id;const snap=fios_ownership.shared().snapshot(io);const lineage=fios_ownership.shared().correlationSnapshot(io,correlation);
+  if(outcome!=null or published!=1 or worker!=null or !callback_started or entry.state!=.unloaded or entry.fios_model_mutation!=null or snap.uncertain or snap.owned!=1 or snap.model_count!=1 or !std.mem.eql(u8,snap.models[0].id[0..snap.models[0].len],expected_model) or !lineage.found or lineage.root_sequence!=caller.sequence or snap.admissions_closed!=(scenario==3)) {std.debug.print("FIO_UNLOAD_INGRESS_MODEL_NOT_BOUND\n",.{});return error.MissingIngressAssociation;}
+  if(sdk_origin==null or !std.meta.eql(sdk_origin.?,caller))return error.CallerRootReplaced;
+  fios_ownership.current().*=null;try fios_ownership.shared().leave(io,caller);
+  const held=fios_ownership.shared().snapshot(io);if(held.owned!=1 or held.model_count!=1 or !std.mem.eql(u8,held.models[0].id[0..held.models[0].len],expected_model))return error.WorkerModelLost;
+  if(fios_host_owner_fixture_wait(0)!=1 or fios_host_owner_fixture_owner(0)!=1)return error.FirstSDKOrigin;
+  fios_host_owner_fixture_release_first();
+  if(fios_host_owner_fixture_wait(1)!=1 or fios_host_owner_fixture_owner(1)!=1)return error.NestedSDKOrigin;
+  const nested=fios_ownership.shared().snapshot(io);const nested_lineage=fios_ownership.shared().correlationSnapshot(io,correlation);
+  if(nested.owned!=1 or nested.model_count!=1 or !std.mem.eql(u8,nested.models[0].id[0..nested.models[0].len],entry.id) or !nested_lineage.found or nested_lineage.root_sequence!=caller.sequence)return error.NestedOriginalLost;
+  if(fios_host_owner_fixture_cleanup()!=1)return error.SDKCleanup;cleaned=true;
+  if(sdk.diagnostic().uncertain or sdk.diagnostic().active_contexts!=0)return error.SDKLocalReferenceLeak;
+ }
+ if(fios_ownership.shared().snapshot(io).owned!=0 or fios_ownership.current().*!=null or fios_ownership.current_group().*!=null)return error.LocalReferenceLeak;
+ std.debug.print("PASS: actual ingress unload preserves original token and correlation through genuine SDK CPU callbacks; no terminal authority\n",.{});
+}
