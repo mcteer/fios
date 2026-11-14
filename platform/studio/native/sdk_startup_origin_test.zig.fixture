@@ -1,0 +1,72 @@
+// Actual startup prefix, native ledger/SDK hooks, genuine CPU queue callbacks.
+const std = @import("std");
+const owners = @import("fios/request_ownership.zig");
+const startup = @import("fios/current_startup_origin.zig");
+const sdk = @import("fios/sdk_request_ownership.zig");
+extern fn fios_startup_sdk_library_is_selected(expected: [*:0]const u8) c_int;
+extern fn fios_host_owner_fixture_start() c_int;
+extern fn fios_host_owner_fixture_wait(second: c_int) c_int;
+extern fn fios_host_owner_fixture_owner(second: c_int) c_int;
+extern fn fios_host_owner_fixture_release_first() void;
+extern fn fios_host_owner_fixture_cleanup() c_int;
+const log = struct { fn info(comptime _: []const u8, _: anytype) void {} };
+const sleep_inhibit = struct { fn release() void {} fn setActive(_: bool) void {} };
+const Entry = struct { id: []const u8 = "fixture/exact-startup-sdk", fios_owner_guard: bool = true };
+const Mutex = struct { fn lockUncancelable(_: *@This(), _: std.Io) void {} fn unlock(_: *@This(), _: std.Io) void {} };
+const Registry = struct {
+    mutex: Mutex = .{},
+    fn tryBeginLoadLocked(_: *@This(), _: *Entry) bool { return true; }
+    fn markErrorLocked(_: *@This(), _: *Entry, _: []const u8) void {}
+};
+const Params = struct { no_initial_load: bool = false, entry: *Entry };
+const Scheduler = struct {
+    io: std.Io, registry: *Registry, inference_done: std.atomic.Value(bool) = .init(false),
+    failed: bool = false, started: bool = false,
+};
+const ThreadCtx = struct { scheduler: *Scheduler, params: Params, fios_startup: ?startup.Scope = null };
+fn cleanupUncertain(io: std.Io) bool { return owners.shared().knownUncertain(io); }
+fn recordLoadError(sch: *Scheduler, _: []const u8) void { sch.failed = true; }
+fn signalStarted(sch: *Scheduler) void { sch.started = true; }
+fn loadErrorName(_: anyerror) []const u8 { return "FixtureLoadFailed"; }
+var callback_started = false;
+fn doLoadOnInferenceThread(_: *Scheduler, _: Params) !void {
+    if (fios_host_owner_fixture_start() != 1) return error.SDKFixtureStart;
+    callback_started = true;
+}
+// ACTUAL_STARTUP_PREFIX
+fn worker(ctx: ThreadCtx) void {
+    inferenceLoop(ctx);
+    std.debug.assert(owners.current().* == null and owners.current_group().* == null);
+}
+pub fn main(init: std.process.Init) !void {
+    const io = init.io;
+    if (fios_startup_sdk_library_is_selected(@import("build_options").sdk_library) != 1) return error.WrongMappedSDK;
+    try owners.shared().initialize(io, @splat(71));
+    try sdk.initialize(io);
+    var registry: Registry = .{}; var entry: Entry = .{};
+    var sch: Scheduler = .{ .io = io, .registry = &registry };
+    const ctx: ThreadCtx = .{ .scheduler = &sch, .params = .{ .entry = &entry }, .fios_startup = try startup.Scope.capture(io, entry.id) };
+    const thread = try std.Thread.spawn(.{}, worker, .{ctx});thread.join();
+    var cleaned = false;
+    defer if (callback_started and !cleaned) { _ = fios_host_owner_fixture_cleanup(); };
+    if (!callback_started or sch.failed or !sch.started or !sch.inference_done.load(.acquire)) return error.StartupFailed;
+    if (fios_host_owner_fixture_wait(0) != 1) return error.FirstCallbackDeadline;
+    const first_owned = fios_host_owner_fixture_owner(0) == 1;
+    const snapshot = owners.shared().snapshot(io);
+    if (snapshot.owned != 1 or snapshot.model_count != 1 or !std.mem.eql(u8, snapshot.models[0].id[0..snapshot.models[0].len], entry.id)) return error.StartupRootLost;
+    fios_host_owner_fixture_release_first();
+    if (fios_host_owner_fixture_wait(1) != 1) return error.NestedCallbackDeadline;
+    const nested_owned = fios_host_owner_fixture_owner(1) == 1;
+    const nested = owners.shared().snapshot(io);
+    if (nested.owned != 1 or nested.model_count != 1 or !std.mem.eql(u8, nested.models[0].id[0..nested.models[0].len], entry.id)) return error.NestedRootLost;
+    if (fios_host_owner_fixture_cleanup() != 1) return error.CallbackCleanup;
+    cleaned = true;
+    if (!first_owned or !nested_owned) {
+        owners.shared().fence(io);
+        std.debug.print("FIO_STARTUP_SDK_CALLBACK_WITHOUT_ORIGIN\n", .{});
+        return error.MissingStartupSDKOrigin;
+    }
+    if (sdk.diagnostic().uncertain or sdk.diagnostic().active_contexts != 0 or owners.shared().snapshot(io).owned != 0) return error.StartupCallbackRetirement;
+    if (owners.current().* != null or owners.current_group().* != null) return error.ParentTLSChanged;
+    std.debug.print("PASS: actual startup prefix retains exact model through genuine SDK CPU callback and destructor-enqueued child; no terminal authority\n", .{});
+}

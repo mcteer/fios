@@ -947,3 +947,13 @@ node scripts/check-platform-current-cache-budget.mjs --isolated --source /privat
 ```
 
 The actual revision function uses declared CPU registry/resolver/cache/publication substitutes. Eight independent-process scenarios in Debug/ReleaseFast require8 original failures,8 original healthy/skip successes and16 candidate successes. Getters assert dynamic/fixed lock context; tests retain current-model order, grow-only/absent-resolver/disabled-cache behavior and release locks on early returns. No latch clearing, hardware or model. See [revision contract](contracts/cache-budget-revision.md).
+
+### Startup origins with genuine SDK CPU callbacks
+
+```sh
+node scripts/check-platform-current-sdk-origins.mjs --isolated --source /private/tmp/REVIEWED_NATIVE_SOURCE --zig /private/tmp/PINNED_ZIG --sdk-source /private/tmp/REVIEWED_CANONICAL_SDK_SOURCE --sdk-library /private/tmp/REVIEWED_SDK/lib/libmlx.dylib --sdk-sha256 REVIEWED_LIBRARY_SHA256
+```
+
+This explicit canonical-SDK check reconstructs the startup patch and matches the actual prefix/native hooks. The fixture loader queues a real CPU callback whose payload destructor queues a second callback. Both must retain the exact startup model after its thread exits. Required results:2 original missing-origin failures and2 candidate passes, Debug/ReleaseSafe. Selected library path is checked with dladdr/realpath; source/library/fixture inputs remain unchanged. No Metal buffers, model, inference, native server, installation or authority; this is not the command-status SDK or model-prerequisite path. See [startup contract](contracts/startup-load-custody.md).
+
+Append `--slot-origins` or `--queued-batch` to the SDK-origins command to characterize those existing native unions with the same selected library. Flags are mutually exclusive. Each mode runs2 client configurations; each expects the named functional test and current native module's anonymous import test,2 genuine CPU callbacks and both original roots retained after sender/actor exit. These metadata shapes are not full scheduler/modality or model acceptance.
