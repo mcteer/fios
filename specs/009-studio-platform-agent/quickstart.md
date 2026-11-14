@@ -975,3 +975,11 @@ node scripts/check-platform-current-required-queued-origin.mjs --isolated --sour
 ```
 
 The source must match the declared two-file patch at private parent3736ed55. The checker exercises actual load/ANE/unload prefixes with real custody modules and explicit post-prefix CPU substitutes. It does not grant maintenance attribution, native admission, installation or activation. See [required queued origins](contracts/required-queued-origins.md).
+
+Current source unload-tail uncertainty, CPU-only (no models/service actions):
+
+```sh
+node scripts/check-platform-current-unload-policy.mjs --isolated --source /ABSOLUTE/PRIVATE_CURRENT_SOURCE --zig /ABSOLUTE/PINNED_ZIG
+```
+
+This reconstructs the required-origin layer followed by the unload-policy layer against private parent3736ed55. Actual native custody modules and unload control flow use explicit CPU lifecycle/policy substitutes. See [unload policy custody](contracts/unload-policy-custody.md); no native authority or activation follows.

@@ -1,0 +1,54 @@
+const std=@import("std");
+const owners=@import("fios/request_ownership.zig");
+const fios_queued=@import("fios/queued_request_ownership.zig");
+const scenario=@import("build_options").scenario;
+var moves:usize=0;var unloads:usize=0;var clears:usize=0;var publications:usize=0;var accounts:usize=0;var finalizations:usize=0;var policies:usize=0;var logs:usize=0;var invalidations:usize=0;var locks:usize=0;var unlocks:usize=0;
+var source_io:std.Io=undefined;
+fn fenceAt(n:usize)void {if(scenario==n) owners.shared().fence(source_io);}
+const Entry=struct {id:[]const u8="fixture/unload-policy",bytes_resident:u64=4096,fios_owner_guard:bool=true,
+ fn tryUnloadResident(_: *@This())bool {unloads+=1;return true;}};
+const FakeMutex=struct {
+ fn lockUncancelable(_: *@This(),_:std.Io)void {locks+=1;fenceAt(2);}
+ fn unlock(_: *@This(),_:std.Io)void {unlocks+=1;}};
+const Registry=struct {mutex:FakeMutex=.{} ,
+ fn accountEvictedLocked(_: *@This(),_:u64)void {accounts+=1;fenceAt(3);}
+ fn finalizeEvictionLocked(_: *@This(),_:*Entry)void {finalizations+=1;fenceAt(4);}};
+const Scheduler=struct {io:std.Io,registry:*Registry,current_model:?*Entry,xfm:?*u8=null,weights:?*u8=null,vision_encoder:?*u8=null,drafter:?*u8=null,dflash:?*u8=null};
+const UnloadRequest=struct {entry:*Entry,fios_origins:?*const owners.Retained=null,fios_failed:bool=false,fios_cleanup_refused:bool=false,done:bool=false};
+const model_registry_mod=struct {
+ fn cleanupUncertain(io:std.Io)bool {return owners.shared().knownUncertain(io);}
+ fn cleanupUncertainLocked(io:std.Io)bool {return owners.shared().knownUncertain(io);}};
+const log=struct {fn info(comptime _:[]const u8,_:anytype)void {}};
+const mlx=struct {
+ fn mlx_clear_cache()u8 {clears+=1;return 0;}
+ fn applyWiredPolicy()u8 {policies+=1;fenceAt(5);return 1;}};
+fn invalidate()void {invalidations+=1;fenceAt(6);}
+const scheduler_mod=struct {const hot_cache_budget_invalidate:?*const fn()void=&invalidate;};
+fn moveHotCacheViewOff(_: *Scheduler,_:*Entry)void {moves+=1;}
+fn publishHotCacheResidency(_: *Scheduler)void {publications+=1;fenceAt(1);}
+fn logWiredPolicy(_:u8)void {logs+=1;}
+fn finishUnloadRequest(_: *Scheduler,req:*UnloadRequest)void {req.done=true;}
+// ACTUAL_REFUSAL_HELPER
+// ACTUAL_RUN_UNLOAD
+pub fn main(init:std.process.Init)!void {
+ const io=init.io;source_io=io;try owners.shared().initialize(io,@splat(93));
+ const root=try owners.shared().enter(io);try owners.shared().bind(io,root,"fixture/unload-policy");
+ owners.current().*=root;var held=(try owners.retainCurrent(io)).?;owners.current().*=null;
+ var entry=Entry{};var registry=Registry{};var sch=Scheduler{.io=io,.registry=&registry,.current_model=&entry};var req=UnloadRequest{.entry=&entry,.fios_origins=&held};
+ runUnloadRequest(&sch,&req);
+ const retained=owners.shared().snapshot(io);
+ if(retained.owned!=1 or retained.model_count!=1 or !std.mem.eql(u8,retained.models[0].id[0..retained.models[0].len],entry.id) or owners.current().*!=null or owners.current_group().*!=null) return error.OriginalCustodyLost;
+ if(scenario==0) {
+  if(moves!=1 or unloads!=1 or clears!=1 or publications!=1 or accounts!=1 or finalizations!=1 or policies!=1 or logs!=1 or invalidations!=1 or locks!=1 or unlocks!=1 or !req.done or req.fios_failed or req.fios_cleanup_refused or retained.uncertain) return error.HealthyControl;
+  if(!held.releaseIfCertain(io)) return error.HealthyRelease;try owners.shared().leave(io,root);
+  if(owners.shared().snapshot(io).owned!=0) return error.LocalReferenceLeak;
+ } else {
+  const expected_publications:usize=if(scenario==6) 0 else 1;
+  const expected_locks:usize=if(scenario==1 or scenario==6) 0 else 1;
+  const expected_accounts:usize=if(scenario==3 or scenario==4 or scenario==5) 1 else 0;
+  const expected_finalizations:usize=if(scenario==4 or scenario==5) 1 else 0;
+  const expected_policies:usize=if(scenario==5) 1 else 0;
+  if(!req.done or !req.fios_failed or !req.fios_cleanup_refused or !retained.uncertain or publications!=expected_publications or locks!=expected_locks or unlocks!=expected_locks or accounts!=expected_accounts or finalizations!=expected_finalizations or policies!=expected_policies or logs!=0) {std.debug.print("FIO_UNLOAD_POLICY_AFTER_KNOWN_UNCERTAINTY\n",.{});return error.UnloadUncertaintyIgnored;}
+ }
+ std.debug.print("PASS: actual unload tail preserves negative evidence and original ownership\n",.{});
+}

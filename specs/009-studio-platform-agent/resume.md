@@ -4,7 +4,7 @@
 
 **39/55 whole tasks complete;16 open.** Branch `009-studio-platform-agent`, draft [PR10](https://github.com/mcteer/fios/pull/10). Continue authorized source engineering and isolated functional tests. No subagents.008 remains parked at3936da2. No merge, app deployment, native installation/activation or Studio acceptance has occurred.
 
-Latest pushed revision `e9d9bcac66b28a8fad16bf2dafa8b0d73d0fae27`; [exact CI43610769817](https://github.com/mcteer/fios/actions/runs/43610769817) pending at this checkpoint. Prior `b6707fad91de77a8fb6a07426726d524f5c2ecf3` / CI43606954758 and9d87b82 / CI43602606288 each have all six prerequisites plus aggregate green. Do not cancel current native CI by repeatedly pushing small increments. Earlier green does not certify a new head.
+Resolve the current local/PR head live with git/gh; historical CI results do not certify later source changes. Exact `e9d9bcac66b28a8fad16bf2dafa8b0d73d0fae27` / [CI43610769817](https://github.com/mcteer/fios/actions/runs/43610769817) now has all six prerequisites plus aggregate green. Prior `b6707fad91de77a8fb6a07426726d524f5c2ecf3` / CI43606954758 and9d87b82 / CI43602606288 each have all six prerequisites plus aggregate green. Do not cancel current native CI by repeatedly pushing small increments. Earlier green does not certify a new head.
 
 Operator answered **“Approve image only”** for `sha256:0406a8451a382eef038d8ac37035ccfb4e2a1e4e7b22c4a349fd9c4648a77c0b`. Readonly recheck `/private/tmp/fios-009-image-approval-X0phNL/verification.json`, SHA647209c7b8ac69b74f624c928376538555c33b86a3a47a4aa979aca67a3b570e passes. See sandbox-image-approval.md. T033 is complete; do not re-request this exact approval. Enrollment/installation/activation remain gated; production approved_sandbox_images is empty. Original approved:false receipt remains historical pre-decision evidence.
 
@@ -91,3 +91,9 @@ Separate source `/private/tmp/fios-009-queued-origin-required-jpv7f4yg/source` p
 
 
 Required queued-origin final source increment: exact-ID checkerad688ae2… passes6 original failures/12 controls/18 candidate cases. Full enabled semantic35/35 (369.018s), link32/32 (12.428s), four empty-model runtime checks1d94ad31… and fresh default-backend ReleaseSafe native160/160 suitea4235ad8… pass.188 Node/API106 installed Python/boundary/syntax/whitespace pass. All local sessions complete. Scope distinctions and exact receipts are in validation.md. Whole39/55; no native/installed acceptance or activation and no new model plan/POST.
+
+
+Unload-tail source checkpoint: actual-function checker31d04b1d… passes12 original failures/2 controls/14 candidate cases for independent source fences at six CPU-substituted stages. Full native compile pending; no whole task closes. Source `/private/tmp/fios-009-unload-policy-work-xze4aark/source` preserves predecessors. Exacte9d9bca CI43610769817 now all7 green. Whole39/55; no new model plan/POST, installation, activation, merge or deployment. See validation.md and contracts/unload-policy-custody.md.
+
+
+Unload-tail final source checks: repository31d04b1d… passes12 original failures/2 controls/14 candidate cases; enabled semantic35/35 (370.268s), link32/32 (12.301s), four empty-model runtime checks38c66b5d… and fresh default-backend ReleaseSafe160/160a8360621… pass. Fresh188 Node/106 installed Python/boundary/syntax/whitespace pass. All local unload-tail sessions complete. Whole39/55; no native/installed/Studio acceptance or activation, no new model plan/POST. See validation.md for exact scopes/receipts.

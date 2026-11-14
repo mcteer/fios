@@ -585,3 +585,9 @@ Required queued-origin source checkpoint: actual load/ANE/unload prefixes refuse
 
 
 Required queued-origin final source increment: exact-ID checkerad688ae2… passes6 original failures/12 controls/18 candidate cases. Full enabled semantic35/35 (369.018s), link32/32 (12.428s), four empty-model runtime checks1d94ad31… and fresh default-backend ReleaseSafe native160/160 suitea4235ad8… pass.188 Node/API106 installed Python/boundary/syntax/whitespace pass. All local sessions complete. Scope distinctions and exact receipts are in validation.md. Whole39/55; no native/installed acceptance or activation and no new model plan/POST.
+
+
+Unload-tail source checkpoint: actual-function checker31d04b1d… passes12 original failures/2 controls/14 candidate cases for independent source fences at six CPU-substituted stages. Full native compile pending; no whole task closes. Source `/private/tmp/fios-009-unload-policy-work-xze4aark/source` preserves predecessors. Exacte9d9bca CI43610769817 now all7 green. Whole39/55; no new model plan/POST, installation, activation, merge or deployment. See validation.md and contracts/unload-policy-custody.md.
+
+
+Unload-tail final source checks: repository31d04b1d… passes12 original failures/2 controls/14 candidate cases; enabled semantic35/35 (370.268s), link32/32 (12.301s), four empty-model runtime checks38c66b5d… and fresh default-backend ReleaseSafe160/160a8360621… pass. Fresh188 Node/106 installed Python/boundary/syntax/whitespace pass. All local unload-tail sessions complete. Whole39/55; no native/installed/Studio acceptance or activation, no new model plan/POST. See validation.md for exact scopes/receipts.
