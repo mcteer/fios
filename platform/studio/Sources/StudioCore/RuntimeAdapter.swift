@@ -66,22 +66,43 @@ public struct VerifiedExecutable:Sendable {
     }
     public func run(arguments: [String], timeout: TimeInterval, maximumOutput: Int = 1 << 20,
                     environment: [String:String] = [:]) throws -> CommandResult {
+        try runBounded(arguments:arguments,timeout:timeout,maximumOutput:maximumOutput,
+            environment:CommandEnvironment.sanitized(environment))
+    }
+    // Fixed metadata operation only. Preserve a verified venv invocation alias
+    // while sharing CLI capacity, exact-child signalling and bounded reap.
+    func platformWorkerMetadata(invocation:String)throws->CommandResult {
+        try runBounded(arguments:["-I","-B","-m","fios_agent.platform_worker","--metadata"],timeout:10,maximumOutput:4096,
+            environment:["PATH":"/usr/bin:/bin","LANG":"C","LC_ALL":"C","HOME":"/var/empty","PYDANTIC_AI_NO_BANNER":"1"],
+            invocation:invocation,workingDirectory:"/var/empty",discardStandardError:true)
+    }
+    private func runBounded(arguments:[String],timeout:TimeInterval,maximumOutput:Int,environment:[String:String],
+                            invocation:String?=nil,workingDirectory:String?=nil,discardStandardError:Bool=false)throws->CommandResult {
         guard timeout > 0, timeout <= 10, maximumOutput >= 0, maximumOutput <= 1 << 20,
               arguments.count <= 128, arguments.allSatisfy({ !$0.contains("\0") && $0.utf8.count <= 4096 }) else { throw RuntimeError.invalid }
-        let childEnvironment=try CommandEnvironment.sanitized(environment)
         try CommandSlots.shared.acquire()
         var commandProcess:Process?
         var processStart:UInt64?
         defer {CommandSlots.shared.release(commandProcess,start:processStart)}
         let deadline = ProcessInfo.processInfo.systemUptime + timeout
         try verify(deadline:deadline)
+        if let invocation {
+            var named=stat()
+            guard invocation.hasPrefix("/"),!invocation.contains("\0"),invocation.utf8.count<=4096,
+                  lstat(invocation,&named)==0,named.st_uid==0 || named.st_uid==geteuid(),
+                  [S_IFREG,S_IFLNK].contains(named.st_mode&S_IFMT),
+                  named.st_mode&S_IFMT==S_IFLNK || named.st_mode&0o022==0,
+                  URL(fileURLWithPath:invocation).resolvingSymlinksInPath().path==path else {throw RuntimeError.identity}
+        }
         guard ProcessInfo.processInfo.systemUptime<deadline else {throw RuntimeError.deadline}
         let process = Process(), pipe = Pipe()
         commandProcess=process
-        process.executableURL = URL(fileURLWithPath:path); process.arguments = arguments
-        process.environment = childEnvironment
+        process.executableURL = URL(fileURLWithPath:invocation ?? path); process.arguments = arguments
+        process.environment = environment
+        if let workingDirectory {process.currentDirectoryURL=URL(fileURLWithPath:workingDirectory)}
         process.standardInput = FileHandle.nullDevice
-        process.standardOutput = pipe; process.standardError = pipe
+        process.standardOutput = pipe
+        if discardStandardError {process.standardError=FileHandle.nullDevice}else {process.standardError=pipe}
         try process.run()
         processStart=try? WorkerResources.startIdentifier(pid:process.processIdentifier)
         func signalOwned(_ signal:Int32) {

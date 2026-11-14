@@ -38,7 +38,7 @@ final class PythonWorkerFactory:Sendable {
         self.invocation=invocation
         executable=try VerifiedExecutable(path:URL(fileURLWithPath:invocation).resolvingSymlinksInPath().path,sha256:executableSHA256)
         try Self.verifyInvocation(invocation,executable:executable)
-        let bytes=try Self.probe(invocation:invocation)
+        let bytes=try Self.probe(invocation:invocation,executable:executable)
         try StrictJSON.validate(bytes,maximum:4096)
         guard let object=try JSONSerialization.jsonObject(with:bytes) as? [String:Any],
               Set(object.keys)==Set(["version","pipe_version","package_version","python_version","policy_sha256","policy_input_units"]) else { throw RuntimeError.identity }
@@ -55,31 +55,10 @@ final class PythonWorkerFactory:Sendable {
               URL(fileURLWithPath:path).resolvingSymlinksInPath().path==executable.path else { throw RuntimeError.identity }
         try executable.verify()
     }
-    private static func probe(invocation:String) throws -> Data {
-        let process=Process(),pipe=Pipe()
-        process.executableURL=URL(fileURLWithPath:invocation);process.arguments=arguments+["--metadata"]
-        process.environment=environment;process.currentDirectoryURL=URL(fileURLWithPath:"/var/empty")
-        process.standardInput=FileHandle.nullDevice;process.standardOutput=pipe;process.standardError=FileHandle.nullDevice
-        try process.run()
-        let handle=pipe.fileHandleForReading,fd=handle.fileDescriptor
-        defer { try? handle.close();if process.isRunning { kill(process.processIdentifier,SIGKILL) } }
-        guard fcntl(fd,F_SETFL,O_NONBLOCK)>=0 else { throw RuntimeError.launch }
-        let deadline=ProcessInfo.processInfo.systemUptime+10
-        var data=Data(),eof=false
-        while !eof || process.isRunning {
-            var bytes=[UInt8](repeating:0,count:4096)
-            let count=Darwin.read(fd,&bytes,bytes.count)
-            if count>0 {
-                guard data.count+count<=4096 else { throw RuntimeError.outputLimit };data.append(contentsOf:bytes.prefix(count))
-            } else if count==0 { eof=true }
-            else if errno != EINTR && errno != EAGAIN { throw RuntimeError.launch }
-            guard ProcessInfo.processInfo.systemUptime<deadline else { throw RuntimeError.deadline }
-            if !eof || process.isRunning { Thread.sleep(forTimeInterval:0.005) }
-        }
-        // EOF plus !isRunning already establish terminated metadata output.
-        // Do not add an unbounded Foundation notification wait after deadline.
-        guard process.terminationStatus==0 else { throw RuntimeError.identity }
-        return data
+    private static func probe(invocation:String,executable:VerifiedExecutable) throws -> Data {
+        let result=try executable.platformWorkerMetadata(invocation:invocation)
+        guard result.status==0 else {throw RuntimeError.identity}
+        return result.output
     }
     // Pure binding validation. Binary verification/spawn occur off-loop for
     // broker starts; no journal, caller argv or permission bytes enter work.

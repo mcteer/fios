@@ -520,3 +520,9 @@ T049/T055 package/consistency follow-up: clean a70b570 produces9 development art
 
 
 T002/T018/T019 partial SDK status propagation: three existing completion callbacks pass known command failure into the private owner scope before callback work, preserving first Error-channel text and independent uncertainty. Modeled/actual SDK controls reproduce the previous gap; corrected fresh-library74-record and new mock32-case checks pass expected outcomes, while original modes stay green. Fresh two-job SDK build and four empty-model recomposition checks pass; model planning stays refused.188 Node/106 Python pass. Whole38/55 unchanged; see validation.md/native-26112-port.md.
+
+
+T033 reviewable-artifact follow-up: clean437ecbf and a fresh saved cached-base content receipt produce immutable candidate0406a845…; functional stdlib/no-Fios-package probe and installed-Pydantic/mock-model/artifact roundtrip pass. Exact candidate/probe absence/source identities are rechecked and retained. Artifact-only operator approval is requested and pending; no enrollment/activation/task closure inferred. Whole38/55; see validation.md.
+
+
+T009/T045 metadata startup partial repair: actual worker metadata probes now share the existing two-command/identity-checked bounded launcher, preserving the venv alias and fixed non-model operation. Exhausted-slot baseline reproduces; corrected Debug/optimized and188 Node/106 Python pass. Local reservations never release independent native uncertainty. Whole38/55 unchanged; see validation.md.

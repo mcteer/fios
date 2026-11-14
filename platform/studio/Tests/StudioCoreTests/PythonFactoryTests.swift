@@ -10,6 +10,14 @@ func runPythonFactoryTests() throws {
     let executable=invocation.resolvingSymlinksInPath()
     let sha=SHA256.hash(data:try Data(contentsOf:executable)).map {String(format:"%02x",$0)}.joined()
     let fixture=try JSONSerialization.jsonObject(with:Data(contentsOf:root.appendingPathComponent("tests/fixtures/platform/model.json"))) as! [String:Any]
+    do {
+        try CommandSlots.shared.acquire();defer {CommandSlots.shared.release(nil)}
+        try CommandSlots.shared.acquire();defer {CommandSlots.shared.release(nil)}
+        do {
+            _=try PythonWorkerFactory(invocation:invocation.path,executableSHA256:sha,policySHA256:fixture["policy_sha256"] as! String)
+            fatalError("PYTHON_METADATA_PROBE_BYPASSED_SHARED_COMMAND_BUDGET")
+        }catch RuntimeError.capacity {}
+    }
     progress("metadata begin")
     let factory=try PythonWorkerFactory(invocation:invocation.path,executableSHA256:sha,policySHA256:fixture["policy_sha256"] as! String)
     progress("metadata ready")
