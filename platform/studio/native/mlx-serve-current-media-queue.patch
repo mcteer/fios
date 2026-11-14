@@ -1,0 +1,164 @@
+diff --git a/src/fios/current_queued_origins.zig b/src/fios/current_queued_origins.zig
+index a607733..cde4069 100644
+--- a/src/fios/current_queued_origins.zig
++++ b/src/fios/current_queued_origins.zig
+@@ -19,5 +19,46 @@ pub fn retain(io: std.Io, requests: anytype) !?Scope {
+         views[index] = .{ .fios_owner = request.fios_origins };
+         pointers[index] = &views[index];
+     }
+-    return try slots.retain(io, pointers[0..requests.len]);
++    // Clone/validate the complete union before touching per-request state.
++    // Request fields are touched only before any sender acknowledgement.
++    const scope = try slots.retain(io, pointers[0..requests.len]);
++    for (requests) |request| {
++        if (request.fios_queue_ticket) |ticket| {
++            if (request.fios_queue_started) { owners.shared().fence(io); return error.InvalidQueuedOrigins; }
++            const held = request.fios_origins orelse { owners.shared().fence(io); return error.InvalidQueuedOrigins; };
++            held.tracker.activateQueued(io, ticket) catch { owners.shared().fence(io); return error.InvalidQueuedOrigins; };
++            request.fios_queue_started = true;
++        } else if (request.fios_origins != null) {
++            owners.shared().fence(io);
++            return error.InvalidQueuedOrigins;
++        }
++    }
++    return scope;
++}
++
++// Sender-only: no publication or enclosing queue lock yet. Preserve exact
++// model membership; nested reuse cannot overwrite an earlier operation.
++pub fn capture(io: std.Io, request: anytype, model: []const u8) !?owners.QueueTicket {
++    // A completed latch would let the sender skip its ownership wait. Reject
++    // this unpublished input without changing independent backend certainty.
++    if (request.done) return error.InvalidQueuedOrigins;
++    if (request.fios_queue_ticket != null or request.fios_queue_started) {
++        owners.shared().fence(io);
++        return error.InvalidQueuedOrigins;
++    }
++    const held = request.fios_origins orelse return null;
++    try held.tracker.validatePreparationOrigins(io, held, model);
++    const ticket = try held.tracker.beginQueued(io, held);
++    request.fios_queue_ticket = ticket;
++    return ticket;
++}
++// Sender-only after uncancelable acknowledgement, or unpublished failure.
++// Failed retirement preserves the original independently retained table entry.
++pub fn retire(io: std.Io, request: anytype, ticket: ?owners.QueueTicket) void {
++    if (ticket) |value| {
++        const held = request.fios_origins orelse { owners.shared().fence(io); return; };
++        held.tracker.retireQueued(io, value) catch { held.tracker.fence(io); return; };
++        request.fios_queue_ticket = null;
++        request.fios_queue_started = false;
++    }
+ }
+diff --git a/src/host/gpu_thread/requests.zig b/src/host/gpu_thread/requests.zig
+index e2adcc9..1b1976e 100644
+--- a/src/host/gpu_thread/requests.zig
++++ b/src/host/gpu_thread/requests.zig
+@@ -149,6 +149,8 @@ pub const LoadRequest = struct {
+ pub const GenRequest = struct {
+     // Sender-owned storage survives the uncancelable completion wait.
+     fios_origins: ?*const fios_ownership.Retained = null,
++    fios_queue_ticket: ?fios_ownership.QueueTicket = null,
++    fios_queue_started: bool = false,
+     fios_failed: bool = false,
+     /// Opaque job payload (a `*GenJob` in server.zig).
+     ctx: *anyopaque,
+@@ -322,6 +324,8 @@ pub const VisionItem = union(enum) {
+ pub const VisionEncodeRequest = struct {
+     // Sender-owned storage survives the uncancelable completion wait.
+     fios_origins: ?*const fios_ownership.Retained = null,
++    fios_queue_ticket: ?fios_ownership.QueueTicket = null,
++    fios_queue_started: bool = false,
+     /// Plan 05 Phase D: target model whose `vision_encoder` services this
+     /// request. The conn thread holds a refcount (via `ensureLoaded`) for
+     /// the duration of the call.
+@@ -362,6 +366,8 @@ pub const VisionEncodeRequest = struct {
+ pub const EmbedRequest = struct {
+     // Sender-owned storage survives the uncancelable completion wait.
+     fios_origins: ?*const fios_ownership.Retained = null,
++    fios_queue_ticket: ?fios_ownership.QueueTicket = null,
++    fios_queue_started: bool = false,
+     /// Plan 05 Phase D: target model whose `transformer` services this
+     /// request. The conn thread holds a refcount for the duration.
+     model: *LoadedModel,
+diff --git a/src/engines/mlx/scheduler.zig b/src/engines/mlx/scheduler.zig
+index 57832ce..0783d5e 100644
+--- a/src/engines/mlx/scheduler.zig
++++ b/src/engines/mlx/scheduler.zig
+@@ -1063,6 +1063,11 @@ pub fn runGeneration(self: *Scheduler, req: *GenRequest) !void {
+     const fio_previous = req.fios_origins;
+     req.fios_origins = if (fio_origins) |*held| held else null;
+     defer req.fios_origins = fio_previous;
++    // Capture before publication; the existing uncancelable wait owns request
++    // storage until acknowledgement. Cleanup is metadata, never device proof.
++    const fio_ticket = try @import("../../fios/current_queued_origins.zig").capture(self.io, req, req.model.id);
++    defer @import("../../fios/current_queued_origins.zig").retire(self.io, req, fio_ticket);
++
+ 
+     {
+         self.queue_mu.lockUncancelable(self.io);
+@@ -1203,6 +1208,11 @@ pub fn computeEmbeddings(self: *Scheduler, req: *EmbedRequest) ![][]f32 {
+     const fio_previous = req.fios_origins;
+     req.fios_origins = if (fio_origins) |*held| held else null;
+     defer req.fios_origins = fio_previous;
++    // Capture before publication; the existing uncancelable wait owns request
++    // storage until acknowledgement. Cleanup is metadata, never device proof.
++    const fio_ticket = try @import("../../fios/current_queued_origins.zig").capture(self.io, req, req.model.id);
++    defer @import("../../fios/current_queued_origins.zig").retire(self.io, req, fio_ticket);
++
+ 
+     self.queue_mu.lockUncancelable(self.io);
+     self.embed_queue.append(self.allocator, req) catch |err| {
+@@ -1241,6 +1251,11 @@ pub fn encodeVision(self: *Scheduler, req: *VisionEncodeRequest) !mlx.mlx_array
+     const fio_previous = req.fios_origins;
+     req.fios_origins = if (fio_origins) |*held| held else null;
+     defer req.fios_origins = fio_previous;
++    // Capture before publication; the existing uncancelable wait owns request
++    // storage until acknowledgement. Cleanup is metadata, never device proof.
++    const fio_ticket = try @import("../../fios/current_queued_origins.zig").capture(self.io, req, req.model.id);
++    defer @import("../../fios/current_queued_origins.zig").retire(self.io, req, fio_ticket);
++
+ 
+     // Post + wake.
+     self.queue_mu.lockUncancelable(self.io);
+@@ -1681,6 +1696,21 @@ test "fios current media queue retains both sender origins" {
+     };
+     try fios_ownership.shared().bind(io, first, model.id);
+     try fios_ownership.shared().bind(io, second, model.id);
++    // Both actual synchronous encode senders must reject a different exact
++    // model before publication, without needing an encoder or model work.
++    const wrong = try registry.registerStub("fixture/wrong-media", "/fixture/never-loaded", null);
++    fios_ownership.current().* = first;
++    var embed: EmbedRequest = .{ .model = wrong, .token_seqs = &.{}, .allocator = a };
++    try std.testing.expectError(error.ModelConflict, computeEmbeddings(&scheduler, &embed));
++    var vision: VisionEncodeRequest = .{ .model = wrong, .items = &.{}, .item_keys = &.{}, .item_tokens = &.{}, .allocator = a };
++    try std.testing.expectError(error.ModelConflict, encodeVision(&scheduler, &vision));
++    embed.model = model;embed.done = true;
++    vision.model = model;vision.done = true;
++    try std.testing.expectError(error.InvalidQueuedOrigins, computeEmbeddings(&scheduler, &embed));
++    try std.testing.expectError(error.InvalidQueuedOrigins, encodeVision(&scheduler, &vision));
++    fios_ownership.current().* = null;
++    try std.testing.expect(scheduler.embed_queue.items.len == 0 and scheduler.vision_queue.items.len == 0);
++    try std.testing.expect(embed.fios_origins == null and vision.fios_origins == null);
+     const Probe = struct {
+         roots: [2]fios_ownership.Token,
+         called: bool = false,
+@@ -1699,7 +1729,8 @@ test "fios current media queue retains both sender origins" {
+                 for (group) |token| if (std.meta.eql(token, root)) { found = true;break; };
+                 if (!found) return;
+             }
+-            self.attributed = fios_ownership.shared().snapshot(std.testing.io).owned == 2;
++            self.attributed = fios_ownership.shared().snapshot(std.testing.io).owned == 2 and
++                fios_ownership.shared().queuedSnapshot(std.testing.io).active == 2;
+         }
+     };
+     const Sender = struct {
+@@ -1743,6 +1774,8 @@ test "fios current media queue retains both sender origins" {
+         try std.Io.sleep(io, .fromMilliseconds(1), .real);
+     }
+     try std.testing.expect(ready);
++    try std.testing.expectEqual(@as(usize, 2), fios_ownership.shared().queuedSnapshot(io).queued);
++    try std.testing.expectEqual(@as(usize, 0), fios_ownership.shared().queuedSnapshot(io).active);
+     // The actual sender must have acquired custody before queue publication.
+     try fios_ownership.shared().leave(io, first);
+     try fios_ownership.shared().leave(io, second);

@@ -1063,3 +1063,11 @@ node scripts/check-platform-current-book-queue.mjs --isolated --source /private/
 ```
 
 This checks the exact parent projection/overlay and actual book/tracker/actor metadata in finite, IP-denied, fresh processes. Parent missing-queue cases fail as expected; five candidate cases per mode pass. Real adapter-worker fixtures and enabled native builds are separately recorded in [the contract](contracts/shared-book-queued-custody.md). No numerical model, enrolled coverage/admission, native terminality, installation or task completion follows.
+
+Finite existing-media queue metadata check (exact reviewed source overlay; no model/native admission authority):
+
+```sh
+node scripts/check-platform-current-media-queue.mjs --isolated --source /private/tmp/REVIEWED_SOURCE --zig /private/tmp/PINNED_ZIG
+```
+
+See [media queued custody](contracts/media-queued-custody.md) for the six-case scope and separate full native qualification.
