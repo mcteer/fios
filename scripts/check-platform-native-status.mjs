@@ -68,7 +68,7 @@ try{
  const diagnostic=opened.native_control;
  if(withBackendFences){
   const fences=diagnostic.backend_fences;assert.equal(fences.scope,'independent_partial_backend_fences');assert.equal(fences.frame_version,2);assert.equal(Object.keys(fences.current_sources).length,7);assert(Object.values(fences.current_sources).some(value=>typeof value==='boolean'));assert(Object.values(fences.current_sources).every(value=>value===null||value===false));assert.equal(fences.coverage,'unknown');assert.equal(fences.authority,false);assert.equal(fences.source_instance,diagnostic.source_instance);
-  assert.equal(fences.mimo_warm_uncertain,false);assert.equal(fences.ds4_metal_uncertainty,0);assert.equal(fences.ds4_host_uncertainty,0);assert.equal(fences.retained_uncertainty,false);
+  assert.equal(fences.mimo_warm_uncertain,null);assert.equal(fences.ds4_metal_uncertainty,null);assert.equal(fences.ds4_host_uncertainty,null);assert.equal(fences.retained_uncertainty,false);
   assert(fences.source_sequence>0&&fences.source_age_ms>=-1000&&fences.source_age_ms<=5000);
  }
  if(withPrimaryActivity){
