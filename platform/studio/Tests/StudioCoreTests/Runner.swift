@@ -99,6 +99,7 @@ struct PolicyTestRunner {
             ("drain",runDrainTests),
             ("drain controller",runServiceDrainControllerTests),
             ("force controller",runServiceForceControllerTests),
+            ("runtime service scope",runServiceRuntimeScopeTests),
             ("services",runServiceTests),
             ("artifact limits",runArtifactLimitTests),
             ("artifacts",runArtifactTests),

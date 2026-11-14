@@ -844,8 +844,8 @@ Private native review copies now bind the two reviewed versioned WebP install na
 Existing dependency source controls (private development data only):
 
 ```sh
-python3 scripts/check-platform-current-llama.py --isolated --source /ABS/CLEAN_B11429_SOURCE --cmake /ABS/PINNED_CMAKE --original-library /ABS/EXISTING_LIBLLAMA --headers /ABS/EXISTING_HEADERS
-python3 scripts/check-platform-ds4-tp-origins.py --isolated --baseline /ABS/PRIOR_REVIEWED_DS4_SOURCE --source /ABS/TP_ORIGIN_CANDIDATE --host /ABS/CURRENT_MLX_SOURCE --zig /ABS/PINNED_ZIG
+.venv/bin/python -I -B scripts/check-platform-current-llama.py --isolated --source /ABS/CLEAN_B11429_SOURCE --cmake /ABS/PINNED_CMAKE --original-library /ABS/EXISTING_LIBLLAMA --headers /ABS/EXISTING_HEADERS
+.venv/bin/python -I -B scripts/check-platform-ds4-tp-origins.py --isolated --baseline /ABS/PRIOR_REVIEWED_DS4_SOURCE --source /ABS/TP_ORIGIN_CANDIDATE --host /ABS/CURRENT_MLX_SOURCE --zig /ABS/PINNED_ZIG
 ```
 
 The first command requires the exact pinned compiler/CMake/SDK, builds with two jobs in fresh private data, compares selected source bytes before/after and runs model-free defaults/CPU batch ABI controls. The second executes the original TP service function with Foundation event fixtures, first reproducing the original missing-context assertion, then testing corrected modeled and actual host callback composition in Debug/optimized modes. It never creates Metal objects or a transport/RDMA connection. Its actual-host CPU profile explicitly disables ANE; full server and native TP production are separate checks. Neither command installs or activates anything, invokes a model, supplies all-client/native terminal authority or authorizes Studio acceptance. Preserve failed/setup receipts and distinguish selected-input observations from whole-native provenance.

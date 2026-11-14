@@ -30,7 +30,8 @@ final class ServiceForceController {
         let known=Set(try journal.jobs().map(\.id))
         guard let requests=try journal.unresolvedRequestIDs(),
               Set(value.scope.ownedJobs).isSubset(of:known),
-              Set(value.scope.unresolvedManagedRequests)==Set(requests) else {throw ServiceError.invalid}
+              Set(value.scope.unresolvedManagedRequests)==Set(requests),
+              try journal.serviceScopeContainsRetainedSandboxes(value.scope) else {throw ServiceError.invalid}
         return current
     }
     func prepare(service:ManagedService,role:ControlRole,now:Int64)throws->ServiceForceChallenge {

@@ -8,6 +8,7 @@ import pathlib
 import platform
 import signal
 import subprocess
+import sys
 import tempfile
 import time
 
@@ -26,6 +27,7 @@ def main():
     for name in ['source', 'cmake', 'original-library', 'headers']:
         parser.add_argument('--' + name, type=pathlib.Path, required=True)
     args = parser.parse_args()
+    assert platform.python_implementation() == 'CPython' and sys.version_info[:3] == (3, 11, 17), 'Use locked CPython 3.11.17'
     assert platform.system() == 'Darwin' and platform.machine() == 'arm64' and os.getuid() > 0
     for file in [args.source, args.cmake, args.original_library, args.headers]:
         assert file.is_absolute() and file.exists() and not file.is_symlink()
@@ -112,6 +114,7 @@ def main():
     assert snapshot() == before and digest(args.original_library) == original
     assert {f.name: digest(f) for f in args.headers.glob('*.h')} == headers
     receipt = {'scope': 'existing_dependency_selected_source_build_and_model_free_ABI_not_native_authority',
+               'python_version': platform.python_version(), 'python_executable_sha256': digest(pathlib.Path(sys.executable).resolve()),
                'revision': PIN, 'declared_sources_before_after': before, 'headers': headers,
                'cmake_sha256': CMAKE_SHA, 'clang_sha256': CLANG_SHA, 'sdk': sdk,
                'fixture_sha256': digest(FIXTURE), 'commands': commands, 'library_sha256': digest(library),

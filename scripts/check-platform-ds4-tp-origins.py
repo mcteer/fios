@@ -9,6 +9,7 @@ import pathlib
 import platform
 import shutil
 import subprocess
+import sys
 import tempfile
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -25,6 +26,7 @@ def main():
     parser.add_argument('--host', type=pathlib.Path)
     parser.add_argument('--zig', type=pathlib.Path)
     args = parser.parse_args()
+    assert platform.python_implementation() == 'CPython' and sys.version_info[:3] == (3, 11, 17), 'Use locked CPython 3.11.17'
     assert bool(args.host) == bool(args.zig)
     assert platform.system() == 'Darwin' and os.getuid() > 0
     for source in [args.baseline, args.source]:
@@ -164,6 +166,7 @@ def main():
     assert fixture_file.read_text() == fixture and patch_file.read_text() == patch
     assert selected_sources == {n: sha((args.source / n).read_bytes()) for n in names}
     receipt = {'scope': 'actual_CPU_TP_service_fragment_with_modeled_metadata_hooks_only',
+               'python_version': platform.python_version(), 'python_executable_sha256': sha(pathlib.Path(sys.executable).resolve().read_bytes()),
                'baseline_source_sha256': BASE_SHA, 'current_source_sha256': sha(current.encode()),
                'patch_sha256': sha(patch.encode()), 'fixture_sha256': sha(fixture.encode()), 'selected_DS4_sources_before_after': selected_sources, 'results': results,
                'models': 0, 'GPU_objects': 0, 'RDMA': False, 'transport_exchange': False,

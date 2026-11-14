@@ -60,7 +60,8 @@ final class ServiceDrainController {
         // uncertainty as drain readiness. Full native proof remains separate.
         guard let requests=try journal.unresolvedRequestIDs(),
               Set(value.scope.ownedJobs).isSubset(of:known),
-              Set(value.scope.unresolvedManagedRequests)==Set(requests) else {throw ServiceError.invalid}
+              Set(value.scope.unresolvedManagedRequests)==Set(requests),
+              try journal.serviceScopeContainsRetainedSandboxes(value.scope) else {throw ServiceError.invalid}
         if let original {
             let remaining=Set(jobs.filter {original.contains($0.id) && $0.state != .removed}.map(\.id))
             guard remaining.isSubset(of:Set(value.scope.ownedJobs)) else {throw ServiceError.invalid}
