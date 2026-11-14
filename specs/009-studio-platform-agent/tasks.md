@@ -547,3 +547,6 @@ C++ checker follow-up: explicit command-status SDK selection now reconstructs al
 
 
 Sandbox policy source follow-up: fixed installed-role/root-policy image binding and separate executor composition now require matching runtime/resource policy and complete metadata-image coverage. Full Debug/optimized and188 Node/106 Python pass; no policy writer/public startup/native admission is enabled. Positive installed/runtime/Studio acceptance remains open; whole38/55 unchanged. See contracts/sandbox-enrollment.md and validation.md.
+
+
+Sandbox enrollment package follow-up: clean `061e489d9b3d18f48c884e62d61fc87273f204f0` at `/private/tmp/fios-009-sandbox-policy-package-7Vbxvz/source` publishes nine development artifacts and remains clean before/after. Manifest `e7663237b84bb85b049b50faa27ac326bacdca326bdb2e06c6663dcfd03b4769`, declared source projection `b6f3c510a8b15a65485f1e9f1f92a29fec4011925c5881ddc0e0f1ac05d5d29e`, verification `15dd135fe7b94c6ce8cc1ec87d75f26530d39b1df439f4202e359e0e4d98454c`. Both Studio plans still report the same five blockers with empty privileged-command lists. These are declared development artifact observations, not installed/enrolled/native acceptance or whole-native provenance. No image approval, installation, activation, inference, merge or deployment follows. Whole tasks remain38/55.
