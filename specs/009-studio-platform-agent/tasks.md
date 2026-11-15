@@ -725,3 +725,11 @@ clean58e302c nine-artifact package417ae05a…/projection9596738f… and expanded
 network-denied actual CLI failure/success tests pass; both Studio plans blocked5,
 post-run release review passes and prior package remains preserved. Aggregate
 e79b37ca…. No installed/native acceptance or wholeT049 closure;39/55 unchanged.
+
+
+Matched source/ABI prerequisite subset final: a new native build stages the
+reviewed four-overlay SDK before compilation, captures selected source/CXX/stage
+inputs beforehand, passes454.619s and4 empty-model checks, then re-verifies bytes
+and both new/retained old capsules. Aggregatef8c86f13…. Strict source prerequisite
+parser passes for the matching new declaration; no model plan/request, all-client
+coverage/native authority or whole task closure. Whole39/55 unchanged.

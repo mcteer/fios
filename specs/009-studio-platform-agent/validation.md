@@ -5238,3 +5238,45 @@ remains unchanged/model-prerequisite-refused. A fresh source-only build bracket
 will bind actual matching inputs before compilation, not attach metadata to the
 old capsule. Build/composition checks are pending; no model plan/request,
 coverage/admission/installation authority or whole-task completion follows.
+
+
+Matched CXX/source selected-input build final: fresh private source
+`/private/tmp/fios-009-matched-cxx-native-e01jjhqy/source`, unchanged P36 selected
+native code with the actual reviewed four-overlay SDK staged **before** native
+compilation. Initial setup omitted ignored generated unit sources, then found
+older native-tree staged libraries; no compile/model operation occurred in those
+failed setup checks. The exact selected source files and reviewed SDK stage
+were copied and checked before the successful build. Original P36 source,
+libraries, binary and capsule remain unchanged. `initial-stage-mismatch.json`
+records the old/new library hashes rather than relabeling the previous binary.
+
+Before-build bracket7a46d3f7… binds1252 selected native source files, actual
+0e97b79e… CXX config, the genuine CXX receipt,991 SDK/132 MLXC/333 copied dependency
+source inputs and446 staged SDK files. The existing strict source-prerequisite
+parser passes the matching declaration before compilation. Native enabled build
+passes454.619s, two jobs,1200s bound, unchanged captured inputs; raw binary
+`93ce3b166406ca206abc1f5ec6a4ec40d23cbde270d3b50cad1ed6daff50795e`.
+This is a fresh build/link, not post-hoc metadata attached to the old capsule.
+
+New private capsule593179e6… has normalized binary
+`d63c8b4a577cc185cd649984a3b48d56fbb51fde3bcc8bc77fe5cfccf4bae652`.
+All4 genuine empty-model correlation/activity/startup/manager checks pass, and
+post-run selected native/SDK/source/stage/CXX byte review plus complete capsule
+verification passes. The old997d7e77… capsule verifies unchanged and remains
+source-prerequisite-refused under its original declaration. New final aggregate
+`/private/tmp/fios-009-matched-cxx-native-e01jjhqy/final-review.json`, SHA256
+`f8c86f13a1a15696fed40a5c7068da412aa7ebe756fbac754ce4b224a45db1da`.
+
+The prerequisite parser result is a data-only source/ABI prerequisite, not a
+new model plan, model request, native capacity/device proof, audited all-client
+contract, publisher/whole-native/mapped-OS provenance or enrollment. Model-plan
+createdfalse, models0, inferencefalse, installedfalse, activationfalse and native
+authorityfalse. The actual serving guard remains unsupported. No native graph,
+protocol, numerical engine, RDMA, installed state or model policy was changed.
+All16 whole tasks remain open;39/55 unchanged.
+
+Published7815c44ceb9ed7a19a57c67350138b0bbd7f16af now passes all7 jobs including
+aggregate in CI43692483894. The publisher's expected-head guard correctly
+refused pushing its older8c09 target after this documentation continuation changed
+HEAD; no CI was cancelled. The current head still needs publication and its own
+exact-head CI. No merge, application deployment or native rollout occurred.
