@@ -1121,3 +1121,11 @@ node scripts/check-platform-current-ane-lane.mjs --isolated --source /private/tm
 ```
 
 This binds the exact one-file parent and executes the actual lane/round methods with a CPU substitute for native request execution. Original-scope retention, entry/restoration, repeat generations, required-origin refusal before both lanes, pending-post exclusion and uncertainty retention are tested in separate processes. It does not execute ANE/model work or issue native completion/admission authority. Complete the enclosing builds and empty-model checks separately.
+
+For original ownership across the existing model-build compiler threads:
+
+```sh
+node scripts/check-platform-current-ane-build.mjs --isolated --source /private/tmp/REVIEWED-SOURCE --zig /private/tmp/REVIEWED-ZIG
+```
+
+The exact constructor/worker projection uses CPU substitutes for native compilation and controlled thread creation. Tests cover pre-publication retention, sibling attribution, serial missing-origin refusal, partial-spawn fallback, uncertain parent retention and the unselected path. No ANE/model execution or native authority is established; enclosing build/runtime checks remain separate.

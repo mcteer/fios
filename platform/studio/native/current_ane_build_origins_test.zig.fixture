@@ -1,0 +1,215 @@
+const std = @import("std");
+const owners = @import("fios/request_ownership.zig");
+const lane_owners = owners;
+const lane_queue = @import("fios/queued_request_ownership.zig");
+const fixture_has_build_origin = FIXTURE_SOURCE_VARIANT;
+const rt = struct {
+    fn cleanupUnknown() bool {
+        return owners.shared().knownUncertain(std.testing.io);
+    }
+};
+const abi = struct {
+    const Host = struct {};
+};
+fn report(_: ?*const abi.Host, _: enum { load_total }, _: u32) void {}
+export fn msv_ane_source_uncertainty() u32 {
+    return 0;
+}
+extern "c" fn usleep(microseconds: c_uint) c_int;
+var spawn_attempts: usize = 0;
+var fail_spawn_after: ?usize = null;
+fn spawnCompiler(config: std.Thread.SpawnConfig, comptime function: anytype, args: anytype) !std.Thread {
+    const attempt = spawn_attempts;
+    spawn_attempts += 1;
+    if (fail_spawn_after == attempt) return error.SystemResources;
+    const thread = try std.Thread.spawn(config, function, args);
+    if (attempt == 0) {
+        for (0..2000) |_| {
+            if (args[0].model.worker_entries.load(.acquire) > 0) break;
+            _ = usleep(1000);
+        }
+    }
+    return thread;
+}
+const Prog = struct {
+    model: *Model,
+    fn deinit(p: Prog) void {
+        _ = p.model.cleaned.fetchAdd(1, .monotonic);
+    }
+};
+const Unit = struct { prog: Prog };
+const Model = struct {
+    arena: std.heap.ArenaAllocator,
+    units: []Unit,
+    heads: [1]Prog,
+    cores: Prog,
+    lanes: usize = 1,
+    dcfg: ?bool = null,
+    dprog: ?Prog = null,
+    expected: ?owners.Token = null,
+    seen: std.atomic.Value(usize) = .init(0),
+    worker_entries: std.atomic.Value(usize) = .init(0),
+    cleaned: std.atomic.Value(usize) = .init(0),
+    creator: std.Thread.Id,
+    fence: bool = false,
+    last_build: std.atomic.Value(?*Build) = .init(null),
+    fn create(expected: ?owners.Token) !*Model {
+        const self = try std.heap.page_allocator.create(Model);
+        self.* = .{ .arena = .init(std.heap.page_allocator), .units = undefined, .heads = undefined, .cores = undefined, .expected = expected, .creator = std.Thread.getCurrentId() };
+        self.units = try self.arena.allocator().alloc(Unit, 1);
+        self.units[0] = .{ .prog = .{ .model = self } };
+        self.heads = .{.{ .model = self }};
+        self.cores = .{ .model = self };
+        return self;
+    }
+    fn disposeIfCertain(self: *Model) void {
+        if (!rt.cleanupUnknown()) {
+            self.arena.deinit();
+            std.heap.page_allocator.destroy(self);
+        }
+    }
+    fn compile(self: *Model, worker_count: usize) !void {
+        const io = std.testing.io;
+        const a = self.arena.allocator();
+        const allocator = a;
+        const pfx = "fixture";
+        const starts = &[_]u32{0};
+        const cpus = worker_count + 1;
+        const lanes = worker_count + 1;
+        const nunits = self.units.len;
+        const opts = struct { progress: ?*const abi.Host = null }{};
+        // ACTUAL_CONSTRUCTOR_PREFIX
+    }
+};
+const Build = struct {
+    model: *Model,
+    pfx: []const u8,
+    starts: []const u32,
+    threads: usize,
+    n: usize,
+    io: std.Io,
+    next: std.atomic.Value(usize) = .init(0),
+    mu: std.Io.Mutex = .init,
+    done: [512]bool = @splat(false),
+    failed: ?anyerror = null,
+    progress: ?*const abi.Host = null,
+    origin: ?owners.Retained = null,
+    fn one(b: *Build, _: usize) !void {
+        b.model.last_build.store(b, .release);
+        if (std.Thread.getCurrentId() != b.model.creator) _ = b.model.worker_entries.fetchAdd(1, .release);
+        if (rt.cleanupUnknown()) return error.NativeCleanupUncertain;
+        if (b.model.expected) |expected| {
+            const group = owners.current_group().*;
+            const current = owners.current().*;
+            const actual = if (group) |g| (if (g.len == 1) g[0] else return error.WrongBuildOrigin) else current orelse return error.MissingBuildOrigin;
+            if (actual.slot != expected.slot or actual.sequence != expected.sequence or !std.mem.eql(u8, &actual.instance, &expected.instance)) return error.WrongBuildOrigin;
+        } else if (owners.current_group().* != null or owners.current().* != null) return error.UnexpectedBuildOrigin;
+        _ = b.model.seen.fetchAdd(1, .release);
+        if (b.model.fence) owners.shared().fence(b.io);
+    }
+    // ACTUAL_BUILD_RUN
+};
+fn initialize(seed: u8) !void {
+    owners.shared().primary_guard = false;
+    try owners.shared().initialize(std.testing.io, @splat(seed));
+}
+fn root() !owners.Token {
+    const token = try owners.shared().enter(std.testing.io);
+    try owners.shared().bind(std.testing.io, token, "fixture/ane-build-origin");
+    owners.current().* = token;
+    return token;
+}
+fn releaseSender(token: owners.Token) !void {
+    owners.current().* = null;
+    try owners.shared().leave(std.testing.io, token);
+}
+fn prepare(build: *Build) !void {
+    if (comptime fixture_has_build_origin) try build.captureOrigin();
+}
+fn finish(build: *Build) bool {
+    if (comptime fixture_has_build_origin) return build.finishOrigin();
+    return true;
+}
+test "ane build original sibling compiler retains exact caller scope" {
+    try initialize(111);
+    const token = try root();
+    defer releaseSender(token) catch {};
+    const model = try Model.create(token);
+    defer model.disposeIfCertain();
+    model.compile(2) catch {
+        std.debug.print("ANE_BUILD_WORKER_LOST_ORIGINAL_SCOPE\n", .{});
+        return error.TestUnexpectedResult;
+    };
+    try std.testing.expect(model.worker_entries.load(.acquire) > 0);
+    try std.testing.expectEqual(@as(usize, 3), model.seen.load(.acquire));
+    try std.testing.expectEqual(@as(usize, 1), owners.shared().snapshot(std.testing.io).owned);
+}
+test "ane build original batch retained before worker publication" {
+    try initialize(112);
+    const token = try root();
+    const model = try Model.create(token);
+    defer model.disposeIfCertain();
+    var build: Build = .{ .model = model, .pfx = "fixture", .starts = &.{0}, .threads = 1, .n = 1, .io = std.testing.io };
+    try prepare(&build);
+    try releaseSender(token);
+    if (owners.shared().snapshot(std.testing.io).owned != 1) {
+        std.debug.print("ANE_BUILD_ORIGIN_NOT_RETAINED_BEFORE_PUBLICATION\n", .{});
+        return error.TestUnexpectedResult;
+    }
+    const thread = try std.Thread.spawn(.{}, Build.run, .{&build});
+    thread.join();
+    try std.testing.expect(build.failed == null);
+    try std.testing.expect(finish(&build));
+    try std.testing.expectEqual(@as(usize, 0), owners.shared().snapshot(std.testing.io).owned);
+}
+test "ane build original serial missing scope refuses before compilation" {
+    try initialize(113);
+    const model = try Model.create(null);
+    defer model.disposeIfCertain();
+    const result = model.compile(0);
+    if (result) |_| {
+        std.debug.print("ANE_BUILD_COMPILED_WITHOUT_REQUIRED_ORIGIN\n", .{});
+        return error.TestUnexpectedResult;
+    } else |err| try std.testing.expect(err == error.InvalidQueuedOrigins);
+    try std.testing.expectEqual(@as(usize, 0), model.seen.load(.acquire));
+    try std.testing.expectEqual(@as(usize, 0), spawn_attempts);
+}
+test "ane build original partial spawn keeps serial fallback attributed" {
+    try initialize(114);
+    const token = try root();
+    defer releaseSender(token) catch {};
+    const model = try Model.create(token);
+    defer model.disposeIfCertain();
+    fail_spawn_after = 1;
+    model.compile(2) catch {
+        std.debug.print("ANE_BUILD_PARTIAL_SPAWN_LOST_ORIGINAL_SCOPE\n", .{});
+        return error.TestUnexpectedResult;
+    };
+    try std.testing.expectEqual(@as(usize, 2), spawn_attempts);
+    try std.testing.expectEqual(@as(usize, 3), model.seen.load(.acquire));
+    try std.testing.expect(!rt.cleanupUnknown());
+}
+test "ane build original uncertainty retains parent after local join" {
+    try initialize(115);
+    const token = try root();
+    const model = try Model.create(token);
+    model.fence = true;
+    const result = model.compile(1);
+    try releaseSender(token);
+    if (!rt.cleanupUnknown() or owners.shared().snapshot(std.testing.io).owned != 1) {
+        std.debug.print("ANE_BUILD_ERASED_ORIGINAL_UNCERTAINTY\n", .{});
+        return error.TestUnexpectedResult;
+    }
+    if (result) |_| return error.TestUnexpectedResult else |_| {}
+    try std.testing.expectEqual(@as(usize, 1), model.seen.load(.acquire));
+    try std.testing.expectEqual(@as(usize, 0), model.cleaned.load(.acquire));
+    if (comptime fixture_has_build_origin) try std.testing.expect(model.last_build.load(.acquire).?.origin != null);
+}
+test "ane build original unselected anonymous constructor remains" {
+    try initialize(116);
+    const model = try Model.create(null);
+    defer model.disposeIfCertain();
+    try model.compile(2);
+    try std.testing.expectEqual(@as(usize, 3), model.seen.load(.acquire));
+    try std.testing.expect(!rt.cleanupUnknown());
+}

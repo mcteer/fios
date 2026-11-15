@@ -4945,3 +4945,38 @@ ANE lane default enclosure final: native build239.894s and162/162 fresh-process 
 ANE lane final source qualification: enabled35/35 semantic steps401.555s and32/32 link steps13.749s pass; raw binary `14de2b3e6c3767df24f35aa51ef2a5493cf325a9b8199ae8d04f8162ef226dfb`, normalized private binary `b7a8991ee180295efc4e0ca12d977f523c319739ea04dcb6d592c9f411f3f0cc`, capsule receipt `0cad99fd36dfe92b625ecef23617f6e1f55eb3dfa3203856534662c8b79f267d`. All4 empty-model correlation/activity/startup/authenticated-manager checks and post-runtime source/capsule verification pass. Admissions remain unsupported and coverage unknown.
 
 Aggregate `/private/tmp/fios-009-ane-lane-work-k2x4qnn2/final-source-qualification.json`, SHA256 `99966bde9bdb593ab8a04910e4ab87e0ed2277e9058e2bc503d55d5e85297c43`, binds strict component, default162/162, enabled build and separate runtime receipts. Missing overlay refuses before compiler (log4ba6ca02…). All local sessions complete; no raw ANE/model/hardware-fault/installed acceptance, native terminal/admission authority or whole-task closure follows. Numerical source bytes outside the metadata handoff are unchanged. Package declared inputs and installed Python code are unchanged by this increment. Whole39/55 remains honest; no new model plan/POST, merge/deployment or activation occurred.
+
+
+## Existing ANE model-build worker origins — source enclosure pending
+
+Actual sibling compiler entry first reproduces `ANE_BUILD_WORKER_LOST_ORIGINAL_SCOPE` while the caller retains its original root. Candidate retains one complete build origin in stable model-arena storage before any worker publication; each actual worker enters a cloned queue Scope. Caller and all started siblings complete/join before the retained batch origin is released; failed entry/finish reaches the constructor, and uncertainty retains parent/scope data. The existing partial-spawn serial fallback and unselected path remain. Native compilation/numerical operations are unchanged.
+
+Strict `/private/tmp/fios-009-ane-build-check-7pUnHk/receipt.json`, SHA256 `6e3ad098cfad8a43d42d5bd62c8090edb5d14c69f49492988a641dae49005172`, passes10 original failures,2 unselected controls and12 candidate cases across Debug/ReleaseSafe, separate processes, frozen inputs and denied network. Actual constructor prefix/worker methods run with declared CPU substitutes for compilation and controlled thread creation, plus actual tracker/queue Scope. Both serial missing-origin and partial-spawn behavior are tested. This is not model/native terminal, idle, all-client or admission authority.
+
+- `platform/studio/native/mlx-serve-current-ane-build-origins.patch`: `2e220c1cc24eff16e79e4c8ed6dc838a91cfbac2c60010dc2cd7801138745f8e`
+- `platform/studio/native/current_ane_build_origins_test.zig.fixture`: `b82e04de299d0515f6d6ad07014cd2099ec188f453b5a088ce8a798ab0b9c4a0`
+- `scripts/check-platform-current-ane-build.mjs`: `36279740aa99e274faf785166f19a4c5e12d561aa84baf5c31912d170301092a`
+
+Initial fixture private-method detection returned false and skipped the new capture call; preserve fixture-private-method-detection-error.log. Explicit source-version selection corrected the fixture, while production always calls capture directly. Early edit-template punctuation assertion did not write source. Initial observed-build-pointer fixture was made atomic before final strict qualification; prior matrix/logs remain separate.93 focused Node/boundary/syntax/whitespace pass; native enclosure remains pending. Whole39/55 unchanged. See [contract](contracts/ane-build-worker-origins.md).
+
+
+ANE build-worker full-source parser follow-up: first default build failed71.500s because the new struct field used a semicolon rather than comma. The initial strict checker extracted methods into a compatible fixture shell, so its6e3ad098… receipt did not establish full-file syntax. Failed log/receipt and output are retained with `.field-syntax-error`; the dependent run was also attempted incorrectly and found no test binary, so no native tests passed from that attempt.
+
+The source field is corrected, and the checker now AST-checks the entire actual file before extraction. New `/private/tmp/fios-009-ane-build-check-vPq6Uf/receipt.json`, SHA256 `eaa8df6dd1f31eebc00b78970a310eae7413bd37ad956e9031730ac818e49eb0`, passes full AST plus10 original failures/2 controls/12 candidate cases with stable inputs/network denied. The default build is rerunning; do not claim full semantics/native enclosure yet.
+
+- `platform/studio/native/mlx-serve-current-ane-build-origins.patch`: `862a345685965c9a3e145b2570553f96353b77140a1427ddc064107815ecd698`
+- `platform/studio/native/current_ane_build_origins_test.zig.fixture`: `b82e04de299d0515f6d6ad07014cd2099ec188f453b5a088ce8a798ab0b9c4a0`
+- `scripts/check-platform-current-ane-build.mjs`: `3537de02aa221bed76448e011944837fca8ec2cbe0f99d003b72c8b1ab169482`
+
+
+Exact published lane head19ef1826a797cc7cc59da791c5f25257cad5572b / [CI43679564386](https://github.com/mcteer/fios/actions/runs/43679564386) passed all7 jobs including aggregate. Corrected P32 default build173.923s now passes with declared inputs frozen; default runtime tests/enabled enclosures remain independent and pending. No merge/deployment/native activation follows; whole39/55 unchanged.
+
+
+Corrected ANE build-worker default native tests now pass162/162 fresh-process cases, zero skips, declared inputs unchanged. Binary `d96099b1fd4486f99ada5b718eee67bc0bebb138d8190637ba04ced48994f9dd`; unit receipt `44fd6d06d9c9a1f3e175fc7ad379481c119f78643555dc493d7b3abdeb963625`. Enabled semantic/link and empty-model runtime remain independent and pending. Whole39/55 unchanged.
+
+
+ANE build-worker final source qualification: enabled35/35 semantic steps402.594s and32/32 link steps11.900s pass with declared inputs unchanged. Raw binary `fe5425866fe299a5261b24b2d463078fc81489ad31a55d1a662e1753df902239`, normalized private binary `f3db286ce90871e56ece66ca97d4bc821bae0e4c38e5f54d2864eace73bc18e5`, capsule receipt `486717d1a91cbaf81974853d2361a8271845e81bcdf62dc71ba820049f01742e`. All4 empty-model correlation/activity/startup/authenticated-manager checks and post-runtime capsule/source checks pass; runtime receipt `fe0f59c6b5bf8659b0bdf9e0442eef0032016e4d06b356aaff5ea0cc97ac21a8`.
+
+Aggregate `/private/tmp/fios-009-ane-build-work-om86by09/final-source-qualification.json`, SHA256 `11b2deb4737fcd6fa8e9c29e548c55221111eed834afcc1bd69895bf826b1f77`, binds the corrected strict receipt, default162/162, enabled build and runtime receipts. Missing overlay refuses before compiler (log875ae15b…). All local P32 sessions complete. Initial parser/fixture/setup failures remain preserved and distinct. Neither numerical operations nor the serving primary guard changed. This qualifies selected source/components and their model-free enclosing executable, not whole-native/installed provenance, ANE/device terminality, all-client coverage or admission. Package-declared inputs remain unchanged, separate from updated interpreter/native provenance. Whole39/55 remains unchanged; no new model plan/POST, installation, activation, merge or deployment.
+
+The resume document was consolidated to current state; previous contradictory pending checks and the settled image-only question were removed. Historical evidence remains here and the previous working text is retained privately as resume-before-consolidation.md.

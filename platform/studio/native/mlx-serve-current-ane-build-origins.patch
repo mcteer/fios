@@ -1,0 +1,82 @@
+diff --git a/src/engines/ane/lm.zig b/src/engines/ane/lm.zig
+index cc57322..3df263a 100644
+--- a/src/engines/ane/lm.zig
++++ b/src/engines/ane/lm.zig
+@@ -439,16 +439,20 @@ pub const Model = struct {
+         const nunits = self.units.len;
+         const B = Build{ .model = self, .io = io, .pfx = pfx, .starts = starts, .threads = @max(1, cpus / lanes), .n = nunits + self.lanes + @as(usize, if (self.dcfg != null) 2 else 1), .progress = opts.progress };
+         report(opts.progress, .load_total, @intCast(B.n));
+-        var build = B;
++        const build = try a.create(Build);
++        build.* = B;
++        try build.captureOrigin();
++        defer _ = build.finishOrigin();
+         const workers = try allocator.alloc(std.Thread, lanes - 1);
+         defer if (!rt.cleanupUnknown()) allocator.free(workers);
+         var spawned: usize = 0;
+         for (workers) |*w| {
+-            w.* = std.Thread.spawn(.{}, Build.run, .{&build}) catch break;
++            w.* = std.Thread.spawn(.{}, Build.run, .{build}) catch break;
+             spawned += 1;
+         }
+         build.run();
+         for (workers[0..spawned]) |w| w.join();
++        if (!build.finishOrigin() and build.failed == null) build.failed = error.NativeCleanupUncertain;
+         if (build.failed) |err| {
+             if (rt.cleanupUnknown()) return err;
+             for (self.units, 0..) |u, i| if (build.done[i]) u.prog.deinit();
+@@ -512,6 +516,7 @@ pub const Model = struct {
+         done: [512]bool = @splat(false),
+         failed: ?anyerror = null,
+         progress: ?*const abi.Host = null,
++        origin: ?lane_owners.Retained = null,
+ 
+         /// One more program ready; a cache miss marks the load as compiling.
+         fn built(b: *Build, p: rt.Program) void {
+@@ -519,7 +524,46 @@ pub const Model = struct {
+             report(b.progress, .load_done, 1);
+         }
+ 
++        // One original group is retained before any sibling publication and
++        // held in the model arena until every started compiler has joined.
++        fn captureOrigin(b: *Build) !void {
++            if (rt.cleanupUnknown()) return error.NativeCleanupUncertain;
++            if (b.origin != null) return error.InvalidQueuedOrigins;
++            b.origin = try lane_owners.retainCurrent(b.io);
++            if (b.origin == null and @import("build_options").fios_source_ane) {
++                lane_owners.shared().fence(b.io);
++                return error.InvalidQueuedOrigins;
++            }
++        }
++        fn finishOrigin(b: *Build) bool {
++            if (b.origin) |*held| {
++                if (rt.cleanupUnknown() or !held.releaseIfCertain(b.io)) {
++                    lane_owners.shared().fence(b.io);
++                    return false;
++                }
++                b.origin = null;
++            }
++            return !rt.cleanupUnknown();
++        }
++        fn failedOrigin(b: *Build, err: anyerror) void {
++            b.mu.lockUncancelable(b.io);
++            defer b.mu.unlock(b.io);
++            if (b.failed == null) b.failed = err;
++        }
+         fn run(b: *Build) void {
++            if (rt.cleanupUnknown()) { b.failedOrigin(error.NativeCleanupUncertain); return; }
++            var scope: ?lane_queue.Scope = null;
++            if (b.origin) |*held| {
++                scope = lane_queue.Scope.retain(b.io, held) catch |err| { b.failedOrigin(err); return; };
++            } else if (@import("build_options").fios_source_ane) {
++                lane_owners.shared().fence(b.io);
++                b.failedOrigin(error.InvalidQueuedOrigins);
++                return;
++            }
++            if (scope) |*owned| owned.enter(b.io) catch |err| { b.failedOrigin(err); return; };
++            defer if (scope) |*owned| {
++                if (!owned.finish(b.io)) b.failedOrigin(error.NativeCleanupUncertain);
++            };
+             while (true) {
+                 const i = b.next.fetchAdd(1, .monotonic);
+                 if (i >= b.n or i >= b.done.len) return;
