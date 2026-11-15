@@ -122,7 +122,7 @@ func runPythonFactoryTests() throws {
     func resources(_ now:Int64)->ResourceSample { ResourceSample(sampledAt:now,physical:128<<30,available:64<<30,vmAvailable:nil,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal) }
     var admission=AdmissionPolicy()
     progress("broker rounds begin")
-    for _ in 0..<4 {
+    for attempt in 0..<4 {
         let time=HostResources.nowMilliseconds()
         try broker.submit(job:scoped,owner:owner,requestID:UUID().uuidString.lowercased(),context:[ModelText(role:"user",content:"fixture only")],binding:freshBinding(),nativeCapacityProven:true,sample:resources(time),admission:&admission,now:time)
         progress("broker round submitted")
@@ -137,6 +137,13 @@ func runPythonFactoryTests() throws {
             Thread.sleep(forTimeInterval:0.01)
         }
         guard done,text=="MOCK_ONLY",broker.activeWorkers==0 else { fatalError("Broker fixed-target mock roundtrip failed") }
+        guard let retained=try journal.inferenceScope(job:scoped,attempt:attempt),retained.state == .uncertain,
+              try journal.hasClaim(job:scoped,attempt:attempt) else {
+            fatalError("BROKER_HTTP_COMPLETION_RELEASED_NATIVE_OWNERSHIP")
+        }
+        // This fixture supplies a separate synthetic native terminal receipt
+        // between rounds. HTTP completion above must never supply it.
+        try journal.resolveInference(job:scoped,attempt:attempt,scope:retained.scope,outcome:.complete)
     }
     let time=HostResources.nowMilliseconds()
     do {

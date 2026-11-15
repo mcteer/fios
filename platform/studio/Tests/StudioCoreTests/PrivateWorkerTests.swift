@@ -8,8 +8,9 @@ func runPrivateWorkerTests() throws {
     let journal=try Journal(directory:directory)
     let older=UUID().uuidString.lowercased()
     try journal.claim(job:older,attempt:0,model:"fixture/model");try journal.markUncertain(job:older,attempt:0)
-    func launch(job:String,mode:String="complete") throws -> PrivateWorker {
-        try journal.claim(job:job,attempt:0,model:"fixture/model")
+    func launch(job:String,mode:String="complete",scope:InferenceScope?=nil) throws -> PrivateWorker {
+        if let scope {try journal.claim(job:job,attempt:0,model:"fixture/model",scope:scope)}
+        else {try journal.claim(job:job,attempt:0,model:"fixture/model")}
         _=try journal.planWorkerLaunch(job:job,attempt:0)
         let process=Process(),input=Pipe(),output=Pipe()
         process.executableURL=root.appendingPathComponent(".venv/bin/python")
@@ -50,6 +51,25 @@ func runPrivateWorkerTests() throws {
         fatalError("Private child completion/reap/correlated ownership failed")
     }
     do { try send(worker,id:job);fatalError("Child permission replay accepted") } catch ControlError.invalid_request {}
+    let boundID=UUID().uuidString.lowercased()
+    let boundScope=InferenceScope(host:"fixture-host",endpointHash:hash,profileHash:String(repeating:"f",count:64),managerEpoch:epoch,nativeEpoch:"native-fixture-one",canonicalModel:"fixture/model",nativeModel:"fixture/model",sequence:1,sampledAt:HostResources.nowMilliseconds())
+    let bound=try launch(job:boundID,scope:boundScope)
+    try send(bound,id:boundID)
+    let boundEnd=ProcessInfo.processInfo.systemUptime+10
+    var boundDone=false
+    while !bound.reaped && ProcessInfo.processInfo.systemUptime<boundEnd {
+        for event in try bound.poll(now:Int64(ProcessInfo.processInfo.systemUptime*1000),authorized:true) {
+            if case .complete=event {boundDone=true}
+        }
+        Thread.sleep(forTimeInterval:0.01)
+    }
+    guard bound.reaped,boundDone,try journal.inferenceScope(job:boundID,attempt:0)?.state == .uncertain,
+          try journal.unresolvedCount()==2,try journal.hasClaim(job:older,attempt:0) else {
+        fatalError("BOUND_HTTP_COMPLETION_RELEASED_NATIVE_OWNERSHIP")
+    }
+    // Explicit synthetic native-terminal reconciliation for this mock claim;
+    // the worker's transport completion above supplied no such evidence.
+    try journal.resolveInference(job:boundID,attempt:0,scope:boundScope,outcome:.complete)
     let failedID=UUID().uuidString.lowercased(),failed=try launch(job:failedID,mode:"missing-model")
     try send(failed,id:failedID)
     let unavailableEnd=ProcessInfo.processInfo.systemUptime+10

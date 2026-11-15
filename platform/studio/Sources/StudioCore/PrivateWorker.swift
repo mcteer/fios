@@ -158,7 +158,17 @@ final class PrivateWorker {
                 switch event {
                 case .complete:
                     terminal=true
-                    if !revoked { try resolve(.complete);events.append(event) }
+                    if !revoked {
+                        if inferenceScope != nil {
+                            // HTTP/Pydantic completion supplies output, not a
+                            // correlated native/device terminal receipt.
+                            try journal.markUncertain(job:job,attempt:attempt)
+                        }else {
+                            // Separate unbound low-level protocol fixtures.
+                            try resolve(.complete)
+                        }
+                        events.append(event)
+                    }
                 case .interrupted,.failed:
                     terminal=true
                     if !nativeComplete { try journal.markUncertain(job:job,attempt:attempt) }
