@@ -12,6 +12,9 @@ var event_origins:std.atomic.Value(u32)=.init(0);
 var event_retired:std.atomic.Value(u32)=.init(0);
 var event_uncertain:std.atomic.Value(u32)=.init(0);
 export fn fios_source_host_event_observe(raw:?*anyopaque,id:u64,phase:u32)c_int {
+ if(@import("build_options").native_host_events and @hasDecl(sdk,"fios_native_host_request_event_observe")) {
+  if(sdk.fios_native_host_request_event_observe(raw,id,phase)!=0)return 1;
+ }
  if(id==0 or id>=event_states.len)return 1;
  if(phase==3) {if(event_states[@intCast(id)].load(.acquire)!=1)return 1;event_states[@intCast(id)].store(3,.release);_=event_uncertain.fetchAdd(1,.acq_rel);return 0;}
  const scope=sdk.fios_native_request_owners_enter(raw);if(scope==0)return 1;
@@ -30,15 +33,31 @@ export fn fios_source_host_event_observe(raw:?*anyopaque,id:u64,phase:u32)c_int 
 test "normal non-model CPU graph preserves original custody and retires local callbacks" {
  const io=std.testing.io;
  const raw=std.mem.span(getenv("FIOS_FIXTURE_HOST_EVENT_SCENARIO") orelse return error.MissingScenario);
- scenario=try std.fmt.parseInt(u32,raw,10);try std.testing.expect(scenario<=4);
+ scenario=try std.fmt.parseInt(u32,raw,10);try std.testing.expect(scenario<=18);
  try owners.shared().initialize(io,@splat(7));try sdk.initialize(io);
  try std.testing.expectEqual(@as(c_int,1),fios_cpu_graph_library_matches(@import("build_options").sdk_library));
  const original=try owners.shared().enter(io);expected_root=original;try owners.shared().bind(io,original,"fixture/cpu-graph");try owners.shared().active(io,original);
  owners.current().*=original;const group=[_]owners.Token{original};owners.current_group().*=&group;
  defer {owners.current().*=null;owners.current_group().*=null;}
+ if(@import("build_options").native_host_events and @hasDecl(sdk,"fios_native_host_request_event_observe")) {
+  if(scenario>=5) {
+   try nativeLedgerCase(io,original);owners.current().*=null;owners.current_group().*=null;
+   try owners.shared().leave(io,original);
+   if(scenario==5 or scenario>=17)try std.testing.expectEqual(@as(usize,0),owners.shared().snapshot(io).owned);
+   return;
+  }
+ }
  try std.testing.expectEqual(@as(c_int,1),fios_cpu_graph_run(scenario));
  owners.current().*=null;owners.current_group().*=null;try owners.shared().leave(io,original);
  const diag=sdk.diagnostic();const snapshot=owners.shared().snapshot(io);
+ if(@import("build_options").native_host_events and @hasDecl(sdk,"fios_native_host_request_event_observe")) {
+  const events=sdk.hostEventDiagnostic();
+  if(scenario>=2)try std.testing.expect(events.uncertain) else {
+   try std.testing.expectEqual(@as(usize,0),events.active);
+   try std.testing.expectEqual(@as(u64,event_retired.load(.acquire)),events.retired);
+   try std.testing.expect(!events.uncertain);
+  }
+ }
  std.debug.print("cpu_graph contexts={d} roots={d} SDK_uncertain={} source_uncertain={} no_native_authority\n",.{diag.active_contexts,snapshot.owned,diag.uncertain,snapshot.uncertain});
  if(scenario>=2) {
   try std.testing.expect(snapshot.uncertain and diag.uncertain and snapshot.owned>0 and diag.active_contexts>0);
@@ -52,5 +71,91 @@ test "normal non-model CPU graph preserves original custody and retires local ca
  }else try std.testing.expectEqual(@as(u32,0),event_origins.load(.acquire));
  try std.testing.expectEqual(@as(u32,0),event_uncertain.load(.acquire));
  try std.testing.expectEqual(@as(u32,0),diag.active_contexts);try std.testing.expect(!diag.uncertain);try std.testing.expectEqual(@as(usize,0),snapshot.owned);try std.testing.expect(!snapshot.uncertain);
+ if(@import("build_options").native_host_events and !@hasDecl(sdk,"fios_native_host_request_event_observe")) {
+  std.debug.print("NATIVE_HOST_EVENT_LEDGER_MISSING\n",.{});return error.TestUnexpectedResult;
+ }
  std.debug.print("PASS host event origin/retirement/legacy scenario={d} events={d} no_native_authority\n",.{scenario,event_origins.load(.acquire)});
+}
+
+fn nativeLedgerCase(io:std.Io, original:owners.Token) !void {
+ const raw=sdk.fios_native_request_owners_capture() orelse return error.MissingContext;
+ defer sdk.fios_native_request_owners_release(raw);
+ const observe=sdk.fios_native_host_request_event_observe;
+ var expected_retired:u64=0;
+ switch(scenario) {
+  5=>{
+   try std.testing.expectEqual(@as(c_int,0),observe(raw,2,1));
+   try std.testing.expectEqual(@as(c_int,0),observe(raw,1,1));
+   try std.testing.expectEqual(@as(c_int,0),observe(raw,2,2));
+   try std.testing.expectEqual(@as(c_int,0),observe(raw,1,2));expected_retired=2;
+  },
+  6=>{try std.testing.expectEqual(@as(c_int,0),observe(raw,1,1));try std.testing.expectEqual(@as(c_int,1),observe(raw,1,1));},
+  7=>{try std.testing.expectEqual(@as(c_int,1),observe(raw,1,2));},
+  8=>{
+   try std.testing.expectEqual(@as(c_int,0),observe(raw,1,1));
+   owners.current().*=null;owners.current_group().*=null;
+   const other=try owners.shared().enter(io);try owners.shared().bind(io,other,"fixture/cpu-graph");
+   owners.current().*=other;const group=[_]owners.Token{other};owners.current_group().*=&group;
+   const different=sdk.fios_native_request_owners_capture() orelse return error.MissingContext;
+   defer sdk.fios_native_request_owners_release(different);
+   try std.testing.expectEqual(@as(c_int,1),observe(different,1,2));
+   owners.current().*=original;owners.current_group().*=null;
+  },
+  9=>{try std.testing.expectEqual(@as(c_int,1),observe(raw,4097,1));},
+  10=>{
+   for(1..owners.capacity+1) |id|try std.testing.expectEqual(@as(c_int,0),observe(raw,id,1));
+   try std.testing.expectEqual(@as(c_int,1),observe(raw,owners.capacity+1,1));
+  },
+  11,12=>{
+   try std.testing.expectEqual(@as(c_int,0),observe(raw,1,1));
+   try std.testing.expectEqual(@as(c_int,0),observe(raw,1,2));expected_retired=1;
+   try std.testing.expectEqual(@as(c_int,1),observe(raw,1,if(scenario==11)1 else 2));
+  },
+  13=>{try std.testing.expectEqual(@as(c_int,1),observe(raw,1,0));},
+  14=>{
+   try std.testing.expectEqual(@as(c_int,0),observe(raw,2,1));
+   try std.testing.expectEqual(@as(c_int,0),observe(raw,2,2));expected_retired=1;
+   try std.testing.expectEqual(@as(c_int,1),observe(raw,4097,1));
+  },
+  15=>{
+   try std.testing.expectEqual(@as(c_int,0),observe(raw,1,1));
+   try std.testing.expectEqual(@as(c_int,0),observe(raw,1,2));expected_retired=1;
+   sdk.fios_native_request_owners_uncertain();
+  },
+  16=>{
+   try std.testing.expectEqual(@as(c_int,0),observe(raw,1,1));
+   owners.shared().fence(io);
+  },
+  17=>{
+   for(1..10001) |id| {
+    try std.testing.expectEqual(@as(c_int,0),observe(raw,id,1));
+    try std.testing.expectEqual(@as(c_int,0),observe(raw,id,2));
+   }
+   expected_retired=10000;
+  },
+  18=>{
+   for(2..4097) |id| {
+    try std.testing.expectEqual(@as(c_int,0),observe(raw,id,1));
+    try std.testing.expectEqual(@as(c_int,0),observe(raw,id,2));
+   }
+   try std.testing.expectEqual(@as(c_int,0),observe(raw,1,1));
+   try std.testing.expectEqual(@as(c_int,0),observe(raw,1,2));
+   try std.testing.expectEqual(@as(c_int,0),observe(raw,4097,1));
+   try std.testing.expectEqual(@as(c_int,0),observe(raw,4097,2));expected_retired=4097;
+  },
+  else=>return error.UnknownScenario,
+ }
+ const result=sdk.hostEventDiagnostic();
+ try std.testing.expectEqual(expected_retired,result.retired);
+ if(scenario==5 or scenario>=17) {
+  try std.testing.expect(!result.uncertain);try std.testing.expectEqual(@as(usize,0),result.active);
+ }else{
+  try std.testing.expect(result.uncertain and owners.shared().knownUncertain(io));
+  const before=result;
+  try std.testing.expectEqual(@as(c_int,1),observe(raw,1,2));
+  const after=sdk.hostEventDiagnostic();
+  try std.testing.expect(after.uncertain);try std.testing.expectEqual(before.active,after.active);
+  try std.testing.expectEqual(before.retired,after.retired);
+ }
+ std.debug.print("PASS host native metadata ledger scenario={d} no_native_authority\n",.{scenario});
 }

@@ -8,7 +8,10 @@ p.add_argument('--isolated', action='store_true', required=True)
 for name in ['source', 'zig', 'sdk-source', 'sdk-library', 'sdk-stage']:
     p.add_argument('--' + name, type=Path, required=True)
 p.add_argument('--sdk-sha256', required=True)
+p.add_argument('--native-host-events', action='store_true')
+p.add_argument('--expect-missing-native-host-events', action='store_true')
 a = p.parse_args()
+assert not a.expect_missing_native_host_events or a.native_host_events
 assert platform.system() == 'Darwin' and platform.machine() == 'arm64' and os.geteuid() > 0
 source, zig, sdk_source, library = [getattr(a, n) for n in ['source', 'zig', 'sdk_source', 'sdk_library']]
 assert all(x == x.resolve() and str(x).startswith('/private/tmp/') for x in [source, zig, sdk_source, library])
@@ -51,7 +54,7 @@ while pending:
         if dependency.exists():
             pending.append(str(relative))
 (unit / 'main.zig').write_bytes(fixture.read_bytes())
-(unit / 'options.zig').write_text('pub const fios_source_ane=false;\npub const sdk_library=' + json.dumps(str(library)) + ';\n')
+(unit / 'options.zig').write_text('pub const fios_source_ane=false;\npub const native_host_events=' + str(a.native_host_events).lower() + ';\npub const sdk_library=' + json.dumps(str(library)) + ';\n')
 patch = root / 'platform/studio/native/mlx-c69303b-host-request-events.patch'
 parents_file = root / 'platform/studio/native/sdk_host_event_parents.json'
 parents = json.loads(parents_file.read_text())
@@ -65,8 +68,21 @@ for n in parents:
 for reverse in [True, False]:
     subprocess.run(['/usr/bin/git', 'apply'] + (['--reverse'] if reverse else []) + [str(patch)], cwd=review, env=env, check=True, capture_output=True, timeout=15)
     assert all(sha(review / n) == h for n, h in (parents if reverse else projection).items())
-fixtures = {str(x.relative_to(root)): sha(x) for x in [cpp, fixture, patch, parents_file, Path(__file__)]}
-receipt = {'scope': 'actual_SDK_CPU_events_origins_registration_refusal_and_abandonment_not_native_terminal_proof', 'native_source': str(source), 'native_inputs': inputs, 'SDK_source': str(sdk_source), 'SDK_library_sha256': sha(library), 'SDK_headers': {}, 'SDK_projection': projection, 'fixture_inputs': fixtures, 'sdk': '27.2', 'CXX_stub_sha256': sha(stub), 'clang': output(['/usr/bin/clang++', '--version']), 'records': [], 'model_requests': 0, 'models': 0, 'installed': False, 'native_authority': False, 'whole_native_provenance': False}
+if a.native_host_events and not a.expect_missing_native_host_events:
+    native_patch = root / 'platform/studio/native/mlx-serve-sdk-host-event-ledger.patch'
+    native_parents = root / 'platform/studio/native/sdk_host_event_ledger_parents.json'
+    parent_hashes = json.loads(native_parents.read_text())
+    assert set(parent_hashes) == {'src/fios/sdk_request_ownership.zig'}
+    native_review = w / 'native-review'
+    for n in parent_hashes:
+        dest = native_review / n
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes((source / n).read_bytes())
+    for reverse in [True, False]:
+        subprocess.run(['/usr/bin/git', 'apply'] + (['--reverse'] if reverse else []) + [str(native_patch)], cwd=native_review, env=env, check=True, capture_output=True, timeout=15)
+        assert all(sha(native_review / n) == h for n, h in (parent_hashes if reverse else {'src/' + n: h for n, h in inputs.items() if n == 'fios/sdk_request_ownership.zig'}).items())
+fixtures = {str(x.relative_to(root)): sha(x) for x in [cpp, fixture, patch, parents_file, Path(__file__)] + ([native_patch, native_parents] if a.native_host_events and not a.expect_missing_native_host_events else [])}
+receipt = {'scope': 'actual_SDK_CPU_events_origins_registration_refusal_and_abandonment_not_native_terminal_proof', 'native_source': str(source), 'native_inputs': inputs, 'SDK_source': str(sdk_source), 'SDK_library_sha256': sha(library), 'SDK_headers': {}, 'SDK_projection': projection, 'fixture_inputs': fixtures, 'sdk': '27.2', 'CXX_stub_sha256': sha(stub), 'clang': output(['/usr/bin/clang++', '--version']), 'records': [], 'native_host_event_ledger': a.native_host_events, 'expect_missing_native_host_events': a.expect_missing_native_host_events, 'model_requests': 0, 'models': 0, 'installed': False, 'native_authority': False, 'whole_native_provenance': False}
 def save():
     (w / 'receipt.json').write_text(json.dumps(receipt, indent=2) + '\n')
 save()
@@ -93,7 +109,7 @@ for mode, opt in [('Debug', '-O0'), ('ReleaseSafe', '-O2')]:
                     receipt['SDK_headers'][relative] = headers[relative]
             assert receipt['SDK_headers']
             save()
-    for scenario in range(5):
+    for scenario in range(1 if a.expect_missing_native_host_events else 19 if a.native_host_events else 5):
         try:
             result = subprocess.run(['/usr/bin/sandbox-exec', '-p', '(version 1)(allow default)(deny network*)', str(binary)], cwd=unit, env={**env, 'FIOS_FIXTURE_HOST_EVENT_SCENARIO': str(scenario)}, capture_output=True, text=True, timeout=20)
             status, log = result.returncode, result.stdout + result.stderr
@@ -102,7 +118,7 @@ for mode, opt in [('Debug', '-O0'), ('ReleaseSafe', '-O2')]:
             log = ''.join(value.decode(errors='replace') if isinstance(value, bytes) else value or '' for value in [failure.stdout, failure.stderr]) + '\nFixture runtime deadline exceeded\n'
         path = w / (mode + '-scenario-' + str(scenario) + '.log')
         path.write_text(log)
-        expected = status == 0 and 'All 2 tests passed.' in log and 'PASS host' in log
+        expected = (status != 0 and status != 124 and 'NATIVE_HOST_EVENT_LEDGER_MISSING' in log) if a.expect_missing_native_host_events else (status == 0 and 'All 2 tests passed.' in log and 'PASS host' in log)
         receipt['records'].append({'mode': mode, 'stage': 'run', 'scenario': scenario, 'status': status, 'expected': expected, 'log_sha256': sha(path)})
         save()
         assert expected, log

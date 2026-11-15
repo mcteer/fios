@@ -1330,3 +1330,19 @@ abandonment. Controlled retirement refusal must return an error with uncertainty
 retained rather than hang or signal completion. No model, shader dispatch, HTTP
 request, native proof or installed action occurs. Full serving-image/MLX-C
 compatibility is separate; see [contract](contracts/sdk-host-request-events.md).
+
+### Native SDK CPU callback receiver
+
+```sh
+.venv/bin/python -I -B scripts/check-platform-sdk-host-events.py --isolated --native-host-events --source /private/tmp/REVIEWED_NATIVE_SOURCE --zig /private/tmp/PINNED_ZIG --sdk-source /private/tmp/REVIEWED_SDK_SOURCE --sdk-library /private/tmp/SELECTED_LIBMLX --sdk-stage /private/tmp/PRIVATE_SDK_STAGE --sdk-sha256 REVIEWED_SDK_LIBRARY_SHA256
+```
+
+Apply `mlx-serve-sdk-host-event-ledger.patch` after the qualified Qwen warm
+custody native checkpoint. Select the separately qualified host-event SDK stage.
+The checker reverses/reapplies both exact native and SDK increments; genuine
+CPU graph callbacks and direct metadata cases are distinct. To verify the old
+native source with the same SDK, add `--expect-missing-native-host-events`:
+compilation must succeed and both graph executions must fail at the explicit
+missing-ledger witness. Ordinary checker mode remains available without either
+flag. No mode installs/registers a production receiver, runs a model or grants
+native proof/admission authority. See [contract](contracts/native-sdk-host-events.md).

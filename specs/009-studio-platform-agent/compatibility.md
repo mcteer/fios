@@ -572,3 +572,19 @@ units-check and4 empty-native/current StudioCore checks pass. Neither modeled co
 nor the empty runtime proves real table IO or native completion. Bounded cleanup,
 complete all-client/native admission and installed acceptance remain open;
 39/55 unchanged. See [contract](contracts/qwen-warm-origins.md) and validation.
+
+### SDK CPU observer and native receiver source components
+
+The selected c69303b SDK now has a separate optional version1 CPU callback
+observer, preserving its seven-pointer ownership ABI. Its qualified SDK build
+is96c3c5a4…; genuine graph, legacy/refusal/abandonment and delayed host-wait
+regressions are recorded in [SDK host events](contracts/sdk-host-request-events.md).
+The host receiver source component copies exact original token groups into a
+bounded ledger, retaining uncertainty and rejecting replay/mismatched transitions.
+See [native receiver](contracts/native-sdk-host-events.md). Receiver component qualification
+passes42 isolated stages, enabled35/35 semantic32/32 link,units-check and four
+private empty-model/current StudioCore manager checks. Neither component supplies
+device completion, an all-client
+coverage issuer, native admission or installed authority. Production startup does
+not register the receiver; the selected SDK component library is distinct from
+the older SDK staged in enclosing native serving builds.

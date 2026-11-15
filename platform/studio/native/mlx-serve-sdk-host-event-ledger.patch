@@ -1,0 +1,96 @@
+--- a/src/fios/sdk_request_ownership.zig
++++ b/src/fios/sdk_request_ownership.zig
+@@ -153,3 +153,93 @@
+     source.mutex.unlock(io);
+     return if (started and source.knownUncertain(io)) 1 else 0;
+ }
++
++// Compiled CPU-callback evidence only. No wire, device proof or admission.
++// The SDK keeps each immutable Context alive throughout this call.
++const host_event_window = 4096;
++const HostEventSlot = struct {
++    id: u64 = 0,
++    count: usize = 0,
++    tokens: [owners.capacity]owners.Token = undefined,
++};
++const HostEvents = struct {
++    mutex: std.Io.Mutex = .init,
++    base: u64 = 1,
++    phases: [host_event_window]u2 = @splat(0),
++    slots: [owners.capacity]HostEventSlot = @splat(.{}),
++    active: usize = 0,
++    retired: u64 = 0,
++    uncertain: bool = false,
++
++    fn observe(self: *HostEvents, context: *const Context, id: u64, phase: u32) bool {
++        if (self.uncertain or id < self.base or id - self.base >= host_event_window or
++            context.retained.tracker != owners.shared() or context.retained.count == 0 or
++            context.retained.count > owners.capacity) return false;
++        const position: usize = @intCast(id % host_event_window);
++        const tokens = context.retained.tokens[0..context.retained.count];
++        if (phase == 1) {
++            if (self.phases[position] != 0) return false;
++            for (&self.slots) |*slot| {
++                if (slot.id != 0) continue;
++                slot.id = id;
++                slot.count = tokens.len;
++                @memcpy(slot.tokens[0..tokens.len], tokens);
++                self.phases[position] = 1;
++                self.active += 1;
++                return true;
++            }
++            return false;
++        }
++        if ((phase != 2 and phase != 3) or self.phases[position] != 1) return false;
++        for (&self.slots) |*slot| {
++            if (slot.id != id) continue;
++            if (slot.count != tokens.len) return false;
++            for (tokens, slot.tokens[0..slot.count]) |token, original| {
++                if (!sameToken(token, original)) return false;
++            }
++            // Uncertain events retain their original identity; never recycle.
++            if (phase == 3) { self.uncertain = true; return true; }
++            slot.id = 0;
++            slot.count = 0;
++            self.active -= 1;
++            self.retired += 1;
++            self.phases[position] = 2;
++            // A bounded reorder window admits concurrent origin callbacks.
++            // Never skip an unseen/live event or wrap the source sequence.
++            while (self.phases[@intCast(self.base % host_event_window)] == 2) {
++                self.phases[@intCast(self.base % host_event_window)] = 0;
++                if (self.base == std.math.maxInt(u64)) return false;
++                self.base += 1;
++            }
++            return true;
++        }
++        return false;
++    }
++};
++var host_events: HostEvents = .{};
++pub const HostEventDiagnostic = struct { active: usize, retired: u64, uncertain: bool };
++pub fn hostEventDiagnostic() HostEventDiagnostic {
++    if (state.load(.acquire) != 2) return .{ .active = 0, .retired = 0, .uncertain = true };
++    const io = source_io.?;
++    host_events.mutex.lockUncancelable(io);
++    var result: HostEventDiagnostic = .{ .active = host_events.active, .retired = host_events.retired,
++        .uncertain = host_events.uncertain or failed.load(.acquire) };
++    host_events.mutex.unlock(io);
++    result.uncertain = result.uncertain or owners.shared().knownUncertain(io);
++    return result;
++}
++pub export fn fios_native_host_request_event_observe(raw: ?*anyopaque, id: u64, phase: u32) c_int {
++    if (state.load(.acquire) != 2) { fence(); return 1; }
++    const context: *const Context = @ptrCast(@alignCast(raw orelse { fence(); return 1; }));
++    const io = source_io.?;
++    const source_uncertain = failed.load(.acquire) or owners.shared().knownUncertain(io);
++    host_events.mutex.lockUncancelable(io);
++    const accepted = (!source_uncertain or phase == 3) and host_events.observe(context, id, phase);
++    if (!accepted) host_events.uncertain = true;
++    const uncertain = host_events.uncertain;
++    host_events.mutex.unlock(io);
++    // Tracker locking/fencing stays outside the metadata mutex. No SDK calls,
++    // TLS entry, allocation or borrowed-pointer retention occurs here.
++    if (uncertain) fence();
++    return if (accepted) 0 else 1;
++}
