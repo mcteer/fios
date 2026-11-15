@@ -1,0 +1,58 @@
+const std=@import("std");
+const host=@import("mlx_host");
+const owners=host.fio_tracker;
+const sdk=host.fio_sdk;
+const warm=@import("sdk/weights/streamed/mimo/gpu_warm.zig");
+const E=warm.Engine(warm.Trace);
+fn tick() void {const ts:std.c.timespec=.{.sec=0,.nsec=std.time.ns_per_ms};_=std.c.nanosleep(&ts,null);}
+fn setup() !void {owners.shared().primary_guard=true;try owners.shared().initialize(std.testing.io,@splat(171));try sdk.initialize(std.testing.io);}
+fn destroy(engine:*E) void {if(comptime @hasDecl(E,"tryDestroy")){_=engine.tryDestroy();}else engine.destroy();}
+fn fail(comptime marker:[]const u8) !void {std.debug.print("{s}\n",.{marker});return error.TestUnexpectedResult;}
+test "fios prototype warm original roots survive caller release" {
+ try setup();const io=std.testing.io;
+ var event=std.atomic.Value(u64).init(0);var log:warm.Trace.Log=.{};
+ const engine=try E.create(std.testing.allocator,warm.Trace.word(&event,&log),.{.target_chunk_ns=50*std.time.ns_per_us,.first_iters=25_000,.stuck_ns=std.time.ns_per_s});
+ defer {event.store(std.math.maxInt(u64),.release);destroy(engine);}
+ const a=try owners.shared().enter(io);const b=try owners.shared().enter(io);
+ try owners.shared().associate(io,a,@splat(1));try owners.shared().associate(io,b,@splat(2));
+ try owners.shared().bind(io,a,"fixture/warm-origins");try owners.shared().bind(io,b,"fixture/warm-origins");
+ try owners.shared().active(io,a);try owners.shared().active(io,b);
+ owners.current().*=a;engine.arm(1);owners.current().*=b;engine.hold(true);engine.hold(false);owners.current().*=null;
+ const dispatch=warm.nowNs()+500*std.time.ns_per_ms;while(log.commits.load(.acquire)<2 and warm.nowNs()<dispatch)tick();
+ try owners.shared().leave(io,a);try owners.shared().leave(io,b);
+ if(owners.shared().snapshot(io).owned!=2 or sdk.diagnostic().active_contexts<2)try fail("WARM_SOURCE_ORIGINS_DROPPED");
+ try std.testing.expect(owners.shared().correlationSnapshot(io,@splat(1)).found and owners.shared().correlationSnapshot(io,@splat(2)).found);
+ event.store(1,.release);
+ const retired=warm.nowNs()+std.time.ns_per_s;while(sdk.diagnostic().active_contexts!=0 and warm.nowNs()<retired)tick();
+ try std.testing.expectEqual(@as(u32,0),sdk.diagnostic().active_contexts);try std.testing.expectEqual(@as(usize,0),owners.shared().snapshot(io).owned);
+ try std.testing.expect(!sdk.diagnostic().uncertain);
+}
+test "fios prototype warm missing original refuses before CPU backend" {
+ try setup();var event=std.atomic.Value(u64).init(0);var log:warm.Trace.Log=.{};
+ const engine=try E.create(std.testing.allocator,warm.Trace.word(&event,&log),.{.target_chunk_ns=50*std.time.ns_per_us,.first_iters=25_000});
+ defer {event.store(std.math.maxInt(u64),.release);destroy(engine);}
+ engine.arm(1);const end=warm.nowNs()+20*std.time.ns_per_ms;while(warm.nowNs()<end)tick();
+ if(!engine.failed.load(.acquire) or log.commits.load(.acquire)!=0 or !sdk.diagnostic().uncertain)try fail("WARM_SOURCE_MISSING_ORIGIN_SUBMITTED");
+}
+
+test "fios prototype warm independent uncertainty survives local retirement" {
+ try setup();const io=std.testing.io;var event=std.atomic.Value(u64).init(0);var log:warm.Trace.Log=.{};
+ const engine=try E.create(std.testing.allocator,warm.Trace.word(&event,&log),.{.target_chunk_ns=50*std.time.ns_per_us,.first_iters=25_000,.stuck_ns=std.time.ns_per_s});
+ defer {event.store(std.math.maxInt(u64),.release);destroy(engine);}
+ const root=try owners.shared().enter(io);try owners.shared().bind(io,root,"fixture/warm-origins");try owners.shared().active(io,root);
+ owners.current().*=root;engine.arm(1);owners.current().*=null;
+ const dispatch=warm.nowNs()+500*std.time.ns_per_ms;while(log.commits.load(.acquire)<2 and warm.nowNs()<dispatch)tick();
+ try owners.shared().leave(io,root);
+ if(owners.shared().snapshot(io).owned!=1)try fail("WARM_UNKNOWN_ROOT_LOST");
+ sdk.fios_native_request_owners_uncertain();event.store(1,.release);
+ const end=warm.nowNs()+std.time.ns_per_s;while(log.retired.load(.acquire)<log.commits.load(.acquire) and warm.nowNs()<end)tick();
+ try std.testing.expect(owners.shared().snapshot(io).uncertain and sdk.diagnostic().uncertain);
+ try std.testing.expectEqual(@as(usize,1),owners.shared().snapshot(io).owned);
+}
+test "fios prototype warm legacy CPU trace remains unchanged" {
+ try setup();var event=std.atomic.Value(u64).init(0);var log:warm.Trace.Log=.{};
+ const engine=try E.create(std.testing.allocator,warm.Trace.word(&event,&log),.{.target_chunk_ns=50*std.time.ns_per_us,.first_iters=25_000});
+ defer {event.store(std.math.maxInt(u64),.release);destroy(engine);}
+ engine.arm(1);const end=warm.nowNs()+500*std.time.ns_per_ms;while(log.commits.load(.acquire)<2 and warm.nowNs()<end)tick();
+ try std.testing.expect(log.commits.load(.acquire)>=2);try std.testing.expectEqual(@as(u32,0),sdk.diagnostic().active_contexts);try std.testing.expect(!sdk.diagnostic().uncertain);
+}

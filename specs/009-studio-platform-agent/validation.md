@@ -5704,3 +5704,89 @@ inputs are unchanged. The old warmer ownership patch still needs a current
 parent-lifetime/ABI implementation; prototype work is separate and unpublished.
 Whole39/55 unchanged. CI43709676706 on66062cd has now passed all7 jobs including
 aggregate; the follow-up will require a new exact-head run after publication.
+
+### Current streamed-warmer original-request custody — source work in progress
+
+The current relocated GLM5N/MIMO warmer ownership port retains original request
+groups through queued chunks and consumes bounded stop results before releasing
+parent resources. It uses fixed host C declarations across the plugin boundary;
+it does not import host ownership globals into a plugin. This remains selected
+source engineering, with no installation, model request or all-client authority.
+
+The canonical ownership checker initially passed16 cases (6 original behavioral
+failures,4 controls,6 candidate passes) in Debug/ReleaseSafe using the real host
+ownership bridge and SDK bindings with the existing CPU Trace backend. Receipt:
+`/private/tmp/fios-009-current-warm-origins-check-k7ssks12/receipt.json`,
+SHA256 `33d60302ec7003c7112fbf82b4da9af8f529691e30f7daf34ee200486914d5fe`.
+The original canonical expert-parent suite passed12 cases. Its extension executes
+actual wrapper cleanup after late inner refusal:16 cases passed, including4
+original runtime failures. Receipt:
+`/private/tmp/fios-009-current-warm-parent-check-isfsa0f5/parent-metadata-receipt.json`,
+SHA256 `a4470739c8fb10825c9a6a37fe2fc457597eacc5c89480be5262a746cda40d1a`.
+These parent resources are metadata spies, not GPU retirement observations.
+
+The initial default native build passed and162 existing current-native tests
+passed in fresh processes; binary SHA256
+`14f5eed2ddd73530ca6fdcba363ab022abf80fef3c3f2f968f530a97a9e88d70`.
+They precede the plugin feature-declaration correction below and do not establish
+physical warmer or complete vendor test coverage.
+
+The first enabled semantic enclosure refused the mismatch between the standalone
+plugin's hard-coded disabled declaration and the served root's build option.
+The private `initial-surface-refusal-*` logs retain that failure. The candidate
+now uses the identical build option on both surfaces; a fresh enabled build and
+final component checks are pending. No failed build is counted as qualified.
+
+Exact published head `e28f2bfb7ddc132c75cfddaea83446d9e2d46033` completed all7 CI jobs
+successfully in run43712728858. That CI applies to the earlier owner-registration
+checkpoint, not this uncommitted port.39/55 whole tasks remain complete. No merge,
+production delivery, native enrollment or activation occurred.
+
+The final canonical parent suite additionally brackets its selected fixture and
+source inputs:16 expected cases passed with receipt
+`/private/tmp/fios-009-current-warm-parent-check-wey8glax/parent-metadata-receipt.json`,
+SHA256 `2cb8f68c3293e612474fdfdf2717f7ad70b54434f6ad2846892395bf6704d0ca`.
+The initial failed compiler continued other unit jobs; the first replacement
+briefly overlapped it. Both development compiler groups were stopped. The old
+bracket correctly refused the changed source, and the replacement recorded
+status-15, not success. `initial-surface-refusal-*` and `overlap-aborted-*`
+retain those observations; neither qualifies an artifact. One serialized final
+enclosure is now running against the corrected, unchanged candidate.
+
+Final corrected custody checkpoint: the serialized enabled semantic build passed
+35/35 steps in120.220s and link passed32/32 in13.967s; units-check with units=true
+passed in1.259s. Selected prebuild inputs and staged SDK/CXX configuration stayed
+unchanged. Raw binary SHA256
+`2c186e239e0cafa1722d9f9ce25ea4e74d4c31212e6adadd45edaed9446518ae`;
+normalized private binary
+`7152ef5999689b9094aea344407efbfd4b29bd60771183d24cbe0d3564701568`;
+review capsule `4efdd1cd56da84f8e9609215d4ca3885a2f7c26711d816cf31456d99bbdb436d`.
+
+The final canonical ownership matrix passed16/16 expected cases (6 original
+runtime failures,4 legacy controls,6 candidate) with receipt
+`/private/tmp/fios-009-current-warm-origins-check-3h9bpods/receipt.json`, SHA256
+`9ed7aa5b9c1f2ca1b36751defb5b6b81fc2d66405866e45eb54bd3fa9a1cae12`.
+The final parent16-case receipt remains2cb8f68c… above. The four actual private
+empty-native checks passed: correlation, activity, startup and current-Core
+primary/backend/lineage manager. The latter compiled current Core, observed
+cold false flags/refresh, preserved original journal uncertainty and ran no
+model requests or installed-service actions. Review directory:
+`/private/tmp/f9-native-status-5QWj9o`.
+
+Post-run source comparison against the frozen owner-registration parent differs
+on exactly the ten declared paths, including the one new C-ABI declaration
+file. New and prior capsule verification passed. The all-src post-run comparison
+is distinct from the selected-suffix prebuild bracket; it does not claim whole
+repository/native/publisher/build provenance. Aggregate:
+`/private/tmp/fios-009-current-warm-origins-work-c1_t5i_5/final-review.json`, SHA256
+`dd64866b55d180afc798e38a7677786e29330ca9476781ad57e5339cef2262f0`.
+No additional package build was needed: this native overlay/checker/fixture/docs
+delta leaves the174-file application package declaration unchanged. The initial
+162-case default result predates the equivalent-disabled-profile declaration
+correction; it is not relabelled as a final-source rerun. Final enabled/object,
+link, unit and component results above exercise the corrected source.
+
+This qualifies original-request custody and parent retention for the selected
+worker source. No real Metal warmer, all-enabled-modality comparison, complete
+all-client producer, proof issuer, atomic native admission, installed runtime,
+activation or whole-task closure is established.39/55 tasks remain complete.

@@ -1,0 +1,14 @@
+const std=@import("std");
+const Trace=struct {frees:usize=0, pool_ops:usize=0, syncs:usize=0, warm_live:bool=true, fail_stop:bool=false, pool_unknown:bool=false, warm_unknown:bool=false, freed_while_warm:bool=false};
+var live:*Trace=undefined;
+fn noteFree()void{live.frees+=1;if(live.warm_live)live.freed_while_warm=true;}
+const gpu_warm=struct {fn fiosSourceUncertain()bool{return live.warm_unknown;}fn fiosRefuseCleanup()void{live.warm_unknown=true;}};
+const sdk_ext=struct {const expert=struct {const io=struct {fn cleanupUncertain()bool{return live.pool_unknown;}};};};
+const mlx=struct {fn mlx_synchronize(_:u8)c_int{live.syncs+=1;return 0;}};
+const Warm=struct {fn tryDestroy(_: *@This())bool{if(live.fail_stop)return false;live.warm_live=false;return true;}fn destroy(self:*@This())void{_=self.tryDestroy();}};
+const Leaf=struct {s:u8=0,fn deinit(_: *@This())void{noteFree();}};
+const Math=struct {fn deinit(_: *@This(),_:anytype)void{noteFree();}};
+const Ex=struct {math:Math=.{},fn releaseParts(_: *@This(),_:anytype)void{noteFree();}fn deinit(_: *@This())void{noteFree();}};
+const Stream=struct {pool:struct{stopped:bool=false}=.{},fn prepareRelease(self:*@This())bool{live.pool_ops+=1;self.pool.stopped=true;return true;}fn deinit(_: *@This())void{noteFree();}};
+const Alloc=struct {fn free(_: @This(),_:anytype)void{noteFree();}fn destroy(_: @This(),_:anytype)void{noteFree();}};
+const fam=enum{exl3}.exl3;

@@ -831,3 +831,22 @@ enabled35/35 semantic32/32 link, actual units-check and4 empty-model/current-Cor
 checks pass. Aggregate8d85d324… is compile-time storage registration only, with
 no reset/wire/authority or whole-task change;39/55 unchanged. Warmer request
 ownership/parent retirement work remains open.
+
+Current warmer ownership port WIP: actual CPU Trace worker/real native C bridge
+matrix passes6 original runtime failures/4 legacy controls/6 candidate cases
+across Debug/ReleaseSafe; default162/162 native passes. Original roots survive
+caller release, missing origins refuse and independent uncertainty survives
+local retirement. Checked parent cleanup and source-SDK host exports are
+implemented in the private candidate; canonical parent16-case checks pass; enabled native/runtime
+checks remain pending. No actual Metal warmer/model, native proof, guard
+activation or whole-task closure.39/55 unchanged. See
+contracts/current-streamed-warm-origins.md.
+
+Current warmer ownership final source checkpoint: corrected host/plugin build
+option, enabled35/35 semantic32/32 link, units-check, canonical origins16 and
+parent16 expected cases,4 empty-native/current-Core checks and exact ten-path
+post-run projection pass. Aggregate dd64866b…/capsule4efdd1cd…. Initial compiler
+surface refusal and aborted overlap are preserved/excluded. CPU Trace and
+metadata parent fixtures do not establish physical Metal retirement, complete
+all-client coverage or admission. No model request/activation/whole-task closure;
+39/55 unchanged.

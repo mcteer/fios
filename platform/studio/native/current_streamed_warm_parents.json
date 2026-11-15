@@ -1,0 +1,11 @@
+{
+  "src/engine_unit.zig": "40f0f381e16e3d9670cda475d8939336e72e6066e8e2a81a98dbf1b0c46f0348",
+  "src/host_unit.zig": "b818a0e1b00d43fa9b4a05d77ad65a82b0788e96cb1a865be5f6377328acccb7",
+  "src/main.zig": "7540e8efa3cf24173f99fe396c7979b366f3eb8621180f081f21dcd106decda5",
+  "src/modules_unit.zig": "1bc0943796c32e7fcd7149780af813c965166ba7ba22a6c4b83319a19d10ed5a",
+  "src/plugin_host.zig": "de6dd1fb19faa65a0f4b8d20eb2c90b854c72032e968e398956679cd9158c475",
+  "src/sdk/weights/streamed/glm5n/experts.zig": "7968498730c18c50da57980038411fc0c9ffeac92f06a95902feed115e660f50",
+  "src/sdk/weights/streamed/glm5n_source.zig": "66ced1f88ed26ce6705051d59e4e0446526f5240629458fcf10d4b8a85f131b1",
+  "src/sdk/weights/streamed/mimo/gpu_warm.zig": "ee032a025bb1edd87ce229496cc946d35ccda3ccc520d359abbee3d3d9d4baf1",
+  "src/tests.zig": "803528700bb3f9d0d726b76c15aaa20911924e00170c588c59aa83458947a53e"
+}
