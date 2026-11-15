@@ -1251,3 +1251,23 @@ before construction and survives local destroy/join and tracker epochs. Seven
 other false backend flags do not negate it. No numerical, settings, serving
 guard, wire or native authority changes. Full native enclosure is separate; see
 [the scoped contract](contracts/streamed-warm-mode-negative.md).
+
+### GUI launch yield source check
+
+```sh
+.venv/bin/python -I -B scripts/check-platform-gui-launch-yield.py --mock
+.venv/bin/python -I -B scripts/check-platform-gui-launch-yield.py --isolated --source /private/tmp/REVIEWED_GUI_SOURCE
+```
+
+Source mode requires the private26.11.2 GUI checkout at4e231ce with the reviewed
+`mlx-serve-26.11.2-gui-listener-ownership.patch` followed by
+`mlx-serve-gui-launch-yield.patch`, using SDK27.2. The checker reverses and
+reapplies the latter two-path projection, binds the existing manager parent,
+and compares the actual launch prefix and helper with the checked-in fixtures.
+Debug/optimized checks exercise the actual policy decision with modeled external
+ports and actual metadata/image readers with a private substituted policy path.
+It never creates the installed configuration or executes GUI main. Mock mode is
+the CI compatibility fixture; neither mode authorizes enrollment, process
+management or native admission. Enclosing GUI compilation and the five existing
+owned-child stop/quit tests remain separate evidence. See
+[the contract](contracts/gui-launch-yield.md).

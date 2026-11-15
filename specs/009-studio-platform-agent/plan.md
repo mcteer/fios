@@ -1,7 +1,7 @@
 # Implementation Plan: Studio Platform Management Agent
 
 **Branch**: `009-studio-platform-agent` | **Date**: 2026-10-26 | **Spec**: [spec.md](spec.md)
-**Input**: Clarified A/A/A specification. Documentation/research only; no implementation or Studio operations authorized by this plan.
+**Input**: Clarified A/A/A specification with subsequent implementation authorization. Source engineering and isolated validation proceed under the current constitution and operator instructions; installed Studio operations retain their separate gates.
 **Status**: Implementation authorized; G1 resolved by constitution2.1.0/ADR0003. Native activation/acceptance gate **HOLD** remains for G2 authoritative-native-activity compatibility; independent local implementation/testing proceeds; see compatibility.md. The original gate review below is historical; current authority is recorded in ADR0003. A complete plan is not permission to bypass either gate.
 
 ## Summary
