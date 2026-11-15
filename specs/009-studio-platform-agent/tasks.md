@@ -696,3 +696,19 @@ Configuration backup source subset now passes full Debug/optimized policy suites
 191 Node/107 installed Python tests, boundary/container recovery checks,
 build/discovery0 inference. New actual packaged-CLI checker execution and fresh
 declared-input package review remain pending. T049 and whole39/55 unchanged.
+
+
+Configuration backup selected source/package: clean e38111a package manifest
+a54e1012…/declared-input f6d588ac… passes actual network-denied version4 CLI
+round trip and old/new ordinary-format compatibility with retained uncertainty
+and export. Both Studio reviews blocked5/no privileged commands; post-run
+package review passes. No installed backup/credential/rollback/uninstall
+acceptance; T049 and whole39/55 remain unchanged. Final expanded Debug pending.
+
+
+Configuration backup selected-source increment final: expanded Debug and
+optimized suites, actual packaged CLI, old/new ordinary-format compatibility,
+post-run package review and complete Node/Python/boundary/container/build/discovery
+checks pass. Final aggregate091aad84…. This is data preservation only;
+installed recovery/credential/rollback/uninstall acceptance and wholeT049 remain
+open. Whole39/55 unchanged.

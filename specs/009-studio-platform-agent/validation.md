@@ -5141,3 +5141,41 @@ not yet packaged/reviewed at this checkpoint. A finite network-denied actual-CLI
 configuration backup checker has been added; packaged execution remains pending.
 Earlier initial-driver/Swift-type compile failures are retained and superseded
 by these successful source runs, not presented as passing evidence.
+
+
+Fresh clean committed-source package: `/private/tmp/fios-009-configuration-backup-package-7m3wxrxf/release`,
+built from `e38111a7f08e34f74f385d2d26652f3ca7c61fd9`. Nine-artifact manifest
+`a54e10129f77f929bf079dc3a0c40d17e7adb1a16ed905196eb4ef170cc9d28a`,
+declared-input projection `f6d588acb559574fa6f16e8419ebaeb94c3c9f70ca5fb660561359185084b858`.
+The actual packaged CLI passes network-denied version4 create/verify/private
+restore/no-overwrite, opaque invalid/empty/absent policy preservation and
+actual journal/export checks; receipt backup digest
+`2813dbd0dd4a61039c4ab87ea97b196362c0f399eec5d1b133ce8c0418050b6d`.
+Retained private fixture `/tmp/fios009-upgrade-configuration-RLJ70D`.
+
+Both Studio install reviews remain blocked with5 explicit blockers, no privileged
+commands and no changes. Actual network-denied CLI compatibility also passes:
+retained prior manifest `121ba32a…` creates an ordinary bundle verified/restored
+by the new CLI; the new CLI's ordinary bundle verifies/restores with the old CLI.
+Both retain1 uncertain inference and1 explicit export. Original bundle digests
+remain unchanged; prior package retained. Version4 is deliberately not claimed
+compatible with historical CLIs; use its matching reviewed artifact.
+
+Post-run complete release review passes for both packages. Aggregate receipt
+`/private/tmp/fios-009-configuration-backup-package-7m3wxrxf/review.json`,
+SHA256 `1d5d8dbb2a6fa7a730aa77df1b00903a4def2ac7637c6515cd7cf81e317e064a`,
+binds package/plans/CLI/compatibility/source-test logs. A final Debug run with the
+expanded recovery/hold cases is pending. This is package-declared input identity,
+not whole-repository/native/interpreter/build/publisher provenance. No installed
+policy, Keychain, native lifecycle, inference, merge or deployment occurred.
+Package completeness/enrollment/all-client coverage/activation remain false;
+T049 and all16 remaining whole tasks stay open.
+
+
+Final expanded Debug policy suite passes (compile28.863s/runtime23.966s).
+Final aggregate `review-final.json` in the same private package directory,
+SHA256 `091aad84c0a9b293ac6fd15d068da5f85b217b7849606aaabcf0e4de26ebb690`,
+adds the exact expanded Debug log to the preceding review. Source and package
+checks for this bounded configuration-backup increment are complete; wholeT049
+is not. The clean package remains pinned to e38111a and its declared projection;
+subsequent documentation-only changes do not extend its provenance scope.

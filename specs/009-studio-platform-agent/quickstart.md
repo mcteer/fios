@@ -366,9 +366,11 @@ separately. To preserve this staged configuration in another backup, pass its
 `configuration/` directory explicitly again. Ordinary backups still use the
 existing formats and omit configuration.
 
-Failed backup creation retains its partial private destination without a valid
-`backup.json` receipt; failed restoration retains its `.fios-restore-*` private
-copy. Retain these for diagnosis; neither is a verified recovery point. A
+Failed backup creation retains its private destination; a failed call supplies
+no verified receipt, even if a manifest was already written. Failed restoration
+retains its `.fios-restore-*` private copy, or the published destination if the
+final durability acknowledgement failed after rename. Retain these for diagnosis;
+file/manifest presence alone does not establish a verified recovery point. A
 successful restore publishes only after verifying its copied tree, and never
 starts a service or installs/activates policy.
 
