@@ -41,3 +41,28 @@ test('container observer shares fresh endpoint-bound metadata; offline, expired,
     rmSync(root,{recursive:true,force:true});
   }
 });
+
+test('shared observer timestamps reject any future millisecond without probing peers',async t=>{
+  const now=1_794_700_000_000;
+  t.mock.method(Date,'now',()=>now);
+  const root=mkdtempSync(join(tmpdir(),'fios-observer-clock-'));
+  t.after(()=>rmSync(root,{recursive:true,force:true}));
+  const file=join(root,'peers.json');
+  const {endpointHash}=await import('../src/agent/availability.js');
+  const calls=[];
+  for(const offset of [0,-5000,1,500,1000,1001,-5001]){
+    writeFileSync(file,JSON.stringify({v:1,peers:[{name:'p',endpointHash:endpointHash('http://studio/v1'),
+      checkedAt:now+offset,status:'available',reason:'ok',models:[{id:'exact/model',loaded:false}]}]}));
+    const result=await discover({base:'http://gateway/v1',peers:{p:'http://studio/v1'},snapshotFile:file,
+      fetchImpl:async(url,options)=>{
+        const target=new URL(url);calls.push(target.href);
+        assert.equal(target.hostname,'gateway');
+        assert.equal(options.headers.Authorization,undefined);
+        return Response.json(target.pathname==='/health'?{status:'ok'}:{data:[{id:'exact/model@p',lan_peer:'p'}]});
+      }});
+    assert.equal(result.models[0].id,'exact/model@p');
+    assert.equal(result.models[0].availability,offset<=0&&offset>=-5000?'available':'unknown',`offset ${offset}`);
+    if(offset>0)assert.equal(result.models[0].reason,'host_unverified');
+  }
+  assert.equal(calls.length,14);
+});

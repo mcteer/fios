@@ -68,7 +68,7 @@ def snapshot_observation(path, name, url):
         observation = next((p for p in value.get('peers', []) if p.get('name') == name and p.get('endpointHash') == fingerprint), None)
         now = int(time.time()*1000)
         if (type(value.get('v')) is not int or value.get('v') != 1 or observation is None or type(observation.get('checkedAt')) is not int
-                or now-observation['checkedAt'] > 5000 or observation['checkedAt'] > now+1000
+                or now-observation['checkedAt'] > 5000 or observation['checkedAt'] > now
                 or observation.get('status') not in ('available','unavailable','unknown')
                 or observation.get('reason') not in ('ok','host_down','unauthorized','invalid_catalog','host_unverified')
                 or (observation['status'] == 'available' and observation['reason'] != 'ok')):

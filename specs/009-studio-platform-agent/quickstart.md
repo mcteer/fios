@@ -1105,3 +1105,11 @@ node scripts/check-platform-current-ds4-cleanup.mjs --isolated --source /private
 ```
 
 The checker requires the exact four-file parent projection and applied cleanup overlay, runs actual Zig wrapper allocation checks with explicit C substitutes in Debug/ReleaseSafe, and checks a separate unit/host shared latch. It denies network access and uses dummy native handles; it never opens a model or initializes Metal. A receipt covers this component only. Follow with the enclosing default/enabled builds and empty-model checks recorded in validation; no native terminal, installed lifecycle or activation authority follows.
+
+With that reviewed shared-cleanup overlay and its status follow-up applied, verify the separate backend collector/encoder:
+
+```sh
+node scripts/check-platform-current-ds4-cleanup-status.mjs --isolated --source /private/tmp/REVIEWED-SOURCE --zig /private/tmp/REVIEWED-ZIG
+```
+
+This binds the prior cleanup helper as a prerequisite and the exact one-file collector overlay. The checked-refusal case must set the current host uncertainty bit while independent C host/GPU getters return0. Compatibility controls preserve C host/GPU separation and unselected unavailable fields. It is a CPU status component test with no model/device work or admission authority.

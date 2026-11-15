@@ -1,3 +1,21 @@
+# Observation fixes qualified locally — 2026-11-15
+
+Whole39/55 unchanged. Public/local committed HEADa0971cfa681ece1bb2b0f79164b387292d4e2e5d / CI43674403485 running;5 prerequisites green, native/process pending at last read. Previous7c2/43672182461 andbd41/43669804968 all7 green. PR10 body currentlya097. Do not cancel current long CI; commit qualified next work explicitly and hold push until it finishes.
+
+Ready for explicit009 commit: P29 one-file DS4 backend status overlay/fixture/checker/contract plus shared-observer nonfuture correction in src/agent/availability.js and Python availability.py, its2 test files/contract and009 artifacts. Private P29 source7pywugvf: strictPVtscN8074bd2c… passes2 original wire failures/6 parent controls/8 candidate cases; default162/162, enabled35/35 semantic32/32 link,4 empty-model checks, post-run stable. Aggregate6f650e46…; all local sessions complete. No native authority/activation follows.
+
+Observer readers both incorrectly allowed+1,000ms future metadata. New deterministic tests reproduce old Node+1 and installed Python+1/+500/+1,000 failures. Two one-line guards now reject checkedAt>now. Locked noneditable uv0.13.5/CPython3.11.17 reinstall completed; installed bytes match sourcea0e9418a…. Full191 Node/107 installed Python,17 browser/build/boundary/syntax/whitespace, Compose, audits and isolated container recovery pass (peak630MiB). uvx absent127 setup preserved; equivalent pinned uv tool run audit passes, local unpublished project skipped. Existing local app discovery7models passes with no model arg/POST. After-test working-tree receiptbcd1bcdd… is not whole-repo provenance; local UI/browser/container context includes protected UI WIP, which must never be staged.
+
+Five Core plans consumed; no sixth/new model plan/POST, native installation/activation, Studio acceptance, merge/deployment. Native-private clock contracts are untouched. Package declared inputs unchanged; Python/native enrollment still incomplete, so4bb platform artifact is not whole interpreter/native provenance. Preserve all private source parents/setup/failures. No subagents. Continue actual work; do not status-only final or invent proof/profile authority.
+
+# DS4 status-frame follow-up active — 2026-11-15
+
+Whole39/55 unchanged. Public/local HEADa0971cfa681ece1bb2b0f79164b387292d4e2e5d / CI43674403485 running; PR10 body updated. All7 jobs passed previous7c2d9de/43672182461 andbd41/43669804968. No merge/deploy/native activation. Protected UI/catalog WIP remains untouched.
+
+Separate current source `/private/tmp/fios-009-ds4-status-work-7pywugvf/source`, parent qualifiedp28xs8he837. One-file current backend collector ORs the shared cleanup latch into the DS4 host boolean; no ABI/numerical/availability change. StrictPVtscN/8074bd2c… passes2 original wire-bit failures,6 parent controls and8 candidate cases, debug/optimized/network-denied/frozen.93 Node/boundary/syntax/whitespace pass. Root patch/fixture/checker/contract and validation/resume are uncommitted pending enclosing native validation. Default build session61459 active, driver build-unit-final.py; do not mutate selected source. Then run-unit-final.py, check-native-final.py/build-native-final.py and separately recomposed4 empty-model checks. Do not claim source/native enclosure before its final receipts. No new model plan/POST; package declared inputs remain unchanged.
+
+All p28 local sessions complete; source-qualified aggregate db75ad67… retained. Five Core requests consumed. No subagents, physical fault/cyber work, native installation/activation or Studio acceptance. Keep future all-client/native terminal/admission authority unsupported; no fabricated profile/receipt authority. Continue user goal without status-only final.
+
 # Checked DS4 wrapper cleanup qualified — 2026-11-15
 
 Whole tasks: **39/55 complete;16 open**. Public head7c2d9def512e057958731433ec276f511ced439d / CI43672182461 remains running. All7 jobs passed precedingbd41/43669804968. Keep the current long CI run; do not cancel it for another partial increment.

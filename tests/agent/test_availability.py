@@ -5,6 +5,7 @@ import time
 import hashlib
 from pathlib import Path
 import unittest
+from unittest.mock import patch
 import httpx2
 from fios_agent.availability import discover, peer_configuration
 from fios_agent.worker import Settings
@@ -30,6 +31,28 @@ class AvailabilityTests(unittest.IsolatedAsyncioTestCase):
             file.unlink()
             result = await discover(settings,transport=httpx2.MockTransport(handle))
             self.assertEqual(result['models'][0]['availability'],'unknown')
+
+    async def test_shared_snapshot_rejects_every_future_millisecond_without_peer_probe(self):
+        now = 1_794_700_000_000
+        with tempfile.TemporaryDirectory() as directory, patch('fios_agent.availability.time.time', return_value=now/1000):
+            file = Path(directory)/'peers.json'
+            settings = Settings('http://gateway/v1','',{'p':'http://studio/v1'},str(file))
+            calls = []
+            async def handle(request):
+                calls.append(request)
+                self.assertEqual(request.method,'GET')
+                self.assertEqual(request.url.host,'gateway')
+                self.assertNotIn('authorization',request.headers)
+                return httpx2.Response(200,json={'status':'ok'} if request.url.path=='/health' else {'data':[{'id':'exact/model@p','lan_peer':'p'}]})
+            for offset in [0,-5000,1,500,1000,1001,-5001]:
+                with self.subTest(offset=offset):
+                    file.write_text(json.dumps({'v':1,'peers':[{'name':'p','endpointHash':hashlib.sha256(b'http://studio/v1').hexdigest(),
+                        'checkedAt':now+offset,'status':'available','reason':'ok','models':[{'id':'exact/model','loaded':False}]}]}))
+                    result = await discover(settings,transport=httpx2.MockTransport(handle))
+                    self.assertEqual(result['models'][0]['id'],'exact/model@p')
+                    self.assertEqual(result['models'][0]['availability'],'available' if -5000<=offset<=0 else 'unknown')
+                    if offset>0:self.assertEqual(result['models'][0]['reason'],'host_unverified')
+            self.assertEqual(len(calls),14)
 
     async def test_shared_contract_fixtures(self):
         fixtures = json.loads((Path(__file__).parents[1] / 'fixtures/availability.json').read_text())

@@ -1,0 +1,74 @@
+const std = @import("std");
+const flags = @import("fios/current_backend_fences.zig");
+const cleanup = @import("fios/current_ds4_checked_cleanup.zig");
+const protocol = @import("fios/control_protocol.zig");
+const owners = @import("fios/request_ownership.zig");
+const options = @import("build_options");
+var host_flags: u32 = 0;
+var gpu_flags: u32 = 0;
+fn hostFlags() callconv(.c) u32 {
+    return host_flags;
+}
+fn gpuFlags() callconv(.c) u32 {
+    return gpu_flags;
+}
+fn refuse(_: ?*anyopaque) callconv(.c) c_int {
+    return 0;
+}
+comptime {
+    if (options.fios_source_ds4) {
+        @export(&hostFlags, .{ .name = "ds4_host_source_uncertainty" });
+        @export(&gpuFlags, .{ .name = "ds4_gpu_source_uncertainty" });
+        @export(&refuse, .{ .name = "ds4_session_free_checked" });
+    }
+}
+fn frame() ![64]u8 {
+    const io = std.testing.io;
+    var tracker: owners.Tracker = .{};
+    const instance: [16]u8 = @splat(77);
+    try tracker.initialize(io, instance);
+    var request: [32]u8 = @splat(0);
+    @memcpy(request[0..4], "FIB9");
+    request[4] = 2;
+    @memcpy(request[8..24], &instance);
+    const response = protocol.dispatchCurrentBackendFences(&tracker, io, &request, &flags.read);
+    try std.testing.expectEqualSlices(u8, "FIF9", response[0..4]);
+    try std.testing.expectEqual(@as(u8, 2), response[4]);
+    try std.testing.expectEqual(@as(u8, 0), response[5]);
+    try std.testing.expectEqualSlices(u8, &instance, response[8..24]);
+    try std.testing.expect(std.mem.allEqual(u8, response[40..], 0));
+    return response;
+}
+test "ds4 cleanup status refusal reaches current wire" {
+    try std.testing.expectEqual(@as(?bool, false), flags.read().ds4_host_uncertain);
+    try std.testing.expect(!cleanup.session(@ptrFromInt(8192)));
+    try std.testing.expect(cleanup.known());
+    const response = try frame();
+    try std.testing.expectEqual(@as(u8, 24), response[6]);
+    try std.testing.expectEqual(@as(u8, 8), response[7]);
+    try std.testing.expectEqual(@as(?bool, true), flags.read().ds4_host_uncertain);
+    try std.testing.expectEqual(@as(?bool, false), flags.read().ds4_gpu_uncertain);
+}
+test "ds4 cleanup status independent C host flag remains visible" {
+    host_flags = 1;
+    const response = try frame();
+    try std.testing.expectEqual(@as(u8, 24), response[6]);
+    try std.testing.expectEqual(@as(u8, 8), response[7]);
+    try std.testing.expect(!cleanup.known());
+}
+test "ds4 cleanup status GPU flag remains separate" {
+    gpu_flags = 1;
+    const response = try frame();
+    try std.testing.expectEqual(@as(u8, 24), response[6]);
+    try std.testing.expectEqual(@as(u8, 16), response[7]);
+    try std.testing.expectEqual(@as(?bool, false), flags.read().ds4_host_uncertain);
+    try std.testing.expect(!cleanup.known());
+}
+test "ds4 cleanup status unselected ABI remains unavailable" {
+    try std.testing.expect(!options.fios_source_ds4);
+    const response = try frame();
+    try std.testing.expectEqual(@as(u8, 0), response[6]);
+    try std.testing.expectEqual(@as(u8, 0), response[7]);
+    try std.testing.expectEqual(@as(?bool, null), flags.read().ds4_host_uncertain);
+    try std.testing.expectEqual(@as(?bool, null), flags.read().ds4_gpu_uncertain);
+}

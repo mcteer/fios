@@ -15,7 +15,7 @@ function snapshotObservation(path, name, url) {
     const value = JSON.parse(new TextDecoder("utf-8", {fatal: true}).decode(bytes.subarray(0, size)));
     const observation = value.peers?.find(p => p.name === name && p.endpointHash === endpointHash(url));
     const now = Date.now();
-    if (value.v !== 1 || !observation || !Number.isSafeInteger(observation.checkedAt) || now - observation.checkedAt > OBSERVATION_MAX_AGE_MS || observation.checkedAt > now + 1000 ||
+    if (value.v !== 1 || !observation || !Number.isSafeInteger(observation.checkedAt) || now - observation.checkedAt > OBSERVATION_MAX_AGE_MS || observation.checkedAt > now ||
       !["available", "unavailable", "unknown"].includes(observation.status) ||
       !["ok", "host_down", "unauthorized", "invalid_catalog", "host_unverified"].includes(observation.reason) ||
       (observation.status === "available" && observation.reason !== "ok")) throw new Error("snapshot");
