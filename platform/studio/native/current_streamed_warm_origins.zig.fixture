@@ -56,3 +56,36 @@ test "fios prototype warm legacy CPU trace remains unchanged" {
  engine.arm(1);const end=warm.nowNs()+500*std.time.ns_per_ms;while(log.commits.load(.acquire)<2 and warm.nowNs()<end)tick();
  try std.testing.expect(log.commits.load(.acquire)>=2);try std.testing.expectEqual(@as(u32,0),sdk.diagnostic().active_contexts);try std.testing.expect(!sdk.diagnostic().uncertain);
 }
+
+test "fios prototype warm bounded join refusal retains independent native uncertainty" {
+ try setup();const io=std.testing.io;
+ const State=struct {entered:std.atomic.Value(bool)=.init(false),release:std.atomic.Value(bool)=.init(false),freed:std.atomic.Value(bool)=.init(false)};
+ const Backend=struct {
+  pub const Chunk=u64;
+  state:*State,
+  pub fn eventValue(_: *@This())u64{return 0;}
+  pub fn commit(_: *@This(),_:u32)!u64{return 1;}
+  pub fn retire(self:*@This(),_:u64)!u64 {self.state.entered.store(true,.release);while(!self.state.release.load(.acquire))tick();return 1;}
+  pub fn deinit(self:*@This())void {self.state.freed.store(true,.release);}
+ };
+ const Worker=warm.Engine(Backend);var state=State{};
+ const engine=try Worker.create(std.testing.allocator,.{.state=&state},.{.fios_bounded_join=true,.stuck_ns=10*std.time.ns_per_s});
+ var consumed=false;
+ defer {state.release.store(true,.release);if(!consumed){const end=warm.nowNs()+3*std.time.ns_per_s;while(warm.nowNs()<end){if(engine.tryDestroy())break;tick();}}}
+ const root=try owners.shared().enter(io);try owners.shared().bind(io,root,"fixture/warm-bounded");try owners.shared().active(io,root);
+ owners.current().*=root;engine.arm(1);owners.current().*=null;
+ const entered=warm.nowNs()+std.time.ns_per_s;while(!state.entered.load(.acquire) and warm.nowNs()<entered)tick();
+ try std.testing.expect(state.entered.load(.acquire));try owners.shared().leave(io,root);
+ try std.testing.expectEqual(@as(usize,1),owners.shared().snapshot(io).owned);
+ const before=warm.nowNs();try std.testing.expect(!engine.tryDestroy());const elapsed=warm.nowNs()-before;
+ try std.testing.expect(elapsed>=std.time.ns_per_s and elapsed<2*std.time.ns_per_s);
+ try std.testing.expect(!state.freed.load(.acquire));
+ try std.testing.expect(warm.fiosSourceUncertain() and sdk.diagnostic().uncertain and owners.shared().snapshot(io).uncertain);
+ try std.testing.expectEqual(@as(usize,1),owners.shared().snapshot(io).owned);
+ state.release.store(true,.release);
+ const end=warm.nowNs()+3*std.time.ns_per_s;
+ while(warm.nowNs()<end){if(engine.tryDestroy()){consumed=true;break;}tick();}
+ try std.testing.expect(consumed and state.freed.load(.acquire));
+ try std.testing.expect(warm.fiosSourceUncertain() and sdk.diagnostic().uncertain and owners.shared().snapshot(io).uncertain);
+ try std.testing.expectEqual(@as(usize,1),owners.shared().snapshot(io).owned);
+}

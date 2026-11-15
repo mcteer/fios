@@ -850,3 +850,8 @@ surface refusal and aborted overlap are preserved/excluded. CPU Trace and
 metadata parent fixtures do not establish physical Metal retirement, complete
 all-client coverage or admission. No model request/activation/whole-task closure;
 39/55 unchanged.
+
+Worker retirement supplement: final canonical24 embedded CPU cases,2 owned
+bounded-join refusal cases and16 ownership matrix cases pass. Local retirement
+leaves original native uncertainty retained. No native source/package change,
+Metal/model run, installed action or whole-task closure;39/55 unchanged.

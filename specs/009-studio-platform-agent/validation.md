@@ -5790,3 +5790,38 @@ This qualifies original-request custody and parent retention for the selected
 worker source. No real Metal warmer, all-enabled-modality comparison, complete
 all-client producer, proof issuer, atomic native admission, installed runtime,
 activation or whole-task closure is established.39/55 tasks remain complete.
+
+### Current worker retirement test supplement (no native source delta)
+
+The default162 filter did not include the worker's12 embedded tests. A separate
+canonical `--embedded` profile now forces module analysis and selects each test
+in a fresh network-denied process, in Debug and ReleaseSafe. An initial private
+driver's lazy import selected zero tests; it was rejected, preserved under
+`initial-zero-selected-*`, and corrected rather than counted as success.
+The first canonical24-case receipt wasb3abed2a…; the final checker/fixture rerun
+passed24/24 with receipt
+`/private/tmp/fios-009-current-warm-origins-check-33oaz1l1/receipt.json`, SHA256
+`eb8db26a6d4c0aa591944c3aee4a29d7d138cfc98062945e66efb5bd68155d9c`.
+These actual CPU worker tests cover lifetime leases, scoped pause/rearm,
+nonreusable instance/sequence controls, failed retirement and queued drain plus
+existing legacy Trace behavior. Legacy profile results do not imply owned
+native/Metal retirement.
+
+The separate `--bounded` owned-profile test blocks the actual worker in a
+CPU backend's retirement callback. Both Debug/ReleaseSafe observe the bounded
+one-second join refusal with the backend retained, then release that callback
+and consume local cleanup. Original root ownership and native uncertainty stay
+retained afterward; local join never grants terminal proof. Both cases pass:
+`/private/tmp/fios-009-current-warm-origins-check-j3xnbxcx/receipt.json`, SHA256
+`dad64a3e74e0ca7b95f500adbc5fa963debf1cc4a36ad2b023470e6a70b20da8`.
+The final checker/fixture default ownership matrix was rerun separately and
+passed16 expected cases:
+`/private/tmp/fios-009-current-warm-origins-check-8w6czuph/receipt.json`, SHA256
+`1869ae67c89ad66b039a69b282a72397667b97723904ad711e0f52f4814a18c6`.
+
+Only test/checker/contracts/evidence changed in this supplement. The qualified
+native source patch and capsule are unchanged; no native rebuild, additional
+model request, package publication, installed action or all-client authority is
+claimed.39/55 whole tasks remain complete. Publishedca7849f is under exact-head
+CI43715682862; five non-native prerequisite jobs passed and native CI is pending
+at this checkpoint. No merge or production/native delivery occurred.

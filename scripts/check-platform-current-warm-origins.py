@@ -15,9 +15,12 @@ import time
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--isolated', action='store_true', required=True)
+parser.add_argument('--bounded', action='store_true', help='Exercise owned-profile bounded join refusal and retained uncertainty')
+parser.add_argument('--embedded', action='store_true', help='Run the existing embedded CPU worker/retirement tests in legacy profile')
 parser.add_argument('--source', type=Path, required=True)
 parser.add_argument('--zig', type=Path, required=True)
 args = parser.parse_args()
+assert not (args.embedded and args.bounded)
 root = Path(__file__).resolve().parents[1]
 source, zig = args.source.resolve(), args.zig.resolve()
 assert platform.system() == 'Darwin' and platform.machine() == 'arm64' and os.geteuid() > 0
@@ -95,14 +98,32 @@ cases = [('original roots survive caller release', 'WARM_SOURCE_ORIGINS_DROPPED'
          ('missing original refuses before CPU backend', 'WARM_SOURCE_MISSING_ORIGIN_SUBMITTED'),
          ('independent uncertainty survives local retirement', 'WARM_UNKNOWN_ROOT_LOST'),
          ('legacy CPU trace remains unchanged', None)]
+if args.bounded:
+    cases = [('bounded join refusal retains independent native uncertainty', None)]
+    receipt['scope'] = 'actual_owned_CPU_worker_bounded_join_and_native_uncertainty_not_device_proof'
+    receipt['baseline_ABI_injected_for_isolation'] = False
+    save()
+if args.embedded:
+    # Force module analysis: filtered-out root tests otherwise leave lazy imports unseen.
+    (unit / 'src/fios-prototype-warm-embedded.zig').write_text(
+        'const warm=@import("sdk/weights/streamed/mimo/gpu_warm.zig");\ncomptime {_ = warm;}\n')
+    names = re.findall(r'^test "(.*)" \{', candidate.decode(), re.M)
+    assert len(names) == 12
+    cases = [(name.replace('\\"', '"'), None) for name in names]
+    receipt['scope'] = 'actual_embedded_CPU_worker_retirement_tests_legacy_profile_not_native_proof'
+    receipt['baseline_ABI_injected_for_isolation'] = False
+    save()
 try:
     for mode in ['Debug', 'ReleaseSafe']:
-        for parent in [True, False]:
+        for parent in ([False] if args.embedded or args.bounded else [True, False]):
             target.write_bytes(baseline if parent else candidate)
             for suffix, marker in cases:
                 command = [('-O' + mode if entry == '-Osafe' else entry) for entry in argv]
-                command[command.index('--test-filter') + 1] = 'fios prototype warm ' + suffix
-                if marker is None:
+                command[command.index('--test-filter') + 1] = suffix if args.embedded else 'fios prototype warm ' + suffix
+                if args.embedded:
+                    command = [entry.replace('-Mroot=src/fios-prototype-warm-origins.zig',
+                                             '-Mroot=src/fios-prototype-warm-embedded.zig') for entry in command]
+                if marker is None and not args.bounded:
                     command = [entry.replace('-Mmlx_host=src/fios-prototype-warm-host.zig',
                                              '-Mmlx_host=src/fios-prototype-warm-legacy-host.zig')
                                for entry in command]

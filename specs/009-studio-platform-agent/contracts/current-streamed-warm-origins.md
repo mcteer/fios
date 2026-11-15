@@ -36,3 +36,20 @@ cases, final enabled object/link,16 ownership cases,16 parent cases and4 current
 empty-native integration checks are recorded independently in validation. The
 complete all-client contract, physical acceptance and native admission remain
 unfinished.
+
+Supplemental checker profiles use the same exact parent/candidate projection
+and pinned compiler. `--embedded` executes each of the12 embedded worker tests
+in a fresh process in Debug and ReleaseSafe, with legacy ownership disabled:
+these cover lease/pause/refusal/drain and original CPU Trace behavior. An explicit
+module import prevents a lazy import from producing a zero-test success.
+`--bounded` executes the owned-profile blocked-retirement case in both modes.
+Its CPU backend waits on a test-owned atomic: join must refuse at its bound and
+retain the backend, then consume local cleanup only after actual retirement.
+Original native uncertainty must remain set after that local cleanup. Neither
+profile uses Metal, issues model requests or creates an admission proof.
+
+Run the same isolated command as the default matrix, adding exactly one of
+`--embedded` or `--bounded`. Each compiler/test subprocess is bounded to120s;
+network access is denied and zero selected tests fail validation. These
+supplements leave the native patch, installed configuration and application
+package inputs unchanged. Results are recorded separately in validation.
