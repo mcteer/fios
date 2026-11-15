@@ -6077,3 +6077,27 @@ Aggregate `/private/tmp/fios-009-qwen-warm-origins-work-h4l8w07m/final-review.js
 SHA256 f2f672763cd335f95a0686146aaafadc8f1e81dd9a10a48a5201401fa07235da.
 Here “current StudioCore” means the freshly compiled local Swift manager library,
 not a real-model run on fios-core or Studio resource acceptance.
+
+2026-11-15 ordinary non-model SDK CPU graph characterization: actual native
+request tracker/hooks and the selected genuine MLX library execute a four-value
+CPU add graph (no model, GPU dispatch or HTTP request). Debug and ReleaseSafe
+CPP/Zig builds and both two-test executables pass; local SDK callback contexts
+and native custody roots retire normally after graph/scheduler cleanup. This
+checks normal local ownership retirement and establishes no native terminal,
+all-client coverage, admission or lifecycle authority. No SDK repair was
+indicated; do not infer one from absent proof issuance or the earlier Core
+request's phase maxima, which are not post-completion native-event evidence.
+
+Canonical receipt
+`/private/tmp/fios-009-sdk-cpu-graph-check-352snxn6/receipt.json`, SHA256
+777a2b1cdec6a52b6029cfb44f46ffc5cdf9ed794eb4069b18c2ea75d3a5d674.
+Six stages pass, with2 named graph executions plus their anonymous native
+import checks. Mapped-library identity is checked in-process; library SHA256
+b1ab22fad4048da5837007cbdd8af55f228786373e67e2fa7d31a910ffba705b.
+All15 compiler-selected SDK headers match prebuild hashes and staged native
+includes. Selected native/fixture/header/library/CXX-stub inputs remain unchanged.
+Private initial characterization also passes, receipt4784295f…; it is separate
+from the final canonical closure check. No native binary/SDK/package rebuild,
+new model plan/POST, installed action or whole-native provenance is claimed.
+39/55 whole tasks unchanged; genuine per-request native proof issuance and
+complete all-client admission remain missing.

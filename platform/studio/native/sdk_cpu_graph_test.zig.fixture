@@ -1,0 +1,19 @@
+
+const std=@import("std");
+const owners=@import("fios/request_ownership.zig");
+const sdk=@import("fios/sdk_request_ownership.zig");
+extern fn fios_cpu_graph_library_matches([*:0]const u8)c_int;
+extern fn fios_cpu_graph_run()c_int;
+test "normal non-model CPU graph preserves original custody and retires local callbacks" {
+ const io=std.testing.io;
+ try owners.shared().initialize(io,@splat(7));try sdk.initialize(io);
+ try std.testing.expectEqual(@as(c_int,1),fios_cpu_graph_library_matches(@import("build_options").sdk_library));
+ const original=try owners.shared().enter(io);try owners.shared().bind(io,original,"fixture/cpu-graph");try owners.shared().active(io,original);
+ owners.current().*=original;const group=[_]owners.Token{original};owners.current_group().*=&group;
+ defer {owners.current().*=null;owners.current_group().*=null;}
+ try std.testing.expectEqual(@as(c_int,1),fios_cpu_graph_run());
+ owners.current().*=null;owners.current_group().*=null;try owners.shared().leave(io,original);
+ const diag=sdk.diagnostic();const snapshot=owners.shared().snapshot(io);
+ std.debug.print("cpu_graph contexts={d} roots={d} SDK_uncertain={} source_uncertain={} no_native_authority\n",.{diag.active_contexts,snapshot.owned,diag.uncertain,snapshot.uncertain});
+ try std.testing.expectEqual(@as(u32,0),diag.active_contexts);try std.testing.expect(!diag.uncertain);try std.testing.expectEqual(@as(usize,0),snapshot.owned);try std.testing.expect(!snapshot.uncertain);
+}

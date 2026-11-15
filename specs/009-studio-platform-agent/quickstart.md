@@ -1302,3 +1302,16 @@ objects verify legacy exclusion and the opted-in five-symbol host ABI dependency
 No model, actual file/table IO, mapping, installed lifecycle or native proof is
 exercised; independent negative evidence remains sticky. See
 [the contract](contracts/qwen-warm-origins.md).
+
+### Ordinary SDK CPU graph characterization
+
+```sh
+.venv/bin/python -I -B scripts/check-platform-current-sdk-cpu-graph.py --isolated --source /private/tmp/REVIEWED_NATIVE_SOURCE --zig /private/tmp/PINNED_ZIG --sdk-source /private/tmp/REVIEWED_SDK_SOURCE --sdk-library /private/tmp/SELECTED_LIBMLX --sdk-sha256 b1ab22fad4048da5837007cbdd8af55f228786373e67e2fa7d31a910ffba705b
+```
+
+Uses a four-element CPU array graph, genuine SDK queues and actual native
+custody hooks in debug/optimized clients. No model, Metal shader dispatch or
+HTTP request runs. The checker pins the compiler/SDK/library, checks the mapped
+library in-process and binds compiler-selected headers to staged includes.
+Normal callback retirement is local ownership evidence, not all-client native
+terminal proof. Public startup/admission remains closed; no installed action.
