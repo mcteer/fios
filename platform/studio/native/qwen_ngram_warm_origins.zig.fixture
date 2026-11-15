@@ -1,0 +1,60 @@
+const std=@import("std");
+const fios_origins=@import("../../sdk/util/warm_request_origins.zig");
+const fios_unproven_warm=@import("../../sdk/util/qwen_ngram_warm_uncertainty.zig").storage;
+threadlocal var context:u64=0;
+var captures=std.atomic.Value(u32).init(0);var releases=std.atomic.Value(u32).init(0);var reads=std.atomic.Value(u32).init(0);var observed=std.atomic.Value(u64).init(0);var uncertainty_calls=std.atomic.Value(u32).init(0);
+var missing=false;var refuse_enter=false;var refuse_leave=false;var enabled=true;
+// MODELED_HOST_ABI_BEGIN
+export fn fios_native_request_owners_capture() ?*anyopaque {if(missing)return null;_=captures.fetchAdd(1,.acq_rel);return @ptrFromInt(4096);}
+export fn fios_native_request_owners_enter(p:?*anyopaque)u64 {if(p==null or refuse_enter)return 0;context=17;return 1;}
+export fn fios_native_request_owners_leave(p:u64)c_int {if(p!=1 or context!=17 or refuse_leave)return 1;context=0;return 0;}
+export fn fios_native_request_owners_release(_: ?*anyopaque)void {_=releases.fetchAdd(1,.acq_rel);}
+export fn fios_native_request_owners_uncertain()void {_=uncertainty_calls.fetchAdd(1,.acq_rel);}
+// MODELED_HOST_ABI_END
+fn warmEnabled()bool{return enabled;}
+const log=struct {fn info(comptime _:[]const u8,_:anytype)void{}};
+fn asGb(x:u64)f64{return @as(f64,@floatFromInt(x))/1e9;}
+const Warm=struct {live_warm_bytes:std.atomic.Value(u64)=.init(0),live_warm_total:std.atomic.Value(u64)=.init(0)};var live=Warm{};
+fn warmBytes()*Warm{return &live;}
+const WarmProgress=struct {fn should(_: *@This(),_:u64,_:u64)bool{return false;}};
+const Pool=struct {warm_finished:std.atomic.Value(bool)=.init(false),fn destroy(_: *@This())void{}};
+const embedded_ple=struct {const Region=struct{fd:c_int,off:u64,len:u64};};
+const Embedded=struct{fn region(_: *@This(),_:usize)?embedded_ple.Region{return null;}fn close(_: *@This())void{}};
+const crt=struct {
+ fn close(_:c_int)void{}
+ fn pread(_:c_int,_:[*]u8,want:usize,_:i64)isize {observed.store(context,.release);_=reads.fetchAdd(1,.acq_rel);return @intCast(want);}
+};
+const NgramTable=struct {
+ map:[]align(std.heap.page_size_min) const u8,fd:c_int=17,pool:?*Pool=null,gpu_owns_map:bool=true,embedded:?*Embedded=null,
+ fmt:enum{affine,ggml}=.affine,w_off:usize=0,rows:u64=16,row_bytes:u32=1,
+@@WARM_FIELDS@@
+@@WARM_CHUNK@@
+@@METHODS@@
+};
+fn join(table:*NgramTable)void {if(table.warm_thread)|t| {t.join();table.warm_thread=null;}}
+fn fail(comptime msg:[]const u8)!void {std.debug.print("{s}\n",.{msg});return error.TestUnexpectedResult;}
+var bytes:[16]u8 align(std.heap.page_size_min)=@splat(0);
+test "original group survives warm until close" {
+ var table=NgramTable{.map=&bytes};defer table.close();table.startWarm();join(&table);
+ if(captures.load(.acquire)!=1 or observed.load(.acquire)!=17 or releases.load(.acquire)!=0)try fail("QWEN_ORIGINAL_WARM_CUSTODY_MISSING");
+ table.close();try std.testing.expectEqual(@as(u32,1),releases.load(.acquire));try std.testing.expect(fios_unproven_warm.get().load(.acquire));
+}
+test "missing original refuses before page IO" {
+ missing=true;var table=NgramTable{.map=&bytes};defer table.close();table.startWarm();join(&table);
+ if(reads.load(.acquire)!=0 or uncertainty_calls.load(.acquire)==0)try fail("QWEN_MISSING_ORIGINAL_WARM_STARTED");
+ try std.testing.expect(fios_unproven_warm.get().load(.acquire));
+}
+test "entry refusal retains descriptor and refuses IO" {
+ refuse_enter=true;var table=NgramTable{.map=&bytes};defer table.close();table.startWarm();join(&table);
+ if(captures.load(.acquire)!=1 or reads.load(.acquire)!=0)try fail("QWEN_ENTRY_REFUSAL_WARM_STARTED");
+ table.close();try std.testing.expectEqual(@as(u32,0),releases.load(.acquire));try std.testing.expect(uncertainty_calls.load(.acquire)>0);
+}
+test "restoration refusal quarantines original descriptor" {
+ refuse_leave=true;var table=NgramTable{.map=&bytes};defer table.close();table.startWarm();join(&table);
+ if(captures.load(.acquire)!=1 or observed.load(.acquire)!=17)try fail("QWEN_RESTORATION_CUSTODY_MISSING");
+ table.close();try std.testing.expectEqual(@as(u32,0),releases.load(.acquire));try std.testing.expect(uncertainty_calls.load(.acquire)>0);
+}
+test "absent region has no publication effects" {var table=NgramTable{.map=&bytes,.fd=-1};table.startWarm();try std.testing.expect(table.warm_thread==null and captures.load(.acquire)==0 and !fios_unproven_warm.get().load(.acquire));}
+test "disabled warm has no publication effects" {enabled=false;var table=NgramTable{.map=&bytes};defer table.close();table.startWarm();try std.testing.expect(table.warm_thread==null and captures.load(.acquire)==0 and !fios_unproven_warm.get().load(.acquire));}
+test "legacy warm remains unchanged" {var table=NgramTable{.map=&bytes};defer table.close();table.startWarm();join(&table);try std.testing.expectEqual(@as(u32,0),captures.load(.acquire));try std.testing.expectEqual(@as(u32,1),reads.load(.acquire));try std.testing.expectEqual(@as(u64,0),observed.load(.acquire));try std.testing.expect(fios_unproven_warm.get().load(.acquire));}
+test "repeat warm does not publish duplicate worker" {var table=NgramTable{.map=&bytes};defer table.close();table.startWarm();table.startWarm();join(&table);try std.testing.expectEqual(@as(u32,1),reads.load(.acquire));}

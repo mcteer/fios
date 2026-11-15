@@ -560,3 +560,15 @@ context17 is not a native request token; empty runtime does not execute Engram.
 No bounded join, parent cleanup, positive all-client/native proof/admission or
 installed acceptance follows.39/55 whole tasks unchanged; see the
 [contract](contracts/engram-prefetch-origins.md) and validation receipts.
+
+### Qwen page-cache warm original request custody — 2026-11-15
+
+The one-path source component captures the original host group before existing
+optional warm-thread publication, restores it around warm IO and retains it
+through joined close. Missing/failed scopes refuse or quarantine. Independent
+negative Qwen evidence remains sticky. Canonical32 runtime cases with modeled
+IO/custody/resource ports plus4 unbound objects,35 semantic/32 link steps,
+units-check and4 empty-native/current StudioCore checks pass. Neither modeled context17
+nor the empty runtime proves real table IO or native completion. Bounded cleanup,
+complete all-client/native admission and installed acceptance remain open;
+39/55 unchanged. See [contract](contracts/qwen-warm-origins.md) and validation.

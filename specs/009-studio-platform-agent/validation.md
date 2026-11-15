@@ -6023,3 +6023,57 @@ whole-native/publisher/build provenance is claimed. No sixth inference plan,
 installation, activation, merge or deployment. Bounded join/parent cleanup,
 complete all-client producer/proof/admission and installed acceptance remain
 unfinished;39/55 whole tasks unchanged.
+
+2026-11-15 Qwen original warm-worker custody source work in progress: private
+`/private/tmp/fios-009-qwen-warm-origins-work-h4l8w07m/source` layers on the
+qualified Engram custody checkpoint. The candidate captures the original group
+before optional warm-thread publication, enters/restores it around existing
+page-cache IO and requests release only after local join/close. Failed scope
+entry/restoration quarantines the descriptor; the independent negative Qwen
+fence remains sticky. Baseline actual fields/start/worker/close methods with
+real threads and modeled pread/custody/resource ports reproduce8 runtime
+failures and pass8 absent/disabled/legacy/repeat controls in Debug/ReleaseSafe.
+An initial private checker Python quoting setup error is preserved separately,
+not counted as behavioral evidence. Corrected candidate and enclosing native
+qualification are pending. No new model request, installation, native proof or
+whole-task closure;39/55 unchanged.
+Qwen canonical actual warm-fields/methods checker now passes36 records:32
+runtime cases (8 original designated failures/8 original controls/16 candidate)
+and4 unbound objects with no modeled custody exports. Legacy objects have no
+custody dependency; opted-in objects reference exactly capture/enter/leave/
+release/uncertain. Receipt
+`/private/tmp/fios-009-qwen-warm-origins-check-qstd4jqb/receipt.json`, SHA256
+4fa29ab421bdf8ff9f8ea3232017b02a58591e0f9f029c2de03ea2d0f5baaeaf.
+The one-path patch SHA256 is
+fd4e65a95db96ae7868e284e7444550dace17bbb693acb7a6654938561d1a1bd.
+These real-thread/actual-clock/8MiB-scratch tests still model IO, mappings,
+logging, pool resources and custody values. No actual table/model/native proof.
+All selected inputs remain unchanged. Enabled semantic/link qualification is
+running serially after component compilers ended;39/55 unchanged.
+
+Qwen original warm-worker final selected-source qualification: canonical36
+records remain bound to4fa29ab4… above. Enabled native35/35 semantic steps pass
+in461.080s,32/32 link in5.915s and units-check in1.334s. Selected source suffixes,
+446 staged SDK inputs and CXX configuration remain unchanged through final
+review. Raw binary
+97dcc254ae5e8fb33a3cce02d7997ea7fdb3ca20aec1c49c26efc710abe80a1d;
+normalized binary4002469e3af4589280be6ee711a6bfd0f720521185ce61ac561ac3b72aeac980;
+capsulef17a54059d78086d5e737f90215b7d6e7d168323441386a468bbee242d45bf60.
+New and prior capsules verify; all4 actual private correlation/activity/startup/
+current StudioCore manager checks pass. Review `/private/tmp/f9-native-status-96xVWm`
+retains original journal uncertainty, with0 model requests/installed actions.
+The empty-model runtime does not execute Qwen warm IO.
+
+All-src2379→2379 post-run comparison differs on exactly
+src/plugins/qwen4_exp/qwen4_exp.zig. Fresh174-file package projection remains
+511e6a8e…; no new package/default native162-case/application build, actual table
+IO, physical backend acceptance or whole-native/publisher/build provenance is
+claimed. The private pool follow-up is source review only: run waits for pending0
+and shutdown joins its original workers; no additional repair is inferred from
+thread enumeration alone. No sixth inference plan, installation, activation,
+merge or deployment. Bounded join/pool/model cleanup, all-client native proof/
+admission and installed acceptance remain unfinished;39/55 unchanged.
+Aggregate `/private/tmp/fios-009-qwen-warm-origins-work-h4l8w07m/final-review.json`,
+SHA256 f2f672763cd335f95a0686146aaafadc8f1e81dd9a10a48a5201401fa07235da.
+Here “current StudioCore” means the freshly compiled local Swift manager library,
+not a real-model run on fios-core or Studio resource acceptance.

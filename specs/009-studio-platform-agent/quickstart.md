@@ -1287,3 +1287,18 @@ opted-in five-symbol host ABI dependency. It executes no model/table IO, native
 proof producer, installed policy or service action. The independent negative
 fence remains set. Full native qualification remains separate; see
 [the contract](contracts/engram-prefetch-origins.md).
+
+### Qwen warm original-custody source check
+
+```sh
+.venv/bin/python -I -B scripts/check-platform-qwen-warm-origins.py --isolated --source /private/tmp/REVIEWED_NATIVE_SOURCE --zig /private/tmp/PINNED_ZIG
+```
+
+Apply `mlx-serve-qwen-ngram-warm-origins.patch` after the qualified native
+Engram original-custody checkpoint. The pinned Zig/SDK27.2 checker reverses and
+reapplies the exact one-path projection. It compiles actual warm fields/methods
+with real threads and explicitly modeled IO/custody/resource ports. Four separate
+objects verify legacy exclusion and the opted-in five-symbol host ABI dependency.
+No model, actual file/table IO, mapping, installed lifecycle or native proof is
+exercised; independent negative evidence remains sticky. See
+[the contract](contracts/qwen-warm-origins.md).

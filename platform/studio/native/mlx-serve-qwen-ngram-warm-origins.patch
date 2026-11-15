@@ -1,0 +1,90 @@
+--- a/src/plugins/qwen4_exp/qwen4_exp.zig
++++ b/src/plugins/qwen4_exp/qwen4_exp.zig
+@@ -13,6 +13,7 @@
+ 
+ const std = @import("std");
+ // One host-owned negative latch across plugin/engine objects.
++const fios_origins = @import("../../sdk/util/warm_request_origins.zig");
+ const fios_unproven_warm = @import("../../sdk/util/shared.zig").Shared(std.atomic.Value(bool), "fios_current_qwen_ngram_warm_uncertainty", .init(false));
+ const crt = @import("../../sdk/util/crt.zig");
+ const io_util = @import("../../sdk/util/io_util.zig");
+@@ -206,6 +207,9 @@
+     /// first long prompt then faults 48 rows/token from SSD (38k: 174 s vs
+     /// 55 s warm). preads through the kept fd, never the mapping.
+     warm_thread: ?std.Thread = null,
++    // Original host group for this optional IO worker; no native proof.
++    fios_warm_origin: ?*anyopaque = null,
++    fios_warm_origin_retirement_known: std.atomic.Value(bool) = .init(true),
+     warm_stop: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
+     warm_bytes: std.atomic.Value(u64) = std.atomic.Value(u64).init(0),
+     /// Set once `ple_gpu.wrap` hands the mapping to a no-copy Metal buffer: MLX unmaps it
+@@ -432,6 +436,18 @@
+             th.join();
+             self.warm_thread = null;
+         }
++        if (comptime @import("build_options").fios_source_sdk) {
++            if (self.fios_warm_origin) |origin| {
++                self.fios_warm_origin = null;
++                if (self.fios_warm_origin_retirement_known.load(.acquire)) {
++                    fios_origins.fios_native_request_owners_release(origin);
++                } else {
++                    // Retain the host descriptor when scope restoration failed.
++                    // Joining the local worker does not clear native uncertainty.
++                    fios_origins.fios_native_request_owners_uncertain();
++                }
++            }
++        }
+         warmBytes().live_warm_bytes.store(0, .release);
+         warmBytes().live_warm_total.store(0, .release);
+         if (self.pool) |p| p.destroy();
+@@ -540,18 +556,47 @@
+         var total: u64 = 0;
+         var i: usize = 0;
+         while (self.warmRegion(i)) |r| : (i += 1) total += r.len;
+-        // This background IO has no original request-custody port yet.
+-        // Publish negative evidence before the worker can outlive preparation.
++        // Original custody does not qualify the still-unported bounded cleanup.
++        // Keep independent negative evidence sticky before worker publication.
+         fios_unproven_warm.get().store(true, .release);
++        if (comptime @import("build_options").fios_source_sdk) {
++            if (self.fios_warm_origin != null) return;
++            self.fios_warm_origin = fios_origins.fios_native_request_owners_capture() orelse {
++                fios_origins.fios_native_request_owners_uncertain();
++                return;
++            };
++        }
+         self.warm_stop.store(false, .release);
+         self.warm_bytes.store(0, .release);
+         warmBytes().live_warm_bytes.store(0, .release);
+         warmBytes().live_warm_total.store(total, .release);
+         log.info("[qwen4] ngram table warm: started, {d:.1} GB in the background (page cache)\n", .{asGb(total)});
+-        self.warm_thread = std.Thread.spawn(.{}, warmMain, .{ self, total }) catch null;
++        self.warm_thread = std.Thread.spawn(.{}, warmMain, .{ self, total }) catch {
++            if (comptime @import("build_options").fios_source_sdk) {
++                if (self.fios_warm_origin) |origin| {
++                    self.fios_warm_origin = null;
++                    fios_origins.fios_native_request_owners_release(origin);
++                }
++            }
++            return;
++        };
+     }
+ 
+     fn warmMain(self: *NgramTable, total: u64) void {
++        const scope = if (comptime @import("build_options").fios_source_sdk) (if (self.fios_warm_origin) |origin| fios_origins.fios_native_request_owners_enter(origin) else 0) else 0;
++        if (comptime @import("build_options").fios_source_sdk) {
++            if (scope == 0) {
++                self.fios_warm_origin_retirement_known.store(false, .release);
++                fios_origins.fios_native_request_owners_uncertain();
++                return;
++            }
++        }
++        defer if (comptime @import("build_options").fios_source_sdk) if (scope != 0) {
++            if (fios_origins.fios_native_request_owners_leave(scope) != 0) {
++                self.fios_warm_origin_retirement_known.store(false, .release);
++                fios_origins.fios_native_request_owners_uncertain();
++            }
++        };
+         var scratch: [WARM_CHUNK]u8 align(16) = undefined;
+         const wio = std.Io.Threaded.global_single_threaded.io();
+         const t0 = std.Io.Timestamp.now(wio, .boot);
