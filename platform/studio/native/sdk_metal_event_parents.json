@@ -1,0 +1,5 @@
+{
+  "mlx/stream.h": "4bc126bd2c9e7fefa51d0054d983875dc1dabf866d9b563f61181fbd87cf80e5",
+  "mlx/stream.cpp": "3ec084a1d4499da5c089cfa3e4af3843f84b98679d3e33f83f49e7d696e12d44",
+  "mlx/backend/metal/device.cpp": "7eae6d32beb62c6ae3a61455794f914db12063a7931ba169892881c53432a04a"
+}

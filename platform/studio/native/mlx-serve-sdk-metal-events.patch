@@ -1,0 +1,107 @@
+--- a/src/fios/sdk_request_ownership.zig
++++ b/src/fios/sdk_request_ownership.zig
+@@ -154,7 +154,7 @@
+     return if (started and source.knownUncertain(io)) 1 else 0;
+ }
+ 
+-// Compiled CPU-callback evidence only. No wire, device proof or admission.
++// Compiled callback evidence only. No whole-request proof or admission.
+ // The SDK keeps each immutable Context alive throughout this call.
+ const host_event_window = 4096;
+ const HostEventSlot = struct {
+@@ -162,7 +162,7 @@
+     count: usize = 0,
+     tokens: [owners.capacity]owners.Token = undefined,
+ };
+-const HostEvents = struct {
++const CallbackEvents = struct {
+     mutex: std.Io.Mutex = .init,
+     base: u64 = 1,
+     phases: [host_event_window]u2 = @splat(0),
+@@ -171,7 +171,7 @@
+     retired: u64 = 0,
+     uncertain: bool = false,
+ 
+-    fn observe(self: *HostEvents, context: *const Context, id: u64, phase: u32) bool {
++    fn observe(self: *CallbackEvents, context: *const Context, id: u64, phase: u32) bool {
+         if (self.uncertain or id < self.base or id - self.base >= host_event_window or
+             context.retained.tracker != owners.shared() or context.retained.count == 0 or
+             context.retained.count > owners.capacity) return false;
+@@ -216,30 +216,40 @@
+         return false;
+     }
+ };
+-var host_events: HostEvents = .{};
++var host_events: CallbackEvents = .{};
++var metal_events: CallbackEvents = .{};
+ pub const HostEventDiagnostic = struct { active: usize, retired: u64, uncertain: bool };
+-pub fn hostEventDiagnostic() HostEventDiagnostic {
++fn eventDiagnostic(events: *CallbackEvents) HostEventDiagnostic {
+     if (state.load(.acquire) != 2) return .{ .active = 0, .retired = 0, .uncertain = true };
+     const io = source_io.?;
+-    host_events.mutex.lockUncancelable(io);
+-    var result: HostEventDiagnostic = .{ .active = host_events.active, .retired = host_events.retired,
+-        .uncertain = host_events.uncertain or failed.load(.acquire) };
+-    host_events.mutex.unlock(io);
++    events.mutex.lockUncancelable(io);
++    var result: HostEventDiagnostic = .{ .active = events.active, .retired = events.retired,
++        .uncertain = events.uncertain or failed.load(.acquire) };
++    events.mutex.unlock(io);
+     result.uncertain = result.uncertain or owners.shared().knownUncertain(io);
+     return result;
+ }
+-pub export fn fios_native_host_request_event_observe(raw: ?*anyopaque, id: u64, phase: u32) c_int {
++fn observeEvent(events: *CallbackEvents, raw: ?*anyopaque, id: u64, phase: u32) c_int {
+     if (state.load(.acquire) != 2) { fence(); return 1; }
+     const context: *const Context = @ptrCast(@alignCast(raw orelse { fence(); return 1; }));
+     const io = source_io.?;
+     const source_uncertain = failed.load(.acquire) or owners.shared().knownUncertain(io);
+-    host_events.mutex.lockUncancelable(io);
+-    const accepted = (!source_uncertain or phase == 3) and host_events.observe(context, id, phase);
+-    if (!accepted) host_events.uncertain = true;
+-    const uncertain = host_events.uncertain;
+-    host_events.mutex.unlock(io);
++    events.mutex.lockUncancelable(io);
++    const accepted = (!source_uncertain or phase == 3) and events.observe(context, id, phase);
++    if (!accepted) events.uncertain = true;
++    const uncertain = events.uncertain;
++    events.mutex.unlock(io);
+     // Tracker locking/fencing stays outside the metadata mutex. No SDK calls,
+     // TLS entry, allocation or borrowed-pointer retention occurs here.
+     if (uncertain) fence();
+     return if (accepted) 0 else 1;
+ }
++
++pub fn hostEventDiagnostic() HostEventDiagnostic {return eventDiagnostic(&host_events);}
++pub fn metalEventDiagnostic() HostEventDiagnostic {return eventDiagnostic(&metal_events);}
++pub export fn fios_native_host_request_event_observe(raw: ?*anyopaque, id: u64, phase: u32) c_int {
++    return observeEvent(&host_events, raw, id, phase);
++}
++pub export fn fios_native_metal_request_event_observe(raw: ?*anyopaque, id: u64, phase: u32) c_int {
++    return observeEvent(&metal_events, raw, id, phase);
++}
+--- a/src/fios/current_sdk_owners.cpp
++++ b/src/fios/current_sdk_owners.cpp
+@@ -14,6 +14,9 @@
+ #ifdef MLX_FIOS_REQUEST_HOST_EVENTS_V1
+ extern "C" int fios_native_host_request_event_observe(void*,uint64_t,uint32_t);
+ #endif
++#ifdef MLX_FIOS_REQUEST_METAL_EVENTS_V1
++extern "C" int fios_native_metal_request_event_observe(void*,uint64_t,uint32_t);
++#endif
+ namespace {
+ __attribute__((constructor)) void enable_current_source_sdk_owners() {
+     static const mlx::core::FiosRequestOwnerHooks hooks{
+@@ -29,6 +32,12 @@
+         fios_native_host_request_event_observe};
+     if (!mlx::core::fios_register_host_request_event_hooks_v1(&events)) std::_Exit(78);
+ #endif
++#ifdef MLX_FIOS_REQUEST_METAL_EVENTS_V1
++    static const mlx::core::FiosMetalRequestEventHooksV1 metal_events{
++        1,sizeof(mlx::core::FiosMetalRequestEventHooksV1),
++        fios_native_metal_request_event_observe};
++    if (!mlx::core::fios_register_metal_request_event_hooks_v1(&metal_events)) std::_Exit(78);
++#endif
+ }
+ }
+ extern "C" int fios_current_sdk_known_uncertain() {

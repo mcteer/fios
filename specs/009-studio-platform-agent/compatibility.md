@@ -600,3 +600,17 @@ The new actual3736ed55-base receipt is4da5716d…. Model prerequisites and nativ
 admission remain refused; installed/public enrollment is unchanged. Old capsules
 with inherited4e231ce labels remain historical records with the limitation
 explained in validation.md, not actual-source or whole-native provenance.
+
+
+The [SDK command-buffer event increment](contracts/sdk-metal-request-events.md)
+adds independent version1 Metal events and scope/event-aware partial SDK holds.
+Original descriptors survive real completion, capture cleanup, TLS restoration
+and observer acknowledgement. A reproduced post-refusal null-handle submission
+hole is repaired with native-fenced pre-commit refusal; legacy observer-off
+behavior remains. Final library4fc2c5d3… passes14 real empty-buffer stages,42 CPU
+regressions and six old-SDK baseline stages. Fixed native35/35 semantic32/32 link,
+units-check and four private empty-model integration checks pass. Its actual-base
+capsule is77f9aa43…. Model/native admission and installed acceptance remain
+unavailable; per-command events and partial SDK tickets are not whole-request or
+all-client proofs. The35 older serving artifacts, including MLX-C, are retained
+rather than rebuilt.

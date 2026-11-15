@@ -1360,3 +1360,19 @@ with the same event-capable SDK. Component tests connect the actual constructor
 and receiver; the legacy-source option verifies the original seven-hook object
 path without the new observer dependency. This is source composition, not native
 installation, model qualification or activation; see [contract](contracts/sdk-host-event-bridge.md).
+
+### SDK command-buffer event source check
+
+```sh
+.venv/bin/python -I -B scripts/check-platform-sdk-metal-events.py --isolated --source /private/tmp/REVIEWED_NATIVE_SOURCE --zig /private/tmp/PINNED_ZIG --sdk-source /private/tmp/REVIEWED_METAL_EVENT_SDK_SOURCE --sdk-library /private/tmp/SELECTED_LIBMLX --sdk-stage /private/tmp/MATCHED_SDK_STAGE --sdk-sha256 REVIEWED_SDK_LIBRARY_SHA256 --metal-headers /private/tmp/REVIEWED_METAL_CPP_HEADERS
+```
+
+The SDK layers `mlx-c69303b-metal-request-events.patch` after CPU event attribution;
+the native source layers `mlx-serve-sdk-metal-events.patch` after the CPU startup
+bridge. `--expect-missing-api` selects the old SDK/library and requires two
+missing-interface failures after genuine empty-buffer cleanup. `--cpu-regression`
+runs the existing42-stage CPU observer suite against the new SDK/receiver.
+The ordinary profile submits one empty command buffer, dispatches no shader and
+loads no model. SDK holds are partial source metadata, never native admission.
+Enclosing serving builds and private HTTP/manager checks are separate; see
+[contract](contracts/sdk-metal-request-events.md).

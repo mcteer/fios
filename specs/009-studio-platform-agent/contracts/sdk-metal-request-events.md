@@ -1,0 +1,11 @@
+# SDK command-buffer event attribution
+
+The optional version1 Metal observer has an independent event ID space and immutable startup hook table. Submission seals the original native owner group and reports origin before `MTLCommandBuffer.commit`. Missing origin, registration failure, exhausted budgets/IDs or observer refusal fail closed. A later null or repeated tracked submission also fences native ownership and refuses before commit when this interface is enabled. The existing seven-pointer ownership ABI remains.
+
+Successful retirement requires the real completion callback, captured-object cleanup and restoration of every callback's original owner TLS scope. The SDK retains the original descriptor until the observer acknowledges retirement. Scope and event counters extend the existing partial SDK hold predicates: a zero older buffer/capture count cannot bypass an outstanding scope or event acknowledgement. Unknown events retain uncertainty and their accounting; cleanup does not refund them.
+
+The native receiver uses separate bounded CPU and Metal ledgers with the same original-token, reorder, replay and uncertainty rules. Source-SDK startup registers the Metal table only when the selected header declares it. Installed/public enrollment is unchanged.
+
+Tests use one genuine empty command buffer per process, with no model, shader dispatch, external device fault or Studio acceptance. Normal/observer-off, delayed acknowledgement, origin refusal and retirement refusal run in Debug/ReleaseSafe. The delayed observer calls no SDK functions: the original creator independently verifies that the partial SDK hold refuses during acknowledgement, then acquires/releases after it. A live native request root remains throughout that control, explicitly demonstrating that this SDK ticket is not native quiescence or admission authority. Existing CPU tests exercise the shared receiver refactor separately.
+
+This interface reports command-buffer evidence, not resident weights, all-client coverage, whole-request/device terminal proof, resource capacity or atomic native admission. Model prerequisites, native installation/activation and both-Studio acceptance remain separately gated. See validation.md for exact component/build/runtime receipts.
