@@ -585,6 +585,18 @@ See [native receiver](contracts/native-sdk-host-events.md). Receiver component q
 passes42 isolated stages, enabled35/35 semantic32/32 link,units-check and four
 private empty-model/current StudioCore manager checks. Neither component supplies
 device completion, an all-client
-coverage issuer, native admission or installed authority. Production startup does
-not register the receiver; the selected SDK component library is distinct from
+coverage issuer, native admission or installed authority. Installed/public startup does
+not enroll this boundary; the selected SDK component library is distinct from
 the older SDK staged in enclosing native serving builds.
+
+
+The subsequent [optional native startup bridge](contracts/sdk-host-event-bridge.md)
+now connects the event-capable SDK to the actual receiver in the source-enabled
+private image. Ten constructor/graph/older-header stages, enabled35/35 semantic
+and32/32 link,units-check and four private empty-model/current StudioCore manager
+checks pass. Its446-file stage changes only the SDK library and stream header;
+35 parent serving artifacts, including MLX-C, are retained rather than rebuilt.
+The new actual3736ed55-base receipt is4da5716d…. Model prerequisites and native
+admission remain refused; installed/public enrollment is unchanged. Old capsules
+with inherited4e231ce labels remain historical records with the limitation
+explained in validation.md, not actual-source or whole-native provenance.

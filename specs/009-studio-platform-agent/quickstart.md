@@ -1346,3 +1346,17 @@ compilation must succeed and both graph executions must fail at the explicit
 missing-ledger witness. Ordinary checker mode remains available without either
 flag. No mode installs/registers a production receiver, runs a model or grants
 native proof/admission authority. See [contract](contracts/native-sdk-host-events.md).
+
+### Optional native SDK event startup bridge
+
+```sh
+.venv/bin/python -I -B scripts/check-platform-sdk-host-event-bridge.py --isolated --source /private/tmp/REVIEWED_NATIVE_SOURCE --zig /private/tmp/PINNED_ZIG --sdk-source /private/tmp/REVIEWED_EVENT_SDK_SOURCE --sdk-library /private/tmp/SELECTED_LIBMLX --sdk-stage /private/tmp/MATCHED_SERVING_STAGE --sdk-sha256 REVIEWED_SDK_LIBRARY_SHA256 --legacy-sdk-source /private/tmp/REVIEWED_PRE_EVENT_SDK_SOURCE
+```
+
+Apply `mlx-serve-sdk-host-event-bridge.patch` after the native receiver patch.
+Use the reviewed new SDK library/header pair, preserving the explicitly declared
+older serving artifacts. `--expect-missing-bridge` checks the old constructor
+with the same event-capable SDK. Component tests connect the actual constructor
+and receiver; the legacy-source option verifies the original seven-hook object
+path without the new observer dependency. This is source composition, not native
+installation, model qualification or activation; see [contract](contracts/sdk-host-event-bridge.md).

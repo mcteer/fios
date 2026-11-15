@@ -9,3 +9,9 @@ Uncertain events keep their original identity and fence the existing native trac
 The receiver is not registered by production startup in this component. Tests connect the actual SDK observer to the receiver in private processes. There is no new wire response, native proof issuer, positive all-client capability, atomic admission or installed activation. Production composition requires the separately reviewed matching SDK/native build and the remaining capability contract. Default and installed source behavior stay gated.
 
 Validation distinguishes genuine four-value SDK CPU graph callbacks from direct metadata transition cases using real native contexts. Neither profile invokes a model, HTTP request or Metal shader. Direct metadata calls do not establish real device/worker coverage or independently retained descriptors for each simulated event. See validation.md for exact fixtures, failures, hashes and enclosing-build scope. Whole T020/T021 remain open.
+
+
+The later [optional source startup bridge](sdk-host-event-bridge.md) connects this
+receiver when the selected SDK exposes the version1 interface. Its private
+image qualification does not change installed/public enrollment or native proof
+and admission gates.

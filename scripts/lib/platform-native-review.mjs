@@ -8,7 +8,7 @@ const names=['libmlx.dylib','libmlxc.dylib','libjaccl.dylib','mlx.metallib','lib
 // Eight fixed private review artifacts, not an installed platform release.
 // Current image plus kernel/dependency data totals 305 MiB; each file stays <=256 MiB.
 export function nativeReviewMaximumBytes(inputs){
- return inputs?.native_base==='4e231ceebe63308cc038117d40b9f9b64bd0372e'?384<<20:256<<20;
+ return ['4e231ceebe63308cc038117d40b9f9b64bd0372e','3736ed55f81c6cf0966a0f0dc7265e783655d244'].includes(inputs?.native_base)?384<<20:256<<20;
 }
 const sha=b=>createHash('sha256').update(b).digest('hex');
 const run=(program,args)=>execFileSync(program,args,{encoding:'utf8',timeout:15000,maxBuffer:1<<20,env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C'}});

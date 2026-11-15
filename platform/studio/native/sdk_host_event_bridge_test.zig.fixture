@@ -1,0 +1,20 @@
+const std=@import("std");
+const owners=@import("fios/request_ownership.zig");
+const sdk=@import("fios/sdk_request_ownership.zig");
+extern fn fios_bridge_library_matches([*:0]const u8)c_int;
+extern fn fios_bridge_cpu_graph()c_int;
+test "actual SDK constructor bridge attributes CPU callbacks" {
+ const io=std.testing.io;
+ try owners.shared().initialize(io,@splat(7));try sdk.initialize(io);
+ try std.testing.expectEqual(@as(c_int,1),fios_bridge_library_matches(@import("build_options").sdk_library));
+ const root=try owners.shared().enter(io);try owners.shared().bind(io,root,"fixture/bridge");try owners.shared().active(io,root);
+ owners.current().*=root;const group=[_]owners.Token{root};owners.current_group().*=&group;
+ defer {owners.current().*=null;owners.current_group().*=null;}
+ const result=fios_bridge_cpu_graph();
+ owners.current().*=null;owners.current_group().*=null;try owners.shared().leave(io,root);
+ if(result!=1) {std.debug.print("SDK_HOST_EVENT_BRIDGE_MISSING\n",.{});return error.TestUnexpectedResult;}
+ const events=sdk.hostEventDiagnostic();const snapshot=owners.shared().snapshot(io);
+ try std.testing.expect(events.retired>0 and events.active==0 and !events.uncertain);
+ try std.testing.expect(snapshot.owned==0 and !snapshot.uncertain and sdk.diagnostic().active_contexts==0);
+ std.debug.print("PASS actual SDK constructor/CPU callback receiver no_native_authority\n",.{});
+}

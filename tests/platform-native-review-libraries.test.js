@@ -17,7 +17,7 @@ test('canonical, unrelated and unmatched versions cannot supply alias mappings',
  assert.throws(()=>nativeReviewLibraryAliases({...ids(),'libwebp.dylib':null}));
 });
 test('current private artifact byte bound stays separate from historical source reviews',()=>{
- assert.equal(nativeReviewMaximumBytes({native_base:'4e231ceebe63308cc038117d40b9f9b64bd0372e'}),384*2**20);
+ for(const native_base of ['4e231ceebe63308cc038117d40b9f9b64bd0372e','3736ed55f81c6cf0966a0f0dc7265e783655d244'])assert.equal(nativeReviewMaximumBytes({native_base}),384*2**20);
  for(const inputs of [undefined,{}, {native_base:'046b647686419df06c6c7132fb1d15d76185c3e5'},
   {native_base:'unknown',artifact_byte_limit:2**30}])assert.equal(nativeReviewMaximumBytes(inputs),256*2**20);
 });
