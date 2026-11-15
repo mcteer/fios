@@ -799,3 +799,28 @@ bytes,174-file declared projection, actual packaged configuration backup/restore
 and failure retention, both blocked/no-command Studio plans and post-run review.
 Aggregatef2c2566d… records these limits. Package remains incomplete, unenrolled
 and inactive; previous417ae05a… is preserved. Whole39/55 unchanged.
+
+Current-Core live empty-native follow-up: canonical protocol3 primary-only and
+combined primary/backend/lineage manager checks pass. All7 backend flags are
+observed false and activity refreshes; coverage remains unknown, admission
+unsupported and the seeded journal record unresolved. Zero model requests or
+installed service actions. This supersedes the older unavailable-producer
+fixture only for this exact selected capsule/current-Core combination, not
+whole-native acceptance.39/55 unchanged; see validation.
+
+Current streamed-warmer source WIP: the relocated warmer's private Metal queue
+has no current request-origin/retirement port. A new sticky negative marker
+before its existing Metal constructor and independent host-getter composition
+preserve that unproven mode instead of treating the seven other false flags as
+complete source coverage. CPU constructor/getter checks and native enclosure
+are pending; no numerical/settings/serving-guard or whole-task change.
+Whole39/55 unchanged. See contracts/streamed-warm-mode-negative.md.
+
+Streamed-warmer negative subset final: corrected host-owned Shared/module and
+separate-object checks pass. Final strict matrix18 old runtime failures/
+14 controls/16 candidate cases, default162/162 native, enabled35/35 semantic
+32/32 link,4 empty-model runtime checks including freshly compiled current-Core
+primary/backend/lineage manager and post-run byte review pass. Aggregate6de7f61e…
+retains initial module/matcher failures. Ownership/retirement port and full G2
+remain incomplete; no native/model/installation authority or whole task closes.
+Whole39/55 unchanged. Nine-artifact package inputs remain unchanged.

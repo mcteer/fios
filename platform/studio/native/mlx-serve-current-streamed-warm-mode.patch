@@ -1,0 +1,35 @@
+--- a/src/sdk/weights/streamed/mimo/gpu_warm.zig
++++ b/src/sdk/weights/streamed/mimo/gpu_warm.zig
+@@ -113,6 +113,7 @@ pub const Metal = struct {
+ 
+     /// Construction only, under the caller's lease: compiles the kernel and makes the queue and buffer (no kernel runs).
+     pub fn init(groups: u32, event_object: u64) !Metal {
++        @import("mlx_host").shared.Shared(std.atomic.Value(bool), "fios_current_streamed_warm_source_uncertainty", .init(false)).get().store(true, .release);
+         var h: ?*anyopaque = null;
+         if (c.mimo_warm_create(groups, threads, &h) != 0) {
+             log.warn("gpu_keep_warm=waits refused: {s}", .{std.mem.span(c.mimo_warm_last_error())});
+--- a/src/host/http/server.zig
++++ b/src/host/http/server.zig
+@@ -1001,6 +1001,7 @@ test "idleEvictTickMs: sweeps well inside the window without spinning" {
+ fn fiosKnownBackendUncertain() bool {
+     const options = @import("build_options");
+     return @import("../../fios/current_distributed_mode_uncertainty.zig").known() or
++        @import("../../sdk/util/streamed_warm_source_uncertainty.zig").known() or
+         @import("../../fios/current_ane_native_backend_uncertainty.zig").known(options.fios_source_sdk, options.llama_engine);
+ }
+ 
+--- /dev/null
++++ b/src/sdk/util/streamed_warm_source_uncertainty.zig
+@@ -0,0 +1,12 @@
++//! Negative evidence for the existing private-queue streamed GPU warmer.
++//! Its current ownership port is incomplete; construction cannot grant idle,
++//! terminality or admission. Local destroy/join and later epochs never reset it.
++const std = @import("std");
++const shared_util = @import("shared.zig");
++const storage = shared_util.Shared(std.atomic.Value(bool), "fios_current_streamed_warm_source_uncertainty", .init(false));
++pub fn known() bool {
++    return storage.get().load(.acquire);
++}
++pub fn markConstruction() void {
++    storage.get().store(true, .release);
++}

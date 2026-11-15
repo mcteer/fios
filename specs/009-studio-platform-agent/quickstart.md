@@ -1235,3 +1235,19 @@ source's missing method is an interface witness. Success returns no inference
 not-sent/completion proof and releases no physical/native lease. Do not infer
 terminality from missing lineage or local CPU counts. See
 [the withdrawal contract](contracts/preparation-withdrawal.md).
+
+## Current streamed-warmer negative fence
+
+```sh
+node scripts/check-platform-current-streamed-warm-mode.mjs --isolated --source /private/tmp/REVIEWED_CURRENT_NATIVE_SOURCE --zig /private/tmp/REVIEWED_PINNED_ZIG
+```
+
+This checks the exact three-file patch/parent projection and full-file AST,
+then48 fresh network-denied Debug/ReleaseSafe cases. Constructor and getter
+omissions fail separately; the C constructor/destroy is CPU-substituted metadata,
+not a real Metal allocation, warm kernel or device-error rehearsal. Each compile/
+test subprocess has a120s limit. The latch marks unproven private-queue warming
+before construction and survives local destroy/join and tracker epochs. Seven
+other false backend flags do not negate it. No numerical, settings, serving
+guard, wire or native authority changes. Full native enclosure is separate; see
+[the scoped contract](contracts/streamed-warm-mode-negative.md).

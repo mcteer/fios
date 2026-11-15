@@ -56,3 +56,21 @@ operation. Exact source/CPU/native-empty enclosure scopes and the old-compositio
 baseline isolation are recorded in
 [distributed-mode-negative](distributed-mode-negative.md). Serving admission
 stays unsupported; the all-client contract remains unproven.
+
+## Relocated streamed private-queue warmer — 2026-11-15
+
+The current `sdk/weights/streamed/mimo/gpu_warm.zig` and its C include construct
+and commit on an independent Metal queue. `glm5n/experts.zig` installs that
+existing warmer, and the stream-source gate/host-wait paths arm it. The current
+file lacks the older fcb4011 source's request-origin/retirement port. SDK
+CommandEncoder custody and the seven other independently false backend flags
+cannot establish coverage of this queue. This is a concrete bounded participant
+gap, not proof of a missing mechanism in every upstream file.
+
+The [streamed-warmer negative increment](streamed-warm-mode-negative.md) marks
+construction before its C boundary and composes that sticky marker in the fixed
+host getter. Strict CPU/module/object cases, default162/162, enabled semantic/
+link and4 empty-model runtime checks pass. No numerical/worker/model-setting
+behavior, actual guard activation or
+native proof is added. Completing this participant's ownership/retirement port
+and the full all-client contract remains required; T002/T018–T022 stay open.

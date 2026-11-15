@@ -5535,3 +5535,139 @@ other repository/Python/native inputs; no whole-repository/native or publisher/
 build authenticity is claimed. This supersedes417ae05a… only for current
 package-declared Core bytes, without relabeling its old compatibility receipts.
 No inference, installed action, merge, deployment or whole task closure occurs.
+
+### Current-Core empty-native diagnostics follow-up
+
+On d85baba64f4c3559c57ad2f178417cc274b67c18, the canonical
+`check-platform-native-status.mjs` recompiles the current Core/manager fixture
+and CLI, then passes protocol3 `--primary-activity --lineage` and separately
+`--primary-activity --backend-fences --lineage` against unchanged selected
+capsuleeed4ca4b…. The combined run observes all7 current backend flags false,
+independent primary/backend refresh, source ingress running→maintenance→running
+and durable unresolved lineage. Coverage stays unknown, native admission stays
+unsupported and the seeded journal uncertainty is retained. Zero model requests
+or installed-service actions. Native ingress control acts only on these private
+empty-model source instances; local exit is not native terminality.
+
+Receipts `/private/tmp/fios-009-diagnostic-clock-wxswrbad/`:
+
+- `native-current-manager-review.json`, SHA256
+  `6dbdbc5a313321c76d77322f95a76c3a2fb075a5f652ceaaca364e8e7fb43498`,
+  fixture `/private/tmp/f9-native-status-Z5WOvL`.
+- `native-combined-manager-review.json`, SHA256
+  `22923c42e67e6d4331d1cd30a310bd9bd8c085dde97fc48ce01d03bf2ddf774d`,
+  fixture `/private/tmp/f9-native-status-x69wj2`.
+
+Post-run complete capsule byte review passes. This selected current producer
+now supplies readable independent flags; the older unavailable-producer result
+remains historical rather than being reclassified as a pass. False flags and
+empty catalogs are not positive all-client/device/terminal/admission proof.
+These are actual empty-native/current-Core checks, not numerical/model/native
+installation acceptance or whole-source/native provenance.39/55 unchanged.
+
+Read-only existing batch/strict-key SSH version/file inventory on both Studios
+still matches macOS27.2.1,256GiB M3 Ultra,MLX-Serve26.11.2 and OrbStack2.2.5,
+with the previously documented server/GUI hashes unchanged. Receipt
+`/private/tmp/fios-009-diagnostic-clock-package-57e5ainj/studio-readonly-inventory.json`,
+SHA256 `3e11369f439f0a15ca9c1efeb870b099c7b591d49d7b1e70c5f70cf952e9f233`.
+This is on-disk/version inventory, not kernel running-image/profile/native
+authority. Zero models, services or settings changed. Exact-head CI43705302613
+is still running; previousae97710/CI43702744803 completed all7 jobs successfully.
+Neither result is deployment or a native rollout.
+
+### Current streamed-warmer negative source fence — WIP
+
+Read of current `sdk/weights/streamed/mimo/gpu_warm.zig`, its existing C include,
+stream-source arm calls and `glm5n/experts.zig` identifies a served private Metal
+queue outside SDK CommandEncoder custody. The current warmer contains none of
+the older fcb4011 request-origin/retirement port. Those old receipts remain
+historical, rather than qualifying the relocated implementation. This is a
+bounded source finding, not a new model engine or complete call-graph audit.
+
+Private candidate `/private/tmp/fios-009-streamed-warm-mode-work-dppnka2z/source`
+preserves the previous current source/SDK-stage inputs, adds one marker before
+the existing Metal C constructor and one OR term in the fixed host negative
+getter, plus the Shared latch utility. Numerical/worker/kernel/event/settings
+behavior and actual serving guardfalse are unchanged. A true latch newly feeds
+the existing diagnostic uncertainty/refusal path, never positive authority.
+
+Strict checker `check-platform-current-streamed-warm-mode.mjs` passes exact
+three-file parent projection/reverse/reapply and full-file AST checks. Receipt
+`/private/tmp/fios-009-streamed-warm-mode-check-zOg0iC/receipt.json`, SHA256
+`ad35751ff770bc1feaf4d5774ad9c3aa0457c6a00274ad09c373066b1da7252f`,
+binds18 required old-constructor/getter runtime failures,14 parent controls and
+16 candidate cases across Debug/ReleaseSafe. Every case runs in a fresh
+network-denied process. Actual constructor/deinit/getter/tracker code executes;
+the C constructor/destroy boundary is substituted metadata. No Metal allocation,
+warm kernel, model or installed process is invoked. Both baseline variants
+receive the new latch utility for explicit isolation, not as whole-native
+baseline equivalence. Native enclosure remains pending. Whole39/55 unchanged.
+
+The first enclosing native build correctly fails with duplicate module ownership
+of the directly imported utility/Shared file. Its71.864s failure, unchanged-input
+receipt and logs are retained under `initial-module-boundary-refusal-*` in the
+work directory. The initial CPU receipt above is a qualified single-module
+prototype, not the final native composition.
+
+The constructor now uses the existing `mlx_host.shared.Shared` bridge directly;
+only the host imports the new utility. The strict fixture was changed to a
+separate constructor module. Its first host-stub attempt also correctly refuses
+duplicate ownership (`...check-TtvfYY`); corrected host exports pass all48 cases
+at `...check-BDW6iP`, receipt5c667ef5…. A separate actual unit-object/host-object
+link check passes Debug/ReleaseSafe with the actual Shared implementation and
+constructor/getter bodies, still substituting the C boundary. Receipt
+`shared-unit-receipt.json`, SHA256
+`7d8e28920f0cd8029f618908e36bb0fae0dd363b45f477f2d429f9fbf0fd3f92`,
+binds its declared inputs and unchanged-byte checks. No Metal/device is used.
+The checker has additionally been tightened to require the exact runtime
+TestUnexpectedResult/one-failed-test summary for each baseline; final rerun and
+corrected native enclosure remain pending. No failure is counted as a pass.
+
+Final subset rerun uses the corrected module graph and strengthened matcher.
+The intermediate `...check-vDMjmR` matcher correctly refused its unexpected
+summary: the target genuinely failed but an imported `test_0` also passed. The
+matcher now permits0/1 passed with exactly1 failed plus the precise runtime
+TestUnexpectedResult and marker; compiler/link errors cannot satisfy it.
+Final `/private/tmp/fios-009-streamed-warm-mode-check-GmBszX/receipt.json`, SHA256
+`11ce40492c9bc27ffd1406620421321771a83542057d3803ab91202e6a30ecf3`,
+passes all48 fresh-process records (18 original runtime failures/14 controls/
+16 candidate), with final checker and declared inputs unchanged. Final patch
+1447a0be…, fixturedffd2e80…, checkerdf33b990…. The separate-object7d8e2892…
+receipt above remains valid for the unchanged constructor/getter/Shared bytes.
+
+Corrected full default native build passes166.941s with inputs unchanged, then
+all162 actual cases pass in separate processes without skips; test binary
+`d0e3744acbc48c721b5185fd77913de19b84c2b5e3536ab0c240c1e5f7085bcf`.
+Enabled semantic35/35 steps402.069s and link32/32 steps13.990s pass. Raw binary
+`da237a9f6c6d9b9a504fc6e6df30a516976262ee74a54a8911fd982375d08883`,
+normalized binary
+`9e1a47c936ebf2a3b92ae019faa8b498d747f914ff8d1ad17f041ab6f89f43c5`,
+new capsule031afdf7… all retain source-only/no-authority scope. Pure source
+prerequisite parsing passes without creating a model plan or request.
+
+All4 actual empty-native correlation/activity/startup/manager checks pass. The
+manager check recompiles current Core and CLI and includes protocol3 primary,
+backend and durable lineage, at `/private/tmp/f9-native-status-fg1LUe`. Cold7
+flags are observed false, activity refreshes, original journal uncertainty
+remains retained and native admission unsupported. Source ingress intent is
+running→maintenance→running only for the owned private empty-native instance;
+zero models/inference/installed service actions. Post-run complete new/prior
+capsule review and captured1811 native source/446 SDK-stage/CXX checks pass.
+The post-run entire named src-tree comparison against the prior candidate
+differs only at the3 patch paths (2375→2376 files); the C warm include is equal.
+That include comparison is post-run, not newly claimed prebuild provenance.
+
+Final `/private/tmp/fios-009-streamed-warm-mode-work-dppnka2z/final-review.json`,
+SHA256 `6de7f61ea66a1f8c939eca6e586bd73ba0bce14345c0cb6d5ccad7710eff85b8`,
+binds exact selected scope, expected failures, module/object/native/runtime
+receipts and preserved failures. This is not whole native/repository or
+publisher/build authenticity, real warm ownership/retirement, all-client or
+device-terminal authority. Actual serving guard staysfalse; whole39/55 stays
+unchanged. The9-artifact package-declared Core inputs did not change.
+
+A separate one-file context check of the old7a52644a… warmer ownership patch
+against the relocated current file succeeds in a private projection. It is
+not applied, compiled or accepted as a current ownership port. Its other parent
+integrations and current native/backend lifetime still require implementation.
+Previousd85baba/CI43705302613 passed all7 jobs; new exact-head CI is required
+after this source subset is published. No merge, deployment or native rollout.
