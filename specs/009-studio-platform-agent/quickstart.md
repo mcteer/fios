@@ -1087,3 +1087,11 @@ node scripts/check-platform-current-backend-fences.mjs --isolated --source /priv
 ```
 
 See [current backend fences](contracts/current-backend-fences.md); flag availability never supplies admission or terminal proof.
+
+Finite coupled registry/request metadata check (no model/device work or residency/idle/admission authority):
+
+```sh
+node scripts/check-platform-current-registry-observation.mjs --isolated --source /private/tmp/REVIEWED_SOURCE --zig /private/tmp/PINNED_ZIG
+```
+
+See [coupled registry observation](contracts/coupled-registry-observation.md) for fixture versus native enclosure scopes and explicit unavailable paths.

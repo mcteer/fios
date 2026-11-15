@@ -3,6 +3,7 @@ import Foundation
 func runNativeControlTests() throws {
     try runNativePrimaryActivityWireTests()
     try runQueuedPrimaryActivityWireTests()
+    try runRegistryActivityWireTests()
     try runNativeBackendFenceWireTests()
     try runCurrentBackendFenceWireTests()
     let instance=String(repeating:"07",count:16)

@@ -25,7 +25,7 @@ struct NativePrimaryActivity:Sendable {
     func validate()throws {
         _=try NativeControlWire.instanceBytes(instance)
         let counts=[owners,ingress,preparing,queued,active,responding]
-        guard [1,2].contains(phaseVersion),phaseVersion==2 || (queued==0 && models.allSatisfy({$0.queued==0})),
+        guard [1,2,3].contains(phaseVersion),phaseVersion != 1 || (queued==0 && models.allSatisfy({$0.queued==0})),
               sampleSequence>0,sampleSequence<=UInt64(ActivityPolicy.maximumTimestamp),
               sampledAt.map({(1...ActivityPolicy.maximumTimestamp).contains($0)}) ?? true,
               counts.allSatisfy({(0...256).contains($0)}),owners==counts[1...5].reduce(0,+),models.count<=64 else {throw NativeControlError.invalid}
@@ -42,7 +42,15 @@ struct NativePrimaryActivity:Sendable {
 struct NativePrimaryActivitySample:Sendable {
     let peer:NativeControlPeer
     let receivedAt:Int64
-    let activity:NativePrimaryActivity
+    private let directActivity:NativePrimaryActivity
+    let registry:NativeRegistryActivity?
+    var activity:NativePrimaryActivity {registry?.primary ?? directActivity}
+    init(peer:NativeControlPeer,receivedAt:Int64,activity:NativePrimaryActivity) {
+        self.peer=peer;self.receivedAt=receivedAt;directActivity=activity;registry=nil
+    }
+    init(peer:NativeControlPeer,receivedAt:Int64,registry:NativeRegistryActivity) {
+        self.peer=peer;self.receivedAt=receivedAt;directActivity=registry.primary;self.registry=registry
+    }
 }
 enum NativePrimaryActivityWire {
     static let responseSize=66624,recordSize=1040
