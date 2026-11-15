@@ -1393,3 +1393,20 @@ Run on the private reviewed Darwin ARM64 source checkout with the pinned compile
 The checker enforces the compiler digest and source base; use actual canonical
 private paths. Its 24 stages include six expected parent failures. No model or
 native installation runs. See [ownership contract](contracts/stream-copy-origins.md).
+
+### Existing C binding against the event-enabled SDK
+
+Use a private fresh MLX C binding build against the exact reviewed SDK prefix;
+never overwrite the qualified parent stage. Bind the selected hashes explicitly:
+
+```sh
+.venv/bin/python -I -B scripts/check-platform-current-mlxc.py --isolated \
+  --prefix /private/tmp/REVIEW/prefix \
+  --mlx-sha256 REVIEWED_MLX_SHA256 --mlxc-sha256 REVIEWED_MLXC_SHA256
+```
+
+For C++ CPU callback compatibility on the same exact event-enabled SDK, append
+`--sdk-request-events` after `--owner-capture-refusal` to the existing current-C++
+command. This verifies both event overlays and emits a distinct source-only scope.
+It neither enables healthy-Metal mode nor validates model prerequisites. See
+[composition contract](contracts/matched-mlxc-composition.md).

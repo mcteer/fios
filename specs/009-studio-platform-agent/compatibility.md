@@ -622,3 +622,11 @@ queue. Its24-stage source fixture reproduces six parent failures and passes the
 candidate/legacy controls. Thread joins and queue completion are local lifetime
 evidence only; they neither clear native uncertainty nor establish all-client
 coverage, genuine terminal proof or atomic admission. G2 stays open.
+
+The [matched existing C-binding increment](contracts/matched-mlxc-composition.md)
+rebuilds MLX C against the exact event-enabled SDK, replacing only its library.
+Both old/new CPU ABI controls pass; no old runtime bug is claimed. The full
+selected-source serving build and private empty-model checks pass, with zero
+changes across2379 source files. The distinct new C++ CPU receipt remains outside
+model prerequisites. This supplies selected composition evidence, not whole-native
+provenance, G2/all-client admission, terminal proof or installed acceptance.

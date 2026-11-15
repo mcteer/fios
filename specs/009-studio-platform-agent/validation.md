@@ -6289,3 +6289,71 @@ from nine rejected private empty-catalog guard requests. No model loads, shader
 dispatch, installed operation, native activation, Studio acceptance, merge or
 deployment occurred. Whole39/55 remains unchanged. Exact published-SHA CI for
 this increment is pending.
+
+
+## 2026-11-15 existing C binding/event SDK composition (source qualification)
+
+Whole tasks remain39/55. The existing MLX C binding56b2d39 plus its already
+reviewed three-line compatibility patch now rebuilds against the selected
+event-enabled SDK4fc2c5d3…. No inference engine, numerical behavior, model ID
+or installed configuration changes. See [contract](contracts/matched-mlxc-composition.md).
+
+Private work `/private/tmp/fios-009-matched-mlxc-work-hdgivg0s`: configure0.376s, build8.739s and
+staging0.024s pass with132 binding source files and411 selected SDK-stage
+files unchanged. New binding25dfeb4fdf9f0bebbd18fe9701c939bbb66c148a00923fda2d9c905018b3e63b
+replaces exactly the old binding library in the446-file serving stage; the
+historical revision stamp is retained as historical metadata, not new build
+provenance. Receipt SHA25656c931abdd95dae559d2e89488bb1fead37e980f759242120741b0483f40acf7.
+
+Canonical new-binding C ABI checker `/private/tmp/fios-009-current-mlxc-check-8p38mrjl/receipt.json`,
+SHA2560b5807da190c9bc6836601e77174a8879b2ae24aa550a1f1273e9291f3457044,
+passes four debug/optimized compile/runtime stages: actual CPU scalar graph,
+invalid-shape error handler, release and exact mapped-library identity. Same
+checks on the old binding with the new SDK also pass four stages, receipt
+`/private/tmp/fios-009-current-mlxc-check-jl27tp7z/receipt.json`, SHA256
+d6597847180ace0b12a4248a856d5dc61c9f3b285e93580f6925000211cf9f59.
+No old-binding runtime bug is claimed. Compiler-selected C headers, fixture,
+compiler, libraries and system stub inputs are unchanged.
+
+The previous C++ checker refuses the newer SDK at its seven-path source
+comparison, before compiling; `old-checker-refusal.log` retains that result.
+An explicit new event-SDK mode reconstructs the exact eight-path composition
+and passes both existing genuine CPU callback/error controls, Debug/ReleaseFast.
+Final receipt `/private/tmp/fios-009-current-cxx-check-tgl8P2/receipt.json`,
+SHA2566a5cf1d556d35b42f9468c0fea7e6203765c70a680e7f14d242af81429aa4db2.
+The earlier private RJbo49 receipt is superseded for checker scope/digest only;
+its passing executions remain preserved. New scope is intentionally refused by
+the model-prerequisite parser. No source-base relabeling or sixth real model
+plan/POST occurs. Native serving qualification is running; these CPU records
+are not whole-native/publisher provenance, all-client coverage, native terminal
+proof, installed acceptance or activation.
+
+Final matched-binding serving qualification passes enabled semantic35/35
+(452.301s), link32/32 (14.166s), units-check (1.321s) and all four private
+empty-model startup/activity/correlation/current StudioCore manager checks.
+Raw binary13e9c8d6029b95f793850409f1348460a52bd021e493837bc81b19fc23eea7ea,
+normalized binary26d397d4012f0d40dbf085acb0a8a035dcefdb5a33f52ce03ab31fde5dd5108f
+and actual3736ed55-base capsule387e7a1ca08388d5aa6c7b41d6a4f53cfcfc0b106ff628d914ad276ff0507c3b
+verify together with the parent. Manager receipt is
+`/private/tmp/f9-native-status-A1Vcvm`. The normalized artifact's libraries also
+pass four actual C ABI CPU stages, `/private/tmp/fios-009-current-mlxc-check-apt7gg4l/receipt.json`,
+SHA2563a69b1243bc6701c099e052f35425dbe7e0598adf64a57773f58a10da9238c36.
+Both bindings preserve614 exported C names and the complete exported-name set;
+name equality is not full ABI or runtime-semantic proof.
+
+Post-run comparison covers all2379 source files with zero source changes;
+all446 selected SDK files and C++ configuration remain unchanged after testing.
+Only the previously declared C library differs from the parent stage. The174-file
+application package projection remains511e6a8e…. Local196 Node/107 installed
+Python and27 targeted review/intent/library checks pass; the final stronger
+scope-refusal assertion passes its targeted rerun. Agent boundary and whitespace
+checks pass. Prior browser/audit/Compose checks remain separate earlier evidence,
+not rerun claims for this increment.
+
+Aggregate `/private/tmp/fios-009-matched-mlxc-work-hdgivg0s/final-review.json`,
+SHA256465a7d145f87401e7e9cbf865800aa8161a6be29704091ba19dda021cacca27e,
+binds selected receipts, including zero new real inference/model plans and nine
+rejected private empty-catalog guard requests. Model prerequisites remain
+refused. No model loads, shader dispatch, installed operation, native activation,
+Studio acceptance, merge or deployment occurred. Whole39/55 remains unchanged;
+this source increment awaits its own published exact-SHA CI.

@@ -202,6 +202,16 @@ function extendedCurrentCxxMetadata(stage=3){
 test('extended current C++ CPU receipts require exact selected SDK composition and app config binding',()=>{
  for(const stage of [1,2,3])nativeReviewModelInputs(extendedCurrentCxxMetadata(stage));
 });
+test('event SDK CPU compatibility remains separate from model prerequisites',()=>{
+ for(const base of ['3736ed55f81c6cf0966a0f0dc7265e783655d244','4e231ceebe63308cc038117d40b9f9b64bd0372e']){
+  const value=extendedCurrentCxxMetadata();value.native_base=base;
+  value.system_cxx.scope='current_build_helper_event_SDK_CPU_compatibility_not_native_authority';
+  value.system_cxx.request_event_patches=Object.fromEntries(
+   ['mlx-c69303b-host-request-events.patch','mlx-c69303b-metal-request-events.patch'].map(name=>
+    [name,createHash('sha256').update(readFileSync(new URL('../platform/studio/native/'+name,import.meta.url))).digest('hex')]));
+  assert.throws(()=>nativeReviewModelInputs(value),/C\+\+/);
+ }
+});
 test('extended CPU compatibility refuses missing reordered or unmatched declarations without authority promotion',()=>{
  for(const change of [v=>delete v.native_cxx_config_sha256,v=>v.native_cxx_config_sha256='b'.repeat(64),
   v=>delete v.system_cxx.sdk_source,v=>v.system_cxx.sdk_library='relative/libmlx.dylib',v=>v.system_cxx.sdk_source='/private/tmp/other-sdk',
