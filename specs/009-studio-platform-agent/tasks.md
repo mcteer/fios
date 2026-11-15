@@ -95,6 +95,8 @@ The selected-loader worker now also binds its creator's non-reusable thread-life
 **Independent test**: Direct/tunnelled/manager request fixtures through ingress/preparation/queue/compute/response; same-model sharing, conflicting switch races, cancellation/restart and stale snapshots. Unsupported coverage fails acceptance.
 
 - [ ] T018 [P] [US2] Add failing coverage/coherence/unknown-source tests in `platform/studio/Tests/StudioCoreTests/ActivityTests.swift` and native fixtures in `tests/fixtures/platform/activity.json`, including pre-enqueue and slow-response ownership plus all enabled modalities (FR-004/006, SC-002/008).
+  - Existing ANE load/unload helpers now reproduce eight parent failures and pass88 expected CPU metadata/original-context/compiler stages; caught NSExceptions retain pre-call graph/residency uncertainty. No native lifecycle/model action, all-client proof or whole-task completion follows. See contracts/ane-load-exception.md.
+
   - Actual ANE C evaluation exception boundaries now reproduce eight parent failures and pass88 expected compiler/CPU metadata/original-native-reference stages across both APIs and build modes. Legacy controls remain unchanged. No ANE model/device or native terminal/admission authority is exercised, and no whole task closes. See contracts/ane-eval-exception.md.
 
   - Queued CPU promotion copy custody now reproduces six parent attribution failures and passes24 expected parent/candidate enabled/legacy Debug/ReleaseSafe compiler/runtime stages. Existing CPU copy behavior is preserved; no all-modality/native acceptance or whole-task completion follows. See contracts/stream-copy-origins.md.

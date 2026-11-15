@@ -1425,3 +1425,17 @@ This compiles actual bridge methods but calls only CPU NSObject stand-ins. It
 loads no ANE framework/model, runs no inference, and supplies no native completion
 or activation authority. Its88 stages include eight expected parent failures;
 see [error-boundary contract](contracts/ane-eval-exception.md).
+
+### ANE load/unload helper exception containment (CPU-only)
+
+Apply `mlx-serve-ane-load-exception.patch` after the evaluation-exception source
+increment, checking `ane_load_exception_parents.json` first:
+
+```sh
+.venv/bin/python -I -B scripts/check-platform-ane-load-exception.py --isolated \
+  --source /private/tmp/REVIEW/source --zig /private/tmp/REVIEW/zig
+```
+
+The88 stages include eight expected parent failures and invoke only fake CPU
+metadata methods. No native load/unload/model or installed operation runs; see
+[helper contract](contracts/ane-load-exception.md).

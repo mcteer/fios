@@ -637,3 +637,10 @@ original-object/active uncertainty. Its88-stage actual-bridge/CPU-metadata/nativ
 reference suite, enclosing native build and four private empty-model checks pass.
 This is error-boundary evidence, not successful ANE inference, native completion,
 all-client coverage, installed acceptance or activation. G2 remains open.
+
+The [ANE load/unload helper exception increment](contracts/ane-load-exception.md)
+preserves original graph/residency uncertainty when a foreign NSException occurs.
+Its88-stage CPU metadata/native-reference suite, full enabled native build and
+four private empty-model checks pass. No native load/unload/model operation or
+installed acceptance runs, and local acceptance/residency is not native proof.
+G2 and whole tasks remain open.

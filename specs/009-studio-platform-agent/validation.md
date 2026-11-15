@@ -6431,3 +6431,60 @@ zero real inference/model plans from nine rejected private empty-catalog guard
 requests. No ANE model/device operation, shader dispatch, installed service
 operation, activation, Studio acceptance, merge or deployment occurred. Whole
 39/55 remains unchanged; published exact-SHA CI for this increment is pending.
+
+
+## 2026-11-15 ANE load/unload helper exception containment (CPU source component)
+
+Whole tasks remain39/55. The original `bridge_load`/`bridge_unload` helpers
+reproduce escaped NSExceptions without a negative fence using CPU NSObject
+stand-ins. The source-only catch sets the existing load/unload uncertainty bit
+and returns `NO`, retaining pre-call graph/residency uncertainty and refusing
+subsequent foreign work. Existing local accepted semantics under independent
+uncertainty remain separate from native authority. Legacy retry behavior stays
+unchanged. No native load/unload, ANE constructor/framework/device, model math
+or installed operation runs. See [contract](contracts/ane-load-exception.md).
+
+Canonical `/private/tmp/fios-009-ane-load-exception-check-fcqooyi_/receipt.json`,
+SHA2569e08d1ebaa50c0c4287ab2bc70b4e8ac29030dca801503de5faba928c7446bcc,
+passes88 expected compiler/C CPU metadata/native tracker/context stages, with
+eight exact-parent failures. Source-enabled/legacy and both build modes cover
+normal return, reported error, exception, independent and prior uncertainty for
+both helpers. Original request capture is explicitly fixture-supplied through
+the actual SDK C ABI; its actual negative C fence quarantines that original root
+after caller/context release. No implicit C-helper capture or native terminal
+proof is claimed. Selected inputs stay unchanged.
+
+The standalone `/private/tmp/fios-009-ane-load-exception-work-bacfwrx5/baseline-receipt.json`
+(SHA256257df161106094ed3cf8308f7c1fc4a30d1e381e8476f126e53df61743cedea2) retains the two
+first direct failures. Initial canonical `...ane-load-exception-check-dl455adw`
+fails compilation because the fixture misspelled the existing resident getter;
+the corrected fixture uses `msv_ane_resident` and changes no production API.
+That setup failure remains preserved.
+
+Full enabled native semantic35/35 (502.920s), link32/32 (12.376s) and units-check
+(1.433s) pass with bracketed source/ANE bridge/header/SDK/C++ inputs unchanged.
+The2379-file src namespace is unchanged; the additional ANE bridge C file is
+the only declared changed native path, its header unchanged. All446 staged SDK
+files and C++ configuration remain unchanged after testing, and the174-file
+package projection remains511e6a8e…. Local196 Node/107 installed Python, agent
+boundary and whitespace checks pass. Private empty-model integration checks
+are running. Model prerequisites remain refused; no real model plan/POST, native
+activation, Studio acceptance, merge, deployment or whole-task completion follows.
+
+Final load/unload-helper qualification passes all four private empty-model
+startup/activity/correlation/current StudioCore manager checks. Raw binary
+a25a603ebdfc73fb84ac9c189da59b4f1767564e8929302f3d08f5d9e2270846,
+normalized binary3f1dafc294b16f125d131e5cc0e2437f0a3d7695f2e2875b2b9c7f0d6d55353a
+and actual3736ed55-base capsuled5f4c0173d9f15d6d2456dd1f90aa9faeeec82015f55dc36f65d2667cdccd92d
+verify with the parent. Manager receipt is `/private/tmp/f9-native-status-BezXpT`.
+Post-run source/ANE bridge/header/SDK/C++ comparisons remain unchanged from the
+bracketed candidate, and the174-file package projection remains511e6a8e….
+
+Aggregate `/private/tmp/fios-009-ane-load-exception-work-bacfwrx5/final-review.json`,
+SHA256138f890da3e3aadb0cbdab3bc1fb401c8a02e73e3ede6e4b1f0c137ea63ca044,
+binds selected receipts and the preserved fixture compiler setup failure. It
+separates zero real inference/model plans from nine rejected private empty-catalog
+guard requests. No native load/unload/model/device action, shader dispatch,
+installed operation, activation, Studio acceptance, merge or deployment occurred.
+Model prerequisites stay refused; whole39/55 stays unchanged. Exact published-SHA
+CI for this increment is pending.

@@ -1,0 +1,65 @@
+// CPU NSObject stand-in only; no native ANE load, unload, framework or device.
+// ACTUAL_BRIDGE_INCLUDE
+static unsigned fixture_calls,fixture_scenario;
+static BOOL fixture_result(NSError **error) {
+    ++fixture_calls;
+    if(fixture_scenario==1) @throw [NSException exceptionWithName:@"FiosOrdinaryFixtureException" reason:@"private CPU fixture" userInfo:nil];
+#ifdef FIOS_ANE_SOURCE
+    if(fixture_scenario==3)fios_ane_fence(FIOS_ANE_LOAD);
+#endif
+    if(fixture_scenario==2){*error=[NSError errorWithDomain:@"FiosCPUFixture" code:1 userInfo:nil];return NO;}
+    return YES;
+}
+@interface FiosLoadErrorMetadata:NSObject
+@end
+@implementation FiosLoadErrorMetadata
+- (BOOL)loadWithQoS:(unsigned)qos options:(id)options error:(NSError **)error {
+    (void)qos;(void)options;return fixture_result(error);
+}
+- (BOOL)unloadWithQoS:(unsigned)qos error:(NSError **)error {
+    (void)qos;return fixture_result(error);
+}
+@end
+int fios_ane_load_exception_fixture(const char *api,unsigned scenario) {
+    @autoreleasepool {
+        fixture_calls=0;fixture_scenario=scenario;
+        const bool load=strcmp(api,"load")==0;
+        FiosLoadErrorMetadata *value=[FiosLoadErrorMetadata new];
+        if(!load)bridge_mark_resident(value,true);
+#ifdef FIOS_ANE_SOURCE
+        const NSUInteger before=fios_ane_compile_quarantine().count;
+        if(scenario==4)fios_ane_fence(FIOS_ANE_LOAD);
+#endif
+        NSError *error=nil;int result=-1,caught=0;
+        @try {result=load?bridge_load(value,@{},&error):bridge_unload(value,&error);}
+        @catch(NSException *exception){(void)exception;caught=1;}
+#ifdef FIOS_ANE_SOURCE
+        if(scenario==1 && caught && !msv_ane_source_uncertainty()) {
+            fprintf(stderr,"ANE_LOAD_UNLOAD_EXCEPTION_ESCAPES_WITHOUT_NEGATIVE_FENCE\n");return 1;
+        }
+        const int accepted=scenario==0 || scenario==3;
+        if(caught || result!=accepted || fixture_calls!=(scenario==4?0:1))return 2;
+        if(scenario==0) {
+            if(msv_ane_source_uncertainty() || fios_ane_compile_quarantine().count!=before)return 3;
+            if(msv_ane_resident()!=(load?1:0))return 4;
+        }else {
+            if(!msv_ane_source_uncertainty())return 5;
+            if(load && scenario!=4 && fios_ane_compile_quarantine().count!=before+1)return 6;
+            if(!load && scenario!=3 && msv_ane_resident()!=1)return 7;
+            // Native uncertainty stops retry/teardown before another foreign call.
+            if(load?bridge_load(value,@{},&error):bridge_unload(value,&error))return 8;
+            if(fixture_calls!=(scenario==4?0:1) || !msv_ane_source_uncertainty())return 9;
+        }
+#else
+        if(scenario==1){if(!caught || fixture_calls!=1)return 10;}
+        else if(caught || result!=(scenario==0) || fixture_calls!=(load && scenario==2?BRIDGE_BARE_TRIES:1))return 11;
+#endif
+        fprintf(stderr,"PASS actual ANE load/unload error boundary with CPU metadata; no native authority\n");return 0;
+    }
+}
+#ifndef FIOS_ZIG_CLIENT
+int main(int argc,char **argv) {
+    if(argc!=3 || (strcmp(argv[1],"load") && strcmp(argv[1],"unload")))return 12;
+    return fios_ane_load_exception_fixture(argv[1],(unsigned)strtoul(argv[2],NULL,10));
+}
+#endif

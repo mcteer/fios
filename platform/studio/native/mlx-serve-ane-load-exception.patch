@@ -1,0 +1,46 @@
+--- a/lib/ane/ane_bridge.m
++++ b/lib/ane/ane_bridge.m
+@@ -496,6 +496,7 @@
+ /* Resident metadata is observational, never native completion/admission. */
+ static BOOL bridge_unload(id model, NSError **failure) {
+ #ifdef FIOS_ANE_SOURCE
++    @try {
+     *failure=nil;
+     if (msv_ane_source_uncertainty()) return NO;
+     const BOOL accepted=((BOOL(*)(id, SEL, unsigned int, NSError **))objc_msgSend)(
+@@ -503,6 +504,12 @@
+     if (accepted) bridge_mark_resident(model,false);
+     else fios_ane_fence(FIOS_ANE_UNLOAD);
+     return accepted;
++    } @catch (NSException *exception) {
++        (void)exception;
++        // Unknown foreign teardown must retain its original owner/residency.
++        fios_ane_fence(FIOS_ANE_UNLOAD);
++        return NO;
++    }
+ #else
+     bridge_mark_resident(model, false);
+     return ((BOOL(*)(id, SEL, unsigned int, NSError **))objc_msgSend)(model, @selector(unloadWithQoS:error:), 21, failure);
+@@ -512,6 +519,7 @@
+ /* Load `model`, again after a pause when the runtime refuses. */
+ static BOOL bridge_load(id model, NSDictionary *options, NSError **failure) {
+ #ifdef FIOS_ANE_SOURCE
++    @try {
+     *failure=nil;
+     if (msv_ane_source_uncertainty()) return NO;
+     /* Reserve original strong owners before any foreign load call. Refusal
+@@ -539,6 +547,14 @@
+ #endif
+         usleep(200000);
+     }
++#ifdef FIOS_ANE_SOURCE
++    } @catch (NSException *exception) {
++        (void)exception;
++        // Preserve any pre-call graph reservation; no retry or cleanup.
++        fios_ane_fence(FIOS_ANE_LOAD);
++        return NO;
++    }
++#endif
+ }
+ 
+ /* Process metadata is not a native terminal issuer. This helper's private
