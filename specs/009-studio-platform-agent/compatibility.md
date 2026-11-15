@@ -518,3 +518,18 @@ producer, per-request native terminal issuer, atomic native admission or either
 installed Studio. Actual source primary guard remains false, unknown coverage
 and unsupported admission remain. No installed native change, additional model
 request, merger/deployment or whole-task completion follows;39/55 unchanged.
+
+### Current Qwen n-gram background warm negative fence
+
+The existing page-cache worker in `plugins/qwen4_exp/qwen4_exp.zig` can outlive
+preparation without retaining original request custody. A five-path candidate
+now reports sticky negative evidence before worker publication, with explicit
+host Shared registration and fixed host/backend getter composition. It changes
+no warmer algorithm, thread count or model settings. Canonical actual-method
+16 cases/4 separate-object stages, full35semantic/32link/units-check and4 private
+empty-native/current-Core integration checks pass (aggregateeb883dfe…,
+capsulea7439643…). The [contract](contracts/qwen-ngram-warm-negative.md) and
+validation record exact scopes and preserved initial fixture failures. This
+blocks an unsafe future idle claim; it does not implement original custody,
+all-client activity/admission, native terminality or installed acceptance.
+39/55 whole tasks remain complete. No additional inference plan or deployment.

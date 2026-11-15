@@ -855,3 +855,20 @@ Worker retirement supplement: final canonical24 embedded CPU cases,2 owned
 bounded-join refusal cases and16 ownership matrix cases pass. Local retirement
 leaves original native uncertainty retained. No native source/package change,
 Metal/model run, installed action or whole-task closure;39/55 unchanged.
+
+Current Qwen n-gram warmer negative fence WIP: source review found an existing
+background page-cache worker without original request custody. A private
+five-path candidate marks sticky negative evidence before worker publication
+and composes it in fixed backend/host getters with explicit Shared registration.
+Actual startWarm metadata-worker matrix16 expected cases pass (4 original
+runtime failures); separate-object sharing, canonical checks and native
+semantic/link/runtime qualification remain pending. No worker/numerical/model
+policy change, inference, installation, authority or whole-task closure;39/55.
+
+Qwen negative-fence final source checkpoint: canonical16 actual-method cases
+plus4 separate-object stages, enabled35semantic/32link,units-check and4 actual
+empty-native/current-Core checks pass. Exact five-path post-run projection and
+new/prior capsule verification pass; aggregateeb883dfe…/capsulea7439643….
+Its real ownership port and complete all-client contract remain unfinished.
+No model request/package publication/installation/activation/whole-task closure;
+39/55 unchanged. See contracts/qwen-ngram-warm-negative.md.

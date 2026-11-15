@@ -5825,3 +5825,62 @@ model request, package publication, installed action or all-client authority is
 claimed.39/55 whole tasks remain complete. Publishedca7849f is under exact-head
 CI43715682862; five non-native prerequisite jobs passed and native CI is pending
 at this checkpoint. No merge or production/native delivery occurred.
+
+### Qwen n-gram background warm negative fence — source WIP
+
+The current source's existing Qwen n-gram table starts background page-cache IO
+without an original request-custody port. A private five-path candidate marks
+sticky negative evidence after the existing no-region/already-started/disabled
+checks and before spawning that worker. Host and fixed backend getters consume
+it; its Shared storage is explicitly registered. It changes no thread count,
+read schedule, numerical algorithm, model setting or installed service.
+
+Private actual-startWarm method tests with a metadata worker passed16 expected
+cases, including4 original runtime failures. No-region/disabled controls remain
+effect-free; worker completion and a later disabled attempt do not reset the
+negative latch. Receipt276a38f1… under
+`/private/tmp/fios-009-qwen-warm-negative-work-l8ealjsk/`. A separate real Shared
+host/plugin-object test passed object/host stages in Debug and ReleaseSafe,
+receipt7cce4435…. The initial fixture import-boundary compiler refusal and
+initial host-summary mismatch (three genuine tests ran instead of the requested
+one) remain preserved/excluded. Corrected host filtering selects the one actual
+cross-object behavior test. Canonical bracketed tests and full native builds
+remain pending; this candidate is not qualified or an authority issuer.
+
+Published4af2501cc836a61ac1035ef3df348846ab7eb8a0 contains the tested prior warmer
+supplement and compatibility/scope reconciliation. CI43717900729 is running.
+Priorca7849f CI43715682862 completed all7 jobs successfully.39/55 whole tasks
+remain complete. No merge, deployment, native activation or new inference plan.
+
+Qwen negative-fence final qualification: canonical actual-method16-case matrix
+plus4 separate-object build/host stages pass in Debug/ReleaseSafe. It uses the
+actual candidate latch declaration rather than a copied declaration; baseline
+injection isolates the missing pre-publication write. Selected source, imported
+Shared/pool dependencies and fixture inputs remain unchanged. Receipt:
+`/private/tmp/fios-009-qwen-warm-negative-check-g5txtqrp/receipt.json`, SHA256
+`fe839ef8a207ecc93cd1ec45a8719d9aeab96090566fdadb6c7c59dbe3c401b7`.
+
+Full enabled semantic35/35 steps passed in450.295s, link32/32 in5.933s and
+units-check in1.396s. Selected prebuild source/staged SDK/CXX inputs stayed
+unchanged. Raw native binary
+`e90e45b9181301abd1d8c2d63efee9639a3699cbff24f7a49d382ff112492a08`;
+normalized private binary
+`da2d84350fe07f12b5cd49d3d137644a4c53b4eaff3a046d42960e2f521c0f8a`;
+capsule `a743964349adc24090075c8e6d58de76bf87388d896c0e099d3a46826712ec18`.
+Pure native source prerequisite parsing passes; no model plan is created.
+
+Actual private correlation/activity/startup/current-Core manager integration
+checks all pass, with0 model requests/installed actions. Current-Core manager
+review `/private/tmp/f9-native-status-qOemHV` observes cold false backend flags
+and preserves original inference uncertainty through source ingress state
+changes. Source2377→2378 post-run comparison differs on exactly the five
+intended paths. New and prior capsules verify unchanged. This post-run all-src
+comparison is not whole-repository/native/publisher/build provenance and is
+distinct from the selected-suffix prebuild bracket. Aggregate:
+`/private/tmp/fios-009-qwen-warm-negative-work-l8ealjsk/final-review.json`, SHA256
+`eb883dfe67aa01924e2b0b7ca9f21d950da8df036f1d5130e023b1e7d00d4982`.
+No new default162-case, application/Node/Python suite or package publication is
+claimed for this scoped native overlay; the174-file package projection stays
+unchanged. Source ownership/parent cleanup for this warmer, full all-client
+contract/producer/proof/admission and installed acceptance remain unfinished.
+39/55 whole tasks unchanged; no merge, application delivery or native activation.

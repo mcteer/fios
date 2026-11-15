@@ -1,0 +1,60 @@
+--- a/src/plugins/qwen4_exp/qwen4_exp.zig
++++ b/src/plugins/qwen4_exp/qwen4_exp.zig
+@@ -12,6 +12,8 @@
+ //! `"bits":"16"`) for bit-exact PLE lookups.
+ 
+ const std = @import("std");
++// One host-owned negative latch across plugin/engine objects.
++const fios_unproven_warm = @import("../../sdk/util/shared.zig").Shared(std.atomic.Value(bool), "fios_current_qwen_ngram_warm_uncertainty", .init(false));
+ const crt = @import("../../sdk/util/crt.zig");
+ const io_util = @import("../../sdk/util/io_util.zig");
+ const log = @import("../../sdk/util/log.zig");
+@@ -538,6 +540,9 @@
+         var total: u64 = 0;
+         var i: usize = 0;
+         while (self.warmRegion(i)) |r| : (i += 1) total += r.len;
++        // This background IO has no original request-custody port yet.
++        // Publish negative evidence before the worker can outlive preparation.
++        fios_unproven_warm.get().store(true, .release);
+         self.warm_stop.store(false, .release);
+         self.warm_bytes.store(0, .release);
+         warmBytes().live_warm_bytes.store(0, .release);
+--- /dev/null
++++ b/src/sdk/util/qwen_ngram_warm_uncertainty.zig
+@@ -0,0 +1,6 @@
++//! Negative evidence for unported original-request custody of the existing
++//! Qwen n-gram background page-cache warmer. No reset or positive authority.
++const std = @import("std");
++const shared_util = @import("shared.zig");
++pub const storage = shared_util.Shared(std.atomic.Value(bool), "fios_current_qwen_ngram_warm_uncertainty", .init(false));
++pub fn known() bool { return storage.get().load(.acquire); }
+--- a/src/shared_all.zig
++++ b/src/shared_all.zig
+@@ -8,6 +8,7 @@
+     _ = @import("fios/request_ownership.zig").current_storage;
+     _ = @import("fios/request_ownership.zig").group_storage;
+     _ = @import("sdk/util/streamed_warm_source_uncertainty.zig").storage;
++    _ = @import("sdk/util/qwen_ngram_warm_uncertainty.zig").storage;
+     _ = @import("sdk/util/err_name.zig").last_tls;
+     if (@import("build_options").mlx_stream) _ = @import("mlx_stream").shared_state;
+     _ = @import("host/plugins/loader.zig").process;
+--- a/src/fios/current_backend_uncertainty.zig
++++ b/src/fios/current_backend_uncertainty.zig
+@@ -6,5 +6,6 @@
+     };
+     const sdk = if (sdk_enabled) Source.fios_current_sdk_known_uncertain() != 0 else false;
+     const llama = if (llama_enabled) Source.mlx_llama_source_uncertainty() != 0 else false;
+-    return @import("current_streamed_pool_uncertainty.zig").known() or sdk or llama;
++    return @import("../sdk/util/qwen_ngram_warm_uncertainty.zig").known() or
++        @import("current_streamed_pool_uncertainty.zig").known() or sdk or llama;
+ }
+--- a/src/host/http/server.zig
++++ b/src/host/http/server.zig
+@@ -1002,6 +1002,7 @@
+     const options = @import("build_options");
+     return @import("../../fios/current_distributed_mode_uncertainty.zig").known() or
+         @import("../../sdk/util/streamed_warm_source_uncertainty.zig").known() or
++        @import("../../sdk/util/qwen_ngram_warm_uncertainty.zig").known() or
+         @import("../../fios/current_ane_native_backend_uncertainty.zig").known(options.fios_source_sdk, options.llama_engine);
+ }
+ 
