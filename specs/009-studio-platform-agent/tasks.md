@@ -763,3 +763,10 @@ witnesses/8 controls/40 candidate cases; actual default162/162; enabled35/35
 semantic32/32 link;4 empty-model runtime/post-run;191Node/107Python/boundary
 checks pass. Aggregated2a3eb52…. Returnvoid is no inference not-sent/terminal
 proof or native/physical lease release; all16 whole tasks remain open,39/55.
+
+
+Exact-head CI43700362865 exposes a local Linux fixture exit/read race. Single
+procfs read with ENOENT-only absence passes4 regressions+deployment checks and
+clean-source full container upgrade/rollback/restore rehearsal;195Node/107Python/
+boundary pass. Receipt eb794306…. CI/native acceptance and wholeT055 remain
+open;39/55 unchanged. No runtime/model retry or native uncertainty clearing.

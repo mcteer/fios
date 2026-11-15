@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
 import { createServer } from "node:net";
 import { deployRelease } from "./deploy.mjs";
+import { localLinuxProcessExited } from "./lib/linux-process-exited.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const id = randomUUID().slice(0, 12),
@@ -214,21 +215,23 @@ try {
     "--input-type=module",
     "-e",
     `
-  import {spawn} from 'node:child_process';import {readFileSync,existsSync} from 'node:fs';
+  import {spawn} from 'node:child_process';import {readFileSync} from 'node:fs';
+  const processExited=(${localLinuxProcessExited.toString()});
   const source=\"import {AgentClient} from './src/agent/client.js';const c=new AgentClient();await c.ready();console.log(c.pid);setInterval(()=>{},1000);\";
   const p=spawn(process.execPath,['--input-type=module','-e',source],{stdio:['ignore','pipe','ignore']});
   const pid=await new Promise((resolve,reject)=>{let s='';p.stdout.on('data',b=>{s+=b;if(s.includes('\\n'))resolve(Number(s.trim()));});setTimeout(()=>reject(new Error('readiness timeout')),5000).unref();});
   p.kill('SIGKILL');let live=true;
-  for(let i=0;i<100;i++){const f='/proc/'+pid+'/stat';if(!existsSync(f)||readFileSync(f,'utf8').split(' ')[2]==='Z'){live=false;break;}await new Promise(r=>setTimeout(r,20));}
+  for(let i=0;i<100;i++){if(processExited(pid,readFileSync)){live=false;break;}await new Promise(r=>setTimeout(r,20));}
   if(live)throw new Error('orphan worker');console.log('parent-death-cleanup-ok');`,
   );
   await compose('exec','-T','app','node','--input-type=module','-e',`
-    import{spawn}from'node:child_process';import{existsSync,readFileSync}from'node:fs';
+    import{spawn}from'node:child_process';import{readFileSync}from'node:fs';
+    const processExited=(${localLinuxProcessExited.toString()});
     const source="import subprocess,sys,time;from fios_agent.web import parser;p=subprocess.Popen([sys.executable,'-I','-B',parser.__file__,'page'],stdin=subprocess.PIPE,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,env={});print(p.pid,flush=True);time.sleep(60)";
     const parent=spawn('/opt/venv/bin/python',['-I','-B','-c',source],{stdio:['ignore','pipe','ignore']});
     const pid=await new Promise((resolve,reject)=>{let text='';parent.stdout.on('data',b=>{text+=b;if(text.includes('\\n'))resolve(Number(text.trim()));});setTimeout(()=>reject(new Error('parser readiness timeout')),5000).unref();});
     parent.kill('SIGKILL');let live=true;
-    for(let i=0;i<100;i++){const path='/proc/'+pid+'/stat';if(!existsSync(path)||readFileSync(path,'utf8').split(' ')[2]==='Z'){live=false;break;}await new Promise(r=>setTimeout(r,20));}
+    for(let i=0;i<100;i++){if(processExited(pid,readFileSync)){live=false;break;}await new Promise(r=>setTimeout(r,20));}
     if(live)throw new Error('orphan parser helper');console.log('parser-parent-death-cleanup-ok');`);
   const peak = Number(
     await compose(

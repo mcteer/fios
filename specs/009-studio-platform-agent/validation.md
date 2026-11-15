@@ -5392,3 +5392,46 @@ inference not-sent/completion, all-client coverage, native capacity/lease,
 registry/backend/journal mutation, wire/serving caller or installed authority
 is not supplied. Actual serving guard remains unsupported;39/55 unchanged.
 Native artifacts remain outside the9-artifact package's declared-input projection.
+
+
+###2026-11-15 exact-head CI fixture race correction
+
+Head3842abbfe2752faa5946855c57749db35b103f78 CI43700362865 failed the ARM64
+container job132769947244 after observer recovery and installed-agent mock search
+checks passed. Uploaded diagnostic artifact14156360932 records an ENOENT reading
+`/proc/182/stat`: its test child exited between `existsSync` and `readFileSync`.
+This was a real CI behavioral failure, not a model/installed native result.
+The native CI lane remains running and is not cancelled.
+
+Both local Linux child-observation loops now use one procfs read. ENOENT is local
+absence; permission/I/O/malformed/foreign observations fail rather than certify
+exit. Parenthesized command names are parsed without space splitting. Existing
+100×20ms bounds, parent signals, daemon hardening and model/HTTP budgets are
+unchanged. The function is embedded as trusted test source; no production
+process/lease/inference controller uses it. A gone/zombie fixture process is
+never native inference completion or a model lease release.
+
+Four regression cases plus deployment safety tests pass (8 total). A clean
+3842abb checkout with exactly the3 proposed files passes the full existing
+`check-agent-container.mjs` rehearsal: named-volume observer recovery,
+installed-agent mock search, ARM64 hardening (peak538MiB), old→harness→old
+backup/restore and automatic failed-upgrade rollback. Full195Node/107 installed
+Python tests and agent boundary also pass. This is isolated fixture delivery,
+not production application/native deployment. No inference request occurred.
+
+Receipt `/private/tmp/fios-009-ci-proc-race-jklistci/review.json`, SHA256
+`eb794306dc43bedb91e94574c90422f5ca01e98ae9d55932050bb370d1ddb0ba`, binds
+exact proposed files, clean source base and test logs. Failed CI diagnostics are
+retained privately. Current9-artifact package417ae05a… projection remains
+unchanged; fixture scripts are outside that declared input set. Whole39/55.
+
+A bounded read-only upstream refresh still finds
+[v26.11.2](https://github.com/ddalcu/mlx-serve/releases/tag/v26.11.2) as latest.
+Main385c39572c872347305c4b4d8f8b8ec060a56a5e adds one
+[cancelled-prefill cache-state fix](https://github.com/ddalcu/mlx-serve/commit/385c39572c872347305c4b4d8f8b8ec060a56a5e)
+since218c766, touching2 files. The pinned candidate's module-cache commit path
+explicitly returns on cancellation; importing the newer cleanup fix alone is
+not justified by that read. No upstream upgrade/backport or model test occurs.
+This diff is not the required all-client activity/admission contract and is not
+an exhaustive absence claim about upstream. Read receipt in the same directory,
+`upstream-review.json`, SHAd4e8e9d812172c00437b9c649d5d6ae377d29053faede2913ef1adda5c9d08fd.
