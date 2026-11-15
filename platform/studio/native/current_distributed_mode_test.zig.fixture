@@ -1,0 +1,81 @@
+const std = @import("std");
+const modes = @import("fios/current_distributed_mode_uncertainty.zig");
+const guard = @import("host/http/server_guard.zig");
+const owners = @import("fios/request_ownership.zig");
+const reported = @import("fios/current_ane_run_uncertainty.zig");
+const io = std.testing.io;
+fn initialize(tracker: *owners.Tracker, epoch: u8) !void {
+    tracker.primary_guard = true; // CPU-only fixture; serving stays false.
+    try tracker.initialize(io, @splat(epoch));
+    try tracker.enrollBackendUncertaintyProbe(io, &guard.known);
+}
+fn expectRefusal(tracker: *owners.Tracker, marker: []const u8) !void {
+    if (tracker.claimCorrelatedPreparation(io, "fixture/model", @splat(17))) |_| {
+        std.debug.print("{s}\n", .{marker});
+        return error.TestUnexpectedResult;
+    } else |err| try std.testing.expectEqual(error.CoverageUncertain, err);
+}
+fn expectKnown(marker: []const u8) !void {
+    if (!guard.known()) {
+        std.debug.print("{s}\n", .{marker});
+        return error.TestUnexpectedResult;
+    }
+}
+test "distributed mode early configuration reaches actual getter" {
+    modes.markConfigured();
+    try expectKnown("DIST_MODE_EARLY_NOT_COMPOSED");
+}
+test "distributed mode late configuration refuses preparation" {
+    var tracker = owners.Tracker{};
+    try initialize(&tracker, 151);
+    modes.markConfigured();
+    try expectRefusal(&tracker, "DIST_MODE_LATE_CLAIM_ACCEPTED");
+}
+test "distributed mode new tracker epochs and reported success retain refusal" {
+    modes.markConfigured();
+    reported.observeOutcome(true);
+    var first = owners.Tracker{};
+    try initialize(&first, 152);
+    try expectRefusal(&first, "DIST_MODE_EPOCH_CLEARED");
+    var second = owners.Tracker{};
+    try initialize(&second, 153);
+    try expectRefusal(&second, "DIST_MODE_EPOCH_CLEARED");
+}
+test "distributed mode zero local owners cannot clear independent fence" {
+    var tracker = owners.Tracker{};
+    try initialize(&tracker, 154);
+    const token = try tracker.enter(io);
+    modes.markConfigured();
+    _ = tracker.backendKnownUncertain(io);
+    try tracker.leave(io, token);
+    try std.testing.expectEqual(@as(usize, 0), tracker.snapshot(io).owned);
+    if (!tracker.knownUncertain(io)) {
+        std.debug.print("DIST_MODE_LOCAL_ZERO_CLEARED\n", .{});
+        return error.TestUnexpectedResult;
+    }
+}
+test "distributed mode concurrent markers survive local thread joins" {
+    const a = try std.Thread.spawn(.{}, modes.markConfigured, .{});
+    const b = try std.Thread.spawn(.{}, modes.markConfigured, .{});
+    a.join();
+    b.join();
+    try expectKnown("DIST_MODE_JOIN_CLEARED");
+}
+test "distributed mode ordinary local source preserves existing getter" {
+    try std.testing.expect(!modes.known());
+    try std.testing.expect(!guard.known());
+}
+test "distributed mode existing ANE refusal remains independent" {
+    try std.testing.expect(!modes.known());
+    reported.observeOutcome(false);
+    try std.testing.expect(guard.known());
+}
+test "distributed mode diagnostic serving guard stays unsupported" {
+    modes.markConfigured();
+    var tracker = owners.Tracker{};
+    tracker.primary_guard = false;
+    try tracker.initialize(io, @splat(155));
+    try tracker.enrollDiagnosticUncertaintyProbe(io, &guard.known);
+    try std.testing.expectError(error.UnsupportedSourceGuard, tracker.claimCorrelatedPreparation(io, "fixture/model", @splat(18)));
+    try std.testing.expect(!tracker.primary_guard);
+}

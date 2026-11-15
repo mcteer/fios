@@ -733,3 +733,19 @@ inputs beforehand, passes454.619s and4 empty-model checks, then re-verifies byte
 and both new/retained old capsules. Aggregatef8c86f13…. Strict source prerequisite
 parser passes for the matching new declaration; no model plan/request, all-client
 coverage/native authority or whole task closure. Whole39/55 unchanged.
+
+
+Configured distributed-mode negative source WIP: three existing CLI branches
+mark a sticky process-wide negative before their existing calls; the HTTP fixed
+getter composes it without reading an unsynchronized peer pointer. Strict CPU
+checks pass10 isolated old-composition failures/6 controls/16 candidate cases;
+full native enclosure pending. No RDMA implementation/settings/traffic or
+positive authority changes. Whole39/55 unchanged. See
+contracts/distributed-mode-negative.md.
+
+
+Configured distributed-mode negative subset final: strict10 parent failures/
+6 controls/16candidate; actual default162/162; enabled35/35 semantic32/32link;
+4 ordinary empty-model runtime checks;191Node/107Python/boundary and post-byte
+reviews pass. Aggregatee0d71c88…. CLI ordering/CPU negative composition is not
+distributed execution or all-client proof. No whole task closes;39/55 unchanged.

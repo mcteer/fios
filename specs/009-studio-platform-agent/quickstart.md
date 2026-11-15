@@ -1207,3 +1207,18 @@ Journal-only and export-only failures also retain their private output (includin
 any SQLite sidecars), with no successful receipt. Do not retry into the same
 path or treat retained bytes as a recovery point; inspect separately and choose
 a fresh destination. These data operations do not resolve native uncertainty.
+
+
+A current-source CPU-only check for the configured distributed-mode negative
+marker is available without starting a distributed endpoint:
+
+```sh
+node scripts/check-platform-current-distributed-mode.mjs --isolated --source /private/tmp/REVIEWED_CURRENT_NATIVE_SOURCE --zig /private/tmp/REVIEWED_PINNED_ZIG
+```
+
+It checks exact source projection, full-file ASTs, ordered CLI marker insertions
+and the actual negative getter/tracker in fresh bounded Debug/ReleaseSafe cases.
+The baseline receives the candidate marker module only to isolate its old getter.
+It sends no RDMA/model request and is not distributed/native acceptance. Never
+use a false marker or successful component receipt as all-client idle/admission
+proof. See [the contract](contracts/distributed-mode-negative.md).

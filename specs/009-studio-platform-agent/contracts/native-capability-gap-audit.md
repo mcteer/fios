@@ -46,3 +46,13 @@ Read-only receipt `/private/tmp/fios-009-participant-read-a5il1sif/review.json`,
 The reviewed SSD writer queues owned host-byte buffers rather than MLX handles. The QSA pooled-rope thread occurrence is inside a test. The sparse neighbor worker transforms CPU arrays and joins before returning. These reads justify no native ownership repair for those paths.
 
 Distributed startup is different: `main` invokes `cluster_connect` before serve startup, and `connect` detaches `waitForWorker`, which reaches `Link.open`/`askForModel` native/distributed operations. Current HTTP scope instrumentation cannot be promoted to coverage of that participant. No transport/RDMA code, settings or real traffic was changed or run. Distributed/all-client compatibility and operational acceptance remain unproven; T002/T018/T020–T022/T051 stay open. The later internal preparation/ingress metadata link supplies no authority across that gap.
+
+
+The configured distributed CLI paths now additionally set a sticky negative
+marker before their existing entry calls/validation; the HTTP fixed getter
+composes it without reading the unsynchronized peer pointer. This is an explicit
+refusal for an unproven mode, not tracking/proof of those actors or any RDMA
+operation. Exact source/CPU/native-empty enclosure scopes and the old-composition
+baseline isolation are recorded in
+[distributed-mode-negative](distributed-mode-negative.md). Serving admission
+stays unsupported; the all-client contract remains unproven.

@@ -1,0 +1,49 @@
+--- a/src/main.zig
++++ b/src/main.zig
+@@ -678,9 +678,11 @@
+             arg_start = 2;
+             use_default_models_root = true;
+         } else if (std.mem.eql(u8, cmd, "worker")) {
++            @import("fios/current_distributed_mode_uncertainty.zig").markConfigured();
+             if (mlx_engine.api().cluster_worker(io, allocator, args[2..]) != null) std.process.exit(1);
+             return;
+         } else if (std.mem.eql(u8, cmd, "dist-probe")) {
++            @import("fios/current_distributed_mode_uncertainty.zig").markConfigured();
+             if (mlx_engine.api().cluster_probe(io, args[2..]) != null) std.process.exit(1);
+             return;
+         } else if (std.mem.eql(u8, cmd, "plugin")) {
+@@ -1485,6 +1487,7 @@
+     _ = mlx.mlx_random_seed(@intCast(std.Io.Timestamp.now(io, .real).toMilliseconds()));
+ 
+     if (dist_mode) |mode| {
++        @import("fios/current_distributed_mode_uncertainty.zig").markConfigured();
+         const coordinator = dist_coordinator orelse {
+             log.err("--dist needs --dist-coordinator IP:PORT (this Mac's address the worker connects to)\n", .{});
+             std.process.exit(1);
+--- a/src/host/http/server.zig
++++ b/src/host/http/server.zig
+@@ -1000,7 +1000,8 @@
+ // neither a missing/false fence nor a local destructor is terminal proof.
+ fn fiosKnownBackendUncertain() bool {
+     const options = @import("build_options");
+-    return @import("../../fios/current_ane_native_backend_uncertainty.zig").known(options.fios_source_sdk, options.llama_engine);
++    return @import("../../fios/current_distributed_mode_uncertainty.zig").known() or
++        @import("../../fios/current_ane_native_backend_uncertainty.zig").known(options.fios_source_sdk, options.llama_engine);
+ }
+ 
+ // The bridge is stopped/joined before scheduler/registry teardown by serve's
+--- /dev/null
++++ b/src/fios/current_distributed_mode_uncertainty.zig
+@@ -0,0 +1,12 @@
++//! Sticky negative evidence for configured distributed CLI modes only.
++//! No RDMA operation/state read, cleanup, terminal or all-client authority.
++//! Survives tracker epochs; no completion/success path resets this latch.
++const std = @import("std");
++const shared_util = @import("../sdk/util/shared.zig");
++const storage = shared_util.Shared(std.atomic.Value(bool), "fios_current_distributed_mode_uncertainty", .init(false));
++pub fn known() bool {
++    return storage.get().load(.acquire);
++}
++pub fn markConfigured() void {
++    storage.get().store(true, .release);
++}

@@ -5280,3 +5280,54 @@ aggregate in CI43692483894. The publisher's expected-head guard correctly
 refused pushing its older8c09 target after this documentation continuation changed
 HEAD; no CI was cancelled. The current head still needs publication and its own
 exact-head CI. No merge, application deployment or native rollout occurred.
+
+
+Configured distributed-mode negative source continuation: private source
+`/private/tmp/fios-009-distributed-mode-work-sjef5g2q/source` adds only3 ordered
+CLI marker calls, a sticky shared atomic marker and its HTTP negative-getter
+composition. No distributed implementation file or existing call/argument
+changes. Actual serving guard remains false. Strict checker receipt
+`/private/tmp/fios-009-distributed-mode-check-858p4Q/receipt.json`, SHA256
+`e33c917f25af0a5893028c97726ea2b976d9ed48626e868a6bed7491207dc318`,
+passes10 baseline failures/6 controls/16 candidate cases in fresh Debug/
+ReleaseSafe CPU processes with networking denied. The baseline gets only the
+candidate marker module to isolate missing old-getter composition. Main ordering
+is exact insertion/full-AST evidence, not executed distributed startup. Existing
+ANE negative and unsupported diagnostic-guard controls pass; no RDMA/model call.
+Default native build is running; enclosing enabled/link/runtime checks pending.
+No whole task closes;39/55 unchanged.
+
+
+Distributed-mode selected native default compile passes238.889s; all162 existing
+native enclosure cases pass in separate processes with no skips, binary
+bba877c6cf4a7f5b980e2c146a6b0aaee140f5d231d534dd1756e07024042e6b.
+The genuine new marker scenarios remain the separately bounded CPU composition
+cases; no distributed mode is executed by these default enclosure cases.
+191 Node/107 installed Python tests and agent boundary checks also pass. Enabled
+semantic/link/empty-model enclosure is still running/pending. No Python source,
+installed programs, RDMA setting/implementation/traffic or model request changed.
+
+
+Configured distributed-mode negative selected-source final: enabled semantic
+35/35 steps449.198s and native link32/32 steps13.878s pass with captured source/
+SDK/config inputs unchanged. New raw binary
+`70e01402d6124ee8d90e8011eab20bffecb0a5c3bad9750958415f9faa8d1e90`;
+normalized private capsule binary
+`9d80e97b6c55afa998c4b1bb477df57f86a4e3e6ca0474d8b6fc6e611bc6eb94`,
+capsule receipt60834421…. All4 genuine empty-model correlation/activity/startup/
+manager checks pass; they exercise ordinary non-distributed configuration and
+are not evidence of distributed runtime coverage. Post-run1810 selected native
+inputs/446 SDK stage files, SDK/MLXC/dependency source bytes and10 CXX SDK inputs
+match; complete new/retained prior capsule review passes. Existing strict source
+prerequisite parser still passes, with no model plan or request created.
+
+Final aggregate `/private/tmp/fios-009-distributed-mode-work-sjef5g2q/final-review.json`,
+SHA256 `e0d71c889edfa78c25c44e0c843fde1e4c5da9802d2f3df7b6092a6ce05d769d`,
+binds strict32 outcomes, default162, semantic/link, four empty checks,191Node/
+107Python/boundary logs and exact patch/fixture/checker hashes. Patchcc218953…,
+fixture6bb9e8ab…,checker777b9315…. No RDMA execution/settings/implementation,
+numerical model engine, model policy, protocol, installed lifecycle, physical
+native terminality or all-client/native authority is claimed. The source serving
+guard remains unsupported. Whole39/55 unchanged; all16 whole tasks remain open.
+Nine-artifact package417ae05a… remains a separate unchanged declared-input
+package: native patches/fixtures/checkers are outside its projection.
