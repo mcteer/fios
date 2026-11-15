@@ -477,3 +477,44 @@ The current source candidate keeps serving `primary_guard=false`, coverage unkno
 The current backend flag candidate uses explicit FIB9/FIF9 version2 for SDK,llama,streamed read pool,DS4host/gpu and ANEreported/native booleans. Historical version1 fields retain their own semantics. New manager backend observation requires version2 without fallback; compiled-out flags are unavailable and format/availability changes within a process epoch fence continuity. This is compiled readonly API availability, not full source/SDK compatibility, native terminality or all-client proof. Current guardfalse/coverageunknown/admissionunsupported/modelprerequisitesfalse remain; see [current backend fences](contracts/current-backend-fences.md).
 
 Coupled activity candidate version3 reports registry declarations and original phase counts at one consistent capture (≤64 relevant IDs,≤4096 catalog scan). Lock contention, missing identities and overflows are unavailable. The manager requests3 without fallback; decoders1/2 remain separate. A registry generation rollback or phase-format change fences continuity. Ready declarations and zero counts retain unknown coverage/activity and never become physical-residency, GPU-idle or atomic reservation proof. Sourceguardfalse/modelprerequisitesfalse/nativeadmissionunsupported remain.
+
+### Current26.11.2 streamed-warmer custody — 2026-11-15
+
+The historical MiMo request-origin/join sections above describe their original
+source revisions. The current relocated worker now has its own ten-path port,
+`platform/studio/native/mlx-serve-current-streamed-warm-origins.patch`, SHA256
+`049cf53f23d87d41f13aedea4196bb1eae530f4a0c108a8e935dd49b7000c180`.
+It is based on the frozen current owner-registration candidate, not an assertion
+that the old complete patch applies to the current serving tree.
+
+The source-SDK compile option consistently selects the fixed C request-custody
+ABI on the served/test/engine/module/plugin host surfaces. It supplies no wire
+capability or metadata-selected activation. Original arm/hold groups span queue
+publication, per-chunk worker commit and actual backend retirement; missing
+ownership refuses submission. The serving warmer selects bounded original
+worker join. Expert initialization unwind and destructor consume stop refusal
+before dependent memory release; the wrapper also retains its allocation after
+late inner refusal. The existing Shared uncertainty latch stays registered in
+the host and remains visible through the fixed negative SDK/registry getter.
+The registry already checks cleanup uncertainty after local retirement and
+before replacement loads. That source review does not create a new terminal
+proof or establish atomic all-client reservation.
+
+The current parent-to-candidate post-run comparison covers2376→2377 src files,
+with exactly ten declared changes. This is a post-run comparison, distinct from
+the selected-suffix prebuild bracket, staged SDK/CXX identity and declared-input
+capsule. Qualified enabled35/35 semantic32/32 link, units-check and4 actual
+empty-native/current-Core integration checks pass; capsule4efdd1cd…/aggregate
+dd64866b…. Separate final CPU tests cover16 original-request ownership cases,
+16 expert/wrapper metadata-resource cases,24 embedded legacy worker cases and
+2 owned bounded-join cases. The bounded case retains original uncertainty after
+late local cleanup. See [the current port contract](contracts/current-streamed-warm-origins.md)
+and validation.md for exact receipts, original behavioral failures and excluded
+compiler/zero-selected/aborted observations.
+
+This repairs the current worker's selected custody/parent paths. It does not
+qualify a real Metal warmer, every enabled modality/client, a normalized native
+producer, per-request native terminal issuer, atomic native admission or either
+installed Studio. Actual source primary guard remains false, unknown coverage
+and unsupported admission remain. No installed native change, additional model
+request, merger/deployment or whole-task completion follows;39/55 unchanged.
