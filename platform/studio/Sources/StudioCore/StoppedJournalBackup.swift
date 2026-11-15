@@ -37,8 +37,8 @@ public enum StoppedJournalBackup {
         }
         let output=open(destination.path,O_RDWR|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC,0o600)
         guard output>=0 else {throw JournalError.storage};close(output)
-        var success=false
-        defer {if !success {for suffix in ["","-journal","-wal","-shm"] {_=unlink(destination.path+suffix)}}}
+        // Retain failed output/SQLite sidecars for diagnosis. No receipt is
+        // returned and no pathname cleanup assumes their current ownership.
         // A restored WAL-mode main file may lack SHM/WAL initialization.
         // Recover only a bounded private snapshot; never open the original
         // with a writable SQLite connection or mutate it to enable backup.
@@ -82,7 +82,6 @@ public enum StoppedJournalBackup {
         let parent=open(destination.deletingLastPathComponent().path,O_RDONLY|O_NOFOLLOW|O_DIRECTORY|O_CLOEXEC)
         guard parent>=0 else {throw JournalError.storage};defer {close(parent)}
         guard fsync(parent)==0 else {throw JournalError.storage}
-        success=true
         return JournalBackupReceipt(schema:9,bytes:savedInfo.st_size,sha256:SHA256.hash(data:data).map {String(format:"%02x",$0)}.joined())
     }
 }

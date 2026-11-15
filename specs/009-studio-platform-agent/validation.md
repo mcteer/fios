@@ -5179,3 +5179,25 @@ adds the exact expanded Debug log to the preceding review. Source and package
 checks for this bounded configuration-backup increment are complete; wholeT049
 is not. The clean package remains pinned to e38111a and its declared projection;
 subsequent documentation-only changes do not extend its provenance scope.
+
+
+###2026-11-15 lower-level failed backup retention (T049 partial)
+
+The journal-only and export-only helpers still removed their caller-selected
+output after an unsuccessful copy. Ordinary invalid-schema/export-hash fixtures
+now require retaining those private outputs without returning a receipt. A
+corrected fixture reproduces journal output loss on the preceding implementation
+(`journal-retention-red.log` in the private focused test directory); the first
+fixture compile also missed one `try` and is recorded separately. No adversarial,
+network, model or installed-service scenario is used. The correction removes
+failure-path destination/sidecar deletion only; success bounds, receipts, writer
+fences and independent uncertainty remain unchanged. Focused actual-Core and full
+Debug suites pass (Debug runtime23.905s); optimized/package refresh pending.
+No wholeT049 closure;39/55 unchanged.
+
+
+Lower-level retention full suites pass with current inputs: Debug compile28.823s/
+runtime23.905s, optimized compile55.534s/runtime18.184s. Source changes are
+limited to retaining failed destination/sidecar data; no success receipt or
+admission behavior changes. A fresh committed-source package is next; the
+preceding a54e1012… package remains preserved and is not relabeled as current.

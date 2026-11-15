@@ -86,7 +86,8 @@ enum StoppedArtifactBackup {
         let disk=try FileManager.default.attributesOfFileSystem(forPath:destination.deletingLastPathComponent().path)
         guard let free=(disk[.systemFreeSize] as? NSNumber)?.int64Value,free>=total+(10<<30) else {throw JournalError.storage}
         guard mkdir(destination.path,0o700)==0 else {throw JournalError.conflict}
-        var success=false;defer {if !success {try? FileManager.default.removeItem(at:destination)}}
+        // A failed copy remains private diagnostic data, never a valid
+        // export receipt. Do not recursively delete its destination by name.
         let end=ProcessInfo.processInfo.systemUptime+30
         var copiedFiles:[ArtifactBackupFile]=[]
         for (record,length) in files {
@@ -121,7 +122,6 @@ enum StoppedArtifactBackup {
         let parent=open(destination.path,O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC)
         guard parent>=0 else {throw JournalError.storage};defer {close(parent)}
         guard fsync(indexFD)==0,fsync(parent)==0 else {throw JournalError.storage}
-        success=true
         return ArtifactBackupReceipt(artifacts:files.count,bytes:total,indexSHA256:SHA256.hash(data:metadata).map {String(format:"%02x",$0)}.joined(),files:copiedFiles.sorted {$0.path<$1.path})
     }
 }

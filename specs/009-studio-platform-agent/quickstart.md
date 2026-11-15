@@ -1201,3 +1201,9 @@ node scripts/check-platform-configuration-backup.mjs --isolated --release /ABS/R
 This compiles a finite disposable-state helper, runs the actual packaged CLI,
 checks explicit exports and unresolved native uncertainty after restoration, and
 retains its private receipt/data. It is not installed backup/rollback acceptance.
+
+
+Journal-only and export-only failures also retain their private output (including
+any SQLite sidecars), with no successful receipt. Do not retry into the same
+path or treat retained bytes as a recovery point; inspect separately and choose
+a fresh destination. These data operations do not resolve native uncertainty.

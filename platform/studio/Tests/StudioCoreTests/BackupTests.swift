@@ -67,6 +67,10 @@ func runBackupTests() throws {
     let changed=sqlite3_exec(database,"PRAGMA user_version=10",nil,nil,nil)
     sqlite3_close(database)
     guard changed==SQLITE_OK else {throw JournalError.storage}
+    try AtomicState.write(Data(),to:future.appendingPathComponent("manager.lock"))
+    let failedJournal=root.appendingPathComponent("rejected-schema-retained.sqlite")
+    do {_=try StoppedJournalBackup.create(directory:future,destination:failedJournal);fatalError("Future schema backup accepted")}catch JournalError.invalid {}
+    guard FileManager.default.fileExists(atPath:failedJournal.path) else {fatalError("Rejected journal backup discarded diagnostic output")}
     let before=try Data(contentsOf:futureFile)
     do {_=try Journal(directory:future);fatalError("Future ownership schema silently downgraded")} catch JournalError.invalid {}
     guard try Data(contentsOf:futureFile)==before else {fatalError("Rejected future journal was mutated")}
@@ -94,6 +98,14 @@ func runBackupTests() throws {
     try JSONSerialization.data(withJSONObject:unknown).write(to:indexPath)
     do {_=try ArtifactStore(directory:state.appendingPathComponent("artifacts"),availableBytes:{100<<30});fatalError("Unknown artifact ownership fields ignored")} catch ArtifactError.invalid {}
     try indexBefore.write(to:indexPath)
+    let sourceBlob=state.appendingPathComponent("artifacts/"+artifact+".blob")
+    let wrongPayload=Data(repeating:0,count:payload.count)
+    try wrongPayload.write(to:sourceBlob)
+    let failedExports=root.appendingPathComponent("rejected-export-retained")
+    do {_=try StoppedArtifactBackup.create(directory:state,destination:failedExports);fatalError("Mismatched export hash accepted")}catch JournalError.invalid {}
+    guard try Data(contentsOf:failedExports.appendingPathComponent(artifact+".blob"))==wrongPayload,
+          try Data(contentsOf:sourceBlob)==wrongPayload else {fatalError("Failed export snapshot discarded output or changed source")}
+    try payload.write(to:sourceBlob)
     let link=root.appendingPathComponent("external-link")
     try FileManager.default.linkItem(at:state.appendingPathComponent("artifacts/"+artifact+".blob"),to:link)
     do {_=try StoppedArtifactBackup.create(directory:state,destination:root.appendingPathComponent("linked-copy"));fatalError("Linked export accepted")} catch JournalError.invalid {}

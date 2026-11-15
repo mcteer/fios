@@ -712,3 +712,9 @@ post-run package review and complete Node/Python/boundary/container/build/discov
 checks pass. Final aggregate091aad84…. This is data preservation only;
 installed recovery/credential/rollback/uninstall acceptance and wholeT049 remain
 open. Whole39/55 unchanged.
+
+
+Lower-level backup retention follow-up: ordinary invalid-schema/export-hash
+fixtures require retaining private failed journal/export outputs without a
+receipt. Preceding journal loss reproduced; corrected focused/full Debug pass;
+optimized/package refresh pending. No native action or whole task closure.
