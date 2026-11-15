@@ -644,3 +644,10 @@ Its88-stage CPU metadata/native-reference suite, full enabled native build and
 four private empty-model checks pass. No native load/unload/model operation or
 installed acceptance runs, and local acceptance/residency is not native proof.
 G2 and whole tasks remain open.
+
+The [ANE constructor-helper exception increment](contracts/ane-compile-exception.md)
+retains original graph/staging uncertainty on NSException. Its80-stage CPU/private
+file/original-reference suite, full enabled build and four private empty-model
+checks pass. The private temporary-directory location is a declared test port;
+no native compiler/model/device or installed action runs. It is not native
+terminal, all-client or installed acceptance evidence; G2 remains open.

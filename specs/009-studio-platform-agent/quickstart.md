@@ -1439,3 +1439,18 @@ increment, checking `ane_load_exception_parents.json` first:
 The88 stages include eight expected parent failures and invoke only fake CPU
 metadata methods. No native load/unload/model or installed operation runs; see
 [helper contract](contracts/ane-load-exception.md).
+
+### ANE constructor-helper exception containment (CPU/private files)
+
+Apply `mlx-serve-ane-compile-exception.patch` after the load/unload-helper increment,
+checking `ane_compile_exception_parents.json` first:
+
+```sh
+.venv/bin/python -I -B scripts/check-platform-ane-compile-exception.py --isolated \
+  --source /private/tmp/REVIEW/source --zig /private/tmp/REVIEW/zig
+```
+
+The80 stages include eight expected parent failures. The full constructor/cache
+logic uses an explicit private temporary-directory fixture port and CPU compiler
+stand-ins. It invokes no native compiler/model/device; see
+[constructor contract](contracts/ane-compile-exception.md).

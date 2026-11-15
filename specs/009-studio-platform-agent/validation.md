@@ -6488,3 +6488,51 @@ guard requests. No native load/unload/model/device action, shader dispatch,
 installed operation, activation, Studio acceptance, merge or deployment occurred.
 Model prerequisites stay refused; whole39/55 stays unchanged. Exact published-SHA
 CI for this increment is pending.
+
+
+## 2026-11-15 ANE constructor-helper exception containment (source qualified)
+
+Whole tasks remain39/55. The original constructor helper lets NSException
+from foreign metadata/compile calls bypass its negative fence. A standalone
+CPU NSObject witness throws before native compile or staging work; its receipt
+`/private/tmp/fios-009-ane-compile-exception-work-a5hwa_9c/baseline-receipt.json`, SHA256
+05f26b6e5caa561435e40ba15284ab34ca985b4cf370fab9892d20f434a3a42c, preserves the first failure.
+The source catch sets constructor/compile uncertainty and returns a fixed error,
+retaining original graph/staging reservations without retry or rollback. Legacy
+behavior remains unchanged. See [contract](contracts/ane-compile-exception.md).
+
+Canonical `/private/tmp/fios-009-ane-compile-exception-check-bu_s4zgv/receipt.json`,
+SHA256342e7183f371d1a78cfa977f42e21934c30f29cf94cefb217a86fe0df6cfccf5,
+passes80 expected compiler/C metadata/private-file/native tracker/context stages,
+including eight exact-parent failures. Normal controls and errors at identifier
+and fake compiler phases, reported errors, independent/prior uncertainty and
+legacy behavior run in both build modes. Native capture is explicitly supplied
+by the fixture using the actual SDK C ABI. No native compiler/model/device or
+framework-loading entry point is invoked.
+
+The first cb21jzj1 and hsbxp0pd canonical attempts refuse before constructor entry
+because Foundation ignores TMPDIR and returned the system temporary directory.
+The final fixture explicitly substitutes only that directory-location function;
+all constructor/cache logic remains actual source, confined to a fresh private
+tree. This declared location port prevents legacy cleanup from scanning/reaping
+unrelated temporary resources. Initial failures remain preserved. No production
+path behavior was changed to satisfy the fixture.
+
+Enabled native semantic35/35 (462.778s), link32/32 (14.099s), units-check (1.213s)
+and all four private empty-model startup/activity/correlation/current StudioCore
+manager checks pass. Raw binaryb51d9e47673a4d74a799e581b806636e9078c9f064c488aabbf6b6eefbf1901f,
+normalized binary767e589e29fa57f794b2dddcda22694d1394346de4289de5e1c3ab6430da923b
+and actual3736ed55-base capsulea327bd065843539938870dc04fbed872537fd02defc4482d53fb0ba6395e71b6
+verify with the parent. The2379-file src namespace is unchanged, the additional
+ANE bridge file alone changes while its header stays unchanged, and all446 SDK
+files/C++ configuration remain unchanged after testing. The174-file package
+projection stays511e6a8e…. Local196 Node/107 installed Python, boundary and
+whitespace checks pass.
+
+Aggregate `/private/tmp/fios-009-ane-compile-exception-work-a5hwa_9c/final-review.json`, SHA256
+bcc28d730b59f519fbeac7b670caa8c78cceca413af3efd700b440a525ee071a, binds
+selected results and preserved path-guard failures. Model prerequisites stay
+refused. Zero new real inference/model plans are distinct from nine rejected
+private empty-catalog guard requests. No installed operation, activation, Studio
+acceptance, merge, deployment or whole-task completion occurs. Published exact-SHA
+CI for this increment is pending.
