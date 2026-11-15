@@ -2,6 +2,7 @@ import Foundation
 
 func runNativeRequestLineageTests()throws {
     try runNativeRequestRetirementTests()
+    try runNativeRequestHandoffTests()
     let instance=String(repeating:"1",count:32)
     let id="29fc52e328d588a1afee500c96d67ccc1045a873a328efccec3dc9ddfaef2cf5"
     let request=try NativeRequestLineageWire.request(instance:instance,correlationID:id)

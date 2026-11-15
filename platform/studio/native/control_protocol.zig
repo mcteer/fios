@@ -112,6 +112,41 @@ pub fn dispatchLineage(tracker: *ownership.Tracker, io: std.Io, request: *const 
     return response;
 }
 
+// Native-private correlation handoff, not a model/admission or completion API.
+// Only a still-pending registration can be cancelled under the tracker mutex.
+pub const handoff_response_size = 88;
+pub fn dispatchHandoff(tracker: *ownership.Tracker, io: std.Io, request: *const [64]u8) [handoff_response_size]u8 {
+    var response: [handoff_response_size]u8 = @splat(0);
+    @memcpy(response[0..4], "FIK9");response[4]=1;
+    response[6]=@intFromEnum(ownership.HandoffState.unknown);response[7]=1;
+    const operation=request[5];
+    const root=std.mem.readInt(u64,request[56..64],.big);
+    if (!std.mem.eql(u8,request[0..4],"FIJ9") or request[4]!=1 or operation>1 or
+        !std.mem.allEqual(u8,request[6..8],0) or (operation==0 and root!=0) or (operation==1 and root==0)) {
+        response[5]=@intFromEnum(Status.invalid);return response;
+    }
+    response[72]=operation;
+    const before=tracker.snapshot(io);
+    @memcpy(response[8..24],&before.instance);@memcpy(response[24..56],request[24..56]);
+    std.mem.writeInt(u64,response[56..64],before.sample_sequence,.big);
+    std.mem.writeInt(u64,response[64..72],root,.big);
+    if (!before.initialized or !std.mem.eql(u8,request[8..24],&before.instance)) {
+        response[5]=@intFromEnum(Status.wrong_instance);return response;
+    }
+    if (operation==0) {
+        const registered=tracker.registerHandoff(io,request[24..56].*) catch |err| {
+            response[5]=@intFromEnum(if(err==error.Maintenance) Status.maintenance else Status.invalid);return response;
+        };
+        std.mem.writeInt(u64,response[64..72],registered.root_sequence,.big);
+        response[6]=@intFromEnum(ownership.HandoffState.pending);
+    } else response[6]=@intFromEnum(tracker.cancelHandoff(io,request[24..56].*,root));
+    const after=tracker.snapshot(io);
+    std.mem.writeInt(u64,response[56..64],after.sample_sequence,.big);
+    response[7]=@intFromBool(after.uncertain or !after.initialized);
+    if(response[7]!=0)response[6]=@intFromEnum(ownership.HandoffState.unknown);
+    return response;
+}
+
 // Local reference-retirement history only. A positive record is NOT native
 // completion/not-sent evidence and cannot release a durable inference claim.
 pub const retirement_response_size = 88;
@@ -502,4 +537,23 @@ test "correlated local retirement wire remains distinct from live lineage and na
     try std.testing.expectEqual(@intFromEnum(Status.wrong_instance), dispatchRetirement(&tracker, io, &request)[5]);
     request[8] ^= 1; request[5] = 1;
     try std.testing.expectEqual(@intFromEnum(Status.invalid), dispatchRetirement(&tracker, io, &request)[5]);
+}
+
+test "handoff register cancel wire binds instance and refuses consumed or stale roots" {
+    const io = std.testing.io;
+    var tracker: ownership.Tracker = .{};
+    try tracker.initialize(io, @splat(88));
+    var request: [64]u8 = @splat(0);
+    @memcpy(request[0..4], "FIJ9");request[4]=1;
+    @memset(request[8..24],88);@memset(request[24..56],89);
+    const registered=dispatchHandoff(&tracker,io,&request);
+    try std.testing.expect(registered[5]==0 and registered[6]==@intFromEnum(ownership.HandoffState.pending));
+    const root=std.mem.readInt(u64,registered[64..72],.big);try std.testing.expect(root>0);
+    request[5]=1;std.mem.writeInt(u64,request[56..64],root,.big);
+    const cancelled=dispatchHandoff(&tracker,io,&request);
+    try std.testing.expect(cancelled[6]==@intFromEnum(ownership.HandoffState.cancelled));
+    request[8]^=1;
+    try std.testing.expectEqual(@intFromEnum(Status.wrong_instance),dispatchHandoff(&tracker,io,&request)[5]);
+    request[8]^=1;request[7]=1;
+    try std.testing.expectEqual(@intFromEnum(Status.invalid),dispatchHandoff(&tracker,io,&request)[5]);
 }

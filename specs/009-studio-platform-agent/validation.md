@@ -6645,3 +6645,69 @@ results; it grants no whole-native/publisher provenance. Previous published
 `dabc83d5881621ddf7e0b44e53cac088292354aa` CI43768745242 passed all seven jobs.
 This new increment requires its own exact-head CI. No whole task, installation,
 activation, Studio acceptance, merge or deployment completes.
+
+## Original root established before native handoff — source increment,2026-11-15
+
+The next handoff component reserves an original source root before POST, transfers
+it atomically to a matching incoming owner, and cancels only unconsumed roots.
+It selects no model or native lifecycle action and grants no admission/device
+completion authority. Production worker POST binding and inference-proof
+reconciliation are not enabled by these types.
+
+Canonical failing-first tracker and wire logs:
+`/private/tmp/fios-009-handoff-{red,wire-red}.log`.37 tracker tests, including32
+real two-thread cancellation/association races,9 protocol tests and1 strict
+full-width/canonical header test pass in Debug/ReleaseSafe. Capacity32 refuses
+without manufacturing idle or clearing independent uncertainty. Cancellation,
+slot/root reuse and history eviction preserve original-root refusal.
+
+Current source baseline `/private/tmp/fios-009-current-handoff-wd3wku8f/receipt.json`,
+SHA1929a27956a4a10772a34c33ccd9ad611991ec82d730919b6a0c331c39427da7,
+records two expected missing-interface compile failures. Candidate
+`/private/tmp/fios-009-current-handoff-k1auu074/receipt.json`, SHA
+ a73fef472ce01f0073626f7892ed2be79d7af8bcc658a88c1b9725e32c53945a,
+passes four compile/runtime stages,8 filtered tests per mode. This binds selected
+parent/overlay module inputs; it is not whole-native or installed provenance.
+Both Swift policy suites pass, including strict typed handoff operation/source/
+root checks. The actual client fixture compiles separately under
+`/private/tmp/fios-009-handoff-client-preflight-J7EnpK/`.
+
+The full private native enclosure is
+`/private/tmp/fios-009-handoff-enclosure-ndyhmvt9/`. Exactly5 paths differ from the
+previous local-retirement candidate, including the new header parser;2380 source
+paths are retained. Semantic/link qualification and actual empty native HTTP /
+Swift-client / journal acceptance are pending, not assumed. No real model POST,
+installation, activation, Studio acceptance, merge or deployment occurred.
+Whole tasks39/55 remain.
+
+Final handoff enclosure: semantic35/35 in504.577s, link32/32 in14.103s and
+shared-global units-check in1.324s pass, inputs unchanged. Raw binary
+7c7f893b1e49f4ddb82cc9c93f34dfe47b61a409d190063b7fc25a32fbbe3125;
+normalized binary14176f85064a0a4b8fb47be88e0ca7c5a4084166c63ae56c9e9efd1eea3426f3;
+capsule47112580b78e9accfb6d4de2c1b5a73b5eb0fd77a68ec8b5f21dc224825275d9.
+All four private empty-model/current-Core checks pass. Current component/native
+module bytes match exactly, including router/header; postrun confirms5 changed
+paths among2380 src files and unchanged446-file SDK/C++/ANE inputs.
+
+Actual native HTTP → kernel/image-checked Swift client → durable original-root
+journal workflow passes `/private/tmp/f9-handoff-bEVCxJ/receipt.json`, SHA256
+9173225c8151a05590bc4e1b53497e189f24398cb31ce90674e2f1634a6ac269.
+It registers/checkpoints each original native root before POST, across separate
+client/journal lifetimes. Cancellation before handoff rejects the original late
+HTTP request409; a second registered request reaches exact empty-catalog target
+validation404 and its fast local retirement retains the checkpointed original
+root. No aggregate counter supplies identity. Both independent uncertain claims
+remain held; the cancellation acknowledgement is not an inference-proof issuer.
+This is source/native metadata integration, not successful model execution or
+physical completion/admission acceptance. Two rejected HTTP POSTs are distinct
+from real-model inference. The separate ordinary correlation guard fixture makes
+nine additional rejected empty-catalog requests;0 real model POSTs/plans occur.
+
+Final198 Node/107 installed Python tests, Debug/optimized platform suites, client
+fixture compile, syntax, source-composition and boundary/whitespace checks pass.
+Aggregate `/private/tmp/fios-009-handoff-enclosure-ndyhmvt9/final-review.json`, SHA
+26e59abec2c05d776b366674ae1024663fba62841d990a57a7c98f836bd328fe,
+binds selected receipts without whole-native/publisher provenance. Published
+c41986fe17725af8e67731bc98a5d056018042dc / CI43772798771 passed all seven jobs.
+This handoff increment needs new exact-head CI after publication. No whole task,
+installation, activation, Studio acceptance, merge or deployment completes.

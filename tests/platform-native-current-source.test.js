@@ -102,7 +102,12 @@ test('current ingress retains exact base companions plus separate local retireme
     for(const [name,bytes]of selected)writeFileSync(path.join(directory,name),bytes);
     execFileSync('git',['apply','--check','-'],{cwd:directory,input:overlay,stdio:['pipe','pipe','pipe']});
     execFileSync('git',['apply','-'],{cwd:directory,input:overlay,stdio:['pipe','pipe','pipe']});
-    for(const name of companions)assert.equal(readFileSync(path.join(directory,'src/fios',name),'utf8'),readFileSync('platform/studio/native/'+name,'utf8'));
+    const handoff=readFileSync('platform/studio/native/mlx-serve-handoff-companions.patch','utf8');
+    assert.deepEqual([...handoff.matchAll(/^diff --git a\/(\S+) b\/(\S+)$/gm)].map(m=>{assert.equal(m[1],m[2]);return m[1]}),
+      ['src/fios/control_protocol.zig','src/fios/control_transport.zig','src/fios/request_ownership.zig','src/fios/handoff_header.zig']);
+    execFileSync('git',['apply','--check','-'],{cwd:directory,input:handoff,stdio:['pipe','pipe','pipe']});
+    execFileSync('git',['apply','-'],{cwd:directory,input:handoff,stdio:['pipe','pipe','pipe']});
+    for(const name of [...companions,'handoff_header.zig'])assert.equal(readFileSync(path.join(directory,'src/fios',name),'utf8'),readFileSync('platform/studio/native/'+name,'utf8'));
   } finally {rmSync(directory,{recursive:true,force:true});}
 });
 
@@ -957,4 +962,15 @@ test('current private H3 cleanup preserves exact model-free owner controls and h
   assert(sections[1].includes('+    fios_pending_result: ?h3.GenResult = null,'));
   assert(sections[1].includes('+    if (ane_cleanup.enabled) e.fios_pending_result = res;'));
   assert(sections[1].includes('+        if (e.resident.tryRelease() == null) {'));
+});
+
+
+test('native handoff overlay stays within original-root metadata and fixed HTTP binding',()=>{
+ const patch=readFileSync('platform/studio/native/mlx-serve-request-handoff.patch','utf8');
+ const paths=[...patch.matchAll(/^diff --git a\/(\S+) b\/(\S+)$/gm)].map(m=>{assert.equal(m[1],m[2]);return m[1]});
+ assert.deepEqual(paths,['src/fios/request_ownership.zig','src/fios/control_protocol.zig','src/fios/control_transport.zig','src/host/http/router.zig','src/fios/handoff_header.zig']);
+ const parents=JSON.parse(readFileSync('platform/studio/native/request_handoff_parents.json','utf8'));
+ assert.deepEqual(Object.keys(parents),paths);
+ assert.equal(parents['src/fios/handoff_header.zig'],null);
+ for(const [name,sha]of Object.entries(parents))if(sha!==null)assert.match(sha,/^[a-f0-9]{64}$/);
 });

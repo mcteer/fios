@@ -5,6 +5,9 @@ const std = @import("std");
 pub const capacity = 256;
 pub const model_limit = 1024;
 pub const model_capacity = 64;
+pub const handoff_capacity = 32;
+pub const HandoffRegistration = struct { instance: [16]u8, correlation: CorrelationID, root_sequence: u64 };
+pub const HandoffState = enum { pending, handed_off, cancelled, unknown };
 // Exact JSON-safe capture counter; exhaustion stays fenced, never wraps.
 pub const maximum_sample_sequence: u64 = 9_007_199_254_740_991;
 pub const Token = struct { slot: usize, sequence: u64, instance: [16]u8 };
@@ -50,6 +53,7 @@ pub const RetirementSnapshot = struct {
     uncertain: bool = true,
 };
 const Retirement = struct {
+    handoff_cancelled: bool = false,
     correlation: CorrelationID = @splat(0),
     root_sequence: u64 = 0,
     sequence: u64 = 0,
@@ -65,6 +69,8 @@ const MutationSlot = struct {
     sequence: u64 = 0,
 };
 const Slot = struct {
+    pending_handoff: bool = false,
+    cancelled_handoff: bool = false,
     sequence: u64 = 0,
     phase: Phase = .vacant,
     primary: ?u6 = null,
@@ -308,6 +314,74 @@ pub const Tracker = struct {
         }
         return &self.slots[token.slot];
     }
+    // Native-private identity reservation only; no model/idle/admission grant.
+    // It makes the original root observable before a worker may POST.
+    pub fn registerHandoff(self: *Tracker, io: std.Io, id: CorrelationID) !HandoffRegistration {
+        self.mutex.lockUncancelable(io);
+        defer self.mutex.unlock(io);
+        if (!self.initialized or self.uncertain) return error.CoverageUncertain;
+        var pending: usize = 0;
+        for (self.slots) |slot| {
+            if (slot.pending_handoff) pending += 1;
+            if (slot.correlation) |existing| if (std.mem.eql(u8, &existing, &id)) return error.DuplicateCorrelation;
+        }
+        for (self.retirements) |record| {
+            if (record.sequence > 0 and std.mem.eql(u8, &record.correlation, &id)) return error.DuplicateCorrelation;
+        }
+        if (pending >= handoff_capacity) return error.HandoffCapacity;
+        const token = try self.enterLocked(false);
+        const slot = &self.slots[token.slot];
+        slot.correlation = id;
+        slot.correlation_root = token.sequence;
+        slot.pending_handoff = true;
+        return .{ .instance = self.instance, .correlation = id, .root_sequence = token.sequence };
+    }
+    // Only the explicit registered-root HTTP path may consume this identity.
+    // An absent/cancelled/evicted original can NEVER fall back to associate().
+    pub fn associateHandoff(self: *Tracker, io: std.Io, incoming: Token, id: CorrelationID, root: u64) !void {
+        self.mutex.lockUncancelable(io);
+        defer self.mutex.unlock(io);
+        if (!self.initialized or self.uncertain) return error.CoverageUncertain;
+        const target = try self.checked(incoming);
+        if (target.phase != .ingress or target.correlation != null or target.pending_handoff) return error.InvalidCorrelationState;
+        for (&self.slots, 0..) |*slot, index| {
+            const correlation = slot.correlation orelse continue;
+            if (!slot.pending_handoff or slot.sequence != root or !std.mem.eql(u8, &correlation, &id)) continue;
+            if (slot.phase != .ingress or slot.references != 1 or slot.primary != null or slot.models != 0 or slot.correlation_root != root) {
+                self.uncertain = true; return error.InvalidHandoffState;
+            }
+            target.correlation = id;
+            target.correlation_root = root;
+            slot.pending_handoff = false;
+            try self.leaveLocked(.{ .instance = self.instance, .slot = index, .sequence = root });
+            return;
+        }
+        return error.MissingHandoff;
+    }
+    // Atomically close only an unconsumed registration. A request which won
+    // the same mutex has already handed off and stays independently owned.
+    // This result is not exposed as native completion or admission authority.
+    pub fn cancelHandoff(self: *Tracker, io: std.Io, id: CorrelationID, root: u64) HandoffState {
+        self.mutex.lockUncancelable(io);
+        defer self.mutex.unlock(io);
+        if (!self.initialized or self.uncertain or root == 0) return .unknown;
+        for (&self.slots, 0..) |*slot, index| {
+            const correlation = slot.correlation orelse continue;
+            if (slot.correlation_root != root or !std.mem.eql(u8, &correlation, &id)) continue;
+            if (!slot.pending_handoff) return .handed_off;
+            if (slot.phase != .ingress or slot.references != 1 or slot.primary != null or slot.models != 0 or slot.sequence != root) {
+                self.uncertain = true; return .unknown;
+            }
+            slot.pending_handoff = false;
+            slot.cancelled_handoff = true;
+            self.leaveLocked(.{ .instance = self.instance, .slot = index, .sequence = root }) catch { self.uncertain = true; return .unknown; };
+            return if (self.uncertain) .unknown else .cancelled;
+        }
+        for (self.retirements) |record| {
+            if (record.sequence > 0 and record.root_sequence == root and std.mem.eql(u8, &record.correlation, &id) and record.handoff_cancelled) return .cancelled;
+        }
+        return .unknown;
+    }
     pub fn associate(self: *Tracker, io: std.Io, token: Token, id: CorrelationID) !void {
         self.mutex.lockUncancelable(io);
         defer self.mutex.unlock(io);
@@ -371,7 +445,7 @@ pub const Tracker = struct {
         }
         return result;
     }
-    fn recordRetirementLocked(self: *Tracker, id: CorrelationID, root: u64) void {
+    fn recordRetirementLocked(self: *Tracker, id: CorrelationID, root: u64, cancelled: bool) void {
         // Called only after the original slot's final reference release. Other
         // descendants with this root keep the local request lineage live.
         for (self.slots) |other| {
@@ -381,7 +455,7 @@ pub const Tracker = struct {
         }
         if (root == 0 or self.retirement_sequence == std.math.maxInt(u64)) { self.uncertain = true; return; }
         self.retirement_sequence += 1;
-        self.retirements[self.retirement_cursor] = .{ .correlation = id, .root_sequence = root, .sequence = self.retirement_sequence };
+        self.retirements[self.retirement_cursor] = .{ .correlation = id, .root_sequence = root, .sequence = self.retirement_sequence, .handoff_cancelled = cancelled };
         self.retirement_cursor = (self.retirement_cursor + 1) % capacity;
         // Eviction discards local history only. Missing records stay unknown;
         // it never releases a manager claim or clears native uncertainty.
@@ -519,6 +593,7 @@ pub const Tracker = struct {
     }
     fn bindLocked(self: *Tracker, token: Token, model: []const u8) !void {
         const slot = try self.checked(token);
+        if (slot.pending_handoff) { self.uncertain = true; return error.InvalidHandoffState; }
         if (slot.phase != .ingress) {
             self.uncertain = true;
             return error.InvalidPhase;
@@ -574,6 +649,7 @@ pub const Tracker = struct {
         self.mutex.lockUncancelable(io);
         defer self.mutex.unlock(io);
         const slot = try self.checked(token);
+        if (slot.pending_handoff) { self.uncertain = true; return error.InvalidHandoffState; }
         if (slot.references == std.math.maxInt(u32)) {
             self.uncertain = true;
             return error.ReferenceOverflow;
@@ -590,6 +666,7 @@ pub const Tracker = struct {
         var seen: [capacity]bool = @splat(false);
         for (tokens) |token| {
             const slot = try self.checked(token);
+            if (slot.pending_handoff) { self.uncertain = true; return error.InvalidHandoffState; }
             if (seen[token.slot]) continue;
             if (slot.references == std.math.maxInt(u32)) { self.uncertain = true; return error.ReferenceOverflow; }
             seen[token.slot] = true;
@@ -661,8 +738,9 @@ pub const Tracker = struct {
         // native completion decision and never clears the independent fence.
         const correlation = slot.correlation;
         const root = slot.correlation_root;
+        const cancelled = slot.cancelled_handoff;
         slot.* = .{};
-        if (correlation) |id| self.recordRetirementLocked(id, root);
+        if (correlation) |id| self.recordRetirementLocked(id, root, cancelled);
     }
     pub fn snapshot(self: *Tracker, io: std.Io) Snapshot {
         self.mutex.lockUncancelable(io);

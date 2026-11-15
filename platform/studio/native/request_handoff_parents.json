@@ -1,0 +1,7 @@
+{
+  "src/fios/request_ownership.zig": "72a10afa25b9f0bf109fc646f75cf8a2aca7c96ac191b0ae527e4f0522c59916",
+  "src/fios/control_protocol.zig": "b0a81fa65709ba4628cfa89ede76062cbf26bcff78976d26930cb35966ca01a9",
+  "src/fios/control_transport.zig": "b3babe3e86c2b5b53efd3230bbe1ce5f549cf0e7917536513fa9c2c505b04fd2",
+  "src/host/http/router.zig": "00559d9198760b21a0a587e84fbbfcc9b8be8064b033cb7cdb9b6762ceb0a67f",
+  "src/fios/handoff_header.zig": null
+}

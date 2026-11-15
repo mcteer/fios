@@ -736,3 +736,106 @@ test "retirement history counter exhaustion fences rather than wrapping" {
     try std.testing.expect(!record.recorded and record.uncertain);
     try std.testing.expect(tracker.snapshot(io).uncertain);
 }
+
+test "handoff establishes original root before a fast incoming request" {
+    var tracker: ownership.Tracker = .{ .primary_guard = true };
+    try tracker.initialize(io, @splat(81));
+    const registered=try tracker.registerHandoff(io,@splat(82));
+    const before=tracker.correlationSnapshot(io,@splat(82));
+    try std.testing.expect(before.found and before.root_sequence==registered.root_sequence);
+    const incoming=try tracker.enter(io);
+    try std.testing.expectError(error.DuplicateCorrelation,tracker.associate(io,incoming,@splat(82)));
+    try std.testing.expectError(error.MissingHandoff,tracker.associateHandoff(io,incoming,@splat(82),registered.root_sequence+1));
+    try tracker.associateHandoff(io,incoming,@splat(82),registered.root_sequence);
+    try tracker.bind(io,incoming,"model-a");
+    const during=tracker.correlationSnapshot(io,@splat(82));
+    try std.testing.expectEqual(registered.root_sequence,during.root_sequence);
+    try std.testing.expectEqual(@as(usize,1),during.owners);
+    try std.testing.expectEqual(ownership.HandoffState.handed_off,tracker.cancelHandoff(io,@splat(82),registered.root_sequence));
+    try tracker.leave(io,incoming);
+    const retired=tracker.retirementSnapshot(io,@splat(82),registered.root_sequence);
+    try std.testing.expect(retired.recorded and !retired.uncertain);
+}
+
+test "handoff cancellation denies the original late request even after history eviction" {
+    var tracker: ownership.Tracker = .{};
+    try tracker.initialize(io,@splat(83));
+    const registered=try tracker.registerHandoff(io,@splat(84));
+    try std.testing.expectEqual(ownership.HandoffState.cancelled,tracker.cancelHandoff(io,@splat(84),registered.root_sequence));
+    try std.testing.expectEqual(ownership.HandoffState.cancelled,tracker.cancelHandoff(io,@splat(84),registered.root_sequence));
+    const incoming=try tracker.enter(io);
+    try std.testing.expectError(error.MissingHandoff,tracker.associateHandoff(io,incoming,@splat(84),registered.root_sequence));
+    try tracker.leave(io,incoming);
+    for(0..ownership.capacity) |_| {
+        const request=try tracker.enter(io);try tracker.associate(io,request,@splat(85));try tracker.leave(io,request);
+    }
+    try std.testing.expectEqual(ownership.HandoffState.unknown,tracker.cancelHandoff(io,@splat(84),registered.root_sequence));
+    const newer=try tracker.registerHandoff(io,@splat(84));
+    try std.testing.expect(newer.root_sequence!=registered.root_sequence);
+    const late=try tracker.enter(io);
+    try std.testing.expectError(error.MissingHandoff,tracker.associateHandoff(io,late,@splat(84),registered.root_sequence));
+    try tracker.leave(io,late);
+    try std.testing.expectEqual(ownership.HandoffState.cancelled,tracker.cancelHandoff(io,@splat(84),newer.root_sequence));
+}
+
+test "handoff pending capacity and independent uncertainty never turn into native admission" {
+    var tracker: ownership.Tracker = .{};
+    try tracker.initialize(io,@splat(86));
+    var registrations:[ownership.handoff_capacity]ownership.HandoffRegistration=undefined;
+    for(&registrations,0..) |*registration,index| {
+        var id:ownership.CorrelationID=@splat(0);id[0]=@intCast(index);
+        registration.*=try tracker.registerHandoff(io,id);
+    }
+    try std.testing.expectError(error.HandoffCapacity,tracker.registerHandoff(io,@splat(87)));
+    try std.testing.expect(!tracker.snapshot(io).uncertain);
+    tracker.fence(io);
+    try std.testing.expectEqual(ownership.HandoffState.unknown,tracker.cancelHandoff(io,@splat(0),registrations[0].root_sequence));
+    try std.testing.expectEqual(ownership.handoff_capacity,tracker.snapshot(io).owned);
+}
+
+test "handoff cancellation and incoming association have one atomic winner" {
+    const Race=struct {
+        tracker:*ownership.Tracker,
+        incoming:ownership.Token,
+        registration:ownership.HandoffRegistration,
+        start:std.atomic.Value(bool)=.init(false),
+        associated:bool=false,
+        failed:bool=false,
+        outcome:ownership.HandoffState=.unknown,
+        fn associate(self:*@This())void {
+            while(!self.start.load(.acquire))std.atomic.spinLoopHint();
+            self.tracker.associateHandoff(io,self.incoming,self.registration.correlation,self.registration.root_sequence) catch |err| {
+                if(err!=error.MissingHandoff)self.failed=true;
+                return;
+            };
+            self.associated=true;
+        }
+        fn cancel(self:*@This())void {
+            while(!self.start.load(.acquire))std.atomic.spinLoopHint();
+            self.outcome=self.tracker.cancelHandoff(io,self.registration.correlation,self.registration.root_sequence);
+        }
+    };
+    for(0..32) |_| {
+        var tracker:ownership.Tracker=.{};
+        try tracker.initialize(io,@splat(90));
+        const registered=try tracker.registerHandoff(io,@splat(91));
+        const incoming=try tracker.enter(io);
+        var race:Race=.{.tracker=&tracker,.incoming=incoming,.registration=registered};
+        const first=try std.Thread.spawn(.{},Race.associate,.{&race});
+        const second=std.Thread.spawn(.{},Race.cancel,.{&race}) catch |err| {
+            race.start.store(true,.release);first.join();return err;
+        };
+        race.start.store(true,.release);first.join();second.join();
+        try std.testing.expect(!race.failed);
+        if(race.outcome==.cancelled) {
+            try std.testing.expect(!race.associated);
+            try std.testing.expectError(error.MissingHandoff,tracker.associateHandoff(io,incoming,@splat(91),registered.root_sequence));
+        } else {
+            try std.testing.expect(race.outcome==.handed_off and race.associated);
+            try std.testing.expectEqual(registered.root_sequence,tracker.correlationSnapshot(io,@splat(91)).root_sequence);
+        }
+        try tracker.leave(io,incoming);
+        try std.testing.expectEqual(@as(usize,0),tracker.snapshot(io).owned);
+        try std.testing.expect(!tracker.snapshot(io).uncertain);
+    }
+}

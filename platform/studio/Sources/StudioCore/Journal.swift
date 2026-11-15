@@ -497,6 +497,15 @@ public final class Journal {
         try execute("INSERT INTO native_lineages(job,attempt,payload) VALUES(?,?,?) ON CONFLICT(job,attempt) DO UPDATE SET payload=excluded.payload",[job,String(attempt),payload])
         return observation
     }
+    // Original native identity only, not current liveness, model permission
+    // or terminal evidence. Changed peer/source checkpoints remain unusable.
+    func originalNativeRoot(job:String,attempt:Int,scope:InferenceScope,peer:NativeControlPeer)throws->UInt64? {
+        guard let record=try inferenceScope(job:job,attempt:attempt),[.dispatched,.uncertain].contains(record.state),
+              try record.scope.encoded()==scope.encoded() else {throw JournalError.conflict}
+        guard let saved=try lineageCheckpoint(job:job,attempt:attempt) else {return nil}
+        let consumer=try NativeRequestLineageConsumer(scope:scope,job:job,attempt:attempt,peer:peer,checkpoint:saved)
+        return consumer.fenced ? nil:consumer.rootSequence
+    }
     // Persist original-root/replay binding before returning local retirement
     // metadata. No inference state transition or reservation release occurs.
     func observeRetirement(job:String,attempt:Int,scope:InferenceScope,peer:NativeControlPeer,

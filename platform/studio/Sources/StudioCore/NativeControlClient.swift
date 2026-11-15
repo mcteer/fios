@@ -140,6 +140,20 @@ struct NativeControlClient:Sendable {
         guard stamp>=0,completed<=ActivityPolicy.maximumTimestamp,completed>=stamp,completed-stamp<=5000 else {throw NativeControlError.invalid}
         return NativeRequestLineageSample(peer:peer,sampledAt:stamp,lineage:value)
     }
+    func registerHandoff(instance:String,correlationID:String)throws->NativeHandoffSample {
+        try handoff(operation:.register,instance:instance,correlationID:correlationID,rootSequence:0)
+    }
+    func cancelHandoff(instance:String,correlationID:String,rootSequence:UInt64)throws->NativeHandoffSample {
+        try handoff(operation:.cancel,instance:instance,correlationID:correlationID,rootSequence:rootSequence)
+    }
+    private func handoff(operation:NativeHandoffOperation,instance:String,correlationID:String,rootSequence:UInt64)throws->NativeHandoffSample {
+        let began=HostResources.nowMilliseconds()
+        let request=try NativeHandoffWire.request(operation:operation,instance:instance,correlationID:correlationID,rootSequence:rootSequence)
+        let result=try NativeHandoffWire.reply(exchange(request,maximum:88),operation:operation,instance:instance,correlationID:correlationID,rootSequence:rootSequence)
+        let completed=HostResources.nowMilliseconds()
+        guard (0...ActivityPolicy.maximumTimestamp).contains(began),completed>=began,completed<=ActivityPolicy.maximumTimestamp,completed-began<=5000 else {throw NativeControlError.invalid}
+        return NativeHandoffSample(peer:peer,sampledAt:began,result:result)
+    }
     func retirement(instance:String,correlationID:String,rootSequence:UInt64)throws->NativeRequestRetirementSample {
         let began=HostResources.nowMilliseconds()
         let request=try NativeRequestRetirementWire.request(instance:instance,correlationID:correlationID,rootSequence:rootSequence)
