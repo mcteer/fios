@@ -1138,3 +1138,12 @@ node scripts/check-platform-current-ane-seam.mjs --isolated --source /private/tm
 ```
 
 Imports the actual complete guard and existing negative composition; raw native flag and CPU fallback are explicit substitutes. Full-file AST, exact two-file reverse/reapply projection and selected dependency closure are checked. No model/runtime installation or positive native authority; full enclosure is recorded separately.
+
+
+Existing SDK ANE Unit/calibration original-scope component check:
+
+```sh
+node scripts/check-platform-current-ane-unit.mjs --isolated --source /private/tmp/fios-009-ane-unit-origin-work-ukj2bzax/source --zig /private/tmp/fios-009-port-26112-ft5mnlcq/source/.zig-toolchain/zig
+```
+
+Requires the exact two-file overlay over the qualified seam candidate and frozen dependency closure. Actual host callbacks/tracker/guard and queue/calibration methods execute; native eval is a CPU substitute, GPU complement omitted. Parent calibration cases deliberately use the repaired queue to isolate the producer. Full native/model-free enclosing validation remains separate; no installed/positive native authority.
