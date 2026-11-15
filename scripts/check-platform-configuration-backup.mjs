@@ -50,7 +50,22 @@ try {
   assert.deepEqual(JSON.parse(run(helper,['check',restored])),{uncertain:1,exports:1});
   cli(state,['backup-state','--configuration',configuration,'--to',bundle],{expected:1});
   assert.equal(hash(readFileSync(join(bundle,'backup.json'))),receipt.sha256);
-  const final={scope:'isolated_packaged_cli_configuration_backup',manifest_sha256:args[4],source_revision:review.manifest.source_revision,backup_sha256:receipt.sha256,network:'denied',model_posts:0,installed:false,activation:false,uncertainty:1,exports:1,scratch};
+  const future=join(scratch,'future-state'),failedJournal=join(scratch,'failed-journal.sqlite');
+  run(helper,['seed',future]);run(helper,['future',future]);
+  assert.equal(cli(future,['backup','--to',failedJournal],{expected:1}),'');
+  assert.equal(existsSync(failedJournal),true,'Rejected journal output was deleted');
+  const index=JSON.parse(readFileSync(join(state,'artifacts/index.json')));
+  const blob=index.records[0].id+'.blob',sourceBlob=join(state,'artifacts',blob),payload=readFileSync(sourceBlob);
+  writeFileSync(sourceBlob,Buffer.alloc(payload.length));
+  const failedExports=join(scratch,'failed-export-bundle');
+  assert.equal(cli(state,['backup-state','--to',failedExports],{expected:1}),'');
+  assert.deepEqual(readFileSync(join(failedExports,'artifacts',blob)),Buffer.alloc(payload.length));
+  assert.equal(existsSync(join(failedExports,'backup.json')),false);
+  assert.deepEqual(readFileSync(sourceBlob),Buffer.alloc(payload.length));
+  writeFileSync(sourceBlob,payload);
+  assert.deepEqual(JSON.parse(run(helper,['check',state])),{uncertain:1,exports:1});
+  assert.equal(JSON.parse(cli(bundle,['verify-backup','--sha256',receipt.sha256])).ok,true);
+  const final={scope:'isolated_packaged_cli_configuration_backup',manifest_sha256:args[4],source_revision:review.manifest.source_revision,backup_sha256:receipt.sha256,network:'denied',failed_journal_retained:true,failed_export_retained:true,model_posts:0,installed:false,activation:false,uncertainty:1,exports:1,scratch};
   writeFileSync(join(scratch,'receipt.json'),JSON.stringify(final,null,2)+'\n',{mode:0o600});
   console.log(JSON.stringify(final));
 } catch(error) {

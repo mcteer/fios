@@ -5201,3 +5201,30 @@ runtime23.905s, optimized compile55.534s/runtime18.184s. Source changes are
 limited to retaining failed destination/sidecar data; no success receipt or
 admission behavior changes. A fresh committed-source package is next; the
 preceding a54e1012… package remains preserved and is not relabeled as current.
+
+
+Lower-level retention final package: clean committed source
+`58e302c7cc53d619a41b05d79238def37a0a9cd6`, private release
+`/private/tmp/fios-009-backup-retention-package-3i675_up/release`,9 artifacts,
+manifest `417ae05a46a79ed855761a773a67fc5ba364d63c948f70451a5b9125bf16af54`,
+declared-input projection `9596738f9ecc2ed92b269e5e93ba52e7aafe9c70746ed01a2c0c167410f133b7`.
+The expanded actual packaged-CLI checker passes with IP/Unix networking denied:
+version4 private round trip and no-overwrite, failed future-schema journal output
+retained without receipt, failed export-hash copy retained without sealing a
+bundle, source bytes unchanged, and actual original/restored journal/export
+checks retaining1 uncertain inference/1 export. No model or lifecycle action.
+Private fixture `/tmp/fios009-upgrade-configuration-pBaQxd`; backup receipt
+`ecd54133113c74c58032daee6d8af3472f31063a25155414abf125855c088595`.
+
+Both Studio reviews remain blocked5 with zero privileged commands/changes.
+Post-run complete release review passes for current417ae05a… and priora54e1012…,
+which is retained unchanged. Aggregate
+`/private/tmp/fios-009-backup-retention-package-3i675_up/review.json`, SHA256
+`e79b37cafad97a0b1f58c1acb35893d1b6112e95a5c60f432262adc283363302`,
+binds exact source test/red/package/plans/CLI logs and checker bytes. The checker
+extension is a separately bound test input outside the package-declared source
+projection; it is not whole-repository/native/build/publisher provenance. Prior
+old/new ordinary-format compatibility belongs to the preserveda54e1012… package,
+not silently relabeled to this build. All current focused/full Debug/optimized
+and actual packaged-CLI checks pass. T049 and whole39/55 remain unchanged;
+installed recovery/credential/rollback/uninstall acceptance is still open.

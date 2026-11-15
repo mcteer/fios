@@ -718,3 +718,10 @@ Lower-level backup retention follow-up: ordinary invalid-schema/export-hash
 fixtures require retaining private failed journal/export outputs without a
 receipt. Preceding journal loss reproduced; corrected focused/full Debug pass;
 optimized/package refresh pending. No native action or whole task closure.
+
+
+Lower-level retention selected-source final: focused and full Debug/optimized,
+clean58e302c nine-artifact package417ae05a…/projection9596738f… and expanded
+network-denied actual CLI failure/success tests pass; both Studio plans blocked5,
+post-run release review passes and prior package remains preserved. Aggregate
+e79b37ca…. No installed/native acceptance or wholeT049 closure;39/55 unchanged.
