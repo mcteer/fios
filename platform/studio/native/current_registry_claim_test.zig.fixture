@@ -1,0 +1,95 @@
+const std = @import("std");
+const owners = @import("fios/request_ownership.zig");
+const claims = @import("fios/current_registry_claim.zig");
+const Entry = struct { id: []const u8, state: enum { unloaded, loading, ready, error_state, evicting }, fios_load_uncertain: std.atomic.Value(bool) = .init(false) };
+const Registry = struct { mutex: std.Io.Mutex = .init, entries: std.StringHashMap(*Entry), generation: std.atomic.Value(u64) = .init(7) };
+test "fios current registry claim accepts exact advertised cold metadata without loading" {
+    const io = std.testing.io;
+    var tracker: owners.Tracker = .{ .primary_guard = true };
+    try tracker.initialize(io, @splat(151));
+    var registry: Registry = .{ .entries = std.StringHashMap(*Entry).init(std.testing.allocator) };
+    defer registry.entries.deinit();
+    var a: Entry = .{ .id = "fixture/a", .state = .unloaded };
+    var b: Entry = .{ .id = "fixture/b", .state = .ready };
+    try registry.entries.put(a.id, &a);
+    try registry.entries.put(b.id, &b);
+    const root = try claims.claim(io, &tracker, &registry, a.id, @splat(1));
+    try std.testing.expect(a.state == .unloaded and b.state == .ready and registry.generation.load(.acquire) == 7);
+    try std.testing.expect(tracker.correlationSnapshot(io, @splat(1)).root_sequence == root.sequence);
+    try std.testing.expectError(error.ModelConflict, claims.claim(io, &tracker, &registry, b.id, @splat(2)));
+    try std.testing.expectEqual(@as(usize, 1), tracker.primarySnapshot(io).owned);
+    try tracker.leave(io, root);
+}
+test "fios current registry claim refuses missing mismatched failed and transitioning identities" {
+    const io = std.testing.io;
+    var tracker: owners.Tracker = .{ .primary_guard = true };
+    try tracker.initialize(io, @splat(152));
+    var registry: Registry = .{ .entries = std.StringHashMap(*Entry).init(std.testing.allocator) };
+    defer registry.entries.deinit();
+    var a: Entry = .{ .id = "fixture/a", .state = .unloaded };
+    var b: Entry = .{ .id = "fixture/b", .state = .loading };
+    try registry.entries.put(a.id, &a);
+    try registry.entries.put(b.id, &b);
+    try std.testing.expectError(error.MissingRegistryIdentity, claims.claim(io, &tracker, &registry, "fixture/absent", @splat(3)));
+    try std.testing.expectError(error.ModelTransition, claims.claim(io, &tracker, &registry, a.id, @splat(3)));
+    b.state = .evicting;
+    try std.testing.expectError(error.ModelTransition, claims.claim(io, &tracker, &registry, a.id, @splat(3)));
+    b.state = .unloaded;
+    b.fios_load_uncertain.store(true, .release);
+    try std.testing.expectError(error.CoverageUncertain, claims.claim(io, &tracker, &registry, a.id, @splat(3)));
+    b.fios_load_uncertain.store(false, .release);
+    a.state = .error_state;
+    try std.testing.expectError(error.ModelTransition, claims.claim(io, &tracker, &registry, a.id, @splat(3)));
+    a.state = .unloaded;
+    a.id = "fixture/renamed";
+    try std.testing.expectError(error.InvalidRegistryIdentity, claims.claim(io, &tracker, &registry, "fixture/a", @splat(3)));
+    a.id = "fixture/a";
+    try std.testing.expectError(error.CoverageUncertain, claims.claim(io, &tracker, &registry, a.id, @splat(3)));
+    try std.testing.expectEqual(@as(usize, 0), tracker.primarySnapshot(io).owned);
+}
+test "fios current registry claim probes before registry lock and known edge has no callback" {
+    const io = std.testing.io;
+    var tracker: owners.Tracker = .{ .primary_guard = true };
+    try tracker.initialize(io, @splat(153));
+    var registry: Registry = .{ .entries = std.StringHashMap(*Entry).init(std.testing.allocator) };
+    defer registry.entries.deinit();
+    var a: Entry = .{ .id = "fixture/a", .state = .unloaded };
+    try registry.entries.put(a.id, &a);
+    const Probe = struct {
+        var target: ?*Registry = null;
+        var calls: usize = 0;
+        var outside: bool = true;
+        fn read() bool {
+            calls += 1;
+            const reg = target.?;
+            if (reg.mutex.tryLock()) reg.mutex.unlock(std.testing.io) else outside = false;
+            return false;
+        }
+    };
+    Probe.target = &registry;
+    try tracker.enrollBackendUncertaintyProbe(io, Probe.read);
+    const root = try claims.claim(io, &tracker, &registry, a.id, @splat(4));
+    try std.testing.expect(Probe.outside and Probe.calls == 1);
+    try tracker.leave(io, root);
+    const next = try claims.claimKnown(io, &tracker, &registry, a.id, @splat(5));
+    try std.testing.expectEqual(@as(usize, 1), Probe.calls);
+    try tracker.leave(io, next);
+    registry.mutex.lockUncancelable(io);
+    try std.testing.expectError(error.RegistryBusy, claims.claimKnown(io, &tracker, &registry, a.id, @splat(6)));
+    registry.mutex.unlock(io);
+}
+test "fios current registry claim keeps diagnostic guard and uncertainty closed" {
+    const io = std.testing.io;
+    var tracker: owners.Tracker = .{ .primary_guard = false };
+    try tracker.initialize(io, @splat(154));
+    var registry: Registry = .{ .entries = std.StringHashMap(*Entry).init(std.testing.allocator) };
+    defer registry.entries.deinit();
+    var a: Entry = .{ .id = "fixture/a", .state = .unloaded };
+    try registry.entries.put(a.id, &a);
+    try std.testing.expectError(error.UnsupportedSourceGuard, claims.claim(io, &tracker, &registry, a.id, @splat(7)));
+    tracker.primary_guard = true;
+    tracker.fence(io);
+    try std.testing.expectError(error.CoverageUncertain, claims.claim(io, &tracker, &registry, a.id, @splat(7)));
+    try std.testing.expectEqual(@as(usize, 0), tracker.primarySnapshot(io).owned);
+    try std.testing.expect(tracker.knownUncertain(io));
+}

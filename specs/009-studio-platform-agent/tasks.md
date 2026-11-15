@@ -635,3 +635,7 @@ Coupled registry/request subset final:161/161 default native,35/35 enabled seman
 2026-11-15 single-lock correlated preparation claim: strict one-path projection,2 parent controls and4 candidate scenarios per Debug/ReleaseSafe pass; missing-overlay refuses before compiler. Internal CPU metadata only, actual serving guardfalse/no wire or native authority. Default native enclosure pending. See [contract](contracts/correlated-preparation-claim.md). Whole39/55 unchanged; T002/T019–T022 remain open.
 
 Correlated claim final source subset:2 parent controls +5 candidate scenarios/mode including actual two-thread conflict pass; default native build239.070s/161 fresh-process tests pass zero skips. No enabled-model/native authority or whole-task closure. Whole39/55 unchanged.
+
+2026-11-15 exact-registry CPU claim subset:3-path projection/2 parent controls/4 candidates per DebugReleaseSafe pass; known registry negative now latches tracker uncertainty, with retained failing-first candidate fixture. Actual ModelRegistry wrapper/default native enclosure pending. No transport/native capacity/admission authority/whole closure. Whole39/55 unchanged; [contract](contracts/registry-preparation-claim.md).
+
+Registry-claim final subset: strict3-path/10 component processes and162 fresh-process default native tests pass zero skips, including real ModelRegistry wrapper. Fixed source guard remains unsupported for actual serving; no whole checkbox closes. Whole39/55 unchanged.
