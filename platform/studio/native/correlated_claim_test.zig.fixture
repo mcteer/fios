@@ -1,0 +1,108 @@
+const std = @import("std");
+const owners = @import("fios/request_ownership.zig");
+test "fios current correlated source claim joins root correlation and model atomically" {
+    const io = std.testing.io;
+    var tracker: owners.Tracker = .{ .primary_guard = true };
+    try tracker.initialize(io, @splat(141));
+    const a = try tracker.claimCorrelatedPreparation(io, "fixture/a", @splat(1));
+    const b = try tracker.claimCorrelatedPreparation(io, "fixture/a", @splat(2));
+    const first = tracker.correlationSnapshot(io, @splat(1));
+    const second = tracker.correlationSnapshot(io, @splat(2));
+    try std.testing.expect(first.found and second.found and first.root_sequence == a.sequence and second.root_sequence == b.sequence);
+    try std.testing.expectEqual(@as(usize, 1), first.preparing);
+    try std.testing.expectEqual(@as(usize, 1), second.preparing);
+    try std.testing.expectEqual(@as(usize, 2), tracker.primarySnapshot(io).owned);
+    try std.testing.expectError(error.ModelConflict, tracker.claimCorrelatedPreparation(io, "fixture/b", @splat(3)));
+    try std.testing.expectEqual(@as(usize, 2), tracker.primarySnapshot(io).owned);
+    try std.testing.expect(!tracker.correlationSnapshot(io, @splat(3)).found);
+    try tracker.leave(io, a);
+    try tracker.leave(io, b);
+}
+test "fios current correlated source claim duplicate and maintenance leave older root intact" {
+    const io = std.testing.io;
+    var tracker: owners.Tracker = .{ .primary_guard = true };
+    try tracker.initialize(io, @splat(142));
+    const original = try tracker.claimCorrelatedPreparation(io, "fixture/a", @splat(4));
+    try std.testing.expectError(error.DuplicateCorrelation, tracker.claimCorrelatedPreparation(io, "fixture/a", @splat(4)));
+    const snapshot = tracker.correlationSnapshot(io, @splat(4));
+    try std.testing.expect(snapshot.found and snapshot.root_sequence == original.sequence and snapshot.references == 1);
+    _ = try tracker.pauseAdmissions(io);
+    try std.testing.expectError(error.Maintenance, tracker.claimCorrelatedPreparation(io, "fixture/a", @splat(5)));
+    try std.testing.expectEqual(@as(usize, 1), tracker.primarySnapshot(io).owned);
+    try tracker.leave(io, original);
+}
+test "fios current correlated source claim remains unsupported by diagnostic guard and uncertainty" {
+    const io = std.testing.io;
+    var tracker: owners.Tracker = .{ .primary_guard = false };
+    try tracker.initialize(io, @splat(143));
+    try std.testing.expectError(error.UnsupportedSourceGuard, tracker.claimCorrelatedPreparation(io, "fixture/a", @splat(6)));
+    try std.testing.expectEqual(@as(usize, 0), tracker.primarySnapshot(io).owned);
+    tracker.primary_guard = true;
+    tracker.fence(io);
+    try std.testing.expectError(error.CoverageUncertain, tracker.claimCorrelatedPreparation(io, "fixture/a", @splat(6)));
+    try std.testing.expect(tracker.primarySnapshot(io).uncertain);
+}
+test "fios current correlated source claim rejects target transition and preserves older uncertainty" {
+    const io = std.testing.io;
+    var tracker: owners.Tracker = .{ .primary_guard = true };
+    try tracker.initialize(io, @splat(144));
+    const mutation = try tracker.beginModelMutation(io, "fixture/a");
+    try std.testing.expectError(error.ModelTransition, tracker.claimCorrelatedPreparation(io, "fixture/a", @splat(7)));
+    try std.testing.expectEqual(@as(usize, 0), tracker.primarySnapshot(io).owned);
+    try tracker.endModelMutation(io, mutation);
+    const root = try tracker.claimCorrelatedPreparation(io, "fixture/a", @splat(7));
+    const held = try tracker.retainTokens(io, &.{root});
+    try tracker.leave(io, root);
+    tracker.fence(io);
+    try std.testing.expectError(error.CoverageUncertain, tracker.claimCorrelatedPreparation(io, "fixture/a", @splat(8)));
+    try std.testing.expect(!held.releaseIfCertain(io));
+    const original = tracker.correlationSnapshot(io, @splat(7));
+    try std.testing.expect(original.found and original.root_sequence == root.sequence and original.uncertain);
+}
+
+test "fios current correlated source claim concurrent conflicting roots serialize" {
+    const io = std.testing.io;
+    var tracker: owners.Tracker = .{ .primary_guard = true };
+    try tracker.initialize(io, @splat(145));
+    const Race = struct {
+        tracker: *owners.Tracker,
+        io: std.Io,
+        ready: *std.atomic.Value(u8),
+        go: *std.atomic.Value(bool),
+        model: []const u8,
+        id: owners.CorrelationID,
+        token: ?owners.Token = null,
+        failure: ?anyerror = null,
+        fn run(self: *@This()) void {
+            _ = self.ready.fetchAdd(1, .seq_cst);
+            while (!self.go.load(.seq_cst)) std.atomic.spinLoopHint();
+            self.token = self.tracker.claimCorrelatedPreparation(self.io, self.model, self.id) catch |err| {
+                self.failure = err;
+                return;
+            };
+        }
+    };
+    var ready = std.atomic.Value(u8).init(0);
+    var go = std.atomic.Value(bool).init(false);
+    var a: Race = .{ .tracker = &tracker, .io = io, .ready = &ready, .go = &go, .model = "fixture/a", .id = @splat(9) };
+    var b: Race = .{ .tracker = &tracker, .io = io, .ready = &ready, .go = &go, .model = "fixture/b", .id = @splat(10) };
+    const first = try std.Thread.spawn(.{}, Race.run, .{&a});
+    const second = std.Thread.spawn(.{}, Race.run, .{&b}) catch |err| {
+        go.store(true, .seq_cst);
+        first.join();
+        return err;
+    };
+    while (ready.load(.seq_cst) != 2) std.atomic.spinLoopHint();
+    go.store(true, .seq_cst);
+    first.join();
+    second.join();
+    try std.testing.expect((a.token != null) != (b.token != null));
+    const winner = if (a.token != null) &a else &b;
+    const loser = if (a.token != null) &b else &a;
+    try std.testing.expectEqual(error.ModelConflict, loser.failure.?);
+    try std.testing.expect(!tracker.correlationSnapshot(io, loser.id).found);
+    const retained = tracker.correlationSnapshot(io, winner.id);
+    try std.testing.expect(retained.found and retained.root_sequence == winner.token.?.sequence and retained.references == 1);
+    try std.testing.expectEqual(@as(usize, 1), tracker.primarySnapshot(io).owned);
+    try tracker.leave(io, winner.token.?);
+}

@@ -1,3 +1,17 @@
+# Correlated claim final source subset — 2026-11-15 01:03 UTC
+
+Whole39/55 unchanged. LocalHEADa3b923e; new root one-path claim patch/fixture/checker/contract/evidence ready for explicit009 commit. Five-case ROOTfixture includes realtwo-thread race; strictcheckerWP3TiJ/715881f7…12processesallpassfrozen. PriorNqobDg fourcases remains earlierqualifiedsubset. Private source standalone remains4cases and excludedfromrootenumeration. Full native build239.070s/161 zero-skip fresh-process tests pass; binary685fde92…,build8851da27…,runec686c28…. All test sessionscomplete; no source SDK/link/runtime repeated for CPUmetadata-only unusedprimitive. Published47c9CI43658847534 stillrunninglastcheck; awaitexactgreenbeforepushnewhead toavoidcancellinglongnativejob. Thenpushonce/updatePR10exacthead. No neednewpackage:862aa76 remainscurrentdeclaredplatforminputs.
+
+No sourceworker/caller/protocol nativegrantadded, actualservingguardfalse. Independentuncertaintypreserved. Continueauthorizedsourceengineering; no subagents/no sixthCoremodelplanPOST/no physicalfault/installactivation/Studioacceptance/merge/deploy. ProtectREADME/spec003/UI/browser/docs inventoryWIP. Shortanalysis/tools.
+
+# Current continuation — correlated claim source qualification
+
+Whole39/55 unchanged. Local HEADa3b923e extends strict C++ CPU record reader; published47c9b7f/CI43658847534 still running (five preceding jobs passed, native in progress). No push until that exact-head run finishes; do not repeatedly cancel native CI.
+
+Private `/private/tmp/fios-009-correlated-claim-work-2aixs1_h/source` copies qualified p21 registry source. New Tracker.claimCorrelatedPreparation locks root creation/correlation/model together, guardfalse unsupported, no transport/caller/native grant. Four standalone tests not imported by native root; actual fixture explicitly testguardtrue, negative testguardfalse preserved. Root one-path patch/fixture/checker +contract +partial evidence imported. Strict checker `/private/tmp/fios-009-correlated-claim-check-NqobDg/receipt.json` 127967fd… passes10, unchanged. Missing-overlay parent refusesbeforecompiler. Initial guard setup and checker variable setup failures retained. Source frozen while default native build runs: session51349, driverbuild-unit.py outputsclaim-native-unit-build-receipt.json. Then run run-unit.py, adapted for seventh standalone exclusion and161/100named61support expected; do not claim beforepass. Existing full enabled/SDK/runtime receipts apply only parent source; no new such run yet. This CPUmetadata-only increment changes no platform Swift/package inputs;862aa76 current declared package remains.
+
+Protect unrelated README/spec003/src UI/browser/docs inventory WIP. No subagents. Five consumed Core real plans only: no sixth/newplan/POST. No installation/activation/hardwarefault/Studioacceptance/merge/deploy. Don’t manufactureprofile/proof/guardflip; taskpartial never closeswhole. Continue actual implementation, short analysis/tools.
+
 # Spec 009 continuation — 2026-11-14
 
 ## Extended C++ CPU prerequisite parser — 00:45 UTC
