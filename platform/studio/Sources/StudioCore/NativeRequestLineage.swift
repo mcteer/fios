@@ -110,6 +110,26 @@ struct NativeRequestLineageConsumer:Sendable {
         _=try NativeLineageCheckpoint.decode(data)
         return data
     }
+    // A root must first have been observed live and checkpointed. This only
+    // returns correlated local metadata; it does not resolve native ownership.
+    mutating func acceptRetirement(_ sample:NativeRequestRetirementSample?,now:Int64)->NativeRequestRetirement? {
+        guard !fenced else {return nil}
+        guard (0...ActivityPolicy.maximumTimestamp).contains(now),now>=previousNow else {fenced=true;return nil}
+        previousNow=now
+        guard let sample else {return nil}
+        let value=sample.retirement
+        guard sample.peer.pid==peer.pid,sample.peer.start==peer.start,
+              sample.peer.executable.path.utf8.elementsEqual(peer.executable.path.utf8),sample.peer.executable.sha256==peer.executable.sha256,
+              value.instance==instance,value.correlationID==correlationID else {fenced=true;return nil}
+        guard (try? value.validate()) != nil,
+              (0...ActivityPolicy.maximumTimestamp).contains(sample.sampledAt),(-1000...5000).contains(now-sample.sampledAt),
+              sample.sampledAt>=sampledAt,value.sampleSequence>sequence else {return nil}
+        guard let original=rootSequence else {return nil}
+        guard original==value.rootSequence else {fenced=true;return nil}
+        sequence=value.sampleSequence;sampledAt=sample.sampledAt
+        guard value.recorded,!value.uncertain else {return nil}
+        return value
+    }
     mutating func accept(_ sample:NativeRequestLineageSample?,now:Int64)->NativeRequestLineageObservation {
         guard !fenced else {return .unknown}
         guard (0...ActivityPolicy.maximumTimestamp).contains(now),now>=previousNow else {fenced=true;return .unknown}

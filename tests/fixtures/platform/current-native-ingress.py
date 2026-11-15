@@ -9,10 +9,11 @@ import pathlib,subprocess,socket,tempfile,os,time,http.client,json,signal,sys,st
 assert sys.platform=="darwin" and os.geteuid()>0
 assert len(sys.argv) in [4,5] and sys.argv[1]=="--isolated"
 mode=sys.argv[4] if len(sys.argv)==5 else None
-assert mode in [None,"--expected-instance","--exact-target","--startup","--correlation","--activity"]
-check_instance=mode in ["--expected-instance","--exact-target","--correlation"]
-check_target=mode in ["--exact-target","--correlation"]
-check_correlation=mode=="--correlation"
+assert mode in [None,"--expected-instance","--exact-target","--startup","--correlation","--activity","--retirement"]
+check_instance=mode in ["--expected-instance","--exact-target","--correlation","--retirement"]
+check_target=mode in ["--exact-target","--correlation","--retirement"]
+check_correlation=mode in ["--correlation","--retirement"]
+check_retirement=mode=="--retirement"
 check_startup=mode=="--startup"
 check_activity=mode=="--activity"
 binary=pathlib.Path(sys.argv[2]);expected=sys.argv[3]
@@ -183,6 +184,12 @@ try:
     assert rejected_with({"X-Fios-Native-Instance":instance},payload)==expected_result,"CURRENT_NATIVE_BOUND_JSON_SELECTION_CHANGED"
    if check_correlation:
     assert rejected_with({"X-Fios-Native-Instance":instance,"X-Fios-Request-ID":"bad-id"})==(400,"invalid_request_identity"),"CURRENT_NATIVE_CORRELATION_HEADER_IGNORED"
+    if check_retirement:
+     # Controlled empty fixture has exactly one sequential HTTP caller. This
+     # predicts its next local token solely to exercise history wiring; an
+     # aggregate counter is NOT a production per-request/native proof.
+     code,activity_body=get("/v1/fios/activity");assert code==200
+     controlled_root=json.loads(activity_body)["sequence"]+1
     assert rejected_with({"X-Fios-Native-Instance":instance,"X-Fios-Request-ID":"a"*64})==(404,"native_target_not_found"),"CURRENT_NATIVE_VALID_CORRELATION_CHANGED_TARGET"
     end=time.monotonic()+2
     while time.monotonic()<end:
@@ -198,10 +205,22 @@ try:
     finally:client.close()
     assert lineage[:8]==b"FIP9"+bytes([1,0,0,1]) and lineage[8:24].hex()==instance and lineage[24:56]==bytes([0xaa])*32,"CURRENT_NATIVE_MISSING_LINEAGE_NOT_UNKNOWN"
     assert 0<struct.unpack(">Q",lineage[56:64])[0]<=9007199254740991 and lineage[64:100]==bytes(36)
+    if check_retirement:
+     query=bytearray(64);query[:4]=b"FIE9";query[4]=1;query[8:56]=lineage_request[8:56];query[56:64]=struct.pack(">Q",controlled_root)
+     client=socket.socket(socket.AF_UNIX);client.settimeout(2);client.connect(str(control));client.sendall(query);client.shutdown(socket.SHUT_WR);retired=b""
+     try:
+      while len(retired)<88:
+       part=client.recv(88-len(retired));assert part;retired+=part
+      assert client.recv(1)==b""
+     finally:client.close()
+     assert retired[:8]==b"FIZ9"+bytes([1,0,1,0]),"CURRENT_NATIVE_LOCAL_RETIREMENT_RECORD_MISSING"
+     assert retired[8:56]==query[8:56] and retired[64:72]==query[56:64] and retired[80:88]==bytes(8)
+     assert struct.unpack(">Q",retired[56:64])[0]>struct.unpack(">Q",lineage[56:64])[0] and struct.unpack(">Q",retired[72:80])[0]>0
+
 
   else:
    assert legacy==matching and legacy[0]>=400,"CURRENT_NATIVE_MATCHING_EPOCH_CHANGED_LEGACY_SELECTION"
- receipt={"binary_sha256":hashlib.sha256(binary.read_bytes()).hexdigest(),"native_pid":proc.pid,"source_instance":instance,"source_sequence":sequence,"source_sampled_at":stamp,"http_connection_counts":list(counts),"accepted_connection_observed":True,"original_http_connection_retired":True,"private_home":str(home),"models":0,"model_requests":9 if check_correlation else (7 if check_target else (3 if check_instance else 0)),"expected_instance_guard_checked":check_instance,"exact_target_guard_checked":check_target,"correlation_header_checked":check_correlation,"retired_lineage_is_unknown":check_correlation,"http_activity_checked":check_activity,"startup_reservation_checked":check_startup,"startup_reacquired_after_original_exit":check_startup,"metadata_available_while_reserved":check_startup,"inference_started":False,"coverage":"unknown","native_admission_authority":False,"peer_authentication_proven":False,"installed":False}
+ receipt={"binary_sha256":hashlib.sha256(binary.read_bytes()).hexdigest(),"native_pid":proc.pid,"source_instance":instance,"source_sequence":sequence,"source_sampled_at":stamp,"http_connection_counts":list(counts),"accepted_connection_observed":True,"original_http_connection_retired":True,"private_home":str(home),"models":0,"model_requests":9 if check_correlation else (7 if check_target else (3 if check_instance else 0)),"expected_instance_guard_checked":check_instance,"exact_target_guard_checked":check_target,"correlation_header_checked":check_correlation,"retired_lineage_is_unknown":check_correlation,"local_retirement_record_checked":check_retirement,"http_activity_checked":check_activity,"startup_reservation_checked":check_startup,"startup_reacquired_after_original_exit":check_startup,"metadata_available_while_reserved":check_startup,"inference_started":False,"coverage":"unknown","native_admission_authority":False,"peer_authentication_proven":False,"installed":False}
  (home/"receipt.json").write_text(json.dumps(receipt,indent=2)+"\n");print(json.dumps(receipt))
 finally:
  if proc.poll() is None:proc.terminate()

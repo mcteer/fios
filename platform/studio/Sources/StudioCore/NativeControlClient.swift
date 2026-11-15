@@ -140,6 +140,14 @@ struct NativeControlClient:Sendable {
         guard stamp>=0,completed<=ActivityPolicy.maximumTimestamp,completed>=stamp,completed-stamp<=5000 else {throw NativeControlError.invalid}
         return NativeRequestLineageSample(peer:peer,sampledAt:stamp,lineage:value)
     }
+    func retirement(instance:String,correlationID:String,rootSequence:UInt64)throws->NativeRequestRetirementSample {
+        let began=HostResources.nowMilliseconds()
+        let request=try NativeRequestRetirementWire.request(instance:instance,correlationID:correlationID,rootSequence:rootSequence)
+        let value=try NativeRequestRetirementWire.reply(exchange(request,maximum:88),instance:instance,correlationID:correlationID,rootSequence:rootSequence)
+        let completed=HostResources.nowMilliseconds()
+        guard (0...ActivityPolicy.maximumTimestamp).contains(began),completed>=began,completed<=ActivityPolicy.maximumTimestamp,completed-began<=5000 else {throw NativeControlError.invalid}
+        return NativeRequestRetirementSample(peer:peer,sampledAt:began,retirement:value)
+    }
     func backendFences(instance:String,after sequence:UInt64=0)throws->NativeBackendFenceSample {
         let began=HostResources.nowMilliseconds()
         let value=try NativeBackendFenceWire.currentReply(exchange(NativeBackendFenceWire.currentRequest(instance:instance),maximum:64),instance:instance,after:sequence)
@@ -159,7 +167,7 @@ struct NativeControlClient:Sendable {
         return NativePrimaryActivitySample(peer:peer,receivedAt:completed,registry:value)
     }
     private func exchange(_ data:Data,maximum:Int)throws->Data {
-        guard [32,64].contains(data.count),[64,80,112,NativePrimaryActivityWire.responseSize,NativePrimaryActivityWire.queuedResponseSize,NativeRegistryActivityWire.responseSize].contains(maximum) else {throw NativeControlError.invalid}
+        guard [32,64].contains(data.count),[64,80,88,112,NativePrimaryActivityWire.responseSize,NativePrimaryActivityWire.queuedResponseSize,NativeRegistryActivityWire.responseSize].contains(maximum) else {throw NativeControlError.invalid}
         guard path.hasPrefix("/"),path.utf8.count<104,!path.contains("\0") else {throw NativeControlError.invalid}
         var parent=stat(),socketInfo=stat()
         let directory=URL(fileURLWithPath:path).deletingLastPathComponent().path

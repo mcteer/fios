@@ -138,6 +138,10 @@ pub const Bridge = struct {
             const value = protocol.dispatchWithBarrier(&ownership.shared, self.io, input[0..protocol.request_size], self.barrier);
             @memcpy(storage[0..protocol.response_size], &value);
             break :legacy storage[0..protocol.response_size];
+        } else if (count == protocol.lineage_request_size and std.mem.eql(u8, input[0..4], "FIE9")) retirement: {
+            const value = protocol.dispatchRetirement(&ownership.shared, self.io, input[0..protocol.lineage_request_size]);
+            @memcpy(storage[0..protocol.retirement_response_size], &value);
+            break :retirement storage[0..protocol.retirement_response_size];
         } else if (count == protocol.lineage_request_size and std.mem.eql(u8, input[0..4], "FIQ9")) lineage: {
             const value = protocol.dispatchLineage(&ownership.shared, self.io, input[0..protocol.lineage_request_size]);
             @memcpy(storage[0..protocol.lineage_response_size], &value);

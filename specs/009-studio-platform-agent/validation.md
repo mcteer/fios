@@ -6569,3 +6569,79 @@ automatic failed-upgrade rollback, Compose configuration, model-free discovery,
 npm audit (zero) and Python audit (no known vulnerabilities; local fios-agent
 unpublished/unaudited) pass. Browser validation includes the separate existing003
 working-tree changes, which remain unstaged; no003 changes belong to this PR.
+
+## Connected request-retirement reconciliation input — 2026-11-15
+
+The tracker preserves original local release history after its final correlated
+slot/descendant retires. Missing live lineage is still unknown; this separate
+record is not native/device terminal or not-sent proof. Native ingress/admission,
+process cleanup and independent inference uncertainty retain their meaning.
+
+- Failing-first canonical tracker/API and wire checks are retained under
+  `/private/tmp/fios-009-retirement-{red,wire-red}.log`. Canonical tracker33 tests
+  and protocol8 tests pass in Debug/ReleaseSafe after implementation.
+- Current host-module baseline `/private/tmp/fios-009-current-retirement-v721a5ba/receipt.json`
+  records two expected missing-interface compiles. Initial broad current-module
+  run `/private/tmp/fios-009-current-retirement-kpaaiwdz/` includes two unrelated
+  one-shot media initialization tests in one process and fails InvalidInstance;
+  it is retained, not called a passing result. The final runner explicitly
+  filters retirement cases into fresh Debug/ReleaseSafe processes.
+- Current host module plus wire qualification
+  `/private/tmp/fios-009-current-retirement-2zl7j7j5/receipt.json`, SHA256
+  4313d074576ce091411da0141483e1be17ea90a565b550c279ce825100c3332d,
+  passes four compile/runtime stages. This tests exact parent/overlay inputs,
+  not the whole serving image or native terminality.
+- Actual tracker/Unix bridge → kernel/image-checked Swift client → durable journal
+  `/private/tmp/f9-retire-i9dAx0/receipt.json`, SHA256
+  df8a6646fb276d33847e70a72486a81d4323a516319210ec2b7d770f8154fdc7,
+  passes live, retained-child, locally-retired and independently-fenced stages.
+  Separate client/journal lifetimes preserve one unresolved/uncertain inference
+  claim. Initial `/private/tmp/f9-retire-a0s2gL/` exposed the omitted88-byte
+  transport allowlist entry; the final run includes the repair.
+- Final197 Node/107 installed Python tests,67 source-composition tests, frontend
+  build, agent boundary and Debug/optimized platform suites pass. Swift tests
+  additionally cover offset-safe/full-width wire identities, unobserved-root
+  refusal, replay across restart and changed-root fencing. The historical ingress
+  patch is unchanged; source-integrity testing applies the separate companion
+  overlay before comparing exact current module bytes.
+
+The private full serving enclosure is `/private/tmp/fios-009-retirement-enclosure-pruchpxc/`;
+its selected source comparison changes only tracker/protocol/transport among2379
+src files. Semantic/link qualification is running; no result is assumed. The
+174-file e867eb5 development package remains historical; current Swift sources
+have changed, so its projection is not a receipt for this implementation.
+Zero model plans/POSTs, native model/device operations, installation, activation,
+Studio acceptance, merge or deployment occurred. Whole tasks39/55 remain.
+
+Final enclosure: semantic35/35 in486.834s, link32/32 in12.317s and shared-global
+units-check in1.374s pass with bracketed inputs unchanged. Raw binary
+96d82ac8adbfd100a828797977d708cb9cf5b9ce0c65e9ab2fb8135e3f0d811a;
+normalized binary35f50f84f3227defb55f75da7207e34198b37b17cc9854b30c54f14a95a4d206;
+capsule a0c4627e4a76267311baf0d720371078c7a2540a6d9b01e548d1746f456df067.
+The final exact-count current-module runner receipt is
+`/private/tmp/fios-009-current-retirement-ptd1zchq/receipt.json`, SHA256
+2287b81e0e6e4deca5037d8e187da5aa76c607421046ae8c91ef1ac5c7cb97c6:
+Debug/ReleaseSafe each run8 filtered tests, including generated import tests;
+standalone mode requires6. All three current component module bytes match the
+full native source exactly. Canonical Debug/ReleaseSafe tracker33 and protocol8
+checks pass independently.
+
+All four private empty-model/current-Core checks pass; manager receipt
+`/private/tmp/f9-native-status-Sv5nGZ` remains nonauthoritative. Additional actual
+HTTP retirement fixture `/private/tmp/f9-cur-ingress-nbigoyv6/receipt.json` passes
+on the rebuilt image. It predicts the root from the sole controlled fixture's
+sequential request counter only to test native routing/history wiring. This is
+not production correlation, native proof or permission for a manager to adopt an
+unobserved root. The Swift consumer still refuses that adoption. Across the two
+empty-catalog guard scenarios18 model-endpoint requests were rejected;0 real
+inference requests/plans occurred. Compatibility prerequisites were checked only
+as data against the retained matched C++/C ABI pair, with no model plan.
+
+Postrun confirms exactly3 changed paths among2379 src files, unchanged446-file
+SDK stage/C++ config and unchanged ANE bridge/header. Aggregate
+`/private/tmp/fios-009-retirement-enclosure-pruchpxc/final-review.json`, SHA256
+3aa126df44e3a3f657b320f5724bb891a90c2c03bf6150841160ca260753fd9c, binds selected
+results; it grants no whole-native/publisher provenance. Previous published
+`dabc83d5881621ddf7e0b44e53cac088292354aa` CI43768745242 passed all seven jobs.
+This new increment requires its own exact-head CI. No whole task, installation,
+activation, Studio acceptance, merge or deployment completes.

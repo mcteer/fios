@@ -497,6 +497,19 @@ public final class Journal {
         try execute("INSERT INTO native_lineages(job,attempt,payload) VALUES(?,?,?) ON CONFLICT(job,attempt) DO UPDATE SET payload=excluded.payload",[job,String(attempt),payload])
         return observation
     }
+    // Persist original-root/replay binding before returning local retirement
+    // metadata. No inference state transition or reservation release occurs.
+    func observeRetirement(job:String,attempt:Int,scope:InferenceScope,peer:NativeControlPeer,
+                           sample:NativeRequestRetirementSample?,now:Int64)throws->NativeRequestRetirement? {
+        guard let record=try inferenceScope(job:job,attempt:attempt),[.dispatched,.uncertain].contains(record.state),
+              try record.scope.encoded()==scope.encoded() else {throw JournalError.conflict}
+        let saved=try lineageCheckpoint(job:job,attempt:attempt)
+        var consumer=try NativeRequestLineageConsumer(scope:scope,job:job,attempt:attempt,peer:peer,checkpoint:saved)
+        let observation=consumer.acceptRetirement(sample,now:now)
+        let payload=String(decoding:try consumer.checkpoint(scope:scope),as:UTF8.self)
+        try execute("INSERT INTO native_lineages(job,attempt,payload) VALUES(?,?,?) ON CONFLICT(job,attempt) DO UPDATE SET payload=excluded.payload",[job,String(attempt),payload])
+        return observation
+    }
     private func lineageCheckpoint(job:String,attempt:Int)throws->Data? {
         try validate(job:job,attempt:attempt)
         let row=try statement("SELECT payload FROM native_lineages WHERE job=? AND attempt=?",[job,String(attempt)])

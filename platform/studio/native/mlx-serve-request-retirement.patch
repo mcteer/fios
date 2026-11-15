@@ -1,0 +1,86 @@
+diff --git a/src/fios/request_ownership.zig b/src/fios/request_ownership.zig
+--- a/src/fios/request_ownership.zig
++++ b/src/fios/request_ownership.zig
+@@ -38,6 +38,21 @@
+     preparing: usize = 0,
+     active: usize = 0,
+     responding: usize = 0,
++};
++// Bounded history of local reference retirement, NOT backend/device terminal
++// or not-sent proof. A consumer still needs independent native evidence.
++pub const RetirementSnapshot = struct {
++    instance: [16]u8,
++    sample_sequence: u64,
++    root_sequence: u64,
++    retirement_sequence: u64 = 0,
++    recorded: bool = false,
++    uncertain: bool = true,
++};
++const Retirement = struct {
++    correlation: CorrelationID = @splat(0),
++    root_sequence: u64 = 0,
++    sequence: u64 = 0,
+ };
+ pub const Phase = enum { vacant, ingress, preparing, active, responding };
+ // Native-internal lease, NOT authentication or a wire management capability.
+@@ -200,6 +215,9 @@
+ 
+     slots: [capacity]Slot = @splat(.{}),
+     models: [model_capacity]Model = @splat(.{}),
++    retirements: [capacity]Retirement = @splat(.{}),
++    retirement_sequence: u64 = 0,
++    retirement_cursor: usize = 0,
+     sequence: u64 = 0,
+     sample_sequence: u64 = 0,
+     instance: [16]u8 = @splat(0),
+@@ -407,6 +425,36 @@
+         }
+         result.uncertain = result.uncertain or self.uncertain or !result.found;
+         return result;
++    }
++    pub fn retirementSnapshot(self: *Tracker, io: std.Io, id: CorrelationID, root: u64) RetirementSnapshot {
++        self.mutex.lockUncancelable(io);
++        defer self.mutex.unlock(io);
++        self.advanceCaptureLocked();
++        var result: RetirementSnapshot = .{ .instance = self.instance, .sample_sequence = self.sample_sequence, .root_sequence = root };
++        if (root == 0) return result;
++        for (self.retirements) |record| {
++            if (record.sequence == 0 or record.root_sequence != root or !std.mem.eql(u8, &record.correlation, &id)) continue;
++            result.recorded = true;
++            result.retirement_sequence = record.sequence;
++            result.uncertain = !self.initialized or self.uncertain;
++            break;
++        }
++        return result;
++    }
++    fn recordRetirementLocked(self: *Tracker, id: CorrelationID, root: u64) void {
++        // Called only after the original slot's final reference release. Other
++        // descendants with this root keep the local request lineage live.
++        for (self.slots) |other| {
++            const correlation = other.correlation orelse continue;
++            if (other.phase != .vacant and other.references > 0 and other.correlation_root == root and
++                std.mem.eql(u8, &correlation, &id)) return;
++        }
++        if (root == 0 or self.retirement_sequence == std.math.maxInt(u64)) { self.uncertain = true; return; }
++        self.retirement_sequence += 1;
++        self.retirements[self.retirement_cursor] = .{ .correlation = id, .root_sequence = root, .sequence = self.retirement_sequence };
++        self.retirement_cursor = (self.retirement_cursor + 1) % capacity;
++        // Eviction discards local history only. Missing records stay unknown;
++        // it never releases a manager claim or clears native uncertainty.
+     }
+     fn addModelLocked(self: *Tracker, slot: *Slot, id: []const u8) !u6 {
+         if (id.len == 0 or id.len > model_limit or !std.unicode.utf8ValidateSlice(id) or
+@@ -918,8 +966,12 @@
+             model.owners -= 1;
+             if (model.owners == 0) model.* = .{};
+         }
+-        // Clear identity without clearing the uncertainty fence or allowing replay.
++        // Preserve local retirement identity before slot reuse; this is not a
++        // native completion decision and never clears the independent fence.
++        const correlation = slot.correlation;
++        const root = slot.correlation_root;
+         slot.* = .{};
++        if (correlation) |id| self.recordRetirementLocked(id, root);
+     }
+     // Capture before queue publication. Validate the entire original union
+     // before retaining any root. No backend callback runs under this mutex.

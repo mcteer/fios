@@ -1,0 +1,4 @@
+{
+  "src/fios/control_protocol.zig": "9db1d74808a91fd64ef88ec209bf60b273ee29505fb3689f1dffdd7efd5b977b",
+  "src/fios/control_transport.zig": "7fd765d78efb1784e90d7af67181d2215f60cbf811dfdcaaaccc45e7291edfd9"
+}

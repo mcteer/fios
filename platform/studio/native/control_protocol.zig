@@ -112,6 +112,32 @@ pub fn dispatchLineage(tracker: *ownership.Tracker, io: std.Io, request: *const 
     return response;
 }
 
+// Local reference-retirement history only. A positive record is NOT native
+// completion/not-sent evidence and cannot release a durable inference claim.
+pub const retirement_response_size = 88;
+pub fn dispatchRetirement(tracker: *ownership.Tracker, io: std.Io, request: *const [64]u8) [retirement_response_size]u8 {
+    var response: [retirement_response_size]u8 = @splat(0);
+    @memcpy(response[0..4], "FIZ9"); response[4] = 1; response[7] = 1;
+    const root = std.mem.readInt(u64, request[56..64], .big);
+    if (!std.mem.eql(u8, request[0..4], "FIE9") or request[4] != 1 or
+        !std.mem.allEqual(u8, request[5..8], 0) or root == 0) {
+        response[5] = @intFromEnum(Status.invalid); return response;
+    }
+    _ = tracker.backendKnownUncertain(io);
+    const snapshot = tracker.retirementSnapshot(io, request[24..56].*, root);
+    @memcpy(response[8..24], &snapshot.instance);
+    @memcpy(response[24..56], request[24..56]);
+    std.mem.writeInt(u64, response[56..64], snapshot.sample_sequence, .big);
+    std.mem.writeInt(u64, response[64..72], root, .big);
+    if (std.mem.allEqual(u8, &snapshot.instance, 0) or !std.mem.eql(u8, request[8..24], &snapshot.instance)) {
+        response[5] = @intFromEnum(Status.wrong_instance); return response;
+    }
+    response[6] = @intFromBool(snapshot.recorded);
+    response[7] = @intFromBool(snapshot.uncertain);
+    std.mem.writeInt(u64, response[72..80], snapshot.retirement_sequence, .big);
+    return response;
+}
+
 pub fn dispatch(tracker: *ownership.Tracker, io: std.Io, request: *const [request_size]u8) [response_size]u8 {
     return dispatchWithBarrier(tracker, io, request, null);
 }
@@ -452,4 +478,28 @@ test "native owner probe rejects a model-change ticket acquired during its barri
         try std.testing.expectEqual(@as(u32, 0), std.mem.readInt(u32, result[60..64], .big));
     }
     std.debug.print("PASS: native owner probe blocks publication while the original model-change ticket remains held; metadata only\n", .{});
+}
+
+test "correlated local retirement wire remains distinct from live lineage and native proof" {
+    const io = std.testing.io;
+    var tracker: ownership.Tracker = .{};
+    try tracker.initialize(io, @splat(74));
+    const root = try tracker.enter(io);
+    try tracker.associate(io, root, @splat(75));
+    var request: [64]u8 = @splat(0);
+    @memcpy(request[0..4], "FIE9"); request[4] = 1;
+    @memcpy(request[8..24], &root.instance);
+    @memset(request[24..56], 75);
+    std.mem.writeInt(u64, request[56..64], root.sequence, .big);
+    const live = dispatchRetirement(&tracker, io, &request);
+    try std.testing.expect(live[6] == 0 and live[7] == 1);
+    try tracker.leave(io, root);
+    const retired = dispatchRetirement(&tracker, io, &request);
+    try std.testing.expect(std.mem.eql(u8, retired[0..4], "FIZ9"));
+    try std.testing.expect(retired[5] == 0 and retired[6] == 1 and retired[7] == 0);
+    try std.testing.expectEqual(root.sequence, std.mem.readInt(u64, retired[64..72], .big));
+    request[8] ^= 1;
+    try std.testing.expectEqual(@intFromEnum(Status.wrong_instance), dispatchRetirement(&tracker, io, &request)[5]);
+    request[8] ^= 1; request[5] = 1;
+    try std.testing.expectEqual(@intFromEnum(Status.invalid), dispatchRetirement(&tracker, io, &request)[5]);
 }

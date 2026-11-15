@@ -652,3 +652,87 @@ test "retained groups keep every distinct origin and validate before acquiring" 
     try tracker.leave(io, live);
     try std.testing.expectError(error.InvalidReferenceGroup, tracker.retainTokens(io, &.{}));
 }
+
+test "retirement preserves original correlation after response and final descendant release" {
+    var tracker: ownership.Tracker = .{ .primary_guard = true };
+    try tracker.initialize(io, @splat(61));
+    const root = try tracker.enter(io);
+    try tracker.associate(io, root, @splat(62));
+    try tracker.bind(io, root, "model-a");
+    const child = try tracker.reservePreparation(io, root, "model-a");
+    try tracker.active(io, root);
+    try tracker.responding(io, root);
+    try tracker.leave(io, root);
+    try std.testing.expect(!tracker.retirementSnapshot(io, @splat(62), root.sequence).recorded);
+    try tracker.leave(io, child);
+    const record = tracker.retirementSnapshot(io, @splat(62), root.sequence);
+    try std.testing.expect(record.recorded and !record.uncertain);
+    try std.testing.expectEqual(root.sequence, record.root_sequence);
+    try std.testing.expectEqual(@as(u64, 1), record.retirement_sequence);
+    try std.testing.expect(!tracker.correlationSnapshot(io, @splat(62)).found);
+    // Ordinary live-lineage absence is still unknown, never native completion.
+    try std.testing.expect(tracker.correlationSnapshot(io, @splat(62)).uncertain);
+}
+
+test "retirement binds original root through correlation reuse and independent uncertainty" {
+    var tracker: ownership.Tracker = .{};
+    try tracker.initialize(io, @splat(63));
+    const first = try tracker.enter(io);
+    try tracker.associate(io, first, @splat(64));
+    try tracker.leave(io, first);
+    const next = try tracker.enter(io);
+    try tracker.associate(io, next, @splat(64));
+    try std.testing.expect(!tracker.retirementSnapshot(io, @splat(64), next.sequence).recorded);
+    try std.testing.expect(tracker.retirementSnapshot(io, @splat(64), first.sequence).recorded);
+    try std.testing.expect(!tracker.retirementSnapshot(io, @splat(65), first.sequence).recorded);
+    tracker.fence(io);
+    try std.testing.expect(tracker.retirementSnapshot(io, @splat(64), first.sequence).uncertain);
+    try tracker.leave(io, next);
+    try std.testing.expect(tracker.retirementSnapshot(io, @splat(64), next.sequence).uncertain);
+}
+
+test "bounded retirement history eviction remains missing rather than terminal" {
+    var tracker: ownership.Tracker = .{};
+    try tracker.initialize(io, @splat(66));
+    const first = try tracker.enter(io);
+    try tracker.associate(io, first, @splat(67));
+    try tracker.leave(io, first);
+    for (0..ownership.capacity) |_| {
+        const request = try tracker.enter(io);
+        try tracker.associate(io, request, @splat(68));
+        try tracker.leave(io, request);
+    }
+    const old = tracker.retirementSnapshot(io, @splat(67), first.sequence);
+    try std.testing.expect(!old.recorded and old.uncertain);
+    try std.testing.expect(!tracker.snapshot(io).uncertain);
+}
+
+test "newer release never records retirement for an older retained request" {
+    var tracker: ownership.Tracker = .{ .primary_guard = true };
+    try tracker.initialize(io, @splat(69));
+    const older = try tracker.enter(io);
+    try tracker.associate(io, older, @splat(70));
+    try tracker.bind(io, older, "model-a");
+    try tracker.retain(io, older);
+    const newer = try tracker.enter(io);
+    try tracker.associate(io, newer, @splat(71));
+    try tracker.bind(io, newer, "model-a");
+    try tracker.leave(io, newer);
+    try std.testing.expect(tracker.retirementSnapshot(io, @splat(71), newer.sequence).recorded);
+    try tracker.leave(io, older);
+    try std.testing.expect(!tracker.retirementSnapshot(io, @splat(70), older.sequence).recorded);
+    try tracker.leave(io, older);
+    try std.testing.expect(tracker.retirementSnapshot(io, @splat(70), older.sequence).recorded);
+}
+
+test "retirement history counter exhaustion fences rather than wrapping" {
+    var tracker: ownership.Tracker = .{};
+    try tracker.initialize(io, @splat(72));
+    const root = try tracker.enter(io);
+    try tracker.associate(io, root, @splat(73));
+    tracker.retirement_sequence = std.math.maxInt(u64);
+    try tracker.leave(io, root);
+    const record = tracker.retirementSnapshot(io, @splat(73), root.sequence);
+    try std.testing.expect(!record.recorded and record.uncertain);
+    try std.testing.expect(tracker.snapshot(io).uncertain);
+}
