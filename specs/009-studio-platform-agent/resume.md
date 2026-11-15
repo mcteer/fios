@@ -1,3 +1,15 @@
+# Checked DS4 wrapper cleanup qualified — 2026-11-15
+
+Whole tasks: **39/55 complete;16 open**. Public head7c2d9def512e057958731433ec276f511ced439d / CI43672182461 remains running. All7 jobs passed precedingbd41/43669804968. Keep the current long CI run; do not cancel it for another partial increment.
+
+Ready to commit: four-path native DS4 checked-cleanup overlay, actual wrapper fixture, strict checker, contract/quickstart/tasks/validation. Private source `/private/tmp/fios-009-ds4-checked-work-xs8he837/source`. Final strictGBtKpp/e1943b73… passes4 original failures,2 cross-unit split-latch controls and14 candidate cases. Vendor Shared storage is required; the pre-shared candidate and its receipts are preserved separately. Legacy test provides no checked C symbols. Default162/162, enabled35/35 semantic32/32 link,4 empty-model checks and93 focused Node checks pass; inputs remain stable. Aggregate qualificationdb75ad67… binds exact receipts. All local sessions complete.
+
+No package-input change: clean4bb declared-input package remains current, separate from whole-native provenance. No new model plan/POST (all five Core plans consumed), native activation/installation, Studio acceptance, merge or deployment. Actual serving guard remains false. No subagents. Preserve protected UI/catalog WIP and all private failed/setup/previous candidates. Commit only explicit009 paths, then hold push until current CI finishes and update PR10 with exact final head/run. Continue authorized source work; do not claim a whole task from component receipts.
+
+# Current continuation — 2026-11-15
+
+Whole39/55 unchanged. All7 jobs including aggregate passed exact bd41d37ead60ac7baa358df12ea38726cd3c54fa / CI43669804968. Qualified GUI increment7c2d9def512e057958731433ec276f511ced439d pushed; current CI43672182461 running. No merge/deployment/native activation. Private next source candidate /private/tmp/fios-009-ds4-checked-work-xs8he837/source: actual DS4 checked C cleanup refusals must retain Zig wrappers/paths and sticky uncertainty. First actual-wrapper allocator regression passes; expanded strict checker and default native compile running. Do not claim candidate qualified until final receipts. Preserve protected UI/catalog WIP. No sixth model plan/POST.
+
 # GUI coexistence source qualified — 2026-11-15 03:15 UTC
 
 Whole39/55 unchanged. RootGUIpatch/fixture/checker+contract/tasks/validation/resume readyLOCALexplicit009commit. Private sqect0nn: helperrefusalFSGmarker/unknown/transientIPv4v6busyports;ServerManagerguardbeforeconfig/spawn,removesPID/nameorphanreaping44lines,ownProcessstopunchanged. Actualhelperdebug/optimized+strict2-fileparentprojectionO9Li9q/508ff293…frozenPASS; enclosinglockedGUIbuild74.769sstatus0unchangeda37ec10a…;parse/133Node/boundary/whitespacepass. GUIneverlaunched/installed,noprimary_guard/version/profileflip. No wholeT027/T049close. SourceonlyGUIartifactsoutsidecollectSources,current4bbpackage121ba32a…/final015c0dcf…stillcurrentdeclaredinputs.

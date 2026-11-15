@@ -1,0 +1,125 @@
+const std = @import("std");
+const bridge = @import("engines/ds4/bridge.zig");
+const cleanup = @import("fios/current_ds4_checked_cleanup.zig");
+const options = @import("build_options");
+const backend = @import("fios/current_ds4_backend_uncertainty.zig");
+export fn ds4_host_source_uncertainty() u32 {
+    return 0;
+}
+export fn ds4_gpu_source_uncertainty() u32 {
+    return 0;
+}
+var calls: usize = 0;
+var checked_result: c_int = 0;
+fn checkedEngine(_: ?*anyopaque) callconv(.c) c_int {
+    calls += 1;
+    return checked_result;
+}
+fn checkedSession(_: ?*anyopaque) callconv(.c) c_int {
+    calls += 1;
+    return checked_result;
+}
+comptime {
+    if (options.fios_source_ds4) {
+        @export(&checkedEngine, .{ .name = "ds4_engine_close_checked" });
+        @export(&checkedSession, .{ .name = "ds4_session_free_checked" });
+    }
+}
+export fn ds4_engine_close(_: ?*anyopaque) void {
+    calls += 100;
+}
+export fn ds4_session_free(_: ?*anyopaque) void {
+    calls += 100;
+}
+const Pair = struct {
+    engine: *bridge.Ds4Engine,
+    session: *bridge.Ds4Session,
+    fn init(a: std.mem.Allocator) !Pair {
+        const e = try a.create(bridge.Ds4Engine);
+        e.* = .{ .allocator = a, .handle = @ptrFromInt(4096), .model_path_owned = try a.dupeSentinel(u8, "exact/model", 0), .mtp_path_owned = try a.dupeSentinel(u8, "exact/mtp", 0), .embedded_mtp = false };
+        const s = try a.create(bridge.Ds4Session);
+        s.* = .{ .allocator = a, .engine = e, .handle = @ptrFromInt(8192), .ctx_size = 512 };
+        return .{ .engine = e, .session = s };
+    }
+    // Only fixture allocations: dummy C handles never represent native objects.
+    fn disposeFixture(self: Pair, a: std.mem.Allocator) void {
+        a.destroy(self.session);
+        a.free(self.engine.model_path_owned);
+        a.free(self.engine.mtp_path_owned.?);
+        a.destroy(self.engine);
+    }
+};
+fn refusal(engine_first: bool, result: c_int) !void {
+    checked_result = result;
+    var counting = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+    const a = counting.allocator();
+    const pair = try Pair.init(a);
+    if (engine_first) pair.engine.close() else pair.session.free();
+    try std.testing.expectEqual(@as(usize, 0), counting.freed_bytes);
+    defer pair.disposeFixture(a);
+    try std.testing.expect(cleanup.known());
+    try std.testing.expect(backend.known(false, false));
+    checked_result = 1; // A subsequent successful substitute cannot erase a refusal.
+    if (engine_first) pair.session.free() else pair.engine.close();
+    try std.testing.expectEqual(@as(usize, 0), counting.freed_bytes);
+    try std.testing.expectEqual(@as(usize, 1), calls);
+    try std.testing.expectEqualStrings("exact/model", pair.engine.model_path_owned);
+    try std.testing.expectEqualStrings("exact/mtp", pair.engine.mtp_path_owned.?);
+    try std.testing.expect(pair.session.engine == pair.engine);
+}
+test "ds4 cleanup session refusal retains wrappers" {
+    try refusal(false, 0);
+}
+test "ds4 cleanup engine refusal retains wrappers" {
+    try refusal(true, 0);
+}
+test "ds4 cleanup malformed result remains uncertain" {
+    try refusal(false, 2);
+}
+test "ds4 cleanup successful destruction releases wrappers" {
+    checked_result = 1;
+    var counting = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+    const pair = try Pair.init(counting.allocator());
+    pair.session.free();
+    pair.engine.close();
+    try std.testing.expectEqual(counting.allocated_bytes, counting.freed_bytes);
+    try std.testing.expectEqual(@as(usize, 2), calls);
+    try std.testing.expect(!cleanup.known()); // Negative flag only, never terminal proof.
+}
+test "ds4 cleanup unselected source preserves legacy ABI" {
+    try std.testing.expect(!options.fios_source_ds4);
+    var counting = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+    const pair = try Pair.init(counting.allocator());
+    pair.session.free();
+    pair.engine.close();
+    try std.testing.expectEqual(counting.allocated_bytes, counting.freed_bytes);
+    try std.testing.expectEqual(@as(usize, 200), calls);
+    try std.testing.expect(!cleanup.known());
+}
+export fn ds4_session_create(out: *?*anyopaque, _: *anyopaque, _: c_int) c_int {
+    out.* = @ptrFromInt(12288);
+    return 0;
+}
+test "ds4 cleanup allocation failure retains native owner" {
+    checked_result = 0;
+    var counting = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+    const a = counting.allocator();
+    const pair = try Pair.init(a);
+    defer pair.disposeFixture(a);
+    counting.fail_index = counting.alloc_index;
+    try std.testing.expectError(error.OutOfMemory, pair.engine.createSession(512));
+    try std.testing.expect(cleanup.known());
+    try std.testing.expect(backend.known(false, false));
+    pair.engine.close();
+    try std.testing.expectEqual(@as(usize, 1), calls);
+    try std.testing.expectEqual(@as(usize, 0), counting.freed_bytes);
+}
+extern fn fios_fixture_unit_refuse() c_int;
+test "ds4 cleanup unit and host share refusal latch" {
+    try std.testing.expect(!cleanup.known());
+    try std.testing.expectEqual(@as(c_int, 0), fios_fixture_unit_refuse());
+    try std.testing.expect(cleanup.known());
+    try std.testing.expect(backend.known(false, false));
+    try std.testing.expect(!cleanup.engine(@ptrFromInt(4096)));
+    try std.testing.expectEqual(@as(usize, 1), calls);
+}

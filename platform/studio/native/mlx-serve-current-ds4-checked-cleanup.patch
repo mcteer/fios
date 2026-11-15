@@ -1,0 +1,126 @@
+diff --git a/src/engines/ds4/bridge.zig b/src/engines/ds4/bridge.zig
+index 86f4d50..b0c327d 100644
+--- a/src/engines/ds4/bridge.zig
++++ b/src/engines/ds4/bridge.zig
+@@ -20,6 +20,7 @@ const env = @import("../../env.zig");
+ const builtin = @import("builtin");
+ const gguf_meta = @import("../../sdk/quant/gguf/engine_pick.zig");
+ const ffi = @import("ffi.zig");
++const cleanup = @import("../../fios/current_ds4_checked_cleanup.zig");
+ const metal_sources = @import("ds4_metal_sources");
+ const log = @import("../../sdk/util/log.zig");
+ 
+@@ -292,10 +293,12 @@ pub const Ds4Engine = struct {
+         if (builtin.os.tag == .macos) try ensureMetalKernels(allocator);
+ 
+         const path_z = allocator.dupeSentinel(u8, model_path, 0) catch return Error.OutOfMemory;
+-        errdefer allocator.free(path_z);
++        errdefer if (!cleanup.known()) allocator.free(path_z);
+ 
+         const mtp_z: ?[:0]u8 = if (opts.mtp_path) |p| (allocator.dupeSentinel(u8, p, 0) catch return Error.OutOfMemory) else null;
+-        errdefer if (mtp_z) |s| allocator.free(s);
++        errdefer if (!cleanup.known()) {
++            if (mtp_z) |s| allocator.free(s);
++        };
+ 
+         const dspark_on = dsparkEffective(opts.dspark, mtp_z != null);
+         if (opts.dspark and !dspark_on) {
+@@ -340,7 +343,7 @@ pub const Ds4Engine = struct {
+         }
+ 
+         const wrapper = allocator.create(Ds4Engine) catch {
+-            ffi.ds4_engine_close(raw);
++            _ = cleanup.engine(raw);
+             return Error.OutOfMemory;
+         };
+         wrapper.* = .{
+@@ -354,7 +357,7 @@ pub const Ds4Engine = struct {
+     }
+ 
+     pub fn close(self: *Ds4Engine) void {
+-        ffi.ds4_engine_close(self.handle);
++        if (!cleanup.engine(self.handle)) return;
+         self.allocator.free(self.model_path_owned);
+         if (self.mtp_path_owned) |s| self.allocator.free(s);
+         self.allocator.destroy(self);
+@@ -485,7 +488,7 @@ pub const Ds4Engine = struct {
+             return Error.SessionCreateFailed;
+         }
+         const sess = self.allocator.create(Ds4Session) catch {
+-            ffi.ds4_session_free(raw);
++            _ = cleanup.session(raw);
+             return Error.OutOfMemory;
+         };
+         sess.* = .{
+@@ -523,7 +526,7 @@ pub const Ds4Session = struct {
+     ctx_size: i32,
+ 
+     pub fn free(self: *Ds4Session) void {
+-        ffi.ds4_session_free(self.handle);
++        if (!cleanup.session(self.handle)) return;
+         self.allocator.destroy(self);
+     }
+ 
+diff --git a/src/engines/ds4/ffi.zig b/src/engines/ds4/ffi.zig
+index 0047d45..c71943f 100644
+--- a/src/engines/ds4/ffi.zig
++++ b/src/engines/ds4/ffi.zig
+@@ -184,6 +184,7 @@ pub const GenerationDoneFn = ?*const fn (ud: ?*anyopaque) callconv(.C) void;
+ 
+ pub extern fn ds4_engine_open(out: *?*Engine, opt: *const EngineOptions) c_int;
+ pub extern fn ds4_engine_close(e: ?*Engine) void;
++pub extern fn ds4_engine_close_checked(e: ?*Engine) c_int;
+ pub extern fn ds4_engine_summary(e: ?*Engine) void;
+ pub extern fn ds4_backend_name(backend: Backend) [*:0]const u8;
+ pub extern fn ds4_think_mode_enabled(mode: ThinkMode) bool;
+@@ -222,6 +223,7 @@ pub extern fn ds4_token_assistant(e: *Engine) c_int;
+ 
+ pub extern fn ds4_session_create(out: *?*Session, e: *Engine, ctx_size: c_int) c_int;
+ pub extern fn ds4_session_free(s: ?*Session) void;
++pub extern fn ds4_session_free_checked(s: ?*Session) c_int;
+ pub extern fn ds4_session_set_progress(s: *Session, f: SessionProgressFn, ud: ?*anyopaque) void;
+ 
+ pub extern fn ds4_session_sync(s: *Session, prompt: *const Tokens, err: ?[*]u8, errlen: usize) c_int;
+diff --git a/src/fios/current_ds4_backend_uncertainty.zig b/src/fios/current_ds4_backend_uncertainty.zig
+index 727b4e9..e899d08 100644
+--- a/src/fios/current_ds4_backend_uncertainty.zig
++++ b/src/fios/current_ds4_backend_uncertainty.zig
+@@ -10,5 +10,5 @@ pub fn known(comptime sdk_enabled: bool, comptime llama_enabled: bool) bool {
+     const ds4 = if (@hasDecl(options, "fios_source_ds4") and options.fios_source_ds4)
+         Source.ds4_host_source_uncertainty() != 0 or Source.ds4_gpu_source_uncertainty() != 0
+     else false;
+-    return ds4 or base.known(sdk_enabled, llama_enabled);
++    return @import("current_ds4_checked_cleanup.zig").known() or ds4 or base.known(sdk_enabled, llama_enabled);
+ }
+diff --git a/src/fios/current_ds4_checked_cleanup.zig b/src/fios/current_ds4_checked_cleanup.zig
+new file mode 100644
+index 0000000..613c06b
+--- /dev/null
++++ b/src/fios/current_ds4_checked_cleanup.zig
+@@ -0,0 +1,26 @@
++//! Sticky negative-only checked destruction. Never a native terminal proof.
++const std = @import("std");
++const options = @import("build_options");
++const ffi = @import("../engines/ds4/ffi.zig");
++const enabled = @hasDecl(options, "fios_source_ds4") and options.fios_source_ds4;
++const uncertain = @import("../sdk/util/shared.zig").Shared(std.atomic.Value(bool), "fios_ds4_checked_cleanup_uncertain", .init(false));
++pub fn known() bool {
++    return uncertain.get().load(.acquire);
++}
++fn retainIfRefused(result: c_int) bool {
++    if (result == 1) return true;
++    uncertain.get().store(true, .release);
++    return false;
++}
++pub fn engine(handle: ?*ffi.Engine) bool {
++    if (known()) return false;
++    if (comptime enabled) return retainIfRefused(ffi.ds4_engine_close_checked(handle));
++    ffi.ds4_engine_close(handle);
++    return true;
++}
++pub fn session(handle: ?*ffi.Session) bool {
++    if (known()) return false;
++    if (comptime enabled) return retainIfRefused(ffi.ds4_session_free_checked(handle));
++    ffi.ds4_session_free(handle);
++    return true;
++}
