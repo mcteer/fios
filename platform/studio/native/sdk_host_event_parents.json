@@ -1,0 +1,6 @@
+{
+  "mlx/stream.h": "f4eb18d7dc903896b47f36cb43a03e48602943befb6aef1b21bf8d1b4548a037",
+  "mlx/stream.cpp": "a061c934c7de7c6b000b8d75eb09176234e59e35aa7623fec2ec81b95ed2d4ed",
+  "mlx/scheduler.cpp": "2557c3207e7425723392d1ab07932151e58c60616e19296a4da090b6bf7888f5",
+  "mlx/backend/metal/event.cpp": "ed0855e27e213586bbe8e659c7e2a2d1566a616b3947c4a6c539615a26fddd11"
+}

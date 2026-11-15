@@ -1,0 +1,56 @@
+
+const std=@import("std");
+const owners=@import("fios/request_ownership.zig");
+const sdk=@import("fios/sdk_request_ownership.zig");
+extern fn fios_cpu_graph_library_matches([*:0]const u8)c_int;
+extern fn fios_cpu_graph_run(u32)c_int;
+extern "c" fn getenv([*:0]const u8)?[*:0]const u8;
+var scenario:u32=0;
+var expected_root:?owners.Token=null;
+var event_states:[64]std.atomic.Value(u8)=@splat(.init(0));
+var event_origins:std.atomic.Value(u32)=.init(0);
+var event_retired:std.atomic.Value(u32)=.init(0);
+var event_uncertain:std.atomic.Value(u32)=.init(0);
+export fn fios_source_host_event_observe(raw:?*anyopaque,id:u64,phase:u32)c_int {
+ if(id==0 or id>=event_states.len)return 1;
+ if(phase==3) {if(event_states[@intCast(id)].load(.acquire)!=1)return 1;event_states[@intCast(id)].store(3,.release);_=event_uncertain.fetchAdd(1,.acq_rel);return 0;}
+ const scope=sdk.fios_native_request_owners_enter(raw);if(scope==0)return 1;
+ defer {if(sdk.fios_native_request_owners_leave(scope)!=0)@panic("event observer restoration failed");}
+ const group=owners.current_group().* orelse return 1;const original=expected_root orelse return 1;
+ if(group.len!=1 or !std.meta.eql(original,group[0]))return 1;
+ const entry=&event_states[@intCast(id)];
+ switch(phase) {
+  1=>{if(scenario==2)return 1;if(entry.cmpxchgStrong(0,1,.acq_rel,.acquire)!=null)return 1;_=event_origins.fetchAdd(1,.acq_rel);},
+  2=>{if(scenario==3){const delay:std.c.timespec=.{.sec=0,.nsec=50*std.time.ns_per_ms};_=std.c.nanosleep(&delay,null);return 1;}if(entry.cmpxchgStrong(1,2,.acq_rel,.acquire)!=null)return 1;_=event_retired.fetchAdd(1,.acq_rel);},
+  3=>{_=event_uncertain.fetchAdd(1,.acq_rel);},
+  else=>return 1,
+ }
+ return 0;
+}
+test "normal non-model CPU graph preserves original custody and retires local callbacks" {
+ const io=std.testing.io;
+ const raw=std.mem.span(getenv("FIOS_FIXTURE_HOST_EVENT_SCENARIO") orelse return error.MissingScenario);
+ scenario=try std.fmt.parseInt(u32,raw,10);try std.testing.expect(scenario<=4);
+ try owners.shared().initialize(io,@splat(7));try sdk.initialize(io);
+ try std.testing.expectEqual(@as(c_int,1),fios_cpu_graph_library_matches(@import("build_options").sdk_library));
+ const original=try owners.shared().enter(io);expected_root=original;try owners.shared().bind(io,original,"fixture/cpu-graph");try owners.shared().active(io,original);
+ owners.current().*=original;const group=[_]owners.Token{original};owners.current_group().*=&group;
+ defer {owners.current().*=null;owners.current_group().*=null;}
+ try std.testing.expectEqual(@as(c_int,1),fios_cpu_graph_run(scenario));
+ owners.current().*=null;owners.current_group().*=null;try owners.shared().leave(io,original);
+ const diag=sdk.diagnostic();const snapshot=owners.shared().snapshot(io);
+ std.debug.print("cpu_graph contexts={d} roots={d} SDK_uncertain={} source_uncertain={} no_native_authority\n",.{diag.active_contexts,snapshot.owned,diag.uncertain,snapshot.uncertain});
+ if(scenario>=2) {
+  try std.testing.expect(snapshot.uncertain and diag.uncertain and snapshot.owned>0 and diag.active_contexts>0);
+  try std.testing.expectEqual(@as(u32,0),event_retired.load(.acquire));
+  if(scenario==4)try std.testing.expect(event_uncertain.load(.acquire)>0);
+  std.debug.print("PASS host observer refusal/abandonment retains independent native uncertainty scenario={d}\n",.{scenario});return;
+ }
+ if(scenario==0) {
+  if(event_origins.load(.acquire)==0){std.debug.print("SDK_HOST_EVENT_ATTRIBUTION_MISSING\n",.{});return error.TestUnexpectedResult;}
+  try std.testing.expectEqual(event_origins.load(.acquire),event_retired.load(.acquire));
+ }else try std.testing.expectEqual(@as(u32,0),event_origins.load(.acquire));
+ try std.testing.expectEqual(@as(u32,0),event_uncertain.load(.acquire));
+ try std.testing.expectEqual(@as(u32,0),diag.active_contexts);try std.testing.expect(!diag.uncertain);try std.testing.expectEqual(@as(usize,0),snapshot.owned);try std.testing.expect(!snapshot.uncertain);
+ std.debug.print("PASS host event origin/retirement/legacy scenario={d} events={d} no_native_authority\n",.{scenario,event_origins.load(.acquire)});
+}

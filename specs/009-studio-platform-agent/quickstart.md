@@ -1315,3 +1315,18 @@ HTTP request runs. The checker pins the compiler/SDK/library, checks the mapped
 library in-process and binds compiler-selected headers to staged includes.
 Normal callback retirement is local ownership evidence, not all-client native
 terminal proof. Public startup/admission remains closed; no installed action.
+
+### SDK CPU event attribution source check
+
+```sh
+.venv/bin/python -I -B scripts/check-platform-sdk-host-events.py --isolated --source /private/tmp/REVIEWED_NATIVE_SOURCE --zig /private/tmp/PINNED_ZIG --sdk-source /private/tmp/REVIEWED_SDK_SOURCE --sdk-library /private/tmp/SELECTED_LIBMLX --sdk-stage /private/tmp/PRIVATE_SDK_STAGE --sdk-sha256 REVIEWED_SDK_LIBRARY_SHA256
+```
+
+The source SDK has the four prior c69303b overlays followed by
+`mlx-c69303b-host-request-events.patch`. The checker reverses/reapplies that exact
+four-file increment, uses genuine native context hooks and tests registration,
+normal attribution, observer-off behavior, refused origin/retirement and
+abandonment. Controlled retirement refusal must return an error with uncertainty
+retained rather than hang or signal completion. No model, shader dispatch, HTTP
+request, native proof or installed action occurs. Full serving-image/MLX-C
+compatibility is separate; see [contract](contracts/sdk-host-request-events.md).

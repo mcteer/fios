@@ -6101,3 +6101,64 @@ from the final canonical closure check. No native binary/SDK/package rebuild,
 new model plan/POST, installed action or whole-native provenance is claimed.
 39/55 whole tasks unchanged; genuine per-request native proof issuance and
 complete all-client admission remain missing.
+
+2026-11-15 SDK host-event source interface in progress: the genuine normal CPU
+graph still runs and retires local custody on the old SDK, but two Debug/
+ReleaseSafe event-attribution regressions fail at runtime because that SDK has
+no per-origin host callback event interface. Baseline receipt
+`/private/tmp/fios-009-sdk-host-event-work-w9gvb2pr/baseline/receipt.json`, SHA256
+7d68e5efca1967fecf6b800bdd8cda80076096c563483f36a9c738c414c7b2f4.
+The first private driver reused the baseline output names for its candidate;
+its original driver log is retained, and separated baseline/candidate reruns
+replace that overwritten individual-output evidence.
+No model, shader dispatch or HTTP request runs. A private three-file SDK candidate
+adds a separate versioned optional CPU callback observer (origin/retired/uncertain)
+and leaves the existing ownership-hook ABI unchanged. Source SDK build is
+running; no candidate pass is claimed yet. Selection-after-start.json is a
+snapshot taken after this first build began, not prebuild or whole-native
+provenance. Original SDK/native sources remain frozen; no host event ledger,
+wire producer, native proof, admission or installed authority is supplied.
+39/55 whole tasks unchanged.
+The first clean SDK component rebuild passes in218.412s, with991 selected SDK
+files,333 dependency files and its CMake cache unchanged. That does not close
+qualification: the first canonical ReleaseSafe retirement-refusal case timed
+out after20s. An immediate10-trial repetition did not reproduce it; a controlled
+50ms observer delay reproduces the hang, and an owned-process sample locates
+`Event::wait` / IOSurface shared-event wait. The original child is killed/reaped
+only as isolated fixture cleanup; no native terminal proof is inferred.
+
+A fourth-file source fix keeps legacy waits unchanged and, when the new host
+event observer is enabled, checks SDK uncertainty between finite native host
+waits. Failure throws without signaling the event or clearing uncertainty.
+A fresh clean rebuild is running with an explicit prebuild bracket. Earlier
+successful candidate controls are retained but do not qualify this fix; the
+controlled delayed-refusal regression must pass before publication.39/55 unchanged.
+
+SDK host-event final selected-component qualification: the clean rebuild of the
+four-file candidate passes in218.548s plus0.090s private staging. Its991 selected
+SDK source files,333 dependency files and CMake cache remain unchanged. Library
+SHA25696c3c5a4cae6b42bd832f386cb686096df210a24def94ac72f2472c2bc8c6522.
+No MLX-C or complete native serving image is rebuilt at this checkpoint.
+
+Final canonical checker passes14 stages:4 CPP/Zig builds and10 runtime scenarios
+across Debug/ReleaseSafe, including controlled50ms retirement refusal. Actual
+native context tokens match the original root; invalid/duplicate/late
+registration refuses; observer origin/retirement refusal and abandoned
+reservations retain independent native uncertainty. Observer-off legacy mode
+still retires normal local custody. Fifteen selected SDK headers match staged
+includes, and all selected native/SDK/fixture/library/CXX inputs remain unchanged.
+Receipt `/private/tmp/fios-009-sdk-host-event-check-vu6gsvhd/receipt.json`, SHA256
+2ff9583ceb2d60160dbf0b7dba3c60b777ea30cea1320b3be6e6ac084b3b0e67.
+Twenty additional controlled delayed-refusal executions pass within3s bounds;
+receipt246d196cad9d07742a029414108e7e31bd00fcedaf9827c33a100a47eb5db23a.
+The preserved failing canonical run and sampled old wait are excluded from
+successful qualification;10 immediate pre-fix repetitions did not reproduce,
+while the controlled delayed pre-fix case did. No timeout/reap is terminal proof.
+
+Aggregate `/private/tmp/fios-009-sdk-host-event-work-w9gvb2pr/final-review.json`,
+SHA256866dc173162e47d17857f22d4fea0a2e117b624d2cd4cf4d0af96a5c13d37c3c.
+This supplies optional genuine CPU callback events only, not Metal/device or
+whole-request proof, a native event ledger/wire producer, all-client capability,
+admission, installed management or whole-native/publisher/build provenance.
+No model/HTTP request, shader dispatch, native activation or deployment ran.
+39/55 whole tasks unchanged. Publishedac7742e/CI43738296797 passed all7 jobs.
