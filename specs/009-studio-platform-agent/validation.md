@@ -6536,3 +6536,24 @@ refused. Zero new real inference/model plans are distinct from nine rejected
 private empty-catalog guard requests. No installed operation, activation, Studio
 acceptance, merge, deployment or whole-task completion occurs. Published exact-SHA
 CI for this increment is pending.
+
+2026-11-15 event SDK compatibility reader (data only): the separate event-generation
+scope now requires actual native base3736ed55, all callback/status/capture/event
+patch digests, the selected native C++ config, successful Debug/ReleaseFast CPU
+controls, and a four-stage Debug/Optimized C ABI receipt bound to both runtime
+library hashes. Current fixture/runner digests and explicit non-authority fields
+are required. Historical seven-path generation remains unchanged; incomplete
+event records remain refused. These are declared compatibility inputs, never
+publisher/whole-native provenance, physical completion, admission or permission.
+
+Test-first positive failed before implementation;23 focused tests now pass,
+including pair/config/patch/authority/refusal cases. Actual retained C++ receipt
+`/private/tmp/fios-009-current-cxx-check-tgl8P2/receipt.json` and C ABI receipt
+`/private/tmp/fios-009-current-mlxc-check-8p38mrjl/receipt.json` pass the data-only
+reader when bound to the constructor capsule's declared runtime pair. New private
+metadata/receipt: `/private/tmp/fios-009-event-reader-Q62LaP/`. Prior capsule and
+historical refusal receipts are unchanged. No model plan or POST was created.
+`npm test`:197 Node/107 installed Python tests pass; build and agent boundary pass.
+Whole tasks remain39/55. Published3e856ff CI43764878523 passed all seven jobs;
+constructor c0ab0f4 and this reader await their new exact-SHA CI. No merge,
+installation, activation, Studio acceptance or deployment occurred.

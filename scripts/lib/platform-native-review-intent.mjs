@@ -3,13 +3,20 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import {createHash} from 'node:crypto';
 import {readFileSync} from 'node:fs';
+const eventCxxScope='current_build_helper_event_SDK_CPU_compatibility_not_native_authority';
 const currentCxxScope='current_build_helper_CPU_callback_compatibility_not_native_authority';
 const reviewDigest=relative=>createHash('sha256').update(readFileSync(new URL('../../'+relative,import.meta.url))).digest('hex');
 // Current checker result metadata remains distinct from the historical graph
 // declaration. Parsing either record grants no native or installed authority.
 function currentCxxInputs(inputs,dependency,cxx,message){
+ const events=cxx.scope===eventCxxScope;
  const callback=Object.hasOwn(cxx,'incremental_patch_sha256'),status=Object.hasOwn(cxx,'command_status_patch_sha256'),capture=Object.hasOwn(cxx,'capture_refusal_patch_sha256');
- assert((!status||callback)&&(!capture||status),message);
+ assert((!status||callback)&&(!capture||status)&&(!events||capture),message);
+ if(events){
+  const patches=Object.fromEntries(['mlx-c69303b-host-request-events.patch','mlx-c69303b-metal-request-events.patch'].map(name=>[name,reviewDigest('platform/studio/native/'+name)]));
+  assert.deepEqual(cxx.request_event_patches,patches,message);assert.deepEqual(dependency.request_event_patches,patches,message);
+  currentCBindingInputs(inputs,dependency,cxx,message);
+ }
  const extraPatches=[['incremental_patch_sha256','platform/studio/native/mlx-c69303b-metal-callback-fence.patch',callback],
   ['command_status_patch_sha256','platform/studio/native/mlx-c69303b-metal-callback-status.patch',status],
   ['capture_refusal_patch_sha256','platform/studio/native/mlx-c69303b-owner-capture-refusal.patch',capture]];
@@ -22,9 +29,9 @@ function currentCxxInputs(inputs,dependency,cxx,message){
   'selected_sdk_inputs','source_patch_sha256','results','models','inference','source_fixture_only','installed','activation',
   'native_authority','whole_native_provenance','declared_inputs_unchanged',
   ...(callback?['sdk_source','sdk_library','incremental_patch_sha256','observed_source_patch_sha256']:[]),
-  ...(status?['command_status_patch_sha256']:[]),...(capture?['capture_refusal_patch_sha256']:[])];
+  ...(events?['request_event_patches']:[]),...(status?['command_status_patch_sha256']:[]),...(capture?['capture_refusal_patch_sha256']:[])];
  assert.deepEqual(Object.keys(cxx).sort(),fields.sort(),message);
- assert(cxx.version===1&&cxx.sdk==='27.2'&&dependency.sdk===cxx.sdk&&inputs.native_base==='4e231ceebe63308cc038117d40b9f9b64bd0372e',message);
+ assert(cxx.version===1&&cxx.sdk==='27.2'&&dependency.sdk===cxx.sdk&&inputs.native_base===(events?'3736ed55f81c6cf0966a0f0dc7265e783655d244':'4e231ceebe63308cc038117d40b9f9b64bd0372e'),message);
  assert(cxx.source_fixture_only===true&&cxx.declared_inputs_unchanged===true&&cxx.models===0,message);
  for(const key of ['inference','installed','activation','native_authority','whole_native_provenance'])assert(cxx[key]===false,message);
  assert(typeof cxx.source==='string'&&cxx.source.startsWith('/private/tmp/')&&path.isAbsolute(cxx.source)&&
@@ -56,6 +63,32 @@ function currentCxxInputs(inputs,dependency,cxx,message){
    result.build_signal===null&&result.run_signal===null&&result.passed===true,message);
  }
 }
+// CPU ABI compatibility declarations only; no native completion or admission.
+function currentCBindingInputs(inputs,dependency,cxx,message){
+ const record=dependency.c_binding_cpu;
+ const exact=(object,fields)=>{assert(object&&typeof object==='object'&&!Array.isArray(object),message);assert.deepEqual(Object.keys(object).sort(),fields.sort(),message);};
+ exact(record,['scope','prefix','inputs','records','models','inference','GPU_dispatch','installed','native_authority','whole_native_provenance','inputs_unchanged']);
+ assert(record.scope==='actual_MLXC_CPU_graph_error_cleanup_selected_C_headers_and_mapped_library_identity_not_native_authority'&&record.models===0&&record.inputs_unchanged===true,message);
+ for(const key of ['inference','GPU_dispatch','installed','native_authority','whole_native_provenance'])assert(record[key]===false,message);
+ const absolute=value=>typeof value==='string'&&path.isAbsolute(value)&&path.normalize(value)===value&&!value.includes('\0')&&value.length<=4096;
+ assert(absolute(record.prefix)&&record.prefix.startsWith('/private/tmp/')&&cxx.sdk_library===record.prefix+'/lib/libmlx.dylib',message);
+ assert(record.inputs&&typeof record.inputs==='object'&&!Array.isArray(record.inputs),message);
+ const files=Object.keys(record.inputs);assert(files.length>=4&&files.length<=1024&&files.every(file=>absolute(file)&&typeof record.inputs[file]==='string'&&/^[a-f0-9]{64}$/.test(record.inputs[file])),message);
+ for(const file of ['platform/studio/native/current_mlxc_cpu_test.c','scripts/check-platform-current-mlxc.py']){
+  const selected=files.filter(name=>name.endsWith('/'+file));assert(selected.length===1&&record.inputs[selected[0]]===reviewDigest(file),message);
+ }
+ for(const name of ['libmlx.dylib','libmlxc.dylib']){
+  const runtime=inputs.runtime_inputs?.[name];assert(runtime&&Number.isSafeInteger(runtime.bytes)&&runtime.bytes>0&&runtime.bytes<=402653184,message);
+  assert(record.inputs[record.prefix+'/lib/'+name]===runtime.sha256,message);
+ }
+ assert(inputs.runtime_inputs['libmlx.dylib'].sha256===cxx.library_sha256,message);
+ assert(Array.isArray(record.records)&&record.records.length===4,message);
+ for(const [index,result]of record.records.entries()){
+  exact(result,['mode','stage','arguments','status','passed','log_sha256']);
+  assert(result.mode===['Debug','Optimized'][Math.floor(index/2)]&&result.stage===['compile','runtime'][index%2]&&result.status===0&&result.passed===true&&/^[a-f0-9]{64}$/.test(result.log_sha256),message);
+  assert(Array.isArray(result.arguments)&&result.arguments.length>0&&result.arguments.length<=64&&result.arguments.every(value=>typeof value==='string'&&value.length>0&&value.length<=4096&&!value.includes('\0')),message);
+ }
+}
 // An optional source dependency must declare the selected format before any
 // model effect. This is a refusal prerequisite, never an admission grant.
 export function nativeReviewModelInputs(inputs){
@@ -64,10 +97,11 @@ export function nativeReviewModelInputs(inputs){
  if(dependency!==undefined&&dependency!==null){
   assert(dependency.source_fixture_only===true&&dependency.native_authority===false&&dependency.features?.safetensors===true,'Source SDK lacks required Safetensors support');
   const cxx=inputs.system_cxx,message='Source SDK lacks matched C++ runtime compatibility';
-  if(['incremental_patch_sha256','command_status_patch_sha256','capture_refusal_patch_sha256','observed_source_patch_sha256'].some(key=>Object.hasOwn(dependency,key)))
-   assert(cxx?.scope===currentCxxScope,message);
+  if(['incremental_patch_sha256','command_status_patch_sha256','capture_refusal_patch_sha256','observed_source_patch_sha256','request_event_patches','c_binding_cpu'].some(key=>Object.hasOwn(dependency,key)))
+   assert([currentCxxScope,eventCxxScope].includes(cxx?.scope),message);
 
-  if(cxx&&typeof cxx==='object'&&!Array.isArray(cxx)&&cxx.scope===currentCxxScope){currentCxxInputs(inputs,dependency,cxx,message);return;}
+  if(Object.hasOwn(dependency,'request_event_patches')||Object.hasOwn(dependency,'c_binding_cpu'))assert(cxx?.scope===eventCxxScope,message);
+  if(cxx&&typeof cxx==='object'&&!Array.isArray(cxx)&&[currentCxxScope,eventCxxScope].includes(cxx.scope)){currentCxxInputs(inputs,dependency,cxx,message);return;}
   assert(cxx&&typeof cxx==='object'&&!Array.isArray(cxx)&&cxx.version===1&&cxx.sdk===dependency.sdk&&cxx.sdk==='27.2'&&
    JSON.stringify(cxx.callback_error_controls)===JSON.stringify(['Debug','ReleaseFast'])&&
    cxx.scope==='selected_SDK_stub_and_header_inputs_not_mapped_OS_runtime_attestation',message);

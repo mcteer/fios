@@ -226,3 +226,34 @@ test('extended CPU compatibility refuses missing reordered or unmatched declarat
  const canonical=currentCxxMetadata();canonical.mlx_source_dependency.capture_refusal_patch_sha256='a'.repeat(64);
  assert.throws(()=>nativeReviewModelInputs(canonical),/C\+\+/);
 });
+
+function eventCompatibilityMetadata(){
+ const value=extendedCurrentCxxMetadata(3),cxx=value.system_cxx,dep=value.mlx_source_dependency;
+ value.native_base='3736ed55f81c6cf0966a0f0dc7265e783655d244';
+ cxx.scope='current_build_helper_event_SDK_CPU_compatibility_not_native_authority';
+ cxx.request_event_patches=Object.fromEntries(['mlx-c69303b-host-request-events.patch','mlx-c69303b-metal-request-events.patch'].map(name=>[name,createHash('sha256').update(readFileSync(new URL('../platform/studio/native/'+name,import.meta.url))).digest('hex')]));
+ dep.request_event_patches={...cxx.request_event_patches};
+ const prefix='/private/tmp/fixture/prefix';cxx.sdk_library=prefix+'/lib/libmlx.dylib';
+ const hash=file=>createHash('sha256').update(readFileSync(new URL('../'+file,import.meta.url))).digest('hex');
+ dep.c_binding_cpu={scope:'actual_MLXC_CPU_graph_error_cleanup_selected_C_headers_and_mapped_library_identity_not_native_authority',prefix,
+  inputs:{[prefix+'/lib/libmlx.dylib']:cxx.library_sha256,[prefix+'/lib/libmlxc.dylib']:'c'.repeat(64),
+   '/fixture/platform/studio/native/current_mlxc_cpu_test.c':hash('platform/studio/native/current_mlxc_cpu_test.c'),
+   '/fixture/scripts/check-platform-current-mlxc.py':hash('scripts/check-platform-current-mlxc.py')},
+  records:['Debug','Optimized'].flatMap(mode=>['compile','runtime'].map(stage=>({mode,stage,arguments:['/fixture/control'],status:0,passed:true,log_sha256:'a'.repeat(64)}))),
+  models:0,inference:false,GPU_dispatch:false,installed:false,native_authority:false,whole_native_provenance:false,inputs_unchanged:true};
+ value.runtime_inputs={'libmlx.dylib':{sha256:cxx.library_sha256,bytes:1},'libmlxc.dylib':{sha256:'c'.repeat(64),bytes:1}};
+ return value;
+}
+test('event SDK compatibility requires matching C ABI controls and runtime pair without granting authority',()=>{
+ nativeReviewModelInputs(eventCompatibilityMetadata());
+ for(const change of [v=>delete v.mlx_source_dependency.c_binding_cpu,v=>v.native_base='4e231ceebe63308cc038117d40b9f9b64bd0372e',
+  v=>delete v.mlx_source_dependency.request_event_patches,v=>v.system_cxx.request_event_patches['mlx-c69303b-host-request-events.patch']='a'.repeat(64),
+  v=>v.runtime_inputs['libmlxc.dylib'].sha256='d'.repeat(64),v=>v.runtime_inputs['libmlx.dylib'].bytes=0,
+  v=>v.mlx_source_dependency.c_binding_cpu.native_authority=true,v=>v.mlx_source_dependency.c_binding_cpu.inference=true,
+  v=>v.mlx_source_dependency.c_binding_cpu.inputs_unchanged=false,v=>v.mlx_source_dependency.c_binding_cpu.records.pop(),
+  v=>v.mlx_source_dependency.c_binding_cpu.records[1].passed=false,v=>v.mlx_source_dependency.c_binding_cpu.records[0].mode='Optimized',
+  v=>v.mlx_source_dependency.c_binding_cpu.inputs['/fixture/scripts/check-platform-current-mlxc.py']='a'.repeat(64),
+  v=>v.system_cxx.config_sha256='b'.repeat(64),v=>delete v.system_cxx.capture_refusal_patch_sha256]){
+  const value=eventCompatibilityMetadata();change(value);assert.throws(()=>nativeReviewModelInputs(value));
+ }
+});
