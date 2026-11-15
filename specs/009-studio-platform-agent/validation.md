@@ -4921,3 +4921,27 @@ Locked noneditable reinstall `uv sync --locked --no-editable --reinstall-package
 Readonly authenticated gateway discovery against the existing localhost app passes with7 catalog models and **no model argument/POST**. This observes the existing application, not deployment of this correction. No model plan/request, native installation/activation, merge or production deployment occurred.
 
 Working-tree receipt `/private/tmp/fios-009-observer-future-validation.json`, SHA256 `bcd1bcdd9c7c21445f51afb72e948e960dafa3d9d1705d368429c79dc7bdbb88`, binds current selected source/test hashes and log hashes. This is after-test selected-input evidence, not a frozen whole-repository enclosure. The local build/browser/container context includes the protected unrelated UI/catalog WIP; none of it is staged for009. Exact-head CI remains separate. Platform package declared inputs are unchanged; the existing4bb nine-artifact package remains a declared-input platform artifact, and interpreter/native enrollment remains incomplete. Whole39/55 unchanged.
+
+
+## Original ANE second-lane ownership — source qualified
+
+The original existing lane handoff published only request handles. The actual-method CPU callback regression first reproduces `ANE_LANE_LOST_ORIGINAL_SCOPE`. Candidate code retains the original complete scope before publication, enters it from stable lane storage and restores it before acknowledgement; required missing origins and an outstanding publication refuse before work. Independent uncertainty survives local join and prevents overwriting retained scope. Numerical operations are unchanged.
+
+Strict `/private/tmp/fios-009-ane-lane-check-z3YOQg/receipt.json`, SHA256 `d391f35d8f9fb939de669602ee6b4b8c018fefe357bd08f447f2341b21ac68a1`, passes10 original failures,2 legacy controls and12 candidate cases across Debug/ReleaseSafe, separate processes, network denied and frozen declared inputs. It binds the exact one-file parent projection and executes the actual lane/round methods with explicit CPU substitutes for native requests, plus real tracker/queue Scope. The direct rounds test confirms absent required custody prevents both lanes' callbacks. The unselected paths, repeated generations, TLS restoration, retained scope and pending-post refusal are tested independently. This is not native/model/device, all-client or terminal authority.
+
+- `platform/studio/native/mlx-serve-current-ane-lane-origins.patch`: `d46903d98fe4fea4fe8f255700a208344046772a0359af438f6a20e88f06a29d`
+- `platform/studio/native/current_ane_lane_origins_test.zig.fixture`: `e4d15c57121c34064d42abc8d388d6e6303dca9cc33010ab17bedcf8385a30d9`
+- `scripts/check-platform-current-ane-lane.mjs`: `c850373e10b911a1815a11de3ddf0bdd31ccd5c1ba793ce187e38302369fea22`
+
+Initial expanded driver wrongly ran all cases in one process; one-time tracker initialization correctly refused the later five cases. Its failed setup log is retained; corrected fresh-process matrix passes. Zig fmt also proposed unrelated formatting/integer-builtin rewrites; those bytes were preserved privately and restored from the qualified parent before producing the limited overlay. Final patch is31 additions/5 removals covering imports, lane custody/publication and the caller's error propagation only.93 focused Node and boundary/syntax/whitespace pass; enclosing native checks are pending. Whole39/55 unchanged. See [contract](contracts/ane-lane-origins.md).
+
+
+Exact published observation-fix head1935ca76566e50dccfb43ef6de23cecb5d785099 / [CI43676598377](https://github.com/mcteer/fios/actions/runs/43676598377) now passed all7 jobs including aggregate. ANE lane source work remains a separate uncommitted candidate pending enclosure. No merge/deployment/native activation occurred; whole39/55 unchanged.
+
+
+ANE lane default enclosure final: native build239.894s and162/162 fresh-process cases pass with frozen declared inputs; unit binary `da93410e600f37f55abecc807bb92d05f1b82a5197df44168b9e5c9ee7691e0f`. Enabled semantic/link/runtime checks remain pending and independent. Whole39/55 unchanged.
+
+
+ANE lane final source qualification: enabled35/35 semantic steps401.555s and32/32 link steps13.749s pass; raw binary `14de2b3e6c3767df24f35aa51ef2a5493cf325a9b8199ae8d04f8162ef226dfb`, normalized private binary `b7a8991ee180295efc4e0ca12d977f523c319739ea04dcb6d592c9f411f3f0cc`, capsule receipt `0cad99fd36dfe92b625ecef23617f6e1f55eb3dfa3203856534662c8b79f267d`. All4 empty-model correlation/activity/startup/authenticated-manager checks and post-runtime source/capsule verification pass. Admissions remain unsupported and coverage unknown.
+
+Aggregate `/private/tmp/fios-009-ane-lane-work-k2x4qnn2/final-source-qualification.json`, SHA256 `99966bde9bdb593ab8a04910e4ab87e0ed2277e9058e2bc503d55d5e85297c43`, binds strict component, default162/162, enabled build and separate runtime receipts. Missing overlay refuses before compiler (log4ba6ca02…). All local sessions complete; no raw ANE/model/hardware-fault/installed acceptance, native terminal/admission authority or whole-task closure follows. Numerical source bytes outside the metadata handoff are unchanged. Package declared inputs and installed Python code are unchanged by this increment. Whole39/55 remains honest; no new model plan/POST, merge/deployment or activation occurred.

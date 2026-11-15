@@ -1,0 +1,76 @@
+diff --git a/src/engines/ane/lm.zig b/src/engines/ane/lm.zig
+index bad5504..cc57322 100644
+--- a/src/engines/ane/lm.zig
++++ b/src/engines/ane/lm.zig
+@@ -14,6 +14,8 @@ const std = @import("std");
+ const env = @import("../../env.zig");
+ const log = @import("../../sdk/util/log.zig");
+ const rt = @import("rt.zig");
++const lane_owners = @import("../../fios/request_ownership.zig");
++const lane_queue = @import("../../fios/queued_request_ownership.zig");
+ const q35 = @import("qwen35.zig");
+ const pack_mod = @import("pack.zig");
+ const prefix = @import("prefix.zig");
+@@ -830,6 +832,7 @@ const LaneThread = struct {
+     seq: std.atomic.Value(u32) = .init(0),
+     done: std.atomic.Value(u32) = .init(0),
+     job: []const rt.Request = &.{},
++    origin: ?lane_queue.Scope = null,
+     failed: bool = false,
+     quit: bool = false,
+ 
+@@ -838,18 +841,41 @@ const LaneThread = struct {
+         while (true) {
+             seen = waitChange(self.io, &self.seq, seen);
+             if (self.quit) return;
+-            self.failed = false;
+-            runReqs(self.job) catch {
++            self.failed = rt.cleanupUnknown();
++            if (!self.failed) if (self.origin) |*origin| {
++                origin.enter(self.io) catch {
++                    self.failed = true;
++                };
++            };
++            if (!self.failed) runReqs(self.job) catch {
+                 self.failed = true;
+             };
++            if (self.origin) |*origin| {
++                if (origin.state == .entered) {
++                    if (!origin.finish(self.io)) self.failed = true;
++                } else self.failed = true;
++            }
+             self.done.store(seen, .release);
+             self.io.futexWake(u32, &self.done.raw, 1);
+         }
+     }
+ 
+-    fn post(self: *LaneThread, job: []const rt.Request) u32 {
+-        self.job = job;
++    fn post(self: *LaneThread, job: []const rt.Request) !u32 {
++        if (rt.cleanupUnknown()) return error.RunFailed;
+         const prev = self.done.load(.acquire);
++        if (self.seq.load(.acquire) != prev) return error.LaneBusy;
++        if (self.origin) |origin| if (origin.state != .closed) {
++            lane_owners.shared().fence(self.io);
++            return error.InvalidQueuedOrigins;
++        };
++        const retained = try lane_owners.retainCurrent(self.io);
++        if (retained == null and @import("build_options").fios_source_ane) {
++            lane_owners.shared().fence(self.io);
++            return error.InvalidQueuedOrigins;
++        }
++        // Retain before publication; enter only after stable worker storage.
++        self.origin = if (retained) |held| .{ .retained = held } else null;
++        self.job = job;
+         _ = self.seq.fetchAdd(1, .release);
+         self.io.futexWake(u32, &self.seq.raw, 1);
+         return prev;
+@@ -1530,7 +1556,7 @@ pub const Engine = struct {
+         const t0 = if (trace()) std.Io.Timestamp.now(self.io, .awake) else undefined;
+         for (0..rs.count()) |r| {
+             if (self.lane1) |lt| {
+-                const prev = lt.post(rs.slice(1, r));
++                const prev = try lt.post(rs.slice(1, r));
+                 const mine = runReqs(rs.slice(0, r));
+                 _ = waitChange(self.io, &lt.done, prev);
+                 try mine;

@@ -1,0 +1,227 @@
+const std = @import("std");
+const owners = @import("fios/request_ownership.zig");
+const lane_owners = owners;
+const lane_queue = @import("fios/queued_request_ownership.zig");
+const rt = struct {
+    const Request = struct {
+        expected: ?owners.Token,
+        seen: *std.atomic.Value(u32),
+        release: ?*std.atomic.Value(u32) = null,
+        fence: bool = false,
+    };
+    fn cleanupUnknown() bool {
+        return owners.shared().knownUncertain(std.testing.io);
+    }
+};
+export fn msv_ane_source_uncertainty() u32 {
+    return 0;
+}
+extern "c" fn usleep(microseconds: c_uint) c_int;
+fn trace() bool {
+    return false;
+}
+const log = struct {
+    fn info(comptime format: []const u8, args: anytype) void {
+        _ = format;
+        _ = args;
+    }
+};
+fn runReqs(job: []const rt.Request) !void {
+    for (job) |request| {
+        if (request.expected) |expected| {
+            const group = owners.current_group().* orelse return error.MissingLaneOrigin;
+            if (group.len != 1 or group[0].slot != expected.slot or group[0].sequence != expected.sequence or !std.mem.eql(u8, &group[0].instance, &expected.instance)) return error.WrongLaneOrigin;
+        } else if (owners.current_group().* != null or owners.current().* != null) return error.LeakedLaneOrigin;
+        _ = request.seen.fetchAdd(1, .release);
+        if (request.fence) owners.shared().fence(std.testing.io);
+        if (request.release) |gate| {
+            for (0..2000) |_| {
+                if (gate.load(.acquire) != 0) break;
+                _ = usleep(1000);
+            } else return error.FixtureDeadline;
+        }
+    }
+}
+// ACTUAL_LANE_METHODS
+const Rounds = struct {
+    jobs: [2][1]rt.Request,
+    fn count(_: *const Rounds) usize {
+        return 1;
+    }
+    fn slice(self: *const Rounds, lane: usize, round: usize) []const rt.Request {
+        _ = round;
+        return &self.jobs[lane];
+    }
+};
+const Engine = struct {
+    io: std.Io,
+    lane1: ?*LaneThread,
+    rows_ready: bool = true,
+    // ACTUAL_ROUND_METHOD
+};
+fn publish(lane: *LaneThread, job: []const rt.Request) !u32 {
+    const result = lane.post(job);
+    if (comptime @typeInfo(@TypeOf(result)) == .error_union) return try result;
+    return result;
+}
+fn initialize(seed: u8) !void {
+    owners.shared().primary_guard = false;
+    try owners.shared().initialize(std.testing.io, @splat(seed));
+}
+fn root() !owners.Token {
+    const token = try owners.shared().enter(std.testing.io);
+    try owners.shared().bind(std.testing.io, token, "fixture/ane-original");
+    owners.current().* = token;
+    return token;
+}
+fn releaseSender(token: owners.Token) !void {
+    owners.current().* = null;
+    try owners.shared().leave(std.testing.io, token);
+}
+fn releaseGate(gate: *std.atomic.Value(u32)) void {
+    gate.store(1, .release);
+}
+fn waitSeen(seen: *std.atomic.Value(u32), lane: *LaneThread, previous: u32) !void {
+    for (0..2000) |_| {
+        if (seen.load(.acquire) > 0) return;
+        if (lane.done.load(.acquire) != previous) break;
+        _ = usleep(1000);
+    }
+    return error.TestUnexpectedResult;
+}
+test "ane lane original retained before worker creation" {
+    try initialize(101);
+    const io = std.testing.io;
+    const token = try root();
+    var seen = std.atomic.Value(u32).init(0);
+    var lane: LaneThread = .{ .io = io };
+    const jobs = [_]rt.Request{.{ .expected = token, .seen = &seen }};
+    const previous = try publish(&lane, &jobs);
+    try releaseSender(token);
+    if (owners.shared().snapshot(io).owned != 1) {
+        std.debug.print("ANE_LANE_UNPUBLISHED_ORIGIN_NOT_RETAINED\n", .{});
+        return error.TestUnexpectedResult;
+    }
+    lane.thread = try std.Thread.spawn(.{ .stack_size = 1 << 20 }, LaneThread.loop, .{&lane});
+    defer lane.stop();
+    _ = waitChange(io, &lane.done, previous);
+    if (lane.failed or seen.load(.acquire) != 1) {
+        std.debug.print("ANE_LANE_LOST_ORIGINAL_SCOPE\n", .{});
+        return error.TestUnexpectedResult;
+    }
+    try std.testing.expectEqual(@as(usize, 0), owners.shared().snapshot(io).owned);
+    const next = try root();
+    const next_jobs = [_]rt.Request{.{ .expected = next, .seen = &seen }};
+    const again = try publish(&lane, &next_jobs);
+    try releaseSender(next);
+    _ = waitChange(io, &lane.done, again);
+    try std.testing.expect(!lane.failed);
+    try std.testing.expectEqual(@as(u32, 2), seen.load(.acquire));
+    try std.testing.expectEqual(@as(usize, 0), owners.shared().snapshot(io).owned);
+    try std.testing.expect(!owners.shared().knownUncertain(io));
+}
+test "ane lane original restores TLS before unselected next round" {
+    try initialize(102);
+    const io = std.testing.io;
+    const token = try root();
+    var seen = std.atomic.Value(u32).init(0);
+    var lane: LaneThread = .{ .io = io };
+    lane.thread = try std.Thread.spawn(.{ .stack_size = 1 << 20 }, LaneThread.loop, .{&lane});
+    defer lane.stop();
+    const attributed = [_]rt.Request{.{ .expected = token, .seen = &seen }};
+    var previous = try publish(&lane, &attributed);
+    try releaseSender(token);
+    _ = waitChange(io, &lane.done, previous);
+    if (lane.failed or seen.load(.acquire) != 1) {
+        std.debug.print("ANE_LANE_LOST_ORIGINAL_SCOPE\n", .{});
+        return error.TestUnexpectedResult;
+    }
+    const legacy = [_]rt.Request{.{ .expected = null, .seen = &seen }};
+    previous = try publish(&lane, &legacy);
+    _ = waitChange(io, &lane.done, previous);
+    try std.testing.expect(!lane.failed);
+    try std.testing.expectEqual(@as(u32, 2), seen.load(.acquire));
+    try std.testing.expectEqual(@as(usize, 0), owners.shared().snapshot(io).owned);
+}
+test "ane lane original required scope refuses both native lane effects" {
+    try initialize(103);
+    const io = std.testing.io;
+    var seen = std.atomic.Value(u32).init(0);
+    var lane: LaneThread = .{ .io = io };
+    lane.thread = try std.Thread.spawn(.{ .stack_size = 1 << 20 }, LaneThread.loop, .{&lane});
+    defer lane.stop();
+    var engine: Engine = .{ .io = io, .lane1 = &lane };
+    const rounds: Rounds = .{ .jobs = .{ .{.{ .expected = null, .seen = &seen }}, .{.{ .expected = null, .seen = &seen }} } };
+    const result = engine.runRounds(&rounds);
+    if (result) |_| {
+        std.debug.print("ANE_LANE_PUBLISHED_WITHOUT_REQUIRED_SCOPE\n", .{});
+        return error.TestUnexpectedResult;
+    } else |err| try std.testing.expect(err == error.InvalidQueuedOrigins);
+    try std.testing.expectEqual(@as(u32, 0), lane.seq.load(.acquire));
+    try std.testing.expectEqual(@as(u32, 0), seen.load(.acquire));
+    try std.testing.expect(owners.shared().knownUncertain(io));
+}
+test "ane lane original uncertainty survives own local join" {
+    try initialize(104);
+    const io = std.testing.io;
+    const token = try root();
+    var seen = std.atomic.Value(u32).init(0);
+    var lane: LaneThread = .{ .io = io };
+    lane.thread = try std.Thread.spawn(.{ .stack_size = 1 << 20 }, LaneThread.loop, .{&lane});
+    const jobs = [_]rt.Request{.{ .expected = token, .seen = &seen, .fence = true }};
+    const previous = try publish(&lane, &jobs);
+    try releaseSender(token);
+    _ = waitChange(io, &lane.done, previous);
+    lane.stop();
+    if (!owners.shared().knownUncertain(io) or owners.shared().snapshot(io).owned != 1) {
+        std.debug.print("ANE_LANE_ERASED_RETAINED_UNCERTAINTY\n", .{});
+        return error.TestUnexpectedResult;
+    }
+    try std.testing.expect(lane.failed);
+    try std.testing.expectError(error.RunFailed, publish(&lane, &jobs));
+    try std.testing.expectEqual(@as(usize, 1), owners.shared().snapshot(io).owned);
+}
+test "ane lane original pending unselected post cannot overwrite" {
+    try initialize(105);
+    const io = std.testing.io;
+    var seen = std.atomic.Value(u32).init(0);
+    var gate = std.atomic.Value(u32).init(0);
+    var lane: LaneThread = .{ .io = io };
+    lane.thread = try std.Thread.spawn(.{ .stack_size = 1 << 20 }, LaneThread.loop, .{&lane});
+    defer lane.stop();
+    defer releaseGate(&gate);
+    const jobs = [_]rt.Request{.{ .expected = null, .seen = &seen, .release = &gate }};
+    const previous = try publish(&lane, &jobs);
+    try waitSeen(&seen, &lane, previous);
+    const result = publish(&lane, &jobs);
+    if (result) |_| {
+        releaseGate(&gate);
+        const published = lane.seq.load(.acquire);
+        for (0..2000) |_| {
+            if (lane.done.load(.acquire) == published) break;
+            _ = usleep(1000);
+        }
+        std.debug.print("ANE_LANE_OVERWROTE_PENDING_JOB\n", .{});
+        return error.TestUnexpectedResult;
+    } else |err| try std.testing.expect(err == error.LaneBusy);
+    try std.testing.expectEqual(@as(u32, 1), lane.seq.load(.acquire));
+    releaseGate(&gate);
+    _ = waitChange(io, &lane.done, previous);
+    try std.testing.expect(!lane.failed);
+    try std.testing.expectEqual(@as(u32, 1), seen.load(.acquire));
+    try std.testing.expect(!owners.shared().knownUncertain(io));
+}
+test "ane lane original unselected anonymous behavior remains" {
+    try initialize(106);
+    const io = std.testing.io;
+    var seen = std.atomic.Value(u32).init(0);
+    var lane: LaneThread = .{ .io = io };
+    lane.thread = try std.Thread.spawn(.{ .stack_size = 1 << 20 }, LaneThread.loop, .{&lane});
+    defer lane.stop();
+    const jobs = [_]rt.Request{.{ .expected = null, .seen = &seen }};
+    const previous = try publish(&lane, &jobs);
+    _ = waitChange(io, &lane.done, previous);
+    try std.testing.expect(!lane.failed);
+    try std.testing.expectEqual(@as(u32, 1), seen.load(.acquire));
+    try std.testing.expect(!owners.shared().knownUncertain(io));
+}

@@ -1113,3 +1113,11 @@ node scripts/check-platform-current-ds4-cleanup-status.mjs --isolated --source /
 ```
 
 This binds the prior cleanup helper as a prerequisite and the exact one-file collector overlay. The checked-refusal case must set the current host uncertainty bit while independent C host/GPU getters return0. Compatibility controls preserve C host/GPU separation and unselected unavailable fields. It is a CPU status component test with no model/device work or admission authority.
+
+For the existing ANE second-lane original-scope handoff overlay:
+
+```sh
+node scripts/check-platform-current-ane-lane.mjs --isolated --source /private/tmp/REVIEWED-SOURCE --zig /private/tmp/REVIEWED-ZIG
+```
+
+This binds the exact one-file parent and executes the actual lane/round methods with a CPU substitute for native request execution. Original-scope retention, entry/restoration, repeat generations, required-origin refusal before both lanes, pending-post exclusion and uncertainty retention are tested in separate processes. It does not execute ANE/model work or issue native completion/admission authority. Complete the enclosing builds and empty-model checks separately.
