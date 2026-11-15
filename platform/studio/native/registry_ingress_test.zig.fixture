@@ -1,0 +1,250 @@
+const std = @import("std");
+const owners = @import("fios/request_ownership.zig");
+const claims = @import("fios/current_registry_claim.zig");
+const Entry = struct { id: []const u8, state: enum { unloaded, loading, ready, error_state, evicting }, fios_load_uncertain: std.atomic.Value(bool) = .init(false) };
+const Registry = struct { mutex: std.Io.Mutex = .init, entries: std.StringHashMap(*Entry), generation: std.atomic.Value(u64) = .init(7) };
+const cid: owners.CorrelationID = @splat(61);
+fn requireInterface() !void {
+    if (!@hasDecl(claims, "attach") or !@hasDecl(owners.Tracker, "bindPreparationRegistryKnown")) {
+        std.debug.print("MISSING_REGISTRY_GENERATION_INGRESS_LINK\n", .{});
+        return error.TestUnexpectedResult;
+    }
+}
+fn attach(t: *owners.Tracker, r: *Registry, claim: owners.Token, ingress: owners.Token, model: []const u8, id: owners.CorrelationID, known: bool) !void {
+    if (comptime @hasDecl(claims, "attach")) {
+        if (known) return claims.attachKnown(std.testing.io, t, r, claim, ingress, model, id);
+        return claims.attach(std.testing.io, t, r, claim, ingress, model, id);
+    } else return error.MissingInterface;
+}
+fn initialize(t: *owners.Tracker, seed: u8) !void {
+    try t.initialize(std.testing.io, @splat(seed));
+}
+test "registry ingress interface" {
+    try requireInterface();
+}
+test "registry ingress exact fresh metadata preserves original lineage" {
+    try requireInterface();
+    const io = std.testing.io;
+    var t: owners.Tracker = .{ .primary_guard = true };
+    try initialize(&t, 181);
+    var r: Registry = .{ .entries = std.StringHashMap(*Entry).init(std.testing.allocator) };
+    defer r.entries.deinit();
+    var a: Entry = .{ .id = "fixture/Exact", .state = .unloaded };
+    try r.entries.put(a.id, &a);
+    const claim = try claims.claim(io, &t, &r, a.id, cid);
+    const ingress = try t.enter(io);
+    try attach(&t, &r, claim, ingress, a.id, cid, false);
+    try std.testing.expect(a.state == .unloaded and r.generation.load(.acquire) == 7);
+    try std.testing.expectEqual(@as(usize, 2), t.correlationSnapshot(io, cid).owners);
+    try t.leave(io, claim);
+    try std.testing.expectEqual(claim.sequence, t.correlationSnapshot(io, cid).root_sequence);
+    try t.active(io, ingress);
+    try t.leave(io, ingress);
+    try std.testing.expect(!t.knownUncertain(io));
+}
+test "registry ingress stale generation keeps claim and ingress without downgrade" {
+    try requireInterface();
+    const io = std.testing.io;
+    var t: owners.Tracker = .{ .primary_guard = true };
+    try initialize(&t, 182);
+    var r: Registry = .{ .entries = std.StringHashMap(*Entry).init(std.testing.allocator) };
+    defer r.entries.deinit();
+    var a: Entry = .{ .id = "fixture/a", .state = .ready };
+    var b: Entry = .{ .id = "fixture/b", .state = .unloaded };
+    try r.entries.put(a.id, &a);
+    const claim = try claims.claim(io, &t, &r, a.id, cid);
+    const ingress = try t.enter(io);
+    r.mutex.lockUncancelable(io);
+    try r.entries.put(b.id, &b);
+    _ = r.generation.fetchAdd(1, .acq_rel);
+    r.mutex.unlock(io);
+    try std.testing.expectError(error.StaleRegistryGeneration, attach(&t, &r, claim, ingress, a.id, cid, false));
+    try std.testing.expectEqual(@as(usize, 2), t.snapshot(io).owned);
+    try std.testing.expectEqual(@as(usize, 1), t.correlationSnapshot(io, cid).owners);
+    try std.testing.expectError(error.RegistryBindingRequired, t.attachPreparationIngressKnown(io, claim, ingress, a.id, cid));
+    try std.testing.expect(!t.knownUncertain(io));
+    try t.leave(io, claim);
+    const next = try claims.claim(io, &t, &r, a.id, @splat(62));
+    try std.testing.expect(next.sequence != claim.sequence);
+    try attach(&t, &r, next, ingress, a.id, @splat(62), false);
+    try t.leave(io, next);
+    try t.leave(io, ingress);
+}
+test "registry ingress unsealed claims cannot use fresh registry path" {
+    try requireInterface();
+    const io = std.testing.io;
+    var t: owners.Tracker = .{ .primary_guard = true };
+    try initialize(&t, 183);
+    var r: Registry = .{ .entries = std.StringHashMap(*Entry).init(std.testing.allocator) };
+    defer r.entries.deinit();
+    var a: Entry = .{ .id = "fixture/a", .state = .unloaded };
+    try r.entries.put(a.id, &a);
+    const claim = try t.claimCorrelatedPreparation(io, a.id, cid);
+    const ingress = try t.enter(io);
+    try std.testing.expectError(error.RegistryBindingRequired, attach(&t, &r, claim, ingress, a.id, cid, false));
+    try t.bindPreparationRegistryKnown(io, claim, 7);
+    try std.testing.expectError(error.RegistryAlreadyBound, t.bindPreparationRegistryKnown(io, claim, 7));
+    try attach(&t, &r, claim, ingress, a.id, cid, false);
+    try t.leave(io, claim);
+    try t.leave(io, ingress);
+}
+test "registry ingress catalog identity transition and uncertainty retain ownership" {
+    try requireInterface();
+    const io = std.testing.io;
+    var t: owners.Tracker = .{ .primary_guard = true };
+    try initialize(&t, 184);
+    var r: Registry = .{ .entries = std.StringHashMap(*Entry).init(std.testing.allocator) };
+    defer r.entries.deinit();
+    var a: Entry = .{ .id = "fixture/a", .state = .unloaded };
+    try r.entries.put(a.id, &a);
+    const claim = try claims.claim(io, &t, &r, a.id, cid);
+    const ingress = try t.enter(io);
+    try std.testing.expectError(error.MissingRegistryIdentity, attach(&t, &r, claim, ingress, "fixture/missing", cid, false));
+    a.state = .loading;
+    try std.testing.expectError(error.ModelTransition, attach(&t, &r, claim, ingress, a.id, cid, false));
+    a.state = .unloaded;
+    a.id = "fixture/renamed";
+    try std.testing.expectError(error.InvalidRegistryIdentity, attach(&t, &r, claim, ingress, "fixture/a", cid, false));
+    a.id = "fixture/a";
+    a.fios_load_uncertain.store(true, .release);
+    try std.testing.expectError(error.CoverageUncertain, attach(&t, &r, claim, ingress, a.id, cid, false));
+    a.fios_load_uncertain.store(false, .release);
+    try std.testing.expectError(error.CoverageUncertain, attach(&t, &r, claim, ingress, a.id, cid, false));
+    try std.testing.expectEqual(@as(usize, 2), t.snapshot(io).owned);
+    try std.testing.expect(t.knownUncertain(io));
+}
+const Probe = struct {
+    var registry: ?*Registry = null;
+    var tracker: ?*owners.Tracker = null;
+    var calls: usize = 0;
+    var outside = true;
+    fn read() bool {
+        calls += 1;
+        if (registry) |r| {
+            if (r.mutex.tryLock()) r.mutex.unlock(std.testing.io) else outside = false;
+        }
+        if (tracker) |t| {
+            if (t.mutex.tryLock()) t.mutex.unlock(std.testing.io) else outside = false;
+        }
+        return false;
+    }
+};
+test "registry ingress probe precedes both locks and known path has no callback" {
+    try requireInterface();
+    const io = std.testing.io;
+    var t: owners.Tracker = .{ .primary_guard = true };
+    try initialize(&t, 185);
+    var r: Registry = .{ .entries = std.StringHashMap(*Entry).init(std.testing.allocator) };
+    defer r.entries.deinit();
+    var a: Entry = .{ .id = "fixture/a", .state = .unloaded };
+    try r.entries.put(a.id, &a);
+    Probe.registry = &r;
+    Probe.tracker = &t;
+    try t.enrollBackendUncertaintyProbe(io, Probe.read);
+    const claim = try claims.claim(io, &t, &r, a.id, cid);
+    const ingress = try t.enter(io);
+    Probe.calls = 0;
+    try attach(&t, &r, claim, ingress, a.id, cid, false);
+    try std.testing.expect(Probe.calls == 1 and Probe.outside);
+    try t.leave(io, claim);
+    try t.leave(io, ingress);
+    const next = try claims.claimKnown(io, &t, &r, a.id, @splat(63));
+    const fresh = try t.enter(io);
+    Probe.calls = 0;
+    try attach(&t, &r, next, fresh, a.id, @splat(63), true);
+    try std.testing.expectEqual(@as(usize, 0), Probe.calls);
+    try t.leave(io, next);
+    try t.leave(io, fresh);
+    Probe.registry = null;
+    Probe.tracker = null;
+}
+const Race = struct {
+    t: *owners.Tracker,
+    r: *Registry,
+    claim: owners.Token,
+    ingress: owners.Token,
+    accepted: bool = false,
+    failure: ?anyerror = null,
+    fn run(self: *Race) void {
+        attach(self.t, self.r, self.claim, self.ingress, "fixture/a", cid, false) catch |err| {
+            self.failure = err;
+            return;
+        };
+        self.accepted = true;
+    }
+};
+test "registry ingress concurrent attachment has one original winner" {
+    try requireInterface();
+    const io = std.testing.io;
+    var t: owners.Tracker = .{ .primary_guard = true };
+    try initialize(&t, 186);
+    var r: Registry = .{ .entries = std.StringHashMap(*Entry).init(std.testing.allocator) };
+    defer r.entries.deinit();
+    var a: Entry = .{ .id = "fixture/a", .state = .unloaded };
+    try r.entries.put(a.id, &a);
+    const claim = try claims.claim(io, &t, &r, a.id, cid);
+    const one = try t.enter(io);
+    const two = try t.enter(io);
+    var races = [_]Race{ .{ .t = &t, .r = &r, .claim = claim, .ingress = one }, .{ .t = &t, .r = &r, .claim = claim, .ingress = two } };
+    const first = try std.Thread.spawn(.{}, Race.run, .{&races[0]});
+    const second = try std.Thread.spawn(.{}, Race.run, .{&races[1]});
+    first.join();
+    second.join();
+    try std.testing.expect(races[0].accepted != races[1].accepted);
+    const winner: usize = if (races[0].accepted) 0 else 1;
+    const refused = races[1 - winner].failure.?;
+    try std.testing.expect(refused == error.RegistryBusy or refused == error.PreparationClaimUsed);
+    try std.testing.expectEqual(@as(usize, 2), t.correlationSnapshot(io, cid).owners);
+    try std.testing.expectEqual(@as(usize, 3), t.snapshot(io).owned);
+    try t.leave(io, claim);
+    try t.leave(io, races[winner].ingress);
+    try std.testing.expectEqual(@as(usize, 1), t.snapshot(io).owned);
+    try t.leave(io, races[1 - winner].ingress);
+}
+test "registry ingress range and busy refusal do not mutate roots" {
+    try requireInterface();
+    const io = std.testing.io;
+    var t: owners.Tracker = .{ .primary_guard = true };
+    try initialize(&t, 187);
+    var r: Registry = .{ .entries = std.StringHashMap(*Entry).init(std.testing.allocator) };
+    defer r.entries.deinit();
+    var a: Entry = .{ .id = "fixture/a", .state = .unloaded };
+    try r.entries.put(a.id, &a);
+    const claim = try claims.claim(io, &t, &r, a.id, cid);
+    const ingress = try t.enter(io);
+    r.mutex.lockUncancelable(io);
+    try std.testing.expectError(error.RegistryBusy, attach(&t, &r, claim, ingress, a.id, cid, true));
+    r.mutex.unlock(io);
+    r.generation.store(owners.maximum_sample_sequence + 1, .release);
+    try std.testing.expectError(error.RegistryGenerationLimit, attach(&t, &r, claim, ingress, a.id, cid, false));
+    try std.testing.expectEqual(@as(usize, 2), t.snapshot(io).owned);
+    try std.testing.expect(!t.knownUncertain(io));
+}
+test "registry ingress control original claim remains compatible" {
+    const io = std.testing.io;
+    var t: owners.Tracker = .{ .primary_guard = true };
+    try initialize(&t, 188);
+    var r: Registry = .{ .entries = std.StringHashMap(*Entry).init(std.testing.allocator) };
+    defer r.entries.deinit();
+    var a: Entry = .{ .id = "fixture/a", .state = .unloaded };
+    try r.entries.put(a.id, &a);
+    const claim = try claims.claim(io, &t, &r, a.id, cid);
+    try std.testing.expectEqual(claim.sequence, t.correlationSnapshot(io, cid).root_sequence);
+    try t.leave(io, claim);
+}
+test "registry ingress control diagnostic source remains unsupported" {
+    const io = std.testing.io;
+    var t: owners.Tracker = .{ .primary_guard = false };
+    try initialize(&t, 189);
+    var r: Registry = .{ .entries = std.StringHashMap(*Entry).init(std.testing.allocator) };
+    defer r.entries.deinit();
+    var a: Entry = .{ .id = "fixture/a", .state = .unloaded };
+    try r.entries.put(a.id, &a);
+    try std.testing.expectError(error.UnsupportedSourceGuard, claims.claim(io, &t, &r, a.id, cid));
+    if (comptime @hasDecl(claims, "attach")) {
+        const token = try t.enter(io);
+        try std.testing.expectError(error.UnsupportedSourceGuard, attach(&t, &r, token, token, a.id, cid, false));
+        try t.leave(io, token);
+    }
+    try std.testing.expect(!t.knownUncertain(io));
+}

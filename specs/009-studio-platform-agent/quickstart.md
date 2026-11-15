@@ -1156,3 +1156,12 @@ node scripts/check-platform-preparation-ingress.mjs --isolated --source /private
 ```
 
 Original API-absence, actual tracker/concurrent metadata cases, full-file AST and frozen exact overlay only. No serving caller, native capacity reservation, model/device work or all-client/terminal authority; full native enclosure is independent.
+
+
+Registry-generation preparation/ingress component check:
+
+```sh
+node scripts/check-platform-registry-ingress.mjs --isolated --source /private/tmp/fios-009-registry-ingress-work-hyyrzggi/source --zig /private/tmp/fios-009-port-26112-ft5mnlcq/source/.zig-toolchain/zig
+```
+
+Exact three-file/full-AST/dependency checks, actual tracker/helper, CPU registry metadata and unchanged prior handoff compatibility fixture. No model/native capacity or authority; real wrapper stub/native enclosing validation is separate.
