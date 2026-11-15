@@ -8,16 +8,36 @@ const reviewDigest=relative=>createHash('sha256').update(readFileSync(new URL('.
 // Current checker result metadata remains distinct from the historical graph
 // declaration. Parsing either record grants no native or installed authority.
 function currentCxxInputs(inputs,dependency,cxx,message){
+ const callback=Object.hasOwn(cxx,'incremental_patch_sha256'),status=Object.hasOwn(cxx,'command_status_patch_sha256'),capture=Object.hasOwn(cxx,'capture_refusal_patch_sha256');
+ assert((!status||callback)&&(!capture||status),message);
+ const extraPatches=[['incremental_patch_sha256','platform/studio/native/mlx-c69303b-metal-callback-fence.patch',callback],
+  ['command_status_patch_sha256','platform/studio/native/mlx-c69303b-metal-callback-status.patch',status],
+  ['capture_refusal_patch_sha256','platform/studio/native/mlx-c69303b-owner-capture-refusal.patch',capture]];
+ for(const [key,file,selected] of extraPatches){
+  assert(Object.hasOwn(dependency,key)===selected,message);
+  if(selected)assert(cxx[key]===reviewDigest(file)&&dependency[key]===cxx[key],message);
+ }
+ assert(Object.hasOwn(dependency,'observed_source_patch_sha256')===callback,message);
  const fields=['version','scope','source','library_sha256','config_sha256','helper_sha256','fixture_sha256','runner_sha256','sdk',
   'selected_sdk_inputs','source_patch_sha256','results','models','inference','source_fixture_only','installed','activation',
-  'native_authority','whole_native_provenance','declared_inputs_unchanged'];
+  'native_authority','whole_native_provenance','declared_inputs_unchanged',
+  ...(callback?['sdk_source','sdk_library','incremental_patch_sha256','observed_source_patch_sha256']:[]),
+  ...(status?['command_status_patch_sha256']:[]),...(capture?['capture_refusal_patch_sha256']:[])];
  assert.deepEqual(Object.keys(cxx).sort(),fields.sort(),message);
  assert(cxx.version===1&&cxx.sdk==='27.2'&&dependency.sdk===cxx.sdk&&inputs.native_base==='4e231ceebe63308cc038117d40b9f9b64bd0372e',message);
  assert(cxx.source_fixture_only===true&&cxx.declared_inputs_unchanged===true&&cxx.models===0,message);
  for(const key of ['inference','installed','activation','native_authority','whole_native_provenance'])assert(cxx[key]===false,message);
  assert(typeof cxx.source==='string'&&cxx.source.startsWith('/private/tmp/')&&path.isAbsolute(cxx.source)&&
   path.normalize(cxx.source)===cxx.source&&!cxx.source.includes('\0')&&cxx.source.length<=4096&&
-  dependency.source===path.join(cxx.source,'lib/mlx-src'),message);
+  (callback||dependency.source===path.join(cxx.source,'lib/mlx-src')),message);
+ if(callback){
+  const privatePath=value=>typeof value==='string'&&value.startsWith('/private/tmp/')&&path.isAbsolute(value)&&path.normalize(value)===value&&!value.includes('\0')&&value.length<=4096;
+  assert(privatePath(cxx.sdk_source)&&privatePath(cxx.sdk_library)&&path.basename(cxx.sdk_library)==='libmlx.dylib'&&dependency.source===cxx.sdk_source,message);
+  assert(/^[a-f0-9]{64}$/.test(cxx.observed_source_patch_sha256)&&dependency.observed_source_patch_sha256===cxx.observed_source_patch_sha256,message);
+  // A CPU control for another app build graph cannot attest this graph.
+  assert(inputs.native_cxx_config_sha256===cxx.config_sha256,message);
+ }
+
  for(const key of ['library_sha256','config_sha256','helper_sha256','fixture_sha256','runner_sha256','source_patch_sha256'])assert(typeof cxx[key]==='string'&&/^[a-f0-9]{64}$/.test(cxx[key]),message);
  assert(cxx.library_sha256===dependency.library_inputs?.['libmlx.dylib']?.sha256&&cxx.source_patch_sha256===dependency.patch_sha256,message);
  for(const [key,file]of [['helper_sha256','platform/studio/native/current_system_cxx_build.zig.fixture'],
@@ -44,6 +64,9 @@ export function nativeReviewModelInputs(inputs){
  if(dependency!==undefined&&dependency!==null){
   assert(dependency.source_fixture_only===true&&dependency.native_authority===false&&dependency.features?.safetensors===true,'Source SDK lacks required Safetensors support');
   const cxx=inputs.system_cxx,message='Source SDK lacks matched C++ runtime compatibility';
+  if(['incremental_patch_sha256','command_status_patch_sha256','capture_refusal_patch_sha256','observed_source_patch_sha256'].some(key=>Object.hasOwn(dependency,key)))
+   assert(cxx?.scope===currentCxxScope,message);
+
   if(cxx&&typeof cxx==='object'&&!Array.isArray(cxx)&&cxx.scope===currentCxxScope){currentCxxInputs(inputs,dependency,cxx,message);return;}
   assert(cxx&&typeof cxx==='object'&&!Array.isArray(cxx)&&cxx.version===1&&cxx.sdk===dependency.sdk&&cxx.sdk==='27.2'&&
    JSON.stringify(cxx.callback_error_controls)===JSON.stringify(['Debug','ReleaseFast'])&&

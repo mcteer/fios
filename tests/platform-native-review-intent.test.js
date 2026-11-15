@@ -145,6 +145,10 @@ test('source SDK model preparation requires the matched C++ compatibility record
  const files=[sdk+'/usr/lib/libc++.1.tbd',...['__config','__config_site','cstdint','memory','functional','optional','stdexcept','typeinfo','exception'].map(name=>sdk+'/usr/include/c++/v1/'+name),root+'/scripts/lib/platform-native-system-cxx.mjs',root+'/platform/studio/native/mlx_cxx_callback_error_test.cpp'];
  const cxx={version:1,sdk:'27.2',callback_error_controls:['Debug','ReleaseFast'],scope:'selected_SDK_stub_and_header_inputs_not_mapped_OS_runtime_attestation',declared_inputs:Object.fromEntries(files.map(name=>[name,'a'.repeat(64)]))};
  nativeReviewModelInputs({mlx_source_dependency:dependency,system_cxx:cxx});
+ for(const key of ['incremental_patch_sha256','command_status_patch_sha256','capture_refusal_patch_sha256','observed_source_patch_sha256']){
+  assert.throws(()=>nativeReviewModelInputs({mlx_source_dependency:{...dependency,[key]:'b'.repeat(64)},system_cxx:cxx}),/C\+\+/);
+ }
+
  for(const system_cxx of [null,{}, {...cxx,version:2},{...cxx,sdk:'27.0'},{...cxx,callback_error_controls:[]},{...cxx,callback_error_controls:['Debug','Debug']},{...cxx,scope:'mapped_runtime_attestation'},{...cxx,declared_inputs:{}},{...cxx,declared_inputs:{...cxx.declared_inputs,[files[0]]:'invalid'}}]){
   assert.throws(()=>nativeReviewModelInputs({mlx_source_dependency:dependency,system_cxx}),/C\+\+/);
  }
@@ -181,4 +185,34 @@ test('current CPU compatibility declarations cannot promote authority or omit a 
   v=>v.system_cxx.results[1].mode='Debug',v=>v.system_cxx.results[0].run_signal='SIGABRT',v=>v.system_cxx.results[0].build_status=null]){
   const value=currentCxxMetadata();change(value);assert.throws(()=>nativeReviewModelInputs(value),/C\+\+/);
  }
+});
+
+function extendedCurrentCxxMetadata(stage=3){
+ const value=currentCxxMetadata(),cxx=value.system_cxx,dependency=value.mlx_source_dependency;
+ const digest=file=>createHash('sha256').update(readFileSync(new URL('../'+file,import.meta.url))).digest('hex');
+ cxx.sdk_source='/private/tmp/fixture/extended-sdk-source';cxx.sdk_library='/private/tmp/fixture/extended-sdk-build/lib/libmlx.dylib';
+ cxx.incremental_patch_sha256=digest('platform/studio/native/mlx-c69303b-metal-callback-fence.patch');
+ cxx.observed_source_patch_sha256='c'.repeat(64);
+ dependency.source=cxx.sdk_source;dependency.incremental_patch_sha256=cxx.incremental_patch_sha256;dependency.observed_source_patch_sha256=cxx.observed_source_patch_sha256;
+ value.native_cxx_config_sha256=cxx.config_sha256;
+ if(stage>=2){cxx.command_status_patch_sha256=digest('platform/studio/native/mlx-c69303b-metal-callback-status.patch');dependency.command_status_patch_sha256=cxx.command_status_patch_sha256;}
+ if(stage>=3){cxx.capture_refusal_patch_sha256=digest('platform/studio/native/mlx-c69303b-owner-capture-refusal.patch');dependency.capture_refusal_patch_sha256=cxx.capture_refusal_patch_sha256;}
+ return value;
+}
+test('extended current C++ CPU receipts require exact selected SDK composition and app config binding',()=>{
+ for(const stage of [1,2,3])nativeReviewModelInputs(extendedCurrentCxxMetadata(stage));
+});
+test('extended CPU compatibility refuses missing reordered or unmatched declarations without authority promotion',()=>{
+ for(const change of [v=>delete v.native_cxx_config_sha256,v=>v.native_cxx_config_sha256='b'.repeat(64),
+  v=>delete v.system_cxx.sdk_source,v=>v.system_cxx.sdk_library='relative/libmlx.dylib',v=>v.system_cxx.sdk_source='/private/tmp/other-sdk',
+  v=>delete v.mlx_source_dependency.incremental_patch_sha256,v=>v.mlx_source_dependency.observed_source_patch_sha256='d'.repeat(64),
+  v=>v.system_cxx.incremental_patch_sha256='a'.repeat(64),v=>v.system_cxx.command_status_patch_sha256='a'.repeat(64),
+  v=>v.system_cxx.capture_refusal_patch_sha256='a'.repeat(64),v=>v.mlx_source_dependency.capture_refusal_patch_sha256='a'.repeat(64),
+  v=>delete v.system_cxx.command_status_patch_sha256,v=>delete v.system_cxx.incremental_patch_sha256,
+  v=>v.system_cxx.native_authority=true,v=>v.system_cxx.installed=true,v=>v.system_cxx.whole_native_provenance=true,
+  v=>v.system_cxx.results[1].passed=false,v=>v.system_cxx.enrolled=true]){
+  const value=extendedCurrentCxxMetadata();change(value);assert.throws(()=>nativeReviewModelInputs(value),/C\+\+/);
+ }
+ const canonical=currentCxxMetadata();canonical.mlx_source_dependency.capture_refusal_patch_sha256='a'.repeat(64);
+ assert.throws(()=>nativeReviewModelInputs(canonical),/C\+\+/);
 });
