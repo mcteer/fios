@@ -1376,3 +1376,20 @@ The ordinary profile submits one empty command buffer, dispatches no shader and
 loads no model. SDK holds are partial source metadata, never native admission.
 Enclosing serving builds and private HTTP/manager checks are separate; see
 [contract](contracts/sdk-metal-request-events.md).
+
+
+### Queued CPU promotion copier custody (source only)
+
+Layer `mlx-serve-stream-copy-origins.patch` on the qualified command-buffer-event
+native candidate, checking `stream_copy_origin_parents.json` before application.
+Run on the private reviewed Darwin ARM64 source checkout with the pinned compiler:
+
+```sh
+.venv/bin/python -I -B scripts/check-platform-stream-copy-origins.py --isolated \
+  --source /private/tmp/REVIEW/source \
+  --zig /private/tmp/REVIEW/zig
+```
+
+The checker enforces the compiler digest and source base; use actual canonical
+private paths. Its 24 stages include six expected parent failures. No model or
+native installation runs. See [ownership contract](contracts/stream-copy-origins.md).

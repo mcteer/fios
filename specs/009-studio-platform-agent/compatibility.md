@@ -614,3 +614,11 @@ capsule is77f9aa43…. Model/native admission and installed acceptance remain
 unavailable; per-command events and partial SDK tickets are not whole-request or
 all-client proofs. The35 older serving artifacts, including MLX-C, are retained
 rather than rebuilt.
+
+
+The [queued CPU promotion copier increment](contracts/stream-copy-origins.md)
+retains original request custody through the existing asynchronous CPU copy
+queue. Its24-stage source fixture reproduces six parent failures and passes the
+candidate/legacy controls. Thread joins and queue completion are local lifetime
+evidence only; they neither clear native uncertainty nor establish all-client
+coverage, genuine terminal proof or atomic admission. G2 stays open.

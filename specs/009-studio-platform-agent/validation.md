@@ -6222,3 +6222,70 @@ Final fixed native qualification: enabled semantic35/35 (438.048s), link32/32 (6
 Aggregate `/private/tmp/fios-009-sdk-metal-submit-fix-wJWjLB0x/final-review.json`, SHA25614a2e21bd2c89104de81577702233007da761067577e7bd70d380d07a584e00c, binds the fixed SDK/native/component/runtime receipts and the preserved failing-first regression. It distinguishes zero new real inference/model plans from the nine rejected private empty-catalog guard requests. No model loads, component shader dispatch, installed service operation, native activation, Studio acceptance, merge or deployment occurred. Whole39/55 remains unchanged. The pre-repair8a8023e4 library and its initial image/capsule remain historical prototype evidence, not the final repaired artifact.
 
 Published6113aa29d749e8b7f936f6d4c0c8a7dd85ba1087 [CI43746667801](https://github.com/mcteer/fios/actions/runs/43746667801) passes all seven jobs including aggregate. This device-event source increment is awaiting its own published exact-SHA CI; no CI result is promoted into native/install or production delivery proof.
+
+
+Published deee3facbab3426c0826fc4405a40954d042a7e6 [CI43753328278](https://github.com/mcteer/fios/actions/runs/43753328278) passes all seven jobs including aggregate. This qualifies that exact source commit in mock-only CI; no merge, installed/native acceptance or deployment follows from this result.
+
+
+## 2026-11-15 queued CPU promotion copy custody (component qualified)
+
+Whole tasks remain39/55; no checkbox closes. The actual streamed-expert copier
+can retain queued work after a fallible GLM forward exits before its ordinary
+flush. Its existing release path still joins before pool release; this is a
+request-attribution/lifetime gap, not a demonstrated use-after-free. The one-file
+`mlx-serve-stream-copy-origins.patch` retains the original native group before
+queue publication, enters/restores that context around unchanged CPU copies and
+releases it before publishing completion. Missing context fences ownership and
+uses the existing synchronous fallback. Independent uncertainty stays quarantined.
+See [contract](contracts/stream-copy-origins.md).
+
+Canonical `/private/tmp/fios-009-stream-copy-check-s0tqtah0/receipt.json`, SHA256
+f36e26504dd6e49789c20748a5ea2451b5c208da7adfadbc77336a42b4cf38c1, passes24 expected stages:
+eight actual compiler stages and16 actual runtime stages across parent/candidate,
+enabled/legacy and Debug/ReleaseSafe. Six parent failures reproduce normal early
+root departure, missing origin and independent-fence attribution; candidate
+checks and legacy controls pass. The fixture projects actual methods and copy
+algorithm with a finite scheduling port, real CPU threads and actual native
+ownership units. Surrounding policy metadata is fixture supplied. All copy
+threads are stopped/joined before assertions. No model, shader, HTTP inference or
+installed service operation runs. Selected inputs remain unchanged.
+
+The2379-file source comparison changes exactly the declared stream file. The
+174-file package projection remains511e6a8e…. Local195 Node/107 installed Python
+tests,26 native review/intent/library checks, agent boundary and application build
+pass. Full enabled native qualification is in progress; these component results
+do not establish all-client coverage, native terminal proof, admission, whole-native
+provenance or installed acceptance. No sixth real model plan/POST is created.
+
+Additional local controls for the copier increment:17 Chromium tests pass, npm
+audit reports zero vulnerabilities, Compose configuration validates and
+`node scripts/check.mjs` discovers the advertised gateway catalog without
+inference. That discovery is functional evidence only and does not establish
+009 native coverage or eliminate host-alias duplicates addressed by separate003
+work. Existing003 working changes are preserved and excluded from this increment.
+
+The pinned pip-audit2.10.1 scan reports no known dependency vulnerabilities;
+local `fios-agent`0.1.0 is not on PyPI and is explicitly unaudited by that service.
+An unrelated package-publication checker invocation without its required
+`--isolated` argument refused at its argument gate before doing work; its log is
+retained and it is not counted as a successful check or a package rebuild.
+
+Final copier source qualification passes enabled semantic35/35 (365.872s),
+link32/32 (5.982s), units-check (1.386s) and all four private empty-model
+startup/activity/correlation/current StudioCore manager checks. Raw binary
+993157f20d73f8529b7868e2dfb4c15784a804a4f16d221dcd87d16c2e5810ea,
+normalized binaryb303256d4c725f5f7282447d2502ac6311fcfed0f92adaec84956e3075cd2c82
+and actual3736ed55-base capsule2978ad42fe3a5fec3da2403737e6e464a30b1c88f5f82eedfe0185b0afe4d643
+verify together with the qualified parent capsule. Manager receipt is
+`/private/tmp/f9-native-status-2Q8m2r`. Post-run2379-file comparison changes
+exactly the declared stream file;446 SDK files and C++ configuration stay
+unchanged. The174-file package projection stays511e6a8e…. Model prerequisite
+parsing still refuses the unqualified C++/MLX-C/model composition.
+
+Aggregate `/private/tmp/fios-009-stream-copy-origins-work-DvTioucS/final-review.json`,
+SHA25623dc4633b3236d9c03d8da42d403e89aff581d1865b2fc4402b33b1eaaaeb451,
+binds the selected receipts. It distinguishes zero real inference/model plans
+from nine rejected private empty-catalog guard requests. No model loads, shader
+dispatch, installed operation, native activation, Studio acceptance, merge or
+deployment occurred. Whole39/55 remains unchanged. Exact published-SHA CI for
+this increment is pending.

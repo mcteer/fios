@@ -1,0 +1,60 @@
+const std=@import("std");
+const owners=@import("fios/request_ownership.zig");
+const sdk=@import("fios/sdk_request_ownership.zig");
+const fios_copy_origins=@import("build_options").enabled;
+const fios_owners=if(fios_copy_origins)sdk else struct{};
+var main_thread:std.Thread.Id=undefined;
+var expected_root:?owners.Token=null;
+var started:std.atomic.Value(bool)=.init(false);
+var proceed:std.atomic.Value(bool)=.init(false);
+var observed:std.atomic.Value(bool)=.init(false);
+extern "c" fn getenv([*:0]const u8)?[*:0]const u8;
+fn pause() void {const ts:std.c.timespec=.{.sec=0,.nsec=std.time.ns_per_ms};_=std.c.nanosleep(&ts,null);}
+const Stream=struct {
+ copier:Copier=.{},
+ layers:[1]struct{policy:struct{capacity:u32=1}=.{}}=.{.{}},
+ max_route_ids:u32=1,
+ const max_wide_depth=4;
+ const promote_threads=8;
+ const Promotion=struct{from:u32};
+ // ACTUAL_DECLARATIONS
+ fn copyParallel(copies:[]const Copy,total:u64) void {
+  if(std.Thread.getCurrentId()!=main_thread) {
+   if(owners.current_group().*) |group| {if(group.len==1 and expected_root!=null and std.meta.eql(group[0],expected_root.?))observed.store(true,.release);}
+   started.store(true,.release);
+   for(0..2000) |_| {if(proceed.load(.acquire))break;pause();}
+  }
+  copyParallelActual(copies,total);
+ }
+};
+test "queued stream promotion copies preserve original native custody" {
+ const io=std.testing.io;main_thread=std.Thread.getCurrentId();
+ const scenario=try std.fmt.parseInt(u32,std.mem.span(getenv("FIOS_COPY_SCENARIO") orelse return error.MissingScenario),10);try std.testing.expect(scenario<=2);
+ try owners.shared().initialize(io,@splat(7));try sdk.initialize(io);
+ const root=try owners.shared().enter(io);try owners.shared().bind(io,root,"fixture/promotion-copy");try owners.shared().active(io,root);expected_root=root;
+ const group=[_]owners.Token{root};
+ if(scenario!=1){owners.current().*=root;owners.current_group().*=&group;}
+ var src:[256]u8=undefined;for(&src,0..) |*v,i|v.*=@truncate(i);
+ var dst:[256]u8=@splat(0);var stream:Stream=.{};
+ const copies=[_]Stream.Copy{.{.dst=&dst,.src=&src}};
+ stream.submitCopies(0,&copies,src.len,&.{});
+ const synchronous=stream.copier.thread==null;
+ if(!synchronous)for(0..1000) |_| {if(started.load(.acquire))break;pause();};
+ const did_start=started.load(.acquire);
+ if(scenario==2)sdk.fios_native_request_owners_uncertain();
+ owners.current().*=null;owners.current_group().*=null;try owners.shared().leave(io,root);
+ const held=owners.shared().snapshot(io);
+ proceed.store(true,.release);
+ stream.settleCopies();stream.stopCopier();
+ try std.testing.expectEqualSlices(u8,&src,&dst);
+ const final=owners.shared().snapshot(io);
+ if(fios_copy_origins and scenario==1) {
+  if(!synchronous){std.debug.print("STREAM_COPY_MISSING_ORIGIN_ASYNC\n",.{});return error.TestUnexpectedResult;}
+  try std.testing.expect(final.uncertain and sdk.diagnostic().uncertain);
+ }else if(fios_copy_origins) {
+  if(!did_start or !observed.load(.acquire) or held.owned!=1){std.debug.print("STREAM_COPY_ORIGIN_MISSING\n",.{});return error.TestUnexpectedResult;}
+  if(scenario==2)try std.testing.expect(final.uncertain and final.owned==1 and sdk.diagnostic().active_contexts==1)
+  else try std.testing.expect(!final.uncertain and final.owned==0 and sdk.diagnostic().active_contexts==0);
+ }else try std.testing.expect(final.owned==0);
+ std.debug.print("PASS promotion-copy original custody scenario={d} enabled={} no_native_authority\n",.{scenario,fios_copy_origins});
+}
