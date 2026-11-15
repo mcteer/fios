@@ -1,0 +1,67 @@
+// CPU NSObject stand-in only; no ANE framework, model, program or device call.
+// ACTUAL_BRIDGE_INCLUDE
+static unsigned fixture_calls;
+static unsigned fixture_scenario;
+@interface FiosEvalErrorMetadata:NSObject
+@end
+@implementation FiosEvalErrorMetadata
+- (BOOL)evaluateWithQoS:(unsigned)qos options:(id)options request:(id)request error:(NSError **)error {
+    (void)qos;(void)options;(void)request;++fixture_calls;
+    if(fixture_scenario==1) @throw [NSException exceptionWithName:@"FiosOrdinaryFixtureException" reason:@"private CPU fixture" userInfo:nil];
+#ifdef FIOS_ANE_SOURCE
+    if(fixture_scenario==3) fios_ane_fence(FIOS_ANE_EVAL);
+#endif
+    if(fixture_scenario==2){*error=[NSError errorWithDomain:@"FiosCPUFixture" code:1 userInfo:nil];return NO;}
+    return YES;
+}
+@end
+int fios_ane_exception_fixture(const char *api,unsigned scenario) {
+    @autoreleasepool {
+        fixture_scenario=scenario;fixture_calls=0;
+        const bool direct=strcmp(api,"model")==0;
+        FiosEvalErrorMetadata *value=[FiosEvalErrorMetadata new];
+        msv_ane_model *h=calloc(1,sizeof(*h));
+        h->model=(__bridge_retained void *)value;
+        h->requests=(__bridge_retained void *)@[[NSObject new]];
+        h->options=(__bridge_retained void *)@{};
+        msv_ane_request *r=calloc(1,sizeof(*r));
+        r->model=(__bridge_retained void *)value;
+        r->request=(__bridge_retained void *)[NSObject new];
+        r->options=(__bridge_retained void *)@{};
+        void *original=direct?h->model:r->model;
+#ifdef FIOS_ANE_SOURCE
+        if(scenario==4) fios_ane_fence(FIOS_ANE_EVAL);
+#endif
+        char text[128]={0};int caught=0,result=-1;
+        @try {result=direct?msv_ane_model_eval(h,0,text,sizeof(text)):msv_ane_request_eval(r,text,sizeof(text));}
+        @catch(NSException *exception){(void)exception;caught=1;}
+#ifdef FIOS_ANE_SOURCE
+        if(scenario==1 && caught && !msv_ane_source_uncertainty()) {
+            fprintf(stderr,"ANE_EVAL_EXCEPTION_ESCAPES_WITHOUT_NEGATIVE_FENCE\n");return 1;
+        }
+        if(caught || result!=(scenario==0) || fixture_calls!=(scenario==4?0:1))return 2;
+        if(scenario==0) {
+            if(msv_ane_source_uncertainty() || (direct?h->fios_active:r->fios_active))return 3;
+        } else {
+            if(!msv_ane_source_uncertainty() || (direct?h->model:r->model)!=original)return 4;
+            if(scenario==1 && (!(direct?h->fios_active:r->fios_active) || !strstr(text,"ownership uncertain")))return 5;
+            if(direct?msv_ane_model_try_free(h):msv_ane_request_try_free(r))return 6;
+            if(fixture_calls!=(scenario==4?0:1) || (direct?h->model:r->model)!=original)return 7;
+            // A repeated evaluation cannot replay foreign work or erase uncertainty.
+            if(direct?msv_ane_model_eval(h,0,text,sizeof(text)):msv_ane_request_eval(r,text,sizeof(text)))return 8;
+            if(fixture_calls!=(scenario==4?0:1) || !msv_ane_source_uncertainty())return 9;
+        }
+#else
+        if(scenario==1){if(!caught || fixture_calls!=1)return 10;}
+        else if(caught || result!=(scenario==0) || fixture_calls!=1)return 11;
+#endif
+        fprintf(stderr,"PASS actual ANE C evaluation error boundary with CPU metadata; no native authority\n");
+        return 0;
+    }
+}
+#ifndef FIOS_ZIG_CLIENT
+int main(int argc,char **argv) {
+    if(argc!=3 || (strcmp(argv[1],"model") && strcmp(argv[1],"request")))return 12;
+    return fios_ane_exception_fixture(argv[1],(unsigned)strtoul(argv[2],NULL,10));
+}
+#endif

@@ -1,0 +1,29 @@
+const std=@import("std");
+const owners=@import("fios/request_ownership.zig");
+const sdk=@import("fios/sdk_request_ownership.zig");
+const backend=@import("fios/current_ane_native_cleanup_uncertainty.zig");
+extern "c" fn fios_ane_exception_fixture([*:0]const u8,c_uint)c_int;
+extern "c" fn getenv([*:0]const u8)?[*:0]const u8;
+test "ANE evaluation exception preserves original native uncertainty" {
+    const io=std.testing.io;try owners.shared().initialize(io,@splat(9));try sdk.initialize(io);
+    const root=try owners.shared().enter(io);
+    try owners.shared().bind(io,root,"fixture/ane-cpu-metadata");
+    try owners.shared().active(io,root);
+    const group=[_]owners.Token{root};owners.current().*=root;owners.current_group().*=&group;
+    const context=sdk.fios_native_request_owners_capture() orelse return error.MissingOriginalContext;
+    const api=getenv("FIOS_ANE_FIXTURE_API") orelse return error.MissingAPI;
+    const result=fios_ane_exception_fixture(api,1);
+    const negative=backend.known(io,false,false);
+    owners.current().*=null;owners.current_group().*=null;
+    try owners.shared().leave(io,root);
+    sdk.fios_native_request_owners_release(context);
+    const after=owners.shared().snapshot(io);
+    if(result!=0 or !negative or !after.uncertain or after.owned!=1){
+        std.debug.print("ANE_EXCEPTION_ORIGINAL_NATIVE_FENCE_MISSING\n",.{});
+        return error.TestUnexpectedResult;
+    }
+    try std.testing.expect(backend.known(io,false,false));
+    try std.testing.expectEqual(@as(usize,1),owners.shared().snapshot(io).owned);
+    try std.testing.expectEqual(@as(u32,1),sdk.diagnostic().active_contexts);
+    std.debug.print("PASS original ANE native root remains uncertain; no terminal proof\n",.{});
+}

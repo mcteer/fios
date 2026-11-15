@@ -6365,3 +6365,69 @@ selection in both genuine CPU modes, without the event flag. Receipt
 This additional control is linked to the preceding aggregate in private
 `additional-legacy-review.json`; the original aggregate remains unchanged.
 No model, native enrollment or authority follows.
+
+
+Published629d642cb36fa7ed692e446b6c6879aa0334de9f [CI43757837931](https://github.com/mcteer/fios/actions/runs/43757837931) passes all seven jobs including aggregate. Published d183a563b04e5706e3a4a27b2bc0a3218ea72b7c now has its own [CI43760801163](https://github.com/mcteer/fios/actions/runs/43760801163) running. No merge or application/native deployment occurred.
+
+## 2026-11-15 ANE C evaluation exception containment (CPU source component)
+
+Whole tasks remain39/55. Both existing model/request evaluation C functions
+let a thrown NSException bypass their negative fence. The original full bridge
+reproduces both failures with CPU NSObject stand-ins, no native ANE model/device
+or framework-loading entry point. Source patch `mlx-serve-ane-eval-exception.patch`
+contains that ordinary foreign error with a fixed failure message, sets the
+one-way uncertainty bit and retains the original object/reservation. Existing
+checked release and repeated evaluation refuse. The legacy path is unchanged;
+no inference engine, math or model-ID behavior is added. See
+[contract](contracts/ane-eval-exception.md).
+
+Canonical `/private/tmp/fios-009-ane-eval-exception-check-8sg2w8df/receipt.json`,
+SHA256684aeddecd20dc0087f6b57749fe3cf3b0114553eb28f298dbb228ffd9dbda27,
+passes88 expected stages:16 compiler,64 actual C function runtimes and8 actual
+native tracker/SDK-context runtimes. Eight exact-parent failures reproduce the
+missing C fence and original-root quarantine failure; candidate/legacy controls
+pass in both build modes. Cases cover normal return, reported failure, thrown
+NSException, independent uncertainty and prior uncertainty for both APIs.
+Native root capture is explicitly fixture-supplied using the actual C ABI; the
+raw C bridge is not claimed to capture an origin implicitly. Selected source,
+fixtures, headers, compiler, Zig and system stub hashes remain unchanged.
+
+Original standalone witness `/private/tmp/fios-009-ane-eval-exception-work-q0z15f84/baseline-receipt.json`,
+SHA2563250a711acec3e05ca166d1b40267ea2f5b3e9dc4f861d3faa4e1150ed78483f, preserves the two
+first direct failures. Initial canonical `/private/tmp/fios-009-ane-eval-exception-check-h54d3vrg`
+failed its candidate native-root assertion because the harness omitted a retained
+descendant context and expected a bare root to remain owned after leave. This
+was fixture setup, not a failed C fix. The corrected harness retains/releases
+the original context and verifies actual quarantine and uncertainty. Earlier
+receipt/logs remain preserved.
+
+Local196 Node/107 installed Python, agent-boundary and whitespace checks pass.
+Full selected-source native qualification is running. No model or shader runs,
+physical fault, installed operation, sixth real inference plan/POST, native
+activation or Studio acceptance occurs. These CPU error/reference controls
+are not successful ANE inference, native terminal proof, all-client coverage,
+atomic admission or whole-native provenance. No whole task closes.
+
+Final ANE exception source qualification passes enabled semantic35/35 (372.492s),
+link32/32 (14.396s), units-check (1.437s) and all four private empty-model
+startup/activity/correlation/current StudioCore manager checks. Raw binary
+eb293384f27ced241b57b112abd482cb38af0df190159d63b56eda2f0e7f8ed0,
+normalized binarya4d5a87b54e97e1cab907eeec1b263597149bded9d5c2f440e39f48285dedb6d
+and actual3736ed55-base capsule1c92b71bcdd63431575087dd792fee44dc94c40514bdc86d1f5537d78b192bfc
+verify with the qualified parent capsule. Manager receipt is
+`/private/tmp/f9-native-status-afXrs3`. The enclosure brackets both actual ANE
+bridge/header inputs in addition to its selected source/SDK/C++ inputs.
+
+The2379-file `src` namespace is unchanged. The additional native path
+`lib/ane/ane_bridge.m` is the only declared changed bridge path; its header stays
+unchanged. All446 staged SDK files and C++ configuration stay unchanged after
+testing, and the174-file application package projection remains511e6a8e…. Model
+prerequisite parsing still refuses this unqualified generation.
+
+Aggregate `/private/tmp/fios-009-ane-eval-exception-work-q0z15f84/final-review.json`,
+SHA2567cd6e0c1bcf3bf85e62674f3934bef4d7260b4505435eedbe26dbfc550761810,
+binds the selected results and preserved initial fixture failure. It distinguishes
+zero real inference/model plans from nine rejected private empty-catalog guard
+requests. No ANE model/device operation, shader dispatch, installed service
+operation, activation, Studio acceptance, merge or deployment occurred. Whole
+39/55 remains unchanged; published exact-SHA CI for this increment is pending.

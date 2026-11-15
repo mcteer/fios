@@ -630,3 +630,10 @@ selected-source serving build and private empty-model checks pass, with zero
 changes across2379 source files. The distinct new C++ CPU receipt remains outside
 model prerequisites. This supplies selected composition evidence, not whole-native
 provenance, G2/all-client admission, terminal proof or installed acceptance.
+
+The [ANE C evaluation exception increment](contracts/ane-eval-exception.md) contains
+ordinary NSException failures in the existing model/request APIs and preserves
+original-object/active uncertainty. Its88-stage actual-bridge/CPU-metadata/native
+reference suite, enclosing native build and four private empty-model checks pass.
+This is error-boundary evidence, not successful ANE inference, native completion,
+all-client coverage, installed acceptance or activation. G2 remains open.

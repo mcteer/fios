@@ -1410,3 +1410,18 @@ For C++ CPU callback compatibility on the same exact event-enabled SDK, append
 command. This verifies both event overlays and emits a distinct source-only scope.
 It neither enables healthy-Metal mode nor validates model prerequisites. See
 [composition contract](contracts/matched-mlxc-composition.md).
+
+### ANE C evaluation exception containment (CPU-only source check)
+
+Apply `mlx-serve-ane-eval-exception.patch` to the qualified matched-C-binding
+native source, checking `ane_eval_exception_parents.json` first:
+
+```sh
+.venv/bin/python -I -B scripts/check-platform-ane-eval-exception.py --isolated \
+  --source /private/tmp/REVIEW/source --zig /private/tmp/REVIEW/zig
+```
+
+This compiles actual bridge methods but calls only CPU NSObject stand-ins. It
+loads no ANE framework/model, runs no inference, and supplies no native completion
+or activation authority. Its88 stages include eight expected parent failures;
+see [error-boundary contract](contracts/ane-eval-exception.md).
