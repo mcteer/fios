@@ -238,15 +238,22 @@ function eventCompatibilityMetadata(){
  dep.c_binding_cpu={scope:'actual_MLXC_CPU_graph_error_cleanup_selected_C_headers_and_mapped_library_identity_not_native_authority',prefix,
   inputs:{[prefix+'/lib/libmlx.dylib']:cxx.library_sha256,[prefix+'/lib/libmlxc.dylib']:'c'.repeat(64),
    '/fixture/platform/studio/native/current_mlxc_cpu_test.c':hash('platform/studio/native/current_mlxc_cpu_test.c'),
-   '/fixture/scripts/check-platform-current-mlxc.py':hash('scripts/check-platform-current-mlxc.py')},
-  records:['Debug','Optimized'].flatMap(mode=>['compile','runtime'].map(stage=>({mode,stage,arguments:['/fixture/control'],status:0,passed:true,log_sha256:'a'.repeat(64)}))),
+   '/fixture/scripts/check-platform-current-mlxc.py':hash('scripts/check-platform-current-mlxc.py'),
+   [prefix+'/include/mlx/c/mlx.h']:'a'.repeat(64),'/fixture/usr/bin/clang':'a'.repeat(64),'/fixture/usr/lib/libSystem.tbd':'a'.repeat(64)},
+  records:['Debug','Optimized'].flatMap(mode=>['compile','runtime'].map(stage=>({mode,stage,arguments:stage==='compile'?['/fixture/usr/bin/clang','-std=c11','-UNDEBUG','-target','arm64-apple-macosx26.2','-isysroot','/fixture','-I',prefix+'/include',mode==='Debug'?'-O0':'-O2','/fixture/platform/studio/native/current_mlxc_cpu_test.c',prefix+'/lib/libmlxc.dylib',prefix+'/lib/libmlx.dylib','-Wl,-rpath,'+prefix+'/lib','-o','/private/tmp/fixture/control/'+mode]:['/usr/bin/sandbox-exec','-p','(version 1)(allow default)(deny network*)','/private/tmp/fixture/control/'+mode,prefix+'/lib/libmlx.dylib',prefix+'/lib/libmlxc.dylib'],status:0,passed:true,log_sha256:'a'.repeat(64)}))),
   models:0,inference:false,GPU_dispatch:false,installed:false,native_authority:false,whole_native_provenance:false,inputs_unchanged:true};
  value.runtime_inputs={'libmlx.dylib':{sha256:cxx.library_sha256,bytes:1},'libmlxc.dylib':{sha256:'c'.repeat(64),bytes:1}};
  return value;
 }
 test('event SDK compatibility requires matching C ABI controls and runtime pair without granting authority',()=>{
  nativeReviewModelInputs(eventCompatibilityMetadata());
- for(const change of [v=>delete v.mlx_source_dependency.c_binding_cpu,v=>v.native_base='4e231ceebe63308cc038117d40b9f9b64bd0372e',
+ for(const change of [v=>delete v.mlx_source_dependency.c_binding_cpu,
+  v=>delete v.mlx_source_dependency.c_binding_cpu.inputs['/private/tmp/fixture/prefix/include/mlx/c/mlx.h'],
+  v=>v.mlx_source_dependency.c_binding_cpu.records[1].arguments.pop(),
+  v=>v.mlx_source_dependency.c_binding_cpu.records[0].arguments[9]='-O2',
+  v=>v.mlx_source_dependency.c_binding_cpu.records[1].arguments[2]='(version 1)(allow default)',
+  v=>v.mlx_source_dependency.c_binding_cpu.records[2].arguments[10]='/fixture/other.c',
+  v=>v.mlx_source_dependency.c_binding_cpu.records[0].log_sha256=['a'.repeat(64)],v=>v.native_base='4e231ceebe63308cc038117d40b9f9b64bd0372e',
   v=>delete v.mlx_source_dependency.request_event_patches,v=>v.system_cxx.request_event_patches['mlx-c69303b-host-request-events.patch']='a'.repeat(64),
   v=>v.runtime_inputs['libmlxc.dylib'].sha256='d'.repeat(64),v=>v.runtime_inputs['libmlx.dylib'].bytes=0,
   v=>v.mlx_source_dependency.c_binding_cpu.native_authority=true,v=>v.mlx_source_dependency.c_binding_cpu.inference=true,

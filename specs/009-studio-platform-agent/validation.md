@@ -6557,3 +6557,15 @@ historical refusal receipts are unchanged. No model plan or POST was created.
 Whole tasks remain39/55. Published3e856ff CI43764878523 passed all seven jobs;
 constructor c0ab0f4 and this reader await their new exact-SHA CI. No merge,
 installation, activation, Studio acceptance or deployment occurred.
+
+Final compatibility-reader consistency pass additionally requires the selected
+C umbrella header/compiler/system stub and exact fixed checker compile/runtime
+arguments, including optimization, fixture, mapped library order and network
+denial. Missing-header, changed optimization/fixture/runtime policy and coerced
+log-digest cases are refused.23 focused tests and the actual retained pair pass;
+no command from the receipt is executed.17 Chromium tests, optimized platform
+mock/policy suite, hardened ARM64 container/readiness/recovery/stopped backup/
+automatic failed-upgrade rollback, Compose configuration, model-free discovery,
+npm audit (zero) and Python audit (no known vulnerabilities; local fios-agent
+unpublished/unaudited) pass. Browser validation includes the separate existing003
+working-tree changes, which remain unstaged; no003 changes belong to this PR.

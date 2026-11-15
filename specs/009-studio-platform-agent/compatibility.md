@@ -651,3 +651,11 @@ file/original-reference suite, full enabled build and four private empty-model
 checks pass. The private temporary-directory location is a declared test port;
 no native compiler/model/device or installed action runs. It is not native
 terminal, all-client or installed acceptance evidence; G2 remains open.
+
+The subsequent event-generation metadata reader accepts the matched C++/C ABI
+CPU records only with exact overlays/configuration, selected compiler/C header/
+stub and fixed CPU compile/runtime arguments, plus both runtime library hashes.
+It checks declarations without executing them. This resolves the compatibility
+reader gap for new data-only metadata; historical refused capsules remain
+unchanged. G2/all-client native admission, physical completion and installed
+acceptance remain open; no model plan or POST occurs.

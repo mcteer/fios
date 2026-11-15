@@ -73,7 +73,10 @@ function currentCBindingInputs(inputs,dependency,cxx,message){
  const absolute=value=>typeof value==='string'&&path.isAbsolute(value)&&path.normalize(value)===value&&!value.includes('\0')&&value.length<=4096;
  assert(absolute(record.prefix)&&record.prefix.startsWith('/private/tmp/')&&cxx.sdk_library===record.prefix+'/lib/libmlx.dylib',message);
  assert(record.inputs&&typeof record.inputs==='object'&&!Array.isArray(record.inputs),message);
- const files=Object.keys(record.inputs);assert(files.length>=4&&files.length<=1024&&files.every(file=>absolute(file)&&typeof record.inputs[file]==='string'&&/^[a-f0-9]{64}$/.test(record.inputs[file])),message);
+ const files=Object.keys(record.inputs);assert(files.length>=7&&files.length<=1024&&files.every(file=>absolute(file)&&typeof record.inputs[file]==='string'&&/^[a-f0-9]{64}$/.test(record.inputs[file])),message);
+ assert(Object.hasOwn(record.inputs,record.prefix+'/include/mlx/c/mlx.h'),message);
+ const compilers=files.filter(file=>file.endsWith('/usr/bin/clang')),stubs=files.filter(file=>file.endsWith('/usr/lib/libSystem.tbd'));
+ assert(compilers.length===1&&stubs.length===1,message);
  for(const file of ['platform/studio/native/current_mlxc_cpu_test.c','scripts/check-platform-current-mlxc.py']){
   const selected=files.filter(name=>name.endsWith('/'+file));assert(selected.length===1&&record.inputs[selected[0]]===reviewDigest(file),message);
  }
@@ -85,8 +88,14 @@ function currentCBindingInputs(inputs,dependency,cxx,message){
  assert(Array.isArray(record.records)&&record.records.length===4,message);
  for(const [index,result]of record.records.entries()){
   exact(result,['mode','stage','arguments','status','passed','log_sha256']);
-  assert(result.mode===['Debug','Optimized'][Math.floor(index/2)]&&result.stage===['compile','runtime'][index%2]&&result.status===0&&result.passed===true&&/^[a-f0-9]{64}$/.test(result.log_sha256),message);
+  assert(result.mode===['Debug','Optimized'][Math.floor(index/2)]&&result.stage===['compile','runtime'][index%2]&&result.status===0&&result.passed===true&&typeof result.log_sha256==='string'&&/^[a-f0-9]{64}$/.test(result.log_sha256),message);
   assert(Array.isArray(result.arguments)&&result.arguments.length>0&&result.arguments.length<=64&&result.arguments.every(value=>typeof value==='string'&&value.length>0&&value.length<=4096&&!value.includes('\0')),message);
+  const compile=record.records[index-index%2].arguments,binary=compile.at(-1);
+  assert(absolute(binary)&&binary.startsWith('/private/tmp/')&&path.basename(binary)===result.mode,message);
+  const libraries=['libmlxc.dylib','libmlx.dylib'].map(name=>record.prefix+'/lib/'+name);
+  const fixture=files.find(name=>name.endsWith('/platform/studio/native/current_mlxc_cpu_test.c'));
+  if(result.stage==='compile')assert.deepEqual(result.arguments,[compilers[0],'-std=c11','-UNDEBUG','-target','arm64-apple-macosx26.2','-isysroot',stubs[0].slice(0,-'/usr/lib/libSystem.tbd'.length),'-I',record.prefix+'/include',result.mode==='Debug'?'-O0':'-O2',fixture,...libraries,'-Wl,-rpath,'+record.prefix+'/lib','-o',binary],message);
+  else assert.deepEqual(result.arguments,['/usr/bin/sandbox-exec','-p','(version 1)(allow default)(deny network*)',binary,...libraries.toReversed()],message);
  }
 }
 // An optional source dependency must declare the selected format before any

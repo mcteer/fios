@@ -43,3 +43,20 @@ Full native builds and private empty-model checks must qualify the serving
 composition separately. None of these selected source/header records proves
 whole-native/publisher provenance, all-client coverage, device terminality,
 atomic admission, installed acceptance or activation. Whole tasks remain39/55.
+
+## Subsequent data-only compatibility reader
+
+The event-generation reader now validates these retained C++ and C ABI records
+as compatibility prerequisites on actual native base3736ed55. It requires all
+reviewed event/callback/status/capture overlays, the native C++ configuration,
+both runtime library hashes, current C fixture/runner hashes, selected compiler,
+C umbrella header/system stub and four successful CPU stages. Compile/runtime
+arguments must match the checker's fixed CPU-only commands, including network
+denial, fixture, optimization and exact mapped library pair. Arguments are
+checked as data and never executed by the reader. Malformed or incomplete event
+records remain refused; historical seven-path compatibility remains separate.
+
+This does not renew historical capsules or change the meaning of their refusal
+receipts. It establishes no publisher provenance, genuine device completion,
+all-client coverage, admission, inference permission, installation or activation.
+The actual retained pair passes without creating a model plan or POST.
