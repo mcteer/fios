@@ -65,23 +65,28 @@ async function modelCase(stale) {
   for(const fields of [{phase:'chunk',job,index:0,data:data.toString('base64')},{phase:'end',job}]){const result=await rpc(state,'job.create',{owner:token,...fields});assert.equal(result.ok,true,result.error);}return job;
  }
  const unavailable=await rpc(state,'job.create',{...begin(context),model:'fixture/missing'});assert.equal(unavailable.ok,false);assert.equal(unavailable.error,'model_unavailable');assert.equal(native.posts,0,'Unavailable model triggered substitution');
- const job=await upload(context,'model');let answer='',terminal;
+ const job=await upload(context,'model'),modelJobs=[job];let answer='',terminal;
  await until(async()=>{const response=await rpc(state,'job.status',{job,owner:token});assert.equal(response.ok,true,response.error);const event=response.result.event;if(event?.type==='model.text')answer+=event.content;if(event?.type==='model.done')terminal=event.status;return response.result.state==='removed'&&terminal!==undefined;});
  assert.equal(answer,'MOCK_ONLY');assert.equal(terminal,'complete');assert.equal(native.posts,1);
  const replay=await rpc(state,'job.create',{owner:token,phase:'end',job});assert.equal(replay.ok,true);await delay(300);assert.equal(native.posts,1,'Consumed input replayed a model POST');
  if(!mock) {
-  const source=readFileSync(join(root,'tests/fixtures/platform/sandbox-task.py')),sandbox=await upload(source,'sandbox');let text='',done;
+  const source=readFileSync(join(root,'tests/fixtures/platform/sandbox-task.py')),sandbox=await upload(source,'sandbox');modelJobs.push(sandbox);let text='',done;
   await until(async()=>{const response=await rpc(state,'job.status',{job:sandbox,owner:token});assert.equal(response.ok,true,response.error);const event=response.result.event;if(event?.type==='output')text+=Buffer.from(event.data,'base64').toString();
    const ids=runtime(['ps','-a','--no-trunc','--filter','name=^/fios-sandbox-'+sandbox+'$','--format','{{.ID}}']);if(ids&&!owned.some(x=>x.job===sandbox)){const item=JSON.parse(runtime(['inspect','--type=container',ids]))[0];assert.equal(item.Id,ids);assert.equal(item.Name,'/fios-sandbox-'+sandbox);assert.equal(item.Image,image);assert.equal(item.Config.Labels['fios.platform.job'],sandbox);assert.match(item.Config.Labels['fios.platform.nonce'],/^[a-f0-9]{64}$/);owned.push({id:ids,name:item.Name,image,job:sandbox,nonce:item.Config.Labels['fios.platform.nonce']});}
    if(response.result.state==='removed'&&typeof response.result.exit_verified==='boolean'){done=response.result;return true;}return false;
   },60000);
-  assert(text.includes('SANDBOX_TASK_PASS'));assert.equal(done.code_complete,true);assert.equal(done.exit_verified,true);assert.equal(done.unresolved_managed_requests,0);assert.equal(native.posts,2);
+  assert(text.includes('SANDBOX_TASK_PASS'));assert.equal(done.code_complete,true);assert.equal(done.exit_verified,true);assert.equal(done.unresolved_managed_requests,1,'Sandbox exit/HTTP completion released its native claim');assert.equal(native.posts,2);
   const saved=owned.find(x=>x.job===sandbox);assert(saved);assert.equal(runtime(['ps','-a','--no-trunc','--filter','id='+saved.id,'--format','{{.ID}}']),'');
  }
- await until(async()=>{const value=await rpc(state,'status',{},'observe');return value.worker_reservations===0&&value.unresolved_requests===0;});
+ await until(async()=>{const value=await rpc(state,'status',{},'observe');return value.worker_reservations===0&&value.unresolved_requests===modelJobs.length;});
  assert.equal((await rpc(state,'status',{},'observe')).services.mlx.desired,'running','Model/frame-looking output gained management authority');
  await stop(child);await stopMock(native);
- console.log('PASS: actual manager model-only'+(mock?'':' and sandbox-mediated')+' IPC uses installed no-tools worker, exact fake POST counts, completion/reap and replay refusal; stale source epoch sends zero requests.');
+ // Inspect only after the sole manager/writer has exited. Successful output
+ // and local reap must retain each bound native claim and spent history.
+ const rows=JSON.parse(command('/usr/bin/sqlite3',['-readonly','-json',join(state,'state.sqlite'),'SELECT job,attempt,state FROM inference_scopes ORDER BY job,attempt'],5000));
+ assert.deepEqual(rows,modelJobs.sort().map(job=>({job,attempt:0,state:'uncertain'})));
+ assert.equal(Number(command('/usr/bin/sqlite3',['-readonly',join(state,'state.sqlite'),'SELECT count(*) FROM request_history'],5000)),modelJobs.length);
+ console.log('PASS: actual manager model-only'+(mock?'':' and sandbox-mediated')+' IPC uses installed no-tools worker, exact fake POST counts, output/local reap with native uncertainty and history retained, replay refusal; stale source epoch sends zero requests.');
 }
 try {
  if(mock) {
