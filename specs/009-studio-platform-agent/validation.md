@@ -5435,3 +5435,50 @@ not justified by that read. No upstream upgrade/backport or model test occurs.
 This diff is not the required all-client activity/admission contract and is not
 an exhaustive absence claim about upstream. Read receipt in the same directory,
 `upstream-review.json`, SHAd4e8e9d812172c00437b9c649d5d6ae377d29053faede2913ef1adda5c9d08fd.
+
+
+Registry CPU-reference withdrawal adapter continuation: private source
+`/private/tmp/fios-009-registry-withdrawal-work-885lns1x/source` adds a fixed-tracker
+`ModelRegistry` delegate and expands its existing actual native stub case.
+No current catalog/generation is read to withdraw an exact CPU reference; no
+registry/physical capacity/inference proof is granted. Call outside registry
+mutex; public negative probe still precedes tracker locking. Source serving
+guard stays false, no wire/serving caller. Exact one-file reverse/reapply/full
+AST pass; native default build running. No behavioral-red claim from mere
+interface absence.39/55 whole tasks unchanged.
+
+
+Registry withdrawal adapter default native compile passes235.906s, with captured
+inputs unchanged. All162 actual native cases pass in separate processes with no
+skips, including the expanded real-registry stub case; binary
+81da094dfdd88efeeb04dfc4b8a80a7621b96af5d2aefefce35a5d10d872643c.
+Exact/wrong/attached/unsupported paths retain their expected ownership/catalog
+behavior without model loading. Enabled semantic/link/empty-model checks remain
+pending. The committed CI fixture correction remains separate, with195Node/
+107Python/boundary and clean-source container/deployment rehearsal passed.
+Whole39/55 unchanged.
+
+
+Fixed-tracker registry withdrawal selected-source final: enabled semantic35/35
+steps410.322s, link32/32 steps13.849s pass, captured inputs unchanged. Raw
+f729327341ce7f3d5b387061bc7d904dec014af379cbcb4cf6b5264fd7e0a1c6;
+normalized8a5070583baa517e1dc982bba2bf6e98dcd09fe988f33dce56d5c86d0b8f7d62,
+capsuleeed4ca4b…. All4 genuine empty-model correlation/activity/startup/manager
+checks pass. Post-run selected native/SDK-stage/CXX/SDK-source byte checks and
+complete new/prior5fd0c1ed… capsule review pass. Pure source prerequisite parser
+passes; no model plan/request or physical/native authority is created.
+
+Final aggregate `/private/tmp/fios-009-registry-withdrawal-work-885lns1x/final-review.json`,
+SHA256 `5ba97713bea2986924c2f9d7c79b2d2a04e2206964b1eef3ca880b2e8b15a055`,
+binds one-file projection/AST, actual default162, enabled semantic/link and4
+runtime checks; patch90b1e18b…. No new baseline behavioral-red claim is made.
+The adapter's success is CPU bookkeeping only, not not-sent/completion proof,
+catalog freshness, model capacity/eviction, inference lease or journal release.
+Source serving guard remains unsupported; whole39/55 unchanged. No9-artifact
+package-declared input changed.
+
+CI43700362865 on3842abb completed: native, browser, Node22/24 and audit jobs
+passed; ARM64 fixture exit/read race failed and therefore aggregate failed.
+This is not green CI. The source fix8be94e5 is locally validated as recorded
+above; its next exact-head run remains required. No run was cancelled, merged
+or deployed. Native rollout/acceptance remains separately gated.

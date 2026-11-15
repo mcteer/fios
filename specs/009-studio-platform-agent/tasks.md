@@ -770,3 +770,16 @@ procfs read with ENOENT-only absence passes4 regressions+deployment checks and
 clean-source full container upgrade/rollback/restore rehearsal;195Node/107Python/
 boundary pass. Receipt eb794306…. CI/native acceptance and wholeT055 remain
 open;39/55 unchanged. No runtime/model retry or native uncertainty clearing.
+
+
+Fixed-tracker registry CPU-reference withdrawal adapter WIP: same process tracker
+as claim/attach, returnsvoid, no catalog/generation/physical lease/proof claim;
+real native stub case expanded for exact/wrong/attached/guard behavior. Projection/
+AST pass; native build running.39/55 unchanged. See contracts/registry-withdrawal.md.
+
+
+Fixed-tracker registry withdrawal subset final: exact projection/AST, actual
+expanded native stub/default162, enabled35/35 semantic32/32 link,4 empty-model
+checks/post-run byte review pass. Aggregate5ba97713…. CPU-only adapter adds no
+proof/capacity/lease or whole task closure;39/55 unchanged. CurrentCI43700362865
+finished with the diagnosed ARM64 fixture race; correction needs new exact-head CI.
