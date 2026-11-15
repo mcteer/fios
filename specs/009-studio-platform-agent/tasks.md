@@ -824,3 +824,10 @@ primary/backend/lineage manager and post-run byte review pass. Aggregate6de7f61e
 retains initial module/matcher failures. Ownership/retirement port and full G2
 remain incomplete; no native/model/installation authority or whole task closes.
 Whole39/55 unchanged. Nine-artifact package inputs remain unchanged.
+
+Warm latch owner-registration follow-up: the upstream host export registry now
+explicitly lists the existing Shared storage type. Exact two-file projection,
+enabled35/35 semantic32/32 link, actual units-check and4 empty-model/current-Core
+checks pass. Aggregate8d85d324… is compile-time storage registration only, with
+no reset/wire/authority or whole-task change;39/55 unchanged. Warmer request
+ownership/parent retirement work remains open.

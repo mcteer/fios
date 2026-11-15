@@ -43,3 +43,10 @@ utility imports failed native module ownership and are retained as failures;
 the corrected constructor uses the existing host-owned Shared bridge. This
 still exercises no real warm kernel and supplies no native completion/admission
 authority. See the exact validation receipts and their source/provenance limits.
+
+The follow-up owner-registration overlay exposes the existing storage type to
+`shared_all.zig` and lists it explicitly in the host's export registry, as the
+upstream unit-build contract requires. Runtime latch behavior and its C symbol
+are unchanged; this adds no wire/reset operation. Enabled semantic/link,
+`units-check -Dunits=true` and4 empty-model checks pass. It does not qualify the
+warmer ownership port or change source coverage/admission.

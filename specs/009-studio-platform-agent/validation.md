@@ -5671,3 +5671,36 @@ not applied, compiled or accepted as a current ownership port. Its other parent
 integrations and current native/backend lifetime still require implementation.
 Previousd85baba/CI43705302613 passed all7 jobs; new exact-head CI is required
 after this source subset is published. No merge, deployment or native rollout.
+
+### Explicit host owner registration for the warm latch
+
+The pinned native host guidance requires new Shared state in `shared_all.zig`.
+The first negative subset already compiles/links and passes its separate-object
+test because the host getter reads the latch. This follow-up makes its storage
+owner explicit: expose the existing storage type and add its registry entry.
+No latch value, runtime body, constructor, C symbol or wire operation changes.
+This low-impact compile-time registration is validated by native compilation/
+global-storage checks rather than a mirrored behavioral test.
+
+Private `/private/tmp/fios-009-warm-owner-registration-work-gmhfj0pq/source`
+differs from the preserved previous src tree only at the utility and export
+registry. Exact parent hashes/reverse/reapply pass. Enabled35/35 semantic
+steps440.098s and32/32 link steps12.863s pass with captured source/SDK-stage/CXX
+bytes unchanged. Actual `units-check -Dunits=true` passes in2.209s; it checks
+compiler object globals, not model/native inference acceptance. Raw binary
+`d550dfcba1d2ebd24163bef66795216b9ebc5651a0cc2568d6ef0aa368c095cd`,
+normalized `880efda6f8b8a9274c17dd5eec8cc925ddcd51629085560053de706356916ad4`,
+capsule4a4bf755… retain source-only scope. All4 empty-native checks pass,
+including a freshly compiled current-Core primary/backend/lineage manager.
+Post-run new/prior capsule and selected-input bytes pass.
+
+Aggregate `/private/tmp/fios-009-warm-owner-registration-work-gmhfj0pq/final-review.json`,
+SHA256 `8d85d324d1eb144a0a1e99862aaa20bd104ea042d860c5f780f416b5586fbf6e`,
+binds the selected source/compile/object/runtime evidence, not whole native or
+publisher/build provenance. Zero models/installed actions/new admission. No
+new default162,195 Node or107 Python run is claimed for this unchanged-runtime
+registration; their prior source scopes remain recorded above. Package-declared
+inputs are unchanged. The old warmer ownership patch still needs a current
+parent-lifetime/ABI implementation; prototype work is separate and unpublished.
+Whole39/55 unchanged. CI43709676706 on66062cd has now passed all7 jobs including
+aggregate; the follow-up will require a new exact-head run after publication.
