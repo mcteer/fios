@@ -1271,3 +1271,19 @@ the CI compatibility fixture; neither mode authorizes enrollment, process
 management or native admission. Enclosing GUI compilation and the five existing
 owned-child stop/quit tests remain separate evidence. See
 [the contract](contracts/gui-launch-yield.md).
+
+### Engram prefetch original-custody source check
+
+```sh
+.venv/bin/python -I -B scripts/check-platform-engram-prefetch-origins.py --isolated --source /private/tmp/REVIEWED_NATIVE_SOURCE --zig /private/tmp/PINNED_ZIG
+```
+
+This source candidate layers `mlx-serve-engram-prefetch-origins.patch` on the
+qualified current native overlays through the Engram negative fence. The checker
+requires the pinned Zig, SDK27.2 and private native base3736ed55. It compiles actual
+Prefetch methods with real threads and explicitly modeled host custody calls;
+separate objects without those modeled exports verify legacy exclusion and the
+opted-in five-symbol host ABI dependency. It executes no model/table IO, native
+proof producer, installed policy or service action. The independent negative
+fence remains set. Full native qualification remains separate; see
+[the contract](contracts/engram-prefetch-origins.md).

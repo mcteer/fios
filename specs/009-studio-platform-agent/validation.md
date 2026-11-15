@@ -5967,3 +5967,59 @@ e12dbebd8d253237b5e408d08dd29c6801d9130a88f66abc86480f3639c2f9e4.
 CI now runs this mock profile alongside the existing GUI listener checker.
 Candidate two-path hashes remain equal to their private projection after tests;
 final-review.json binds the selected build/test receipts separately.
+
+2026-11-15 Engram original-custody source work in progress: a new private clone
+`/private/tmp/fios-009-engram-origins-work-9i9i_vi7/source` captures the original
+host group before prefetch publication, enters it around the existing read-ahead
+worker and requests descriptor release only after join and successful scope
+restoration. The independent negative fence remains sticky. Baseline actual
+Prefetch methods with real threads/allocators and a modeled host custody ABI
+reproduce8 designated runtime failures and pass4 legacy/allocation controls in
+Debug/ReleaseSafe. These modeled tokens are not native ownership/proof evidence.
+An initial candidate compile error on nested-if syntax is retained separately;
+expanded corrected candidate checks, full native qualification and exact
+projection are pending. No whole task closure;39/55,0 new model requests or
+installed actions. Existing unbounded join and parent cleanup port remain open.
+Canonical actual-Prefetch/real-thread/modeled-host-ABI checker now passes24 cases
+(8 original designated failures,4 original controls,12 candidate cases), with
+selected source/dependencies/fixture inputs unchanged. Receipt
+`/private/tmp/fios-009-engram-origins-check-mqrd946q/receipt.json`, SHA256
+68788e9891d7792f19cf426ca15ac9d9e2f53daeaef8600b15292e9d7f920b44.
+One-path patch SHA256
+50b194c2347f2bc419c240e29315c1cafc6fd57a51e2892d748f8cfb3d1e89c7.
+Source review notes the existing Table.readAll child-thread joins/synchronous
+GCD apply; the retained parent group covers this local IO lifetime. The fixture
+Table does not exercise actual GCD/table IO, native backend completion or a
+positive all-client source. Full enabled semantic/link qualification is running
+serially after all component compiler jobs ended.39/55 unchanged.
+
+Engram original-custody final selected-source qualification: final canonical
+receipt `/private/tmp/fios-009-engram-origins-check-dys3v9uc/receipt.json`, SHA256
+844c42475ab96f994ccfa91942136d1873936b2b3cf84f7bcb7a115e2336f081,
+passes24 runtime cases plus4 unbound objects. These objects exclude modeled
+exports: legacy has no custody symbols, opted-in has exactly capture/enter/leave/
+release/uncertain. The fixture's synthetic context and metadata IO remain
+explicitly separate from the genuine host implementation and native proof.
+
+Enabled native35/35 semantic steps pass in440.493s,32/32 link in4.298s and
+units-check in1.329s. Selected source suffixes,446 staged SDK inputs and CXX
+configuration remain unchanged through final review. Raw binary
+3890af41c47d5074fba285fba56f2ccd34012e70a46a83cbaef3e673b7485e23;
+normalized binary 1d8c69f3a82cf88d369ecca489bbe5026b5950baed5da077e6a3a53ac2b3b65c;
+capsule 069072d241dcc09becd263c13159de6a94b7054b0a69d3f607e90fc849d5954a.
+New and prior capsules verify. All4 actual private correlation/activity/startup/
+current-Core manager checks pass. Review `/private/tmp/f9-native-status-woPRix`
+retains original journal uncertainty and observes cold false backend flags;
+0 model requests/installed actions. This empty-model runtime never invokes the
+new Engram IO path and does not replace the separately modeled branch tests.
+
+All-src2379→2379 post-run comparison differs on exactly
+src/plugins/deepseek_v41/engram.zig. Aggregate
+`/private/tmp/fios-009-engram-origins-work-9i9i_vi7/final-review.json`, SHA256
+35e696508b3e8c142e154fc0eae30c3cb800f198cd871527aedcdc9d904d46ac.
+Fresh174-file package projection still equals511e6a8e…; no new package/default
+native162-case/application build, real table IO, physical backend acceptance or
+whole-native/publisher/build provenance is claimed. No sixth inference plan,
+installation, activation, merge or deployment. Bounded join/parent cleanup,
+complete all-client producer/proof/admission and installed acceptance remain
+unfinished;39/55 whole tasks unchanged.

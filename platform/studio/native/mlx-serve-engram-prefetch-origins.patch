@@ -1,0 +1,79 @@
+--- a/src/plugins/deepseek_v41/engram.zig
++++ b/src/plugins/deepseek_v41/engram.zig
+@@ -2,6 +2,7 @@
+ //! the on-disk tables it indexes, and the gated add into the residual stream.
+ //! The tables (~100 GB a layer) are read from disk per lookup, never loaded.
+ const std = @import("std");
++const fios_origins = @import("../../sdk/util/warm_request_origins.zig");
+ const fios_unproven_prefetch = @import("../../sdk/util/shared.zig").Shared(std.atomic.Value(bool), "fios_current_engram_prefetch_uncertainty", .init(false));
+ const builtin = @import("builtin");
+ const crt = @import("../../sdk/util/crt.zig");
+@@ -626,6 +627,9 @@
+     nc: usize,
+     stop: std.atomic.Value(bool) = .init(false),
+     thread: ?std.Thread = null,
++    // Original host-owned request group only; no positive native proof.
++    fios_origin: ?*anyopaque = null,
++    fios_origin_retirement_known: std.atomic.Value(bool) = .init(true),
+     /// A batch's grids (one a state, `startBatch`) read a layer at a time across all of them, as its forward asks.
+     across: bool = false,
+ 
+@@ -676,7 +680,17 @@
+             made += 1;
+         }
+         self.* = .{ .gpa = gpa, .tables = own_tables, .grids = grids, .span = span, .nc = nc, .across = across };
+-        // Read-ahead may outlive the originating chunk; custody is unported.
++        // Capture before publication, retaining the original group through
++        // worker retirement and the existing joined parent cleanup.
++        if (comptime @import("build_options").fios_source_sdk) {
++            self.fios_origin = fios_origins.fios_native_request_owners_capture() orelse {
++                fios_origins.fios_native_request_owners_uncertain();
++                return error.FiosPrefetchOrigins;
++            };
++        }
++        errdefer if (comptime @import("build_options").fios_source_sdk) if (self.fios_origin) |origin| fios_origins.fios_native_request_owners_release(origin);
++        // The independent unported-cleanup fence remains sticky. Capturing a
++        // group does not establish bounded cleanup or native terminality.
+         // Record negative source evidence before this worker is published.
+         fios_unproven_prefetch.get().store(true, .release);
+         self.thread = try std.Thread.spawn(.{}, run, .{self});
+@@ -690,6 +704,21 @@
+     }
+ 
+     fn run(self: *Prefetch) void {
++        const scope = if (comptime @import("build_options").fios_source_sdk) (if (self.fios_origin) |origin| fios_origins.fios_native_request_owners_enter(origin) else 0) else 0;
++        if (comptime @import("build_options").fios_source_sdk) {
++            if (self.fios_origin != null and scope == 0) {
++                self.fios_origin_retirement_known.store(false, .release);
++                fios_origins.fios_native_request_owners_uncertain();
++                for (self.grids) |*g| for (g.items) |*item| item.state.store(failed, .release);
++                return;
++            }
++        }
++        defer if (comptime @import("build_options").fios_source_sdk) if (scope != 0) {
++            if (fios_origins.fios_native_request_owners_leave(scope) != 0) {
++                self.fios_origin_retirement_known.store(false, .release);
++                fios_origins.fios_native_request_owners_uncertain();
++            }
++        };
+         if (self.across) {
+             for (0..self.tables.len) |layer| for (self.grids) |*g| if (!self.readGrid(g, layer)) return;
+         } else for (self.grids) |*g| for (0..self.tables.len) |layer| if (!self.readGrid(g, layer)) return;
+@@ -738,6 +767,17 @@
+     pub fn finish(self: *Prefetch) void {
+         self.stop.store(true, .release);
+         if (self.thread) |t| t.join();
++        if (comptime @import("build_options").fios_source_sdk) {
++            if (self.fios_origin) |origin| {
++                if (self.fios_origin_retirement_known.load(.acquire)) {
++                    fios_origins.fios_native_request_owners_release(origin);
++                } else {
++                    // Quarantine the original host descriptor after failed scope
++                    // restoration; local thread joining cannot clear uncertainty.
++                    fios_origins.fios_native_request_owners_uncertain();
++                }
++            }
++        }
+         for (self.grids) |g| freeGrid(self.gpa, g);
+         self.gpa.free(self.grids);
+         self.gpa.free(self.tables);

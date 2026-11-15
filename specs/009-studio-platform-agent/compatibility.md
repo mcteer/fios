@@ -547,3 +547,16 @@ capsule4191c2a1…). See [the contract](contracts/engram-prefetch-negative.md) a
 validation. Local stop/join/free does not reset the flag or supply native proof.
 Actual custody, all-client producer/proof/admission and installed acceptance
 remain unfinished;39/55 unchanged. No further inference plan or native change.
+
+### Engram original request custody — 2026-11-15
+
+The one-path source follow-up captures the original group through the existing
+host C ABI before read-ahead publication and enters/restores it around the
+existing worker. Missing scope refuses IO; failed entry/restoration retains the
+original descriptor. The independent Engram negative fence remains sticky.
+Actual-method/real-thread/modeled-ABI24 cases,4 unbound objects,35 semantic/32
+link steps, units-check and4 empty-native/current-Core checks pass. Synthetic
+context17 is not a native request token; empty runtime does not execute Engram.
+No bounded join, parent cleanup, positive all-client/native proof/admission or
+installed acceptance follows.39/55 whole tasks unchanged; see the
+[contract](contracts/engram-prefetch-origins.md) and validation receipts.
