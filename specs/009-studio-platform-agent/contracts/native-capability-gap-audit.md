@@ -38,3 +38,11 @@ A subsequent seven-file source read is bound by `/private/tmp/fios-009-cpu-bound
 - The n-gram poster drains already queued host gathers before its loop exits; destruction joins before freeing the poster. This is not all concurrent callers, parent lifetime or native-device acceptance.
 
 No source repair is justified solely by these reads. Backend/registry/process-generation proof issuance and the positive all-client compatibility ceiling remain unfinished; no task checkbox changes.
+
+## Additional bounded participant read — 2026-11-15
+
+Read-only receipt `/private/tmp/fios-009-participant-read-a5il1sif/review.json`, SHA256293d000d2d513317e9454714deeadeb8206a2e6abe66c8d7825f39ff613f84fd, binds six selected P34 source files. This is not a test, complete call-graph proof or native coverage receipt.
+
+The reviewed SSD writer queues owned host-byte buffers rather than MLX handles. The QSA pooled-rope thread occurrence is inside a test. The sparse neighbor worker transforms CPU arrays and joins before returning. These reads justify no native ownership repair for those paths.
+
+Distributed startup is different: `main` invokes `cluster_connect` before serve startup, and `connect` detaches `waitForWorker`, which reaches `Link.open`/`askForModel` native/distributed operations. Current HTTP scope instrumentation cannot be promoted to coverage of that participant. No transport/RDMA code, settings or real traffic was changed or run. Distributed/all-client compatibility and operational acceptance remain unproven; T002/T018/T020–T022/T051 stay open. The later internal preparation/ingress metadata link supplies no authority across that gap.

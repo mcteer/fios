@@ -1147,3 +1147,12 @@ node scripts/check-platform-current-ane-unit.mjs --isolated --source /private/tm
 ```
 
 Requires the exact two-file overlay over the qualified seam candidate and frozen dependency closure. Actual host callbacks/tracker/guard and queue/calibration methods execute; native eval is a CPU substitute, GPU complement omitted. Parent calibration cases deliberately use the repaired queue to isolate the producer. Full native/model-free enclosing validation remains separate; no installed/positive native authority.
+
+
+Internal preparation-to-ingress metadata component check:
+
+```sh
+node scripts/check-platform-preparation-ingress.mjs --isolated --source /private/tmp/fios-009-preparation-ingress-work-0qdlqbsb/source --zig /private/tmp/fios-009-port-26112-ft5mnlcq/source/.zig-toolchain/zig
+```
+
+Original API-absence, actual tracker/concurrent metadata cases, full-file AST and frozen exact overlay only. No serving caller, native capacity reservation, model/device work or all-client/terminal authority; full native enclosure is independent.
