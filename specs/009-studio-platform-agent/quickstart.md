@@ -1129,3 +1129,12 @@ node scripts/check-platform-current-ane-build.mjs --isolated --source /private/t
 ```
 
 The exact constructor/worker projection uses CPU substitutes for native compilation and controlled thread creation. Tests cover pre-publication retention, sibling attribution, serial missing-origin refusal, partial-spawn fallback, uncertain parent retention and the unselected path. No ANE/model execution or native authority is established; enclosing build/runtime checks remain separate.
+
+
+Existing ANE seam negative-fence component check (private source candidate only):
+
+```sh
+node scripts/check-platform-current-ane-seam.mjs --isolated --source /private/tmp/fios-009-ane-seam-guard-work-a3jjstsc/source --zig /private/tmp/fios-009-port-26112-ft5mnlcq/source/.zig-toolchain/zig
+```
+
+Imports the actual complete guard and existing negative composition; raw native flag and CPU fallback are explicit substitutes. Full-file AST, exact two-file reverse/reapply projection and selected dependency closure are checked. No model/runtime installation or positive native authority; full enclosure is recorded separately.

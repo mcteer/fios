@@ -1,0 +1,71 @@
+const std = @import("std");
+const guard = @import("sdk/ane/source_guard.zig");
+const owners = @import("fios/request_ownership.zig");
+const reported = @import("fios/current_ane_run_uncertainty.zig");
+const options = @import("build_options");
+const sdk_host = @import("fios/sdk_request_ownership.zig");
+comptime {
+    if (@hasDecl(sdk_host, "fios_native_request_owners_known_uncertain")) _ = &sdk_host.fios_native_request_owners_known_uncertain;
+}
+var native_unknown: u32 = 0;
+export fn msv_ane_source_uncertainty() u32 {
+    return native_unknown;
+}
+const Spy = struct {
+    calls: *usize,
+    pub fn full(self: @This(), x: usize) !usize {
+        self.calls.* += 1;
+        return x + 1;
+    }
+};
+fn initialize() !void {
+    owners.shared().primary_guard = false;
+    try owners.shared().initialize(std.testing.io, @splat(147));
+}
+fn expectBlocked(comptime marker: []const u8) !void {
+    var calls: usize = 0;
+    const result = guard.fallback(Spy{ .calls = &calls }, @as(usize, 3));
+    if (result) |_| {
+        std.debug.print("{s}\n", .{marker});
+        return error.TestUnexpectedResult;
+    } else |err| try std.testing.expectEqual(error.FiosAneSourceUncertain, err);
+    try std.testing.expectEqual(@as(usize, 0), calls);
+}
+test "ane seam tracker fence blocks fallback" {
+    try initialize();
+    owners.shared().fence(std.testing.io);
+    try expectBlocked("ANE_SEAM_IGNORED_ORIGINAL_TRACKER_FENCE");
+}
+test "ane seam reported refusal blocks fallback" {
+    try initialize();
+    reported.observeOutcome(false);
+    try expectBlocked("ANE_SEAM_IGNORED_REPORTED_RUN_REFUSAL");
+}
+test "ane seam raw native refusal blocks fallback" {
+    native_unknown = 1;
+    try expectBlocked("ANE_SEAM_IGNORED_RAW_NATIVE_REFUSAL");
+}
+test "ane seam clean initialized caller preserves fallback" {
+    try initialize();
+    var calls: usize = 0;
+    try std.testing.expectEqual(@as(usize, 4), try guard.fallback(Spy{ .calls = &calls }, @as(usize, 3)));
+    try std.testing.expectEqual(@as(usize, 1), calls);
+    try std.testing.expect(!guard.known());
+}
+test "ane seam prestartup caller preserves fallback" {
+    var calls: usize = 0;
+    try std.testing.expectEqual(@as(usize, 4), try guard.fallback(Spy{ .calls = &calls }, @as(usize, 3)));
+    try std.testing.expectEqual(@as(usize, 1), calls);
+    try std.testing.expect(!guard.known());
+}
+test "ane seam unselected preserves legacy despite source fences" {
+    try std.testing.expect(!options.fios_source_ane);
+    try initialize();
+    owners.shared().fence(std.testing.io);
+    reported.observeOutcome(false);
+    native_unknown = 1;
+    var calls: usize = 0;
+    try std.testing.expectEqual(@as(usize, 4), try guard.fallback(Spy{ .calls = &calls }, @as(usize, 3)));
+    try std.testing.expectEqual(@as(usize, 1), calls);
+    try std.testing.expect(!guard.known());
+}

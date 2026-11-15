@@ -1,0 +1,39 @@
+diff --git a/src/sdk/ane/source_guard.zig b/src/sdk/ane/source_guard.zig
+--- a/src/sdk/ane/source_guard.zig
++++ b/src/sdk/ane/source_guard.zig
+@@ -1,10 +1,15 @@
+ //! Negative-only private ANE seam fence. It never issues native completion.
+ const options = @import("build_options");
+ extern fn msv_ane_source_uncertainty() u32;
++extern "c" fn fios_native_request_owners_known_uncertain() c_int;
+ pub fn known() bool {
+     if (!@hasDecl(options, "fios_source_ane")) return false;
+     if (!options.fios_source_ane) return false;
+-    return msv_ane_source_uncertainty() != 0;
++    // SDK-safe negative readers only: the tracker remains behind its fixed
++    // host ABI. No callback, cleanup or positive completion/admission claim.
++    return msv_ane_source_uncertainty() != 0 or
++        @import("../../fios/current_ane_run_uncertainty.zig").known() or
++        fios_native_request_owners_known_uncertain() != 0;
+ }
+ pub fn requireCertain() error{FiosAneSourceUncertain}!void {
+     if (known()) return error.FiosAneSourceUncertain;
+diff --git a/src/fios/sdk_request_ownership.zig b/src/fios/sdk_request_ownership.zig
+--- a/src/fios/sdk_request_ownership.zig
++++ b/src/fios/sdk_request_ownership.zig
+@@ -140,3 +140,15 @@
+     owners.current_group().* = original.group;
+     return 0;
+ }
++
++// Callback-free negative metadata only. The kit calls this fixed host ABI
++// instead of importing the host-owned tracker and its cleanup enrollment graph.
++// Missing source startup preserves legacy metadata behavior; false is no proof.
++pub export fn fios_native_request_owners_known_uncertain() c_int {
++    const io = std.Io.Threaded.global_single_threaded.io();
++    const source = owners.shared();
++    source.mutex.lockUncancelable(io);
++    const started = source.initialized;
++    source.mutex.unlock(io);
++    return if (started and source.knownUncertain(io)) 1 else 0;
++}
