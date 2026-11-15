@@ -5228,3 +5228,13 @@ old/new ordinary-format compatibility belongs to the preserveda54e1012… packag
 not silently relabeled to this build. All current focused/full Debug/optimized
 and actual packaged-CLI checks pass. T049 and whole39/55 remain unchanged;
 installed recovery/credential/rollback/uninstall acceptance is still open.
+
+
+Matched CXX/source prerequisite continuation: the existing genuine CPU CXX
+receipt `/private/tmp/fios-009-current-cxx-check-yOWhkc/receipt.json` records the
+same0e97b79e… config and b1ab22fa… four-overlay SDK library as the current selected
+native source. The existing P36 capsule intentionally omits that declaration and
+remains unchanged/model-prerequisite-refused. A fresh source-only build bracket
+will bind actual matching inputs before compilation, not attach metadata to the
+old capsule. Build/composition checks are pending; no model plan/request,
+coverage/admission/installation authority or whole-task completion follows.
