@@ -5509,3 +5509,29 @@ installation, inference-lease release or native terminality is involved.
 Whole39/55 remains complete. Current417ae05a… development package is unchanged;
 this Core change requires a fresh clean development build/review before it can
 replace that package's declared-input evidence. Exact-head CI remains required.
+
+Clean e867eb5362a0f86f0a2eb7313b1c5111b98d0253 development build is retained at
+`/private/tmp/fios-009-diagnostic-clock-package-57e5ainj/{source,release}`. New
+9-artifact manifest SHA256
+`ba97690c2c5e05fdb2b442a7df76df55f1f7e054d801b581d32405d44c6fc222`
+and174-file declared projection
+`511e6a8ea957e8e2f8700107cd509bad4cc7ad8aa9f676705ae10562ea73ce5e`
+pass complete review and match current package-declared source bytes. Both
+Studio install plans remain blocked with exactly5 blockers/zero privileged
+commands/zero changes. Actual network-denied packaged CLI configuration v4
+backup/restore and failed-output retention pass at
+`/tmp/fios009-upgrade-configuration-K8RONZ`, backup SHA256
+`e3e370a5b3fb50ba19405c09475a1b83458e5b7a72a21672a5fae8f286846738`;
+independent inference uncertainty1/export1 remain retained.
+
+Post-run complete new/prior417ae05a… artifact review passes. Aggregate
+`/private/tmp/fios-009-diagnostic-clock-package-57e5ainj/review.json`, SHA256
+`f2c2566d034b70ae1c429ef614e5137f3a1e6adde045aa1c2faf88b879835164`,
+also retains the initial wrong-working-directory command refusal, corrected
+before any build. No output was discarded. Package completeness, interpreter/
+native enrollment and activation remain false, all-client coverage unsupported
+and approved images empty. Declared projection excludes native overlays and
+other repository/Python/native inputs; no whole-repository/native or publisher/
+build authenticity is claimed. This supersedes417ae05a… only for current
+package-declared Core bytes, without relabeling its old compatibility receipts.
+No inference, installed action, merge, deployment or whole task closure occurs.

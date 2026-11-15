@@ -793,3 +793,9 @@ and boundary checks pass. No public admission bypass or whole-task closure is
 claimed;39/55 remains complete. See contracts/diagnostic-clock-continuity.md.
 Changed package-declared Core inputs require a new development package review;
 the earlier417ae05a… package remains historical and unchanged.
+
+Fresh clean e867eb5 development package ba97690c… now passes all9 artifact
+bytes,174-file declared projection, actual packaged configuration backup/restore
+and failure retention, both blocked/no-command Studio plans and post-run review.
+Aggregatef2c2566d… records these limits. Package remains incomplete, unenrolled
+and inactive; previous417ae05a… is preserved. Whole39/55 unchanged.
