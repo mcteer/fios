@@ -1,0 +1,60 @@
+import Foundation
+import Darwin
+
+@main struct PreflightMain {
+    static func listener(_ family:Int32,port:UInt16=0)throws->(Int32,UInt16) {
+        let fd=socket(family,SOCK_STREAM,0)
+        guard fd>=0 else {throw NSError(domain:"fixture.socket",code:Int(errno))}
+        do {
+            if family==AF_INET {
+                var address=sockaddr_in();address.sin_len=UInt8(MemoryLayout<sockaddr_in>.size);address.sin_family=sa_family_t(AF_INET);address.sin_port=port.bigEndian
+                guard inet_pton(AF_INET,"127.0.0.1",&address.sin_addr)==1 else {throw NSError(domain:"fixture.address",code:1)}
+                guard withUnsafePointer(to:&address,{$0.withMemoryRebound(to:sockaddr.self,capacity:1){Darwin.bind(fd,$0,socklen_t(MemoryLayout<sockaddr_in>.size))}})==0 else {throw NSError(domain:"fixture.bind",code:Int(errno))}
+                var length=socklen_t(MemoryLayout<sockaddr_in>.size)
+                guard withUnsafeMutablePointer(to:&address,{$0.withMemoryRebound(to:sockaddr.self,capacity:1){getsockname(fd,$0,&length)}})==0,listen(fd,1)==0 else {throw NSError(domain:"fixture.listen",code:Int(errno))}
+                return(fd,UInt16(bigEndian:address.sin_port))
+            }
+            var only:Int32=1
+            guard setsockopt(fd,IPPROTO_IPV6,IPV6_V6ONLY,&only,socklen_t(MemoryLayout<Int32>.size))==0 else {throw NSError(domain:"fixture.v6only",code:Int(errno))}
+            var address=sockaddr_in6();address.sin6_len=UInt8(MemoryLayout<sockaddr_in6>.size);address.sin6_family=sa_family_t(AF_INET6);address.sin6_port=port.bigEndian
+            guard inet_pton(AF_INET6,"::1",&address.sin6_addr)==1 else {throw NSError(domain:"fixture.address",code:2)}
+            guard withUnsafePointer(to:&address,{$0.withMemoryRebound(to:sockaddr.self,capacity:1){Darwin.bind(fd,$0,socklen_t(MemoryLayout<sockaddr_in6>.size))}})==0 else {throw NSError(domain:"fixture.bind",code:Int(errno))}
+            var length=socklen_t(MemoryLayout<sockaddr_in6>.size)
+            guard withUnsafeMutablePointer(to:&address,{$0.withMemoryRebound(to:sockaddr.self,capacity:1){getsockname(fd,$0,&length)}})==0,listen(fd,1)==0 else {throw NSError(domain:"fixture.listen",code:Int(errno))}
+            return(fd,UInt16(bigEndian:address.sin6_port))
+        }catch{close(fd);throw error}
+    }
+    static func stillListening(_ fd:Int32,port:UInt16)throws {
+        var address=sockaddr_storage(),length=socklen_t(MemoryLayout<sockaddr_storage>.size)
+        let status=withUnsafeMutablePointer(to:&address) {$0.withMemoryRebound(to:sockaddr.self,capacity:1){getsockname(fd,$0,&length)}}
+        let actual=withUnsafeBytes(of:address) {UInt16($0[2]) << 8 | UInt16($0[3])}
+        guard status==0,actual==port,fcntl(fd,F_GETFD)>=0,listen(fd,1)==0 else {throw NSError(domain:"fixture.listener.changed",code:1)}
+    }
+    static func main()throws {
+        let root=URL(fileURLWithPath:CommandLine.arguments[1]);try FileManager.default.createDirectory(at:root,withIntermediateDirectories:false,attributes:[.posixPermissions:0o700])
+        let marker=root.appendingPathComponent("startup.lock").path
+        let v4=try listener(AF_INET)
+        guard FiosServerLaunchPreflight.refusal(on:v4.1,reservationPath:marker)==FiosServerLaunchPreflight.occupied else {fatalError("GUI_PREFLIGHT_DID_NOT_REFUSE_IPV4_OWNER")}
+        try stillListening(v4.0,port:v4.1);close(v4.0)
+        let v6=try listener(AF_INET6)
+        guard FiosServerLaunchPreflight.refusal(on:v6.1,reservationPath:marker)==FiosServerLaunchPreflight.occupied else {fatalError("GUI_PREFLIGHT_DID_NOT_REFUSE_IPV6_OWNER")}
+        try stillListening(v6.0,port:v6.1);close(v6.0)
+        var free:UInt16?
+        for _ in 0..<8 {
+            let held=try listener(AF_INET);close(held.0)
+            if FiosServerLaunchPreflight.refusal(on:held.1,reservationPath:marker)==nil {free=held.1;break}
+        }
+        guard let free,FiosServerLaunchPreflight.refusal(on:free,reservationPath:marker)==nil else {fatalError("GUI_PREFLIGHT_RETAINED_PORT_OR_REFUSED_FREE_PAIR")}
+        try Data("fixture presence only; not an enrollment record".utf8).write(to:URL(fileURLWithPath:marker))
+        guard FiosServerLaunchPreflight.refusal(on:free,reservationPath:marker)==FiosServerLaunchPreflight.reserved else {fatalError("GUI_PREFLIGHT_IGNORED_FIOS_RESERVATION")}
+        try FileManager.default.removeItem(atPath:marker)
+        try FileManager.default.createDirectory(atPath:marker,withIntermediateDirectories:false)
+        guard FiosServerLaunchPreflight.refusal(on:free,reservationPath:marker)==FiosServerLaunchPreflight.reserved else {fatalError("GUI_PREFLIGHT_ACCEPTED_EXISTING_MALFORMED_RESERVATION")}
+        guard FiosServerLaunchPreflight.refusal(on:free,reservationPath:marker+"/missing")==nil else {throw NSError(domain:"fixture.absent",code:1)}
+        try FileManager.default.removeItem(atPath:marker)
+        try Data().write(to:URL(fileURLWithPath:marker))
+        guard FiosServerLaunchPreflight.refusal(on:free,reservationPath:marker+"/missing")==FiosServerLaunchPreflight.unavailable else {fatalError("GUI_PREFLIGHT_TREATED_UNKNOWN_PATH_AS_ABSENT")}
+        guard FiosServerLaunchPreflight.refusal(on:0,reservationPath:root.appendingPathComponent("absent").path)==FiosServerLaunchPreflight.unavailable else {fatalError("GUI_PREFLIGHT_ACCEPTED_ZERO_PORT")}
+        print("PASS: actual GUI preflight preserves IPv4/IPv6 listeners, releases free-port probes and refuses Fios reservation/unknown metadata; no GUI, server, model or service launched")
+    }
+}
