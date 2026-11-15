@@ -1222,3 +1222,16 @@ The baseline receives the candidate marker module only to isolate its old getter
 It sends no RDMA/model request and is not distributed/native acceptance. Never
 use a false marker or successful component receipt as all-client idle/admission
 proof. See [the contract](contracts/distributed-mode-negative.md).
+
+
+For the internal CPU bookkeeping withdrawal component only:
+
+```sh
+node scripts/check-platform-preparation-withdrawal.mjs --isolated --source /private/tmp/REVIEWED_CURRENT_NATIVE_SOURCE --zig /private/tmp/REVIEWED_PINNED_ZIG
+```
+
+This checks exact tracker projection and fresh Debug/ReleaseSafe cases. The old
+source's missing method is an interface witness. Success returns no inference
+not-sent/completion proof and releases no physical/native lease. Do not infer
+terminality from missing lineage or local CPU counts. See
+[the withdrawal contract](contracts/preparation-withdrawal.md).

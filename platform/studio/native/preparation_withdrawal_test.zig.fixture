@@ -1,0 +1,244 @@
+const std = @import("std");
+const owners = @import("fios/request_ownership.zig");
+const io = std.testing.io;
+fn initialize(t: *owners.Tracker) !void {
+    t.primary_guard = true;
+    try t.initialize(io, @splat(161));
+}
+fn withdraw(t: *owners.Tracker, token: owners.Token, model: []const u8, id: owners.CorrelationID, comptime known: bool) !void {
+    if (comptime @hasDecl(owners.Tracker, "withdrawUnattachedPreparation")) {
+        if (known) return t.withdrawUnattachedPreparationKnown(io, token, model, id);
+        return t.withdrawUnattachedPreparation(io, token, model, id);
+    } else {
+        std.debug.print("PREPARATION_WITHDRAWAL_API_ABSENT\n", .{});
+        return error.MissingPreparationWithdrawalAPI;
+    }
+}
+fn original(t: *owners.Tracker) !owners.Token {
+    return t.claimCorrelatedPreparation(io, "fixture/a", @splat(1));
+}
+fn owned(t: *owners.Tracker, n: usize) !void {
+    try std.testing.expectEqual(n, t.snapshot(io).owned);
+}
+var probe_target: ?*owners.Tracker = null;
+var probe_calls: usize = 0;
+var probe_unlocked = false;
+var probe_unknown = false;
+fn probe() bool {
+    probe_calls += 1;
+    if (probe_target) |t| {
+        if (t.mutex.tryLock()) {
+            probe_unlocked = true;
+            t.mutex.unlock(io);
+        }
+    }
+    return probe_unknown;
+}
+test "preparation withdrawal API exact local claim only" {
+    var t = owners.Tracker{};
+    try initialize(&t);
+    const token = try original(&t);
+    try withdraw(&t, token, "fixture/a", @splat(1), false);
+    try owned(&t, 0);
+    try std.testing.expect(!t.correlationSnapshot(io, @splat(1)).found);
+    try std.testing.expect(!t.knownUncertain(io));
+}
+test "preparation withdrawal registry-bound metadata remains CPU only" {
+    var t = owners.Tracker{};
+    try initialize(&t);
+    const token = try original(&t);
+    try t.bindPreparationRegistryKnown(io, token, 7);
+    try withdraw(&t, token, "fixture/a", @splat(1), true);
+    try owned(&t, 0);
+}
+test "preparation withdrawal preserves unrelated original root" {
+    var t = owners.Tracker{};
+    try initialize(&t);
+    const token = try original(&t);
+    const other = try t.claimCorrelatedPreparation(io, "fixture/a", @splat(2));
+    try withdraw(&t, token, "fixture/a", @splat(1), false);
+    try owned(&t, 1);
+    const kept = t.correlationSnapshot(io, @splat(2));
+    try std.testing.expect(kept.found and kept.root_sequence == other.sequence and kept.references == 1);
+}
+test "preparation withdrawal exact target and correlation preserve original" {
+    var t = owners.Tracker{};
+    try initialize(&t);
+    const token = try original(&t);
+    try std.testing.expectError(error.ClaimModelMismatch, withdraw(&t, token, "fixture/b", @splat(1), false));
+    try std.testing.expectError(error.ClaimCorrelationMismatch, withdraw(&t, token, "fixture/a", @splat(2), false));
+    try std.testing.expectError(error.InvalidModel, withdraw(&t, token, "", @splat(1), false));
+    try owned(&t, 1);
+    try std.testing.expect(t.correlationSnapshot(io, @splat(1)).found);
+}
+test "preparation withdrawal retained reference refuses without decrement" {
+    var t = owners.Tracker{};
+    try initialize(&t);
+    const token = try original(&t);
+    try t.retain(io, token);
+    try std.testing.expectError(error.PreparationClaimBusy, withdraw(&t, token, "fixture/a", @splat(1), false));
+    try std.testing.expectEqual(@as(u64, 2), t.correlationSnapshot(io, @splat(1)).references);
+}
+test "preparation withdrawal child preparation refuses both roots retained" {
+    var t = owners.Tracker{};
+    try initialize(&t);
+    const token = try original(&t);
+    _ = try t.reservePreparation(io, token, "fixture/a");
+    try std.testing.expectError(error.PreparationClaimBusy, withdraw(&t, token, "fixture/a", @splat(1), false));
+    try owned(&t, 2);
+}
+test "preparation withdrawal attached ingress refuses both owners retained" {
+    var t = owners.Tracker{};
+    try initialize(&t);
+    const token = try original(&t);
+    const ingress = try t.enter(io);
+    try t.attachPreparationIngress(io, token, ingress, "fixture/a", @splat(1));
+    try std.testing.expectError(error.PreparationClaimUsed, withdraw(&t, token, "fixture/a", @splat(1), false));
+    try owned(&t, 2);
+    try std.testing.expectEqual(@as(usize, 2), t.correlationSnapshot(io, @splat(1)).owners);
+}
+test "preparation withdrawal active and auxiliary membership refuse" {
+    var t = owners.Tracker{};
+    try initialize(&t);
+    const token = try original(&t);
+    try t.active(io, token);
+    try std.testing.expectError(error.InvalidPreparationClaim, withdraw(&t, token, "fixture/a", @splat(1), false));
+    try owned(&t, 1);
+    var u = owners.Tracker{};
+    try initialize(&u);
+    const other = try original(&u);
+    try u.bindAuxiliary(io, other, "fixture/b");
+    try std.testing.expectError(error.InvalidPreparationClaim, withdraw(&u, other, "fixture/a", @splat(1), false));
+    try owned(&u, 1);
+}
+test "preparation withdrawal ordinary correlated root cannot impersonate" {
+    var t = owners.Tracker{};
+    try initialize(&t);
+    const token = try t.enter(io);
+    try t.associate(io, token, @splat(1));
+    try t.bind(io, token, "fixture/a");
+    try std.testing.expectError(error.InvalidPreparationClaim, withdraw(&t, token, "fixture/a", @splat(1), false));
+    try owned(&t, 1);
+}
+test "preparation withdrawal older uncertainty preserves both claims" {
+    var t = owners.Tracker{};
+    try initialize(&t);
+    const token = try original(&t);
+    _ = try t.claimCorrelatedPreparation(io, "fixture/a", @splat(2));
+    t.fence(io);
+    try std.testing.expectError(error.CoverageUncertain, withdraw(&t, token, "fixture/a", @splat(1), false));
+    try owned(&t, 2);
+    try std.testing.expect(t.knownUncertain(io));
+}
+test "preparation withdrawal guard change refuses existing claim" {
+    var t = owners.Tracker{};
+    try initialize(&t);
+    const token = try original(&t);
+    t.primary_guard = false;
+    try std.testing.expectError(error.UnsupportedSourceGuard, withdraw(&t, token, "fixture/a", @splat(1), false));
+    try owned(&t, 1);
+}
+test "preparation withdrawal maintenance remains closed after local removal" {
+    var t = owners.Tracker{};
+    try initialize(&t);
+    const token = try original(&t);
+    const pause = try t.pauseAdmissions(io);
+    try withdraw(&t, token, "fixture/a", @splat(1), false);
+    try owned(&t, 0);
+    const snapshot = t.snapshot(io);
+    try std.testing.expect(snapshot.admissions_closed and snapshot.admission_pause == pause.sequence);
+    try std.testing.expectError(error.Maintenance, t.claimCorrelatedPreparation(io, "fixture/a", @splat(2)));
+}
+test "preparation withdrawal public probe precedes mutex and known has no callback" {
+    var t = owners.Tracker{};
+    try initialize(&t);
+    probe_target = &t;
+    try t.enrollBackendUncertaintyProbe(io, &probe);
+    const token = try t.claimCorrelatedPreparationKnown(io, "fixture/a", @splat(1));
+    try withdraw(&t, token, "fixture/a", @splat(1), false);
+    try std.testing.expect(probe_unlocked and probe_calls == 1);
+    const other = try t.claimCorrelatedPreparationKnown(io, "fixture/a", @splat(2));
+    probe_calls = 0;
+    try withdraw(&t, other, "fixture/a", @splat(2), true);
+    try std.testing.expectEqual(@as(usize, 0), probe_calls);
+}
+test "preparation withdrawal new probe refusal retains original and fence" {
+    var t = owners.Tracker{};
+    try initialize(&t);
+    probe_target = &t;
+    try t.enrollBackendUncertaintyProbe(io, &probe);
+    const token = try t.claimCorrelatedPreparationKnown(io, "fixture/a", @splat(1));
+    probe_unknown = true;
+    try std.testing.expectError(error.CoverageUncertain, withdraw(&t, token, "fixture/a", @splat(1), false));
+    try owned(&t, 1);
+    try std.testing.expect(t.knownUncertain(io));
+}
+test "preparation withdrawal replay cannot remove reused slot" {
+    var t = owners.Tracker{};
+    try initialize(&t);
+    const token = try original(&t);
+    try withdraw(&t, token, "fixture/a", @splat(1), false);
+    _ = try t.claimCorrelatedPreparation(io, "fixture/a", @splat(2));
+    if (withdraw(&t, token, "fixture/a", @splat(1), false)) |_| return error.TestUnexpectedResult else |_| {}
+    try owned(&t, 1);
+    try std.testing.expect(t.correlationSnapshot(io, @splat(2)).found);
+}
+test "preparation withdrawal race attachment and withdrawal have one winner" {
+    var t = owners.Tracker{};
+    try initialize(&t);
+    const token = try original(&t);
+    const ingress = try t.enter(io);
+    const Work = struct {
+        tracker: *owners.Tracker,
+        claim: owners.Token,
+        incoming: owners.Token,
+        attach_ok: bool = false,
+        withdraw_ok: bool = false,
+        fn attach(self: *@This()) void {
+            self.tracker.attachPreparationIngress(io, self.claim, self.incoming, "fixture/a", @splat(1)) catch return;
+            self.attach_ok = true;
+        }
+        fn remove(self: *@This()) void {
+            withdraw(self.tracker, self.claim, "fixture/a", @splat(1), false) catch return;
+            self.withdraw_ok = true;
+        }
+    };
+    var work = Work{ .tracker = &t, .claim = token, .incoming = ingress };
+    const a = try std.Thread.spawn(.{}, Work.attach, .{&work});
+    const b = try std.Thread.spawn(.{}, Work.remove, .{&work});
+    a.join();
+    b.join();
+    try std.testing.expect(work.attach_ok != work.withdraw_ok);
+    try owned(&t, if (work.attach_ok) 2 else 1);
+}
+test "preparation withdrawal control original preparation correlates" {
+    var t = owners.Tracker{};
+    try initialize(&t);
+    const token = try original(&t);
+    const value = t.correlationSnapshot(io, @splat(1));
+    try std.testing.expect(value.found and value.root_sequence == token.sequence);
+}
+test "preparation withdrawal control attachment retains original after creator leaves" {
+    var t = owners.Tracker{};
+    try initialize(&t);
+    const token = try original(&t);
+    const incoming = try t.enter(io);
+    try t.attachPreparationIngress(io, token, incoming, "fixture/a", @splat(1));
+    try t.leave(io, token);
+    const value = t.correlationSnapshot(io, @splat(1));
+    try std.testing.expect(value.found and value.root_sequence == token.sequence and value.owners == 1);
+}
+test "preparation withdrawal control diagnostic guard unsupported" {
+    var t = owners.Tracker{};
+    t.primary_guard = false;
+    try t.initialize(io, @splat(162));
+    try std.testing.expectError(error.UnsupportedSourceGuard, original(&t));
+}
+test "preparation withdrawal control older uncertainty refuses new claim" {
+    var t = owners.Tracker{};
+    try initialize(&t);
+    _ = try original(&t);
+    t.fence(io);
+    try std.testing.expectError(error.CoverageUncertain, t.claimCorrelatedPreparation(io, "fixture/a", @splat(2)));
+    try owned(&t, 1);
+}

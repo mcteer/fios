@@ -1,0 +1,44 @@
+--- a/src/fios/request_ownership.zig
++++ b/src/fios/request_ownership.zig
+@@ -477,6 +477,41 @@
+         defer self.mutex.unlock(io);
+         return self.attachPreparationIngressLocked(claim, ingress, model, id, null);
+     }
++    // Withdraw only this exact unattached CPU bookkeeping claim. No native
++    // work/resource is cancelled and no not-sent/terminal/lease proof is issued.
++    pub fn withdrawUnattachedPreparation(self: *Tracker, io: std.Io, claim: Token, model: []const u8, id: CorrelationID) !void {
++        self.observeBackendUncertainty(io);
++        return self.withdrawUnattachedPreparationKnown(io, claim, model, id);
++    }
++    // Existing outer locks require the fixed negative probe first. No callback
++    // under this mutex; maintenance remains closed and uncertainty never clears.
++    pub fn withdrawUnattachedPreparationKnown(self: *Tracker, io: std.Io, claim: Token, model: []const u8, id: CorrelationID) !void {
++        self.mutex.lockUncancelable(io);
++        defer self.mutex.unlock(io);
++        if (!self.primary_guard) return error.UnsupportedSourceGuard;
++        if (!self.initialized or self.uncertain) return error.CoverageUncertain;
++        if (model.len == 0 or model.len > model_limit or !std.unicode.utf8ValidateSlice(model) or std.mem.indexOfScalar(u8, model, 0) != null) return error.InvalidModel;
++        const reserved = try self.checked(claim);
++        if (reserved.preparation_claim == .attached) return error.PreparationClaimUsed;
++        if (reserved.preparation_claim != .reserved or reserved.phase != .preparing or reserved.correlation_root != claim.sequence) return error.InvalidPreparationClaim;
++        if (reserved.references != 1) return error.PreparationClaimBusy;
++        const correlation = reserved.correlation orelse return error.InvalidPreparationClaim;
++        if (!std.mem.eql(u8, &correlation, &id)) return error.ClaimCorrelationMismatch;
++        const primary = reserved.primary orelse return error.InvalidPreparationClaim;
++        if (reserved.models != @as(u64, 1) << primary) return error.InvalidPreparationClaim;
++        const identity = &self.models[primary];
++        if (!std.mem.eql(u8, identity.id[0..identity.len], model)) return error.ClaimModelMismatch;
++        for (self.slots, 0..) |slot, index| {
++            if (index != claim.slot and slot.phase != .vacant and slot.correlation_root == claim.sequence) return error.PreparationClaimBusy;
++        }
++        if (identity.owners == 0 or identity.owners > capacity) {
++            self.uncertain = true;
++            return error.InvalidModelOwnership;
++        }
++        // Only the validated single local association is removed. No inference
++        // journal, native registry/capacity, backend object or unrelated root.
++        try self.leaveLocked(claim);
++    }
+     // Registry metadata only, not native capacity or admission. The generation
+     // is recorded while the caller holds its registry mutex before publication.
+     pub fn bindPreparationRegistryKnown(self: *Tracker, io: std.Io, claim: Token, generation: u64) !void {

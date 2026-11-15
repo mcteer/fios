@@ -749,3 +749,17 @@ Configured distributed-mode negative subset final: strict10 parent failures/
 4 ordinary empty-model runtime checks;191Node/107Python/boundary and post-byte
 reviews pass. Aggregatee0d71c88…. CLI ordering/CPU negative composition is not
 distributed execution or all-client proof. No whole task closes;39/55 unchanged.
+
+
+Unattached preparation CPU-reference withdrawal source WIP: exact reserved,
+original/single-reference/model/correlation checks, attached/forked/uncertain
+refusal and unchanged maintenance. Returnsvoid; no inference not-sent/terminal
+proof, native capacity/object/registry or journal release. Strict/native checks
+are running;39/55 whole tasks unchanged. See contracts/preparation-withdrawal.md.
+
+
+Unattached CPU-reference withdrawal subset final: strict2 original interface
+witnesses/8 controls/40 candidate cases; actual default162/162; enabled35/35
+semantic32/32 link;4 empty-model runtime/post-run;191Node/107Python/boundary
+checks pass. Aggregated2a3eb52…. Returnvoid is no inference not-sent/terminal
+proof or native/physical lease release; all16 whole tasks remain open,39/55.

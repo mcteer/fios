@@ -5331,3 +5331,64 @@ native terminality or all-client/native authority is claimed. The source serving
 guard remains unsupported. Whole39/55 unchanged; all16 whole tasks remain open.
 Nine-artifact package417ae05a… remains a separate unchanged declared-input
 package: native patches/fixtures/checkers are outside its projection.
+
+
+Unattached CPU preparation-reference withdrawal continuation: private source
+`/private/tmp/fios-009-preparation-withdrawal-work-w2koilkh/source` changes only
+the actual tracker. Method returnsvoid, validates the exact original reserved
+single-reference/model/correlation claim, refuses attached/retained/forked/
+active/auxiliary/ordinary/uncertain roots, and preserves maintenance/other roots.
+No physical lease, native object/registry, inference journal or proof is touched.
+Historical completed descendants are not evidence that native preparation never
+ran; success must never be treated as inference not-sent/completion.
+
+Initial strict driver omitted tracker dependency copies and stopped before its
+intended interface witness; failed receipt6v1mnt remains preserved, not a
+behavioral red. The driver now captures/copies those dependencies with backend
+options disabled. The corrected strict run and native default build are running.
+No source serving-guard enablement, wire/caller, model request or activation.
+Whole39/55 unchanged.
+
+
+Corrected preparation-withdrawal strict checks pass: receipt
+`/private/tmp/fios-009-preparation-withdrawal-check-bacLqY/receipt.json`, SHA256
+`6fa7c55ad20bc827f85e703a9425cfd86c24d0de139d754fa98ba378601eba12`;
+2 genuine original-interface absence witnesses/8 original controls/40 candidate
+cases across fresh Debug/ReleaseSafe processes, networking denied. Cases include
+original/unrelated identity, exact target/correlation, retained/forked/attached/
+active/auxiliary impersonation, sticky uncertainty, unchanged maintenance,
+probe-before-mutex/callback-free Known edge, replay and a real two-thread
+attach/withdraw race. No proof result, model/physical lease release, registry/
+backend action, inference journal or wire caller is supplied. Default native
+enclosure is compiling;191Node/107Python/boundary rerun pending. Whole39/55.
+
+
+Preparation-withdrawal default native compile passes242.729s with captured inputs
+unchanged. All162 existing native enclosure cases pass in separate processes
+with no skips; binary59ad068a0ebd19d0c78b6a65e4e4eee06d067bd81e3553b94b1dc5ab2989db68.
+191 Node/107 installed Python tests and agent inference boundary pass. Current
+enabled semantic/link/empty-model checks remain pending. No Python source or
+nine-artifact package-declared input changed; no noneditable reinstall or package
+relabeling is claimed. Whole39/55 unchanged.
+
+
+Preparation-withdrawal selected-source final: enabled semantic35/35 steps
+381.559s and link32/32 steps13.976s pass with captured inputs unchanged. Raw
+binarycecca038dd3f4e060250834356f735586d0853bc09b5dba6bfdda73cab66339c;
+normalized76eef9dce640c4d511df1e21d3e5b2c0415590d92113f033c12b7a2f5aeea0a5,
+capsule5fd0c1ed…. All4 genuine empty-model correlation/activity/startup/manager
+checks pass. Post-run selected native/source/SDK-stage/CXX/SDK-source review and
+complete new/prior60834421… capsule verification pass. Source prerequisite
+parser passes; no model plan or request is created.
+
+Final aggregate `/private/tmp/fios-009-preparation-withdrawal-work-w2koilkh/final-review.json`,
+SHA256 `d2a3eb52078a200e191e981a2d5e1a94935635f6a916dbf36875aa10a0c120f3`,
+binds2 interface witnesses/8 controls/40 candidate cases, default162, enabled
+semantic/link,4 empty checks,191Node/107Python/boundary logs and root inputs.
+Patchc6b7f0d2…,fixture46ff1205…,checker76e32692…. Initial dependency-copy driver
+failure remains recorded and is not claimed as a behavioral red. This is only
+CPU-reference withdrawal; historical preparation, physical native terminality,
+inference not-sent/completion, all-client coverage, native capacity/lease,
+registry/backend/journal mutation, wire/serving caller or installed authority
+is not supplied. Actual serving guard remains unsupported;39/55 unchanged.
+Native artifacts remain outside the9-artifact package's declared-input projection.
