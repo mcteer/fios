@@ -888,3 +888,5 @@ empty-native/current-Core checks pass. Exact four-path source post-comparison
 and new/prior capsule verification pass; aggregate449a7e3d…/capsule4191c2a1….
 This is negative evidence only; actual custody/parent/native authority remain
 unfinished. No new model request/package/installed action;39/55 unchanged.
+
+2026-11-15 T027 GUI launch-yield source component: the exact installed GUI image now refuses startup before port/default/spawn effects whenever fixed Fios launch configuration exists or cannot be checked; private copies skip installed metadata. Actual prefix/decision plus private syscall-reader checks pass36 runtime cases/16 compiles across Debug/optimized, including6 designated original failures. Full locked private GUI and test-bundle builds and5 existing owned-child stop/quit tests pass. No GUI main, installation, native authority or whole-task closure;39/55 unchanged. See [contract](contracts/gui-launch-yield.md).

@@ -5938,3 +5938,32 @@ proof issuer/atomic admission, installed runtime/profile/task composition and
 both-Studio acceptance remain open.39/55 whole tasks unchanged. Published
 4af2501 CI43717900729 completed all7 jobs successfully before publication of
 this checkpoint. No merge, deployment, native activation or further inference.
+
+2026-11-15 GUI launch-yield source qualification (T027 remains open): private
+`/private/tmp/fios-009-gui-launch-yield-work-s0i4xo6j/source` is based on GUI
+4e231ce plus the reviewed listener patch. New two-path patch SHA256
+94a529e316f4959e80159132dce8cc608047418277bac120b7176a0cd228b68c.
+Canonical isolated checker passes52 records (36 runs/16 compiles), including6
+expected original-prefix failures, actual lazy role decisions and private-path
+lstat/proc_pidpath readers. Receipt
+`/private/tmp/fios-009-gui-launch-yield-check-y7aeg2t6/receipt.json`, SHA256
+bcd81e42d225be878a5070be8903c024f661f66cdebd780604b2921ebddc7c73.
+Initial canonical reader fixture failed compilation on missing operator spacing;
+its log is retained in canonical-check.log and corrected rerun is separate.
+
+Locked full private GUI Debug build passes in81.232s; test bundle rebuild in
+56.634s. Both bracket359 selected app/manifest inputs unchanged. Existing five
+ServerManagerStopTests/ServerQuitTeardownTests pass with zero failures in0.368s
+under network denial; GUI main is never executed. Initial xcrun invocation lacked
+Xcode DEVELOPER_DIR and failed before test execution; corrected log is separate.
+Build/test receipts and gui-unit-direct-fixed.log are in the private work root.
+Package.resolved remains cae0a71b33715a79b1c0f3755802cb89f3dd94a6b22a228200b0abf0cd11c691.
+No model requests, installed policy/app changes, native completion/absence proof,
+whole-native provenance, activation or deployment.39/55 whole tasks unchanged.
+Published ffbe3d7 CI43721214561 is successful before this next publication.
+Mock compatibility profile also passes52 records; receipt
+`/private/tmp/fios-009-gui-launch-yield-check-npwfsoy9/receipt.json`, SHA256
+e12dbebd8d253237b5e408d08dd29c6801d9130a88f66abc86480f3639c2f9e4.
+CI now runs this mock profile alongside the existing GUI listener checker.
+Candidate two-path hashes remain equal to their private projection after tests;
+final-review.json binds the selected build/test receipts separately.
