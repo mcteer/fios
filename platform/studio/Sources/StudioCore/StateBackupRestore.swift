@@ -27,10 +27,12 @@ extension StoppedStateBackup {
         guard let free=(disk[.systemFreeSize] as? NSNumber)?.int64Value,free>=receipt.bytes+(10<<30) else {throw JournalError.storage}
         let temporary=parent.appendingPathComponent(".fios-restore-"+UUID().uuidString.lowercased())
         guard mkdir(temporary.path,0o700)==0 else {throw JournalError.storage}
-        defer {try? FileManager.default.removeItem(at:temporary)}
+        // Retain a failed private copy for diagnosis. Publication removes this
+        // name by exclusive rename; no recursive cleanup follows uncertainty.
         var recovery=try serviceRecoveryPayload(directory:directory)==nil ? []:["service-recovery.json"]
         if try migrationHoldPayload(directory:directory) != nil {recovery.append("migration-hold.json")}
-        for name in ["state.sqlite","artifacts","backup.json"]+recovery {
+        let hasConfiguration=receipt.scope=="platform_journal_exports_and_configuration"
+        for name in ["state.sqlite","artifacts","backup.json"]+recovery+(hasConfiguration ? ["configuration"]:[]) {
             try FileManager.default.copyItem(at:directory.appendingPathComponent(name),to:temporary.appendingPathComponent(name))
         }
         // Verify the copied tree, not just the previously observed source. A
@@ -64,6 +66,17 @@ extension StoppedStateBackup {
             guard fd>=0 else {throw JournalError.storage}
             let result=fsync(fd);close(fd)
             guard result==0 else {throw JournalError.storage}
+        }
+        if hasConfiguration {
+            let config=temporary.appendingPathComponent("configuration")
+            for name in try FileManager.default.contentsOfDirectory(atPath:config.path) {
+                let fd=open(config.appendingPathComponent(name).path,O_RDONLY|O_NOFOLLOW|O_CLOEXEC)
+                guard fd>=0 else {throw JournalError.storage}
+                let result=fsync(fd);close(fd);guard result==0 else {throw JournalError.storage}
+            }
+            let fd=open(config.path,O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC)
+            guard fd>=0 else {throw JournalError.storage}
+            let result=fsync(fd);close(fd);guard result==0 else {throw JournalError.storage}
         }
         let artifacts=open(artifactDirectory.path,O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC)
         guard artifacts>=0 else {throw JournalError.storage};defer {close(artifacts)}

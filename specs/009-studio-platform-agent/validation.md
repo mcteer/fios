@@ -5097,3 +5097,47 @@ Registry-generation ingress final selected-source qualification: enabled35/35 se
 Aggregate `/private/tmp/fios-009-registry-ingress-work-hyyrzggi/final-source-qualification.json`, SHA256 `07b0e85c40bb1dd69430558076f8284a8ef027426519e350070a27515bec938e`, binds2 original API-absence/4 controls/20 new +22 previous compatibility cases, actual wrapper/native162/162, enabled build/runtime and93 focused Node checks. All P36 local sessions complete. Missing overlay refuses before component tests; AST preflight may run. The initial AST shadow error is retained separately. No native transport/capacity/proof/all-client or installed authority, numerical/model-policy change, new model plan/POST, installation, activation, merge or deployment follows. Whole39/55 unchanged.
 
 Exact published6abe79b917bcd4e9c5edc3a6bd9fd972ab7a32fc/[CI43687915511](https://github.com/mcteer/fios/actions/runs/43687915511) passed all7 jobs including aggregate. Qualified CPU handoff source is published82bc221c5d7558128ca35b58b125ecfdc1b01da6/[CI43690344462](https://github.com/mcteer/fios/actions/runs/43690344462), pending. CI remains distinct from merge/deployment; neither occurred.
+
+
+###2026-11-15 configuration backup source continuation (T049 partial)
+
+Whole-task progress remains39/55;16 remain open. The previous published
+`82bc221c5d7558128ca35b58b125ecfdc1b01da6` passed all7 CI jobs, including the
+aggregate gate, in run43690344462. This is CI evidence, not deployment.
+Registry-generation source commit `7815c44ceb9ed7a19a57c67350138b0bbd7f16af`
+is published; exact-head CI43692483894 is pending.
+
+Working source now adds optional version4 stopped-state configuration backup:
+six fixed opaque policy documents,64KiB each, empty/absent distinctions,
+original owner/mode metadata, private restoration, source identity/content
+rechecks, explicit configuration manifest binding, and retained failed private
+backup/restore copies. Existing format1/2/3 operations remain supported. No
+installed path, Keychain secret, native binary, process/custody descriptor or
+application database is copied/modified. Private restored policy is rejected by
+the actual root-policy reader; independent journal uncertainty remains retained.
+
+Focused actual-Core backup tests pass after implementation. The initial test
+compile also contained missing `try` markers; it is not a clean behavioral red
+receipt. An intermediate driver omitted the new helper and overlapped a source
+edit; another compile caught Swift's ambiguous `stat` initializer in a dictionary
+expression. These failures are retained in the private work directory; the final
+focused compile/runtime passed with stable inputs. Full Debug policy tests are
+running; optimized/package/CLI validation is pending. Eleven relevant Node
+release/source/uninstall tests and the agent boundary checks passed. Container
+boundary/recovery checks are still running at this checkpoint. This subset does
+not complete protected installation, credential recovery, installed rollback,
+uninstall or wholeT049. No new model request or native activation occurred.
+
+
+Configuration backup source checks now pass: focused actual-Core compile/runtime;
+full Debug policy compile28.631s/runtime24.139s; full optimized policy
+compile56.450s/runtime17.944s, including all four recovery/hold combinations;
+191 Node/107 installed Python tests;11 focused release/source/uninstall tests;
+agent boundary and container boundary/recovery checks; application build and
+authenticated discovery (7 advertised chat entries,0 inference requests).
+Application build/discovery used the existing workspace, including preserved003
+UI WIP; only009 paths are included in this change. The package-input source is
+not yet packaged/reviewed at this checkpoint. A finite network-denied actual-CLI
+configuration backup checker has been added; packaged execution remains pending.
+Earlier initial-driver/Swift-type compile failures are retained and superseded
+by these successful source runs, not presented as passing evidence.

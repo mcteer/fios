@@ -44,16 +44,18 @@ extension StoppedStateBackup {
         let (receiptHash,_,data)=try hash(directory.appendingPathComponent("backup.json"),maximum:65536,collect:true)
         guard receiptHash==expectedSHA256 else {throw JournalError.invalid}
         try StrictJSON.validate(data,maximum:65536)
-        guard let raw=try JSONSerialization.jsonObject(with:data) as? [String:Any],let version=WireScalar.integer(raw["version"],maximum:3),(1...3).contains(version) else {throw JournalError.invalid}
+        guard let raw=try JSONSerialization.jsonObject(with:data) as? [String:Any],let version=WireScalar.integer(raw["version"],maximum:4),(1...4).contains(version) else {throw JournalError.invalid}
         guard journalSchema != 7 || version<=2 else {throw JournalError.invalid}
-        let extra=version>=2 ? ["service_recovery_bytes","service_recovery_sha256"]+(version==3 ? ["migration_hold_bytes","migration_hold_sha256"]:[]):[]
-        guard Set(raw.keys)==Set(["version","scope","host_hash","owner_uid","journal_schema","journal_application_id","journal_bytes","journal_sha256","artifact_index_sha256","artifact_files"]+extra),
+        let extra=version>=2 ? ["service_recovery_bytes","service_recovery_sha256"]+(version>=3 ? ["migration_hold_bytes","migration_hold_sha256"]:[]):[]
+        let configurationKeys=version==4 ? ["configuration_sha256","configuration_bytes"]:[]
+        guard Set(raw.keys)==Set(["version","scope","host_hash","owner_uid","journal_schema","journal_application_id","journal_bytes","journal_sha256","artifact_index_sha256","artifact_files"]+extra+configurationKeys),
               let files=raw["artifact_files"] as? [[String:Any]],files.allSatisfy({Set($0.keys)==Set(["path","bytes","sha256"])}) else {throw JournalError.invalid}
         let manifest=try JSONDecoder().decode(Manifest.self,from:data)
-        let scope=version==3 ? "platform_journal_exports_and_migration_hold":version==2 ? "platform_journal_exports_and_service_recovery":"platform_journal_and_exports"
+        let scope=version==4 ? "platform_journal_exports_and_configuration":version==3 ? "platform_journal_exports_and_migration_hold":version==2 ? "platform_journal_exports_and_service_recovery":"platform_journal_and_exports"
         guard manifest.scope==scope,manifest.owner_uid==geteuid(),manifest.host_hash == (try StoppedPlatformState.hostHash()),manifest.journal_schema==journalSchema,manifest.journal_application_id=="FIS9",(100...(64<<20)).contains(manifest.journal_bytes),digest(manifest.journal_sha256),digest(manifest.artifact_index_sha256),manifest.artifact_files.count<=256 else {throw JournalError.invalid}
-        let hasRecovery=version==2 || (version==3 && !(raw["service_recovery_bytes"] is NSNull))
-        let additional=(hasRecovery ? ["service-recovery.json"]:[])+(version==3 ? ["migration-hold.json"]:[])
+        let hasRecovery=version==2 || (version>=3 && !(raw["service_recovery_bytes"] is NSNull))
+        let hasHold=version==3 || (version==4 && !(raw["migration_hold_bytes"] is NSNull))
+        let additional=(hasRecovery ? ["service-recovery.json"]:[])+(hasHold ? ["migration-hold.json"]:[])+(version==4 ? ["configuration"]:[])
         guard Set(try FileManager.default.contentsOfDirectory(atPath:directory.path))==Set(["backup.json","state.sqlite","artifacts"]+additional) else {throw JournalError.invalid}
         var recoveryBytes:Int64=0
         if hasRecovery {
@@ -64,13 +66,22 @@ extension StoppedStateBackup {
             recoveryBytes=declared
         }
         var holdBytes:Int64=0
-        if version==3 {
+        if version>=3 && !hasRecovery {guard raw["service_recovery_sha256"] is NSNull else {throw JournalError.invalid}}
+        if version==4 && !hasHold {guard raw["migration_hold_sha256"] is NSNull else {throw JournalError.invalid}}
+        if hasHold {
             if !hasRecovery {guard raw["service_recovery_sha256"] is NSNull else {throw JournalError.invalid}}
             guard let declared=WireScalar.integer(raw["migration_hold_bytes"],maximum:4096),declared>0,
                   let expected=manifest.migration_hold_sha256,digest(expected),
                   let bytes=try migrationHoldPayload(directory:directory),Int64(bytes.count)==declared,
                   SHA256.hash(data:bytes).map({String(format:"%02x",$0)}).joined()==expected else {throw JournalError.invalid}
             holdBytes=declared
+        }
+        var configurationBytes:Int64=0
+        if version==4 {
+            guard let expected=raw["configuration_sha256"] as? String,digest(expected),
+                  let declared=WireScalar.integer(raw["configuration_bytes"],maximum:7*65536),declared>0 else {throw JournalError.invalid}
+            configurationBytes=try ConfigurationBackup.verify(directory:directory.appendingPathComponent("configuration"),expected:expected)
+            guard configurationBytes==declared else {throw JournalError.invalid}
         }
         let artifacts=directory.appendingPathComponent("artifacts")
         try privateDirectory(artifacts)
@@ -93,6 +104,6 @@ extension StoppedStateBackup {
         let (journal,length,header)=try hash(directory.appendingPathComponent("state.sqlite"),maximum:64<<20)
         guard journal==manifest.journal_sha256,length==manifest.journal_bytes,header.count==100,
               Array(header.prefix(16))==Array("SQLite format 3\0".utf8),Array(header[60..<64])==[0,0,0,UInt8(journalSchema)],Array(header[68..<72])==[0x46,0x49,0x53,0x39] else {throw JournalError.invalid}
-        return StateBackupReceipt(scope:scope,bytes:length+total+recoveryBytes+holdBytes,artifacts:manifest.artifact_files.count,sha256:receiptHash)
+        return StateBackupReceipt(scope:scope,bytes:length+total+configurationBytes+recoveryBytes+holdBytes,artifacts:manifest.artifact_files.count,sha256:receiptHash)
     }
 }

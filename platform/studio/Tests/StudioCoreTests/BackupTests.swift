@@ -149,5 +149,69 @@ func runBackupTests() throws {
         _=try stream.next(now:1001)
         guard case .chunk(0,let encoded)=try stream.next(now:1001),Data(base64Encoded:encoded)==payload else {fatalError("Bundle lost explicit export")}
     }
+    let configuration=root.appendingPathComponent("configuration-source")
+    try FileManager.default.createDirectory(at:configuration,withIntermediateDirectories:false,attributes:[.posixPermissions:0o700])
+    let policy=Data("opaque enrollment reference; not authority".utf8)
+    try AtomicState.write(policy,to:configuration.appendingPathComponent("runtime-enrollment.json"))
+    try AtomicState.write(Data(),to:configuration.appendingPathComponent("session-enrollment.json"))
+    try AtomicState.write(Data("unrelated".utf8),to:configuration.appendingPathComponent("unrelated.json"))
+    try FileManager.default.setAttributes([.posixPermissions:0o644],ofItemAtPath:configuration.appendingPathComponent("runtime-enrollment.json").path)
+    let configured=root.appendingPathComponent("configured-backup")
+    let configuredReceipt=try StoppedStateBackup.create(directory:state,destination:configured,configuration:configuration)
+    guard configuredReceipt.scope=="platform_journal_exports_and_configuration" else {fatalError("Missing configuration scope")}
+    _=try StoppedStateBackup.verify(directory:configured,expectedSHA256:configuredReceipt.sha256)
+    let configurationManifest=try JSONDecoder().decode(ConfigurationBackup.Manifest.self,from:Data(contentsOf:configured.appendingPathComponent("configuration/manifest.json")))
+    guard configurationManifest.files.count==6,configurationManifest.files[0].originalMode==0o644,
+          configurationManifest.files[1].bytes==0,configurationManifest.files[2].bytes==nil else {fatalError("Configuration original metadata/absence lost")}
+
+    let configuredRestore=root.appendingPathComponent("configured-restore")
+    _=try StoppedStateBackup.restore(directory:configured,expectedSHA256:configuredReceipt.sha256,destination:configuredRestore)
+    let restoredConfiguration=configuredRestore.appendingPathComponent("configuration")
+    guard try Data(contentsOf:restoredConfiguration.appendingPathComponent("runtime-enrollment.json"))==policy,
+          try Data(contentsOf:restoredConfiguration.appendingPathComponent("session-enrollment.json")).isEmpty,
+          !FileManager.default.fileExists(atPath:restoredConfiguration.appendingPathComponent("python-enrollment.json").path),
+          try Data(contentsOf:configuration.appendingPathComponent("unrelated.json"))==Data("unrelated".utf8) else {fatalError("Configuration bytes/absence changed")}
+    var stagedInfo=stat()
+    guard lstat(restoredConfiguration.appendingPathComponent("runtime-enrollment.json").path,&stagedInfo)==0,
+          stagedInfo.st_uid==geteuid(),stagedInfo.st_mode&0o7777==0o600 else {fatalError("Configuration restoration not private")}
+    do {_=try RootPolicyFile.read(path:restoredConfiguration.appendingPathComponent("runtime-enrollment.json").path,maximum:65536);fatalError("Private restoration granted enrollment")}catch ControlError.unauthorized {}
+    do {
+        let journal=try Journal(directory:configuredRestore)
+        guard try journal.uncertainCount()==1 else {fatalError("Configuration restore cleared native uncertainty")}
+    }
+    let configRebackup=root.appendingPathComponent("configured-restored-before-start-backup")
+    let configRebackupReceipt=try StoppedStateBackup.create(directory:configuredRestore,destination:configRebackup,configuration:restoredConfiguration)
+    _=try StoppedStateBackup.verify(directory:configRebackup,expectedSHA256:configRebackupReceipt.sha256)
+    // Recovery and migration hold remain opaque and independent of the
+    // configuration's missing enrollments, for all four presence combinations.
+    for mask in 1...3 {
+        let recovery=state.appendingPathComponent("service-recovery.json"),hold=state.appendingPathComponent("migration-hold.json")
+        if mask&1 != 0 {try AtomicState.write(Data("retained service uncertainty".utf8),to:recovery)}
+        if mask&2 != 0 {try AtomicState.write(Data("retained migration hold".utf8),to:hold)}
+        let bundle=root.appendingPathComponent("configuration-recovery-\(mask)")
+        let receipt=try StoppedStateBackup.create(directory:state,destination:bundle,configuration:configuration)
+        _=try StoppedStateBackup.verify(directory:bundle,expectedSHA256:receipt.sha256)
+        let restored=root.appendingPathComponent("configuration-recovery-restored-\(mask)")
+        _=try StoppedStateBackup.restore(directory:bundle,expectedSHA256:receipt.sha256,destination:restored)
+        if mask&1 != 0 {
+            guard try Data(contentsOf:restored.appendingPathComponent("service-recovery.json"))==Data(contentsOf:recovery) else {fatalError("Configuration snapshot lost recovery uncertainty")}
+            try FileManager.default.removeItem(at:recovery)
+        }
+        if mask&2 != 0 {
+            guard try Data(contentsOf:restored.appendingPathComponent("migration-hold.json"))==Data(contentsOf:hold) else {fatalError("Configuration snapshot lost migration hold")}
+            try FileManager.default.removeItem(at:hold)
+        }
+    }
+    let changedConfiguration=root.appendingPathComponent("changed-configuration-backup")
+    try FileManager.default.copyItem(at:configured,to:changedConfiguration)
+    try policy.dropLast().write(to:changedConfiguration.appendingPathComponent("configuration/runtime-enrollment.json"))
+    do {_=try StoppedStateBackup.verify(directory:changedConfiguration,expectedSHA256:configuredReceipt.sha256);fatalError("Changed configuration verified")}catch JournalError.invalid {}
+    let failedBundle=root.appendingPathComponent("failed-backup-retained")
+    try Data("not an artifact index".utf8).write(to:indexPath)
+    do {_=try StoppedStateBackup.create(directory:state,destination:failedBundle);fatalError("Malformed artifact index accepted")}catch {}
+    guard FileManager.default.fileExists(atPath:failedBundle.appendingPathComponent("state.sqlite").path),
+          !FileManager.default.fileExists(atPath:failedBundle.appendingPathComponent("backup.json").path) else {fatalError("Failed backup evidence removed or sealed")}
+    try indexBefore.write(to:indexPath)
+    print("PASS: bounded configuration bytes and absences privately restored without enrollment; independent uncertainty and failed partial backup retained")
     print("PASS: supervisor+custody+manager-fenced stopped-only bounded platform-marked SQLite backup, immutable receipt/no overwrite and independent uncertainty preserved on restore; no Fios database access")
 }

@@ -42,7 +42,7 @@ public enum StoppedStateBackup {
     }
     // One lexical writer fence spans both snapshots. Native uncertainty may
     // continue independently; no completion/reap inference or execution replay.
-    public static func create(directory:URL,destination:URL)throws->StateBackupReceipt {
+    public static func create(directory:URL,destination:URL,configuration:URL?=nil)throws->StateBackupReceipt {
         let stopped=try StoppedPlatformState(directory:directory)
         defer {withExtendedLifetime(stopped) {}}
         let protected=directory.appendingPathComponent("artifacts").resolvingSymlinksInPath().standardizedFileURL.path
@@ -51,15 +51,15 @@ public enum StoppedStateBackup {
         var parent=stat()
         guard lstat(destination.deletingLastPathComponent().path,&parent)==0,parent.st_mode&S_IFMT==S_IFDIR,parent.st_uid==geteuid(),parent.st_mode&0o077==0 else {throw JournalError.invalid}
         guard mkdir(destination.path,0o700)==0 else {throw JournalError.conflict}
-        var success=false
-        defer {if !success {try? FileManager.default.removeItem(at:destination)}}
+        // Retain partial private output after failure; it is not a sealed backup.
+        let configurationSnapshot=try configuration.map {try ConfigurationBackup.capture(directory:$0)}
         let journal=try StoppedJournalBackup.create(directory:directory,destination:destination.appendingPathComponent("state.sqlite"),stopped:stopped)
         let artifacts=try StoppedArtifactBackup.create(directory:directory,destination:destination.appendingPathComponent("artifacts"),stopped:stopped)
         let files=try JSONSerialization.jsonObject(with:JSONEncoder().encode(artifacts.files))
         let recovery=try serviceRecoveryPayload(directory:directory)
         let hold=try migrationHoldPayload(directory:directory)
-        let scope=hold != nil ? "platform_journal_exports_and_migration_hold":recovery==nil ? "platform_journal_and_exports":"platform_journal_exports_and_service_recovery"
-        var manifest:[String:Any]=["version":hold != nil ? 3:recovery==nil ? 1:2,"scope":scope,"host_hash":try StoppedPlatformState.hostHash(),"owner_uid":Int(geteuid()),"journal_schema":journal.schema,"journal_application_id":"FIS9",
+        let scope=configuration != nil ? "platform_journal_exports_and_configuration":hold != nil ? "platform_journal_exports_and_migration_hold":recovery==nil ? "platform_journal_and_exports":"platform_journal_exports_and_service_recovery"
+        var manifest:[String:Any]=["version":configuration != nil ? 4:hold != nil ? 3:recovery==nil ? 1:2,"scope":scope,"host_hash":try StoppedPlatformState.hostHash(),"owner_uid":Int(geteuid()),"journal_schema":journal.schema,"journal_application_id":"FIS9",
             "journal_bytes":journal.bytes,"journal_sha256":journal.sha256,"artifact_index_sha256":artifacts.indexSHA256,"artifact_files":files]
         if let recovery {
             let path=destination.appendingPathComponent("service-recovery.json")
@@ -82,6 +82,16 @@ public enum StoppedStateBackup {
             manifest["migration_hold_sha256"]=SHA256.hash(data:hold).map {String(format:"%02x",$0)}.joined()
             if recovery==nil {manifest["service_recovery_bytes"]=NSNull();manifest["service_recovery_sha256"]=NSNull()}
         }
+        var configurationBytes:Int64=0
+        if let configuration,let configurationSnapshot {
+            try configurationSnapshot.recheck(directory:configuration)
+            let saved=try configurationSnapshot.write(directory:destination.appendingPathComponent("configuration"))
+            try configurationSnapshot.recheck(directory:configuration)
+            configurationBytes=saved.bytes
+            manifest["configuration_sha256"]=saved.sha256
+            manifest["configuration_bytes"]=saved.bytes
+            for key in ["service_recovery_bytes","service_recovery_sha256","migration_hold_bytes","migration_hold_sha256"] where manifest[key]==nil {manifest[key]=NSNull()}
+        }
         let data=try JSONSerialization.data(withJSONObject:manifest,options:[.sortedKeys])
         guard data.count<=65536 else {throw JournalError.invalid}
         let path=destination.appendingPathComponent("backup.json")
@@ -94,7 +104,6 @@ public enum StoppedStateBackup {
         let outer=open(destination.deletingLastPathComponent().path,O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC)
         guard outer>=0 else {throw JournalError.storage};defer {close(outer)}
         guard fsync(fd)==0,fsync(folder)==0,fsync(outer)==0 else {throw JournalError.storage}
-        success=true
-        return StateBackupReceipt(scope:scope,bytes:journal.bytes+artifacts.bytes+Int64(recovery?.count ?? 0)+Int64(hold?.count ?? 0),artifacts:artifacts.artifacts,sha256:SHA256.hash(data:data).map {String(format:"%02x",$0)}.joined())
+        return StateBackupReceipt(scope:scope,bytes:journal.bytes+artifacts.bytes+configurationBytes+Int64(recovery?.count ?? 0)+Int64(hold?.count ?? 0),artifacts:artifacts.artifacts,sha256:SHA256.hash(data:data).map {String(format:"%02x",$0)}.joined())
     }
 }

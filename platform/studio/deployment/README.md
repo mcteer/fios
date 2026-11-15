@@ -232,3 +232,16 @@ Positive installed behavior remains unexecuted and requires reviewed installatio
 The source-only protected Python policy/factory composition is described in [python-runtime-enrollment.md](../../../specs/009-studio-platform-agent/contracts/python-runtime-enrollment.md). It binds the actual fixed installed manager and root-reviewed interpreter/manifest/context at fixed paths. Metadata decoding/private candidate receipts cannot construct that opaque policy. Complete byte review precedes a separate off-loop fixed metadata factory; public startup wiring and positive installed acceptance remain gated. No policy, interpreter tree, service or native admission has been installed/enabled by this source code.
 
 The source-only [sandbox image/runtime factory](../../../specs/009-studio-platform-agent/contracts/sandbox-enrollment.md) binds a fixed protected image policy to the installed runtime and resource policies before constructing the existing executor. No policy writer, public execution startup, image import/pull, installation or native admission is enabled. The operator approved exact development image `sha256:0406a8451a382eef038d8ac37035ccfb4e2a1e4e7b22c4a349fd9c4648a77c0b` only; see the [decision and readonly verification](../../../specs/009-studio-platform-agent/sandbox-image-approval.md). Protected enrollment, activation and installed positive acceptance remain pending; the production approved-image list is still empty.
+
+
+Stopped-state backups may optionally include the six fixed policy/enrollment
+filenames using `studioctl --state STATE backup-state --configuration CONFIG
+--to NEW_BUNDLE`. Version4 bundles preserve opaque bytes, original owner/mode and
+explicit absence, with64KiB per-file bounds. Verification binds the private
+configuration subtree to the reviewed backup digest. Restoration copies it to
+`NEW_STATE/configuration/` as user-owned mode600 data; it never writes installed
+root policy or Keychain data. Missing/empty/invalid enrollment bytes remain
+missing/empty/invalid. Programs and credential recovery must be retained
+separately. Failed backup/restore copies are retained privately for diagnosis;
+only a verified complete bundle is a recovery point. This does not complete the
+protected installation/rollback/uninstall or native acceptance requirements.

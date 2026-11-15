@@ -344,13 +344,35 @@ For stopped-state backup/verification/fresh restore only:
 
 ```sh
 studioctl --state /ABS/STOPPED_STATE backup-state --to /ABS/NEW_BACKUP
+# Optional, data-only preservation of the six known enrollment/policy documents:
+studioctl --state /ABS/STOPPED_STATE backup-state --configuration /ABS/CONFIGURATION --to /ABS/NEW_CONFIG_BACKUP
 studioctl --state /ABS/NEW_BACKUP verify-backup --sha256 REVIEWED_DIGEST
 studioctl --state /ABS/NEW_BACKUP restore-state --sha256 REVIEWED_DIGEST --to /ABS/NEW_STATE
 ```
 
 If service-recovery metadata exists, the stopped bundle uses version2 and preserves its exact unresolved launch intents and start budgets; otherwise it retains version1. Verification/restore include that file and reject tampering. Older tools must refuse version2 rather than omit its state or clear pending launches. The recovery controller is not yet wired to a production session transport.
 
-Both writer locks must be available. These commands preserve the separate platform journal and exports, reject foreign schemas/links/overwrite and never touch Fios SQLite or start the restored state. Journal-only `backup` is not a full export backup. Preserve artifacts/config and backups separately; incompatible rollback remains stopped/maintenance rather than discarding unresolved ownership. The installer is review-only and refuses application of incomplete development packages. See [deployment guidance](../../platform/studio/deployment/README.md); no sudo/SSH/reboot/lifecycle action follows from these examples.
+The optional configuration form creates a version4 bundle. It preserves only
+`runtime-enrollment.json`, `session-enrollment.json`, `python-enrollment.json`,
+`resource-enrollment.json`, `native-serving-launch.json` and
+`sandbox-enrollment.json`; absent and empty files are recorded distinctly.
+Each present file is bounded to64KiB. The manifest records original owner/mode
+and content identity; restored copies are owned by the current user, mode600,
+under the new state's private `configuration/` directory. These are opaque
+preservation bytes, not validated enrollments or installed root policy. No
+Keychain secret, executable, environment file, startup lock or custody descriptor
+is copied. Keep the matching reviewed programs and credential recovery material
+separately. To preserve this staged configuration in another backup, pass its
+`configuration/` directory explicitly again. Ordinary backups still use the
+existing formats and omit configuration.
+
+Failed backup creation retains its partial private destination without a valid
+`backup.json` receipt; failed restoration retains its `.fios-restore-*` private
+copy. Retain these for diagnosis; neither is a verified recovery point. A
+successful restore publishes only after verifying its copied tree, and never
+starts a service or installs/activates policy.
+
+Both writer locks must be available. These commands preserve the separate platform journal and exports, reject foreign schemas/links/overwrite and never touch Fios SQLite or start the restored state. Journal-only `backup` is not a full export backup. Preserve programs/credential recovery and backups separately; incompatible rollback remains stopped/maintenance rather than discarding unresolved ownership. The installer is review-only and refuses application of incomplete development packages. See [deployment guidance](../../platform/studio/deployment/README.md); no sudo/SSH/reboot/lifecycle action follows from these examples.
 
 008 remains parked at `3936da2`. Its eventual consumer must verify009's normalized authenticated source/process/epoch/coverage and admission contract; unavailable/unknown stays unavailable, not resident-only routing or silent fallback. No008 import/resume/deployment is implied.
 
@@ -1165,3 +1187,15 @@ node scripts/check-platform-registry-ingress.mjs --isolated --source /private/tm
 ```
 
 Exact three-file/full-AST/dependency checks, actual tracker/helper, CPU registry metadata and unchanged prior handoff compatibility fixture. No model/native capacity or authority; real wrapper stub/native enclosing validation is separate.
+
+
+For the version4 data-only backup path, exercise a reviewed development release
+without networking, installed services or model requests:
+
+```sh
+node scripts/check-platform-configuration-backup.mjs --isolated --release /ABS/REVIEWED_RELEASE --sha256 REVIEWED_MANIFEST_SHA
+```
+
+This compiles a finite disposable-state helper, runs the actual packaged CLI,
+checks explicit exports and unresolved native uncertainty after restoration, and
+retains its private receipt/data. It is not installed backup/rollback acceptance.

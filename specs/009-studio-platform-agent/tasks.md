@@ -683,3 +683,16 @@ Internal preparation/ingress source subset final: strict44103730…2 original in
 Registry-generation ingress source WIP: source-stored generation and downgrade refusal pass2 original API-absence cases/4 controls/20 candidate plus22 prior CPU-link compatibility cases; full native wrapper/enclosure pending. No native capacity/transport/proof/all-client/installed authority or whole-task closure;39/55 unchanged. See contracts/registry-ingress-link.md.
 
 Registry-generation ingress selected-source final: strictf548817e…2 baseline API-absence/4 controls/20 candidate +22 prior compatibility cases; actual-wrapper native162/162; enabled35/35 semantic32/32 link;4 model-free runtime/post-run and93 Node checks pass. Aggregate07b0e85c…. No native capacity/transport/proof/all-client/installed acceptance or whole task closure;39/55 unchanged.
+
+
+Configuration backup source WIP (T049 partial): optional version4 fixed-policy
+byte preservation/private restore passes focused actual-Core round trip,
+empty/absent/original-mode checks, private-policy rejection and independent
+uncertainty retention. Full policy/package/CLI checks remain pending; no
+installed recovery/credential authority or whole-task closure. Whole39/55.
+
+
+Configuration backup source subset now passes full Debug/optimized policy suites,
+191 Node/107 installed Python tests, boundary/container recovery checks,
+build/discovery0 inference. New actual packaged-CLI checker execution and fresh
+declared-input package review remain pending. T049 and whole39/55 unchanged.

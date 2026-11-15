@@ -2,7 +2,7 @@ import Foundation
 import StudioCore
 
 let arguments=CommandLine.arguments
-let usage="Usage: studioctl --state ABSOLUTE_PRIVATE_DIRECTORY status|activity|resources|supervisor|task|export; service mlx|orbstack status|running|maintenance|stopped|drain|force prepare|force confirm TOKEN SCOPE_DIGEST; backup|backup-state --to ABSOLUTE_NEW_PATH; verify-backup --sha256 REVIEWED_DIGEST; restore-state|migrate-state-seven|migrate-state-eight --sha256 REVIEWED_DIGEST --to ABSOLUTE_NEW_DIRECTORY\n       studioctl plan-memory --ram-gib POSITIVE_GIB\n       studioctl stage-release --from ABSOLUTE_REVIEWED_RELEASE --sha256 REVIEWED_MANIFEST_SHA --to ABSOLUTE_NEW_DIRECTORY\n"
+let usage="Usage: studioctl --state ABSOLUTE_PRIVATE_DIRECTORY status|activity|resources|supervisor|task|export; service mlx|orbstack status|running|maintenance|stopped|drain|force prepare|force confirm TOKEN SCOPE_DIGEST; backup|backup-state --to ABSOLUTE_NEW_PATH; backup-state --configuration ABSOLUTE_CONFIGURATION --to ABSOLUTE_NEW_PATH; verify-backup --sha256 REVIEWED_DIGEST; restore-state|migrate-state-seven|migrate-state-eight --sha256 REVIEWED_DIGEST --to ABSOLUTE_NEW_DIRECTORY\n       studioctl plan-memory --ram-gib POSITIVE_GIB\n       studioctl stage-release --from ABSOLUTE_REVIEWED_RELEASE --sha256 REVIEWED_MANIFEST_SHA --to ABSOLUTE_NEW_DIRECTORY\n"
 if arguments.count==2 && ["--help","-h"].contains(arguments[1]) {
     FileHandle.standardOutput.write(Data(usage.utf8))
     exit(0)
@@ -40,11 +40,12 @@ if arguments.count==8,arguments[1]=="stage-release",arguments[2]=="--from",argum
     }
 }
 let offlineBackup=arguments.count==6 && ["backup","backup-state"].contains(arguments[3]) && arguments[4]=="--to" && arguments[5].hasPrefix("/")
+let configurationBackup=arguments.count==8 && arguments[3]=="backup-state" && arguments[4]=="--configuration" && arguments[5].hasPrefix("/") && arguments[6]=="--to" && arguments[7].hasPrefix("/")
 let verifyBackup=arguments.count==6 && arguments[3]=="verify-backup" && arguments[4]=="--sha256"
 let restoreBackup=arguments.count==8 && ["restore-state","migrate-state-seven","migrate-state-eight"].contains(arguments[3]) && arguments[4]=="--sha256" && arguments[6]=="--to" && arguments[7].hasPrefix("/")
 let ordinary=arguments.count==4 && ["status","activity","resources","supervisor","task","export"].contains(arguments[3])
 let serviceCommand=OperatorServiceCommand(arguments:Array(arguments.dropFirst(3)))
-if (!offlineBackup && !ordinary && !verifyBackup && !restoreBackup && serviceCommand == nil) || arguments[1] != "--state" || !arguments[2].hasPrefix("/") {
+if (!offlineBackup && !configurationBackup && !ordinary && !verifyBackup && !restoreBackup && serviceCommand == nil) || arguments[1] != "--state" || !arguments[2].hasPrefix("/") {
     FileHandle.standardError.write(Data(usage.utf8))
     exit(2)
 }
@@ -66,17 +67,17 @@ do {
         else if migration==8 {receipt=try StoppedStateBackup.migrateEight(directory:directory,expectedSHA256:arguments[5],destination:target)}
         else {receipt=try StoppedStateBackup.restore(directory:directory,expectedSHA256:arguments[5],destination:target)}
         if let migration {
-            result=["ok":true,"from_schema":migration,"to_schema":9,"input_backup_sha256":receipt.sha256,"maintenance":true,"started":false]
+            result=["ok":true,"from_schema":migration,"to_schema":9,"input_backup_sha256":receipt.sha256,"maintenance":true,"started":false,"installed":false,"activation":false]
         }else {
-            result=["ok":true,"scope":receipt.scope,"bytes":receipt.bytes,"artifacts":receipt.artifacts,"sha256":receipt.sha256,"started":false]
+            result=["ok":true,"scope":receipt.scope,"bytes":receipt.bytes,"artifacts":receipt.artifacts,"sha256":receipt.sha256,"started":false,"installed":false,"activation":false]
         }
     } else if verifyBackup {
         let receipt=try StoppedStateBackup.verify(directory:directory,expectedSHA256:arguments[5])
-        result=["ok":true,"scope":receipt.scope,"bytes":receipt.bytes,"artifacts":receipt.artifacts,"sha256":receipt.sha256]
-    } else if offlineBackup {
+        result=["ok":true,"scope":receipt.scope,"bytes":receipt.bytes,"artifacts":receipt.artifacts,"sha256":receipt.sha256,"installed":false,"activation":false]
+    } else if offlineBackup || configurationBackup {
         if arguments[3]=="backup-state" {
-            let receipt=try StoppedStateBackup.create(directory:directory,destination:URL(fileURLWithPath:arguments[5]))
-            result=["ok":true,"scope":receipt.scope,"bytes":receipt.bytes,"artifacts":receipt.artifacts,"sha256":receipt.sha256]
+            let receipt=try StoppedStateBackup.create(directory:directory,destination:URL(fileURLWithPath:arguments[configurationBackup ? 7:5]),configuration:configurationBackup ? URL(fileURLWithPath:arguments[5]):nil)
+            result=["ok":true,"scope":receipt.scope,"bytes":receipt.bytes,"artifacts":receipt.artifacts,"sha256":receipt.sha256,"installed":false,"activation":false]
         } else {
             let receipt=try StoppedJournalBackup.create(directory:directory,destination:URL(fileURLWithPath:arguments[5]))
             result=["ok":true,"scope":"platform_journal_only","schema":receipt.schema,"bytes":receipt.bytes,"sha256":receipt.sha256]
