@@ -6357,3 +6357,11 @@ rejected private empty-catalog guard requests. Model prerequisites remain
 refused. No model loads, shader dispatch, installed operation, native activation,
 Studio acceptance, merge or deployment occurred. Whole39/55 remains unchanged;
 this source increment awaits its own published exact-SHA CI.
+
+The updated checker also passes its previous seven-path/capture-refusal SDK
+selection in both genuine CPU modes, without the event flag. Receipt
+`/private/tmp/fios-009-current-cxx-check-llNkIV/receipt.json`, SHA256
+1b2570c048ca78458893f42ccc77022a6062d1d232c61177beb014d9a27f3350.
+This additional control is linked to the preceding aggregate in private
+`additional-legacy-review.json`; the original aggregate remains unchanged.
+No model, native enrollment or authority follows.
