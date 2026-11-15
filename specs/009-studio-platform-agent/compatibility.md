@@ -533,3 +533,17 @@ validation record exact scopes and preserved initial fixture failures. This
 blocks an unsafe future idle claim; it does not implement original custody,
 all-client activity/admission, native terminality or installed acceptance.
 39/55 whole tasks remain complete. No additional inference plan or deployment.
+
+### Current Engram read-ahead negative fence
+
+The existing DeepSeek Engram prefetch can survive a prompt chunk in `m.ahead`
+without original request custody. A four-path source candidate marks sticky
+negative evidence before worker publication, registers one Shared boolean and
+composes the fixed backend getter. It changes no algorithm, IO scheduling,
+thread count, model setting or wire version. Canonical16 actual-constructor/
+free/finish cases and4 separate-object stages,35semantic/32link/units-check and
+4 private empty-native/current-Core integration checks pass (aggregate449a7e3d…,
+capsule4191c2a1…). See [the contract](contracts/engram-prefetch-negative.md) and
+validation. Local stop/join/free does not reset the flag or supply native proof.
+Actual custody, all-client producer/proof/admission and installed acceptance
+remain unfinished;39/55 unchanged. No further inference plan or native change.

@@ -872,3 +872,19 @@ new/prior capsule verification pass; aggregateeb883dfe…/capsulea7439643….
 Its real ownership port and complete all-client contract remain unfinished.
 No model request/package publication/installation/activation/whole-task closure;
 39/55 unchanged. See contracts/qwen-ngram-warm-negative.md.
+
+Current Engram prefetch negative fence WIP: the reachable existing DeepSeek
+read-ahead can be retained across prompt chunks without original request custody.
+A private four-path candidate marks sticky negative evidence before worker
+publication, registers its Shared storage and composes the fixed backend getter.
+Canonical16 actual-constructor/free/finish cases and4 separate-object stages
+pass; full native semantic/link/unit/runtime qualification remains pending.
+No prefetch algorithm/IO schedule/model-policy change, inference, installation,
+native authority or whole-task closure;39/55 complete.
+
+Engram prefetch final source checkpoint:16 canonical actual-method cases and4
+separate-object stages, enabled35semantic/32link,units-check and4 private
+empty-native/current-Core checks pass. Exact four-path source post-comparison
+and new/prior capsule verification pass; aggregate449a7e3d…/capsule4191c2a1….
+This is negative evidence only; actual custody/parent/native authority remain
+unfinished. No new model request/package/installed action;39/55 unchanged.

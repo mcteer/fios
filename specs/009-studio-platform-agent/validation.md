@@ -5884,3 +5884,57 @@ claimed for this scoped native overlay; the174-file package projection stays
 unchanged. Source ownership/parent cleanup for this warmer, full all-client
 contract/producer/proof/admission and installed acceptance remain unfinished.
 39/55 whole tasks unchanged; no merge, application delivery or native activation.
+
+### Current Engram prefetch negative fence — source WIP
+
+Review of the actual `deepseek_v41` model caller finds `engramPrefetch` retaining
+`m.ahead` across prompt chunks. The existing `Prefetch.startOrdered` worker has
+no original request custody. A four-path private candidate records sticky
+negative evidence after allocation/copy setup and before worker publication,
+registers Shared storage and composes it in the fixed backend getter. It does
+not change prefetch math, IO schedule, thread count, model settings or wire API.
+The separate generic SDK Poster has no production enablePosting caller found
+in this src review; no change is made based solely on a thread-spawn search.
+Source review inventory b99fbdbe… is not behavioral/native evidence.
+
+The initial private actual-method matrix passed16 cases, receipt8ce41b9f….
+The canonical checker reverses/reapplies the exact four-path patch and verifies
+its three parent hashes/new utility; it executes the actual constructor,
+freeGrid and finish methods against metadata tables/worker, real allocators,
+real Shared and each prefix's actual fixed getter.16 cases pass (4 original
+runtime failures, allocation-failure and input-copy controls) plus4 separate
+plugin-object/host stages in Debug/ReleaseSafe. Local stop/join leaves the
+negative fence set. No table IO, model or native completion proof is exercised.
+Receipt `/private/tmp/fios-009-engram-prefetch-negative-check-q11eyyjh/receipt.json`,
+SHA256 `8a72f72b9c5a59e93a631e34bd8573a3e15fa806566b37a6603f783499c1984b`.
+All selected source/dependency/fixture inputs remain unchanged. Full native
+semantic/link/unit and empty-model runtime qualification is pending.39/55 whole
+tasks remain complete; no activation, deployment or additional inference plan.
+
+Engram prefetch negative-fence final qualification: enabled35/35 semantic steps
+pass in444.789s,32/32 link in5.980s and units-check in1.284s. Selected prebuild
+source, staged SDK and CXX configuration remain unchanged. Canonical16 cases
+and4 separate-object stages remain bound to8a72f72b… above. Raw binary
+`702c9cbb756fa14ee2bb6097409b78bb495bdcfb27e7ad9b6ee0b1a858ca7002`;
+normalized binary `e4a1557baa43bcde77475d647dae5fc797dbca01ba17bc044e3cbe9afc4c2840`;
+review capsule `4191c2a10912d0b265693d4341bed195739887cba4abce3ec1bbe8c6ea306848`.
+Pure prerequisite parsing passes; no model plan is created.
+
+The four actual private correlation/activity/startup/current-Core manager checks
+pass. Fresh current-Core manager review `/private/tmp/f9-native-status-6im1WD`
+observes cold false backend flags and preserves original journal uncertainty
+through source ingress state changes;0 model requests/installed actions. New
+and prior capsules verify. Post-run source2378→2379 comparison differs on exactly
+four intended paths, separately from the selected-suffix prebuild bracket.
+Aggregate `/private/tmp/fios-009-engram-prefetch-negative-work-k60tlnil/final-review.json`,
+SHA256 `449a7e3dfc3d2039a12fcaabebbb6903313d542887137dcf1820960ed76f8066`.
+No whole-repository/native/publisher/build provenance or new default162-case
+suite/application/package build is claimed. The174-file package projection is
+unchanged. The candidate's mas=true profile compiles out the outside-plugin
+startup path; that source review does not qualify another build profile.
+
+The actual Engram custody/parent port, complete normalized native source,
+proof issuer/atomic admission, installed runtime/profile/task composition and
+both-Studio acceptance remain open.39/55 whole tasks unchanged. Published
+4af2501 CI43717900729 completed all7 jobs successfully before publication of
+this checkpoint. No merge, deployment, native activation or further inference.

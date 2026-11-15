@@ -1,0 +1,5 @@
+{
+  "src/plugins/deepseek_v41/engram.zig": "05bd9e2c1a95c75f29235d6ca64e8fe6ec4caef0b28a262b99c1f31dc9ad7a40",
+  "src/shared_all.zig": "5f43d145013f65210bd5f7f4b996c7e078fe2afc8c807e3fe766329d66726adb",
+  "src/fios/current_backend_uncertainty.zig": "5e5daf16af4b97273e72b27dabca2d36bbc8e60684a0b1720c16d79e36e20717"
+}
