@@ -17,6 +17,11 @@ struct NativePrimaryActivityDiagnostics {
     }
     mutating func completed(_ sample:NativePrimaryActivitySample,expectedInstance:String,now:Int64) {
         guard configured,!fenced else {failed();return}
+        guard (0...ActivityPolicy.maximumTimestamp).contains(now) else {failed();return}
+        guard now>=previousNow else {fenced=true;failed();return}
+        // Wall-clock continuity is independent of reply validity. A replay or
+        // malformed sample cannot hide a later local rollback.
+        previousNow=now
         let activity=sample.activity
         do {try activity.validate();if let registry=sample.registry {try registry.validate()}else if activity.phaseVersion==3 {throw NativeControlError.invalid}} catch {failed();return}
         guard activity.instance==expectedInstance,(try? NativeControlWire.instanceBytes(activity.instance)) != nil,
@@ -28,12 +33,12 @@ struct NativePrimaryActivityDiagnostics {
 
             guard sample.peer.pid==old.peer.pid,sample.peer.start==old.peer.start,
                   sample.peer.executable.path.utf8.elementsEqual(old.peer.executable.path.utf8),sample.peer.executable.sha256==old.peer.executable.sha256,
-                  activity.instance==old.activity.instance,activity.phaseVersion==old.activity.phaseVersion,stamp>=old.activity.sampledAt!,now>=previousNow,
+                  activity.instance==old.activity.instance,activity.phaseVersion==old.activity.phaseVersion,stamp>=old.activity.sampledAt!,
                   !(seenUncertainty && !activity.uncertain) else {fenced=true;failed();return}
             guard activity.sampleSequence>old.activity.sampleSequence else {failed();return}
         }
         seenUncertainty = seenUncertainty || activity.uncertain
-        checkpoint=sample;value=sample;previousNow=now;unavailable=false
+        checkpoint=sample;value=sample;unavailable=false
     }
     func summary(now:Int64)->[String:Any] {
         var result:[String:Any]=["version":1,"scope":"primary_request_ownership","coverage":"unknown","authority":false,

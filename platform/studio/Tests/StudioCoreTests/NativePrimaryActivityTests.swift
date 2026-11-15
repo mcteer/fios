@@ -40,4 +40,16 @@ func runNativePrimaryActivityWireTests()throws {
     diagnostic.completed(try sample(4,234,false),expectedInstance:instance,now:1002)
     guard diagnostic.summary(now:1002)["state"] as? String=="fenced",diagnostic.summary(now:1002)["retained_uncertainty"] as? Bool==true else {fatalError("Primary sticky uncertainty cleared")}
 
+    var replayClock=NativePrimaryActivityDiagnostics(configured:true)
+    replayClock.completed(try sample(2,232,true),expectedInstance:instance,now:1000)
+    replayClock.completed(try sample(2,232,true),expectedInstance:instance,now:2000)
+    guard replayClock.summary(now:2000)["state"] as? String=="unavailable" else {fatalError("Primary replay refreshed the source")}
+    var forwardClock=replayClock
+    forwardClock.completed(try sample(3,233,true),expectedInstance:instance,now:2001)
+    guard forwardClock.summary(now:2001)["state"] as? String=="received",
+          forwardClock.summary(now:2001)["source_sequence"] as? UInt64==3 else {fatalError("Primary rejected reply advanced its native checkpoint")}
+    replayClock.completed(try sample(3,233,true),expectedInstance:instance,now:1001)
+    guard replayClock.summary(now:1001)["state"] as? String=="fenced",
+          replayClock.summary(now:1001)["retained_uncertainty"] as? Bool==true else {fatalError("Rejected primary reply hid a local clock rollback")}
+
 }

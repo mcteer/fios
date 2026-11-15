@@ -47,5 +47,16 @@ func runNativeBackendFenceWireTests()throws {
     guard coldDiagnostics.summary(now:1000)["mimo_warm_uncertain"] as? Bool==false,
           coldDiagnostics.summary(now:6001)["mimo_warm_uncertain"] is NSNull,
           coldDiagnostics.summary(now:Int64.min)["state"] as? String=="stale" else {fatalError("Expired/invalid source time became fresh")}
+    var replayClock=NativeBackendFenceDiagnostics(configured:true)
+    replayClock.completed(sample(2,1000,true,17,3),expectedInstance:instance,now:1000)
+    replayClock.completed(sample(2,1000,true,17,3),expectedInstance:instance,now:2000)
+    guard replayClock.summary(now:2000)["state"] as? String=="unavailable" else {fatalError("Backend replay refreshed the source")}
+    var forwardClock=replayClock
+    forwardClock.completed(sample(3,1001,true,17,3),expectedInstance:instance,now:2001)
+    guard forwardClock.summary(now:2001)["state"] as? String=="received",
+          forwardClock.summary(now:2001)["source_sequence"] as? UInt64==3 else {fatalError("Backend rejected reply advanced its native checkpoint")}
+    replayClock.completed(sample(3,1001,true,17,3),expectedInstance:instance,now:1001)
+    guard replayClock.summary(now:1001)["state"] as? String=="fenced",
+          replayClock.summary(now:1001)["retained_uncertainty"] as? Bool==true else {fatalError("Rejected backend reply hid a local clock rollback")}
     print("PASS: readonly backend frame preserves source/sequence/clock, unavailable versus observed values and unknown-only partial scope")
 }

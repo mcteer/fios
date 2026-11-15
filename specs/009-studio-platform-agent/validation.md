@@ -5482,3 +5482,30 @@ passed; ARM64 fixture exit/read race failed and therefore aggregate failed.
 This is not green CI. The source fix8be94e5 is locally validated as recorded
 above; its next exact-head run remains required. No run was cancelled, merged
 or deployed. Native rollout/acceptance remains separately gated.
+
+### Child diagnostic clock continuity — 2026-11-15
+
+Source subset on parentae9771089ce744a15566fd110ceebfd26a2f4097: two child
+diagnostic caches previously updated their local wall-clock checkpoint only
+after accepting a native reply. A rejected replay at a later local time could
+therefore hide rollback from the child. The outer NativeControlDiagnostics
+already guards this case; this is not a claimed public admission bypass.
+
+Both genuine original-code cases compile and fail at their precise runtime
+assertion (`Rejected primary/backend reply hid a local clock rollback`), in
+separate network-denied processes. Corrected Debug/optimized cases pass and
+independent forward-time controls preserve the original native sequence/time.
+The final complete Debug/optimized mock suites pass;195 Node/107 installed
+Python tests and the agent boundary check pass. No Python source changed.
+
+Retained evidence `/private/tmp/fios-009-diagnostic-clock-wxswrbad/review.json`,
+SHA256 `9ae36c33d955c574acafab5b5eb3a34e8b96434123f886ee4faa9ecb2403d8ff`,
+binds the selected final source/contract and logs. The first focused Debug pass
+precedes removal of redundant later clock assignments; the full Debug and
+focused/full optimized passes exercise the final bytes. Native capture clocks,
+sequence/peer checkpoints and sticky uncertainty remain independent. Both
+views retain unknown coverage/no authority. No model, service, native build,
+installation, inference-lease release or native terminality is involved.
+Whole39/55 remains complete. Current417ae05a… development package is unchanged;
+this Core change requires a fresh clean development build/review before it can
+replace that package's declared-input evidence. Exact-head CI remains required.

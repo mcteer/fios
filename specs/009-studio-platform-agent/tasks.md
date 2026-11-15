@@ -783,3 +783,13 @@ expanded native stub/default162, enabled35/35 semantic32/32 link,4 empty-model
 checks/post-run byte review pass. Aggregate5ba97713…. CPU-only adapter adds no
 proof/capacity/lease or whole task closure;39/55 unchanged. CurrentCI43700362865
 finished with the diagnosed ARM64 fixture race; correction needs new exact-head CI.
+
+2026-11-15 T020 diagnostic continuity subset: primary/backend child caches now
+retain the local completion-clock checkpoint even for rejected replies, matching
+the existing outer diagnostic guard. Two genuine failing-first replay→rollback
+cases precede corrected Debug/optimized and complete mock-suite passes; forward
+controls preserve independent native checkpoints.195 Node/107 installed Python
+and boundary checks pass. No public admission bypass or whole-task closure is
+claimed;39/55 remains complete. See contracts/diagnostic-clock-continuity.md.
+Changed package-declared Core inputs require a new development package review;
+the earlier417ae05a… package remains historical and unchanged.

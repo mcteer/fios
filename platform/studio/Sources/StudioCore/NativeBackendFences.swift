@@ -78,6 +78,11 @@ struct NativeBackendFenceDiagnostics {
     }
     mutating func completed(_ sample:NativeBackendFenceSample,expectedInstance:String,now:Int64) {
         guard configured,!fenced else {failed();return}
+        guard (0...ActivityPolicy.maximumTimestamp).contains(now) else {failed();return}
+        guard now>=previousNow else {fenced=true;failed();return}
+        // Keep local clock continuity even when the native reply is rejected;
+        // this never advances its source sequence/time or clears uncertainty.
+        previousNow=now
         let flags=sample.fences
         do {try flags.validate()} catch {failed();return}
         guard flags.instance==expectedInstance,sample.peer.pid>1,sample.peer.start>0,
@@ -85,7 +90,7 @@ struct NativeBackendFenceDiagnostics {
         if let old=checkpoint {
             guard sample.peer.pid==old.peer.pid,sample.peer.start==old.peer.start,
                   sample.peer.executable.path.utf8.elementsEqual(old.peer.executable.path.utf8),sample.peer.executable.sha256==old.peer.executable.sha256,
-                  flags.instance==old.fences.instance,(flags.current==nil)==(old.fences.current==nil),flags.current?.available==old.fences.current?.available,stamp>=old.fences.sampledAt!,now>=previousNow else {fenced=true;failed();return}
+                  flags.instance==old.fences.instance,(flags.current==nil)==(old.fences.current==nil),flags.current?.available==old.fences.current?.available,stamp>=old.fences.sampledAt! else {fenced=true;failed();return}
             guard flags.sampleSequence>old.fences.sampleSequence else {failed();return}
         }
         guard ((flags.current?.uncertain ?? 0) & seenCurrent)==seenCurrent,!(seenMimo && flags.mimoWarmUncertain==false),
@@ -94,7 +99,7 @@ struct NativeBackendFenceDiagnostics {
         if flags.mimoWarmUncertain==true {seenMimo=true}
         seenCurrent |= flags.current?.uncertain ?? 0
         seenMetal |= flags.ds4MetalUncertainty ?? 0;seenHost |= flags.ds4HostUncertainty ?? 0
-        checkpoint=sample;value=sample;previousNow=now;unavailable=false
+        checkpoint=sample;value=sample;unavailable=false
     }
     func summary(now:Int64)->[String:Any] {
         var result:[String:Any]=["version":1,"scope":"independent_partial_backend_fences","coverage":"unknown","authority":false,
