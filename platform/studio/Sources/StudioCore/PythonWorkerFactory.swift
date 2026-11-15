@@ -26,6 +26,13 @@ struct WorkerDispatchBinding:Sendable {
     let apiKey:String?
 }
 
+// No public/memberwise initializer: only the live factory's pre-spawn
+// cancellation branch can attest that its single-use plan created no process.
+struct WorkerNeverSpawnedEvidence:Sendable {
+    let plan:PlannedWorkerStart
+    fileprivate init(plan:PlannedWorkerStart) {self.plan=plan}
+}
+
 final class PythonWorkerFactory:Sendable {
     private let invocation:String
     private let executable:VerifiedExecutable
@@ -72,12 +79,13 @@ final class PythonWorkerFactory:Sendable {
               components?.path=="/v1",components?.user==nil,components?.password==nil,
               components?.query==nil,components?.fragment==nil else { throw RuntimeError.identity }
     }
-    func beginStart(binding:WorkerDispatchBinding,launchID:String,started:Int64,now:Int64)throws->PendingPythonWorker {
+    func beginStart(binding:WorkerDispatchBinding,plan:PlannedWorkerStart,started:Int64,now:Int64,initiallyCancelled:Bool=false)throws->PendingPythonWorker {
         try validate(binding,now:now)
-        guard WireScalar.uuid(launchID),started>=0,started<=ActivityPolicy.maximumTimestamp-2000 else {throw RuntimeError.invalid}
-        return PendingPythonWorker { [self] cancelled in
-            do {return .success(try spawnTransport(binding:binding,launchID:launchID,cancelled:cancelled))}
-            catch WorkerStartFailure.cancelled {return .failure(.cancelled)}
+        guard WireScalar.uuid(plan.nonce),started>=0,started<=ActivityPolicy.maximumTimestamp-2000 else {throw RuntimeError.invalid}
+        guard try plan.scope.encoded()==binding.inferenceScope().encoded(),plan.consume() else {throw RuntimeError.identity}
+        return PendingPythonWorker(initiallyCancelled:initiallyCancelled) { [self] cancelled in
+            do {return .success(try spawnTransport(binding:binding,launchID:plan.nonce,cancelled:cancelled))}
+            catch WorkerStartFailure.cancelled {return .failure(.neverSpawned(WorkerNeverSpawnedEvidence(plan:plan)))}
             catch {return .failure(.unavailable)}
         }
     }

@@ -4,6 +4,25 @@ import CSQLite
 
 public enum JournalError: Error { case invalid, locked, storage, conflict, trackingLimit }
 
+// Live, single-use handoff from a newly committed launch intent. This cannot
+// be reconstructed from a nonce, restart/census result or durable reap record.
+final class PlannedWorkerStart:@unchecked Sendable {
+    let job:String
+    let attempt:Int
+    let nonce:String
+    let scope:InferenceScope
+    private let lock=NSLock()
+    private var consumed=false
+    fileprivate init(job:String,attempt:Int,nonce:String,scope:InferenceScope) {
+        self.job=job;self.attempt=attempt;self.nonce=nonce;self.scope=scope
+    }
+    func consume()->Bool {
+        lock.lock();defer {lock.unlock()}
+        guard !consumed else {return false}
+        consumed=true;return true
+    }
+}
+
 // Owned by one serialized manager loop. Never share across threads or open
 // Fios's database. Values are bound parameters; no workload content is stored.
 public final class Journal {
@@ -701,6 +720,31 @@ public final class Journal {
             try execute("INSERT INTO worker_launches VALUES(?,?,?,?,0)",[job,String(attempt),nonce,boot])
         }
         return nonce
+    }
+    func planWorkerStart(job:String,attempt:Int)throws->PlannedWorkerStart {
+        guard let record=try inferenceScope(job:job,attempt:attempt),record.state == .reserved else {throw JournalError.conflict}
+        let nonce=try planWorkerLaunch(job:job,attempt:attempt)
+        return PlannedWorkerStart(job:job,attempt:attempt,nonce:nonce,scope:record.scope)
+    }
+    // Only the original live factory can produce this evidence, after its
+    // consumed plan exits before Process.run. It proves this attempt was not
+    // sent; it proves nothing about any older request or native completion.
+    func recordWorkerNeverSpawned(job:String,attempt:Int,evidence:WorkerNeverSpawnedEvidence)throws {
+        try validate(job:job,attempt:attempt)
+        let plan=evidence.plan,boot=try HostBoot.identity()
+        guard plan.job==job,plan.attempt==attempt,WireScalar.uuid(plan.nonce) else {throw JournalError.conflict}
+        let expected=try plan.scope.encoded()
+        try transaction {
+            guard let record=try inferenceScope(job:job,attempt:attempt),
+                  [.reserved,.uncertain].contains(record.state),try record.scope.encoded()==expected,
+                  try scalar("SELECT count(*) FROM worker_grants WHERE job=? AND attempt=?",[job,String(attempt)])==0 else {throw JournalError.conflict}
+            try execute("UPDATE worker_launches SET reaped=1 WHERE job=? AND attempt=? AND nonce=? AND boot=? AND reaped=0",[job,String(attempt),plan.nonce,boot])
+            guard sqlite3_changes(db)==1 else {throw JournalError.conflict}
+            try execute("DELETE FROM inference WHERE job=? AND attempt=?",[job,String(attempt)])
+            guard sqlite3_changes(db)==1 else {throw JournalError.conflict}
+            try execute("UPDATE inference_scopes SET state='not_sent' WHERE job=? AND attempt=?",[job,String(attempt)])
+            guard sqlite3_changes(db)==1 else {throw JournalError.conflict}
+        }
     }
     // Only the live producer's completed pre-spawn cancellation can use this
     // transition. Restart/census failures cannot infer that spawn never ran.

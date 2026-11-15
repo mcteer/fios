@@ -22,6 +22,7 @@ func runPythonFactoryTests() throws {
     let factory=try PythonWorkerFactory(invocation:invocation.path,executableSHA256:sha,policySHA256:fixture["policy_sha256"] as! String)
     progress("metadata ready")
     guard factory.metadata.policy_input_units==fixture["policy_input_units"] as? Int else { fatalError("Installed policy units diverged from cross-language fixture") }
+    try runNeverSpawnedWorkerTests(factory:factory)
     do {
         _=try PythonWorkerFactory(invocation:invocation.path,executableSHA256:String(repeating:"0",count:64),policySHA256:fixture["policy_sha256"] as! String)
         fatalError("Wrong interpreter hash accepted")
@@ -244,6 +245,7 @@ func runPythonFactoryTests() throws {
     try lifecycle.cancelled(job:sandboxID,now:HostResources.nowMilliseconds())
     _=try lifecycle.observed(job:sandboxID,presence:.absent,now:HostResources.nowMilliseconds(),resourcesSafe:true)
     progress("sandbox-mediated model reaped")
+    let earlierUnresolved=try journal.unresolvedCount(),earlierUncertain=try journal.uncertainCount()
     let active=[UUID().uuidString.lowercased(),UUID().uuidString.lowercased()]
     for id in active {
         let stamp=HostResources.nowMilliseconds()
@@ -259,7 +261,12 @@ func runPythonFactoryTests() throws {
         _=try broker.poll(now:HostResources.nowMilliseconds(),uptime:Int64(ProcessInfo.processInfo.systemUptime*1000),admission:&admission,source:{_ in nil})
         Thread.sleep(forTimeInterval:0.01)
     }
-    guard broker.activeWorkers==0,try journal.unresolvedCount()==2,try journal.workerGrants().isEmpty,
+    let sourceLossStates=try active.map {try journal.inferenceScope(job:$0,attempt:0)?.state}
+    let retainedSourceLoss=sourceLossStates.filter {$0 == .uncertain}.count
+    guard broker.activeWorkers==0,sourceLossStates.allSatisfy({$0 == .uncertain || $0 == .not_sent}),
+          try journal.unresolvedCount()==earlierUnresolved+retainedSourceLoss,
+          try journal.uncertainCount()==earlierUncertain+retainedSourceLoss,try journal.workerGrants().isEmpty,
+          try active.allSatisfy({try journal.workerLaunchReaped(job:$0,attempt:0) && journal.requestCount(job:$0)==1}),
           try journal.jobs().filter({active.contains($0.id)}).allSatisfy({$0.state == .revoking}) else { fatalError("Source loss did not revoke/reap without clearing native uncertainty") }
     progress("source-loss workers reaped")
     let conflictReports=try runBusySourceWorkerTests(directory:directory.appendingPathComponent("busy-source"),factory:factory,
@@ -279,4 +286,86 @@ func runPythonFactoryTests() throws {
     try admission.reserveWorker(key:"reaped-one",sample:resources(reaped),now:reaped)
     try admission.reserveWorker(key:"reaped-two",sample:resources(reaped),now:reaped)
     print("PASS: pinned production Python/real private guard/mock HTTP, durable4-call budget,2-worker cap and source-loss revoke/reap with native uncertainty retained; no real inference/native acceptance")
+}
+
+private func runNeverSpawnedWorkerTests(factory:PythonWorkerFactory)throws {
+    let directory=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer {try? FileManager.default.removeItem(at:directory)}
+    let older=UUID().uuidString.lowercased(),id=UUID().uuidString.lowercased(),contradictory=UUID().uuidString.lowercased(),legacy=UUID().uuidString.lowercased()
+    let now=HostResources.nowMilliseconds(),base="http://127.0.0.1:1/v1"
+    let snapshot=NativeSnapshot(host:"fixture-host",endpointHash:PythonWorkerFactory.digest(base),nativeEpoch:"fixture-never-spawned",sequence:1,sampledAt:now,allClientLifecycleCoverage:true,residentModel:nil,outstandingOwners:0,loading:false)
+    let binding=WorkerDispatchBinding(baseURL:base,guardPath:"/fixture/observe.sock",host:"fixture-host",profileHash:String(repeating:"f",count:64),managerEpoch:UUID().uuidString.lowercased(),canonicalModel:"fixture/model",nativeModel:"fixture/model",nativeSnapshot:snapshot,nativeCompatibilityAccepted:true,apiKey:nil)
+    let scope=try binding.inferenceScope(),started=Int64(ProcessInfo.processInfo.systemUptime*1000)
+    func evidence(_ operation:PendingPythonWorker)throws->WorkerNeverSpawnedEvidence {
+        let end=ProcessInfo.processInfo.systemUptime+2
+        while ProcessInfo.processInfo.systemUptime<end {
+            if let result=operation.take() {
+                guard case .failure(.neverSpawned(let proof))=result,operation.take()==nil else {throw JournalError.conflict}
+                return proof
+            }
+            Thread.sleep(forTimeInterval:0.005)
+        }
+        throw RuntimeError.deadline
+    }
+    do {
+        let journal=try Journal(directory:directory)
+        try journal.claim(job:older,attempt:0,model:binding.canonicalModel,scope:scope)
+        try journal.markDispatched(job:older,attempt:0)
+        try journal.markUncertain(job:older,attempt:0)
+        try journal.claim(job:id,attempt:0,model:binding.canonicalModel,scope:scope)
+        let plan=try journal.planWorkerStart(job:id,attempt:0)
+        let foreign=WorkerDispatchBinding(baseURL:base,guardPath:binding.guardPath,host:binding.host,profileHash:String(repeating:"e",count:64),managerEpoch:binding.managerEpoch,canonicalModel:binding.canonicalModel,nativeModel:binding.nativeModel,nativeSnapshot:snapshot,nativeCompatibilityAccepted:true,apiKey:nil)
+        do {
+            _=try factory.beginStart(binding:foreign,plan:plan,started:started,now:now,initiallyCancelled:true)
+            fatalError("NEVER_SPAWNED_PLAN_ACCEPTED_FOREIGN_SCOPE")
+        }catch RuntimeError.identity {}
+        let operation=try factory.beginStart(binding:binding,plan:plan,started:started,now:now,initiallyCancelled:true)
+        do {
+            _=try factory.beginStart(binding:binding,plan:plan,started:started,now:now,initiallyCancelled:true)
+            fatalError("NEVER_SPAWNED_PLAN_REUSED")
+        }catch RuntimeError.identity {}
+        let proof=try evidence(operation)
+        try journal.markUncertain(job:id,attempt:0)
+        for (job,attempt) in [(older,0),(id,1)] {
+            do {
+                try journal.recordWorkerNeverSpawned(job:job,attempt:attempt,evidence:proof)
+                fatalError("NEVER_SPAWNED_EVIDENCE_RELEASED_FOREIGN_ATTEMPT")
+            }catch JournalError.conflict {}
+        }
+        guard try journal.unresolvedCount()==2,try journal.uncertainCount()==2,try journal.activeLaunchCount()==1 else {throw JournalError.conflict}
+        try journal.recordWorkerNeverSpawned(job:id,attempt:0,evidence:proof)
+        guard try journal.inferenceScope(job:id,attempt:0)?.state == .not_sent,
+              try journal.inferenceScope(job:older,attempt:0)?.state == .uncertain,
+              try journal.unresolvedCount()==1,try journal.uncertainCount()==1,
+              try journal.activeLaunchCount()==0,try journal.workerGrants().isEmpty,
+              try journal.requestCount(job:id)==1 else {fatalError("NEVER_SPAWNED_EVIDENCE_CHANGED_OLDER_UNCERTAINTY_OR_REFUNDED_HISTORY")}
+        do {
+            try journal.recordWorkerNeverSpawned(job:id,attempt:0,evidence:proof)
+            fatalError("NEVER_SPAWNED_EVIDENCE_REPLAYED")
+        }catch JournalError.conflict {}
+        try journal.claim(job:contradictory,attempt:0,model:binding.canonicalModel,scope:scope)
+        let otherPlan=try journal.planWorkerStart(job:contradictory,attempt:0)
+        let other=try evidence(factory.beginStart(binding:binding,plan:otherPlan,started:started,now:now,initiallyCancelled:true))
+        try journal.markDispatched(job:contradictory,attempt:0)
+        do {
+            try journal.recordWorkerNeverSpawned(job:contradictory,attempt:0,evidence:other)
+            fatalError("NEVER_SPAWNED_EVIDENCE_OVERRULED_DISPATCH")
+        }catch JournalError.conflict {}
+        guard try journal.activeLaunchCount()==1,try journal.unresolvedCount()==2 else {throw JournalError.conflict}
+        try journal.markUncertain(job:contradictory,attempt:0)
+        try journal.claim(job:legacy,attempt:0,model:binding.canonicalModel,scope:scope)
+        let legacyNonce=try journal.planWorkerLaunch(job:legacy,attempt:0)
+        try journal.recordWorkerNotStarted(job:legacy,attempt:0,nonce:legacyNonce)
+        do {
+            _=try journal.planWorkerStart(job:legacy,attempt:0)
+            fatalError("DURABLE_REAP_HISTORY_RECONSTRUCTED_LIVE_START_PLAN")
+        }catch JournalError.conflict {}
+        guard try journal.inferenceScope(job:legacy,attempt:0)?.state == .reserved else {throw JournalError.conflict}
+        try journal.markUncertain(job:legacy,attempt:0)
+    }
+    let reopened=try Journal(directory:directory)
+    guard try reopened.inferenceScope(job:id,attempt:0)?.state == .not_sent,
+          try reopened.uncertainCount()==3,try reopened.unresolvedCount()==3,
+          try reopened.requestCount(job:id)==1 else {throw JournalError.conflict}
+    print("PASS: live one-use pre-spawn cancellation records exact not-sent attempt atomically, retaining older native uncertainty and request history; no worker/model POST")
 }

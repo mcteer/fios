@@ -1,7 +1,10 @@
 import Foundation
 import Darwin
 
-enum WorkerStartFailure:Error,Sendable {case cancelled,unavailable}
+enum WorkerStartFailure:Error,Sendable {
+    case cancelled,unavailable
+    case neverSpawned(WorkerNeverSpawnedEvidence)
+}
 
 // A lexical process/pipe owner. The background producer stops using it before
 // publishing; the serialized manager consumes it once and owns all journal I/O.
@@ -36,7 +39,8 @@ final class PendingPythonWorker:@unchecked Sendable {
     private let lock=NSLock()
     private var cancelled=false
     private var result:Result<StartedPythonWorker,WorkerStartFailure>?
-    init(work:@escaping @Sendable (@Sendable ()->Bool)->Result<StartedPythonWorker,WorkerStartFailure>) {
+    init(initiallyCancelled:Bool=false,work:@escaping @Sendable (@Sendable ()->Bool)->Result<StartedPythonWorker,WorkerStartFailure>) {
+        cancelled=initiallyCancelled
         Thread.detachNewThread { [self] in
             let value=work { [self] in lock.lock();defer {lock.unlock()};return cancelled }
             lock.lock();result=value;lock.unlock()

@@ -89,10 +89,10 @@ final class ModelBroker {
             "model":binding.nativeModel,"epoch":binding.managerEpoch,"endpoint_hash":binding.nativeSnapshot.endpointHash,
             "expires_at":min(now+5000,owned.lease.expires),"context":context.map {["role":$0.role,"content":$0.content]}])
         do {
-            let nonce=try journal.planWorkerLaunch(job:id,attempt:ordinal)
+            let plan=try journal.planWorkerStart(job:id,attempt:ordinal)
             let started=Int64(ProcessInfo.processInfo.systemUptime*1000)
-            let operation=try factory.beginStart(binding:binding,launchID:nonce,started:started,now:now)
-            starting[id]=Starting(operation:operation,attempt:ordinal,key:key,nonce:nonce,started:started,packet:packet,binding:binding)
+            let operation=try factory.beginStart(binding:binding,plan:plan,started:started,now:now)
+            starting[id]=Starting(operation:operation,attempt:ordinal,key:key,nonce:plan.nonce,started:started,packet:packet,binding:binding)
         } catch {
             try journal.markUncertain(job:id,attempt:ordinal)
             // Do not guess away a possibly spawned child or free its512MiB.
@@ -150,6 +150,11 @@ final class ModelBroker {
                     launchHolds.remove(WorkerLaunchKey(job:id,attempt:pending.attempt))
                 case .failure(.cancelled):
                     try journal.recordWorkerNotStarted(job:id,attempt:pending.attempt,nonce:pending.nonce)
+                    admission.releaseWorkerAfterReap(key:pending.key)
+                    launchHolds.remove(WorkerLaunchKey(job:id,attempt:pending.attempt))
+                    result[id]=[.interrupted]
+                case .failure(.neverSpawned(let evidence)):
+                    try journal.recordWorkerNeverSpawned(job:id,attempt:pending.attempt,evidence:evidence)
                     admission.releaseWorkerAfterReap(key:pending.key)
                     launchHolds.remove(WorkerLaunchKey(job:id,attempt:pending.attempt))
                     result[id]=[.interrupted]
