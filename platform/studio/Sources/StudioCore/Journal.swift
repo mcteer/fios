@@ -512,6 +512,19 @@ public final class Journal {
         try execute("INSERT INTO native_lineages(job,attempt,payload) VALUES(?,?,?) ON CONFLICT(job,attempt) DO UPDATE SET payload=excluded.payload",[job,String(attempt),payload])
         return accepted
     }
+    func observePreparationRegistration(job:String,attempt:Int,scope:InferenceScope,peer:NativeControlPeer,
+                                    sample:VerifiedNativePreparationRegistration,now:Int64)throws->Bool {
+        guard let record=try inferenceScope(job:job,attempt:attempt),
+              [.dispatched,.uncertain].contains(record.state),
+              try record.scope.encoded()==scope.encoded(),
+              sample.acknowledgement.model.utf8.elementsEqual(scope.nativeModel.utf8) else {throw JournalError.conflict}
+        var consumer=try NativeRequestLineageConsumer(scope:scope,job:job,attempt:attempt,peer:peer,
+                                                    checkpoint:lineageCheckpoint(job:job,attempt:attempt))
+        let accepted=consumer.acceptRegistration(sample,now:now)
+        let payload=String(decoding:try consumer.checkpoint(scope:scope),as:UTF8.self)
+        try execute("INSERT INTO native_lineages(job,attempt,payload) VALUES(?,?,?) ON CONFLICT(job,attempt) DO UPDATE SET payload=excluded.payload",[job,String(attempt),payload])
+        return accepted
+    }
     // Original native identity only, not current liveness, model permission
     // or terminal evidence. Changed peer/source checkpoints remain unusable.
     func originalNativeRoot(job:String,attempt:Int,scope:InferenceScope,peer:NativeControlPeer)throws->UInt64? {

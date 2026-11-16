@@ -72,6 +72,7 @@ enum NativeRequestLineageObservation {case unknown,live(NativeRequestLineage)}
 struct NativeRequestLineageConsumer:Sendable {
     private let peer:NativeControlPeer
     private let instance:String
+    private let nativeModel:String
     let correlationID:String
     private var previousNow:Int64 = -1
     private var sampledAt:Int64 = -1
@@ -82,7 +83,7 @@ struct NativeRequestLineageConsumer:Sendable {
     init(scope:InferenceScope,job:String,attempt:Int,peer:NativeControlPeer,checkpoint:Data?=nil)throws {
         try scope.validate();_=try NativeControlWire.instanceBytes(scope.nativeEpoch)
         guard peer.pid>1,peer.start>0 else {throw NativeControlError.invalid}
-        instance=scope.nativeEpoch
+        instance=scope.nativeEpoch;nativeModel=scope.nativeModel
         correlationID=try scope.nativeRequestCorrelationID(job:job,attempt:attempt)
         if let checkpoint {
             let saved=try NativeLineageCheckpoint.decode(checkpoint)
@@ -123,31 +124,45 @@ struct NativeRequestLineageConsumer:Sendable {
     mutating func acceptRegistration(_ verified:VerifiedNativeHandoffRegistration,now:Int64)->Bool {
         acceptRegistration(verified.sample,observedAt:verified.verifiedAt,now:now)
     }
+    mutating func acceptRegistration(_ verified:VerifiedNativePreparationRegistration,now:Int64)->Bool {
+        let sample=verified.sample,ack=sample.acknowledgement
+        return acceptRootIdentity(suppliedPeer:sample.peer,suppliedInstance:ack.instance,suppliedCorrelation:ack.correlationID,
+            suppliedModel:ack.model,root:ack.rootSequence,sampleSequence:ack.sampleSequence,capturedAt:sample.receivedAt,
+            observedAt:verified.verifiedAt,now:now,validRegistration:ack.operation == .reserve && (1...5000).contains(ack.lifetimeMilliseconds))
+    }
     private mutating func acceptRegistration(_ sample:NativeHandoffSample,observedAt:Int64,now:Int64)->Bool {
+        let value=sample.result
+        return acceptRootIdentity(suppliedPeer:sample.peer,suppliedInstance:value.instance,suppliedCorrelation:value.correlationID,
+            suppliedModel:nil,root:value.rootSequence,sampleSequence:value.sampleSequence,capturedAt:sample.sampledAt,
+            observedAt:observedAt,now:now,validRegistration:value.operation == .register && value.state == .pending && !value.uncertain)
+    }
+    private mutating func acceptRootIdentity(suppliedPeer:NativeControlPeer,suppliedInstance:String,suppliedCorrelation:String,
+                                            suppliedModel:String?,root:UInt64,sampleSequence:UInt64,capturedAt:Int64,
+                                            observedAt:Int64,now:Int64,validRegistration:Bool)->Bool {
         guard !fenced else {return false}
         guard (0...ActivityPolicy.maximumTimestamp).contains(now),now>=previousNow,
               (0...ActivityPolicy.maximumTimestamp).contains(observedAt),now>=observedAt else {fenced=true;return false}
         previousNow=now
-        let value=sample.result
-        guard sample.peer.pid==peer.pid,sample.peer.start==peer.start,
-              sample.peer.executable.path.utf8.elementsEqual(peer.executable.path.utf8),
-              sample.peer.executable.sha256==peer.executable.sha256,
-              value.instance==instance,value.correlationID==correlationID else {fenced=true;return false}
-        guard value.operation == .register,value.state == .pending,!value.uncertain,value.rootSequence>0,
-              value.sampleSequence>0,value.sampleSequence<=UInt64(ActivityPolicy.maximumTimestamp),
-              (0...ActivityPolicy.maximumTimestamp).contains(sample.sampledAt),
-              (-1000...5000).contains(observedAt-sample.sampledAt) else {return false}
-        if let original=rootSequence,original != value.rootSequence {fenced=true;return false}
+        guard suppliedPeer.pid==peer.pid,suppliedPeer.start==peer.start,
+              suppliedPeer.executable.path.utf8.elementsEqual(peer.executable.path.utf8),
+              suppliedPeer.executable.sha256==peer.executable.sha256,
+              suppliedInstance==instance,suppliedCorrelation==correlationID,
+              suppliedModel.map({$0.utf8.elementsEqual(nativeModel.utf8)}) ?? true else {fenced=true;return false}
+        guard validRegistration,root>0,
+              sampleSequence>0,sampleSequence<=UInt64(ActivityPolicy.maximumTimestamp),
+              (0...ActivityPolicy.maximumTimestamp).contains(capturedAt),
+              (-1000...5000).contains(observedAt-capturedAt) else {return false}
+        if let original=rootSequence,original != root {fenced=true;return false}
         // A newer readonly poll may already have persisted this same root.
         // Keep its sequence/clock rather than replaying the registration.
-        if value.sampleSequence<=sequence {
+        if sampleSequence<=sequence {
             // A verified original registration remains identity even after a
             // newer unknown lookup; it cannot restore a live observation.
-            rootSequence=value.rootSequence
+            rootSequence=root
             return true
         }
-        guard sample.sampledAt>=sampledAt,value.sampleSequence>sequence else {return false}
-        rootSequence=value.rootSequence;sequence=value.sampleSequence;sampledAt=sample.sampledAt
+        guard capturedAt>=sampledAt,sampleSequence>sequence else {return false}
+        rootSequence=root;sequence=sampleSequence;sampledAt=capturedAt
         return true
     }
     // A root must first have been observed live and checkpointed. This only

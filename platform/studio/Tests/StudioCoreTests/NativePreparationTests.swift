@@ -1,6 +1,7 @@
 import Foundation
 
 func runNativePreparationTests()throws {
+    try runNativePreparationReservationTests()
     let instance=String(repeating:"a",count:32),id=String(repeating:"b",count:64),model="fixture/exact-模型",root=UInt64.max
     let request=try NativePreparationWire.request(operation:.reserve,instance:instance,correlationID:id,model:model)
     guard request.count==1104,request.prefix(4)==Data("FIP9".utf8),request[5]==1,
