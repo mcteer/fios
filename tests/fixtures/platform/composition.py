@@ -80,6 +80,51 @@ class CompositionTests(unittest.TestCase):
                 with self.assertRaises(ValueError):API['compose'](platform,digest,runtime,sha(data),root/'refused')
                 self.assertFalse((root/'refused').exists());self.assertFalse(sentinel.exists())
 
+    def test_first_install_proposal_is_inactive_fixed_layout_data_only(self):
+        with tempfile.TemporaryDirectory(dir=Path('/tmp').resolve()) as temporary:
+            root=Path(temporary);args=self.fixture(root);output=root/'combined'
+            result=API['compose'](*args[:4],output)
+            planned=subprocess.run(['node',str(ROOT/'scripts/install-platform.mjs'),'propose-first-install',
+                '--candidate',str(output),'--sha256',result['composition_sha256'],'--host','fios-edge-b.lab'],
+                capture_output=True,timeout=10)
+            self.assertEqual(planned.returncode,0,planned.stderr)
+            value=json.loads(planned.stdout)
+            self.assertEqual(value['state'],'blocked');self.assertEqual(value['privileged_commands'],[])
+            self.assertFalse(value['commands_authorized']);self.assertTrue(value['requires_operator_execution'])
+            for flag in ('installed','activation','native_authority','enrollment_written','credentials_written','state_opened'):
+                self.assertFalse(value[flag])
+            self.assertEqual(value['launchd_registration'],'not_proposed')
+            self.assertIn('destination_prefix_absent_no_overwrite',value['mandatory_preconditions'])
+            files=value['proposed_file_commands'];self.assertEqual(len(files),12)
+            self.assertEqual(len({item['destination'] for item in files}),12)
+            for item in files:
+                self.assertEqual(item['program'],'/usr/bin/install')
+                self.assertEqual(item['argv'],['-o','root','-g','wheel','-m',format(item['mode'],'04o'),item['source'],item['destination']])
+                self.assertTrue(item['source'].startswith(str(output)+'/'))
+                self.assertTrue(item['destination'].startswith('/Library/Application Support/Fios/Studio/'))
+                self.assertEqual(sha(Path(item['source']).read_bytes()),item['sha256'])
+            self.assertTrue(any(item['destination'].endswith('/python/runtime/bin/python') for item in files))
+            directories=value['proposed_directory_commands']
+            self.assertEqual(directories[0],{'program':'/bin/mkdir','argv':['-m','0755','/Library/Application Support/Fios/Studio']})
+            self.assertTrue(all(item['program']=='/bin/mkdir' and item['argv'][:2]==['-m','0755'] for item in directories))
+            self.assertFalse(args[4].exists())
+            # Exercise only OS data-copy operations in a disposable redirected
+            # tree. Root ownership arguments are deliberately NOT executed;
+            # this is not protected installation or the proposed host action.
+            prefix=Path('/Library/Application Support/Fios/Studio')
+            staged=root/'operator-copy-fixture';unrelated=root/'unrelated';unrelated.write_bytes(b'retain')
+            for item in directories:
+                destination=staged/Path(item['argv'][-1]).relative_to(prefix)
+                subprocess.run(['/bin/mkdir','-m','0755',str(destination)],check=True,timeout=2)
+            for item in files:
+                destination=staged/Path(item['destination']).relative_to(prefix)
+                subprocess.run(['/usr/bin/install','-m',format(item['mode'],'04o'),item['source'],str(destination)],check=True,timeout=2)
+                self.assertEqual(sha(destination.read_bytes()),item['sha256'])
+                self.assertEqual(destination.stat().st_mode & 0o7777,item['mode'])
+                self.assertEqual(destination.stat().st_uid,os.getuid())
+            self.assertEqual(sum(path.is_file() for path in staged.rglob('*')),12)
+            self.assertEqual(unrelated.read_bytes(),b'retain');self.assertFalse(args[4].exists())
+
     def test_existing_destination_and_sentinel_are_preserved(self):
         with tempfile.TemporaryDirectory(dir=Path('/tmp').resolve()) as temporary:
             root=Path(temporary);args=self.fixture(root);output=root/'existing';output.mkdir(mode=0o700)

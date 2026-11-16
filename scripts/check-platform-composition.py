@@ -114,10 +114,65 @@ def installation_plan(directory, expected, host):
             'preserves':['native_inference_uncertainty','platform_exports','unrelated_runtime_objects','fios_database','legacy_volume']}
 
 
+def first_install_proposal(directory, expected, host):
+    plan = installation_plan(directory, expected, host)
+    root = Path(directory)
+    raw, _ = API['read_source'](root/'composition.json', root)
+    require(sha(raw) == expected)
+    value = json.loads(raw, object_pairs_hook=RUNTIME['unique_object'])
+    prefix = '/Library/Application Support/Fios/Studio'
+    copies, destinations = [], set()
+    for name, record in sorted(value['files'].items()):
+        if name == 'release-template.json':
+            continue  # Review evidence, never an installed runtime input.
+        if name.startswith('platform/'):
+            relative = name[len('platform/'):]
+        else:
+            require(name.startswith('python-runtime/'))
+            relative = 'python/runtime/'+name[len('python-runtime/'):]
+        require(relative and all(part not in ('', '.', '..') for part in relative.split('/')))
+        destination = prefix+'/'+relative
+        require(destination not in destinations)
+        destinations.add(destination)
+        copies.append({'source':str(root/name),'destination':destination,'sha256':record['sha256'],
+                       'bytes':record['bytes'],'mode':record['mode'],
+                       'program':'/usr/bin/install',
+                       'argv':['-o','root','-g','wheel','-m',format(record['mode'],'04o'),str(root/name),destination]})
+    folders = {str(parent) for destination in destinations for parent in Path(destination).parents
+               if str(parent) == prefix or str(parent).startswith(prefix+'/')}
+    create = [{'program':'/bin/mkdir','argv':['-m','0755',folder]}
+              for folder in sorted(folders,key=lambda name:(len(Path(name).parts),name))]
+    tool_inputs = {name:sha(API['read_source'](COMPOSE['ROOT']/name,COMPOSE['ROOT'])[0])
+                   for name in ('scripts/check-platform-composition.py','scripts/install-platform.mjs')}
+    return {**plan,'operation':'first_install_command_proposal','commands_authorized':False,
+            'requires_operator_execution':True,'candidate_programs_executed':False,
+            'proposal_tool_inputs':tool_inputs,
+            'proposal_scope':'inactive_new_prefix_only_not_upgrade_or_activation',
+            'proposed_files':len(copies),'proposed_directories':len(create),
+            'proposed_bytes':sum(item['bytes'] for item in copies),
+            'review_only_excluded':['release-template.json'],
+            'mandatory_preconditions':['separate_operator_installation_approval',
+                'complete_installable_release_review_not_development_receipt',
+                'execute_on_exact_reviewed_studio_not_core',
+                'root_wheel_operator_and_protected_no_symlink_parent',
+                'destination_prefix_absent_no_overwrite',
+                'no_registered_platform_jobs_or_running_platform_writers',
+                'serialized_operator_transaction_and_source_hash_recheck'],
+            'proposed_directory_commands':create,'proposed_file_commands':copies,
+            'source_and_destination_hashes':'verify_all_before_copy_and_all_protected_copies_afterward',
+            'on_failure':'stop_retain_partial_prefix_for_diagnosis_do_not_activate_or_delete',
+            'launchd_registration':'not_proposed','enrollment_written':False,
+            'credentials_written':False,'state_opened':False}
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--candidate',required=True)
     parser.add_argument('--sha256',required=True)
     parser.add_argument('--host')
+    parser.add_argument('--first-install-proposal',action='store_true')
     args = parser.parse_args()
-    print(json.dumps(installation_plan(args.candidate,args.sha256,args.host) if args.host else review(args.candidate,args.sha256)))
+    require(not args.first_install_proposal or args.host is not None)
+    result = (first_install_proposal(args.candidate,args.sha256,args.host) if args.first_install_proposal else
+              installation_plan(args.candidate,args.sha256,args.host) if args.host else review(args.candidate,args.sha256))
+    print(json.dumps(result))

@@ -313,3 +313,25 @@ that source after the private startup rehearsal. Its receipt reports this
 selected-input scope explicitly; it does not attest whole-native build inputs
 or installed custody. Without `--source`, existing artifact-only review behavior
 and historical package checks remain unchanged.
+
+
+`propose-first-install` accepts the same candidate/hash/host arguments as
+`plan-composition`. It emits a blocked review proposal containing fixed
+`/bin/mkdir` and `/usr/bin/install` argv, exact source/destination paths,
+SHA256, byte count and mode for every proposed copy. The destination is a new
+`/Library/Application Support/Fios/Studio` prefix, with Python at
+`python/runtime`; review-only template data is excluded. Directories are
+ordered parent first and created without `-p`, so an existing prefix must not
+be reused. The protected parent must already be separately reviewed.
+
+These command records are proposals for later operator execution, not an
+executor or installation authorization. Current development components remain
+blocked; no approval is inferred from their hashes or the sandbox image
+approval. Separate release/host/operator review, a protected parent, absent
+prefix, stopped writers/unregistered jobs, serialization and complete before/
+after hash verification are mandatory. Failure means stop and retain partial
+new data for diagnosis. The tool does not inspect a remote destination or
+claim these preconditions were met. It writes no protected paths, policies,
+credentials or state and proposes no launchd registration, process operation,
+SSH, reboot or inference. Upgrade/switch/removal and credential installation
+remain unfinished; this proposal does not complete T049.
