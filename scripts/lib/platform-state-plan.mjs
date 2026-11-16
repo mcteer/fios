@@ -25,21 +25,30 @@ function newPrivateDestination(path){
 // writer, copy/restore files, resolve credentials or issue privileged argv.
 // Actual studioctl execution independently checks the stopped writer fence,
 // FIS9/schema, origin, receipt, links and no-replace destination semantics.
-export function platformStatePlan({operation,release,verified,host,source,destination,backupSHA256}){
+export function platformStatePlan({operation,release,verified,host,source,destination,backupSHA256,configuration}){
   if(!['backup','restore'].includes(operation)||!verified.manifest.native_inventory.hosts.includes(host))fail();
   const from=privateDirectory(source),to=newPrivateDestination(destination);
   if(from===to||to.startsWith(from+'/')||from.startsWith(to+'/'))fail();
   if(operation==='restore'&&!/^[a-f0-9]{64}$/.test(backupSHA256))fail();
+  let configurationSource;
+  if(configuration!==undefined){
+    if(operation!=='backup')fail();
+    absolute(configuration);
+    const info=lstatSync(configuration);
+    if(!info.isDirectory()||![0,process.geteuid()].includes(info.uid)||(info.mode&0o7022)!==0)fail();
+    configurationSource=realpathSync.native(configuration);
+  }
   const program=join(resolve(release),'bin/studioctl');
   const artifact=verified.manifest.artifacts.find(item=>item.path==='bin/studioctl');
   if(!artifact)fail();
   const command=arguments_=>({program,arguments:arguments_,artifact_sha256:artifact.sha256,execution:'operator_only'});
   const commands=operation==='backup'
-    ?[command(['--state',from,'backup-state','--to',to])]
+    ?[command(['--state',from,'backup-state',...(configurationSource?['--configuration',configurationSource]:[]),'--to',to])]
     :[command(['--state',from,'verify-backup','--sha256',backupSHA256]),command(['--state',from,'restore-state','--sha256',backupSHA256,'--to',to])];
   return {version:1,operation:`stopped_state_${operation}_review`,host,manifest_sha256:verified.manifestSHA256,
     state:'operator_review_required',changes_made:false,activation:false,privileged_commands:[],proposed_commands:commands,
-    unverified_at_review:operation==='backup'?['source_journal_identity','source_writer_stopped']:['backup_origin','backup_receipt','backup_journal_compatibility','destination_writer_absent'],
+    ...(configurationSource?{configuration_scope:'six_fixed_opaque_enrollment_documents_not_credentials_or_installed_release'}:{}),
+    unverified_at_review:operation==='backup'?['source_journal_identity','source_writer_stopped',...(configurationSource?['configuration_snapshot_identity_and_bytes']:[])]:['backup_origin','backup_receipt','backup_journal_compatibility','destination_writer_absent'],
     blockers:['explicit_operator_review_and_execution_required'],
     preserves:['native_inference_uncertainty','platform_exports','unrelated_runtime_objects','fios_database','legacy_volume'],
     limitations:['no_installation_or_service_authority','no_native_inference','no_schema_downgrade_or_overwrite','execute_on_the_originating_host_only']};

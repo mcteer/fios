@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {mkdtempSync,mkdirSync,chmodSync,writeFileSync,readFileSync,existsSync,rmSync,realpathSync} from 'node:fs';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
-import {platformUninstallPlan} from '../scripts/lib/platform-state-plan.mjs';
+import {platformUninstallPlan,platformStatePlan} from '../scripts/lib/platform-state-plan.mjs';
 
 test('uninstall review orders status, stopped backup and retained-data steps',()=>{
   const directory=mkdtempSync(join(tmpdir(),'fios-uninstall-workflow-'));
@@ -22,5 +22,27 @@ test('uninstall review orders status, stopped backup and retained-data steps',()
     assert.equal(plan.data_removal,false);assert.equal(plan.uninstall_executed,false);
     assert.equal(existsSync(join(directory,'backup with spaces')),false);
     assert.equal(readFileSync(join(state,'example.txt'),'utf8'),'retained application data');
+  }finally{rmSync(directory,{recursive:true,force:true});}
+});
+
+test('configuration-preserving uninstall proposes the actual bounded backup command without reading or changing configuration',()=>{
+  const directory=mkdtempSync(join(tmpdir(),'fios-uninstall-configuration-'));
+  try{
+    chmodSync(directory,0o700);
+    const state=join(directory,'state'),configuration=join(directory,'configuration with spaces'),destination=join(directory,'backup');
+    for(const path of [state,configuration])mkdirSync(path,{mode:0o700});
+    const file=join(configuration,'runtime-enrollment.json');writeFileSync(file,'opaque retained bytes',{mode:0o600});
+    const verified={manifestSHA256:'b'.repeat(64),manifest:{native_inventory:{hosts:['fios-edge-a.lab']},artifacts:[{path:'bin/studioctl',sha256:'a'.repeat(64)}]}};
+    const input={release:join(directory,'release'),verified,host:'fios-edge-a.lab',source:state,configuration,destination};
+    const plan=platformUninstallPlan(input);
+    assert.deepEqual(plan.proposed_commands[1].arguments,['--state',realpathSync.native(state),'backup-state','--configuration',realpathSync.native(configuration),'--to',join(realpathSync.native(directory),'backup')]);
+    assert.equal(plan.proposed_commands[1].artifact_sha256,'a'.repeat(64));
+    assert(plan.unverified_at_review.includes('configuration_snapshot_identity_and_bytes'));
+    assert.equal(plan.configuration_scope,'six_fixed_opaque_enrollment_documents_not_credentials_or_installed_release');
+    assert.equal(plan.state,'blocked');assert.deepEqual(plan.privileged_commands,[]);
+    assert.equal(existsSync(destination),false);assert.equal(readFileSync(file,'utf8'),'opaque retained bytes');
+    assert.throws(()=>platformStatePlan({...input,operation:'restore',backupSHA256:'c'.repeat(64)}));
+    assert.throws(()=>platformUninstallPlan({...input,configuration:join(directory,'missing')}));
+    chmodSync(configuration,0o777);assert.throws(()=>platformUninstallPlan(input));
   }finally{rmSync(directory,{recursive:true,force:true});}
 });

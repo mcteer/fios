@@ -33,7 +33,15 @@ try {
   writeFileSync(join(configuration,'session-enrollment.json'),'',{mode:0o600});
   writeFileSync(join(configuration,'unrelated.json'),'retain separately',{mode:0o600});
   const cli=(directory,argv,options)=>run(join(release,'bin/studioctl'),['--state',directory,...argv],options);
-  const receipt=JSON.parse(cli(state,['backup-state','--configuration',configuration,'--to',bundle]));
+  const proposalArgs=['--release',release,'--sha256',args[4],'--host','fios-edge-a.lab','--state',state,'--configuration',configuration,'--to',bundle];
+  const proposal=JSON.parse(run(process.execPath,[join(root,'scripts/install-platform.mjs'),'plan-backup-config',...proposalArgs]));
+  const uninstall=JSON.parse(run(process.execPath,[join(root,'scripts/install-platform.mjs'),'plan-uninstall-config',...proposalArgs]));
+  assert.equal(existsSync(bundle),false,'Planning created a backup');
+  assert.deepEqual(uninstall.proposed_commands[1],proposal.proposed_commands[0]);
+  assert.equal(uninstall.state,'blocked');assert.deepEqual(uninstall.privileged_commands,[]);
+  const command=proposal.proposed_commands[0];assert.equal(command.program,join(release,'bin/studioctl'));
+  assert.equal(command.artifact_sha256,review.manifest.artifacts.find(item=>item.path==='bin/studioctl').sha256);
+  const receipt=JSON.parse(run(command.program,command.arguments));
   assert.equal(receipt.ok,true);assert.equal(receipt.scope,'platform_journal_exports_and_configuration');
   assert.equal(receipt.installed,false);assert.equal(receipt.activation,false);
   const manifest=readFileSync(join(bundle,'backup.json'));
@@ -65,7 +73,7 @@ try {
   writeFileSync(sourceBlob,payload);
   assert.deepEqual(JSON.parse(run(helper,['check',state])),{uncertain:1,exports:1});
   assert.equal(JSON.parse(cli(bundle,['verify-backup','--sha256',receipt.sha256])).ok,true);
-  const final={scope:'isolated_packaged_cli_configuration_backup',manifest_sha256:args[4],source_revision:review.manifest.source_revision,backup_sha256:receipt.sha256,network:'denied',failed_journal_retained:true,failed_export_retained:true,model_posts:0,installed:false,activation:false,uncertainty:1,exports:1,scratch};
+  const final={scope:'isolated_packaged_cli_configuration_backup',manifest_sha256:args[4],source_revision:review.manifest.source_revision,configuration_plan_executed:true,uninstall_proposal_matches:true,backup_sha256:receipt.sha256,network:'denied',failed_journal_retained:true,failed_export_retained:true,model_posts:0,installed:false,activation:false,uncertainty:1,exports:1,scratch};
   writeFileSync(join(scratch,'receipt.json'),JSON.stringify(final,null,2)+'\n',{mode:0o600});
   console.log(JSON.stringify(final));
 } catch(error) {

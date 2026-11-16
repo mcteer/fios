@@ -247,3 +247,19 @@ missing/empty/invalid. Programs and credential recovery must be retained
 separately. Failed backup/restore copies are retained privately for diagnosis;
 only a verified complete bundle is a recovery point. This does not complete the
 protected installation/rollback/uninstall or native acceptance requirements.
+
+The installer can now propose the configuration-preserving backup explicitly:
+
+```sh
+node scripts/install-platform.mjs plan-backup-config --release /ABSOLUTE/REVIEWED_RELEASE --sha256 REVIEWED_MANIFEST_SHA --host fios-edge-a.lab --state /ABSOLUTE/PRIVATE_STATE --configuration /ABSOLUTE/CONFIGURATION_DIRECTORY --to /ABSOLUTE/PRIVATE_PARENT/NEW_BACKUP
+```
+
+`plan-uninstall-config` accepts the same arguments and puts that exact backup
+command after the manual stopped-writer step. Both commands only review paths
+and emit fixed program/argv proposals; they read no enrollment contents and
+create no backup. The selected packaged CLI checks and captures the six fixed
+documents when the operator executes the proposal. Configuration bytes remain
+opaque and independently unverified during planning. These options do not
+capture credentials, installed programs or launchd state, remove enrollment or
+authorize installation. The original `plan-backup`/`plan-uninstall` workflows
+continue to preserve state/exports without configuration.
