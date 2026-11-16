@@ -1,0 +1,50 @@
+--- a/build/macos.zig
++++ b/build/macos.zig
+@@ -16,6 +16,7 @@
+     version: []const u8,
+     units: bool,
+     fios_source_sdk: bool,
++    fios_source_background_seal: bool,
+     fios_source_ds4: bool,
+     /// The server's module (`src/main.zig`; `src/exe.zig` under `-Dunits`) and the unit tests' (`src/tests.zig`).
+     exe_mod: *std.Build.Module,
+@@ -34,6 +35,9 @@
+ 
+         const mas = b.option(bool, "mas", "MAS build (no curl/model-pull subprocess)") orelse false;
+         const fios_source_sdk = b.option(bool, "fios-source-sdk", "Private source SDK ownership composition only") orelse false;
++        const fios_source_background_seal = b.option(bool, "fios-source-background-seal", "Explicit private SDK background-start exclusion only") orelse false;
++        if (fios_source_background_seal and !fios_source_sdk)
++            @panic("Private background exclusion requires the source SDK bridge");
+         const fios_source_ds4 = b.option(bool, "fios-source-ds4", "Private reviewed DS4 ownership composition only") orelse false;
+         if (fios_source_ds4 and !fios_source_sdk)
+             @panic("Fios DS4 composition requires the private source SDK bridge");
+@@ -119,6 +123,7 @@
+             .version = version,
+             .units = units,
+             .fios_source_sdk = fios_source_sdk,
++            .fios_source_background_seal = fios_source_background_seal,
+             .fios_source_ds4 = fios_source_ds4,
+             .exe_mod = blk: {
+                 const m = shared.engineModule(b, target, optimize, host, "src/main.zig");
+@@ -216,7 +221,9 @@
+     const mod = g.exe_mod;
+     if (g.fios_source_sdk) mod.addCSourceFile(.{
+         .file = b.path("src/fios/current_sdk_owners.cpp"),
+-        .flags = &.{ "-std=c++20", "-DNDEBUG" },
++        .flags = if (g.fios_source_background_seal)
++            &.{ "-std=c++20", "-DNDEBUG", "-DFIOS_REQUIRE_BACKGROUND_PARTICIPANT_SEAL=1" }
++        else &.{ "-std=c++20", "-DNDEBUG" },
+     });
+     if (g.fios_source_ds4) mod.addCSourceFile(.{
+         .file = b.path("src/fios/current_ds4_owners.cpp"),
+@@ -320,7 +327,9 @@
+     // Match the executable's real selected ownership hooks in the test root.
+     if (g.fios_source_sdk) g.test_mod.addCSourceFile(.{
+         .file = b.path("src/fios/current_sdk_owners.cpp"),
+-        .flags = &.{ "-std=c++20", "-DNDEBUG" },
++        .flags = if (g.fios_source_background_seal)
++            &.{ "-std=c++20", "-DNDEBUG", "-DFIOS_REQUIRE_BACKGROUND_PARTICIPANT_SEAL=1" }
++        else &.{ "-std=c++20", "-DNDEBUG" },
+     });
+     if (g.fios_source_ds4) g.test_mod.addCSourceFile(.{
+         .file = b.path("src/fios/current_ds4_owners.cpp"),

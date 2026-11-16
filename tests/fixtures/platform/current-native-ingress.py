@@ -9,7 +9,8 @@ import pathlib,subprocess,socket,tempfile,os,time,http.client,json,signal,sys,st
 assert sys.platform=="darwin" and os.geteuid()>0
 assert len(sys.argv) in [4,5] and sys.argv[1]=="--isolated"
 mode=sys.argv[4] if len(sys.argv)==5 else None
-assert mode in [None,"--expected-instance","--exact-target","--startup","--correlation","--activity","--retirement","--preparation","--pristine-preparation"]
+assert mode in [None,"--expected-instance","--exact-target","--startup","--correlation","--activity","--retirement","--preparation","--pristine-preparation","--background-sealed"]
+check_background_sealed=mode=="--background-sealed"
 check_instance=mode in ["--expected-instance","--exact-target","--correlation","--retirement","--preparation","--pristine-preparation"]
 check_target=mode in ["--exact-target","--correlation","--retirement","--preparation","--pristine-preparation"]
 check_correlation=mode in ["--correlation","--retirement"]
@@ -29,6 +30,23 @@ assert subprocess.check_output(["/usr/sbin/sysctl","-n","machdep.cpu.brand_strin
 home=pathlib.Path(tempfile.mkdtemp(prefix="f9-cur-ingress-",dir="/private/tmp"));models=home/"empty-models";models.mkdir(mode=0o700)
 listener=socket.socket();listener.bind(("127.0.0.1",0));port=listener.getsockname()[1];listener.close()
 env={"PATH":"/usr/bin:/bin","HOME":str(home),"LANG":"C","LC_ALL":"C","XDG_CACHE_HOME":str(home/"cache"),"FIOS_NATIVE_CONTROL":"isolated-source-fixture","FIOS_NATIVE_STARTUP":"isolated-source-fixture"}
+default_denial=None
+if check_background_sealed:
+ probe_home=pathlib.Path(tempfile.mkdtemp(prefix="f9-sealed-default-",dir="/private/tmp"));probe_models=probe_home/"empty-models";probe_models.mkdir(mode=0o700)
+ probe_env={**env,"HOME":str(probe_home),"XDG_CACHE_HOME":str(probe_home/"cache")}
+ probe_log=os.open(probe_home/"native.log",os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)
+ probe=subprocess.Popen([str(binary),"serve","--host","127.0.0.1","--port",str(port),"--model-dir",str(probe_models),"--no-warmup-eager"],cwd=probe_home,env=probe_env,stdout=probe_log,stderr=probe_log,start_new_session=True);os.close(probe_log)
+ try:
+  try:probe.wait(timeout=5)
+  except subprocess.TimeoutExpired:raise AssertionError("SEALED_SOURCE_DEFAULT_REFRESH_NOT_REFUSED")
+  text=(probe_home/"native.log").read_bytes();assert len(text)<=65536
+  assert probe.returncode != 0 and b"Untracked SDK background participant refused" in text,"SEALED_SOURCE_DEFAULT_REFUSAL_MISMATCH"
+  default_denial={"private_home":str(probe_home),"exit":probe.returncode,"configuration":"existing_default_unmodified","inference_started":False}
+ finally:
+  if probe.poll() is None:os.killpg(probe.pid,signal.SIGKILL)
+  probe.wait(timeout=2)
+ # This explicit test-only child configuration changes no installed setting.
+ env["MLX_METAL_RESIDENCY_REFRESH_INTERVAL_MS"]="0"
 log=os.open(home/"native.log",os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)
 proc=subprocess.Popen([str(binary),"serve","--host","127.0.0.1","--port",str(port),"--model-dir",str(models),"--no-warmup-eager"],cwd=home,env=env,stdout=log,stderr=log,start_new_session=True);os.close(log)
 def get(path):
@@ -62,6 +80,17 @@ try:
  instance=frame[8:24].hex();assert int(instance,16)>0
  counts=struct.unpack(">6I",frame[32:56]);assert counts[0]==sum(counts[1:5]) and counts[5]==0
  sequence,stamp=struct.unpack(">2Q",frame[64:80]);assert 0<sequence<=9007199254740991 and -1000<=int(time.time()*1000)-stamp<=5000
+ if check_background_sealed:
+  background=bytearray(32);background[:4]=b"FIB9";background[4]=3;background[8:24]=bytes.fromhex(instance)
+  channel=socket.socket(socket.AF_UNIX);channel.settimeout(2);channel.connect(str(control));channel.sendall(background);channel.shutdown(socket.SHUT_WR)
+  reply=b""
+  try:
+   while len(reply)<64:
+    part=channel.recv(64-len(reply));assert part;reply+=part
+  finally:channel.close()
+  assert reply[:6]==b"FIF9"+bytes([3,0]) and reply[8:24]==bytes.fromhex(instance),"SEALED_SOURCE_BACKGROUND_FRAME_MISMATCH"
+  assert reply[40]==1 and reply[41:]==bytes(23),"SEALED_SOURCE_BACKGROUND_NOT_EXCLUDED"
+  assert reply[7]==0,"SEALED_SOURCE_CLEANUP_UNCERTAINTY"
  def snapshot():
   connection=socket.socket(socket.AF_UNIX);connection.settimeout(2);connection.connect(str(control));connection.sendall(request);connection.shutdown(socket.SHUT_WR);value=b""
   try:
@@ -267,6 +296,10 @@ try:
    time.sleep(.025)
   assert current[0]==0,"CURRENT_NATIVE_REJECTED_PREPARATION_HTTP_OWNER_RETAINED"
  receipt={"binary_sha256":hashlib.sha256(binary.read_bytes()).hexdigest(),"native_pid":proc.pid,"source_instance":instance,"source_sequence":sequence,"source_sampled_at":stamp,"http_connection_counts":list(counts),"accepted_connection_observed":True,"original_http_connection_retired":True,"private_home":str(home),"models":0,"model_requests":(9 if check_correlation else (7 if check_target else (3 if check_instance else 0)))+(4 if check_preparation else 0),"preparation_control_refused":check_preparation,"pristine_preparation_control_refused":check_pristine,"preparation_http_guards_checked":check_preparation,"expected_instance_guard_checked":check_instance,"exact_target_guard_checked":check_target,"correlation_header_checked":check_correlation,"retired_lineage_is_unknown":check_correlation,"local_retirement_record_checked":check_retirement,"http_activity_checked":check_activity,"startup_reservation_checked":check_startup,"startup_reacquired_after_original_exit":check_startup,"metadata_available_while_reserved":check_startup,"inference_started":False,"coverage":"unknown","native_admission_authority":False,"peer_authentication_proven":False,"installed":False}
+ if check_background_sealed:
+  receipt.update({"explicit_private_background_exclusion":True,"default_refresh_startup_refused":default_denial,
+      "test_child_refresh_interval_ms":0,"source_background_untracked":False,"all_client_coverage":False,
+      "configuration_scope":"private_child_only_not_installed_model_policy"})
  (home/"receipt.json").write_text(json.dumps(receipt,indent=2)+"\n");print(json.dumps(receipt))
 finally:
  if proc.poll() is None:proc.terminate()
