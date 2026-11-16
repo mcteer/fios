@@ -328,6 +328,69 @@ def python_policy_removal_proposal(directory, expected, host, bundle, bundle_sha
             'on_failure':'stop_retain_configuration_backups_and_uncertainty_no_recursive_cleanup'}
 
 
+def configuration_removal_proposal(directory, expected, host, configuration, configuration_sha256):
+    plan=installation_plan(directory,expected,host)
+    require(isinstance(configuration_sha256,str) and re.fullmatch('[0-9a-f]{64}',configuration_sha256))
+    require(isinstance(configuration,(str,Path)))
+    root=Path(configuration)
+    require(root.is_absolute() and root.resolve()==root and str(root).startswith(('/private/tmp/','/tmp/')))
+    names=['runtime-enrollment.json','session-enrollment.json','python-enrollment.json',
+           'resource-enrollment.json','native-serving-launch.json','sandbox-enrollment.json']
+    chain=API['directory_chain'](root)
+    try:
+        info=os.fstat(chain[-1][0]);require(info.st_uid==os.getuid() and stat.S_IMODE(info.st_mode)==0o700)
+        began=time.monotonic();records={}
+        def read(name):
+            require(time.monotonic()-began<=2)
+            info=(root/name).lstat()
+            require(stat.S_ISREG(info.st_mode) and info.st_uid==os.getuid() and info.st_nlink==1 and
+                    stat.S_IMODE(info.st_mode)==0o600 and 0<=info.st_size<=65536)
+            result=API['read_source'](root/name,root)
+            require(result[1]==API['identity'](info) and len(result[0])==info.st_size)
+            return result
+        records['manifest.json']=read('manifest.json')
+        require(sha(records['manifest.json'][0])==configuration_sha256)
+        manifest=json.loads(records['manifest.json'][0],object_pairs_hook=RUNTIME['unique_object'])
+        require(isinstance(manifest,dict) and set(manifest)=={'version','scope','files'} and type(manifest['version']) is int and manifest['version']==1 and
+                manifest['scope']=='opaque_configuration_data_only' and isinstance(manifest['files'],list) and len(manifest['files'])==6)
+        removals=[]
+        for name,row in zip(names,manifest['files']):
+            require(isinstance(row,dict) and row.get('name')==name)
+            if set(row)=={'name'}:
+                continue
+            require(set(row)=={'name','bytes','sha256','originalUID','originalMode'} and
+                    type(row['bytes']) is int and 0<=row['bytes']<=65536 and
+                    isinstance(row['sha256'],str) and re.fullmatch('[0-9a-f]{64}',row['sha256']) and
+                    type(row['originalUID']) is int and row['originalUID'] in (0,os.getuid()) and
+                    type(row['originalMode']) is int and 0<=row['originalMode']<=0o7777 and not row['originalMode']&0o7022)
+            records[name]=read(name)
+            require(len(records[name][0])==row['bytes'] and sha(records[name][0])==row['sha256'])
+            destination='/Library/Application Support/Fios/Studio/'+name
+            removals.append({'program':'/bin/rm','argv':[destination],'destination':destination,
+                'required_sha256':row['sha256'],'required_bytes':row['bytes'],'required_uid':0,
+                'required_mode':row['originalMode'],'snapshot_original_uid':row['originalUID']})
+        require(set(os.listdir(chain[-1][0]))==set(records))
+        for name,record in records.items():require(read(name)==record)
+        API['verify_chain'](chain)
+        return {**plan,'operation':'configuration_removal_command_proposal','commands_authorized':False,
+                'requires_operator_execution':True,'configuration_removed':False,'credentials_written':False,
+                'state_opened':False,'state_and_exports_retained':True,'credentials_retained':True,
+                'native_inference_uncertainty_retained':True,'configuration_manifest_sha256':configuration_sha256,
+                'configuration_snapshot_rechecked':True,'configuration_documents_interpreted':False,
+                'stopped_state_backup_verified':False,'proposed_file_removals':removals,
+                'mandatory_preconditions':['separate_operator_enrollment_removal_approval',
+                    'exact_reviewed_studio_account_state_and_installed_context',
+                    'registrations_removed_or_persistently_disabled_and_all_platform_writers_stopped',
+                    'owned_native_children_absent_or_in_separately_reviewed_retained_custody',
+                    'independently_verified_complete_stopped_state_exports_configuration_backup',
+                    'installed_files_regular_single_link_root_owned_no_acl_exact_size_mode_and_hash',
+                    'serialized_operator_transaction_and_recheck_each_file_before_removal',
+                    'preserve_independent_native_inference_uncertainty'],
+                'on_failure':'stop_retain_backups_configuration_and_uncertainty_no_recursive_cleanup'}
+    finally:
+        API['close_chain'](chain)
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--candidate',required=True)
@@ -340,19 +403,24 @@ if __name__ == '__main__':
     modes.add_argument('--stage-python-enrollment',action='store_true')
     modes.add_argument('--python-policy-install-proposal',action='store_true')
     modes.add_argument('--python-policy-removal-proposal',action='store_true')
+    modes.add_argument('--configuration-removal-proposal',action='store_true')
     parser.add_argument('--uid')
     parser.add_argument('--state')
     parser.add_argument('--review-sha256')
     parser.add_argument('--to')
     parser.add_argument('--bundle')
     parser.add_argument('--bundle-sha256')
+    parser.add_argument('--configuration')
+    parser.add_argument('--configuration-sha256')
     args = parser.parse_args()
-    require(not (args.first_install_proposal or args.uninstall_proposal or args.python_enrollment_proposal or args.stage_python_enrollment or args.python_policy_install_proposal or args.python_policy_removal_proposal) or args.host is not None)
+    require(not (args.first_install_proposal or args.uninstall_proposal or args.python_enrollment_proposal or args.stage_python_enrollment or args.python_policy_install_proposal or args.python_policy_removal_proposal or args.configuration_removal_proposal) or args.host is not None)
     require((args.python_enrollment_proposal or args.stage_python_enrollment) or all(value is None for value in (args.uid,args.state,args.review_sha256)))
     require(args.stage_python_enrollment or args.to is None)
     require(not args.stage_python_enrollment or args.to is not None)
     require((args.python_policy_install_proposal or args.python_policy_removal_proposal) or (args.bundle is None and args.bundle_sha256 is None))
-    result = (python_policy_removal_proposal(args.candidate,args.sha256,args.host,args.bundle,args.bundle_sha256) if args.python_policy_removal_proposal else
+    require(args.configuration_removal_proposal or (args.configuration is None and args.configuration_sha256 is None))
+    result = (configuration_removal_proposal(args.candidate,args.sha256,args.host,args.configuration,args.configuration_sha256) if args.configuration_removal_proposal else
+              python_policy_removal_proposal(args.candidate,args.sha256,args.host,args.bundle,args.bundle_sha256) if args.python_policy_removal_proposal else
               python_policy_install_proposal(args.candidate,args.sha256,args.host,args.bundle,args.bundle_sha256) if args.python_policy_install_proposal else
               stage_python_enrollment(args.candidate,args.sha256,args.host,args.uid,args.state,args.review_sha256,args.to) if args.stage_python_enrollment else
               python_enrollment_proposal(args.candidate,args.sha256,args.host,args.uid,args.state,args.review_sha256) if args.python_enrollment_proposal else

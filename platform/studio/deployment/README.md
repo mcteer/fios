@@ -436,3 +436,19 @@ restore only the recorded previous registration/disabled states after review.
 Both commands print blocked, unauthorized proposals and invoke no launchctl,
 change no durable desired service state and write no registration, credentials
 or state. Partial failure stops the transaction with backups/uncertainty retained.
+
+`propose-enrollment-removal` reviews the composed candidate/hash/host plus
+`--configuration ABS_PRIVATE_CONFIGURATION_BACKUP --configuration-sha256
+REVIEWED_MANIFEST_SHA`. This is the `configuration` directory from the existing
+opaque configuration snapshot format, not a claim that a full stopped backup
+has been verified. It checks the fixed six-name manifest, private file metadata,
+exact bytes/hashes, presence/absence and source stability. Document contents
+remain opaque and are never printed or treated as enrollment authority.
+
+The blocked proposal names only present fixed enrollment files with required
+installed root ownership, original mode, size and hash. No parent directory,
+credential, state/export or unrelated file is removed. Separate removal approval,
+exact installed context, disabled/removed registrations, stopped writers,
+retained native custody/absence and independently verified complete stopped
+backup remain prerequisites. The tool executes no removal and cannot establish
+those installed prerequisites from the snapshot.

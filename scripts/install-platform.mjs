@@ -11,6 +11,7 @@ Commands:
   plan
   plan-composition     --candidate ABS_COMPOSITION --sha256 REVIEWED_COMPOSITION_SHA --host HOST
   propose-first-install --candidate ABS_COMPOSITION --sha256 REVIEWED_COMPOSITION_SHA --host HOST
+  propose-enrollment-removal --candidate ABS_COMPOSITION --sha256 REVIEWED_COMPOSITION_SHA --host HOST --configuration ABS_PRIVATE_CONFIGURATION_BACKUP --configuration-sha256 REVIEWED_MANIFEST_SHA
   propose-artifact-uninstall --candidate ABS_COMPOSITION --sha256 REVIEWED_COMPOSITION_SHA --host HOST
   propose-python-enrollment --candidate ABS_COMPOSITION --sha256 REVIEWED_COMPOSITION_SHA --host HOST --uid SERVICE_UID --state ABS_STATE --review-sha256 REVIEW_IDENTITY
   stage-python-enrollment --candidate ABS_COMPOSITION --sha256 REVIEWED_COMPOSITION_SHA --host HOST --uid SERVICE_UID --state ABS_STATE --review-sha256 REVIEW_IDENTITY --to ABS_NEW_PRIVATE_BUNDLE
@@ -38,6 +39,22 @@ Reviews, stages or verifies private configuration/state data. Executes no instal
 function failure(){console.error('Platform review/preparation failed; retain any private output for review.');process.exitCode=1;}
 if(args.length===1&&['--help','-h'].includes(args[0])){
   console.log(usage);
+}else if(args[0]==='propose-enrollment-removal'){
+  try{
+    if(args.length!==11||args[1]!=='--candidate'||args[3]!=='--sha256'||args[5]!=='--host'||args[7]!=='--configuration'||args[9]!=='--configuration-sha256')throw Error('arguments');
+    const python=fileURLToPath(new URL('../.venv/bin/python',import.meta.url));
+    const checker=fileURLToPath(new URL('./check-platform-composition.py',import.meta.url));
+    const result=spawnSync(python,['-I','-B',checker,'--candidate',args[2],'--sha256',args[4],'--host',args[6],
+      '--configuration-removal-proposal','--configuration',args[8],'--configuration-sha256',args[10]],{encoding:'utf8',timeout:250000,maxBuffer:65536});
+    if(result.error||result.status!==0||result.stderr)throw Error('review');
+    const plan=JSON.parse(result.stdout);
+    if(plan.operation!=='configuration_removal_command_proposal'||plan.state!=='blocked'||plan.commands_authorized!==false||
+       plan.requires_operator_execution!==true||plan.configuration_removed!==false||plan.installed!==false||plan.activation!==false||
+       plan.native_authority!==false||plan.privileged_commands.length!==0||plan.state_opened!==false||plan.credentials_written!==false||
+       plan.configuration_snapshot_rechecked!==true||plan.configuration_documents_interpreted!==false||plan.stopped_state_backup_verified!==false||
+       !Array.isArray(plan.proposed_file_removals)||plan.proposed_file_removals.length>6)throw Error('authority');
+    console.log(JSON.stringify(plan,null,2));
+  }catch{failure();}
 }else if(['plan-composition','propose-first-install','propose-artifact-uninstall','propose-python-enrollment','stage-python-enrollment','propose-python-policy-install','propose-python-policy-removal'].includes(args[0])){
   try{
     const policyRemoval=args[0]==='propose-python-policy-removal',policyInstall=policyRemoval||args[0]==='propose-python-policy-install';

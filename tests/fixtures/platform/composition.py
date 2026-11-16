@@ -309,6 +309,48 @@ class CompositionTests(unittest.TestCase):
             self.assertTrue(output.exists());self.assertTrue((output/'platform').exists())
             self.assertFalse((output/'composition.json').exists());self.assertFalse(args[4].exists())
 
+    def test_configuration_removal_reviews_fixed_opaque_snapshot_without_deleting_data(self):
+        with tempfile.TemporaryDirectory(dir=Path('/tmp').resolve()) as temporary:
+            root=Path(temporary);args=self.fixture(root);output=root/'combined'
+            result=API['compose'](*args[:4],output);snapshot=root/'configuration';snapshot.mkdir(mode=0o700)
+            names=['runtime-enrollment.json','session-enrollment.json','python-enrollment.json',
+                   'resource-enrollment.json','native-serving-launch.json','sandbox-enrollment.json']
+            rows=[]
+            for index,name in enumerate(names):
+                if index==3:
+                    rows.append({'name':name});continue
+                payload=b'opaque non-policy bytes '+str(index).encode()
+                (snapshot/name).write_bytes(payload);(snapshot/name).chmod(0o600)
+                rows.append({'name':name,'bytes':len(payload),'sha256':sha(payload),'originalUID':os.getuid(),'originalMode':0o644})
+            manifest={'version':1,'scope':'opaque_configuration_data_only','files':rows}
+            payload=json.dumps(manifest).encode();(snapshot/'manifest.json').write_bytes(payload);(snapshot/'manifest.json').chmod(0o600)
+            digest=sha(payload);before={p.name:p.read_bytes() for p in snapshot.iterdir()}
+            command=['node',str(ROOT/'scripts/install-platform.mjs'),'propose-enrollment-removal',
+                '--candidate',str(output),'--sha256',result['composition_sha256'],'--host','fios-edge-a.lab',
+                '--configuration',str(snapshot),'--configuration-sha256',digest]
+            completed=subprocess.run(command,capture_output=True,timeout=10)
+            self.assertEqual(completed.returncode,0,completed.stderr)
+            plan=json.loads(completed.stdout)
+            self.assertEqual(plan['operation'],'configuration_removal_command_proposal')
+            self.assertEqual(plan['state'],'blocked');self.assertFalse(plan['commands_authorized'])
+            self.assertFalse(plan['configuration_removed']);self.assertFalse(plan['state_opened'])
+            self.assertFalse(plan['stopped_state_backup_verified']);self.assertFalse(plan['configuration_documents_interpreted'])
+            self.assertEqual(plan['privileged_commands'],[]);self.assertTrue(plan['configuration_snapshot_rechecked'])
+            self.assertTrue(plan['native_inference_uncertainty_retained']);self.assertTrue(plan['credentials_retained'])
+            removals=plan['proposed_file_removals'];self.assertEqual(len(removals),5)
+            self.assertEqual([x['argv'] for x in removals],[['/Library/Application Support/Fios/Studio/'+x['name']] for x in rows if 'bytes' in x])
+            self.assertTrue(all(x['program']=='/bin/rm' and x['required_uid']==0 for x in removals))
+            self.assertNotIn(b'opaque non-policy bytes',completed.stdout)
+            self.assertEqual(before,{p.name:p.read_bytes() for p in snapshot.iterdir()});self.assertFalse(args[4].exists())
+            (snapshot/names[0]).write_bytes(b'changed')
+            with self.assertRaises(ValueError):REVIEW['configuration_removal_proposal'](output,result['composition_sha256'],'fios-edge-a.lab',snapshot,digest)
+            (snapshot/names[0]).write_bytes(before[names[0]])
+            manifest['version']=True;bad=json.dumps(manifest).encode();(snapshot/'manifest.json').write_bytes(bad)
+            with self.assertRaises(ValueError):REVIEW['configuration_removal_proposal'](output,result['composition_sha256'],'fios-edge-a.lab',snapshot,sha(bad))
+            (snapshot/'manifest.json').write_bytes(before['manifest.json']);(snapshot/'unrelated').write_bytes(b'retain')
+            with self.assertRaises(ValueError):REVIEW['configuration_removal_proposal'](output,result['composition_sha256'],'fios-edge-a.lab',snapshot,digest)
+            self.assertEqual((snapshot/'unrelated').read_bytes(),b'retain')
+
     def test_independent_review_rejects_changed_surface_and_claimed_authority(self):
         for mutation in ('none','bytes','extra-directory','approval','duplicate-key'):
             with self.subTest(mutation=mutation), tempfile.TemporaryDirectory(dir=Path('/tmp').resolve()) as temporary:
