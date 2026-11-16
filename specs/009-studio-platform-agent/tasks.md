@@ -1026,3 +1026,5 @@ Native observation now has a narrowed code-only client/worker and internal manag
 Clean e0de598 read-only observation package and actual old/new/old manager/stopped-state recovery pass with uncertainty/export retained and future-schema refusal. Bounded2-thread recovery compilation is explicit. Root-protected installation, native observer factory/producer and operational acceptance remain open;39/55 whole tasks unchanged.
 
 Readonly native observation now has an off-loop protected-profile factory and per-operation live process resolver. Debug/optimized,200 Node and actual dynamic/fixed/maintenance integrations pass; public development images refuse installed metadata before reading it. Clean packaging/public startup, positive protected-root factory and native production observation bootstrap remain pending; full native authority and39/55 whole tasks unchanged.
+
+Clean cc87e92 observer-source package qualifies184 inputs/9 inactive artifacts, actual public private-image refusal and old/new/old recovery. Positive installed factory and production native observation bootstrap remain unfinished;39/55 whole tasks unchanged.
