@@ -309,6 +309,13 @@ public enum ManagerRuntime {
                             now:requestedAt,epoch:epoch,sequence:Int64(sequence),vmEpoch:vmEpoch(now:requestedAt))
                         response["resources"]=telemetry.resources
                         response["resource_observation"]=telemetry.observation
+                    case .preparation:
+                        let subject=try NativePreparationSubject(payload:request.payload)
+                        response["preparation"]=NSNull()
+                        if let sample=activeExecution?.preparationObservation(subject,requestedAt),
+                           let frame=try? sample.encoded(subject:subject,managerEpoch:epoch,journal:journal,now:requestedAt) {
+                            response["preparation"]=try JSONSerialization.jsonObject(with:frame)
+                        }
                     case .activity:
                         guard request.payload.isEmpty else { throw ControlError.invalid_request }
                         guard activitySequence<WireScalar.maximumTimestamp else {throw ControlError.internal_error}

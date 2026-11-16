@@ -115,6 +115,8 @@ private func runPreparationPlanBindingTests(peer:NativeControlPeer)throws {
     let scope=InferenceScope(host:"fixture-host",endpointHash:String(repeating:"a",count:64),profileHash:String(repeating:"b",count:64),
         managerEpoch:"00000000-0000-4000-8000-000000000002",nativeEpoch:String(repeating:"a",count:32),
         canonicalModel:"fixture/model",nativeModel:"fixture/model",sequence:1,sampledAt:HostResources.nowMilliseconds())
+    _=try journal.reserveJob(DurableJob(id:job,idempotency:UUID().uuidString.lowercased(),ownerHash:String(repeating:"c",count:64),requestHash:String(repeating:"d",count:64),created:scope.sampledAt))
+    try journal.transitionJob(id:job,to:.running,now:scope.sampledAt)
     try journal.claim(job:job,attempt:0,model:scope.canonicalModel,scope:scope)
     let plan=try journal.planWorkerStart(job:job,attempt:0);try journal.markDispatched(job:job,attempt:0)
     let source=PreparationReservationSource(peer:peer,mode:.healthy);source.release.signal()
@@ -129,9 +131,29 @@ private func runPreparationPlanBindingTests(peer:NativeControlPeer)throws {
     let binding=try WorkerPreparationBinding.capture(plan:plan,journal:journal,prepared:prepared,now:now)
     try binding.validate(plan:plan,scope:scope,journal:journal,now:now)
     guard binding.rootSequence==UInt64.max,binding.launchNonce==plan.nonce else {fatalError("Original plan/root identity lost")}
+    let subject=try NativePreparationSubject(payload:["job_id":job,"attempt":0,"root_sequence":String(UInt64.max),"correlation_id":binding.correlationID])
+    let primary=NativePrimaryActivity(phaseVersion:4,instance:scope.nativeEpoch,sampleSequence:13,sampledAt:now,uncertain:false,
+        owners:1,ingress:0,preparing:1,queued:0,active:0,responding:0,
+        models:[NativePrimaryModelActivity(model:scope.nativeModel,preparing:1,queued:0,active:0,responding:0)])
+    let registry=NativeRegistryActivity(primary:primary,registryGeneration:7,transitioning:false,models:[
+        NativeRegistryModelFact(model:scope.nativeModel,readyDeclared:false,transitioning:false,uncertain:false,claimable:true,counts:NativePhaseCounts(ingress:0,preparing:1,queued:0,active:0,responding:0)),
+        NativeRegistryModelFact(model:"fixture/idle",readyDeclared:true,transitioning:false,uncertain:false,claimable:true,counts:.zero)])
+    let activity=NativePrimaryActivitySample(peer:peer,receivedAt:now,registry:registry)
+    guard let lineage=prepared.lineage,
+          try binding.observation(lineage:lineage,activity:activity,journal:journal,now:now)==nil,
+          let observation=try binding.observation(lineage:lineage,activity:activity,journal:journal,sourceCoverage:.all_clients,now:now) else {fatalError("Original scoped observation lost its separate coverage ceiling")}
+    let frame=try observation.encoded(subject:subject,managerEpoch:scope.managerEpoch,journal:journal,now:now)
+    let object=try JSONSerialization.jsonObject(with:frame) as! [String:Any]
+    guard object["root_sequence"] as? String==String(UInt64.max),object["registry_ready_model"] as? String=="fixture/idle",
+          object["native_model"] as? String==scope.nativeModel,
+          WireScalar.integer(object["lease_requested_at"])==prepared.registration.sample.requestedAt else {fatalError("Scoped export changed original lease or resident identity")}
+    let wrong=try NativePreparationSubject(payload:["job_id":job,"attempt":0,"root_sequence":"1","correlation_id":binding.correlationID])
+    do{_=try observation.encoded(subject:wrong,managerEpoch:scope.managerEpoch,journal:journal,now:now);fatalError("Scoped observation crossed original root")}catch RuntimeError.identity {}
     let missing=PreparedNativeReservation(registration:prepared.registration,lineage:nil)
     do{_=try WorkerPreparationBinding.capture(plan:plan,journal:journal,prepared:missing,now:now);fatalError("Missing lineage became launch-plan binding")}catch RuntimeError.identity {}
     try journal.claim(job:other,attempt:0,model:scope.canonicalModel,scope:scope)
+    do{_=try observation.encoded(subject:subject,managerEpoch:scope.managerEpoch,journal:journal,now:now);fatalError("Scoped observation ignored independent unresolved inference")}catch RuntimeError.identity {}
+    guard try binding.observation(lineage:lineage,activity:activity,journal:journal,sourceCoverage:.all_clients,now:now)==nil else {fatalError("Fresh metadata laundered independent inference uncertainty")}
     let otherPlan=try journal.planWorkerStart(job:other,attempt:0)
     do{try binding.validate(plan:otherPlan,scope:scope,journal:journal,now:now);fatalError("Preparation crossed original plan")}catch RuntimeError.identity {}
     let expiry=prepared.registration.sample.requestedAt+Int64(prepared.registration.acknowledgement.lifetimeMilliseconds)

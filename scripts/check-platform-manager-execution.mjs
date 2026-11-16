@@ -38,6 +38,10 @@ async function start(state,mode){
  mkdirSync(state,{recursive:true,mode:0o700});
  const child=spawn(binary,[state,docker,createHash('sha256').update(readFileSync(docker)).digest('hex'),socketURL.slice(7),image,mode,...(mode==='models'?[join(root,'.venv/bin/python')]:[])],{cwd:root,env:environment,stdio:mode==='models'?['pipe','ignore','ignore']:'ignore'});children.push(child);
  await until(async()=>{assert(!exited(child),'Fixture manager exited');try{return (await rpc(state,'status',{},'observe')).ok;}catch(error){if(['ENOENT','ECONNREFUSED'].includes(error.code))return false;throw error;}});
+ const subject={job_id:randomUUID(),attempt:0,root_sequence:'18446744073709551615',correlation_id:'a'.repeat(64)};
+ const unknown=await rpc(state,'preparation',subject,'observe');assert.equal(unknown.ok,true);assert.equal(unknown.preparation,null,'Missing original scope granted preparation');
+ const malformed=await rpc(state,'preparation',{...subject,attempt:true},'observe');assert.equal(malformed.ok,false);assert.equal(malformed.error,'invalid_request');
+ const denied=await rpc(state,'preparation',subject,'task');assert.equal(denied.ok,false);assert.equal(denied.error,'unauthorized');
  return child;
 }
 async function stop(child){if(!exited(child))child.kill('SIGTERM');await until(()=>exited(child),5000);assert.equal(child.exitCode,0,'Fixture manager failed graceful exit');}

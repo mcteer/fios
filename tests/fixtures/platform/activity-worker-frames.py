@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 import sys,time,inspect
 from fios_agent import platform_protocol
-from fios_agent.platform_guard import GuardProfile,validate_observation,NativeGuardError
+from fios_agent.platform_guard import GuardProfile,validate_observation,validate_preparation_observation,NativeGuardError
 from fios_agent.platform_protocol import parse_platform_command
 
 project=Path(__file__).resolve().parents[3]
@@ -23,3 +23,12 @@ for name in ('idle','queued','active','responding','preparing','unknown','confli
     except NativeGuardError:
         if name not in ('preparing','unknown','conflict'):raise
 print('PASS actual Swift current exports -> installed Python:4 eligible fixtures/3 preparation-or-unknown refusals; no native authority')
+
+preparation=json.loads((root/'preparation.json').read_text())
+validate_preparation_observation(preparation,profile,command,'18446744073709551615',int(time.time()*1000))
+for changes in ({'source_coverage':'unknown'},{'root_sequence':'1'},{'lease_expires_at':int(time.time()*1000)}):
+    try:
+        validate_preparation_observation({**preparation,**changes},profile,command,'18446744073709551615',int(time.time()*1000))
+    except NativeGuardError:pass
+    else:raise AssertionError('Invalid original preparation frame became eligible')
+print('PASS actual checked original Swift preparation -> installed Python; scope/lease/unresolved claim retained; no native authority')

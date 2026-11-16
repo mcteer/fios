@@ -13,12 +13,12 @@
     {"name":"trailing object", "accept":false, "json":"{\"version\":1,\"id\":\"11111111-1111-4111-8111-111111111111\",\"operation\":\"status\",\"payload\":{}}{}"}
   ],
   "roles": {
-    "observer":["status","activity","resources"],
+    "observer":["status","activity","resources","preparation"],
     "task":["status","job.create","job.status","job.renew","job.cancel","artifact.read","model.request"],
-    "operator":["status","activity","resources","service.desired","service.drain","service.force","reconcile"],
+    "operator":["status","activity","resources","preparation","service.desired","service.drain","service.force","reconcile"],
     "sandbox":["model.request"]
   },
-  "operations":["status","activity","resources","reconcile","job.create","job.status","job.renew","job.cancel","artifact.read","model.request","service.desired","service.drain","service.force"],
+  "operations":["status","activity","preparation","resources","reconcile","job.create","job.status","job.renew","job.cancel","artifact.read","model.request","service.desired","service.drain","service.force"],
   "states": {
     "service":["mlx","orbstack"],
     "desired":["running","maintenance","stopped"],

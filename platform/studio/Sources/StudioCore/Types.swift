@@ -3,7 +3,7 @@ import CoreFoundation
 
 public enum ControlError: String, Error, Codable { case invalid_request, unauthorized, unsupported_version, internal_error, busy }
 public enum ControlOperation: String, Sendable {
-    case status, activity, resources, reconcile
+    case status, activity, resources, preparation, reconcile
     case jobCreate = "job.create", jobStatus = "job.status", jobRenew = "job.renew", jobCancel = "job.cancel"
     case artifactRead = "artifact.read", modelRequest = "model.request"
     case serviceDesired = "service.desired", serviceDrain = "service.drain", serviceForce = "service.force"
@@ -12,9 +12,9 @@ public enum ControlRole: Sendable {
     case observer, task, `operator`, sandbox
     public func allows(_ operation: ControlOperation) -> Bool {
         switch self {
-        case .observer: return [.status,.activity,.resources].contains(operation)
+        case .observer: return [.status,.activity,.resources,.preparation].contains(operation)
         case .task: return [.status,.jobCreate,.jobStatus,.jobRenew,.jobCancel,.artifactRead,.modelRequest].contains(operation)
-        case .operator: return [.status,.activity,.resources,.serviceDesired,.serviceDrain,.serviceForce,.reconcile].contains(operation)
+        case .operator: return [.status,.activity,.resources,.preparation,.serviceDesired,.serviceDrain,.serviceForce,.reconcile].contains(operation)
         case .sandbox: return operation == .modelRequest
         }
     }

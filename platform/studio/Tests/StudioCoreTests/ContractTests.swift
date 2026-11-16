@@ -16,7 +16,7 @@ func runContractTests() throws {
         guard accepted==vector.accept else {fatalError("Contract fixture mismatch: \(vector.name)")}
     }
     let roles:[String:ControlRole] = ["observer":.observer,"task":.task,"operator":.operator,"sandbox":.sandbox]
-    guard Set(fixture.roles.keys)==Set(roles.keys),Set(fixture.operations).count==13,fixture.operations.count==13 else {fatalError("Role/operation fixture incomplete")}
+    guard Set(fixture.roles.keys)==Set(roles.keys),Set(fixture.operations).count==14,fixture.operations.count==14 else {fatalError("Role/operation fixture incomplete")}
     for (name,role) in roles {
         let allowed=Set(fixture.roles[name]!)
         guard allowed.count==fixture.roles[name]!.count,allowed.isSubset(of:Set(fixture.operations)) else {fatalError("Unknown fixture permission")}

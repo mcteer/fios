@@ -4,7 +4,7 @@ Private worker metadata3 adds native_preparation_version1 while retaining
 pipe1/handoff1. Current Core accepts strict metadata2 for the legacy handoff
 path and strict metadata3 with preparation1; mixed/missing/unknown fields and
 unsupported versions refuse. This is protocol support, not native authority.
-The broker/factory preparation dispatch and manager producer remain unfinished.
+The broker/factory preparation dispatch and native source issuer remain unfinished.
 
 An original preparation is selected only by the private parent environment's
 FIOS_PLATFORM_PREPARATION_ROOT and FIOS_PLATFORM_PREPARATION_CORRELATION. Both
@@ -39,7 +39,13 @@ unknown scope or caller-supplied reserved header refuses before an actual POST.
 No retry, direct inference fallback, tools, SQLite or listener is introduced.
 Metadata/import/health operations still invoke no model.
 
-The current manager has no preparation producer/dispatch composition. The
-client therefore cannot grant production eligibility: native source guards,
+The manager recognizes this readonly query for observer/operator roles and
+refuses task/sandbox roles. Its typed observation relay defaults to nil. A checked
+observation can be built only from the original binding, current active job and
+launch, separate all-client ceiling and coherent native samples. Encoding rechecks
+the same journal instance/checkpoint/revision and original lease; any other
+unresolved inference refuses, even when native metadata looks fresh. No read
+changes an inference row or spent budget. The broker has not yet connected its
+preparation producer/dispatch composition. The client cannot grant production eligibility: native source guards,
 all-client proof/capacity and installed enrollment remain closed. Fixture
 responses do not qualify those capabilities or complete T022/T045.

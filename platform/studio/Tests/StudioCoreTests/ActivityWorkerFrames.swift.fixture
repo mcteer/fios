@@ -13,5 +13,52 @@ import Foundation
                 totals:counts,models:rows,context:ActivityObservationContext())
             try data.write(to:directory.appendingPathComponent(name+".json"))
         }
+        try emitPreparation(directory:directory)
     }
+}
+
+private final class FramePreparationSource:NativePreparationReserving,@unchecked Sendable {
+    let peer:NativeControlPeer
+    init(peer:NativeControlPeer){self.peer=peer}
+    func reservePreparation(instance:String,correlationID:String,model:String,lifetimeMilliseconds:UInt32,after sequence:UInt64)throws->NativePreparationSample {
+        let now=HostResources.nowMilliseconds()
+        return NativePreparationSample(peer:peer,requestedAt:now,receivedAt:now,acknowledgement:NativePreparationAcknowledgement(operation:.reserve,
+            instance:instance,correlationID:correlationID,model:model,rootSequence:UInt64.max,sampleSequence:sequence+1,sourceSampledAt:now,lifetimeMilliseconds:lifetimeMilliseconds))
+    }
+    func lineage(instance:String,correlationID:String)throws->NativeRequestLineageSample {
+        NativeRequestLineageSample(peer:peer,sampledAt:HostResources.nowMilliseconds(),lineage:NativeRequestLineage(instance:instance,correlationID:correlationID,
+            sampleSequence:12,rootSequence:UInt64.max,found:true,uncertain:false,references:1,owners:1,ingress:0,preparing:1,active:0,responding:0))
+    }
+}
+private func emitPreparation(directory:URL)throws {
+    let state=directory.appendingPathComponent("preparation-state"),job="00000000-0000-4000-8000-000000000003"
+    let journal=try Journal(directory:state),began=HostResources.nowMilliseconds()
+    let scope=InferenceScope(host:"fixture-host",endpointHash:String(repeating:"a",count:64),profileHash:String(repeating:"b",count:64),
+        managerEpoch:"00000000-0000-4000-8000-000000000002",nativeEpoch:String(repeating:"c",count:32),
+        canonicalModel:"fixture/model@studio-a",nativeModel:"fixture/model",sequence:7,sampledAt:began)
+    _=try journal.reserveJob(DurableJob(id:job,idempotency:UUID().uuidString.lowercased(),ownerHash:String(repeating:"d",count:64),requestHash:String(repeating:"e",count:64),created:began))
+    try journal.transitionJob(id:job,to:.running,now:began)
+    try journal.claim(job:job,attempt:0,model:scope.canonicalModel,scope:scope)
+    let plan=try journal.planWorkerStart(job:job,attempt:0);try journal.markDispatched(job:job,attempt:0)
+    let peer=NativeControlPeer(pid:42,start:99,executable:try VerifiedExecutable(path:"/fixture/native",sha256:String(repeating:"f",count:64)))
+    let pending=PendingNativePreparation(source:FramePreparationSource(peer:peer),instance:scope.nativeEpoch,
+        correlationID:try scope.nativeRequestCorrelationID(job:job,attempt:0),model:scope.nativeModel,after:10)
+    let deadline=ProcessInfo.processInfo.systemUptime+2
+    var result:Result<PreparedNativeReservation,NativeControlError>?
+    while result==nil && ProcessInfo.processInfo.systemUptime<deadline {result=pending.take();if result==nil {usleep(1000)}}
+    guard let result else {throw NativeControlError.deadline}
+    let prepared=try result.get(),now=HostResources.nowMilliseconds()
+    guard try journal.observePreparationRegistration(job:job,attempt:0,scope:scope,peer:peer,sample:prepared.registration,now:now),let lineage=prepared.lineage else {throw RuntimeError.identity}
+    let binding=try WorkerPreparationBinding.capture(plan:plan,journal:journal,prepared:prepared,now:now)
+    let counts=NativePhaseCounts(ingress:0,preparing:1,queued:0,active:0,responding:0)
+    let primary=NativePrimaryActivity(phaseVersion:4,instance:scope.nativeEpoch,sampleSequence:13,sampledAt:now,uncertain:false,
+        owners:1,ingress:0,preparing:1,queued:0,active:0,responding:0,models:[NativePrimaryModelActivity(model:scope.nativeModel,preparing:1,queued:0,active:0,responding:0)])
+    let activity=NativePrimaryActivitySample(peer:peer,receivedAt:now,registry:NativeRegistryActivity(primary:primary,registryGeneration:7,transitioning:false,models:[
+        NativeRegistryModelFact(model:scope.nativeModel,readyDeclared:false,transitioning:false,uncertain:false,claimable:true,counts:counts),
+        NativeRegistryModelFact(model:"other/idle-model",readyDeclared:true,transitioning:false,uncertain:false,claimable:true,counts:.zero)]))
+    guard try binding.observation(lineage:lineage,activity:activity,journal:journal,now:now)==nil,
+          let observation=try binding.observation(lineage:lineage,activity:activity,journal:journal,sourceCoverage:.all_clients,now:now) else {throw RuntimeError.identity}
+    let subject=try NativePreparationSubject(payload:["job_id":job,"attempt":0,"root_sequence":String(UInt64.max),"correlation_id":binding.correlationID])
+    try observation.encoded(subject:subject,managerEpoch:scope.managerEpoch,journal:journal,now:now).write(to:directory.appendingPathComponent("preparation.json"))
+    guard try journal.uncertainCount()==0,try journal.unresolvedCount()==1,try journal.requestCount(job:job)==1,try journal.inferenceScope(job:job,attempt:0)?.state == .dispatched else {throw JournalError.invalid}
 }
