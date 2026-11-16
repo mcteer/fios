@@ -30,7 +30,8 @@ struct WorkerDispatchBinding:Sendable {
 // cancellation branch can attest that its single-use plan created no process.
 struct WorkerNeverSpawnedEvidence:Sendable {
     let plan:PlannedWorkerStart
-    fileprivate init(plan:PlannedWorkerStart) {self.plan=plan}
+    let handoff:WorkerHandoffBinding?
+    fileprivate init(plan:PlannedWorkerStart,handoff:WorkerHandoffBinding?=nil) {self.plan=plan;self.handoff=handoff}
 }
 
 final class PythonWorkerFactory:Sendable {
@@ -79,17 +80,18 @@ final class PythonWorkerFactory:Sendable {
               components?.path=="/v1",components?.user==nil,components?.password==nil,
               components?.query==nil,components?.fragment==nil else { throw RuntimeError.identity }
     }
-    func beginStart(binding:WorkerDispatchBinding,plan:PlannedWorkerStart,started:Int64,now:Int64,initiallyCancelled:Bool=false)throws->PendingPythonWorker {
+    func beginStart(binding:WorkerDispatchBinding,plan:PlannedWorkerStart,started:Int64,now:Int64,initiallyCancelled:Bool=false,handoff:WorkerHandoffBinding?=nil)throws->PendingPythonWorker {
         try validate(binding,now:now)
         guard WireScalar.uuid(plan.nonce),started>=0,started<=ActivityPolicy.maximumTimestamp-2000 else {throw RuntimeError.invalid}
+        try handoff?.validate(plan:plan,scope:binding.inferenceScope())
         guard try plan.scope.encoded()==binding.inferenceScope().encoded(),plan.consume() else {throw RuntimeError.identity}
         return PendingPythonWorker(initiallyCancelled:initiallyCancelled) { [self] cancelled in
-            do {return .success(try spawnTransport(binding:binding,launchID:plan.nonce,cancelled:cancelled))}
-            catch WorkerStartFailure.cancelled {return .failure(.neverSpawned(WorkerNeverSpawnedEvidence(plan:plan)))}
+            do {return .success(try spawnTransport(binding:binding,launchID:plan.nonce,handoff:handoff,cancelled:cancelled))}
+            catch WorkerStartFailure.cancelled {return .failure(.neverSpawned(WorkerNeverSpawnedEvidence(plan:plan,handoff:handoff)))}
             catch {return .failure(.unavailable)}
         }
     }
-    private func spawnTransport(binding:WorkerDispatchBinding,launchID:String,cancelled:@Sendable ()->Bool)throws->StartedPythonWorker {
+    private func spawnTransport(binding:WorkerDispatchBinding,launchID:String,handoff:WorkerHandoffBinding?=nil,cancelled:@Sendable ()->Bool)throws->StartedPythonWorker {
         guard !cancelled() else {throw WorkerStartFailure.cancelled}
         try Self.verifyInvocation(invocation,executable:executable)
         guard !cancelled() else {throw WorkerStartFailure.cancelled}
@@ -106,13 +108,17 @@ final class PythonWorkerFactory:Sendable {
         env["FIOS_PLATFORM_NATIVE_SEQUENCE"]=String(binding.nativeSnapshot.sequence)
         env["FIOS_PLATFORM_CANONICAL_MODEL"]=binding.canonicalModel
         env["FIOS_PLATFORM_NATIVE_MODEL"]=binding.nativeModel
+        if let handoff {
+            env["FIOS_PLATFORM_HANDOFF_ROOT"]=String(handoff.rootSequence)
+            env["FIOS_PLATFORM_HANDOFF_CORRELATION"]=handoff.correlationID
+        }
         process.executableURL=URL(fileURLWithPath:invocation);process.arguments=Self.arguments
         process.environment=env;process.currentDirectoryURL=URL(fileURLWithPath:"/var/empty")
         process.standardInput=input;process.standardOutput=output;process.standardError=FileHandle.nullDevice
         do {
             try process.run()
             let grant=try? WorkerGrant.capture(pid:process.processIdentifier)
-            return StartedPythonWorker(process:process,input:input.fileHandleForWriting,output:output.fileHandleForReading,grant:grant)
+            return StartedPythonWorker(process:process,input:input.fileHandleForWriting,output:output.fileHandleForReading,grant:grant,handoff:handoff)
         }catch {
             try? input.fileHandleForWriting.close();try? output.fileHandleForReading.close()
             if process.isRunning {kill(process.processIdentifier,SIGKILL)}

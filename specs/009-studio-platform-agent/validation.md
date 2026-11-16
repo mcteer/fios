@@ -6711,3 +6711,33 @@ binds selected receipts without whole-native/publisher provenance. Published
 c41986fe17725af8e67731bc98a5d056018042dc / CI43772798771 passed all seven jobs.
 This handoff increment needs new exact-head CI after publication. No whole task,
 installation, activation, Studio acceptance, merge or deployment completes.
+
+
+### 2026-11-15 private worker original-root binding (source/mock only)
+
+`WorkerHandoffBinding.capture` requires the original live launch plan, durable
+dispatched exact scope and already-observed root/peer. The once-only factory
+transports that identity through its sanitized child environment, retains it
+through process ownership transfer, and requires it when accepting permission
+bytes. Python validates the full UInt64 decimal root, exact correlation, epoch
+and model before its one fixed POST. No new native/model engine is introduced.
+
+The isolated actual installed child returns mock text with the required native
+instance/root/request headers; completion/reap leaves the native claim uncertain.
+A separately cancelled, never-spawned launch releases its local slot while keeping
+both its native claim and an older unrelated uncertain claim. The final extra
+unit regression models an independently persisted terminal result to check that
+a later no-spawn acknowledgement preserves it rather than resurrecting a hold.
+That transition is synthetic fixture evidence, not a native proof issuer.
+
+Executed:198 Node/API and108 installed Python tests pass
+(`/private/tmp/fios-009-worker-handoff-npm.log`); frontend build, agent boundary
+and container observer/parser checks pass. Debug full policy run
+`/private/tmp/fios-009-worker-root-platform-debug3.log` passes in24936ms;
+optimized `/private/tmp/fios-009-worker-root-platform-release.log` passes
+in19812ms. Final terminal-preservation test reruns pass (25148ms Debug,19206ms optimized) in
+`/private/tmp/fios-009-worker-root-platform-debug4.log` and
+`/private/tmp/fios-009-worker-root-platform-release2.log`. Expanded Python missing/empty binding regressions also pass all108 installed tests (`/private/tmp/fios-009-worker-handoff-python-final.log`). Python was reinstalled
+with pinned uv, locked/no-editable before installed tests. No real inference,
+native installation/activation or whole task closure. Production automatic root
+acquisition and genuine completion/all-client reconciliation remain open.

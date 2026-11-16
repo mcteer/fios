@@ -47,3 +47,21 @@ Validation distinguishes deterministic orderings,32 actual two-thread races,
 strict header/wire checks, current native source-module tests and full-image/
 HTTP/Swift-journal integration. Model-free empty-catalog requests are separate
 from real model inference. See validation.md for executed evidence and limits.
+
+
+The private worker factory now accepts an optional `WorkerHandoffBinding` captured
+from the original live, once-only launch plan and its already-dispatched,
+checkpointed native root. It validates the exact scope and peer before launch,
+passes only the root and derived correlation through the sanitized private child
+environment, and carries that binding through launch ownership transfer. The
+installed Python transport validates the full UInt64 decimal root, exact command
+correlation, native epoch and model before adding `X-Fios-Handoff-Root` to its
+single permitted POST. Partial or invalid bindings fail closed; supplied request
+headers cannot override the parent identity.
+
+For a bound handoff, child no-spawn, zero-POST, completion and reap release no
+independent native claim. Durable terminal native evidence, if separately
+accepted, is preserved when subsequent child cancellation/output arrives. The
+legacy unbound fixture path retains its existing local not-sent transition.
+This API does not automatically register roots in the production ModelBroker or
+create native proof. Production composition and all-client proof remain open.

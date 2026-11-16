@@ -6,6 +6,7 @@ import os
 import struct
 import sys
 import time
+from pathlib import Path
 from uuid import UUID
 
 
@@ -33,7 +34,7 @@ async def main():
                 assert request['operation'] == 'activity' and request['payload'] == {}
                 sequence += 1
                 snapshot = {'version': 1, 'host': 'fixture-host', 'endpoint_hash': endpoint_hash,
-                            'profile_hash': profile_hash, 'manager_epoch': epoch, 'native_epoch': 'native-fixture-one',
+                            'profile_hash': profile_hash, 'manager_epoch': epoch, 'native_epoch': (Path(directory, 'native-epoch').read_text(encoding='ascii') if os.path.exists(directory + '/native-epoch') else 'native-fixture-one'),
                             'sequence': sequence, 'sampled_at': int(time.time() * 1000), 'coverage': 'supported',
                             'resident_model': 'fixture/idle-other', 'outstanding_owners': 0, 'loading': False}
                 response = body({'version': 1, 'id': request['id'], 'ok': True, 'epoch': epoch,
@@ -67,6 +68,10 @@ async def main():
                 elif method == 'GET' and route == '/v1/models':
                     result = body({'data': [{'id': 'fixture/model'}]})
                 elif method == 'POST' and route == '/v1/chat/completions':
+                    if os.path.exists(directory + '/native-epoch'):
+                        assert fields.get('x-fios-native-instance') == Path(directory, 'native-epoch').read_text(encoding='ascii')
+                        assert fields.get('x-fios-handoff-root') == '18446744073709551615'
+                        assert len(fields.get('x-fios-request-id', '')) == 64
                     posts += 1
                     print(json.dumps({'posts': posts}), flush=True)
                     value = json.loads(data)

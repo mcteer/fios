@@ -14,7 +14,7 @@ from pydantic_ai import CancellationToken
 
 from .harness import run_agent, INSTRUCTIONS
 from .platform_protocol import decode_platform_frame, parse_platform_command, endpoint_hash, request_correlation_id
-from .platform_guard import check_native_guard, NativeGuardError
+from .platform_guard import check_native_guard, bound_handoff_root, NativeGuardError
 from .protocol import utf16_length
 from .transport import StreamFailure
 from .worker import Settings, pipe_streams
@@ -72,10 +72,18 @@ class PlatformTransport(httpx2.AsyncBaseTransport):
                 raise StreamFailure('invalid_request')
             if not isinstance(native_epoch,str) or not native_epoch:
                 raise StreamFailure('model_unavailable')
-            if 'x-fios-request-id' in request.headers or 'x-fios-native-instance' in request.headers:
+            if any(name in request.headers for name in ('x-fios-request-id','x-fios-native-instance','x-fios-handoff-root')):
                 raise StreamFailure('invalid_request')
+            try:
+                handoff_root = bound_handoff_root(self.command, native_epoch)
+            except NativeGuardError:
+                raise StreamFailure('model_unavailable') from None
             request.headers['x-fios-request-id']=request_correlation_id(self.command)
             request.headers['x-fios-native-instance']=native_epoch
+            if handoff_root is not None:
+                request.headers['x-fios-handoff-root']=handoff_root
+            if self.token.cancelled or int(time.time()*1000)>=self.command.expires_at:
+                raise StreamFailure('invalid_request')
             self.actual_posts+=1
         return await self.inner.handle_async_request(request)
 

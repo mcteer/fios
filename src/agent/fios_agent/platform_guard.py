@@ -14,7 +14,7 @@ import sys
 import time
 from uuid import UUID, uuid4
 
-from .platform_protocol import decode_platform_frame
+from .platform_protocol import decode_platform_frame, request_correlation_id
 
 
 class NativeGuardError(ValueError):
@@ -154,5 +154,29 @@ async def check_native_guard(command):
         value = await query_observation(profile, command)
         validate_observation(value, profile, command, int(time.time() * 1000))
         return profile.native_epoch
+    except (ValueError, TypeError, KeyError, UnicodeError):
+        raise NativeGuardError() from None
+
+
+def bound_handoff_root(command, native_epoch):
+    """Optional enrolled parent metadata; never selected by pipe/model data.
+
+    A supplied root must bind this exact permission. No partial/invalid binding
+    can downgrade to an ordinary request or a different native instance.
+    """
+    root = os.environ.get('FIOS_PLATFORM_HANDOFF_ROOT')
+    correlation = os.environ.get('FIOS_PLATFORM_HANDOFF_CORRELATION')
+    if root is None and correlation is None:
+        return None
+    try:
+        profile = GuardProfile.from_environment()
+        if (not isinstance(root, str) or not 1 <= len(root) <= 20 or root[0] == '0'
+                or not root.isascii() or not root.isdecimal() or int(root) > 18446744073709551615
+                or not _digest(correlation) or correlation != request_correlation_id(command)
+                or profile.native_epoch != native_epoch or len(native_epoch) != 32
+                or any(c not in '0123456789abcdef' for c in native_epoch) or int(native_epoch, 16) == 0
+                or profile.native_model != command.model):
+            raise NativeGuardError()
+        return root
     except (ValueError, TypeError, KeyError, UnicodeError):
         raise NativeGuardError() from None

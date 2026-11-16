@@ -758,10 +758,19 @@ public final class Journal {
         let expected=try plan.scope.encoded()
         try transaction {
             guard let record=try inferenceScope(job:job,attempt:attempt),
-                  [.reserved,.uncertain].contains(record.state),try record.scope.encoded()==expected,
+                  (evidence.handoff == nil ? [.reserved,.uncertain].contains(record.state):[.dispatched,.uncertain,.complete,.not_sent].contains(record.state)),try record.scope.encoded()==expected,
                   try scalar("SELECT count(*) FROM worker_grants WHERE job=? AND attempt=?",[job,String(attempt)])==0 else {throw JournalError.conflict}
+            try evidence.handoff?.validate(plan:plan,scope:record.scope)
             try execute("UPDATE worker_launches SET reaped=1 WHERE job=? AND attempt=? AND nonce=? AND boot=? AND reaped=0",[job,String(attempt),plan.nonce,boot])
             guard sqlite3_changes(db)==1 else {throw JournalError.conflict}
+            if evidence.handoff != nil {
+                if [.complete,.not_sent].contains(record.state) {return} // Preserve independent terminal proof.
+                try execute("UPDATE inference SET uncertain=1 WHERE job=? AND attempt=?",[job,String(attempt)])
+                guard sqlite3_changes(db)==1 else {throw JournalError.conflict}
+                try execute("UPDATE inference_scopes SET state='uncertain' WHERE job=? AND attempt=?",[job,String(attempt)])
+                guard sqlite3_changes(db)==1 else {throw JournalError.conflict}
+                return // Local launch is reaped; the native claim stays independent.
+            }
             try execute("DELETE FROM inference WHERE job=? AND attempt=?",[job,String(attempt)])
             guard sqlite3_changes(db)==1 else {throw JournalError.conflict}
             try execute("UPDATE inference_scopes SET state='not_sent' WHERE job=? AND attempt=?",[job,String(attempt)])

@@ -23,6 +23,7 @@ func runPythonFactoryTests() throws {
     progress("metadata ready")
     guard factory.metadata.policy_input_units==fixture["policy_input_units"] as? Int else { fatalError("Installed policy units diverged from cross-language fixture") }
     try runNeverSpawnedWorkerTests(factory:factory)
+    try runHandoffNeverSpawnedTests(factory:factory)
     do {
         _=try PythonWorkerFactory(invocation:invocation.path,executableSHA256:String(repeating:"0",count:64),policySHA256:fixture["policy_sha256"] as! String)
         fatalError("Wrong interpreter hash accepted")
@@ -289,6 +290,52 @@ func runPythonFactoryTests() throws {
     let reports=String(decoding:counts,as:UTF8.self).split(separator:"\n")
     guard reports.count==1,let last=reports.last,
           let summary=try JSONSerialization.jsonObject(with:Data(last.utf8)) as? [String:Int],summary["posts"]==10 else { fatalError("Source conflict dispatched or replayed an extra model POST") }
+    // Actual installed child carries the original native identity, while its
+    // mock completion/reap must leave the native claim unresolved.
+    let handoffEpoch=String(repeating:"1",count:32)
+    try Data(handoffEpoch.utf8).write(to:directory.appendingPathComponent("native-epoch"))
+    let handoffDirectory=directory.appendingPathComponent("handoff-state")
+    let handoffJournal=try Journal(directory:handoffDirectory),handoffJob=UUID().uuidString.lowercased()
+    let handoffNow=HostResources.nowMilliseconds()
+    let handoffSnapshot=NativeSnapshot(host:"fixture-host",endpointHash:hash,nativeEpoch:handoffEpoch,sequence:1,sampledAt:handoffNow,allClientLifecycleCoverage:true,residentModel:nil,outstandingOwners:0,loading:false)
+    let handoffBinding=WorkerDispatchBinding(baseURL:base,guardPath:directory.appendingPathComponent("observe.sock").path,host:"fixture-host",profileHash:String(repeating:"f",count:64),managerEpoch:epoch,canonicalModel:"fixture/model",nativeModel:"fixture/model",nativeSnapshot:handoffSnapshot,nativeCompatibilityAccepted:true,apiKey:nil)
+    let handoffScope=try handoffBinding.inferenceScope()
+    try handoffJournal.claim(job:handoffJob,attempt:0,model:"fixture/model",scope:handoffScope)
+    let handoffPlan=try handoffJournal.planWorkerStart(job:handoffJob,attempt:0)
+    try handoffJournal.markDispatched(job:handoffJob,attempt:0)
+    let handoffPeer=NativeControlPeer(pid:42,start:99,executable:try VerifiedExecutable(path:"/fixture/native",sha256:String(repeating:"d",count:64)))
+    let handoffCorrelation=try handoffScope.nativeRequestCorrelationID(job:handoffJob,attempt:0)
+    let handoffSample=NativeRequestLineageSample(peer:handoffPeer,sampledAt:handoffNow,lineage:NativeRequestLineage(instance:handoffEpoch,correlationID:handoffCorrelation,sampleSequence:1,rootSequence:UInt64.max,found:true,uncertain:false,references:1,owners:1,ingress:1,preparing:0,active:0,responding:0))
+    _=try handoffJournal.observeLineage(job:handoffJob,attempt:0,scope:handoffScope,peer:handoffPeer,sample:handoffSample,now:handoffNow)
+    let handoff=try WorkerHandoffBinding.capture(plan:handoffPlan,journal:handoffJournal,peer:handoffPeer)
+    let launchTime=Int64(ProcessInfo.processInfo.systemUptime*1000)
+    let pending=try factory.beginStart(binding:handoffBinding,plan:handoffPlan,started:launchTime,now:handoffNow,handoff:handoff)
+    var handoffWorker:PrivateWorker?
+    let launchDeadline=ProcessInfo.processInfo.systemUptime+5
+    while ProcessInfo.processInfo.systemUptime<launchDeadline {
+        if let result=pending.take() {
+            let started=try result.get()
+            handoffWorker=try started.bind(journal:handoffJournal,key:WorkerLaunchKey(job:handoffJob,attempt:0),nonce:handoffPlan.nonce,started:launchTime,readyAt:Int64(ProcessInfo.processInfo.systemUptime*1000));break
+        }
+        Thread.sleep(forTimeInterval:0.005)
+    }
+    guard let handoffWorker else {throw RuntimeError.deadline}
+    let permissionTime=HostResources.nowMilliseconds()
+    let packet=try JSONSerialization.data(withJSONObject:["v":1,"type":"run","job_id":handoffJob,"attempt":0,"epoch":epoch,"model":"fixture/model","endpoint_hash":hash,"expires_at":permissionTime+5000,"context":[["role":"user","content":"fixture handoff"]]])
+    try handoffWorker.enqueue(packet,expectedModel:"fixture/model",endpointHash:hash,epoch:epoch,now:permissionTime)
+    var handoffAnswer="",handoffComplete=false
+    let handoffDeadline=ProcessInfo.processInfo.systemUptime+10
+    while !handoffWorker.reaped && ProcessInfo.processInfo.systemUptime<handoffDeadline {
+        for event in try handoffWorker.poll(now:Int64(ProcessInfo.processInfo.systemUptime*1000),authorized:true) {
+            if case .text(_,let text)=event {handoffAnswer+=text}
+            if case .complete=event {handoffComplete=true}
+        }
+        Thread.sleep(forTimeInterval:0.01)
+    }
+    guard handoffComplete,handoffAnswer=="MOCK_ONLY",handoffWorker.reaped,
+          try handoffJournal.activeLaunchCount()==0,try handoffJournal.unresolvedCount()==1,
+          try handoffJournal.inferenceScope(job:handoffJob,attempt:0)?.state == .uncertain else {fatalError("Bound child lost header or cleared native hold")}
+    print("PASS: installed private Python child forwards full-width original root on one mock POST; completion/reap retains native uncertainty")
     let reaped=HostResources.nowMilliseconds()
     try admission.reserveWorker(key:"reaped-one",sample:resources(reaped),now:reaped)
     try admission.reserveWorker(key:"reaped-two",sample:resources(reaped),now:reaped)
@@ -375,4 +422,50 @@ private func runNeverSpawnedWorkerTests(factory:PythonWorkerFactory)throws {
           try reopened.uncertainCount()==3,try reopened.unresolvedCount()==3,
           try reopened.requestCount(job:id)==1 else {throw JournalError.conflict}
     print("PASS: live one-use pre-spawn cancellation records exact not-sent attempt atomically, retaining older native uncertainty and request history; no worker/model POST")
+}
+
+// Synthetic native identity only; cancellation must retain its independent claim.
+private func runHandoffNeverSpawnedTests(factory:PythonWorkerFactory)throws {
+    for independentlyResolved in [false,true] {
+    let directory=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer {try? FileManager.default.removeItem(at:directory)}
+    let journal=try Journal(directory:directory),now=HostResources.nowMilliseconds()
+    let base="http://127.0.0.1:1/v1",epoch=String(repeating:"1",count:32)
+    let snapshot=NativeSnapshot(host:"fixture-host",endpointHash:PythonWorkerFactory.digest(base),nativeEpoch:epoch,sequence:1,sampledAt:now,allClientLifecycleCoverage:true,residentModel:nil,outstandingOwners:0,loading:false)
+    let binding=WorkerDispatchBinding(baseURL:base,guardPath:"/fixture/observe.sock",host:"fixture-host",profileHash:String(repeating:"f",count:64),managerEpoch:UUID().uuidString.lowercased(),canonicalModel:"fixture/model",nativeModel:"fixture/model",nativeSnapshot:snapshot,nativeCompatibilityAccepted:true,apiKey:nil)
+    let scope=try binding.inferenceScope(),job=UUID().uuidString.lowercased(),older=UUID().uuidString.lowercased()
+    let peer=NativeControlPeer(pid:42,start:99,executable:try VerifiedExecutable(path:"/fixture/native",sha256:String(repeating:"d",count:64)))
+    try journal.claim(job:older,attempt:0,model:scope.canonicalModel,scope:scope)
+    try journal.markDispatched(job:older,attempt:0);try journal.markUncertain(job:older,attempt:0)
+    try journal.claim(job:job,attempt:0,model:scope.canonicalModel,scope:scope)
+    let plan=try journal.planWorkerStart(job:job,attempt:0)
+    try journal.markDispatched(job:job,attempt:0)
+    do {_=try WorkerHandoffBinding.capture(plan:plan,journal:journal,peer:peer);fatalError("Unobserved native root accepted")}catch RuntimeError.identity {}
+    let correlation=try scope.nativeRequestCorrelationID(job:job,attempt:0)
+    let sample=NativeRequestLineageSample(peer:peer,sampledAt:now,lineage:NativeRequestLineage(instance:epoch,correlationID:correlation,sampleSequence:1,rootSequence:UInt64.max,found:true,uncertain:false,references:1,owners:1,ingress:1,preparing:0,active:0,responding:0))
+    _=try journal.observeLineage(job:job,attempt:0,scope:scope,peer:peer,sample:sample,now:now)
+    let handoff=try WorkerHandoffBinding.capture(plan:plan,journal:journal,peer:peer)
+    guard handoff.rootSequence==UInt64.max,handoff.correlationID==correlation else {throw JournalError.conflict}
+    do {try handoff.validate(job:older,attempt:0,scope:scope);fatalError("Foreign handoff accepted")}catch RuntimeError.identity {}
+    let operation=try factory.beginStart(binding:binding,plan:plan,started:Int64(ProcessInfo.processInfo.systemUptime*1000),now:now,initiallyCancelled:true,handoff:handoff)
+    let deadline=ProcessInfo.processInfo.systemUptime+2
+    var proof:WorkerNeverSpawnedEvidence?
+    while ProcessInfo.processInfo.systemUptime<deadline {
+        if let result=operation.take() {
+            guard case .failure(.neverSpawned(let evidence))=result else {throw JournalError.conflict}
+            proof=evidence;break
+        }
+        Thread.sleep(forTimeInterval:0.005)
+    }
+    guard let proof else {throw RuntimeError.deadline}
+    // Unit-only terminal transition models separately accepted native proof;
+    // the worker's no-spawn acknowledgement must neither mint nor undo it.
+    if independentlyResolved {try journal.resolveInference(job:job,attempt:0,scope:scope,outcome:.not_sent)}
+    try journal.recordWorkerNeverSpawned(job:job,attempt:0,evidence:proof)
+    guard try journal.activeLaunchCount()==0,try journal.unresolvedCount()==(independentlyResolved ? 1:2),try journal.uncertainCount()==(independentlyResolved ? 1:2),
+          try journal.inferenceScope(job:job,attempt:0)?.state == (independentlyResolved ? .not_sent:.uncertain),
+          try journal.inferenceScope(job:older,attempt:0)?.state == .uncertain else {fatalError("Local cancellation cleared native handoff or older uncertainty")}
+    do {try journal.recordWorkerNeverSpawned(job:job,attempt:0,evidence:proof);fatalError("Handoff cancellation replay accepted")}catch JournalError.conflict {}
+    }
+    print("PASS: original full-width native root binds once-only launch; local no-spawn cancellation releases only local slot and preserves both native claims")
 }

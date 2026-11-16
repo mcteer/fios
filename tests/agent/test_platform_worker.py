@@ -231,3 +231,40 @@ class PlatformWorkerTests(unittest.IsolatedAsyncioTestCase):
     def test_expired_permission_rejects(self):
         data=command();data['expires_at']=int(time.time()*1000)-1
         with self.assertRaises(PlatformProtocolError):parse_platform_command(data)
+
+    async def test_enrolled_original_handoff_root_is_bound_to_one_permission(self):
+        from pydantic_ai import CancellationToken
+        from fios_agent.transport import StreamFailure
+        permitted=parse_platform_command(command());seen=[]
+        async def handler(request):seen.append(dict(request.headers));return httpx2.Response(200)
+        async def emit(event):pass
+        environment={**guard_environment(),'FIOS_PLATFORM_NATIVE_EPOCH':'1'*32,
+                     'FIOS_PLATFORM_HANDOFF_ROOT':'18446744073709551615',
+                     'FIOS_PLATFORM_HANDOFF_CORRELATION':request_correlation_id(permitted)}
+        with patch.dict(os.environ,environment,clear=True),patch('fios_agent.platform_worker.check_native_guard',return_value='1'*32):
+            transport=PlatformTransport(permitted,httpx2.MockTransport(handler),emit,CancellationToken(),base_url='http://127.0.0.1:1/v1')
+            await transport.handle_async_request(httpx2.Request('POST','http://127.0.0.1:1/v1/chat/completions',json={'model':permitted.model}))
+            self.assertEqual(seen[-1]['x-fios-handoff-root'],'18446744073709551615')
+            self.assertEqual(seen[-1]['x-fios-request-id'],environment['FIOS_PLATFORM_HANDOFF_CORRELATION'])
+            await transport.aclose()
+        for changes in ({'FIOS_PLATFORM_HANDOFF_ROOT':'01'},{'FIOS_PLATFORM_HANDOFF_ROOT':'0'},
+                        {'FIOS_PLATFORM_HANDOFF_ROOT':'18446744073709551616'},
+                        {'FIOS_PLATFORM_HANDOFF_CORRELATION':'f'*64},
+                        {'FIOS_PLATFORM_NATIVE_EPOCH':'2'*32},
+                        {'FIOS_PLATFORM_HANDOFF_ROOT':''},
+                        {'FIOS_PLATFORM_HANDOFF_CORRELATION':''}):
+            with patch.dict(os.environ,{**environment,**changes},clear=True),patch('fios_agent.platform_worker.check_native_guard',return_value='1'*32):
+                transport=PlatformTransport(permitted,httpx2.MockTransport(handler),emit,CancellationToken(),base_url='http://127.0.0.1:1/v1')
+                with self.assertRaises(StreamFailure):
+                    await transport.handle_async_request(httpx2.Request('POST','http://127.0.0.1:1/v1/chat/completions',json={'model':permitted.model}))
+                self.assertEqual(transport.actual_posts,0)
+                await transport.aclose()
+        for missing in ('FIOS_PLATFORM_HANDOFF_ROOT','FIOS_PLATFORM_HANDOFF_CORRELATION'):
+            partial={key:value for key,value in environment.items() if key != missing}
+            with patch.dict(os.environ,partial,clear=True),patch('fios_agent.platform_worker.check_native_guard',return_value='1'*32):
+                transport=PlatformTransport(permitted,httpx2.MockTransport(handler),emit,CancellationToken(),base_url='http://127.0.0.1:1/v1')
+                with self.assertRaises(StreamFailure):
+                    await transport.handle_async_request(httpx2.Request('POST','http://127.0.0.1:1/v1/chat/completions',json={'model':permitted.model}))
+                self.assertEqual(transport.actual_posts,0)
+                await transport.aclose()
+        self.assertEqual(len(seen),1)
