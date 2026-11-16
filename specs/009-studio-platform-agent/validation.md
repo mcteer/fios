@@ -7409,3 +7409,12 @@ change; fresh clean packaging is required. No installation, activation, native
 model actuation, new inference plan, merge or deployment occurred. Whole39/55
 remains unchanged. Exact563ade3 CI43804147768 is still running; this new source
 batch requires its own exact-head CI.
+
+
+### Clean unused-preparation package qualification (2026-11-15)
+
+Clean revision `bbde708c0105a5918bcebcf022b44fa474870830` produces nine inactive artifacts and179 declared inputs in `/private/tmp/fios-009-unused-preparation-package-waa7ywir`. Manifest SHA256 `dd9fb3ec457d3605967bd8f2e43a884fe638f1a19b3321c023dbddef260754e8`; declared-source projection `2d3477821e46eed8346ad3b816f41245210a427d28a46225bb4f1a06d616996b`; final review `7eb3d5dd483d32e8a9e5733ad6d1fc384ee775654231ac885ca7e71570417ec5`.
+
+Both private Studio installation reviews remain blocked with zero privileged commands; all four plist stage/verify/lint checks pass. Separate unchanged Python candidate `d29ab3a0f26fef07c3e470838312bdd38a2b91baa85b80b47223b185f7c8f3e3` passes byte review before/after, actual Core factory metadata2/pipe1/handoff1 and108 copied-prefix tests with Unix sockets permitted and IP denied. Packaged CLI verifies/restores stopped backup `4a46fed8b26e5d535b601d0f19d28dc58045c1d0b5d54d00e831c4bfe00d4a82`; the restored current reader retains scoped not_sent, older uncertainty1 and history1, while the older reader refuses without modifying DB bytes.
+
+These are declared-input/private-artifact checks, not publisher/build/whole-repository/native provenance. Enrollment, installation and activation remain false. No model request, native actuation, merge or deployment occurred. Whole tasks remain39/55. Prior exact563ade3 CI43804147768 completed successfully with all seven jobs, including CI gate; this batch still requires its own exact-head CI.
