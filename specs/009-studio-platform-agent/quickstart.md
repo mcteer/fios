@@ -1486,3 +1486,15 @@ Ten finite Debug/ReleaseSafe cases run two tiny existing warm-kernel chunks with
 shared-event gates and five-second emergency release, no model/weights/inference.
 No serving source or configuration is changed. The ownership-disabled control is
 a test-host profile, not pristine upstream; all-client acceptance remains open.
+
+
+### Qwen warm descriptor IO supplement
+
+```sh
+.venv/bin/python -I -B scripts/check-platform-qwen-real-io.py --isolated --source /ABS/PRIVATE_CURRENT_NATIVE_SOURCE --zig /ABS/PINNED_ZIG
+```
+
+The checker requires the same recorded current source/ownership overlay, SDK27.2
+and selected SDK hashes. Twelve finite cases use separate private16MiB files and
+actual pread/close through an explicit IO gate. No model or inference runs; no
+physical-disk/residency or bounded blocked-IO acceptance is implied.

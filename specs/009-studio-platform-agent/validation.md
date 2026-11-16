@@ -7030,3 +7030,38 @@ Other producers/modalities, all-client normalized activity, positive model
 completion/admission, installed lifecycle and Studio acceptance remain open.
 No native code, model setting, numerical algorithm, installation, enrollment or
 activation changes;39/55 whole tasks unchanged.
+
+
+### 2026-11-15 Qwen warm actual descriptor IO
+
+New `check-platform-qwen-real-io.py` / `qwen_real_io_origins.zig.fixture` render
+actual current NgramTable warm fields and warmRegion/startWarm/warmMain/close,
+link real host custody/SDK and read a private16MiB sparse file using actual libc
+pread through an explicit gate. Normal cases perform two8MiB reads and observe
+the original request on the real worker thread. The descriptor closes only after
+join; ownership remains until close requests release. This is actual descriptor
+IO, not an assertion about physical SSD/page residency or a real model table.
+Inactive pool/embedded resources, private allocated map-length data and suppressed
+progress logs remain explicit fixtures; no numerical/model/GPU gather runs.
+
+Final receipt `/private/tmp/fios-009-current-warm-origins-check-tx30gt86/receipt.json`
+SHA256 `5491cbf6126f0397430dc4f9b4f0ceed93e6f3fe9129f34ef8425ce4e807f0e9`
+records12 expected Debug/ReleaseSafe stages: current-method ownership-disabled
+control failures, normal retained root through IO/join/close, missing origin
+refusing before actual read, independent uncertainty preserved after completed
+IO, close waiting while an actual-read gate is held, restored normal. The
+control is a test profile, not pristine upstream. All selected input/fixture/
+library hashes bracket unchanged, including the same4fc2c5d… libmlx and25dfeb4f…
+libmlxc. Native source/settings and the179-input application artifact projection
+are unchanged; no enclosing native rebuild is claimed.
+
+Excluded private prototypes: x34iwag0 failed duplicate Shared module ownership;
+51zyx47q failed old integer O flag syntax. Corrected fixtures use the actual
+host-owned Shared import and packed current flags. The genuine prototype
+q1bf6lpz then passes one real IO case. These are retained validation attempts,
+not installed operation or provenance.
+
+Bounded join and complete parent/pool/map/model cleanup remain unimplemented/
+unqualified for this participant. No all-client native authority, positive
+model completion, new inference plan, installation, enrollment, activation or
+whole-task closure;39/55 unchanged.
