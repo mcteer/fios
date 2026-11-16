@@ -1,0 +1,4 @@
+{
+  "src/plugins/qwen4_exp/qwen4_exp.zig": "b869e7f61e14a52e48117231df9ecbc62edb2fb3f0ef7eee79935d1909751128",
+  "src/plugins/qwen4_exp/plugin.zig": "7754aa3a888524a145c9abf3c3033dcea0168ef0719d35e62bbfe663c9f948d3"
+}

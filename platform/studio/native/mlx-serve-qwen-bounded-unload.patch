@@ -1,0 +1,75 @@
+--- a/src/plugins/qwen4_exp/qwen4_exp.zig
++++ b/src/plugins/qwen4_exp/qwen4_exp.zig
+@@ -207,6 +207,9 @@
+     /// first long prompt then faults 48 rows/token from SSD (38k: 174 s vs
+     /// 55 s warm). preads through the kept fd, never the mapping.
+     warm_thread: ?std.Thread = null,
++    // A timed-out unload retains the complete Model and this stable table.
++    fios_warm_join_pending: bool = false,
++    fios_warm_joined: std.atomic.Value(bool) = .init(false),
+     // Original host group for this optional IO worker; no native proof.
+     fios_warm_origin: ?*anyopaque = null,
+     fios_warm_origin_retirement_known: std.atomic.Value(bool) = .init(true),
+@@ -428,6 +431,43 @@
+             .wcols = @intCast(w.cols),
+             .scols = @intCast(sc.cols),
+         };
++    }
++
++    fn joinWarm(self: *NgramTable, thread: std.Thread) void {
++        thread.join();
++        // Last table access. The detached helper performs no model/device work.
++        self.fios_warm_joined.store(true, .release);
++    }
++
++    /// Local thread join only, never native completion. On refusal the caller
++    /// must retain the complete model, including this stable table.
++    pub fn stopWarmWithin(self: *NgramTable, timeout_ns: u64) bool {
++        if (!self.fios_warm_join_pending) {
++            const thread = self.warm_thread orelse return true;
++            self.warm_stop.store(true, .release);
++            self.fios_warm_joined.store(false, .release);
++            const joiner = std.Thread.spawn(.{}, joinWarm, .{ self, thread }) catch {
++                self.fios_warm_origin_retirement_known.store(false, .release);
++                if (comptime @import("build_options").fios_source_sdk) fios_origins.fios_native_request_owners_uncertain();
++                return false;
++            };
++            self.fios_warm_join_pending = true;
++            self.warm_thread = null;
++            joiner.detach();
++        }
++        const io = std.Io.Threaded.global_single_threaded.io();
++        const started = std.Io.Timestamp.now(io, .boot);
++        while (!self.fios_warm_joined.load(.acquire)) {
++            const elapsed = started.untilNow(io, .boot).nanoseconds;
++            if (elapsed < 0 or elapsed >= timeout_ns) {
++                self.fios_warm_origin_retirement_known.store(false, .release);
++                if (comptime @import("build_options").fios_source_sdk) fios_origins.fios_native_request_owners_uncertain();
++                return false;
++            }
++            const ts: std.c.timespec = .{ .sec = 0, .nsec = std.time.ns_per_ms };
++            _ = std.c.nanosleep(&ts, null);
++        }
++        return true;
+     }
+ 
+     pub fn close(self: *NgramTable) void {
+--- a/src/plugins/qwen4_exp/plugin.zig
++++ b/src/plugins/qwen4_exp/plugin.zig
+@@ -214,6 +214,16 @@
+ 
+ fn unload(mp: *anyopaque) callconv(.c) void {
+     const m: *Model = @ptrCast(@alignCast(mp));
++    // Before any parent/weight/configuration cleanup: blocked IO keeps the
++    // complete model alive. The driver independently retains uncertainty.
++    if (comptime @import("build_options").fios_source_sdk) {
++        const negative = struct { extern "c" fn fios_native_request_owners_known_uncertain() c_int; };
++        if (negative.fios_native_request_owners_known_uncertain() != 0) return;
++        if (m.trunk.qwen4) |state| {
++            if (!state.table.stopWarmWithin(2 * std.time.ns_per_s)) return;
++        }
++        if (negative.fios_native_request_owners_known_uncertain() != 0) return;
++    }
+     var it = m.recs.iterator();
+     while (it.next()) |e| if (e.value_ptr.pending) |p| ple.releasePlePending(p);
+     m.recs.deinit(gpa);

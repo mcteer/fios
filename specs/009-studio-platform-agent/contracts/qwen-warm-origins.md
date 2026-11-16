@@ -43,3 +43,8 @@ The separate [publication repair](qwen-warm-publication.md) subsequently moves
 the existing reader start past all fallible Trunk construction. Its component,
 native build and empty-catalog evidence is separate from this unchanged-method
 IO supplement; bounded successful-table shutdown remains open.
+
+The subsequent [serving-unload preflight](qwen-bounded-unload.md) qualifies a
+bounded wait for this reader's real join and complete plugin-parent retention
+on refusal. It leaves the aggregate negative fence intact and does not qualify
+later pool/map/GPU cleanup or other direct SDK consumers.

@@ -1511,3 +1511,19 @@ bounded to120s each, IP-denied executions to15s. Run after full native builds,
 so component compilers do not overlap the two-job enclosure. Receipts identify
 modeled dependencies; no model load, bounded shutdown or native authority follows.
 See [the contract](contracts/qwen-warm-publication.md).
+
+### Qwen reader join before serving-plugin cleanup
+
+```sh
+.venv/bin/python -I -B scripts/check-platform-qwen-bounded-unload.py --isolated --source /ABS/PRIVATE_PRE_BOUNDED_UNLOAD_SOURCE --zig /ABS/PINNED_ZIG
+```
+
+The exact two-file parent and current warm overlay/SDK are required. Sixteen
+Debug/ReleaseSafe cases combine finite compilation/execution under IP denial
+with a120s process-group deadline per case. The held-read control releases at3s;
+the candidate checks its two-second cooperative wait and retains the complete
+modeled parent without cleanup. Real file IO, thread join and host custody run;
+other model resources and join-creation failure are explicit fixture ports.
+Finish this checker before starting a two-job full native build. This does not
+qualify all model cleanup, native completion or admission; see
+[the contract](contracts/qwen-bounded-unload.md).

@@ -7120,3 +7120,63 @@ Exact232e448 CI43788982300 passed all seven jobs including aggregate. Published
 3ec35a2 CI43792614286 is still running; local later work needs its own exact-head
 CI after publication. These results are separate from merge/deployment, neither
 of which occurred.
+
+### 2026-11-15 Qwen warm-reader join preflight and retained plugin parent
+
+The two-file `mlx-serve-qwen-bounded-unload.patch` adds a source-SDK serving
+plugin preflight before any model resource cleanup. A helper owns and actually
+joins the original reader thread; its final table access publishes local join
+completion. The caller has a two-second cooperative wait. Creation failure,
+clock reversal or timeout retains the complete Model and original table/FD/
+pool/map/weights/configuration, marks existing SDK uncertainty and prevents
+later local join from releasing the original descriptor. Fixed SDK-negative
+checks before/after the wait preserve independent uncertainty. No native
+terminal or positive admission proof is inferred. Legacy behavior is unchanged.
+
+`check-platform-qwen-bounded-unload.py` renders the actual warm fields/methods,
+join preflight and complete plugin unload callback. Real host custody, selected
+SDK, threads, joins and private-file pread/close run. Other model resources are
+explicit cleanup counters; a join-spawn wrapper injects its designated failure.
+Final16 Debug/ReleaseSafe stages comprise2 original-unload held-read failures
+and14 passing candidate cases: normal, blocked reader, independent uncertainty
+before/during join, helper creation failure, disabled warming and restored
+normal. Held-read cases assert1.9–2.5s wait with no parent cleanup and retain
+original uncertainty after the late actual read/join. The3s fixture release
+keeps the original unbounded callback finite. Receipt
+`/private/tmp/fios-009-current-warm-origins-check-n5mdyh35/receipt.json`
+SHA256 `25f461b5433df78bbb03624cb3fa6a3a7b89e6af0645974133d21edc268c5b07`.
+
+Enclosure `/private/tmp/fios-009-qwen-bounded-unload-_qklnpu0` passes enabled
+semantic35/35 in458.52s, link32/32 in5.84s and unit/global-storage checking in1.38s,
+with at most two native compiler jobs and no component overlap. Raw binary
+`45a096eafbd7006eea759e80ddf1687dcf4a4e7df60c0a1fde639252facbe184`;
+normalized binary `a8dd8f8c4d118faf82ed3945ab74054cd182bc516fef0fd374019eb2d891564a`.
+Native capsule receipt
+`780bd7ea02b9f4e589ec5998517dde1d9b740902e85812ff3df744e2ca971b4c`.
+All4 empty-catalog correlation/activity/startup/current-Core manager checks pass;
+nine rejected correlation requests load no model or inference. Manager health,
+ingress, lineage, backend and primary diagnostics remain nonauthoritative.
+
+Only2 of2380 native source files differ from the qualified publication parent;
+the component and enclosing native changed-file bytes match exactly. Selected446
+SDK files, C++ configuration and ANE bridge remain unchanged. Final selected
+review `final-review-current.json` SHA256
+`cdcad5289d11796d1202eda5fbdacdfd996dedf1fc901c6e265f6da025c442ba`.
+The inherited build driver used its earlier publication scope label; derived
+bounded-semantic/link receipts bind the preserved originals by hash and record
+the corrected component scope. No original receipt was overwritten.
+
+Retained earlier attempts: a source copy without Git metadata refused before
+compilation; fixture1hyaamtl failed optional-thread type inference before runtime.
+Corrected26khshwd then passed12 stages before adding creation-error/disabled
+reader coverage. An initial16-stage i7sq7gbf run passed; after removing an extra fixture EOF blank line, n5mdyh35 repeats all16 stages and supplies the final byte-bound qualification above. The prior142ff363… final review remains retained alongside the current review. No failed
+candidate was installed or used as acceptance.
+
+This bounds the reader wait in the serving plugin only. Later pool/map/GPU/model
+cleanup, other direct SDK consumers and the complete installed lifecycle remain
+unqualified. The existing Qwen aggregate negative fence stays sticky and can
+refuse ordinary driver cleanup before this callback. No installer, activation,
+native all-client coverage, atomic admission or whole-task completion follows.
+Whole39/55 remains unchanged. Published3ec35a2 CI43792614286 passed all seven
+jobs; latest publishedd04fc95 CI43795808251 remains running. No merge/deployment
+or new real-inference plan occurred.
