@@ -25,7 +25,7 @@ struct NativePrimaryActivity:Sendable {
     func validate()throws {
         _=try NativeControlWire.instanceBytes(instance)
         let counts=[owners,ingress,preparing,queued,active,responding]
-        guard [1,2,3].contains(phaseVersion),phaseVersion != 1 || (queued==0 && models.allSatisfy({$0.queued==0})),
+        guard [1,2,3,4].contains(phaseVersion),phaseVersion != 1 || (queued==0 && models.allSatisfy({$0.queued==0})),
               sampleSequence>0,sampleSequence<=UInt64(ActivityPolicy.maximumTimestamp),
               sampledAt.map({(1...ActivityPolicy.maximumTimestamp).contains($0)}) ?? true,
               counts.allSatisfy({(0...256).contains($0)}),owners==counts[1...5].reduce(0,+),models.count<=64 else {throw NativeControlError.invalid}

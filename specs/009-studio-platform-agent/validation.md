@@ -7500,3 +7500,33 @@ Evidence:
 - `/private/tmp/fios-009-preparation-plan-binding-release.log` SHA256 `5cc5807e001735fa2868e17b944be9b2f6928ede3aa3ca9bb401b7a6714d97c5`.
 
 No Python/native source or metadata ABI changed. Two new Core inputs require a future182-input package; the clean2470401/180-input package is now historical for this new Core source. The model broker/worker still uses the old handoff path: owned-preparation eligibility, atomic worker transport and production composition remain unfinished. No native authority, inference plan, installation, activation, merge, delivery or whole-task closure occurs;39/55 remains complete. Published2470401 CI43816703463 passed all seven jobs; this batch needs its own exact-head CI.
+
+
+### Registry claimability and original-preparation consistency (2026-11-16)
+
+The source's v3 diagnostic flags could not distinguish an owned unloaded target from an errored target. Readonly version4 keeps the same bounded coupled frame and adds a registry-computed claimability bit (unloaded/ready and not uncertain). It preserves v3 encoding/unknown claimability and rejects contradictory flags. Current Core requests4 explicitly and refuses downgrade; diagnostics require coupled metadata for4 and retain the same unknown all-client ceiling. This is neither native capacity nor an admission/terminal proof.
+
+Six Debug/ReleaseSafe actual tracker/protocol/registry-shaped cases pass: legacy versus available unloaded/ready, errored/loading/uncertain states, contradiction/version/provider refusal. Actual Zig4 frames decode through actual current-Core Debug/optimized binaries across both native modes. Native overlay touches only3 files; selected libmlx/libmlxc/C++ configuration remain unchanged. Enabled semantic35/35 passes408.861s, link32/32 passes5.839s, unit/global-storage20/20 passes1.214s. Raw786844ff…/normalized3c33f0ce…/capsuleedd2af59… bind selected inputs, not publisher/build/whole-native provenance. The first private overlay-preparation driver failed on a comment-anchor lookup before compilation; the corrected run uses the actual next function boundary.
+
+NativeOwnedPreparationCoherence adds a deliberately narrow diagnostic consistency result: separate reviewed all-client ceiling (defaultunknown), original current lease/root, fresh matching live lineage/v4 capture, exactly one original preparation owner, claimable target, no competing work/transition/uncertainty and at most one ready declaration. Preparing target and registry-ready identity remain distinct. The generic normalizer still returns unknown/no permit for conflicting preparing/resident models. Source-ceiling gaps, unavailable/legacy metadata, coherent competing active work, wrong root/peer, future clock and expiry refuse. It does not export observation, grant dispatch/capacity, connect worker/broker or issue proof. Full final Core debug compile32732ms/runtime30727ms and optimized62002ms/runtime24455ms pass with the new cases; earlier pre-helper debug26297/29452 and optimized62123/24209 are narrower checkpoints.
+
+All5 empty-image checks pass (correlation/activity/startup/preparation refusal/current-Core authenticated manager with primary phase4), and all5 existing actual-native handoff modes pass, preserving prior uncertainty/history. All images have empty catalogs; rejected private fixture POSTs are not real inference.
+
+Evidence:
+- `/private/tmp/fios-009-claimability-qxb7e3tx/receipt.json` SHA256 `f456e535b8e2be122304355ff0696b982f14cf83a4c2d48803bd5584925ab5ac`.
+- `/private/tmp/fios-009-claimability-cross-7vMbJU/receipt.json` SHA256 `022e7a593e25efbd05913ec952607dc457198c4078d4df2973c8751b5496a13a`.
+- `/private/tmp/fios-009-claimable-source-rsj4crv9/semantic-receipt.json` SHA256 `75ab9e9ecb9a19d3510e030901e48f3c7f0e5d919c513ec09a9e8d71b17d563c`.
+- `/private/tmp/fios-009-claimable-source-rsj4crv9/link-receipt.json` SHA256 `2f19b543417802864e405255a9a6ab0cffd0ae45b22d3909b19b0fe30b200e3a`.
+- `/private/tmp/fios-009-claimable-source-rsj4crv9/units-check-receipt.json` SHA256 `4e391ebcb6b2039ad8c463acf6523612a694dc8b5e46a528ced5bbf25e2ae618`.
+- `/private/tmp/fios-009-claimable-source-rsj4crv9/source-comparison.json` SHA256 `726642ba516c097f591b0972779b14ffa0175f87ae596626ebd0fafdc8f12cdb`.
+- `/private/tmp/fios-009-claimable-source-rsj4crv9/capsule-runtime-receipt.json` SHA256 `0aabe5b11ab412ec142b2bac96709b75ac6963c16eff955f47a0428d71c1fe1e`.
+- `/private/tmp/fios-009-claimable-source-rsj4crv9/handoffs-receipt.json` SHA256 `8bf479b652b42037d302813a6d5cea29a0bcc7cb35434e0b101c35eba996bf3d`.
+- `/private/tmp/f9-handoff-ARapBc/receipt.json` SHA256 `8714a67ef7970ff3b55b2207470cc6e0fae122be78b27456a6ae469750c9eb37`.
+- `/private/tmp/f9-handoff-WtILKE/receipt.json` SHA256 `83c201ce184cc8333f00fa28505b09ebc267431372dcd28df5e97b800f78275b`.
+- `/private/tmp/f9-handoff-EVJWO8/receipt.json` SHA256 `5faccbd5d859275d7983684cc90a8b0187e7f97e6c52d49d25b865ef4dce6102`.
+- `/private/tmp/f9-handoff-crMmJx/receipt.json` SHA256 `4136dc8215ffb0b81f98b58442b06c786ac155f224f355a0f6350040f3094e2b`.
+- `/private/tmp/f9-handoff-lTc3O3/receipt.json` SHA256 `7c14e812648a7f8da271474f01e66f9843874ccd2981a52d0e33d73d4432ab24`.
+- `/private/tmp/fios-009-owned-preparation-debug.log` SHA256 `bc9ac86a628f6efc2efda8de5da37182ae3579424ff6949b1c9686833ad8d45e`.
+- `/private/tmp/fios-009-owned-preparation-release.log` SHA256 `0065b10d10ef80d5277c309188bea1805231dc8bfd4b9c6d21f86c122dc08eca`.
+
+Final review `/private/tmp/fios-009-claimable-source-rsj4crv9/final-review.json` SHA256 `6524a2daa19e10a6b6204d30b5fc2f5a316f467d07344b8823f28ddd61e43a1d`. Current Core requires183-input packaging; the older2470401/180-input package remains historical for current source. Python metadata2/handoff1 is unchanged. Complete positive native coverage/proof/capacity, owned-observation export, actual worker preparation mode and production composition remain unfinished. No source guard activation, enrollment, installation, Studio actuation, real inference plan, merge or delivery occurs. Whole39/55 stays complete. Publisheda628278 CI43823398534 is running; prior2470401 passed all seven jobs.

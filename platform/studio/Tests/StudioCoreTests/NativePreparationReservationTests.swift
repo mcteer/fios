@@ -57,6 +57,7 @@ func runNativePreparationReservationTests()throws {
     }
     try runPreparationIdentityPersistenceTests(peer:peer)
     try runPreparationPlanBindingTests(peer:peer)
+    try runOwnedPreparationCoherenceTests(peer:peer)
     print("PASS: finite off-loop original preparation identity, once-only RPC/result, exact Unicode/peer scope, optional lineage and nonrenewable timing; no native authority")
 }
 
@@ -136,4 +137,54 @@ private func runPreparationPlanBindingTests(peer:NativeControlPeer)throws {
     let expiry=prepared.registration.sample.requestedAt+Int64(prepared.registration.acknowledgement.lifetimeMilliseconds)
     do{try binding.validate(plan:plan,scope:scope,now:expiry);fatalError("Expired preparation binding renewed")}catch RuntimeError.identity {}
     guard plan.consume(),!plan.consume(),source.counts.0==1,source.counts.1==1 else {fatalError("Binding created a process/consumed plan or retried native RPC")}
+}
+
+private func runOwnedPreparationCoherenceTests(peer:NativeControlPeer)throws {
+    let instance=String(repeating:"a",count:32),id=String(repeating:"b",count:64),model="fixture/a"
+    let source=PreparationReservationSource(peer:peer,mode:.healthy);source.release.signal()
+    let pending=PendingNativePreparation(source:source,instance:instance,correlationID:id,model:model,after:10)
+    var reply:Result<PreparedNativeReservation,NativeControlError>?
+    let end=ProcessInfo.processInfo.systemUptime+2
+    while reply==nil && ProcessInfo.processInfo.systemUptime<end {reply=pending.take();if reply==nil {usleep(1000)}}
+    guard let reply else {fatalError("Owned preparation fixture unavailable")}
+    let prepared=try reply.get(),registration=prepared.registration,now=HostResources.nowMilliseconds()
+    guard let lineage=prepared.lineage else {fatalError("Owned preparation original lookup unavailable")}
+    let target=NativeRegistryModelFact(model:model,readyDeclared:false,transitioning:false,uncertain:false,claimable:true,
+        counts:NativePhaseCounts(ingress:0,preparing:1,queued:0,active:0,responding:0))
+    let idle=NativeRegistryModelFact(model:"fixture/b",readyDeclared:true,transitioning:false,uncertain:false,claimable:true,counts:.zero)
+    func activity(rows:[NativeRegistryModelFact]=[target,idle],ingress:Int=0,queued:Int=0,active:Int=0,responding:Int=0,
+                  uncertain:Bool=false,transitioning:Bool=false,version:Int=4,samplePeer:NativeControlPeer?=nil,stamp:Int64?=nil)->NativePrimaryActivitySample {
+        let busy=rows.filter{$0.counts != .zero}.map{NativePrimaryModelActivity(model:$0.model,preparing:$0.counts.preparing,queued:$0.counts.queued,active:$0.counts.active,responding:$0.counts.responding)}
+        let primary=NativePrimaryActivity(phaseVersion:version,instance:instance,sampleSequence:13,sampledAt:stamp ?? now,uncertain:uncertain,
+            owners:1+ingress+queued+active+responding,ingress:ingress,preparing:1,queued:queued,active:active,responding:responding,models:busy)
+        return NativePrimaryActivitySample(peer:samplePeer ?? peer,receivedAt:now,registry:NativeRegistryActivity(primary:primary,registryGeneration:7,transitioning:transitioning,models:rows))
+    }
+    func evaluate(_ sample:NativePrimaryActivitySample,coverage:NativeCoverage = .all_clients,at:Int64?=nil)->NativeOwnedPreparation? {
+        NativeOwnedPreparationCoherence.evaluate(registration:registration,lineage:lineage,activity:sample,sourceCoverage:coverage,now:at ?? now)
+    }
+    let generic=NativeActivityCoherence.evaluate(coverage:.all_clients,sourceCoverage:.all_clients,
+        totals:target.counts,unattributed:.zero,
+        models:[NativeModelActivity(model:model,resident:false,counts:target.counts),NativeModelActivity(model:"fixture/b",resident:true,counts:.zero)],transitioning:false)
+    guard generic.state == .unknown,!generic.permits(target:model) else {fatalError("Scoped preparation weakened generic conflicting-resident refusal")}
+    let current=activity()
+    guard let result=evaluate(current),result.target.utf8.elementsEqual(model.utf8),result.registryReadyModel=="fixture/b",
+          current.registry!.conservativeActivity().state == .unknown else {fatalError("Original preparation changed global idle/residency semantics")}
+    guard evaluate(current,coverage:.unknown)==nil,evaluate(current,coverage:.unsupported)==nil else {fatalError("Partial source raised independent coverage ceiling")}
+    let unavailable=NativeRegistryModelFact(model:model,readyDeclared:false,transitioning:false,uncertain:false,claimable:false,counts:target.counts)
+    let legacy=NativeRegistryModelFact(model:model,readyDeclared:false,transitioning:false,uncertain:false,counts:target.counts)
+    for sample in [activity(rows:[unavailable,idle]),activity(rows:[legacy],version:3),activity(ingress:1),activity(queued:1),activity(active:1),activity(responding:1),
+                   activity(uncertain:true),activity(transitioning:true),activity(stamp:now+1),
+                   activity(samplePeer:NativeControlPeer(pid:43,start:peer.start,executable:peer.executable))] {
+        guard evaluate(sample)==nil else {fatalError("Unknown/conflicting source became owned preparation consistency")}
+    }
+    let competing=NativeRegistryModelFact(model:"fixture/c",readyDeclared:false,transitioning:false,uncertain:false,claimable:true,
+        counts:NativePhaseCounts(ingress:0,preparing:0,queued:0,active:1,responding:0))
+    guard evaluate(activity(rows:[target,idle,competing],active:1))==nil else {fatalError("Competing coherent native work accepted as original preparation only")}
+    let wrongRoot=NativeRequestLineageSample(peer:peer,sampledAt:lineage.sampledAt,lineage:NativeRequestLineage(instance:instance,correlationID:id,
+        sampleSequence:12,rootSequence:7,found:true,uncertain:false,references:1,owners:1,ingress:0,preparing:1,active:0,responding:0))
+    guard NativeOwnedPreparationCoherence.evaluate(registration:registration,lineage:wrongRoot,activity:current,sourceCoverage:.all_clients,now:now)==nil else {fatalError("Foreign original root accepted")}
+    let another=NativeRegistryModelFact(model:"fixture/c",readyDeclared:true,transitioning:false,uncertain:false,claimable:true,counts:.zero)
+    guard evaluate(activity(rows:[target,idle,another]))==nil,
+          evaluate(current,at:registration.sample.requestedAt+5000)==nil else {fatalError("Multiple ready models/expired lease accepted")}
+    guard source.counts.0==1,source.counts.1==1 else {fatalError("Owned preparation consistency repeated native IO")}
 }

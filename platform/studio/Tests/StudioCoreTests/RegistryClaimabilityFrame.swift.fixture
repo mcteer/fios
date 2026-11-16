@@ -1,0 +1,13 @@
+import Foundation
+@main struct RegistryClaimabilityFrame {
+    static func main()throws {
+        guard CommandLine.arguments.count==2 else {throw NativeControlError.invalid}
+        let value=try NativeRegistryActivityWire.reply(Data(contentsOf:URL(fileURLWithPath:CommandLine.arguments[1])),instance:String(repeating:"b5",count:16))
+        guard value.primary.phaseVersion==4,value.models.count==2,value.primary.preparing==1,
+              let a=value.models.first(where:{$0.model.utf8.elementsEqual("fixture/a".utf8)}),
+              let b=value.models.first(where:{$0.model.utf8.elementsEqual("fixture/b".utf8)}),
+              a.claimable==true,!a.readyDeclared,b.claimable==true,b.readyDeclared,
+              value.conservativeActivity().coverage == .unknown,value.conservativeActivity().state == .unknown else {throw NativeControlError.invalid}
+        print("PASS actual native claimability frame in current Core; no source authority")
+    }
+}

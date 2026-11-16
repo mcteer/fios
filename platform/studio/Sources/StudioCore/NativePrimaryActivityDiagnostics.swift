@@ -23,7 +23,7 @@ struct NativePrimaryActivityDiagnostics {
         // malformed sample cannot hide a later local rollback.
         previousNow=now
         let activity=sample.activity
-        do {try activity.validate();if let registry=sample.registry {try registry.validate()}else if activity.phaseVersion==3 {throw NativeControlError.invalid}} catch {failed();return}
+        do {try activity.validate();if let registry=sample.registry {try registry.validate()}else if [3,4].contains(activity.phaseVersion) {throw NativeControlError.invalid}} catch {failed();return}
         guard activity.instance==expectedInstance,(try? NativeControlWire.instanceBytes(activity.instance)) != nil,
               activity.sampleSequence>0,activity.sampleSequence<=UInt64(ActivityPolicy.maximumTimestamp),
               sample.peer.pid>1,sample.peer.start>0,let stamp=activity.sampledAt,
@@ -44,7 +44,7 @@ struct NativePrimaryActivityDiagnostics {
         var result:[String:Any]=["version":1,"scope":"primary_request_ownership","coverage":"unknown","authority":false,
             "state":configured ? (fenced ? "fenced":unavailable ? "unavailable":"waiting"):"unconfigured",
             "source_instance":NSNull(),"source_sequence":NSNull(),"source_sampled_at":NSNull(),"source_age_ms":NSNull(),
-            "received_at":NSNull(),"receipt_age_ms":NSNull(),"reported_counts":NSNull(),"model_identities":NSNull(),"tracker_uncertain":NSNull(),"retained_uncertainty":seenUncertainty,"registry_generation":NSNull(),"registry_model_identities":NSNull(),"registry_ready_declared":NSNull(),"registry_transitioning":NSNull(),"coherent_activity":NSNull()]
+            "received_at":NSNull(),"receipt_age_ms":NSNull(),"reported_counts":NSNull(),"model_identities":NSNull(),"tracker_uncertain":NSNull(),"retained_uncertainty":seenUncertainty,"registry_claimable":NSNull(),"registry_generation":NSNull(),"registry_model_identities":NSNull(),"registry_ready_declared":NSNull(),"registry_transitioning":NSNull(),"coherent_activity":NSNull()]
         guard configured,!fenced,let sample=value,let stamp=sample.activity.sampledAt else {return result}
         guard (0...ActivityPolicy.maximumTimestamp).contains(now) else {result["state"]="stale";return result}
         result["source_sequence"]=sample.activity.sampleSequence;result["source_sampled_at"]=stamp;result["source_age_ms"]=now-stamp
@@ -55,6 +55,7 @@ struct NativePrimaryActivityDiagnostics {
         result["reported_counts"]=["owners":activity.owners,"ingress":activity.ingress,"preparing":activity.preparing,"queued":activity.phaseVersion != 1 ? activity.queued as Any:NSNull(),"active":activity.active,"responding":activity.responding]
         result["model_identities"]=activity.models.count;result["tracker_uncertain"]=activity.uncertain
         if let registry=sample.registry {
+            if registry.primary.phaseVersion==4 {result["registry_claimable"]=registry.models.filter{$0.claimable==true}.count}
             result["registry_generation"]=registry.registryGeneration;result["registry_model_identities"]=registry.models.count
             result["registry_ready_declared"]=registry.models.filter(\.readyDeclared).count;result["registry_transitioning"]=registry.transitioning
             result["coherent_activity"]=registry.conservativeActivity().state.rawValue

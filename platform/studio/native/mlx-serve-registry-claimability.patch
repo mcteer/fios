@@ -1,0 +1,62 @@
+--- a/src/fios/current_registry_activity.zig
++++ b/src/fios/current_registry_activity.zig
+@@ -7,6 +7,7 @@
+     id: [owners.model_limit]u8 = @splat(0),
+     len: usize = 0,
+     ready_declared: bool = false,
++    claimable: bool = false,
+     transitioning: bool = false,
+     uncertain: bool = false,
+     preparing: usize = 0,
+@@ -59,6 +60,7 @@
+         if (model.state != .ready and !transitioning and !uncertain and find(&result, model.id) == null) continue;
+         const row = try add(&result, model.id);
+         row.ready_declared = model.state == .ready;row.transitioning = transitioning;row.uncertain = uncertain;
++        row.claimable = !uncertain and (model.state == .unloaded or model.state == .ready);
+         result.transitioning = result.transitioning or transitioning;
+         result.uncertain = result.uncertain or uncertain;
+     }
+--- a/src/fios/control_protocol.zig
++++ b/src/fios/control_protocol.zig
+@@ -170,8 +170,8 @@
+ pub const registry_response_size = 96 + ownership.model_capacity * registry_record_size;
+ pub fn dispatchRegistryActivity(tracker: *ownership.Tracker, io: std.Io, request: *const [primary_request_size]u8, source: ?RegistryActivitySource) [registry_response_size]u8 {
+     var response: [registry_response_size]u8 = @splat(0);
+-    @memcpy(response[0..4], "FIT9");response[4] = 3;
+-    if (!std.mem.eql(u8, request[0..4], "FIA9") or request[4] != 3 or
++    @memcpy(response[0..4], "FIT9");response[4] = if (request[4] == 4) 4 else 3;
++    if (!std.mem.eql(u8, request[0..4], "FIA9") or (request[4] != 3 and request[4] != 4) or
+         !std.mem.allEqual(u8, request[5..8], 0) or !std.mem.allEqual(u8, request[24..32], 0)) {
+         response[5] = @intFromEnum(Status.invalid);return response;
+     }
+@@ -202,7 +202,9 @@
+     var totals: [4]usize = @splat(0);var transitioning = false;
+     for (value.models[0..value.model_count],0..) |model,index| {
+         if (model.len == 0 or model.len > ownership.model_limit or !std.unicode.utf8ValidateSlice(model.id[0..model.len]) or
+-            std.mem.indexOfScalar(u8,model.id[0..model.len],0) != null or (model.uncertain and !value.uncertain)) {
++            std.mem.indexOfScalar(u8,model.id[0..model.len],0) != null or (model.uncertain and !value.uncertain) or
++            (model.claimable and (model.transitioning or model.uncertain)) or
++            (request[4] == 4 and model.ready_declared and !model.uncertain and !model.claimable)) {
+             response[5] = @intFromEnum(Status.invalid);return response;
+         }
+         for (value.models[0..index]) |prior| if (std.mem.eql(u8,prior.id[0..prior.len],model.id[0..model.len])) {
+@@ -218,7 +220,7 @@
+         const offset = 96 + index * registry_record_size;
+         std.mem.writeInt(u16,response[offset..][0..2],@intCast(model.len),.big);
+         response[offset + 2] = @intFromBool(model.ready_declared);
+-        response[offset + 3] = @as(u8,@intFromBool(model.transitioning)) | (@as(u8,@intFromBool(model.uncertain)) << 1);
++        response[offset + 3] = @as(u8,@intFromBool(model.transitioning)) | (@as(u8,@intFromBool(model.uncertain)) << 1) | (if (request[4] == 4) @as(u8,@intFromBool(model.claimable)) << 2 else @as(u8,0));
+         inline for (phases,0..) |count,phase| std.mem.writeInt(u32,response[offset + 4 + phase * 4 ..][0..4],@intCast(count),.big);
+         @memcpy(response[offset + 24 ..][0..model.len],model.id[0..model.len]);
+     }
+--- a/src/fios/control_transport.zig
++++ b/src/fios/control_transport.zig
+@@ -141,7 +141,7 @@
+             const value = preparation.dispatch(ownership.shared(), self.io, input[0..preparation.request_size], self.preparation_source);
+             @memcpy(storage[0..preparation.response_size], &value);
+             break :prepared storage[0..preparation.response_size];
+-        } else if (count == protocol.primary_request_size and input[4] == 3 and std.mem.eql(u8, input[0..4], "FIA9")) registry: {
++        } else if (count == protocol.primary_request_size and (input[4] == 3 or input[4] == 4) and std.mem.eql(u8, input[0..4], "FIA9")) registry: {
+             const value = protocol.dispatchRegistryActivity(ownership.shared(), self.io, input[0..protocol.primary_request_size], self.registry_activity);
+             @memcpy(storage[0..protocol.registry_response_size], &value);
+             break :registry storage[0..protocol.registry_response_size];

@@ -190,11 +190,11 @@ struct NativeControlClient:Sendable {
     }
     func primaryActivity(instance:String,after sequence:UInt64=0)throws->NativePrimaryActivitySample {
         let began=HostResources.nowMilliseconds()
-        let value=try NativeRegistryActivityWire.reply(exchange(NativeRegistryActivityWire.request(instance:instance),maximum:NativeRegistryActivityWire.responseSize),instance:instance,after:sequence)
+        let value=try NativeRegistryActivityWire.reply(exchange(NativeRegistryActivityWire.request(instance:instance,version:4),maximum:NativeRegistryActivityWire.responseSize),instance:instance,after:sequence)
         let completed=HostResources.nowMilliseconds()
         guard (0...ActivityPolicy.maximumTimestamp).contains(began),completed>=began,
               completed<=ActivityPolicy.maximumTimestamp,completed-began<=5000,
-              let stamp=value.primary.sampledAt,(-1000...5000).contains(completed-stamp) else {throw NativeControlError.invalid}
+              value.primary.phaseVersion==4,let stamp=value.primary.sampledAt,(-1000...5000).contains(completed-stamp) else {throw NativeControlError.invalid}
         return NativePrimaryActivitySample(peer:peer,receivedAt:completed,registry:value)
     }
     private func exchange(_ data:Data,maximum:Int)throws->Data {

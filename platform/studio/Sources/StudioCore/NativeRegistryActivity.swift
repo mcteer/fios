@@ -7,6 +7,7 @@ struct NativeRegistryModelFact:Sendable {
     let readyDeclared:Bool
     let transitioning:Bool
     let uncertain:Bool
+    var claimable:Bool? = nil
     let counts:NativePhaseCounts
 }
 struct NativeRegistryActivity:Sendable {
@@ -16,12 +17,16 @@ struct NativeRegistryActivity:Sendable {
     let models:[NativeRegistryModelFact]
     func validate()throws {
         try primary.validate()
-        guard primary.phaseVersion==3,registryGeneration<=UInt64(ActivityPolicy.maximumTimestamp),models.count<=64 else {throw NativeControlError.invalid}
+        guard [3,4].contains(primary.phaseVersion),registryGeneration<=UInt64(ActivityPolicy.maximumTimestamp),models.count<=64 else {throw NativeControlError.invalid}
         var identities=Set<Data>(),totals=[0,0,0,0],positive=[NativePrimaryModelActivity]()
         for row in models {
             guard WireScalar.model(row.model),!row.model.contains("\0"),identities.insert(Data(row.model.utf8)).inserted,
                   row.counts.ingress==0,row.counts.values.allSatisfy({(0...256).contains($0)}),
                   !row.uncertain || primary.uncertain else {throw NativeControlError.invalid}
+            if primary.phaseVersion==4 {
+                guard let claimable=row.claimable,!claimable || (!row.transitioning && !row.uncertain),
+                      !row.readyDeclared || row.uncertain || claimable else {throw NativeControlError.invalid}
+            } else if row.claimable != nil {throw NativeControlError.invalid}
             let phases=[row.counts.preparing,row.counts.queued,row.counts.active,row.counts.responding]
             let count=phases.reduce(0,+)
             guard count>0 || row.readyDeclared || row.transitioning || row.uncertain else {throw NativeControlError.invalid}
@@ -45,13 +50,14 @@ struct NativeRegistryActivity:Sendable {
 }
 enum NativeRegistryActivityWire {
     static let responseSize=67168,recordSize=1048
-    static func request(instance:String)throws->Data {
-        var data=try NativePrimaryActivityWire.queuedRequest(instance:instance);data[4]=3;return data
+    static func request(instance:String,version:UInt8=3)throws->Data {
+        guard [3,4].contains(version) else {throw NativeControlError.invalid}
+        var data=try NativePrimaryActivityWire.queuedRequest(instance:instance);data[4]=version;return data
     }
     static func reply(_ data:Data,instance:String,after sequence:UInt64=0)throws->NativeRegistryActivity {
         guard data.count==responseSize,sequence<=UInt64(ActivityPolicy.maximumTimestamp) else {throw NativeControlError.invalid}
         _=try NativeControlWire.instanceBytes(instance);let bytes=Array(data)
-        guard bytes[0..<4].elementsEqual("FIT9".utf8),bytes[4]==3,bytes[5]==0,bytes[6]==0,bytes[7]<=1,
+        guard bytes[0..<4].elementsEqual("FIT9".utf8),[3,4].contains(bytes[4]),bytes[5]==0,bytes[6]==0,bytes[7]<=1,
               bytes[8..<24].map({String(format:"%02x",$0)}).joined()==instance,
               bytes[76]<=1,bytes[77..<96].allSatisfy({$0==0}) else {throw NativeControlError.invalid}
         func integer(_ offset:Int,_ length:Int)->UInt64 {bytes[offset..<(offset+length)].reduce(0) {($0<<8)|UInt64($1)}}
@@ -63,18 +69,18 @@ enum NativeRegistryActivityWire {
         var rows=[NativeRegistryModelFact](),primaryRows=[NativePrimaryModelActivity]()
         for index in 0..<modelCount {
             let offset=96+index*recordSize,length=Int(integer(offset,2))
-            guard (1...1024).contains(length),bytes[offset+2]<=1,bytes[offset+3]<=3,
+            guard (1...1024).contains(length),bytes[offset+2]<=1,bytes[offset+3]<=(bytes[4]==4 ? 7:3),
                   bytes[(offset+20)..<(offset+24)].allSatisfy({$0==0}),
                   bytes[(offset+24+length)..<(offset+recordSize)].allSatisfy({$0==0}),
                   let model=String(data:Data(bytes[(offset+24)..<(offset+24+length)]),encoding:.utf8) else {throw NativeControlError.invalid}
             let phases=(0..<4).map {Int(integer(offset+4+$0*4,4))}
             guard phases.allSatisfy({(0...256).contains($0)}) else {throw NativeControlError.invalid}
-            rows.append(NativeRegistryModelFact(model:model,readyDeclared:bytes[offset+2]==1,transitioning:bytes[offset+3]&1 != 0,uncertain:bytes[offset+3]&2 != 0,
+            rows.append(NativeRegistryModelFact(model:model,readyDeclared:bytes[offset+2]==1,transitioning:bytes[offset+3]&1 != 0,uncertain:bytes[offset+3]&2 != 0,claimable:bytes[4]==4 ? bytes[offset+3]&4 != 0:nil,
                 counts:NativePhaseCounts(ingress:0,preparing:phases[0],queued:phases[1],active:phases[2],responding:phases[3])))
             if phases.reduce(0,+)>0 {primaryRows.append(NativePrimaryModelActivity(model:model,preparing:phases[0],queued:phases[1],active:phases[2],responding:phases[3]))}
         }
         guard bytes[(96+modelCount*recordSize)..<responseSize].allSatisfy({$0==0}) else {throw NativeControlError.invalid}
-        let primary=NativePrimaryActivity(phaseVersion:3,instance:instance,sampleSequence:current,sampledAt:stamp==UInt64.max ? nil:Int64(stamp),uncertain:bytes[7]==1,
+        let primary=NativePrimaryActivity(phaseVersion:Int(bytes[4]),instance:instance,sampleSequence:current,sampledAt:stamp==UInt64.max ? nil:Int64(stamp),uncertain:bytes[7]==1,
             owners:counts[0],ingress:counts[1],preparing:counts[2],queued:counts[3],active:counts[4],responding:counts[5],models:primaryRows)
         let value=NativeRegistryActivity(primary:primary,registryGeneration:generation,transitioning:bytes[76]==1,models:rows)
         try value.validate();return value

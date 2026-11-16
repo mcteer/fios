@@ -87,3 +87,28 @@ real completion. This supersedes the earlier absence/CPU-only observation for
 that specific port, without establishing complete all-client/producer coverage,
 normalized native activity, positive model proof or admission. Serving code and
 settings remain unchanged;39/55 whole tasks remain complete.
+
+## Original preparation and readonly claimability continuation
+
+The internal registry claim now has a bounded single-use lease bridge, private
+source-fixture Unix reserve/withdraw transport, exact bound-chat consumption and
+typed Core acknowledgements. Original receipt identity and launch-plan binding
+remain separate from admission. The current native primary guard stays false;
+these paths are not production native authority.
+
+A subsequent source read found that v3's ready/transition/uncertainty flags do
+not distinguish an owned unloaded target from an errored one. Version4 supplies
+an explicit registry-computed claimability flag while preserving v3 encoding and
+unknown claimability for old frames. Claimability is not capacity, complete
+coverage or terminality. Current Core requests4 without downgrade.
+
+The scoped preparation consistency helper requires an independent all-client
+ceiling, current original lease, fresh matching root/registry capture, exactly
+one original preparation owner, no competing work/transitions/uncertainty and
+at most one ready declaration. It separates target from registry-ready identity
+without changing generic conflicting-model unknown semantics. It is not yet an
+owned observation export or the Python/broker atomic preparation mode. The
+complete positive source/proof/capacity issuer and production composition remain
+unfinished. See [claimability](registry-claimability.md),
+[reservation](preparation-reservation.md) and
+[transport](preparation-transport.md). Whole39/55 remains unchanged.
