@@ -7,7 +7,7 @@ import {resolve,join} from 'node:path';
 import {homedir} from 'node:os';
 import {createHash} from 'node:crypto';
 import {validatePlatformRelease} from './lib/platform-release.mjs';
-import {capturePlatformSources,verifyPlatformSources} from './lib/platform-source.mjs';
+import {capturePlatformSources,verifyPlatformSources,platformPackagingInputs} from './lib/platform-source.mjs';
 const root=resolve(import.meta.dirname,'..'),args=process.argv.slice(2);
 if(args.length!==2||args[0]!=='--output'||!args[1].startsWith('/'))throw Error('Usage: node scripts/package-platform.mjs --output NEW_ABSOLUTE_DIRECTORY');
 const output=resolve(args[1]),scratch=mkdtempSync('/private/tmp/fios-package-'),payload=join(scratch,'development-release');
@@ -24,19 +24,12 @@ function run(command,args,timeout=180000){
   }
   return result.stdout.trim();
 }
-function files(directory){
-  return readdirSync(directory).sort().flatMap(name=>{
-    const path=join(directory,name),stat=lstatSync(path);
-    if(stat.isSymbolicLink()||(!stat.isFile()&&!stat.isDirectory()))throw Error('Nonregular release source');
-    return stat.isDirectory()?files(path):[path];
-  });
-}
 
 try{
   if(run('/usr/bin/uname',['-m'])!==template.architecture||!run('/usr/bin/swift',['--version']).includes(`Apple Swift version ${template.toolchain.swift} `)||run('/usr/bin/xcrun',['--show-sdk-version'])!==template.toolchain.sdk)throw Error('Pinned arm64/Swift/SDK toolchain required');
   if(!run('/usr/bin/swift',['--version']).includes(template.toolchain.swift_build)||run('/usr/bin/swift',['-I','platform/studio/Sources/CSQLite','-e','import CSQLite; print(String(cString: sqlite3_libversion()))'])!==template.sqlite.version)throw Error('Pinned Swift build/SQLite runtime required');
   if(sha(readFileSync(join(root,'uv.lock')))!==template.python.uv_lock_sha256)throw Error('Python lock identity changed');
-  const collectSources=()=>[...files(join(root,'platform/studio/Sources')),join(root,'platform/studio/Package.swift'),join(root,'platform/studio/Package.resolved'),join(root,'platform/studio/sandbox/runner.py'),join(root,'platform/studio/sandbox/Dockerfile'),join(root,'platform/studio/deployment/release.json'),join(root,'uv.lock'),join(root,'scripts/package-platform.mjs'),join(root,'scripts/install-platform.mjs'),join(root,'scripts/lib/platform-state-plan.mjs'),join(root,'scripts/lib/platform-release.mjs'),join(root,'scripts/lib/platform-source.mjs'),...files(join(root,'platform/studio/deployment')).filter(path=>path.endsWith('.plist'))].sort();
+  const collectSources=()=>platformPackagingInputs(root);
   const sourceProof=capturePlatformSources(root,collectSources()),sourceHash=sourceProof.digest;
   const build=['build','--package-path','platform/studio','--disable-automatic-resolution','--jobs','2','-c','release','--arch','arm64','--scratch-path',scratch,
     '-Xswiftc','-gnone','-Xswiftc','-file-prefix-map','-Xswiftc',`${root}=/fios/source`,

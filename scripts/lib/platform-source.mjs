@@ -1,8 +1,8 @@
 // Development packaging provenance, not runtime/model authority. Source edits
 // during compilation must not produce a manifest claiming a different input.
-import {openSync,closeSync,readSync,lstatSync,fstatSync,constants} from 'node:fs';
+import {openSync,closeSync,readSync,lstatSync,fstatSync,readdirSync,constants} from 'node:fs';
 import {createHash} from 'node:crypto';
-import {resolve,relative,isAbsolute,dirname} from 'node:path';
+import {resolve,relative,isAbsolute,dirname,join} from 'node:path';
 const sha=bytes=>createHash('sha256').update(bytes).digest('hex');
 const fail=()=>{throw Error('Platform build sources changed or are not regular bounded inputs');};
 const identity=s=>[s.dev,s.ino,s.mode,s.size,s.mtimeNs,s.ctimeNs].join(':');
@@ -17,6 +17,26 @@ function readStable(file){
   if(count!==Number(before.size)||identity(before)!==identity(fstatSync(fd,{bigint:true}))||identity(before)!==identity(lstatSync(file,{bigint:true})))fail();
   return {digest:sha(bytes.subarray(0,count)),identity:identity(before)};
  }finally{closeSync(fd);}
+}
+// One explicit source closure shared by the packer and qualification. The
+// installer also consumes these Python reviewers; omitting them would let a
+// changed review implementation retain an unchanged packaging source digest.
+export function platformPackagingInputs(root){
+ root=resolve(root);
+ function files(directory){
+  return readdirSync(directory).sort().flatMap(name=>{
+   const file=join(directory,name),info=lstatSync(file);
+   if(info.isSymbolicLink()||(!info.isFile()&&!info.isDirectory()))fail();
+   return info.isDirectory()?files(file):[file];
+  });
+ }
+ const fixed=['platform/studio/Package.swift','platform/studio/Package.resolved',
+  'platform/studio/sandbox/runner.py','platform/studio/sandbox/Dockerfile','platform/studio/deployment/release.json',
+  'uv.lock','scripts/package-platform.mjs','scripts/install-platform.mjs','scripts/lib/platform-state-plan.mjs',
+  'scripts/lib/platform-release.mjs','scripts/lib/platform-source.mjs','scripts/check-platform-composition.py',
+  'scripts/compose-platform-candidate.py','scripts/check-platform-python-candidate.py','scripts/package-platform-python.py'];
+ return [...files(join(root,'platform/studio/Sources')),...fixed.map(name=>join(root,name)),
+  ...files(join(root,'platform/studio/deployment')).filter(file=>file.endsWith('.plist'))].sort();
 }
 export function capturePlatformSources(root,paths){
  root=resolve(root);

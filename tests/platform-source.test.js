@@ -35,3 +35,20 @@ test('source proof rejects duplicate, escaping and symbolic inputs',()=>fixture(
  const link=path.join(root,'link.swift');symlinkSync(file,link);
  assert.throws(()=>capturePlatformSources(root,[link]));
 }));
+
+test('installer transitive Python review code is included in the declared build source fence',async()=>{
+ const {platformPackagingInputs}=await import('../scripts/lib/platform-source.mjs');
+ assert.equal(typeof platformPackagingInputs,'function');
+ const actual=path.resolve(import.meta.dirname,'..'),directory=mkdtempSync(path.join(tmpdir(),'fios-packaging-closure-'));
+ const {mkdirSync,copyFileSync}=await import('node:fs');
+ try{
+  for(const input of platformPackagingInputs(actual)){
+   const target=path.join(directory,path.relative(actual,input));mkdirSync(path.dirname(target),{recursive:true});copyFileSync(input,target);
+  }
+  const before=capturePlatformSources(directory,platformPackagingInputs(directory));
+  const checker=path.join(directory,'scripts/check-platform-composition.py');
+  assert(before.records.some(record=>record.name==='scripts/check-platform-composition.py'));
+  writeFileSync(checker,'changed reviewer implementation');
+  assert.throws(()=>verifyPlatformSources(before,directory,platformPackagingInputs(directory)));
+ }finally{rmSync(directory,{recursive:true,force:true});}
+});

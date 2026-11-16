@@ -282,3 +282,25 @@ opaque and independently unverified during planning. These options do not
 capture credentials, installed programs or launchd state, remove enrollment or
 authorize installation. The original `plan-backup`/`plan-uninstall` workflows
 continue to preserve state/exports without configuration.
+
+
+Development platform/runtime composition can be copied into one new private
+review directory without executing either candidate:
+
+```sh
+.venv/bin/python -I -B scripts/compose-platform-candidate.py --platform /ABS/PLATFORM_RELEASE --platform-sha256 PLATFORM_SHA --runtime /ABS/PYTHON_RUNTIME --runtime-sha256 RUNTIME_SHA --output /private/tmp/PRIVATE_PARENT/NEW_CANDIDATE
+.venv/bin/python -I -B scripts/check-platform-composition.py --candidate /private/tmp/PRIVATE_PARENT/NEW_CANDIDATE --sha256 COMPOSITION_SHA
+node scripts/install-platform.mjs plan-composition --candidate /private/tmp/PRIVATE_PARENT/NEW_CANDIDATE --sha256 COMPOSITION_SHA --host fios-edge-a.lab
+```
+
+Use canonical absolute private temporary paths. Composition requires matching
+raw release-template and lock hashes, bounds copying to 11,000 files/1 GiB,
+requires 10 GiB free headroom and retains incomplete copies. Independent review
+checks the exact file/directory surface and measured component bytes. It does
+not execute candidate programs or establish atomic installed custody. The host
+plan remains blocked, emits no privileged commands and performs no writes.
+Development approval, enrollment, installation, activation and native authority
+remain false. Credentials and protected installation are not implemented by
+this composition. Packaging now declares all four transitive Python review
+helpers among its 190 source inputs; historical 186-input packages retain their
+original provenance scope.
