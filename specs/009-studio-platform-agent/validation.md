@@ -6841,3 +6841,38 @@ installed Python tests pass;198 Node/API plus108 Python pass under npm test
 No inference, enrollment, installation or whole-task completion. The separately
 retained4f7c3a3 package/Python candidate above predates this change and must not be
 used as metadata-v2 artifact evidence.39/55 unchanged.
+
+
+### 2026-11-15 metadata-v2 clean development artifacts and integration
+
+Clean detachedc59f56a192a6a0e38984882b4f99f23466d04066 produces nine inactive
+development artifacts at `/private/tmp/fios-009-handoff-v2-package-crzg1755/release`.
+Manifest SHA256 `ebc3760266962f6bb731dea93ebea7a86d122840958dc046c10e664cab2d6969`;
+178 declared source inputs reproduce projection
+`5f61d1471516762cb0a0cd187f3f41626aa04f1641b0ecac6fd7ef9c828d57f2`.
+A separate4461-file/113994647-byte private Python candidate has receipt SHA256
+`d29ab3a0f26fef07c3e470838312bdd38a2b91baa85b80b47223b185f7c8f3e3`.
+Read-only candidate byte/tree review and all108 copied-prefix tests pass. The
+actual copied runtime reports metadata2/pipe1/native_handoff1. These are separate
+artifacts and package-declared/source-byte records, not a complete installed
+package, publisher/build/whole-repository/native provenance or approval.
+
+Both per-host install reviews remain blocked with0 privileged commands; four
+private configuration plists verify and lint. The actual manager/task IPC
+model-only mock check passes installed-worker/exact-POST-count/output/reap,
+retained uncertainty/history, replay refusal and stale-epoch zero-dispatch checks
+(`/private/tmp/fios-009-worker-v2-manager-execution.log`). Linux container
+observer/parser/hardening and isolated delivery upgrade/failed-upgrade rollback
+rehearsals pass (`/private/tmp/fios-009-worker-v2-container.log`); this is not
+production deployment. Current Core against the unchanged private handoff native
+capsule passes protocol3 health/ingress/lineage/backend/primary observations with
+0 model requests and0 installed service actions, authoritative:false
+(`/private/tmp/fios-009-worker-v2-native-status.log`, retained review
+`/private/tmp/f9-native-status-8hCwaK`). The real native image/SDK are not rebuilt
+or promoted by this Core-only qualification.
+
+Aggregate `/private/tmp/fios-009-handoff-v2-package-crzg1755/final-review.json`
+SHA256 `0ddd4731c6338862c24553eb42c2bbceedb9add488d186706aa9026f597db5e4`
+binds these receipts/logs. No real inference, installed lifecycle, enrollment or
+activation; sandbox image approval remains image-only and unchanged.39/55 whole
+tasks complete,16 open.

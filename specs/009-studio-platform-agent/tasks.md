@@ -939,3 +939,6 @@ Final T021 original-root handoff increment:198 Node/107 installed Python, Debug/
 
 
 2026-11-15 T045 worker compatibility follow-up: private metadata version2 explicitly requires native_handoff_version1, preventing an older package/policy-identical runtime from entering the new launch contract. Actual installed old metadata fails first; after pinned locked/no-editable reinstall,198 Node/108 installed Python, Debug25822ms/optimized19424ms and boundary checks pass. Legacy/missing and unsupported future handoff metadata refuse before launch. Ordinary007 metadata and private pipe1 remain unchanged; no native authority or whole-task closure.39/55 unchanged.
+
+
+2026-11-15 T045/T049 metadata-v2 artifact qualification: clean c59f56a nine-artifact/178-input development package and separate4461-file Python candidate pass review,108 copied-prefix tests, actual metadata2/handoff1, both per-host private config checks, full manager/model-only mock IPC and container/delivery rehearsals. Current Core/native empty-image protocol3 integration passes0 model requests/installed actions, authoritative:false. Native proof, complete protected installation/enrollment and Studio acceptance remain open;39/55 unchanged. See validation for exact independent receipt hashes.
