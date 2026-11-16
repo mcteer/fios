@@ -7329,3 +7329,27 @@ proof, atomic admission, installed lifecycle or whole-task completion.
 Whole39/55 remains unchanged. Exact6f72de5 CI43799865429 passed all seven jobs;
 the new source batch requires its own exact-head CI. No merge, deployment,
 installation/activation, native actuation or new real-inference plan occurred.
+
+### 2026-11-15 Clean preparation-write-recovery package
+
+Clean563ade344e998e1ce2a591cceb4abae8acb42077 checkout
+`/private/tmp/fios-009-preparation-storage-package-jyzam424/source` builds and
+independently verifies9 inactive artifacts/179 declared inputs. Manifest
+`56898a54a261f0126743d6cdb1e5b59a66e7bb65c73d7070ac08e4c6dfd0438b`;
+projection `a4f3bf86558d7ae3f6bdc42d4fba728686547829fc0cbb062a4f67266d5a33ac`.
+Both install reviews stay blocked/0 privileged commands; all4 saved plist
+render/lint/verify checks pass. The separate unchanged d29ab3a0… runtime passes
+before/after byte review, actual current-Core factory metadata and108 copied-
+prefix tests with Unix permitted/IP denied. Metadata remains2/pipe1/handoff1.
+
+The actual packaged CLI verifies/restores the stopped4a46fed8… backup into a new
+private directory. Current Core verifies own not_sent, older uncertainty1,
+history1 and its version2 producer receipt; the previousc59 reader refuses
+without changing database bytes. Final review `final-review.json` under that
+package directory SHA256
+`d2f585d6a3560e09428c785f306d270dac0e97ae0d557c81d5ee30bd51fae92f`.
+The prior6f72de5 package remains historical. These are declared-input/byte/state
+observations, not publisher/build/whole-native provenance or installation.
+Whole39/55 stays unchanged. Exact563ade3 CI43804147768 is running; all approval,
+enrollment and activation flags remain false. No merge/deployment or model
+inference/installed lifecycle action occurred.
