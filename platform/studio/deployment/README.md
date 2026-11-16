@@ -304,3 +304,12 @@ remain false. Credentials and protected installation are not implemented by
 this composition. Packaging now declares all four transitive Python review
 helpers among its 190 source inputs; historical 186-input packages retain their
 original provenance scope.
+
+The development release checker accepts `--source /ABS/CLEAN_CHECKOUT` after
+its existing `--isolated --release ... --sha256 ...` arguments for current
+190-input packages. It checks the exact Git revision, clean checkout and shared
+declared source projection before running any packaged program, then rechecks
+that source after the private startup rehearsal. Its receipt reports this
+selected-input scope explicitly; it does not attest whole-native build inputs
+or installed custody. Without `--source`, existing artifact-only review behavior
+and historical package checks remain unchanged.
