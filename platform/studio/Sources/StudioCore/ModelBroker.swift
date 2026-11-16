@@ -379,7 +379,7 @@ final class ModelBroker {
             // A started transport cannot be rebound after ownership transfer.
             let retainOnStorageFailure:Bool
             switch finished {
-            case .failure(.neverSpawned),.failure(.cancelled):retainOnStorageFailure=true
+            case .success,.failure(.neverSpawned),.failure(.cancelled):retainOnStorageFailure=true
             default:retainOnStorageFailure=false
             }
             if !retainOnStorageFailure {starting.removeValue(forKey:id)}
@@ -387,9 +387,12 @@ final class ModelBroker {
                 switch finished {
                 case .success(let transport):
                     let worker=try transport.bind(journal:journal,key:WorkerLaunchKey(job:id,attempt:pending.attempt),nonce:pending.nonce,started:pending.started,readyAt:uptime)
+                    // Ownership transferred. Later failures belong to the
+                    // bound worker/reaper and must never retry this transport.
+                    entries[id]=Entry(worker:worker,attempt:pending.attempt,key:pending.key,binding:pending.binding,preparation:pending.preparation)
+                    starting.removeValue(forKey:id)
                     if pending.revoked {try worker.cancel(now:uptime);result[id]=[.interrupted]}
                     else {try worker.enqueue(pending.packet,expectedModel:pending.binding.nativeModel,endpointHash:pending.binding.nativeSnapshot.endpointHash,epoch:pending.binding.managerEpoch,now:now)}
-                    entries[id]=Entry(worker:worker,attempt:pending.attempt,key:pending.key,binding:pending.binding,preparation:pending.preparation)
                     launchHolds.remove(WorkerLaunchKey(job:id,attempt:pending.attempt))
                 case .failure(.cancelled):
                     if !pending.acknowledgementRecorded {
@@ -414,7 +417,12 @@ final class ModelBroker {
                 }
                 starting.removeValue(forKey:id)
             }catch JournalError.storage where retainOnStorageFailure {
+                if entries[id] != nil {
+                    try entries[id]?.worker.cancel(now:uptime)
+                    continue
+                }
                 pending.revoked=true
+                if case .success(let transport)=finished {transport.revokeUnbound()}
                 starting[id]=pending
                 launchHolds.insert(WorkerLaunchKey(job:id,attempt:pending.attempt))
                 continue

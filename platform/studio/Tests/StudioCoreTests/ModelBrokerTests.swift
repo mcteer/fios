@@ -58,5 +58,32 @@ func runModelBrokerTests() throws {
           try recovery.requestCount(job:recoveryID)==1 else {fatalError("Retained completion did not recover exactly once")}
     _=try recovering.poll(now:10_000,uptime:0,admission:&held,source:{_ in binding})
     print("PASS: broker retains opaque no-spawn completion across repeated SQLite writer failures without respawn or budget refund")
+    let childID=UUID().uuidString.lowercased(),childStarted=Int64(ProcessInfo.processInfo.systemUptime*1000)
+    _=try recovery.reserveJob(DurableJob(id:childID,idempotency:UUID().uuidString.lowercased(),ownerHash:owner,requestHash:String(repeating:"b",count:64),created:10_000))
+    try recovery.transitionJob(id:childID,to:.running,now:10_000)
+    try recovery.claim(job:childID,attempt:0,model:binding.canonicalModel,scope:binding.inferenceScope())
+    let childPlan=try recovery.planWorkerStart(job:childID,attempt:0)
+    let childOperation=try factory.beginStart(binding:binding,plan:childPlan,started:childStarted,now:10_000)
+    var childResult:Result<StartedPythonWorker,WorkerStartFailure>?
+    let childDeadline=ProcessInfo.processInfo.systemUptime+2
+    while childResult==nil && ProcessInfo.processInfo.systemUptime<childDeadline {childResult=childOperation.take();if childResult==nil {usleep(1000)}}
+    guard let childResult,case .success=childResult else {throw RuntimeError.launch}
+    let retainedChild=PendingPythonWorker {_ in childResult}
+    try recovering.retainStart(operation:retainedChild,plan:childPlan,binding:binding,packet:Data(),started:childStarted)
+    try held.reserveWorker(key:"model:\(childID):0",sample:sample,now:10_000)
+    usleep(5000)
+    guard sqlite3_exec(writer,"BEGIN IMMEDIATE",nil,nil,nil)==SQLITE_OK else {throw JournalError.storage}
+    for _ in 0..<3 {_=try recovering.poll(now:10_000,uptime:childStarted,admission:&held,source:{_ in binding})}
+    guard recovering.active(job:childID),try recovery.activeLaunchCount()==1,try recovery.workerGrants().isEmpty else {fatalError("Binding failure lost original started child")}
+    guard sqlite3_exec(writer,"ROLLBACK",nil,nil,nil)==SQLITE_OK else {throw JournalError.storage}
+    let reapedBy=ProcessInfo.processInfo.systemUptime+3
+    while recovering.active(job:childID) && ProcessInfo.processInfo.systemUptime<reapedBy {
+        _=try recovering.poll(now:10_000,uptime:Int64(ProcessInfo.processInfo.systemUptime*1000),admission:&held,source:{_ in binding})
+        usleep(5000)
+    }
+    guard !recovering.active(job:childID),try recovery.activeLaunchCount()==0,try recovery.workerGrants().isEmpty,
+          try recovery.inferenceScope(job:childID,attempt:0)?.state == .uncertain,
+          try recovery.unresolvedCount()==1,try recovery.requestCount(job:childID)==1 else {fatalError("Started-child recovery lost uncertainty or durable local reap")}
+    print("PASS: original started child survives binding storage failure for exact local kill/bind/reap, no permission bytes or respawn, native uncertainty retained")
     print("PASS: broker owner lease/native-capacity fail-closed and irreversible clock fencing")
 }

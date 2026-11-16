@@ -26,6 +26,14 @@ final class StartedPythonWorker:@unchecked Sendable {
         transferred=true
         return worker
     }
+    func revokeUnbound() {
+        guard !transferred,let captured,process.processIdentifier==captured.pid,process.isRunning,
+              (try? HostBoot.identity())==captured.boot,
+              (try? WorkerResources.startIdentifier(pid:captured.pid))==captured.start else {return}
+        // Retain pipes and original captured identity for later durable local
+        // binding/reaping. No permission bytes have been enqueued.
+        kill(captured.pid,SIGKILL)
+    }
     deinit {
         if !transferred {
             try? input.close();try? output.close()

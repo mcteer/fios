@@ -34,6 +34,7 @@ final class PrivateWorker {
     private var cancelAt:Int64?
     private var actualPosts:Int?
     private var dispatchRecorded=false
+    private var ownsTransport=false
     private(set) var reaped=false
     private(set) var zeroPostEvidence:WorkerZeroPostEvidence?
     private(set) var memorySamples=0
@@ -65,8 +66,12 @@ final class PrivateWorker {
               fcntl(input.fileDescriptor,F_SETNOSIGPIPE,1)>=0,
               fcntl(output.fileDescriptor,F_SETFL,O_NONBLOCK)>=0 else { throw RuntimeError.launch }
         try journal.bindWorker(job:job,attempt:attempt,grant:grant,nonce:launchNonce)
+        ownsTransport=true
     }
     deinit {
+        // Until durable binding succeeds, StartedPythonWorker remains the
+        // lexical owner. A failed initializer must not destroy its pipes.
+        guard ownsTransport else {return}
         signalOwned(SIGKILL)
         try? input.close();try? output.close()
         // Durable ownership is intentionally not released by destruction.

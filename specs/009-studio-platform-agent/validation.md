@@ -7668,3 +7668,13 @@ The first compile exposed a test access to a private checkpoint helper. The fixt
 - `/private/tmp/fios-009-preparation3-container.log` SHA256 `e36c330c3cfd6afd15cf53c0e7570741f75ca57d842617a4f229a1911544c178`.
 
 Current metadata3 hardened ARM64 container passes installed worker/search mock checks, observer expiry/recovery, old→new→old rollback and backup restore; peak636MiB. This is isolated container evidence, not deployed application or native authority. Whole39/55 unchanged.
+
+### Started child binding storage recovery (2026-11-16)
+
+Before durable binding succeeds, the original asynchronous transport remains the pipe/process owner. A failed PrivateWorker initializer no longer closes that owner's pipes or consumes the child. The broker retains that exact successful start result on SQLite storage failure, revokes it by captured boot/PID/start identity without sending a command, then retries only local durable binding/reaping. Once ownership transfers, later errors remain with the bound worker and never rebind or respawn the transport. Native inference uncertainty and spent request history remain independent.
+
+The regression starts the actual installed worker, holds an isolated real SQLite writer lock across three binding attempts, confirms the launch stays retained with zero grants, then restores storage and proves durable local reap with one uncertain original request/history1. It never supplies model permission or a model endpoint that can serve inference. Debug compile31957ms/runtime39272ms passes; a further PID-equality guard is covered by final optimized compile64919ms/runtime34084ms and actual manager IPC. Existing manager model-only mock requests succeed once; stale/default/closed/missing-source cases remain closed. No native installation, real inference or whole-task closure occurs. Whole39/55 unchanged.
+
+- `/private/tmp/fios-009-started-bind-debug.log` SHA256 `e8df57bc19d5ca1123c3adad5ca647920e40b397fdd0ed3879a250a704f2e4c5`.
+- `/private/tmp/fios-009-started-bind-release.log` SHA256 `1b16a447fbabe109fd44ff8a4c8f0589b9a343ce01d668bfa98b927cdc2d3f5c`.
+- `/private/tmp/fios-009-started-bind-manager.log` SHA256 `be2993c142b192b53d2387492d380a41a8eeea24949c8f1d99432cfb522bf78a`.
