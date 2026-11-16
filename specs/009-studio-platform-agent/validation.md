@@ -7713,3 +7713,11 @@ A genuine stopped backup contains an unsupported decision version within schema9
 - `/private/tmp/fios-009-backup-compatibility-release.log` SHA256 `726626707f32f90c65ef4b500cf53840e48ffdfd869df9388a4b7c00227cffe7`.
 - `/private/tmp/fios-009-backup-compatibility-node.log` SHA256 `876be4734b2b2b5eb495b0dc2c15de2339d7f961400eaf8b5876f52468676464`.
 - `/private/tmp/fios-009-backup-compatibility-boundary.log` SHA256 `c48954b6e815c6287f37d4ce266bfce48c958980163a31438c5166be14e0a469`.
+
+### Actual packaged executable compatibility rehearsal (2026-11-16)
+
+Clean8fe4a28f7311318962d10ccedfbd876cbc44b4b1 packages183 declared inputs/9 inactive artifacts. Manifest SHA256 `0f216f1e8764f93cf5019c116ca1401d59dc292edfc332c2f4b8bf275511f28e`; declared projection `184a3b42a3a8e797a7bc539b78599f9f025941cbbd1c86eacf045c2bc08bfae2`. Both blocked Studio configuration reviews/4 plists pass with0 privileged commands. Actual packaged CLI verifies/restores legacy checkpoint2 and current checkpoint3 backups; journal_compatible is observed on current-format verification. The actual decision-check client confirms own not_sent, older uncertainty1/history retained after restore.
+
+A copied private fixture evolves its decision to unsupported99. The actual packaged backup command preserves it with a real new receipt; actual verify-backup refuses it and restore refuses before destination publication, retaining source bytes/names. Compatibility review `/private/tmp/fios-009-compatible-package-0nhhiycw/compatibility-review.json`, SHA256 `1fe75e40bf30b2b5243565d95828c60e66075d1fbb88905f95f4b73023a2c86d`. This exercises the shipped executable, not only Core tests. Optimized source compilation took64695ms. Qualification in the same workspace binds logs and declared inputs; not whole-repository/native provenance or installation authority. No inference, native actuation, installation, merge or deployment;39/55 whole tasks unchanged.
+
+Qualification SHA256 `8e083233e53b66de2f934a284ca09f3f3ffb54cf0c34e9ce3182ccb1b9e01c35`.

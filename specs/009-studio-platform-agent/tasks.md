@@ -1008,3 +1008,5 @@ Handoff non-dispatch receipts now bind the actual negotiated metadata2/3 produce
 Clean0545360 package/current metadata3 runtime factory and actual packaged checkpoint2/3 stopped backup/restore/old-reader refusal qualify the current receipt path. Both Studio install reviews remain blocked,0 privileged commands;183 declared inputs/9 inactive artifacts are not whole-repository/native provenance. Whole39/55 unchanged.
 
 Restore compatibility increment: current verify-backup/private-copy decoding now checks executable decision-format compatibility before current-schema restoration can publish. Byte-valid unknown future decisions remain preservable but cannot be adopted; full Debug/optimized and6 planner tests pass. Protected installation/switch/removal and actual packaged CLI qualification remain open;39/55 whole tasks.
+
+Actual clean8fe4a28 packaged CLI passes legacy/current compatible backup restores, preserves a genuinely receipted unsupported99 backup, and refuses verification/restoration before publication without changing it. Both Studio install plans remain blocked; protected installation/switching/removal still open. Whole39/55 unchanged.
