@@ -7180,3 +7180,61 @@ native all-client coverage, atomic admission or whole-task completion follows.
 Whole39/55 remains unchanged. Published3ec35a2 CI43792614286 passed all seven
 jobs; latest publishedd04fc95 CI43795808251 remains running. No merge/deployment
 or new real-inference plan occurred.
+
+### 2026-11-15 Preserve native registration across follow-up lookup failure
+
+The original coordinator discarded its verified registration when the later
+lineage call failed or returned a different root. A genuine failing-first mock
+run `/private/tmp/fios-009-registration-retention-red.log` stops at
+`Lineage failure/cancellation discarded verified original registration`.
+The repair retains validated registration separately from optional lineage,
+durably checkpoints only original identity before considering worker launch,
+and refuses the factory when lineage is absent. No synthetic lineage/counts,
+native terminal proof, retry or request-budget refund is introduced.
+
+`acceptRegistration` validates pending/register state, original peer/source/
+correlation/root, safe sequence and clock bounds. Changed roots fence continuity;
+late same-root replies preserve newer readonly samples. Existing checkpoint
+format1 remains identity-only and existing fences cannot be cleared. Journal
+state/ownership never resolves from this method. Known-unstarted local launch
+release remains separate from native uncertainty.
+
+Final full debug26019ms and optimized20153ms suites pass:
+`/private/tmp/fios-009-registration-final-debug.log` and
+`/private/tmp/fios-009-registration-final-release.log`. They include mismatched/
+unavailable lineage and mid-registration cancellation without spawn, invalid
+registration states/ages/sequence, original-root restart, changed-root fencing
+and newer-readonly sample preservation. Existing installed-worker/mock behavior
+remains; no Python source or worker metadata/protocol version changed.
+
+The new private native `--preparation-failure` mode uses actual authenticated
+registration, actual broker/journal and an injected follow-up lookup error.
+Its separate verification lookup is deliberately not persisted. A fresh client
+recovers the same root solely from registration; own/older uncertainty2,
+spent history1, active launches0 and worker grants0 remain. It sends0 model
+POSTs, loads0 models and issues no cancellation or native authority.
+Receipt `/private/tmp/f9-handoff-2r6FIu/receipt.json`, SHA256
+`0872e08607073cb8876924f34e9e6c0dda009e0b480847a6c3f1a8b7b2fc5d28`.
+Initial fixtureFXNaGQ failed compilation for missing `try` before native startup;
+it is retained and excluded. Corrected source compiles and passes.
+
+Both existing driver modes also pass with current Core and the same private
+780bd7ea… native capsule: default4 stages,
+`/private/tmp/f9-handoff-jfn7Zb/receipt.json` SHA256
+`2436ecf57a8a0522aa3952a1b2ea205529c8cdbce025a7ee5c4b5fee649b42cd`;
+paired non-dispatch3 stages,
+`/private/tmp/f9-handoff-XdcJE8/receipt.json` SHA256
+`080a09973a57602bdfbd6938e649a424d9b4aedb89d3dad1e62d35efe86e50a3`.
+The former retains both uncertain claims through rejected-root requests; the
+latter resolves only its own paired no-spawn/cancelled-root not_sent and keeps
+older uncertainty/budget. Those modes send2 and1 rejected private HTTP POSTs,
+respectively, and0 real inference. Synthetic advisory/capacity values remain
+explicit fixtures, never native all-client proof.
+
+Native source/image bytes are unchanged by this Core-only repair. The old232e448
+179-input package predates these four Core changes; a fresh clean package is
+required. This continuation does not qualify storage-failure retry, positive
+native proof/admission or installed lifecycle. Whole39/55 stays unchanged.
+Published exactd04fc95 CI43795808251 passed all seven jobs including aggregate;
+later local work needs new exact-head CI. No merge, deployment, enrollment,
+installation/activation or new real-inference plan occurred.

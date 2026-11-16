@@ -14,6 +14,26 @@ func runNativeHandoffCancellationTests()throws {
     func cancelled(root:UInt64=UInt64.max,state:NativeHandoffState = .cancelled,uncertain:Bool=false,sequence:UInt64=2,at:Int64=10001)->NativeHandoffSample {
         NativeHandoffSample(peer:peer,sampledAt:at,result:NativeHandoffResult(operation:.cancel,instance:instance,correlationID:id,rootSequence:root,sampleSequence:sequence,state:state,uncertain:uncertain))
     }
+    func registration(root:UInt64=UInt64.max,state:NativeHandoffState = .pending,uncertain:Bool=false,sequence:UInt64=1,at:Int64=10000,operation:NativeHandoffOperation = .register)->NativeHandoffSample {
+        NativeHandoffSample(peer:peer,sampledAt:at,result:NativeHandoffResult(operation:operation,instance:instance,correlationID:id,rootSequence:root,sampleSequence:sequence,state:state,uncertain:uncertain))
+    }
+    for sample in [registration(root:0),registration(state:.cancelled),registration(uncertain:true),registration(sequence:0),registration(sequence:UInt64(ActivityPolicy.maximumTimestamp)+1),registration(at:11001),registration(at:4999),registration(operation:.cancel)] {
+        var fresh=try NativeRequestLineageConsumer(scope:scope,job:job,attempt:0,peer:peer)
+        guard !fresh.acceptRegistration(sample,now:10000),fresh.rootSequence==nil else {fatalError("Invalid registration became original identity")}
+    }
+    var registered=try NativeRequestLineageConsumer(scope:scope,job:job,attempt:0,peer:peer)
+    guard registered.acceptRegistration(registration(),now:10000),registered.rootSequence==UInt64.max,
+          registered.acceptRetirement(nil,now:10000)==nil,
+          registered.acceptHandoffCancellation(nil,now:10000)==nil else {throw JournalError.invalid}
+    let registeredBytes=try registered.checkpoint(scope:scope)
+    let restoredRegistration=try NativeRequestLineageConsumer(scope:scope,job:job,attempt:0,peer:peer,checkpoint:registeredBytes)
+    guard restoredRegistration.rootSequence==UInt64.max,!restoredRegistration.fenced else {throw JournalError.invalid}
+    let live=NativeRequestLineageSample(peer:peer,sampledAt:10001,lineage:NativeRequestLineage(instance:instance,correlationID:id,sampleSequence:3,rootSequence:UInt64.max,found:true,uncertain:false,references:1,owners:1,ingress:1,preparing:0,active:0,responding:0))
+    guard case .live=registered.accept(live,now:10001),registered.acceptRegistration(registration(),now:10001) else {throw JournalError.invalid}
+    let newer=try JSONSerialization.jsonObject(with:registered.checkpoint(scope:scope)) as! [String:Any]
+    guard (newer["sequence"] as? NSNumber)?.uint64Value==3 else {fatalError("Late registration rewound newer lineage")}
+    guard !registered.acceptRegistration(registration(root:7,sequence:4,at:10002),now:10002),registered.fenced,
+          !registered.acceptRegistration(registration(sequence:5,at:10003),now:10003) else {fatalError("Changed registration root or later reply removed fence")}
     for sample in [cancelled(root:7),cancelled(state:.handedOff),cancelled(state:.unknown,uncertain:true),cancelled(uncertain:true),cancelled(sequence:1),cancelled(sequence:UInt64(ActivityPolicy.maximumTimestamp)+1),cancelled(at:11002),cancelled(at:4999)] {
         var value=try consumer()
         guard value.acceptHandoffCancellation(sample,now:10001)==nil else {fatalError("Ineligible native cancellation became non-dispatch metadata")}

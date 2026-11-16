@@ -1527,3 +1527,17 @@ other model resources and join-creation failure are explicit fixture ports.
 Finish this checker before starting a two-job full native build. This does not
 qualify all model cleanup, native completion or admission; see
 [the contract](contracts/qwen-bounded-unload.md).
+
+### Registered root retained after a failed follow-up lookup
+
+```sh
+node scripts/check-platform-native-handoff.mjs --isolated --capsule /ABS/PRIVATE_REVIEWED_CAPSULE --sha256 REVIEWED_CAPSULE_SHA256 --preparation-failure
+```
+
+This selects a separate private coordinator fixture. Actual native registration
+is followed by an injected readonly lookup failure; restart must recover the
+root from registration alone. Synthetic advisory/capacity inputs grant no native
+authority. Own/older uncertainty and spent budget remain, with no model POST or
+worker grant. Existing default and `--non-dispatch` modes remain separate. The
+same finite child identity, memory, process and network bounds apply. See
+[registration durability](contracts/handoff-registration-durability.md).

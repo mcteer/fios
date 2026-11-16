@@ -11,8 +11,8 @@ import path from 'node:path';
 import {verifyNativeReview} from './lib/platform-native-review.mjs';
 import {nativeReviewJSON} from './lib/platform-native-review-intent.mjs';
 const args=process.argv.slice(2),root=path.resolve(import.meta.dirname,'..');
-const nonDispatch=args.at(-1)==='--non-dispatch';if(nonDispatch)args.pop();
-const fixture='platform/studio/Tests/StudioCoreTests/'+(nonDispatch?'NativeHandoffNonDispatchClient.swift.fixture':'NativeHandoffClient.swift.fixture');
+const nonDispatch=args.at(-1)==='--non-dispatch',preparationFailure=args.at(-1)==='--preparation-failure';if(nonDispatch||preparationFailure)args.pop();
+const fixture='platform/studio/Tests/StudioCoreTests/'+(nonDispatch?'NativeHandoffNonDispatchClient.swift.fixture':preparationFailure?'NativeHandoffPreparationFailureClient.swift.fixture':'NativeHandoffClient.swift.fixture');
 assert(process.platform==='darwin'&&process.arch==='arm64'&&process.getuid()>0);
 assert(args.length===5&&args[0]==='--isolated'&&args[1]==='--capsule'&&args[3]==='--sha256');
 const capsule=verifyNativeReview(args[2],args[4]),review=JSON.parse(readFileSync(path.join(args[2],'review.json')));
@@ -64,14 +64,23 @@ async function request(route,{method='GET',headers={},body}={}){
 }
 const unixPolicy='(version 1)(allow default)(deny network*)(allow network* (local unix-socket) (remote unix-socket))';
 const state=path.join(directory,'state'),socket=path.join(home,'.fios-native-control/control.sock');
-function invoke(step,job,instance){assert(performance.now()<deadline);observe();return run(step+'-'+job,'/usr/bin/sandbox-exec',['-p',unixPolicy,client,state,String(child.pid),capsule.binary,socket,job,instance,step,...(nonDispatch?[path.join(root,'.venv/bin/python'),JSON.parse(readFileSync(path.join(root,'tests/fixtures/platform/model.json'))).policy_sha256]:[])],8000)}
+function invoke(step,job,instance){assert(performance.now()<deadline);observe();return run(step+'-'+job,'/usr/bin/sandbox-exec',['-p',unixPolicy,client,state,String(child.pid),capsule.binary,socket,job,instance,step,...(nonDispatch||preparationFailure?[path.join(root,'.venv/bin/python'),JSON.parse(readFileSync(path.join(root,'tests/fixtures/platform/model.json'))).policy_sha256]:[])],8000)}
 function parseRegistration(output){const parts=output.split(' ');assert(parts.length===2&&/^[a-f0-9]{64}$/.test(parts[0])&&/^[1-9][0-9]{0,19}$/.test(parts[1]));assert(BigInt(parts[1])<=18446744073709551615n);return {id:parts[0],root:parts[1]}}
 try {
  let healthy=false;const startDeadline=Math.min(deadline,performance.now()+10000);
  while(performance.now()<startDeadline&&!healthy){assert(!error&&!exited());try{observe();healthy=(await request('/health')).status===200}catch{await delay(25)}}
  assert(healthy,'Private startup deadline');assert.deepEqual((await request('/v1/models')).value.data,[]);
  const activity=await request('/v1/fios/activity'),instance=activity.value.source_instance;assert.equal(activity.value.coverage,'unknown');assert.match(instance,/^[a-f0-9]{32}$/);
- if(nonDispatch){
+ if(preparationFailure){
+  const job=randomUUID(),registration=parseRegistration(invoke('fail',job,instance));
+  assert.deepEqual(parseRegistration(invoke('check',job,instance)),registration);
+  assert.equal(attempts,0);observe();assert.deepEqual(capture(),inputs);
+  const result={scope:'actual_native_registration_survives_injected_lineage_failure_and_journal_restart_only',inputs,records,capsule_receipt_sha256:args[4],source_instance:instance,job,stages:2,
+   original_root_checkpointed:true,own_and_older_uncertainty_retained:2,request_budget_retained:true,worker_grants:0,model_POSTs:0,models:0,
+   synthetic_advisory_and_capacity_only:true,injected_readonly_lineage_failure:true,peak_native_process_bytes:peak,
+   native_admission_authority:false,native_completion_proof:false,installed:false,activation:false,inputs_unchanged:true};
+  writeFileSync(path.join(directory,'receipt.json'),JSON.stringify(result,null,2)+'\n',{mode:0o600});console.log(JSON.stringify({directory,receipt_sha256:sha(path.join(directory,'receipt.json')),stages:2,native_admission_authority:false}));
+ }else if(nonDispatch){
   const job=randomUUID(),registration=parseRegistration(invoke('close',job,instance));
   invoke('check',job,instance);
   const late=await request('/v1/chat/completions',{method:'POST',headers:{'Content-Type':'application/json','X-Fios-Native-Instance':instance,'X-Fios-Request-ID':registration.id,'X-Fios-Handoff-Root':registration.root},body:JSON.stringify({model:'fixture/missing-model',messages:[]})});

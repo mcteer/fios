@@ -531,8 +531,9 @@ private final class FixtureHandoffSource:NativeHandoffPreparing,@unchecked Senda
     let peer:NativeControlPeer
     let entered=DispatchSemaphore(value:0),release=DispatchSemaphore(value:0),lineageReady=DispatchSemaphore(value:0)
     let wrongRoot:Bool
+    let lineageUnavailable:Bool
     let cancellationState:NativeHandoffState
-    init(peer:NativeControlPeer,wrongRoot:Bool=false,cancellationState:NativeHandoffState = .handedOff) {self.peer=peer;self.wrongRoot=wrongRoot;self.cancellationState=cancellationState}
+    init(peer:NativeControlPeer,wrongRoot:Bool=false,lineageUnavailable:Bool=false,cancellationState:NativeHandoffState = .handedOff) {self.peer=peer;self.wrongRoot=wrongRoot;self.lineageUnavailable=lineageUnavailable;self.cancellationState=cancellationState}
     func registerHandoff(instance:String,correlationID:String)throws->NativeHandoffSample {
         entered.signal()
         guard release.wait(timeout:.now()+2) == .success else {throw NativeControlError.deadline}
@@ -542,13 +543,15 @@ private final class FixtureHandoffSource:NativeHandoffPreparing,@unchecked Senda
         NativeHandoffSample(peer:peer,sampledAt:HostResources.nowMilliseconds(),result:NativeHandoffResult(operation:.cancel,instance:instance,correlationID:correlationID,rootSequence:rootSequence,sampleSequence:4,state:cancellationState,uncertain:false))
     }
     func lineage(instance:String,correlationID:String)throws->NativeRequestLineageSample {
+        if lineageUnavailable {lineageReady.signal();throw NativeControlError.unavailable}
         let value=NativeRequestLineageSample(peer:peer,sampledAt:HostResources.nowMilliseconds(),lineage:NativeRequestLineage(instance:instance,correlationID:correlationID,sampleSequence:2,rootSequence:wrongRoot ? 7:UInt64.max,found:true,uncertain:false,references:1,owners:1,ingress:1,preparing:0,active:0,responding:0))
         lineageReady.signal();return value
     }
 }
 
 private func runHandoffPreparationFailureTests(factory:PythonWorkerFactory)throws {
-    for cancelled in [false,true] {
+    for scenario in [(cancelled:false,wrongRoot:true,lineageUnavailable:false),(cancelled:false,wrongRoot:false,lineageUnavailable:true),(cancelled:true,wrongRoot:false,lineageUnavailable:false)] {
+        let cancelled=scenario.cancelled
         let directory=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer {try? FileManager.default.removeItem(at:directory)}
         let journal=try Journal(directory:directory),now=HostResources.nowMilliseconds()
@@ -556,7 +559,7 @@ private func runHandoffPreparationFailureTests(factory:PythonWorkerFactory)throw
         let snapshot=NativeSnapshot(host:"fixture-host",endpointHash:PythonWorkerFactory.digest(base),nativeEpoch:epoch,sequence:1,sampledAt:now,allClientLifecycleCoverage:true,residentModel:nil,outstandingOwners:0,loading:false)
         let binding=WorkerDispatchBinding(baseURL:base,guardPath:"/fixture/observe.sock",host:"fixture-host",profileHash:String(repeating:"f",count:64),managerEpoch:UUID().uuidString.lowercased(),canonicalModel:"fixture/model",nativeModel:"fixture/model",nativeSnapshot:snapshot,nativeCompatibilityAccepted:true,apiKey:nil)
         let peer=NativeControlPeer(pid:42,start:99,executable:try VerifiedExecutable(path:"/fixture/native",sha256:String(repeating:"d",count:64)))
-        let source=FixtureHandoffSource(peer:peer,wrongRoot:!cancelled)
+        let source=FixtureHandoffSource(peer:peer,wrongRoot:scenario.wrongRoot,lineageUnavailable:scenario.lineageUnavailable)
         let broker=ModelBroker(journal:journal,factory:factory,handoffSource:source)
         let id=UUID().uuidString.lowercased(),owner=String(repeating:"a",count:64)
         _=try journal.reserveJob(DurableJob(id:id,idempotency:UUID().uuidString.lowercased(),ownerHash:owner,requestHash:String(repeating:"b",count:64),created:now))
@@ -576,14 +579,12 @@ private func runHandoffPreparationFailureTests(factory:PythonWorkerFactory)throw
             _=try broker.poll(now:HostResources.nowMilliseconds(),uptime:Int64(ProcessInfo.processInfo.systemUptime*1000),admission:&admission,source:{_ in binding})
             Thread.sleep(forTimeInterval:0.005)
         }
-        if cancelled {
-            guard try journal.originalNativeRoot(job:id,attempt:0,scope:binding.inferenceScope(),peer:peer)==UInt64.max else {fatalError("Cancellation discarded verified original identity")}
-        }
+        guard try journal.originalNativeRoot(job:id,attempt:0,scope:binding.inferenceScope(),peer:peer)==UInt64.max else {fatalError("Lineage failure/cancellation discarded verified original registration")}
         guard !broker.active(job:id),try journal.activeLaunchCount()==0,try journal.workerGrants().isEmpty,
               try journal.unresolvedCount()==1,try journal.uncertainCount()==1,
               try journal.inferenceScope(job:id,attempt:0)?.state == .uncertain else {fatalError("Preparation failure/cancel spawned or cleared native uncertainty")}
     }
-    print("PASS: broker registration mismatch and mid-registration cancellation never spawn; responsive poll and exact local release retain native uncertainty")
+    print("PASS: broker lineage mismatch/unavailable and mid-registration cancellation retain verified original registration without spawn; exact local release preserves native uncertainty")
 }
 
 private struct FactoryMetadataFixture:Encodable {

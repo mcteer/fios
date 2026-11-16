@@ -115,6 +115,29 @@ struct NativeRequestLineageConsumer:Sendable {
         _=try NativeLineageCheckpoint.decode(data)
         return data
     }
+    // Authenticated original-root registration is durable identity metadata,
+    // not a live lineage observation, worker permission or native completion.
+    mutating func acceptRegistration(_ sample:NativeHandoffSample,now:Int64)->Bool {
+        guard !fenced else {return false}
+        guard (0...ActivityPolicy.maximumTimestamp).contains(now),now>=previousNow else {fenced=true;return false}
+        previousNow=now
+        let value=sample.result
+        guard sample.peer.pid==peer.pid,sample.peer.start==peer.start,
+              sample.peer.executable.path.utf8.elementsEqual(peer.executable.path.utf8),
+              sample.peer.executable.sha256==peer.executable.sha256,
+              value.instance==instance,value.correlationID==correlationID else {fenced=true;return false}
+        guard value.operation == .register,value.state == .pending,!value.uncertain,value.rootSequence>0,
+              value.sampleSequence>0,value.sampleSequence<=UInt64(ActivityPolicy.maximumTimestamp),
+              (0...ActivityPolicy.maximumTimestamp).contains(sample.sampledAt),
+              (-1000...5000).contains(now-sample.sampledAt) else {return false}
+        if let original=rootSequence,original != value.rootSequence {fenced=true;return false}
+        // A newer readonly poll may already have persisted this same root.
+        // Keep its sequence/clock rather than replaying the registration.
+        if rootSequence != nil,value.sampleSequence<=sequence {return true}
+        guard sample.sampledAt>=sampledAt,value.sampleSequence>sequence else {return false}
+        rootSequence=value.rootSequence;sequence=value.sampleSequence;sampledAt=sample.sampledAt
+        return true
+    }
     // A root must first have been observed live and checkpointed. This only
     // returns correlated local metadata; it does not resolve native ownership.
     mutating func acceptRetirement(_ sample:NativeRequestRetirementSample?,now:Int64)->NativeRequestRetirement? {

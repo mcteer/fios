@@ -1,0 +1,68 @@
+import Foundation
+import CryptoKit
+
+// Only the follow-up readonly lookup is replaced. Registration comes from the
+// real private native peer; no worker permission or model POST is possible.
+private final class MissingLineageSource:NativeHandoffPreparing,@unchecked Sendable {
+    let client:NativeControlClient
+    var peer:NativeControlPeer {client.peer}
+    private let lock=NSLock()
+    private var saved:NativeHandoffSample?
+    init(client:NativeControlClient) {self.client=client}
+    var registration:NativeHandoffSample? {lock.lock();defer {lock.unlock()};return saved}
+    func registerHandoff(instance:String,correlationID:String)throws->NativeHandoffSample {
+        let value=try client.registerHandoff(instance:instance,correlationID:correlationID)
+        lock.lock();saved=value;lock.unlock();return value
+    }
+    func lineage(instance:String,correlationID:String)throws->NativeRequestLineageSample {throw NativeControlError.unavailable}
+    func cancelHandoff(instance:String,correlationID:String,rootSequence:UInt64)throws->NativeHandoffSample {throw NativeControlError.unavailable}
+}
+
+@main enum PreparationFailureClient {
+    static func main()throws {
+        let a=CommandLine.arguments
+        guard a.count==10,let pid=Int32(a[2]) else {throw RuntimeError.invalid}
+        let directory=URL(fileURLWithPath:a[1]),job=a[5],instance=a[6],step=a[7]
+        let executable=try VerifiedExecutable(path:a[3],sha256:SHA256.hash(data:Data(contentsOf:URL(fileURLWithPath:a[3]))).map {String(format:"%02x",$0)}.joined())
+        let peer=NativeControlPeer(pid:pid,start:try WorkerResources.startIdentifier(pid:pid),executable:executable)
+        let journal=try Journal(directory:directory),now=HostResources.nowMilliseconds()
+        if step=="fail" {
+            let base="http://127.0.0.1:1/v1",epoch="00000000-0000-4000-8000-000000000002"
+            let snapshot=NativeSnapshot(host:"fixture-host",endpointHash:PythonWorkerFactory.digest(base),nativeEpoch:instance,sequence:1,sampledAt:now,allClientLifecycleCoverage:true,residentModel:nil,outstandingOwners:0,loading:false)
+            // Synthetic advisory/capacity values exercise coordination only.
+            // They are never a source ceiling or native admission grant.
+            let binding=WorkerDispatchBinding(baseURL:base,guardPath:directory.appendingPathComponent("observe.sock").path,host:snapshot.host,profileHash:String(repeating:"b",count:64),managerEpoch:epoch,canonicalModel:"fixture/model",nativeModel:"fixture/model",nativeSnapshot:snapshot,nativeCompatibilityAccepted:true,apiKey:nil)
+            let scope=try binding.inferenceScope(),older=UUID().uuidString.lowercased(),owner=String(repeating:"a",count:64)
+            try journal.claim(job:older,attempt:0,model:scope.canonicalModel,scope:scope)
+            try journal.markDispatched(job:older,attempt:0);try journal.markUncertain(job:older,attempt:0)
+            _=try journal.reserveJob(DurableJob(id:job,idempotency:UUID().uuidString.lowercased(),ownerHash:owner,requestHash:String(repeating:"c",count:64),created:now))
+            try journal.transitionJob(id:job,to:.running)
+            let python=URL(fileURLWithPath:a[8]).resolvingSymlinksInPath()
+            let factory=try PythonWorkerFactory(invocation:a[8],executableSHA256:SHA256.hash(data:Data(contentsOf:python)).map {String(format:"%02x",$0)}.joined(),policySHA256:a[9])
+            let client=NativeControlClient(path:a[4],peer:peer),source=MissingLineageSource(client:client)
+            let broker=ModelBroker(journal:journal,factory:factory,handoffSource:source)
+            var admission=AdmissionPolicy()
+            let sample=ResourceSample(sampledAt:now,physical:128<<30,available:64<<30,vmAvailable:nil,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal)
+            try broker.submit(job:job,owner:owner,requestID:UUID().uuidString.lowercased(),context:[ModelText(role:"user",content:"fixture")],binding:binding,nativeCapacityProven:true,sample:sample,admission:&admission,now:now)
+            let end=ProcessInfo.processInfo.systemUptime+3
+            while broker.active(job:job) && ProcessInfo.processInfo.systemUptime<end {
+                _=try broker.poll(now:HostResources.nowMilliseconds(),uptime:Int64(ProcessInfo.processInfo.systemUptime*1000),admission:&admission,source:{_ in binding})
+                Thread.sleep(forTimeInterval:0.005)
+            }
+            guard !broker.active(job:job),let registered=source.registration,
+                  try journal.originalNativeRoot(job:job,attempt:0,scope:scope,peer:peer)==registered.result.rootSequence,
+                  try journal.activeLaunchCount()==0,try journal.workerGrants().isEmpty,
+                  try journal.inferenceScope(job:older,attempt:0)?.state == .uncertain else {throw JournalError.conflict}
+            let live=try client.lineage(instance:instance,correlationID:registered.result.correlationID)
+            guard live.lineage.found,live.lineage.rootSequence==registered.result.rootSequence else {throw NativeControlError.invalid}
+            // Do not persist this verification lookup: the checkpoint under
+            // test must come solely from the original registration reply.
+        }else {guard step=="check" else {throw RuntimeError.invalid}}
+        guard let record=try journal.inferenceScope(job:job,attempt:0),record.state == .uncertain,
+              let root=try journal.originalNativeRoot(job:job,attempt:0,scope:record.scope,peer:peer),
+              try journal.unresolvedCount()==2,try journal.uncertainCount()==2,
+              try journal.requestCount(job:job)==1,try journal.activeLaunchCount()==0,
+              try journal.workerGrants().isEmpty else {throw JournalError.conflict}
+        print("\(try record.scope.nativeRequestCorrelationID(job:job,attempt:0)) \(root)")
+    }
+}

@@ -168,15 +168,19 @@ final class ModelBroker {
             preparing.removeValue(forKey:id)
             do {
                 let value=try finished.get(),peer=value.registration.peer
-                guard value.registration.sampledAt<=value.lineage.sampledAt,
+                let previousRoot=try journal.originalNativeRoot(job:id,attempt:pending.plan.attempt,scope:pending.plan.scope,peer:peer)
+                guard try journal.observeHandoffRegistration(job:id,attempt:pending.plan.attempt,scope:pending.plan.scope,
+                          peer:peer,sample:value.registration,now:now),
+                      let lineage=value.lineage,
+                      value.registration.sampledAt<=lineage.sampledAt,
                       value.registration.sampledAt>=0,now>=value.registration.sampledAt,
                       now-value.registration.sampledAt<=5000 else {throw NativeControlError.unavailable}
-                if let original=try journal.originalNativeRoot(job:id,attempt:pending.plan.attempt,scope:pending.plan.scope,peer:peer) {
+                if let original=previousRoot {
                     // A readonly poll can checkpoint a newer sample before this
                     // asynchronous reply is drained. Preserve that checkpoint.
                     guard original==value.registration.result.rootSequence else {throw NativeControlError.invalid}
                 }else {
-                    guard case .live=try journal.observeLineage(job:id,attempt:pending.plan.attempt,scope:pending.plan.scope,peer:peer,sample:value.lineage,now:now) else {throw NativeControlError.unavailable}
+                    guard case .live=try journal.observeLineage(job:id,attempt:pending.plan.attempt,scope:pending.plan.scope,peer:peer,sample:lineage,now:now) else {throw NativeControlError.unavailable}
                 }
                 // Cancellation still records known original identity, but can
                 // never turn that metadata into a process or permission bytes.
