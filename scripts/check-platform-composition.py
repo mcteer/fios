@@ -165,14 +165,47 @@ def first_install_proposal(directory, expected, host):
             'credentials_written':False,'state_opened':False}
 
 
+def uninstall_proposal(directory, expected, host):
+    plan = first_install_proposal(directory, expected, host)
+    files = plan.pop('proposed_file_commands')
+    directories = plan.pop('proposed_directory_commands')
+    # Only the exact reviewed managed artifact names. No state, enrollment,
+    # credentials, launchd registration, runtime objects or unrelated paths.
+    removals = [{'program':'/bin/rm','argv':[item['destination']],
+                 'destination':item['destination'],'required_sha256':item['sha256'],
+                 'required_bytes':item['bytes'],'required_mode':item['mode']}
+                for item in files]
+    empty_directories = [{'program':'/bin/rmdir','argv':[item['argv'][-1]]}
+                         for item in reversed(directories)]
+    return {**plan,'operation':'uninstall_command_proposal',
+            'proposal_scope':'known_artifacts_only_retains_state_enrollment_and_unknown_files',
+            'mandatory_preconditions':['separate_operator_uninstall_approval',
+                'execute_on_exact_reviewed_studio_not_core',
+                'root_wheel_operator_and_protected_no_symlink_prefix',
+                'verified_stopped_state_configuration_and_program_backup',
+                'platform_jobs_unregistered_and_all_writers_stopped',
+                'reviewed_launchd_registration_removed_or_persistently_disabled',
+                'owned_native_child_reconciled_no_unknown_native_disruption',
+                'serialized_operator_transaction',
+                'reverify_each_installed_artifact_owner_mode_size_and_hash_before_removal'],
+            'proposed_file_removals':removals,'proposed_empty_directory_removals':empty_directories,
+            'enrollment_retained':True,'credentials_retained':True,'state_and_exports_retained':True,
+            'unknown_files':'retain_never_recurse_or_expand_removal_scope',
+            'source_and_destination_hashes':'installed_file_must_match_exact_reviewed_artifact_before_removal',
+            'on_failure':'stop_retain_remaining_data_and_uncertainty_no_recursive_cleanup'}
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--candidate',required=True)
     parser.add_argument('--sha256',required=True)
     parser.add_argument('--host')
-    parser.add_argument('--first-install-proposal',action='store_true')
+    modes=parser.add_mutually_exclusive_group()
+    modes.add_argument('--first-install-proposal',action='store_true')
+    modes.add_argument('--uninstall-proposal',action='store_true')
     args = parser.parse_args()
-    require(not args.first_install_proposal or args.host is not None)
-    result = (first_install_proposal(args.candidate,args.sha256,args.host) if args.first_install_proposal else
+    require(not (args.first_install_proposal or args.uninstall_proposal) or args.host is not None)
+    result = (uninstall_proposal(args.candidate,args.sha256,args.host) if args.uninstall_proposal else
+              first_install_proposal(args.candidate,args.sha256,args.host) if args.first_install_proposal else
               installation_plan(args.candidate,args.sha256,args.host) if args.host else review(args.candidate,args.sha256))
     print(json.dumps(result))

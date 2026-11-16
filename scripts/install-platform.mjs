@@ -11,6 +11,7 @@ Commands:
   plan
   plan-composition     --candidate ABS_COMPOSITION --sha256 REVIEWED_COMPOSITION_SHA --host HOST
   propose-first-install --candidate ABS_COMPOSITION --sha256 REVIEWED_COMPOSITION_SHA --host HOST
+  propose-artifact-uninstall --candidate ABS_COMPOSITION --sha256 REVIEWED_COMPOSITION_SHA --host HOST
   plan-config          --state ABS_STATE
   stage-config         --state ABS_STATE --to ABS_NEW_PRIVATE_BUNDLE
   verify-config        --bundle ABS_BUNDLE --bundle-sha256 REVIEWED_BUNDLE_SHA256
@@ -29,17 +30,17 @@ Reviews, stages or verifies private configuration/state data. Executes no instal
 function failure(){console.error('Platform review/preparation failed; retain any private output for review.');process.exitCode=1;}
 if(args.length===1&&['--help','-h'].includes(args[0])){
   console.log(usage);
-}else if(['plan-composition','propose-first-install'].includes(args[0])){
+}else if(['plan-composition','propose-first-install','propose-artifact-uninstall'].includes(args[0])){
   try{
     if(args.length!==7||args[1]!=='--candidate'||args[3]!=='--sha256'||args[5]!=='--host')throw Error('arguments');
     const python=fileURLToPath(new URL('../.venv/bin/python',import.meta.url));
     const checker=fileURLToPath(new URL('./check-platform-composition.py',import.meta.url));
-    const proposal=args[0]==='propose-first-install';
-    const result=spawnSync(python,['-I','-B',checker,'--candidate',args[2],'--sha256',args[4],'--host',args[6],...(proposal?['--first-install-proposal']:[])],
+    const proposal=args[0]!=='plan-composition',uninstall=args[0]==='propose-artifact-uninstall';
+    const result=spawnSync(python,['-I','-B',checker,'--candidate',args[2],'--sha256',args[4],'--host',args[6],...(proposal?[uninstall?'--uninstall-proposal':'--first-install-proposal']:[])],
       {encoding:'utf8',timeout:250000,maxBuffer:proposal?8<<20:65536});
     if(result.error||result.status!==0||result.stderr)throw Error('composition');
     const plan=JSON.parse(result.stdout);
-    if(plan.operation!==(proposal?'first_install_command_proposal':'composed_platform_install_review')||plan.state!=='blocked'||plan.activation!==false||plan.installed!==false||plan.native_authority!==false||plan.privileged_commands.length!==0)throw Error('authority');
+    if(plan.operation!==(proposal?(uninstall?'uninstall_command_proposal':'first_install_command_proposal'):'composed_platform_install_review')||plan.state!=='blocked'||plan.activation!==false||plan.installed!==false||plan.native_authority!==false||plan.privileged_commands.length!==0)throw Error('authority');
     if(proposal&&(plan.commands_authorized!==false||plan.requires_operator_execution!==true||plan.enrollment_written!==false||plan.credentials_written!==false))throw Error('proposal');
     console.log(JSON.stringify(plan,null,2));
   }catch{failure();}

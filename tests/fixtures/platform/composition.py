@@ -133,6 +133,50 @@ class CompositionTests(unittest.TestCase):
             self.assertEqual((output/'sentinel').read_bytes(),b'unrelated')
             self.assertEqual(set(p.name for p in output.iterdir()),{'sentinel'})
 
+    def test_uninstall_proposes_only_exact_artifacts_and_retains_unknown_data(self):
+        with tempfile.TemporaryDirectory(dir=Path('/tmp').resolve()) as temporary:
+            root=Path(temporary);args=self.fixture(root);output=root/'combined'
+            result=API['compose'](*args[:4],output)
+            planned=subprocess.run(['node',str(ROOT/'scripts/install-platform.mjs'),'propose-artifact-uninstall',
+                '--candidate',str(output),'--sha256',result['composition_sha256'],'--host','fios-edge-a.lab'],
+                capture_output=True,timeout=10)
+            self.assertEqual(planned.returncode,0,planned.stderr)
+            value=json.loads(planned.stdout)
+            self.assertEqual(value['operation'],'uninstall_command_proposal');self.assertEqual(value['state'],'blocked')
+            self.assertFalse(value['commands_authorized']);self.assertTrue(value['requires_operator_execution'])
+            self.assertEqual(value['privileged_commands'],[])
+            self.assertNotIn('proposed_file_commands',value);self.assertNotIn('proposed_directory_commands',value)
+            for flag in ('enrollment_retained','credentials_retained','state_and_exports_retained'):
+                self.assertTrue(value[flag])
+            self.assertFalse(value['installed']);self.assertFalse(value['native_authority'])
+            records=value['proposed_file_removals'];self.assertEqual(len(records),12)
+            prefix=Path('/Library/Application Support/Fios/Studio');staged=root/'removal-fixture'
+            copies=REVIEW['first_install_proposal'](output,result['composition_sha256'],'fios-edge-a.lab')
+            for item in copies['proposed_file_commands']:
+                path=staged/Path(item['destination']).relative_to(prefix)
+                path.parent.mkdir(parents=True,exist_ok=True);path.write_bytes(Path(item['source']).read_bytes())
+                path.chmod(item['mode'])
+            policy=staged/'python-enrollment.json';policy.write_bytes(b'opaque retained enrollment')
+            unrelated=staged/'unrelated-file';unrelated.write_bytes(b'retain')
+            state=root/'independent-state';state.write_bytes(b'uncertainty and exports')
+            for item in records:
+                self.assertEqual(item['program'],'/bin/rm');self.assertEqual(item['argv'],[item['destination']])
+                path=staged/Path(item['destination']).relative_to(prefix)
+                self.assertEqual(sha(path.read_bytes()),item['required_sha256'])
+                self.assertEqual(path.stat().st_size,item['required_bytes'])
+                self.assertEqual(path.stat().st_mode & 0o7777,item['required_mode'])
+                subprocess.run(['/bin/rm',str(path)],check=True,timeout=2)
+            depths=[len(Path(item['argv'][0]).parts) for item in value['proposed_empty_directory_removals']]
+            self.assertEqual(depths,sorted(depths,reverse=True))
+            for item in value['proposed_empty_directory_removals']:
+                self.assertEqual(item['program'],'/bin/rmdir');self.assertEqual(len(item['argv']),1)
+                path=staged/Path(item['argv'][0]).relative_to(prefix)
+                # ENOTEMPTY retains unknown files; never recursively remove.
+                subprocess.run(['/bin/rmdir',str(path)],capture_output=True,timeout=2)
+            self.assertEqual(policy.read_bytes(),b'opaque retained enrollment')
+            self.assertEqual(unrelated.read_bytes(),b'retain');self.assertEqual(state.read_bytes(),b'uncertainty and exports')
+            self.assertFalse(args[4].exists())
+
     def test_copy_failure_retains_partial_data_without_receipt_or_authority(self):
         with tempfile.TemporaryDirectory(dir=Path('/tmp').resolve()) as temporary:
             root=Path(temporary);args=self.fixture(root);output=root/'partial';original=API['API']['write_data']

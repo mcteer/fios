@@ -335,3 +335,21 @@ claim these preconditions were met. It writes no protected paths, policies,
 credentials or state and proposes no launchd registration, process operation,
 SSH, reboot or inference. Upgrade/switch/removal and credential installation
 remain unfinished; this proposal does not complete T049.
+
+
+`propose-artifact-uninstall` also accepts candidate/hash/host arguments. Its
+blocked proposal lists only exact reviewed artifact paths with required
+installed owner/mode/size/hash checks, followed by deepest-first nonrecursive
+`rmdir` commands. It never proposes recursive removal, globbing, pruning or
+removal of state, exports, credentials, enrollment or unrelated files. Missing,
+changed or nonempty paths require stopping and retaining data for review.
+
+The operator must separately approve removal, verify stopped-state/configuration/
+program backups, reconcile native child custody, stop writers, remove or
+persistently disable the reviewed launchd registrations and serialize the
+transaction. The tool neither checks a remote installed tree nor performs any
+of these actions. Registration and enrollment removal remain separate,
+unimplemented steps; this artifact-only proposal does not claim full uninstall
+or T049 completion. A private fixture redirects only the data operations into
+a disposable user-owned tree and verifies that unknown/enrollment/state bytes
+survive; it supplies no root ownership or native-terminal evidence.
