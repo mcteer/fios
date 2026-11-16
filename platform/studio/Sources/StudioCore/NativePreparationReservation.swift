@@ -3,7 +3,11 @@ import Foundation
 protocol NativePreparationReserving:NativeLineageReading {
     func reservePreparation(instance:String,correlationID:String,model:String,lifetimeMilliseconds:UInt32,after sequence:UInt64)throws->NativePreparationSample
 }
-extension NativeControlClient:NativePreparationReserving {}
+protocol NativePreparationManaging:NativePreparationReserving {
+    func primaryActivity(instance:String,after sequence:UInt64)throws->NativePrimaryActivitySample
+    func withdrawPreparation(instance:String,correlationID:String,model:String,rootSequence:UInt64,after sequence:UInt64)throws->NativePreparationSample
+}
+extension NativeControlClient:NativePreparationManaging {}
 
 // Opaque once-verified receipt identity. Persistence may outlive its timing
 // window; neither identity nor a current window is native admission authority.
@@ -28,6 +32,10 @@ struct PreparedNativeReservation:Sendable {
     // Failure/mismatch does not discard an already verified original identity.
     // Nil cannot authorize launch or resolve independent native uncertainty.
     let lineage:NativeRequestLineageSample?
+    let activity:NativePrimaryActivitySample?
+    init(registration:VerifiedNativePreparationRegistration,lineage:NativeRequestLineageSample?,activity:NativePrimaryActivitySample?=nil) {
+        self.registration=registration;self.lineage=lineage;self.activity=activity
+    }
 }
 final class PendingNativePreparation:@unchecked Sendable {
     private let lock=NSLock()
@@ -69,7 +77,17 @@ final class PendingNativePreparation:@unchecked Sendable {
                           (0...5000).contains(now-value.sampledAt) else {throw NativeControlError.invalid}
                     try value.lineage.validate();lineage=value
                 } catch {lineage=nil}
-                completed = .success(PreparedNativeReservation(registration:registration,lineage:lineage))
+                var activity:NativePrimaryActivitySample?
+                if let lineage,let observing=source as? any NativePreparationManaging {
+                    do {
+                        let sample=try observing.primaryActivity(instance:instance,after:lineage.lineage.sampleSequence)
+                        guard samePeer(sample.peer),sample.activity.instance==instance,
+                              sample.activity.sampleSequence>lineage.lineage.sampleSequence else {throw NativeControlError.invalid}
+                        try sample.activity.validate();try sample.registry?.validate()
+                        activity=sample
+                    }catch {activity=nil} // Preserve original identity on observation loss.
+                }
+                completed = .success(PreparedNativeReservation(registration:registration,lineage:lineage,activity:activity))
             } catch {completed = .failure(.unavailable)}
             lock.lock();result=completed;lock.unlock()
         }
@@ -77,5 +95,31 @@ final class PendingNativePreparation:@unchecked Sendable {
     func take()->Result<PreparedNativeReservation,NativeControlError>? {
         lock.lock();defer {lock.unlock()}
         let value=result;result=nil;return value
+    }
+}
+
+// Cleanup of one known original unconsumed CPU claim only. The result is
+// metadata, never not_sent/terminal proof and never a reason to clear a journal.
+final class PendingNativePreparationWithdrawal:@unchecked Sendable {
+    private let lock=NSLock()
+    private var result:Result<NativePreparationSample,NativeControlError>?
+    init(source:any NativePreparationManaging,instance:String,correlationID:String,model:String,root:UInt64,after sequence:UInt64) {
+        let expected=source.peer
+        Thread.detachNewThread { [self] in
+            let value:Result<NativePreparationSample,NativeControlError>
+            do {
+                let sample=try source.withdrawPreparation(instance:instance,correlationID:correlationID,model:model,rootSequence:root,after:sequence)
+                let ack=sample.acknowledgement
+                guard sample.peer.pid==expected.pid,sample.peer.start==expected.start,
+                      sample.peer.executable.path.utf8.elementsEqual(expected.executable.path.utf8),sample.peer.executable.sha256==expected.executable.sha256,
+                      ack.operation == .withdraw,ack.instance==instance,ack.correlationID==correlationID,
+                      ack.model.utf8.elementsEqual(model.utf8),ack.rootSequence==root,ack.lifetimeMilliseconds==0,ack.sampleSequence>sequence else {throw NativeControlError.invalid}
+                value = .success(sample)
+            }catch {value = .failure((error as? NativeControlError) ?? .unavailable)}
+            lock.lock();result=value;lock.unlock()
+        }
+    }
+    func take()->Result<NativePreparationSample,NativeControlError>? {
+        lock.lock();defer {lock.unlock()};let value=result;result=nil;return value
     }
 }

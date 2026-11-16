@@ -35,6 +35,9 @@ async def main():
                     with Path(directory,'preparation-queries').open('a') as trace:trace.write(request['operation']+'\n')
                 if request['operation']=='preparation':
                     snapshot_path=Path(directory,'preparation.json')
+                    if Path(directory,'preparation-await').exists():
+                        end=time.monotonic()+0.5
+                        while not snapshot_path.exists() and time.monotonic()<end:await asyncio.sleep(0.005)
                     value=json.loads(snapshot_path.read_text()) if snapshot_path.exists() else None
                     if value is not None:
                         assert request['payload']=={key:value[key] for key in ('job_id','attempt','root_sequence','correlation_id')}

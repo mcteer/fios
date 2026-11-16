@@ -4,7 +4,7 @@ Private worker metadata3 adds native_preparation_version1 while retaining
 pipe1/handoff1. Current Core accepts strict metadata2 for the legacy handoff
 path and strict metadata3 with preparation1; mixed/missing/unknown fields and
 unsupported versions refuse. This is protocol support, not native authority.
-The broker preparation dispatch and native source issuer remain unfinished.
+The complete positive native source issuer remains unfinished.
 
 An original preparation is selected only by the private parent environment's
 FIOS_PLATFORM_PREPARATION_ROOT and FIOS_PLATFORM_PREPARATION_CORRELATION. Both
@@ -45,8 +45,8 @@ observation can be built only from the original binding, current active job and
 launch, separate all-client ceiling and coherent native samples. Encoding rechecks
 the same journal instance/checkpoint/revision and original lease; any other
 unresolved inference refuses, even when native metadata looks fresh. No read
-changes an inference row or spent budget. The broker has not yet connected its
-preparation producer/dispatch composition. The client cannot grant production eligibility: native source guards,
+changes an inference row or spent budget. The broker now connects the original preparation producer, checked observation
+and factory through explicitly configured trusted ports. The client cannot grant production eligibility: native source guards,
 all-client proof/capacity and installed enrollment remain closed. Fixture
 responses do not qualify those capabilities or complete T022/T045.
 
@@ -60,3 +60,22 @@ Cancellation before Process.run or withdrawal of the original unused plan
 produces local no-spawn evidence only. Its durable acknowledgement reaps the
 local launch while retaining native uncertainty and spent history. It cannot
 enter the old handoff cancellation/not_sent producer.
+
+The broker's optional preparation mode requires independent all-client coverage
+and metadata3/preparation1 before reserving local resources or issuing a native
+RPC. It has no handoff fallback. Reservation, lineage and primary capture run
+once off-loop; missing observations retain an already verified registration.
+The serialized broker commits original identity before construction/spawn and
+serves its checked cached observation through TaskController. Generic unknown
+activity remains closed for new admission; metadata identity/freshness alone
+may retain the original already-bound operation, with the independent source
+ceiling and scoped checks still mandatory.
+
+Cancellation or journal-write failure revokes the original plan. The once-only
+completion is retained across local write retry and cannot become a delayed
+launch. When a native RPC may have happened without an acknowledgement, factory
+no-spawn evidence explicitly retains that possible native claim. Its local ack
+cannot use the no-native-request branch. Known unused CPU claims may receive
+one exact asynchronous withdrawal; its reply is metadata only and does not
+resolve an inference. Failure/expiry does not clear ownership. The public
+manager leaves preparation mode disabled and source coverage unknown.

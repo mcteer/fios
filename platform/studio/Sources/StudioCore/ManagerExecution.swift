@@ -14,7 +14,8 @@ struct ManagerExecutionPorts {
     private let bindingSource:(String,String)->WorkerDispatchBinding?
     let nativeCapacityProven:()->Bool
     let admissionOpen:()->Bool
-    let preparationObservation:(NativePreparationSubject,Int64)->NativePreparationObservation?
+    let nativePreparationEnabled:Bool
+    let nativePreparationCoverage:()->NativeCoverage
     private let resources:(Int64,Double?)->ResourceSample?
     private let resourceReader:(any VMResourceReading)?
     init(runtime:DockerRuntime?=nil,approvedImages:Set<String>,workerFactory:PythonWorkerFactory?=nil,
@@ -22,14 +23,15 @@ struct ManagerExecutionPorts {
          resources:@escaping (Int64,Double?)->ResourceSample?,
          binding:@escaping (String,String)->WorkerDispatchBinding?={_,_ in nil},
          nativeCapacityProven:@escaping ()->Bool={false},admissionOpen:@escaping ()->Bool={false},
-         preparationObservation:@escaping (NativePreparationSubject,Int64)->NativePreparationObservation?={_,_ in nil})throws {
+         nativePreparationEnabled:Bool=false,nativePreparationCoverage:@escaping ()->NativeCoverage={.unknown})throws {
         guard approvedImages.count<=8,(!approvedImages.isEmpty || workerFactory != nil),
               approvedImages.isEmpty || runtime != nil,
               approvedImages.allSatisfy({$0.hasPrefix("sha256:") && $0.utf8.count==71 && WireScalar.sha256(String($0.dropFirst(7)))}) else {throw RuntimeError.invalid}
         self.runtime=runtime;self.approvedImages=approvedImages;self.workerFactory=workerFactory
         self.vmSource=vmSource;self.resourceReader=resourceReader;self.resources=resources
         self.bindingSource=binding;self.nativeCapacityProven=nativeCapacityProven;self.admissionOpen=admissionOpen
-        self.preparationObservation=preparationObservation
+        guard !nativePreparationEnabled || workerFactory?.metadata.native_preparation_version==1 else {throw RuntimeError.identity}
+        self.nativePreparationEnabled=nativePreparationEnabled;self.nativePreparationCoverage=nativePreparationCoverage
     }
     func binding(_ model:String,managerEpoch:String)->WorkerDispatchBinding? {
         guard WireScalar.uuid(managerEpoch),WireScalar.model(model),let value=bindingSource(model,managerEpoch),

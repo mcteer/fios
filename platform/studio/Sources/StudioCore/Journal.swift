@@ -867,7 +867,7 @@ public final class Journal {
         try validate(job:job,attempt:attempt)
         let plan=evidence.plan,boot=try HostBoot.identity()
         guard plan.job==job,plan.attempt==attempt,WireScalar.uuid(plan.nonce) else {throw JournalError.conflict}
-        let expected=try plan.scope.encoded(),hasNativeParent=evidence.handoff != nil || evidence.preparation != nil
+        let expected=try plan.scope.encoded(),hasNativeParent=evidence.handoff != nil || evidence.preparation != nil || evidence.nativeAttempt
         try transaction {
             guard let record=try inferenceScope(job:job,attempt:attempt),
                   (!hasNativeParent ? [.reserved,.uncertain].contains(record.state):[.dispatched,.uncertain,.complete,.not_sent].contains(record.state)),try record.scope.encoded()==expected,

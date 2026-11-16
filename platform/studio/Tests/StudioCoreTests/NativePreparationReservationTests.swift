@@ -333,3 +333,132 @@ func runPreparationFactoryTransportTests(factory:PythonWorkerFactory,base:String
     guard queries==["preparation","preparation"] else {fatalError("Scoped preparation retried or fell back to global activity")}
     print("PASS: actual metadata3 factory/installed private child/scoped Unix guard/exact preparation header;1 mock POST or0 on unknown, native uncertainty/history retained")
 }
+
+private final class ManagedPreparationSource:NativePreparationManaging,@unchecked Sendable {
+    enum Mode {case healthy,reserveFailure,primaryFailure}
+    let peer:NativeControlPeer
+    let mode:Mode
+    let entered=DispatchSemaphore(value:0),release=DispatchSemaphore(value:0)
+    private let lock=NSLock()
+    private var instance="",correlation="",model=""
+    private var sequence:UInt64=0
+    private var calls=[0,0,0,0]
+    var counts:[Int] {lock.lock();defer{lock.unlock()};return calls}
+    init(peer:NativeControlPeer,mode:Mode){self.peer=peer;self.mode=mode}
+    func reservePreparation(instance:String,correlationID:String,model:String,lifetimeMilliseconds:UInt32,after sequence:UInt64)throws->NativePreparationSample {
+        lock.lock();calls[0]+=1;lock.unlock();entered.signal()
+        guard release.wait(timeout:.now()+2) == .success else {throw NativeControlError.deadline}
+        if mode == .reserveFailure {throw NativeControlError.unavailable}
+        lock.lock();self.instance=instance;correlation=correlationID;self.model=model;self.sequence=sequence+1;let next=self.sequence;lock.unlock()
+        let now=HostResources.nowMilliseconds()
+        return NativePreparationSample(peer:peer,requestedAt:now,receivedAt:now,acknowledgement:NativePreparationAcknowledgement(operation:.reserve,instance:instance,
+            correlationID:correlationID,model:model,rootSequence:UInt64.max,sampleSequence:next,sourceSampledAt:now,lifetimeMilliseconds:lifetimeMilliseconds))
+    }
+    func lineage(instance:String,correlationID:String)throws->NativeRequestLineageSample {
+        lock.lock();calls[1]+=1;sequence+=1;let next=sequence;lock.unlock()
+        return NativeRequestLineageSample(peer:peer,sampledAt:HostResources.nowMilliseconds(),lineage:NativeRequestLineage(instance:instance,correlationID:correlationID,
+            sampleSequence:next,rootSequence:UInt64.max,found:true,uncertain:false,references:1,owners:1,ingress:0,preparing:1,active:0,responding:0))
+    }
+    func primaryActivity(instance:String,after afterSequence:UInt64)throws->NativePrimaryActivitySample {
+        lock.lock();calls[2]+=1;sequence=max(sequence,afterSequence)+1;let next=sequence,model=self.model;lock.unlock()
+        if mode == .primaryFailure {throw NativeControlError.unavailable}
+        let now=HostResources.nowMilliseconds()
+        let primary=NativePrimaryActivity(phaseVersion:4,instance:instance,sampleSequence:next,sampledAt:now,uncertain:false,
+            owners:1,ingress:0,preparing:1,queued:0,active:0,responding:0,models:[NativePrimaryModelActivity(model:model,preparing:1,queued:0,active:0,responding:0)])
+        return NativePrimaryActivitySample(peer:peer,receivedAt:now,registry:NativeRegistryActivity(primary:primary,registryGeneration:7,transitioning:false,models:[
+            NativeRegistryModelFact(model:model,readyDeclared:false,transitioning:false,uncertain:false,claimable:true,counts:NativePhaseCounts(ingress:0,preparing:1,queued:0,active:0,responding:0)),
+            NativeRegistryModelFact(model:"fixture/idle-other",readyDeclared:true,transitioning:false,uncertain:false,claimable:true,counts:.zero)]))
+    }
+    func withdrawPreparation(instance:String,correlationID:String,model:String,rootSequence:UInt64,after afterSequence:UInt64)throws->NativePreparationSample {
+        lock.lock();calls[3]+=1;sequence=max(sequence,afterSequence)+1;let next=sequence;lock.unlock()
+        let now=HostResources.nowMilliseconds()
+        return NativePreparationSample(peer:peer,requestedAt:now,receivedAt:now,acknowledgement:NativePreparationAcknowledgement(operation:.withdraw,instance:instance,
+            correlationID:correlationID,model:model,rootSequence:rootSequence,sampleSequence:next,sourceSampledAt:now,lifetimeMilliseconds:0))
+    }
+}
+
+func runPreparationBrokerTests(factory:PythonWorkerFactory,base:String,guardDirectory:URL,epoch:String)throws {
+    let cache=guardDirectory.appendingPathComponent("preparation.json"),mode=guardDirectory.appendingPathComponent("preparation-mode"),awaiting=guardDirectory.appendingPathComponent("preparation-await")
+    try Data("fixture".utf8).write(to:mode);try Data("fixture".utf8).write(to:awaiting)
+    defer {for path in [cache,mode,awaiting]{try? FileManager.default.removeItem(at:path)}}
+    try Data(String(repeating:"4",count:32).utf8).write(to:guardDirectory.appendingPathComponent("native-epoch"))
+    let peer=NativeControlPeer(pid:42,start:99,executable:try VerifiedExecutable(path:"/fixture/native",sha256:String(repeating:"e",count:64)))
+    for scenario in ["healthy","reserveFailure","primaryFailure","cancelled","storageFailure"] {
+        let testMode:ManagedPreparationSource.Mode = scenario=="reserveFailure" ? .reserveFailure:scenario=="primaryFailure" ? .primaryFailure:.healthy
+        try? FileManager.default.removeItem(at:cache)
+        let directory=guardDirectory.appendingPathComponent(UUID().uuidString),journal=try Journal(directory:directory)
+        let id=UUID().uuidString.lowercased(),owner=String(repeating:"c",count:64),created=HostResources.nowMilliseconds()
+        _=try journal.reserveJob(DurableJob(id:id,idempotency:UUID().uuidString.lowercased(),ownerHash:owner,requestHash:String(repeating:"d",count:64),created:created))
+        try journal.transitionJob(id:id,to:.running,now:created)
+        let snapshot=NativeSnapshot(host:"fixture-host",endpointHash:PythonWorkerFactory.digest(base),nativeEpoch:String(repeating:"4",count:32),sequence:1,
+            sampledAt:created,allClientLifecycleCoverage:true,residentModel:"fixture/idle-other",outstandingOwners:0,loading:false)
+        let binding=WorkerDispatchBinding(baseURL:base,guardPath:guardDirectory.appendingPathComponent("observe.sock").path,host:"fixture-host",profileHash:String(repeating:"f",count:64),managerEpoch:epoch,
+            canonicalModel:"fixture/model",nativeModel:"fixture/model",nativeSnapshot:snapshot,nativeCompatibilityAccepted:true,apiKey:nil)
+        let scope=try binding.inferenceScope(),native=ManagedPreparationSource(peer:peer,mode:testMode)
+        let broker=ModelBroker(journal:journal,factory:factory,preparationSource:native,preparationCoverage:{.all_clients})
+        var admission=AdmissionPolicy()
+        let resource=ResourceSample(sampledAt:created,physical:128<<30,available:64<<30,vmAvailable:nil,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal)
+        if scenario=="healthy" {
+            let blocked=ModelBroker(journal:journal,factory:factory,preparationSource:native,preparationCoverage:{.unknown})
+            do {
+                try blocked.submit(job:id,owner:owner,requestID:UUID().uuidString.lowercased(),context:[ModelText(role:"user",content:"fixture")],binding:binding,
+                    nativeCapacityProven:true,sample:resource,admission:&admission,now:created)
+                fatalError("Metadata or generic source raised independent preparation coverage")
+            }catch AdmissionError.capacity {}
+            guard native.counts==[0,0,0,0],try journal.requestCount(job:id)==0,try journal.activeLaunchCount()==0 else {fatalError("Unknown preparation floor spent budget or called native source")}
+        }
+        let start=ProcessInfo.processInfo.systemUptime
+        try broker.submit(job:id,owner:owner,requestID:UUID().uuidString.lowercased(),context:[ModelText(role:"user",content:"fixture broker preparation")],binding:binding,
+            nativeCapacityProven:true,sample:resource,admission:&admission,now:created)
+        guard ProcessInfo.processInfo.systemUptime-start<0.1,native.entered.wait(timeout:.now()+1) == .success,
+              try journal.workerGrants().isEmpty,try journal.inferenceScope(job:id,attempt:0)?.state == .dispatched else {fatalError("Preparation broker blocked or spawned before reservation")}
+        if scenario=="cancelled" {try broker.cancel(job:id,uptime:Int64(ProcessInfo.processInfo.systemUptime*1000))}
+        native.release.signal()
+        if scenario=="storageFailure" {
+            let readyBy=ProcessInfo.processInfo.systemUptime+1
+            while native.counts[2]==0 && ProcessInfo.processInfo.systemUptime<readyBy {usleep(1000)}
+            guard native.counts[2]==1 else {throw NativeControlError.deadline}
+            usleep(5000)
+            var writer:OpaquePointer?
+            guard sqlite3_open_v2(directory.appendingPathComponent("state.sqlite").path,&writer,SQLITE_OPEN_READWRITE,nil)==SQLITE_OK,let writer else {throw JournalError.storage}
+            defer {sqlite3_close(writer)}
+            guard sqlite3_exec(writer,"BEGIN IMMEDIATE",nil,nil,nil)==SQLITE_OK else {throw JournalError.storage}
+            let heldUntil=ProcessInfo.processInfo.systemUptime+0.05
+            while ProcessInfo.processInfo.systemUptime<heldUntil {
+                _=try broker.poll(now:HostResources.nowMilliseconds(),uptime:Int64(ProcessInfo.processInfo.systemUptime*1000),admission:&admission,source:{_ in binding})
+                usleep(1000)
+            }
+            guard try journal.workerGrants().isEmpty else {fatalError("Preparation storage failure spawned a child")}
+            guard sqlite3_exec(writer,"ROLLBACK",nil,nil,nil)==SQLITE_OK else {throw JournalError.storage}
+        }
+        let subject=try NativePreparationSubject(payload:["job_id":id,"attempt":0,"root_sequence":String(UInt64.max),"correlation_id":scope.nativeRequestCorrelationID(job:id,attempt:0)])
+        var posts:Int?,completed=false
+        let finishBy=ProcessInfo.processInfo.systemUptime+10
+        while broker.active(job:id) && ProcessInfo.processInfo.systemUptime<finishBy {
+            let now=HostResources.nowMilliseconds()
+            let unknown=NativeSnapshot(host:binding.host,endpointHash:snapshot.endpointHash,nativeEpoch:snapshot.nativeEpoch,sequence:1,sampledAt:now,
+                allClientLifecycleCoverage:false,residentModel:nil,outstandingOwners:0,loading:false)
+            let current=WorkerDispatchBinding(baseURL:base,guardPath:binding.guardPath,host:binding.host,profileHash:binding.profileHash,managerEpoch:epoch,
+                canonicalModel:binding.canonicalModel,nativeModel:binding.nativeModel,nativeSnapshot:unknown,nativeCompatibilityAccepted:true,apiKey:nil)
+            guard try !NativeAdmission.permitsDispatch(current,now:now) else {fatalError("Scoped broker raised generic unknown activity")}
+            let events=try broker.poll(now:now,uptime:Int64(ProcessInfo.processInfo.systemUptime*1000),admission:&admission,source:{_ in current})
+            if let sample=broker.preparationObservation(subject,now:now),let data=try? sample.encoded(subject:subject,managerEpoch:epoch,journal:journal,now:now) {try data.write(to:cache)}
+            for event in events[id] ?? [] {
+                if case .usage(let count,_)=event {posts=count}
+                if case .complete=event {completed=true}
+            }
+            usleep(5000)
+        }
+        guard !broker.active(job:id),try journal.activeLaunchCount()==0,try journal.unresolvedCount()==1,try journal.uncertainCount()==1,
+              try journal.requestCount(job:id)==1,try journal.inferenceScope(job:id,attempt:0)?.state == .uncertain else {fatalError("Preparation broker lost local/native separation")}
+        if scenario == "healthy" {
+            guard completed,posts==1,native.counts==[1,1,1,0] else {fatalError("Preparation broker did not launch exact once-only original scope")}
+        }else {
+            let limit=ProcessInfo.processInfo.systemUptime+1
+            while scenario != "reserveFailure" && native.counts[3]==0 && ProcessInfo.processInfo.systemUptime<limit {usleep(1000)}
+            guard try journal.workerGrants().isEmpty,posts==nil,!completed,native.counts[0]==1,
+                  native.counts[3] == (scenario == "reserveFailure" ? 0:1) else {fatalError("Failed preparation spawned/retried or laundered withdrawal metadata")}
+        }
+    }
+    print("PASS: broker off-loop original preparation/checked scope/actual installed child; generic unknown stays closed; source failures reap local launch and retain native uncertainty")
+}

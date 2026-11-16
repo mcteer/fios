@@ -48,8 +48,9 @@ struct WorkerNeverSpawnedEvidence:Sendable {
     let plan:PlannedWorkerStart
     let handoff:WorkerHandoffBinding?
     let preparation:WorkerPreparationBinding?
-    fileprivate init(plan:PlannedWorkerStart,handoff:WorkerHandoffBinding?=nil,preparation:WorkerPreparationBinding?=nil) {
-        self.plan=plan;self.handoff=handoff;self.preparation=preparation
+    let nativeAttempt:Bool
+    fileprivate init(plan:PlannedWorkerStart,handoff:WorkerHandoffBinding?=nil,preparation:WorkerPreparationBinding?=nil,nativeAttempt:Bool=false) {
+        self.plan=plan;self.handoff=handoff;self.preparation=preparation;self.nativeAttempt=nativeAttempt
     }
 }
 
@@ -119,6 +120,15 @@ final class PythonWorkerFactory:Sendable {
             catch WorkerStartFailure.cancelled {return .failure(.neverSpawned(WorkerNeverSpawnedEvidence(plan:plan,preparation:preparation)))}
             catch {return .failure(.unavailable)}
         }
+    }
+    // A native RPC may have happened even without an acknowledgement. This
+    // proves only that the original local plan never spawned a child.
+    func withdrawUnstartedNativeAttempt(plan:PlannedWorkerStart,journal:Journal)throws->WorkerNeverSpawnedEvidence {
+        guard let record=try journal.inferenceScope(job:plan.job,attempt:plan.attempt),[.dispatched,.uncertain].contains(record.state),
+              try record.scope.encoded()==plan.scope.encoded(),
+              try journal.activeLaunches().contains(where:{$0.job==plan.job && $0.attempt==plan.attempt && $0.nonce==plan.nonce}),
+              plan.consume() else {throw RuntimeError.identity}
+        return WorkerNeverSpawnedEvidence(plan:plan,nativeAttempt:true)
     }
     // Local plan only: no native withdrawal or native terminal claim.
     func withdrawUnstartedPreparation(plan:PlannedWorkerStart,preparation:WorkerPreparationBinding)throws->WorkerNeverSpawnedEvidence {

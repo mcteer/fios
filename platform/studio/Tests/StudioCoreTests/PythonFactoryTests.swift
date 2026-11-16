@@ -394,6 +394,7 @@ func runPythonFactoryTests() throws {
           try zeroReopened.requestCount(job:zeroJob)==1 else {fatalError("Reopened zero-post decision lost original producer/budget")}
     print("PASS: installed private child emits verified zero-POST refusal; exact native cancellation plus durable reap records only not_sent with original grant and spent budget across restart")
     try runPreparationFactoryTransportTests(factory:factory,base:base,guardDirectory:directory,epoch:epoch)
+    try runPreparationBrokerTests(factory:factory,base:base,guardDirectory:directory,epoch:epoch)
     let reaped=HostResources.nowMilliseconds()
     try admission.reserveWorker(key:"reaped-one",sample:resources(reaped),now:reaped)
     try admission.reserveWorker(key:"reaped-two",sample:resources(reaped),now:reaped)

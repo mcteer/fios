@@ -7624,3 +7624,18 @@ Initial compiles found missing try on scope conversion and a test's outdated eve
 - `/private/tmp/fios-009-preparation-factory-manager.log` SHA256 `be2993c142b192b53d2387492d380a41a8eeea24949c8f1d99432cfb522bf78a`.
 
 No public preparation broker/issuer, complete native coverage/proof/capacity or installed policy is enabled. Broker dispatch/observation composition and native withdrawal reconciliation remain unfinished. All artifacts/runtimes need fresh qualification for current inputs;39/55 whole tasks unchanged. No native actuation, real inference, installation, merge or deployment occurs.
+
+### Broker original-preparation composition and recovery (2026-11-16)
+
+An explicitly configured preparation source now reserves once off-loop, optionally reads one lineage/primary capture, preserves registration on observation loss, checkpoints original identity before factory launch and exposes only its checked cached scope through TaskController. Mode selection requires an independent all-client ceiling plus preparation1 before any native call/budget spend; no fallback to handoff occurs. Generic unknown remains non-dispatchable while the original operation may retain exact source identity/freshness. The manager's new mode defaults disabled/coverage unknown; no native issuer is fabricated.
+
+Actual installed-child/private-Unix/mock-HTTP broker cases pass for healthy scoped dispatch despite generic unknown, reservation failure, primary capture failure, cancellation before reservation acknowledgement and real isolated SQLite writer contention. Unknown independent coverage spends no budget/calls. Failure/no-spawn reaps only the local launch, retains the native uncertain scope/root/history and cannot produce legacy not_sent evidence. A known unused claim receives one exact async withdrawal; its metadata cannot close inference. Native-RPC failure without an acknowledgement uses a distinct local no-spawn native-attempt marker, preventing the no-native-request cleanup branch. Original cached completion survives storage recovery without repeating reservation or spawning late.
+
+An intermediate compile rejected an unused optional binding; changed to a boolean presence check. Final full Debug/optimized,198 Node/116 installed Python and actual manager default/closed/missing-source/model-only IPC pass. No real inference/native activation occurs. Broker failure cases deliberately retain native uncertainty even after withdrawal; full correlated native reconciliation and positive proof/capacity remain unfinished. The original registration's rejected/fenced persistence and later-start local storage failure paths still need complete qualification; no whole-task closure is claimed.
+
+- `/private/tmp/fios-009-preparation-broker-debug-final.log` SHA256 `b621d0f3e0ee0003dbadba2f109c75ca2edcc79f78de94d0839fa70545e65ff3`.
+- `/private/tmp/fios-009-preparation-broker-release.log` SHA256 `354e322e57c79ae6c8d667c14cc4fbccbab96343940206b83ed6f5e7d47577f9`.
+- `/private/tmp/fios-009-preparation-broker-manager.log` SHA256 `be2993c142b192b53d2387492d380a41a8eeea24949c8f1d99432cfb522bf78a`.
+- `/private/tmp/fios-009-preparation-broker-npm-test.log` SHA256 `ba87e0b22ff0c36ae8fd9e9d85df1ce60a7c721a2b1e4a455a693c8c521ed220`.
+
+Metadata3 runtime candidate61242be8… has been built and byte-reviewed before/after116 copied-prefix tests, but current-Core factory and fresh clean package qualification are still pending. Old candidates remain separately scoped historical evidence. Whole39/55 unchanged. Exact published1d430c7 CI43832556877 is all seven jobs green; this queued batch requires its own exact-head CI. No merge, delivery, installation or Studio actuation occurs.

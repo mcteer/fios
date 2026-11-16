@@ -34,6 +34,7 @@ struct WorkerPreparationBinding:Sendable {
         return Self(plan:plan,registration:registration,checkpoint:try journal.preparationBindingCheckpoint(plan:plan,peer:registration.peer,root:ack.rootSequence))
     }
     var launchNonce:String {plan.nonce}
+    var registrationSequence:UInt64 {registration.acknowledgement.sampleSequence}
     func validateIdentity(plan expected:PlannedWorkerStart,scope:InferenceScope)throws {
         guard plan===expected else {throw RuntimeError.identity}
         try validateIdentity(job:plan.job,attempt:plan.attempt,scope:scope)

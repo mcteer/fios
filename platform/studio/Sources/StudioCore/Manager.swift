@@ -69,7 +69,10 @@ public enum ManagerRuntime {
         let workerRecovery=try WorkerReconciler(journal:journal,admission:&admission)
         let audit=try AuditLog(directory:directory.appendingPathComponent("audit"),telemetry:telemetry)
         let artifacts=AsyncArtifacts(store:try ArtifactStore(directory:directory.appendingPathComponent("artifacts")))
-        let tasks=TaskController(journal:journal,broker:ModelBroker(journal:journal,factory:activeExecution?.workerFactory,handoffSource:activeNativeControl))
+        let preparationEnabled=activeExecution?.nativePreparationEnabled ?? false
+        guard !preparationEnabled || activeNativeControl != nil else {throw ServiceError.invalid}
+        let tasks=TaskController(journal:journal,broker:ModelBroker(journal:journal,factory:activeExecution?.workerFactory,handoffSource:activeNativeControl,
+            preparationSource:preparationEnabled ? activeNativeControl:nil,preparationCoverage:activeExecution?.nativePreparationCoverage ?? {.unknown}))
         let executor:any SandboxExecuting = try activeExecution?.makeExecutor() ?? UnavailableSandboxRuntime()
         let jobs=JobController(journal:journal,executor:executor,collectVM:activeExecution?.vmSource == .ownedContainer)
         let sandboxes=SandboxTaskController(journal:journal,jobs:jobs,tasks:tasks,artifacts:artifacts,
@@ -312,7 +315,7 @@ public enum ManagerRuntime {
                     case .preparation:
                         let subject=try NativePreparationSubject(payload:request.payload)
                         response["preparation"]=NSNull()
-                        if let sample=activeExecution?.preparationObservation(subject,requestedAt),
+                        if let sample=tasks.preparationObservation(subject,now:requestedAt),
                            let frame=try? sample.encoded(subject:subject,managerEpoch:epoch,journal:journal,now:requestedAt) {
                             response["preparation"]=try JSONSerialization.jsonObject(with:frame)
                         }

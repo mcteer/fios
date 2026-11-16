@@ -12,6 +12,10 @@ final class TaskController {
 
     var failedLaunches:Set<WorkerLaunchKey> {broker.failedLaunches}
 
+    func preparationObservation(_ subject:NativePreparationSubject,now:Int64)->NativePreparationObservation? {
+        broker.preparationObservation(subject,now:now)
+    }
+
     func createModelJob(owner:String,idempotency:String,context:[ModelText],binding:WorkerDispatchBinding,
                         nativeCapacityProven:Bool,lifetime:Int64=900_000,sample:ResourceSample,
                         admission:inout AdmissionPolicy,now:Int64) throws -> DurableJob {
