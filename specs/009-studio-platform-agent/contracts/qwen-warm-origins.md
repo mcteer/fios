@@ -38,3 +38,8 @@ and serving settings are unchanged. Full all-client/Studio acceptance remains
 open. Initial duplicate Shared module ownership and old integer open-flag syntax
 failed before IO; retained corrected projections use the actual host-owned Shared
 utility and current packed flags.
+
+The separate [publication repair](qwen-warm-publication.md) subsequently moves
+the existing reader start past all fallible Trunk construction. Its component,
+native build and empty-catalog evidence is separate from this unchanged-method
+IO supplement; bounded successful-table shutdown remains open.

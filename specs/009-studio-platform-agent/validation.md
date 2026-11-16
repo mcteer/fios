@@ -7065,3 +7065,58 @@ Bounded join and complete parent/pool/map/model cleanup remain unimplemented/
 unqualified for this participant. No all-client native authority, positive
 model completion, new inference plan, installation, enrollment, activation or
 whole-task closure;39/55 unchanged.
+
+### 2026-11-15 Qwen reader publication after successful construction
+
+The one-file `mlx-serve-qwen-warm-publication.patch` moves the existing reader
+start after construction of the complete `Trunk` return value. Previously the
+reader could be running when MTP loading, ternary-bias checking or owned-list
+conversion failed and entered table cleanup. GPU selection/calibration, exact
+local-layer/rank and GPU/embedded predicates, the read loop and model numerics
+remain. This removes reader publication from those load-error paths; it does
+not make successful-table shutdown bounded.
+
+`check-platform-qwen-warm-publication.py` verifies the exact parent, reversible
+patch and explicit fallible-operation ordering. It renders the unaltered load
+tail into a component with real parent allocation/thread/cleanup and explicit
+substitutes for model/GPU values and the three error producers. Debug and
+ReleaseSafe reproduce the original early-reader failure and pass the corrected
+three-error and six successful-predicate cases. This is not a complete model
+load, physical table read or proof of the surrounding native cleanup graph.
+Receipt `/private/tmp/fios-009-qwen-publication-check-_a1bcdke/receipt.json`
+SHA256 `958f168869322820ec7cb790aa60457176e320a653cf04d2bb797c7942663181`.
+
+Private enclosure `/private/tmp/fios-009-qwen-publication-opzto8zi` passes
+enabled native semantic35/35 steps in456.55s and link32/32 in5.36s with two jobs.
+Raw binary SHA256 `2e1168e8f712055e614648b0ef58a35cab57e64567ac283bda388e0981b94db6`;
+private normalized binary `407214216d5b3907132faaa179cdbef2a8e5bd0f5f347cfadf8f66fd686c807c`.
+The new capsule receipt is
+`ad5d7ffa8119ac87d509ab8e2090c16502ba82d5bb1722110854978633146f03`.
+All four empty-catalog correlation/activity/startup/current-Core manager checks
+pass. Correlation fixtures send nine rejected model-endpoint requests against
+an empty catalog; no model is loaded and no inference starts. Manager health,
+ingress, lineage, backend fences and primary diagnostics remain nonauthoritative.
+
+All2380 source files were compared: only `trunk_load.zig` differs. Selected446
+SDK files, C++ configuration and ANE bridge remain unchanged. Final selected
+review `/private/tmp/fios-009-qwen-publication-opzto8zi/final-review.json`
+SHA256 `5cd3e1006b2676e94dd8fc6e12398d57b3de3f9d2b573495bfbcfafb9e56b128`.
+This is selected-source/byte evidence, not whole-repository/native provenance.
+The179-input Core package is unchanged and does not enroll this native image.
+
+Retained excluded attempts: the initial ordering-only receipt fz2rtlb8 predates
+runtime regression coverage; fixture899gtdgq failed compilation because its
+modeled table lacked log-only fields. The corrected fixture includes those
+fields. The initial `capsule` staging refused an unresolved raw webp dependency
+name when supplied already-normalized libraries; `capsule-final` uses the
+original pinned webp inputs and records normalization. No failed candidate was
+launched, installed or classified as acceptance.
+
+Whole39/55 remains unchanged. T018/T019/T021/T027, bounded successful-table
+cleanup, normalized all-client authority and atomic admission remain open.
+No installed action, new real-inference plan, enrollment or activation occurred.
+
+Exact232e448 CI43788982300 passed all seven jobs including aggregate. Published
+3ec35a2 CI43792614286 is still running; local later work needs its own exact-head
+CI after publication. These results are separate from merge/deployment, neither
+of which occurred.

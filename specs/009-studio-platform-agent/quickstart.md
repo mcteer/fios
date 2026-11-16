@@ -1498,3 +1498,16 @@ The checker requires the same recorded current source/ownership overlay, SDK27.2
 and selected SDK hashes. Twelve finite cases use separate private16MiB files and
 actual pread/close through an explicit IO gate. No model or inference runs; no
 physical-disk/residency or bounded blocked-IO acceptance is implied.
+
+### Qwen reader publication after construction
+
+```sh
+.venv/bin/python -I -B scripts/check-platform-qwen-warm-publication.py --isolated --source /ABS/PRIVATE_PRE_PUBLICATION_SOURCE --zig /ABS/PINNED_ZIG
+```
+
+This requires the exact one-file parent and tests the actual load-tail ordering
+with explicit model/GPU/error substitutes and a real reader thread. Builds are
+bounded to120s each, IP-denied executions to15s. Run after full native builds,
+so component compilers do not overlap the two-job enclosure. Receipts identify
+modeled dependencies; no model load, bounded shutdown or native authority follows.
+See [the contract](contracts/qwen-warm-publication.md).
