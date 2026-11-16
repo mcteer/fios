@@ -223,6 +223,8 @@ docker compose config --quiet
 swift build --package-path platform/studio
 node scripts/check-platform.mjs --mock
 node scripts/check-platform.mjs --mock --release
+# Actual Swift activity exports -> installed Python guard; fixtures only, no native authority.
+node scripts/check-platform-activity-worker-frames.mjs --isolated
 # Explicit local disposable runtime measurements; uses existing fios:current, no pulls/models.
 node scripts/check-platform.mjs --isolated-metrics
 # Artifact-only staging/corruption/publication rehearsal; independently reviewed receipt required.

@@ -203,6 +203,7 @@ jobs:
           .venv/bin/python -I -B scripts/check-platform-gui-launch-yield.py --mock
           node scripts/check-platform.mjs --mock
           node scripts/check-platform.mjs --mock --release
+          node scripts/check-platform-activity-worker-frames.mjs --isolated
           node scripts/check-platform-process.mjs --isolated
           node scripts/check-platform-boot.mjs --isolated
           node scripts/check-platform-boot-state.mjs --isolated

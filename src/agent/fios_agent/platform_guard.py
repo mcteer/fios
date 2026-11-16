@@ -65,8 +65,78 @@ class GuardProfile:
             raise NativeGuardError()
 
 
+def _model(value):
+    try:
+        return isinstance(value,str) and 0<len(value.encode('utf-8'))<=1024 and '\0' not in value
+    except UnicodeError:
+        return False
+
+
+def _current_observation(value,now):
+    # Exact current manager frame. These checks preserve its independent
+    # all-client ceiling; they cannot raise an unknown export into eligibility.
+    legacy={'version','host','endpoint_hash','profile_hash','manager_epoch','native_epoch',
+            'sequence','sampled_at','coverage','resident_model','outstanding_owners','loading'}
+    fields=legacy|{'native_sequence','native_sampled_at','source_age_ms','activity','counts','unattributed_counts',
+                   'models','transitioning','reason','resources','services','local_ownership'}
+    if (set(value)!=fields or type(value['version']) is not int or value['version']!=2
+            or value['coverage']!='all_clients' or value['activity'] not in ('idle','queued','active')
+            or value['reason']!='none' or value['loading'] is not False or value['transitioning'] is not False
+            or not _integer(now) or not _integer(value['sequence']) or value['sequence']==0
+            or not _integer(value['native_sequence']) or value['native_sequence']==0
+            or not _integer(value['sampled_at']) or not _integer(value['native_sampled_at'])
+            or not -1000<=now-value['native_sampled_at']<=5000
+            or type(value['source_age_ms']) is not int
+            or value['source_age_ms']!=value['sampled_at']-value['native_sampled_at']
+            or value['source_age_ms']< -1000):
+        raise NativeGuardError()
+    names={'ingress','preparing','queued','active','responding'}
+    def counts(v):
+        if not isinstance(v,dict) or set(v)!=names or any(not _integer(n,2147483647) for n in v.values()):
+            raise NativeGuardError()
+        return v
+    total=counts(value['counts']);unattributed=counts(value['unattributed_counts'])
+    rows=value['models']
+    if (not isinstance(rows,list) or len(rows)>64 or any(unattributed.values())
+            or total['ingress'] or total['preparing']):raise NativeGuardError()
+    identities=set();combined={name:0 for name in names};residents=[];busy=[]
+    for row in rows:
+        if (not isinstance(row,dict) or set(row)!={'model','resident','counts'} or not _model(row['model'])
+                or row['model'] in identities or type(row['resident']) is not bool):raise NativeGuardError()
+        identities.add(row['model']);phase=counts(row['counts'])
+        for name in names:combined[name]+=phase[name]
+        if row['resident']:residents.append(row['model'])
+        if any(phase.values()):busy.append(row['model'])
+    owners=sum(total.values());resident=residents[0] if residents else None
+    expected='active' if total['active'] or total['responding'] else 'queued' if total['queued'] else 'idle'
+    if (combined!=total or owners>2147483647 or len(residents)>1 or len(busy)>1
+            or (busy and residents and busy[0]!=resident) or value['resident_model']!=resident
+            or not _integer(value['outstanding_owners'],2147483647) or value['outstanding_owners']!=owners
+            or value['activity']!=expected):raise NativeGuardError()
+    local=value['local_ownership'];resources=value['resources'];services=value['services']
+    if (not isinstance(local,dict) or set(local)!={'unresolved_count','uncertain','blocked'}
+            or not _integer(local['unresolved_count'],32) or local['uncertain'] is not False or local['blocked'] is not False
+            or (local['unresolved_count']>0 and expected=='idle')
+            or not isinstance(resources,dict) or set(resources)!={'sampled_at','pressure','thermal'}
+            or resources['pressure'] not in ('normal','warning','critical','unknown')
+            or resources['thermal'] not in ('nominal','fair','serious','critical','unknown')
+            or (resources['sampled_at'] is not None and not _integer(resources['sampled_at']))
+            or (resources['sampled_at'] is None and (resources['pressure']!='unknown' or resources['thermal']!='unknown'))
+            or not isinstance(services,dict) or set(services)!={'mlx','orbstack'}
+            or any(v not in ('starting','ready','waiting_session','waiting_credentials','stopped','degraded','unknown') for v in services.values())):
+        raise NativeGuardError()
+    # The trusted parent's minimum is a native-source sequence, not the
+    # independent manager/control export sequence. Keep the two clocks distinct.
+    result={key:value[key] for key in legacy}
+    result.update(version=1,coverage='supported',sequence=value['native_sequence'],
+                  resident_model=busy[0] if busy else resident)
+    return result
+
+
 def validate_observation(value, profile, command, now):
     profile.validate()
+    if isinstance(value,dict) and type(value.get('version')) is int and value['version']==2:
+        value=_current_observation(value,now)
     fields = {'version', 'host', 'endpoint_hash', 'profile_hash', 'manager_epoch', 'native_epoch',
               'sequence', 'sampled_at', 'coverage', 'resident_model', 'outstanding_owners', 'loading'}
     if not isinstance(value, dict) or set(value) != fields:
@@ -128,8 +198,15 @@ async def query_observation(profile, command):
             if (not isinstance(response, dict) or set(response) != {'version', 'id', 'ok', 'epoch', 'coverage', 'activity', 'observation'}
                     or type(response['version']) is not int or response['version'] != 1
                     or response['id'] != identifier or response['ok'] is not True or response['epoch'] != command.epoch
-                    or response['coverage'] != 'supported' or response['activity'] not in ('idle', 'busy')):
+                    or not isinstance(response['observation'],dict)):
                 raise NativeGuardError()
+            current=response['observation'].get('version')==2
+            if current:
+                if (response['coverage']!='all_clients' or response['activity']!=response['observation'].get('activity')
+                        or response['activity'] not in ('idle','queued','active')):raise NativeGuardError()
+            elif response['coverage']!='supported' or response['activity'] not in ('idle','busy'):
+                raise NativeGuardError()
+            validate_observation(response['observation'],profile,command,int(time.time()*1000))
             return response['observation']
     except (OSError, ValueError, TimeoutError, asyncio.IncompleteReadError, UnicodeError):
         raise NativeGuardError() from None

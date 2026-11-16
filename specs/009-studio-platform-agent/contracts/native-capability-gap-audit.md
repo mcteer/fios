@@ -112,3 +112,16 @@ complete positive source/proof/capacity issuer and production composition remain
 unfinished. See [claimability](registry-claimability.md),
 [reservation](preparation-reservation.md) and
 [transport](preparation-transport.md). Whole39/55 remains unchanged.
+
+## Current manager/worker frame compatibility
+
+The Python worker previously accepted only the legacy v1/supported observation,
+while the manager exports v2/all_clients-or-unknown activity. Strict v2 worker
+validation now handles native versus manager sequence, coupled source age,
+phase/model coherence, local uncertainty and correlated Unix envelope checks.
+Actual current Swift export frames pass through the installed Python guard in
+both build modes, with unknown/conflicting/preparing frames refused. This fixes
+format compatibility; the production manager still has unknown coverage/activity
+and remains closed. It does not supply the missing source authority, scoped
+preparation export or broker/worker preparation transport. See
+[worker activity contract](worker-activity-v2.md).

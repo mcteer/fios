@@ -34,6 +34,22 @@ def observation(profile, command, now):
             'resident_model': 'idle-other/model', 'outstanding_owners': 0, 'loading': False}
 
 
+def observation_v2(profile, command, now, phase=None, model=None):
+    value=observation(profile,command,now)
+    counts={name:0 for name in ('ingress','preparing','queued','active','responding')}
+    if phase:counts[phase]=1
+    model=model or ('test/model' if phase else 'idle-other/model')
+    value.update(version=2,coverage='all_clients',native_sequence=profile.minimum_sequence,
+                 native_sampled_at=now,source_age_ms=0,activity=('active' if phase in ('active','responding') else phase or 'idle'),
+                 resident_model=model,outstanding_owners=int(phase is not None),loading=False,transitioning=False,
+                 counts=counts,unattributed_counts={name:0 for name in counts},
+                 models=[{'model':model,'resident':True,'counts':dict(counts)}],reason='none',
+                 resources={'sampled_at':now,'pressure':'normal','thermal':'nominal'},
+                 services={'mlx':'ready','orbstack':'ready'},
+                 local_ownership={'unresolved_count':int(phase is not None),'uncertain':False,'blocked':False})
+    return value
+
+
 class PlatformGuardTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         with patch.dict(os.environ, guard_environment()):
@@ -46,6 +62,33 @@ class PlatformGuardTests(unittest.IsolatedAsyncioTestCase):
         validate_observation(value, self.profile, self.command, self.now)
         value.update(resident_model='test/model', outstanding_owners=2)
         validate_observation(value, self.profile, self.command, self.now)
+
+    def test_current_v2_manager_activity_and_source_sequence(self):
+        for phase in (None,'queued','active','responding'):
+            with self.subTest(phase=phase):
+                value=observation_v2(self.profile,self.command,self.now,phase)
+                value['sequence']=1
+                value['native_sequence']=7
+                validate_observation(value,replace(self.profile,minimum_sequence=7),self.command,self.now)
+        busy=observation_v2(self.profile,self.command,self.now,'active','other/model')
+        with self.assertRaises(NativeGuardError):validate_observation(busy,self.profile,self.command,self.now)
+
+    def test_v2_unknown_conflicts_and_malformed_refuse(self):
+        import copy
+        original=observation_v2(self.profile,self.command,self.now)
+        mutations=[{'coverage':'unknown'},{'activity':'unknown'},{'version':True},{'native_sequence':None},
+                   {'native_sequence':0},{'native_sampled_at':self.now-5001},{'source_age_ms':True},
+                   {'source_age_ms':1},{'native_sampled_at':self.now+1001},{'transitioning':True},
+                   {'loading':True},{'reason':'source_unknown'},{'outstanding_owners':1},
+                   {'counts':{**original['counts'],'active':1}},
+                   {'unattributed_counts':{**original['counts'],'ingress':1}},
+                   {'models':original['models']*2},
+                   {'local_ownership':{'unresolved_count':1,'uncertain':True,'blocked':False}},
+                   {'local_ownership':{'unresolved_count':1,'uncertain':False,'blocked':True}},
+                   {'resources':{'sampled_at':None,'pressure':'normal','thermal':'nominal'}}]
+        for changes in mutations:
+            with self.subTest(changes=changes),self.assertRaises(NativeGuardError):
+                validate_observation({**copy.deepcopy(original),**changes},self.profile,self.command,self.now)
 
     def test_unknown_busy_loading_and_malformed_reject(self):
         for changes in ({'coverage': 'unsupported'}, {'coverage': 'unknown'}, {'outstanding_owners': True},
@@ -103,6 +146,33 @@ class PlatformGuardTests(unittest.IsolatedAsyncioTestCase):
             finally:
                 server.close()
                 await server.wait_closed()
+
+    async def test_real_v2_unix_envelope_matches_current_frame(self):
+        with tempfile.TemporaryDirectory(prefix='fg-') as directory:
+            path=directory+'/observe.sock';mode=['healthy']
+            async def respond(reader,writer):
+                size=struct.unpack('!I',await reader.readexactly(4))[0]
+                request=json.loads(await reader.readexactly(size))
+                inner=observation_v2(self.profile,self.command,int(time.time()*1000),'queued')
+                outer={'version':1,'id':request['id'],'ok':True,'epoch':self.command.epoch,
+                       'coverage':'all_clients','activity':'queued','observation':inner}
+                if mode[0]=='state':outer['activity']='idle'
+                if mode[0]=='coverage':outer['coverage']='supported'
+                if mode[0]=='unknown':inner['activity']='unknown';outer['activity']='unknown'
+                if mode[0]=='native_sequence':inner['native_sequence']=0
+                body=json.dumps(outer).encode();writer.write(struct.pack('!I',len(body))+body)
+                await writer.drain();writer.close();await writer.wait_closed()
+            server=await asyncio.start_unix_server(respond,path);os.chmod(path,0o600)
+            try:
+                profile=replace(self.profile,path=path)
+                result=await query_observation(profile,self.command)
+                validate_observation(result,profile,self.command,int(time.time()*1000))
+                for refusal in ('state','coverage','unknown','native_sequence'):
+                    mode[0]=refusal
+                    with self.subTest(mode=refusal),self.assertRaises(NativeGuardError):
+                        await query_observation(profile,self.command)
+            finally:
+                server.close();await server.wait_closed()
 
     async def test_socket_symlink_refused(self):
         with tempfile.TemporaryDirectory(prefix='fg-') as directory:
