@@ -1,5 +1,6 @@
 import Foundation
 import CryptoKit
+import CSQLite
 
 // Only the follow-up readonly lookup is replaced. Registration comes from the
 // real private native peer; no worker permission or model POST is possible.
@@ -8,9 +9,12 @@ private final class MissingLineageSource:NativeHandoffPreparing,@unchecked Senda
     var peer:NativeControlPeer {client.peer}
     private let lock=NSLock()
     private var saved:NativeHandoffSample?
+    private var calls=0
     init(client:NativeControlClient) {self.client=client}
     var registration:NativeHandoffSample? {lock.lock();defer {lock.unlock()};return saved}
+    var registrationCalls:Int {lock.lock();defer {lock.unlock()};return calls}
     func registerHandoff(instance:String,correlationID:String)throws->NativeHandoffSample {
+        lock.lock();calls+=1;lock.unlock()
         let value=try client.registerHandoff(instance:instance,correlationID:correlationID)
         lock.lock();saved=value;lock.unlock();return value
     }
@@ -26,7 +30,8 @@ private final class MissingLineageSource:NativeHandoffPreparing,@unchecked Senda
         let executable=try VerifiedExecutable(path:a[3],sha256:SHA256.hash(data:Data(contentsOf:URL(fileURLWithPath:a[3]))).map {String(format:"%02x",$0)}.joined())
         let peer=NativeControlPeer(pid:pid,start:try WorkerResources.startIdentifier(pid:pid),executable:executable)
         let journal=try Journal(directory:directory),now=HostResources.nowMilliseconds()
-        if step=="fail" {
+        if step=="fail" || step=="fail-storage" {
+            let storageFailure=step=="fail-storage"
             let base="http://127.0.0.1:1/v1",epoch="00000000-0000-4000-8000-000000000002"
             let snapshot=NativeSnapshot(host:"fixture-host",endpointHash:PythonWorkerFactory.digest(base),nativeEpoch:instance,sequence:1,sampledAt:now,allClientLifecycleCoverage:true,residentModel:nil,outstandingOwners:0,loading:false)
             // Synthetic advisory/capacity values exercise coordination only.
@@ -44,12 +49,29 @@ private final class MissingLineageSource:NativeHandoffPreparing,@unchecked Senda
             var admission=AdmissionPolicy()
             let sample=ResourceSample(sampledAt:now,physical:128<<30,available:64<<30,vmAvailable:nil,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal)
             try broker.submit(job:job,owner:owner,requestID:UUID().uuidString.lowercased(),context:[ModelText(role:"user",content:"fixture")],binding:binding,nativeCapacityProven:true,sample:sample,admission:&admission,now:now)
+            var blocker:OpaquePointer?
+            defer {if blocker != nil {sqlite3_exec(blocker,"ROLLBACK",nil,nil,nil);sqlite3_close(blocker)}}
+            if storageFailure {
+                guard sqlite3_open_v2(directory.appendingPathComponent("state.sqlite").path,&blocker,SQLITE_OPEN_READWRITE|SQLITE_OPEN_FULLMUTEX,nil)==SQLITE_OK,
+                      sqlite3_exec(blocker,"BEGIN IMMEDIATE",nil,nil,nil)==SQLITE_OK else {throw JournalError.storage}
+                var encounteredWrite=false
+                let deadline=ProcessInfo.processInfo.systemUptime+4
+                while !encounteredWrite && ProcessInfo.processInfo.systemUptime<deadline {
+                    let began=ProcessInfo.processInfo.systemUptime
+                    _=try? broker.poll(now:HostResources.nowMilliseconds(),uptime:Int64(began*1000),admission:&admission,source:{_ in binding})
+                    encounteredWrite=ProcessInfo.processInfo.systemUptime-began>=0.8
+                    if !encounteredWrite {Thread.sleep(forTimeInterval:0.001)}
+                }
+                guard encounteredWrite,broker.active(job:job),try journal.activeLaunchCount()==1,
+                      try journal.workerGrants().isEmpty else {throw JournalError.conflict}
+                guard sqlite3_exec(blocker,"ROLLBACK",nil,nil,nil)==SQLITE_OK else {throw JournalError.storage}
+            }
             let end=ProcessInfo.processInfo.systemUptime+3
             while broker.active(job:job) && ProcessInfo.processInfo.systemUptime<end {
-                _=try broker.poll(now:HostResources.nowMilliseconds(),uptime:Int64(ProcessInfo.processInfo.systemUptime*1000),admission:&admission,source:{_ in binding})
+                _=try broker.poll(now:HostResources.nowMilliseconds()+(storageFailure ? 6000:0),uptime:Int64(ProcessInfo.processInfo.systemUptime*1000),admission:&admission,source:{_ in binding})
                 Thread.sleep(forTimeInterval:0.005)
             }
-            guard !broker.active(job:job),let registered=source.registration,
+            guard !broker.active(job:job),source.registrationCalls==1,let registered=source.registration,
                   try journal.originalNativeRoot(job:job,attempt:0,scope:scope,peer:peer)==registered.result.rootSequence,
                   try journal.activeLaunchCount()==0,try journal.workerGrants().isEmpty,
                   try journal.inferenceScope(job:older,attempt:0)?.state == .uncertain else {throw JournalError.conflict}

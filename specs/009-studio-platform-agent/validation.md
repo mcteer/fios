@@ -7275,3 +7275,57 @@ build provenance. Native image780bd7ea… remains a separate private source
 qualification. All enrollment/installation/activation flags remain false.
 Whole39/55 is unchanged; exact6f72de5 CI43799865429 is running. No merge,
 production delivery, native operation or new real-inference plan occurred.
+
+### 2026-11-15 Retain completed preparation through local write contention
+
+A genuine finite same-process writer lock reproduces the original loss of a
+completed native registration before its journal write commits. Red log
+`/private/tmp/fios-009-preparation-storage-red.log` stops at
+`PREPARATION_REPLY_LOST_BEFORE_DURABLE_REGISTRATION`. This is a disposable
+platform journal and one manager, never the Fios database or a second app.
+
+Preparing now retains its once-only completion and local reservation until
+identity and the known-unstarted local marker commit. A storage error revokes
+that launch; recovery retries local writes, never registration or process
+creation. A separate job-revocation flag preserves sandbox model-only cancel
+semantics. The opaque registration value is minted only after original peer/
+instance/correlation/root and receipt-time freshness checks. Its captured time
+permits later identity storage; raw observations retain freshness checks and
+old metadata supplies no live lineage/admission/terminal proof. Newer unknown
+samples retain their clock/sequence without hiding the original root.
+
+Final full debug28174ms and optimized22160ms pass in
+`/private/tmp/fios-009-preparation-storage-final-debug.log` and
+`/private/tmp/fios-009-preparation-storage-final-release.log`. Cases include
+held local reservation/no grants under a real writer lock, retry after rollback,
+one original registration, a6000ms fixture-clock advance for identity-only
+storage, fresh valid-lineage recovery still refusing delayed spawn, original
+uncertainty/budget retention, unknown-gap ordering and model-only cancellation
+leaving the enclosing sandbox job running. The clock advance is simulated,
+not a measured six-second native outage. An earlier four-case debug rehearsal
+passed26365ms before adding the fresh-lineage and unknown-gap controls.
+
+All4 current-Core/private780bd7ea… native modes pass:
+
+- Storage plus injected lookup failure,2 stages: `/private/tmp/f9-handoff-yIm3Xp/receipt.json`, SHA256 `6587ea0a50f73d3bef4bfeced56ae47eca0bd69988ef30c20f2ee96558282e8e`.
+- Lookup failure alone,2 stages: `/private/tmp/f9-handoff-OZ7lkm/receipt.json`, SHA256 `6754cfbaca1c2aa0186eef21542637a50351c0f91ec41877981f29682ed23904`.
+- Existing default,4 stages: `/private/tmp/f9-handoff-XW7lmp/receipt.json`, SHA256 `a24fdd3ac38d34fd71f36f72bb8cd3f4d08559a26e65c43bcd1ea97d1cb00cd0`.
+- Existing paired non-dispatch,3 stages: `/private/tmp/f9-handoff-nzJ9At/receipt.json`, SHA256 `3f3c050d2c9d90358a90063933ba75dec027f014381bdbfbc57513c63b1f3767`.
+
+The first two use actual authenticated registration and actual journal restart,
+with only the follow-up lookup/error, advisory/capacity inputs and consumer
+clock as explicit fixtures. Both preserve own/older uncertainty2, history1 and
+0 grants/model POSTs. The storage case asserts1 registration RPC. The separate
+verification lookup is not persisted. No cleanup infers native completion.
+Default retains both uncertain claims after2 rejected private HTTP POSTs;
+paired non-dispatch closes only its own not_sent while older uncertainty1 and
+history remain, denying1 late private POST. Neither starts real inference.
+
+Native source/image and Python worker/metadata versions are unchanged. Current
+Core has four changed declared inputs and needs a fresh clean package; prior
+e6ba5936…/6f72de5 remains its own narrower qualified artifact. This does not
+establish arbitrary I/O/crash recovery, normalized all-client source, positive
+proof, atomic admission, installed lifecycle or whole-task completion.
+Whole39/55 remains unchanged. Exact6f72de5 CI43799865429 passed all seven jobs;
+the new source batch requires its own exact-head CI. No merge, deployment,
+installation/activation, native actuation or new real-inference plan occurred.

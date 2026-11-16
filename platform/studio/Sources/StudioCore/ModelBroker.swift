@@ -30,7 +30,9 @@ final class ModelBroker {
         let started:Int64
         let packet:Data
         let binding:WorkerDispatchBinding
+        var completion:Result<PreparedNativeHandoff,NativeControlError>?
         var revoked=false
+        var revokeJob=false
     }
     private var preparing:[String:Preparing]=[:]
     private let handoffSource:(any NativeHandoffPreparing)?
@@ -151,6 +153,8 @@ final class ModelBroker {
         launchHolds=try Self.reconcileFailedLaunches(launchHolds,journal:journal,admission:&admission)
         var result:[String:[ModelWorkerEvent]]=[:]
         for (id,var pending) in preparing {
+            if pending.completion == nil {pending.completion=pending.operation.take()}
+            preparing[id]=pending
             let lease=(try? job(id,now:now)) != nil
             let current=try? source(id)
             let coherent=current.map {binding in
@@ -159,13 +163,16 @@ final class ModelBroker {
                     && ((try? NativeAdmission.retainsSource(binding,now:now)) ?? false)
             } ?? false
             if !pending.revoked && (!lease || !coherent || uptime<pending.started || uptime-pending.started>=10000) {
-                pending.revoked=true
-                if lease {try journal.transitionJob(id:id,to:.revoking,now:now)}
-                try journal.markUncertain(job:id,attempt:pending.plan.attempt)
+                pending.revoked=true;pending.revokeJob=true
             }
             preparing[id]=pending
-            guard let finished=pending.operation.take() else {continue}
-            preparing.removeValue(forKey:id)
+            if pending.revoked {
+                do {
+                    if pending.revokeJob && lease {try journal.transitionJob(id:id,to:.revoking,now:now)}
+                    try journal.markUncertain(job:id,attempt:pending.plan.attempt)
+                }catch JournalError.storage {continue}
+            }
+            guard let finished=pending.completion else {continue}
             do {
                 let value=try finished.get(),peer=value.registration.peer
                 let previousRoot=try journal.originalNativeRoot(job:id,attempt:pending.plan.attempt,scope:pending.plan.scope,peer:peer)
@@ -188,11 +195,22 @@ final class ModelBroker {
                 let handoff=try WorkerHandoffBinding.capture(plan:pending.plan,journal:journal,peer:peer)
                 let operation=try factory.beginStart(binding:pending.binding,plan:pending.plan,started:pending.started,now:now,handoff:handoff)
                 starting[id]=Starting(operation:operation,attempt:pending.plan.attempt,key:pending.key,nonce:pending.plan.nonce,started:pending.started,packet:pending.packet,binding:pending.binding,hasNativeHandoff:true)
+                preparing.removeValue(forKey:id)
+            }catch JournalError.storage {
+                // Retain the once-only reply and local reservation until its
+                // original metadata can commit. Never retry RPC/spawn or turn
+                // recovered storage into a delayed worker permission.
+                pending.revoked=true;pending.revokeJob=true;preparing[id]=pending
             }catch {
                 // This preparation path has never called the worker factory.
                 // Release its local slot only; registration may have succeeded.
-                try journal.markUncertain(job:id,attempt:pending.plan.attempt)
-                try journal.recordWorkerNotStarted(job:id,attempt:pending.plan.attempt,nonce:pending.plan.nonce)
+                do {
+                    try journal.markUncertain(job:id,attempt:pending.plan.attempt)
+                    try journal.recordWorkerNotStarted(job:id,attempt:pending.plan.attempt,nonce:pending.plan.nonce)
+                }catch JournalError.storage {
+                    pending.revoked=true;pending.revokeJob=true;preparing[id]=pending;continue
+                }
+                preparing.removeValue(forKey:id)
                 admission.releaseWorkerAfterReap(key:pending.key)
                 result[id]=pending.revoked ? [.interrupted]:[.failed(code:"model_unavailable")]
             }

@@ -1541,3 +1541,9 @@ authority. Own/older uncertainty and spent budget remain, with no model POST or
 worker grant. Existing default and `--non-dispatch` modes remain separate. The
 same finite child identity, memory, process and network bounds apply. See
 [registration durability](contracts/handoff-registration-durability.md).
+
+`--preparation-storage-failure` selects the additional finite SQLite writer
+contention case. The same actual registration must survive local write retry
+and a6000ms fixture consumer-clock advance without another RPC, model POST,
+worker grant or ownership release. Only original identity is checkpointed;
+the simulated clock is not a measured native outage or fresh admission proof.

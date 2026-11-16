@@ -34,6 +34,12 @@ func runNativeHandoffCancellationTests()throws {
     guard (newer["sequence"] as? NSNumber)?.uint64Value==3 else {fatalError("Late registration rewound newer lineage")}
     guard !registered.acceptRegistration(registration(root:7,sequence:4,at:10002),now:10002),registered.fenced,
           !registered.acceptRegistration(registration(sequence:5,at:10003),now:10003) else {fatalError("Changed registration root or later reply removed fence")}
+    var gap=try NativeRequestLineageConsumer(scope:scope,job:job,attempt:0,peer:peer)
+    let missing=NativeRequestLineageSample(peer:peer,sampledAt:10001,lineage:NativeRequestLineage(instance:instance,correlationID:id,sampleSequence:3,rootSequence:0,found:false,uncertain:true,references:0,owners:0,ingress:0,preparing:0,active:0,responding:0))
+    guard case .unknown=gap.accept(missing,now:10001),gap.acceptRegistration(registration(),now:10001),
+          gap.rootSequence==UInt64.max,case .unknown=gap.accept(nil,now:10001) else {fatalError("Original registration after unknown gap became lost or live")}
+    let gapBytes=try JSONSerialization.jsonObject(with:gap.checkpoint(scope:scope)) as! [String:Any]
+    guard (gapBytes["sequence"] as? NSNumber)?.uint64Value==3 else {throw JournalError.invalid}
     for sample in [cancelled(root:7),cancelled(state:.handedOff),cancelled(state:.unknown,uncertain:true),cancelled(uncertain:true),cancelled(sequence:1),cancelled(sequence:UInt64(ActivityPolicy.maximumTimestamp)+1),cancelled(at:11002),cancelled(at:4999)] {
         var value=try consumer()
         guard value.acceptHandoffCancellation(sample,now:10001)==nil else {fatalError("Ineligible native cancellation became non-dispatch metadata")}

@@ -37,6 +37,8 @@ The current continuation repairs load-error reader publication and tests a
 bounded reader-join preflight that retains the complete model on refusal.
 Original native registration identity now also survives failed follow-up
 lineage lookup without starting a worker or resolving uncertainty.
+Completed preparation and its local reservation survive temporary journal-write
+failure; storage recovery cannot turn the old result into a delayed launch.
 These address concrete lifecycle defects; they do not close the native-authority
 workstream. Subsequent implementation must connect the producer/proof/guard and
 operational paths, rather than interpreting additional component receipts as

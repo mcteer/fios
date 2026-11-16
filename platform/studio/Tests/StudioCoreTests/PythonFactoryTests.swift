@@ -1,6 +1,7 @@
 import Foundation
 import CryptoKit
 import Darwin
+import CSQLite
 
 func runPythonFactoryTests() throws {
     func progress(_ phase:String) {FileHandle.standardError.write(Data(("Python factory fixture: "+phase+"\n").utf8))}
@@ -533,8 +534,12 @@ private final class FixtureHandoffSource:NativeHandoffPreparing,@unchecked Senda
     let wrongRoot:Bool
     let lineageUnavailable:Bool
     let cancellationState:NativeHandoffState
+    private let counterLock=NSLock()
+    private var registrationCount=0
+    var registrations:Int {counterLock.lock();defer {counterLock.unlock()};return registrationCount}
     init(peer:NativeControlPeer,wrongRoot:Bool=false,lineageUnavailable:Bool=false,cancellationState:NativeHandoffState = .handedOff) {self.peer=peer;self.wrongRoot=wrongRoot;self.lineageUnavailable=lineageUnavailable;self.cancellationState=cancellationState}
     func registerHandoff(instance:String,correlationID:String)throws->NativeHandoffSample {
+        counterLock.lock();registrationCount+=1;counterLock.unlock()
         entered.signal()
         guard release.wait(timeout:.now()+2) == .success else {throw NativeControlError.deadline}
         return NativeHandoffSample(peer:peer,sampledAt:HostResources.nowMilliseconds(),result:NativeHandoffResult(operation:.register,instance:instance,correlationID:correlationID,rootSequence:UInt64.max,sampleSequence:1,state:.pending,uncertain:false))
@@ -550,7 +555,7 @@ private final class FixtureHandoffSource:NativeHandoffPreparing,@unchecked Senda
 }
 
 private func runHandoffPreparationFailureTests(factory:PythonWorkerFactory)throws {
-    for scenario in [(cancelled:false,wrongRoot:true,lineageUnavailable:false),(cancelled:false,wrongRoot:false,lineageUnavailable:true),(cancelled:true,wrongRoot:false,lineageUnavailable:false)] {
+    for scenario in [(cancelled:false,wrongRoot:true,lineageUnavailable:false,storageFailure:false,delayedRecovery:false),(cancelled:false,wrongRoot:false,lineageUnavailable:true,storageFailure:false,delayedRecovery:false),(cancelled:true,wrongRoot:false,lineageUnavailable:false,storageFailure:false,delayedRecovery:false),(cancelled:false,wrongRoot:false,lineageUnavailable:true,storageFailure:true,delayedRecovery:true),(cancelled:false,wrongRoot:false,lineageUnavailable:false,storageFailure:true,delayedRecovery:false)] {
         let cancelled=scenario.cancelled
         let directory=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer {try? FileManager.default.removeItem(at:directory)}
@@ -573,18 +578,49 @@ private func runHandoffPreparationFailureTests(factory:PythonWorkerFactory)throw
         let began=ProcessInfo.processInfo.systemUptime
         _=try broker.poll(now:now,uptime:uptime,admission:&admission,source:{_ in binding})
         guard ProcessInfo.processInfo.systemUptime-began<0.1,broker.active(job:id),try journal.workerGrants().isEmpty else {fatalError("Preparation blocked poll or spawned prematurely")}
+        // Finite same-process writer contention in this disposable platform
+        // journal only. No second manager/app or Fios database is involved.
+        var blocker:OpaquePointer?
+        defer {if blocker != nil {sqlite3_exec(blocker,"ROLLBACK",nil,nil,nil);sqlite3_close(blocker)}}
+        if scenario.storageFailure {
+            guard sqlite3_open_v2(directory.appendingPathComponent("state.sqlite").path,&blocker,SQLITE_OPEN_READWRITE|SQLITE_OPEN_FULLMUTEX,nil)==SQLITE_OK,
+                  sqlite3_exec(blocker,"BEGIN IMMEDIATE",nil,nil,nil)==SQLITE_OK else {throw JournalError.storage}
+        }
         source.release.signal()
+        if scenario.storageFailure {
+            guard source.lineageReady.wait(timeout:.now()+1) == .success else {throw RuntimeError.deadline}
+            var encounteredWrite=false
+            let deadline=ProcessInfo.processInfo.systemUptime+3
+            while !encounteredWrite && ProcessInfo.processInfo.systemUptime<deadline {
+                let start=ProcessInfo.processInfo.systemUptime
+                _=try? broker.poll(now:HostResources.nowMilliseconds(),uptime:Int64(start*1000),admission:&admission,source:{_ in binding})
+                encounteredWrite=ProcessInfo.processInfo.systemUptime-start>=0.8
+                if !encounteredWrite {Thread.sleep(forTimeInterval:0.001)}
+            }
+            guard encounteredWrite,broker.active(job:id),try journal.activeLaunchCount()==1,
+                  try journal.workerGrants().isEmpty else {fatalError("PREPARATION_REPLY_LOST_BEFORE_DURABLE_REGISTRATION")}
+            guard sqlite3_exec(blocker,"ROLLBACK",nil,nil,nil)==SQLITE_OK else {throw JournalError.storage}
+        }
         let end=ProcessInfo.processInfo.systemUptime+2
         while broker.active(job:id) && ProcessInfo.processInfo.systemUptime<end {
-            _=try broker.poll(now:HostResources.nowMilliseconds(),uptime:Int64(ProcessInfo.processInfo.systemUptime*1000),admission:&admission,source:{_ in binding})
+            // Old registration remains identity metadata after the freshness
+            // window. This never permits launching from a stale observation.
+            _=try broker.poll(now:HostResources.nowMilliseconds()+(scenario.delayedRecovery ? 6000:0),uptime:Int64(ProcessInfo.processInfo.systemUptime*1000),admission:&admission,source:{_ in binding})
             Thread.sleep(forTimeInterval:0.005)
         }
         guard try journal.originalNativeRoot(job:id,attempt:0,scope:binding.inferenceScope(),peer:peer)==UInt64.max else {fatalError("Lineage failure/cancellation discarded verified original registration")}
         guard !broker.active(job:id),try journal.activeLaunchCount()==0,try journal.workerGrants().isEmpty,
+              source.registrations==1,
               try journal.unresolvedCount()==1,try journal.uncertainCount()==1,
               try journal.inferenceScope(job:id,attempt:0)?.state == .uncertain else {fatalError("Preparation failure/cancel spawned or cleared native uncertainty")}
+        if cancelled {
+            guard try journal.jobs().first(where:{$0.id==id})?.state == .running else {fatalError("Model-only cancellation revoked the whole sandbox job")}
+        }
+        if scenario.storageFailure {
+            guard try journal.jobs().first(where:{$0.id==id})?.state == .revoking else {fatalError("Storage recovery revived job admission")}
+        }
     }
-    print("PASS: broker lineage mismatch/unavailable and mid-registration cancellation retain verified original registration without spawn; exact local release preserves native uncertainty")
+    print("PASS: broker lineage failure/cancel and finite writer contention retain one original registration through durable retry and stale-identity storage; no delayed spawn/RPC retry/native release or whole-job model-cancel revocation")
 }
 
 private struct FactoryMetadataFixture:Encodable {

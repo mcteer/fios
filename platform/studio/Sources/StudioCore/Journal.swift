@@ -501,7 +501,7 @@ public final class Journal {
     // Preserve an authenticated registration even if its subsequent lineage
     // lookup fails. This cannot resolve ownership or issue worker permission.
     func observeHandoffRegistration(job:String,attempt:Int,scope:InferenceScope,peer:NativeControlPeer,
-                                    sample:NativeHandoffSample,now:Int64)throws->Bool {
+                                    sample:VerifiedNativeHandoffRegistration,now:Int64)throws->Bool {
         guard let record=try inferenceScope(job:job,attempt:attempt),
               [.dispatched,.uncertain].contains(record.state),
               try record.scope.encoded()==scope.encoded() else {throw JournalError.conflict}
