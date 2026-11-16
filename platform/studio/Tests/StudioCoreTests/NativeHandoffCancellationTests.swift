@@ -58,12 +58,21 @@ func runNativeHandoffCancellationTests()throws {
           try NativeRequestLineageConsumer.handoffClosureReceipt(data,scope:scope,job:job,attempt:0)?.launchNonce==receipt.launchNonce else {throw JournalError.invalid}
     let original=try JSONSerialization.jsonObject(with:data) as! [String:Any]
     guard original["version"] as? Int==2 else {throw JournalError.invalid}
+    var current=try consumer()
+    guard current.acceptHandoffCancellation(cancelled(),now:10001) != nil else {throw JournalError.invalid}
+    try current.recordHandoffClosure(NativeHandoffClosureCheckpoint(version:1,localProducer:"never_spawned",workerMetadataVersion:3,handoffVersion:1,launchNonce:receipt.launchNonce,grantSHA256:nil))
+    let currentData=try current.checkpoint(scope:scope)
+    let currentObject=try JSONSerialization.jsonObject(with:currentData) as! [String:Any]
+    guard currentObject["version"] as? Int==3,
+          try NativeRequestLineageConsumer.handoffClosureReceipt(currentData,scope:scope,job:job,attempt:0)?.workerMetadataVersion==3 else {fatalError("Negotiated worker metadata lost in durable receipt")}
     func refuses(_ object:[String:Any])throws {
         let bytes=try JSONSerialization.data(withJSONObject:object)
         do {try NativeRequestLineageConsumer.validateCheckpoint(bytes,scope:scope,job:job,attempt:0)}catch{return}
         fatalError("Malformed durable non-dispatch receipt accepted")
     }
     var bad=original;bad.removeValue(forKey:"handoffClosure");try refuses(bad)
+    var downgraded=currentObject;downgraded["version"]=2;try refuses(downgraded)
+    var upgraded=original;upgraded["version"]=3;try refuses(upgraded)
     bad=original;bad["version"]=1;try refuses(bad)
     bad=original;bad["root"]="0";try refuses(bad)
     for field in ["workerMetadataVersion","handoffVersion","localProducer","grantSHA256","unexpected"] {

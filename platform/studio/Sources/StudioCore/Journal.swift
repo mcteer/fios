@@ -594,7 +594,7 @@ public final class Journal {
                 producer="reaped_zero_post"
                 grantHash=SHA256.hash(data:Data(try grantPayload(proof.grant).utf8)).map {String(format:"%02x",$0)}.joined()
             }
-            try consumer.recordHandoffClosure(NativeHandoffClosureCheckpoint(version:1,localProducer:producer,workerMetadataVersion:2,handoffVersion:1,launchNonce:binding.launchNonce,grantSHA256:grantHash))
+            try consumer.recordHandoffClosure(NativeHandoffClosureCheckpoint(version:1,localProducer:producer,workerMetadataVersion:evidence.metadataVersion(),handoffVersion:1,launchNonce:binding.launchNonce,grantSHA256:grantHash))
         }
         let payload=String(decoding:try consumer.checkpoint(scope:scope),as:UTF8.self)
         try transaction {

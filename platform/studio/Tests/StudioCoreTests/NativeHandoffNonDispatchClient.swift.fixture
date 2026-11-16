@@ -55,7 +55,9 @@ import CryptoKit
             }
             guard !coordinator.pending,try journal.inferenceScope(job:job,attempt:0)?.state == .not_sent,
                   try journal.unresolvedCount()==1,try journal.uncertainCount()==1,
+                  try journal.handoffNonDispatchReceipt(job:job,attempt:0)?.workerMetadataVersion==factory.metadata.version,
                   try journal.inferenceScope(job:older,attempt:0)?.state == .uncertain else {throw JournalError.conflict}
+            try JSONSerialization.data(withJSONObject:["version":factory.metadata.version]).write(to:directory.appendingPathComponent("worker-metadata.json"))
             print("\(id) \(registered.rootSequence)")
         }else if step=="check" {
             guard try journal.inferenceScope(job:job,attempt:0)?.state == .not_sent,

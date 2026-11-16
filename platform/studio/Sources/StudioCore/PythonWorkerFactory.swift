@@ -49,8 +49,10 @@ struct WorkerNeverSpawnedEvidence:Sendable {
     let handoff:WorkerHandoffBinding?
     let preparation:WorkerPreparationBinding?
     let nativeAttempt:Bool
-    fileprivate init(plan:PlannedWorkerStart,handoff:WorkerHandoffBinding?=nil,preparation:WorkerPreparationBinding?=nil,nativeAttempt:Bool=false) {
+    let workerMetadataVersion:Int
+    fileprivate init(plan:PlannedWorkerStart,workerMetadataVersion:Int,handoff:WorkerHandoffBinding?=nil,preparation:WorkerPreparationBinding?=nil,nativeAttempt:Bool=false) {
         self.plan=plan;self.handoff=handoff;self.preparation=preparation;self.nativeAttempt=nativeAttempt
+        self.workerMetadataVersion=workerMetadataVersion
     }
 }
 
@@ -101,7 +103,7 @@ final class PythonWorkerFactory:Sendable {
         guard try plan.scope.encoded()==binding.inferenceScope().encoded(),plan.consume() else {throw RuntimeError.identity}
         return PendingPythonWorker(initiallyCancelled:initiallyCancelled) { [self] cancelled in
             do {return .success(try spawnTransport(binding:binding,launchID:plan.nonce,handoff:handoff,cancelled:cancelled))}
-            catch WorkerStartFailure.cancelled {return .failure(.neverSpawned(WorkerNeverSpawnedEvidence(plan:plan,handoff:handoff)))}
+            catch WorkerStartFailure.cancelled {return .failure(.neverSpawned(WorkerNeverSpawnedEvidence(plan:plan,workerMetadataVersion:metadata.version,handoff:handoff)))}
             catch {return .failure(.unavailable)}
         }
     }
@@ -117,7 +119,7 @@ final class PythonWorkerFactory:Sendable {
         guard try plan.scope.encoded()==scope.encoded(),plan.consume() else {throw RuntimeError.identity}
         return PendingPythonWorker(initiallyCancelled:initiallyCancelled) { [self] cancelled in
             do {return .success(try spawnTransport(binding:binding,launchID:plan.nonce,preparation:preparation,cancelled:cancelled))}
-            catch WorkerStartFailure.cancelled {return .failure(.neverSpawned(WorkerNeverSpawnedEvidence(plan:plan,preparation:preparation)))}
+            catch WorkerStartFailure.cancelled {return .failure(.neverSpawned(WorkerNeverSpawnedEvidence(plan:plan,workerMetadataVersion:metadata.version,preparation:preparation)))}
             catch {return .failure(.unavailable)}
         }
     }
@@ -128,13 +130,13 @@ final class PythonWorkerFactory:Sendable {
               try record.scope.encoded()==plan.scope.encoded(),
               try journal.activeLaunches().contains(where:{$0.job==plan.job && $0.attempt==plan.attempt && $0.nonce==plan.nonce}),
               plan.consume() else {throw RuntimeError.identity}
-        return WorkerNeverSpawnedEvidence(plan:plan,nativeAttempt:true)
+        return WorkerNeverSpawnedEvidence(plan:plan,workerMetadataVersion:metadata.version,nativeAttempt:true)
     }
     // Local plan only: no native withdrawal or native terminal claim.
     func withdrawUnstartedPreparation(plan:PlannedWorkerStart,preparation:WorkerPreparationBinding)throws->WorkerNeverSpawnedEvidence {
         try preparation.validateIdentity(plan:plan,scope:plan.scope)
         guard WireScalar.uuid(plan.nonce),plan.consume() else {throw RuntimeError.identity}
-        return WorkerNeverSpawnedEvidence(plan:plan,preparation:preparation)
+        return WorkerNeverSpawnedEvidence(plan:plan,workerMetadataVersion:metadata.version,preparation:preparation)
     }
     // Consume only an original, still-unused plan. This executes no process,
     // refreshes no permission and needs no live model-admission observation.
@@ -143,7 +145,7 @@ final class PythonWorkerFactory:Sendable {
         try plan.scope.validate()
         try handoff.validate(plan:plan,scope:plan.scope)
         guard WireScalar.uuid(plan.nonce),plan.consume() else {throw RuntimeError.identity}
-        return WorkerNeverSpawnedEvidence(plan:plan,handoff:handoff)
+        return WorkerNeverSpawnedEvidence(plan:plan,workerMetadataVersion:metadata.version,handoff:handoff)
     }
     private func spawnTransport(binding:WorkerDispatchBinding,launchID:String,handoff:WorkerHandoffBinding?=nil,preparation:WorkerPreparationBinding?=nil,cancelled:@Sendable ()->Bool)throws->StartedPythonWorker {
         guard !cancelled() else {throw WorkerStartFailure.cancelled}
@@ -177,7 +179,7 @@ final class PythonWorkerFactory:Sendable {
         do {
             try process.run()
             let grant=try? WorkerGrant.capture(pid:process.processIdentifier)
-            return StartedPythonWorker(process:process,input:input.fileHandleForWriting,output:output.fileHandleForReading,grant:grant,handoff:handoff,preparation:preparation)
+            return StartedPythonWorker(process:process,input:input.fileHandleForWriting,output:output.fileHandleForReading,grant:grant,handoff:handoff,preparation:preparation,workerMetadataVersion:metadata.version)
         }catch {
             try? input.fileHandleForWriting.close();try? output.fileHandleForReading.close()
             if process.isRunning {kill(process.processIdentifier,SIGKILL)}

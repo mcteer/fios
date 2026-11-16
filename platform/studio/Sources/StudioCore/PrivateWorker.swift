@@ -8,7 +8,8 @@ import CoreFoundation
 struct WorkerZeroPostEvidence:Sendable {
     let handoff:WorkerHandoffBinding
     let grant:WorkerGrant
-    fileprivate init(handoff:WorkerHandoffBinding,grant:WorkerGrant) {self.handoff=handoff;self.grant=grant}
+    let workerMetadataVersion:Int
+    fileprivate init(handoff:WorkerHandoffBinding,grant:WorkerGrant,workerMetadataVersion:Int) {self.handoff=handoff;self.grant=grant;self.workerMetadataVersion=workerMetadataVersion}
 }
 final class PrivateWorker {
     private let process:Process
@@ -21,6 +22,7 @@ final class PrivateWorker {
     private let inferenceScope:InferenceScope?
     private let nativeHandoff:WorkerHandoffBinding?
     private let nativePreparation:WorkerPreparationBinding?
+    private let workerMetadataVersion:Int?
     private var parser:ModelWorkerProtocol
     private var memory:WorkerMemoryGuard
     private let started:Int64
@@ -40,7 +42,8 @@ final class PrivateWorker {
     private(set) var memorySamples=0
     var outputEOFObserved:Bool {eof}
 
-    init(process:Process,input:FileHandle,output:FileHandle,journal:Journal,job:String,attempt:Int,started:Int64,readyAt:Int64?=nil,capturedGrant:WorkerGrant?=nil,launchNonce:String?=nil,nativeHandoff:WorkerHandoffBinding?=nil,nativePreparation:WorkerPreparationBinding?=nil) throws {
+    init(process:Process,input:FileHandle,output:FileHandle,journal:Journal,job:String,attempt:Int,started:Int64,readyAt:Int64?=nil,capturedGrant:WorkerGrant?=nil,launchNonce:String?=nil,nativeHandoff:WorkerHandoffBinding?=nil,nativePreparation:WorkerPreparationBinding?=nil,workerMetadataVersion:Int?=nil) throws {
+        self.workerMetadataVersion=workerMetadataVersion
         guard process.processIdentifier>1,try journal.hasClaim(job:job,attempt:attempt) else { throw JournalError.invalid }
         grant=try capturedGrant ?? WorkerGrant.capture(pid:process.processIdentifier)
         guard grant.pid==process.processIdentifier else {throw RuntimeError.identity}
@@ -237,7 +240,9 @@ final class PrivateWorker {
             // neither child exit nor this summary releases that native hold.
             if !protocolBroken && terminal && actualPosts==0 && !nativeComplete {
                 try resolve(.not_sent)
-                if let nativeHandoff,!nativeComplete {zeroPostEvidence=WorkerZeroPostEvidence(handoff:nativeHandoff,grant:grant)}
+                if let nativeHandoff,!nativeComplete,let workerMetadataVersion,[2,3].contains(workerMetadataVersion) {
+                    zeroPostEvidence=WorkerZeroPostEvidence(handoff:nativeHandoff,grant:grant,workerMetadataVersion:workerMetadataVersion)
+                }
             }
             if !terminal && !nativeComplete { try retainNativeUncertainty() }
         }

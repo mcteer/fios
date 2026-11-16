@@ -108,7 +108,7 @@ struct NativeRequestLineageConsumer:Sendable {
         SHA256.hash(data:try scope.encoded()).map {String(format:"%02x",$0)}.joined()
     }
     func checkpoint(scope:InferenceScope)throws->Data {
-        let saved=NativeLineageCheckpoint(version:handoffClosure == nil ? 1:2,scopeSHA256:try Self.scopeDigest(scope),instance:instance,correlationID:correlationID,
+        let saved=NativeLineageCheckpoint(version:handoffClosure.map {$0.workerMetadataVersion == 3 ? 3:2} ?? 1,scopeSHA256:try Self.scopeDigest(scope),instance:instance,correlationID:correlationID,
             pid:peer.pid,start:String(peer.start),path:peer.executable.path,sha256:peer.executable.sha256,root:String(rootSequence ?? 0),
             sequence:sequence,sampledAt:sampledAt,previousNow:previousNow,fenced:fenced,handoffClosure:handoffClosure)
         let encoder=JSONEncoder();encoder.outputFormatting=[.sortedKeys]
@@ -280,8 +280,8 @@ private struct NativeLineageCheckpoint:Codable {
     static func decode(_ data:Data)throws->Self {
         try StrictJSON.validate(data,maximum:16384)
         guard let object=try JSONSerialization.jsonObject(with:data) as? [String:Any],
-              let version=WireScalar.integer(object["version"],maximum:2),[1,2].contains(version),
-              Set(object.keys)==Set(["version","scopeSHA256","instance","correlationID","pid","start","path","sha256","root","sequence","sampledAt","previousNow","fenced"]+(version==2 ? ["handoffClosure"]:[])),WireScalar.integer(object["pid"],maximum:Int64(Int32.max)) != nil,
+              let version=WireScalar.integer(object["version"],maximum:3),[1,2,3].contains(version),
+              Set(object.keys)==Set(["version","scopeSHA256","instance","correlationID","pid","start","path","sha256","root","sequence","sampledAt","previousNow","fenced"]+(version>=2 ? ["handoffClosure"]:[])),WireScalar.integer(object["pid"],maximum:Int64(Int32.max)) != nil,
               WireScalar.integer(object["sequence"]) != nil,
               // The initial no-sample sentinel is private persistent metadata.
               ["sampledAt","previousNow"].allSatisfy({key in
@@ -290,11 +290,11 @@ private struct NativeLineageCheckpoint:Codable {
               }) else {throw JournalError.invalid}
         let value=try JSONDecoder().decode(Self.self,from:data)
         _=try value.peer();_=try NativeControlWire.instanceBytes(value.instance)
-        if version==2 {
+        if version>=2 {
             guard let closure=value.handoffClosure,let raw=object["handoffClosure"] as? [String:Any],
                   Set(raw.keys)==Set(["version","localProducer","workerMetadataVersion","handoffVersion","launchNonce"]+(closure.grantSHA256 == nil ? []:["grantSHA256"])),
                   WireScalar.integer(raw["version"],maximum:1)==1,
-                  WireScalar.integer(raw["workerMetadataVersion"],maximum:2)==2,
+                  WireScalar.integer(raw["workerMetadataVersion"],maximum:3)==version,
                   WireScalar.integer(raw["handoffVersion"],maximum:1)==1 else {throw JournalError.invalid}
             try closure.validate()
         }else if value.handoffClosure != nil {throw JournalError.invalid}
@@ -306,7 +306,8 @@ private struct NativeLineageCheckpoint:Codable {
     }
 }
 
-// Version2 lineage checkpoints retain the accepted non-dispatch decision's
+// Version2/3 lineage checkpoints retain the negotiated worker metadata version
+// and the accepted non-dispatch decision's
 // local producer beside the original native peer/root/cancellation sequence.
 // There is deliberately no native complete, device idle or all-client field.
 struct NativeHandoffClosureCheckpoint:Codable,Sendable {
@@ -317,7 +318,7 @@ struct NativeHandoffClosureCheckpoint:Codable,Sendable {
     let launchNonce:String
     let grantSHA256:String?
     func validate()throws {
-        guard version==1,workerMetadataVersion==2,handoffVersion==1,WireScalar.uuid(launchNonce),
+        guard version==1,[2,3].contains(workerMetadataVersion),handoffVersion==1,WireScalar.uuid(launchNonce),
               localProducer=="never_spawned" ? grantSHA256==nil : localProducer=="reaped_zero_post" && grantSHA256.map(WireScalar.sha256)==true else {throw JournalError.invalid}
     }
 }

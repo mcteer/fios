@@ -386,6 +386,7 @@ func runPythonFactoryTests() throws {
     guard zeroUsage,zeroFailure,!zeroBroker.active(job:zeroJob),!zeroBroker.nativeNonDispatchPending,
           try zeroJournal.unresolvedCount()==0,try zeroJournal.requestCount(job:zeroJob)==1,
           try zeroJournal.handoffNonDispatchReceipt(job:zeroJob,attempt:0)?.localProducer == "reaped_zero_post",
+          try zeroJournal.handoffNonDispatchReceipt(job:zeroJob,attempt:0)?.workerMetadataVersion == factory.metadata.version,
           try zeroJournal.handoffNonDispatchReceipt(job:zeroJob,attempt:0)?.grantSHA256 != nil else {fatalError("Zero-post/native closure lost bound grant, decision or spent budget")}
     }
     let zeroReopened=try Journal(directory:zeroState)
@@ -535,7 +536,8 @@ private func runHandoffNeverSpawnedTests(factory:PythonWorkerFactory)throws {
               try journal.inferenceScope(job:job,attempt:0)?.state == .not_sent,
               try journal.inferenceScope(job:older,attempt:0)?.state == .uncertain,
               try journal.requestCount(job:job)==1,
-              try journal.handoffNonDispatchReceipt(job:job,attempt:0)?.localProducer == "never_spawned" else {fatalError("Native closed-handoff proof lost durable receipt or changed older uncertainty/history")}
+              try journal.handoffNonDispatchReceipt(job:job,attempt:0)?.localProducer == "never_spawned",
+              try journal.handoffNonDispatchReceipt(job:job,attempt:0)?.workerMetadataVersion == factory.metadata.version else {fatalError("Native closed-handoff proof lost durable receipt or changed older uncertainty/history")}
         do {_=try journal.resolveClosedHandoff(evidence:.neverSpawned(proof),sample:native,now:now);fatalError("Native non-dispatch proof replayed")}catch JournalError.conflict {}
     }
     }

@@ -5,6 +5,15 @@ import Foundation
 enum WorkerNoPostEvidence:Sendable {
     case neverSpawned(WorkerNeverSpawnedEvidence)
     case reaped(WorkerZeroPostEvidence)
+    func metadataVersion()throws->Int {
+        let version:Int
+        switch self {
+        case .neverSpawned(let proof):version=proof.workerMetadataVersion
+        case .reaped(let proof):version=proof.workerMetadataVersion
+        }
+        guard [2,3].contains(version) else {throw RuntimeError.identity}
+        return version
+    }
     func binding()throws->WorkerHandoffBinding {
         switch self {
         case .neverSpawned(let proof):

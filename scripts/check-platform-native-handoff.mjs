@@ -88,8 +88,9 @@ try {
   const late=await request('/v1/chat/completions',{method:'POST',headers:{'Content-Type':'application/json','X-Fios-Native-Instance':instance,'X-Fios-Request-ID':registration.id,'X-Fios-Handoff-Root':registration.root},body:JSON.stringify({model:'fixture/missing-model',messages:[]})});
   assert.equal(late.status,409);assert.equal(late.value.error.type,'native_handoff_unavailable');
   invoke('check',job,instance);observe();assert.deepEqual(capture(),inputs);
+  const workerMetadata=JSON.parse(readFileSync(path.join(state,'worker-metadata.json')));assert.deepEqual(Object.keys(workerMetadata),['version']);assert([2,3].includes(workerMetadata.version));
   const result={scope:'actual_native_unconsumed_root_plus_fixed_worker_no_spawn_not_sent_only',inputs,records,capsule_receipt_sha256:args[4],source_instance:instance,job,stages:3,
-   own_request_not_sent:true,older_independent_uncertainty_retained:1,late_original_root_denied:true,request_budget_retained:true,worker_metadata_version:2,
+   own_request_not_sent:true,older_independent_uncertainty_retained:1,late_original_root_denied:true,request_budget_retained:true,worker_metadata_version:workerMetadata.version,
    private_rejected_HTTP_POSTs:attempts,real_model_POSTs:0,models:0,peak_native_process_bytes:peak,native_admission_authority:false,native_completion_proof:false,
    synthetic_pre_admission_no_spawn_only:true,installed:false,activation:false,inputs_unchanged:true};
   writeFileSync(path.join(directory,'receipt.json'),JSON.stringify(result,null,2)+'\n',{mode:0o600});console.log(JSON.stringify({directory,receipt_sha256:sha(path.join(directory,'receipt.json')),stages:3,native_admission_authority:false}));

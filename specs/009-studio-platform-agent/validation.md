@@ -7678,3 +7678,19 @@ The regression starts the actual installed worker, holds an isolated real SQLite
 - `/private/tmp/fios-009-started-bind-debug.log` SHA256 `e8df57bc19d5ca1123c3adad5ca647920e40b397fdd0ed3879a250a704f2e4c5`.
 - `/private/tmp/fios-009-started-bind-release.log` SHA256 `1b16a447fbabe109fd44ff8a4c8f0589b9a343ce01d668bfa98b927cdc2d3f5c`.
 - `/private/tmp/fios-009-started-bind-manager.log` SHA256 `be2993c142b192b53d2387492d380a41a8eeea24949c8f1d99432cfb522bf78a`.
+
+### Negotiated worker metadata in non-dispatch receipts (2026-11-16)
+
+Factory negotiation now reaches both opaque no-spawn and reaped-zero-POST evidence through the original transport/private worker. Journal records the actual metadata version instead of hardcoding2. Existing metadata2 receipts remain checkpoint2; metadata3 receipts use checkpoint3. Exact checkpoint/producer-version mismatches reject. Direct low-level transports without negotiation cannot manufacture zero-POST handoff evidence. These remain original unconsumed-handoff not_sent decisions only, never preparation withdrawal, model completion or all-client authority.
+
+Full final Debug compile28209ms/runtime39882ms and optimized65740ms/34367ms pass. Existing checkpoint2 roundtrip, new checkpoint3 roundtrip, downgrade/upgrade mismatch refusal, factory no-spawn and actual installed-child zero-POST negotiated-version assertions pass. Actual current activity/preparation export→installed Python checks pass in both build modes: `/private/tmp/fios-009-activity-worker-cRIePM/receipt.json`, SHA256 `d517635c4162643bc710a35153057fe30f361bf986da2d3b2d6e731aaa1e76a3`.
+
+Actual isolated empty-catalog native cancellation plus genuine factory no-spawn produces worker_metadata_version3, retains older uncertainty1/history and denies a late root POST;0 real-model POSTs. Receipt `/private/tmp/f9-handoff-ujUUON/receipt.json`, SHA256 `17a4a9589cc000818892865274633f602c1cd97837a690dc86bc0819cd76a1fd`. Previous reader compiled from clean84089c2 accepts an old checkpoint2 database and refuses current checkpoint3 with its database SHA unchanged. Review `/private/tmp/fios-009-negotiated-reader-wntv4mrh/review.json`, SHA256 `72dbfc427299e33838f6945be777294160cd0b9facb193cf2454d4cf6fa81930`. An initial overly broad assertion expected successful old-state opening not to perform startup recovery; corrected to require unchanged bytes for unsupported-state refusal. No original backup was changed. Current-format packaged backup/restore qualification is next.
+
+- `/private/tmp/fios-009-negotiated-receipt-debug-final.log` SHA256 `a9d2b56bac451b90da461a1d9266d00a1246d5b44b0265d7ee4379cde9c72e29`.
+- `/private/tmp/fios-009-negotiated-receipt-release.log` SHA256 `a46998ac485af55ad47b8d6b8d3b8fff73ec623aa488e9c634249fc8b75fe421`.
+- `/private/tmp/fios-009-negotiated-receipt-native.log` SHA256 `e16669e7e942b29c909f71158c70797b955a5d4536c7ddc64f74d09240c1fa77`.
+- `/private/tmp/fios-009-negotiated-receipt-cross.log` SHA256 `b181b47df191302441870076d53a664e5530784ccab73d2d07671a951ae47368`.
+- `/private/tmp/fios-009-negotiated-receipt-boundary.log` SHA256 `c48954b6e815c6287f37d4ce266bfce48c958980163a31438c5166be14e0a469`.
+
+39/55 whole tasks unchanged. No native activation, enrollment, installation, real inference, merge or deployment. Published f758eaf CI43851027121 remains pending independently of these local checks.

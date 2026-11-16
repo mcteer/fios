@@ -15,14 +15,16 @@ final class StartedPythonWorker:@unchecked Sendable {
     private let captured:WorkerGrant?
     private let handoff:WorkerHandoffBinding?
     private let preparation:WorkerPreparationBinding?
+    private let workerMetadataVersion:Int?
     private var transferred=false
-    init(process:Process,input:FileHandle,output:FileHandle,grant:WorkerGrant?,handoff:WorkerHandoffBinding?=nil,preparation:WorkerPreparationBinding?=nil) {
+    init(process:Process,input:FileHandle,output:FileHandle,grant:WorkerGrant?,handoff:WorkerHandoffBinding?=nil,preparation:WorkerPreparationBinding?=nil,workerMetadataVersion:Int?=nil) {
         self.process=process;self.input=input;self.output=output;captured=grant;self.handoff=handoff;self.preparation=preparation
+        self.workerMetadataVersion=workerMetadataVersion
     }
     func bind(journal:Journal,key:WorkerLaunchKey,nonce:String,started:Int64,readyAt:Int64)throws->PrivateWorker {
         guard !transferred,let captured else {throw RuntimeError.identity}
         let worker=try PrivateWorker(process:process,input:input,output:output,journal:journal,job:key.job,attempt:key.attempt,
-            started:started,readyAt:readyAt,capturedGrant:captured,launchNonce:nonce,nativeHandoff:handoff,nativePreparation:preparation)
+            started:started,readyAt:readyAt,capturedGrant:captured,launchNonce:nonce,nativeHandoff:handoff,nativePreparation:preparation,workerMetadataVersion:workerMetadataVersion)
         transferred=true
         return worker
     }

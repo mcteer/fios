@@ -8,7 +8,8 @@ The local input is an opaque producer value: either the factory's once-only
 never-spawned result carrying the original handoff, or the fixed private worker's
 validated terminal/zero-POST summary after exact kernel absence and durable reap.
 A census, signal, HTTP result, counter or local service acknowledgement alone
-cannot construct that input. The worker contract requires metadata2, pipe1 and
+cannot construct that input. The worker contract requires negotiated metadata2
+or metadata3, pipe1 and
 native_handoff1; its sole possible model POST binds the original native instance,
 correlation and full-width root. Public/enrollment gates remain independent.
 
@@ -28,11 +29,16 @@ native terminality from this local process lifecycle.
 
 An accepted decision atomically persists its original lineage/decision receipt,
 deletes only its own unresolved inference row and sets only its scope to
-`not_sent`. Request history remains spent. Version2 lineage checkpoints bind the
+`not_sent`. Request history remains spent. Version2/3 lineage checkpoints bind the
 local producer, metadata/handoff versions, launch nonce and (for reaped workers)
 stored grant hash to the original native peer/root/cancellation sequence. Startup
 requires the matching durable reaped launch and producer rows. Older version1
-checkpoints remain readable; older readers reject version2. Rollback uses the
+checkpoints remain readable. Checkpoint2 requires the actual metadata2 producer;
+checkpoint3 requires the actual metadata3 producer. The factory carries the
+negotiated version through both opaque local evidence paths; the journal must
+not infer or hardcode it. Relabelling either checkpoint without the matching
+producer version rejects. A metadata2 reader refuses checkpoint3 before adopting
+state, without changing the unsupported database. Rollback uses the
 retained old artifact's original compatible stopped backup, never a downgrade of
 new state. Backups/restores preserve the accepted decision and unrelated holds.
 
