@@ -7238,3 +7238,40 @@ native proof/admission or installed lifecycle. Whole39/55 stays unchanged.
 Published exactd04fc95 CI43795808251 passed all seven jobs including aggregate;
 later local work needs new exact-head CI. No merge, deployment, enrollment,
 installation/activation or new real-inference plan occurred.
+
+### 2026-11-15 Clean registration-durability package qualification
+
+Clean detached6f72de5742436772d4d64f2de77dc16dd75275a3 checkout
+`/private/tmp/fios-009-registration-package-nh18wve8/source` builds9 inactive
+artifacts. Manifest SHA256
+`e6ba5936298f3f328558a0816d022e83cd2091fd79a193f60916b5ba53994e0f`;
+179-input projection
+`f9ccd19dc59d1c851add299789cebf4710d7869f6adc3e9e86b6f493d1531923`.
+Independent source capture/recheck, exact release-byte validation through both
+host reviews and all4 saved plist lint/verification checks pass. Both installation
+reviews remain blocked with0 privileged commands. No configuration is installed.
+
+The separate unchanged4461-file/113994647-byte Python candidate d29ab3a0… is
+reused, independently byte-reviewed before/after use and checked with the actual
+current-Core factory. Its actual metadata remains2/pipe1/handoff1. All108 tests
+pass from that noneditable copied prefix against clean6f72de5 test sources.
+The initial verification profile denied Unix sockets as well as IP, causing the
+intended private-Unix positive test to fail; its log is retained as
+`python-tests-ip-and-unix-denied.log`. Corrected verification allows Unix only,
+keeps IP denied and passes108/108. No runtime/source guard was weakened.
+
+The actual packaged CLI verifies and restores the retained stopped4CpWl5 backup
+4a46fed8… into a new private directory. The current Core offline reader verifies
+own not_sent, older uncertainty1, spent history1 and the version2 producer
+receipt. The previousc59 reader refuses without changing database bytes.
+No process exit, cleanup or restoration clears independent native uncertainty.
+
+Final review `final-review.json` under that package directory, SHA256
+`c5b2d0ef9b5355da0af2c51927212c19809c0f5534f72d509f262c6357e71517`,
+binds the exact source/package/runtime/configuration/state logs, including the
+excluded Unix-denial attempt. This supersedes the old232e448 package for current
+declared Core inputs only. It is neither whole-repository/native nor publisher/
+build provenance. Native image780bd7ea… remains a separate private source
+qualification. All enrollment/installation/activation flags remain false.
+Whole39/55 is unchanged; exact6f72de5 CI43799865429 is running. No merge,
+production delivery, native operation or new real-inference plan occurred.
