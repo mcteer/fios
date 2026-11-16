@@ -63,5 +63,26 @@ For a bound handoff, child no-spawn, zero-POST, completion and reap release no
 independent native claim. Durable terminal native evidence, if separately
 accepted, is preserved when subsequent child cancellation/output arrives. The
 legacy unbound fixture path retains its existing local not-sent transition.
-This API does not automatically register roots in the production ModelBroker or
-create native proof. Production composition and all-client proof remain open.
+This binding API does not itself create native proof. The subsequent coordinator
+composition below supplies root acquisition; production enrollment and all-client
+proof remain open.
+
+
+The ModelBroker now has an optional trusted `NativeHandoffPreparing` port. With
+that port it checkpoints dispatched intent before beginning one off-loop native
+registration followed by one lineage read. Both replies must bind the original
+peer, instance, correlation, full-width root and increasing native sequence. The
+serialized coordinator checks age, lease and source, persists the original live
+root, and captures the launch binding before invoking the worker factory. Its
+preparation participates in the existing two-worker resource reservation and
+active-launch accounting. The manager supplies this port only from its existing
+internal native-control client; public observation-only startup supplies none.
+
+Cancellation/source loss while preparation runs never spawns a child. Failed,
+stale or mismatched replies release only the known-unstarted local launch slot;
+the dispatched native claim stays uncertain because registration may have
+succeeded. No automatic cancellation ACK, absent lineage, worker exit or counter
+is treated as native completion. Source retention allows this request's own
+preparation after initial admission, rather than mistaking its root for a new
+conflicting dispatch. The atomic all-client guard and proof issuer remain open;
+this wiring supplies neither admission authority nor production enrollment.

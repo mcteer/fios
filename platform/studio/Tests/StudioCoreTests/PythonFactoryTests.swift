@@ -24,6 +24,7 @@ func runPythonFactoryTests() throws {
     guard factory.metadata.policy_input_units==fixture["policy_input_units"] as? Int else { fatalError("Installed policy units diverged from cross-language fixture") }
     try runNeverSpawnedWorkerTests(factory:factory)
     try runHandoffNeverSpawnedTests(factory:factory)
+    try runHandoffPreparationFailureTests(factory:factory)
     do {
         _=try PythonWorkerFactory(invocation:invocation.path,executableSHA256:String(repeating:"0",count:64),policySHA256:fixture["policy_sha256"] as! String)
         fatalError("Wrong interpreter hash accepted")
@@ -299,43 +300,33 @@ func runPythonFactoryTests() throws {
     let handoffNow=HostResources.nowMilliseconds()
     let handoffSnapshot=NativeSnapshot(host:"fixture-host",endpointHash:hash,nativeEpoch:handoffEpoch,sequence:1,sampledAt:handoffNow,allClientLifecycleCoverage:true,residentModel:nil,outstandingOwners:0,loading:false)
     let handoffBinding=WorkerDispatchBinding(baseURL:base,guardPath:directory.appendingPathComponent("observe.sock").path,host:"fixture-host",profileHash:String(repeating:"f",count:64),managerEpoch:epoch,canonicalModel:"fixture/model",nativeModel:"fixture/model",nativeSnapshot:handoffSnapshot,nativeCompatibilityAccepted:true,apiKey:nil)
-    let handoffScope=try handoffBinding.inferenceScope()
-    try handoffJournal.claim(job:handoffJob,attempt:0,model:"fixture/model",scope:handoffScope)
-    let handoffPlan=try handoffJournal.planWorkerStart(job:handoffJob,attempt:0)
-    try handoffJournal.markDispatched(job:handoffJob,attempt:0)
     let handoffPeer=NativeControlPeer(pid:42,start:99,executable:try VerifiedExecutable(path:"/fixture/native",sha256:String(repeating:"d",count:64)))
-    let handoffCorrelation=try handoffScope.nativeRequestCorrelationID(job:handoffJob,attempt:0)
-    let handoffSample=NativeRequestLineageSample(peer:handoffPeer,sampledAt:handoffNow,lineage:NativeRequestLineage(instance:handoffEpoch,correlationID:handoffCorrelation,sampleSequence:1,rootSequence:UInt64.max,found:true,uncertain:false,references:1,owners:1,ingress:1,preparing:0,active:0,responding:0))
-    _=try handoffJournal.observeLineage(job:handoffJob,attempt:0,scope:handoffScope,peer:handoffPeer,sample:handoffSample,now:handoffNow)
-    let handoff=try WorkerHandoffBinding.capture(plan:handoffPlan,journal:handoffJournal,peer:handoffPeer)
-    let launchTime=Int64(ProcessInfo.processInfo.systemUptime*1000)
-    let pending=try factory.beginStart(binding:handoffBinding,plan:handoffPlan,started:launchTime,now:handoffNow,handoff:handoff)
-    var handoffWorker:PrivateWorker?
-    let launchDeadline=ProcessInfo.processInfo.systemUptime+5
-    while ProcessInfo.processInfo.systemUptime<launchDeadline {
-        if let result=pending.take() {
-            let started=try result.get()
-            handoffWorker=try started.bind(journal:handoffJournal,key:WorkerLaunchKey(job:handoffJob,attempt:0),nonce:handoffPlan.nonce,started:launchTime,readyAt:Int64(ProcessInfo.processInfo.systemUptime*1000));break
-        }
-        Thread.sleep(forTimeInterval:0.005)
-    }
-    guard let handoffWorker else {throw RuntimeError.deadline}
-    let permissionTime=HostResources.nowMilliseconds()
-    let packet=try JSONSerialization.data(withJSONObject:["v":1,"type":"run","job_id":handoffJob,"attempt":0,"epoch":epoch,"model":"fixture/model","endpoint_hash":hash,"expires_at":permissionTime+5000,"context":[["role":"user","content":"fixture handoff"]]])
-    try handoffWorker.enqueue(packet,expectedModel:"fixture/model",endpointHash:hash,epoch:epoch,now:permissionTime)
+    let handoffSource=FixtureHandoffSource(peer:handoffPeer)
+    let handoffBroker=ModelBroker(journal:handoffJournal,factory:factory,handoffSource:handoffSource)
+    _=try handoffJournal.reserveJob(DurableJob(id:handoffJob,idempotency:UUID().uuidString.lowercased(),ownerHash:owner,requestHash:String(repeating:"b",count:64),created:handoffNow))
+    try handoffJournal.transitionJob(id:handoffJob,to:.running)
+    var handoffAdmission=AdmissionPolicy()
+    let beforePreparation=ProcessInfo.processInfo.systemUptime
+    try handoffBroker.submit(job:handoffJob,owner:owner,requestID:UUID().uuidString.lowercased(),context:[ModelText(role:"user",content:"fixture handoff")],binding:handoffBinding,nativeCapacityProven:true,sample:resources(handoffNow),admission:&handoffAdmission,now:handoffNow)
+    guard ProcessInfo.processInfo.systemUptime-beforePreparation<0.1,
+          handoffSource.entered.wait(timeout:.now()+1) == .success,
+          try handoffJournal.workerGrants().isEmpty,
+          try handoffJournal.inferenceScope(job:handoffJob,attempt:0)?.state == .dispatched else {fatalError("Coordinator blocked or spawned before registration")}
+    handoffSource.release.signal()
     var handoffAnswer="",handoffComplete=false
     let handoffDeadline=ProcessInfo.processInfo.systemUptime+10
-    while !handoffWorker.reaped && ProcessInfo.processInfo.systemUptime<handoffDeadline {
-        for event in try handoffWorker.poll(now:Int64(ProcessInfo.processInfo.systemUptime*1000),authorized:true) {
+    while handoffBroker.active(job:handoffJob) && ProcessInfo.processInfo.systemUptime<handoffDeadline {
+        let events=try handoffBroker.poll(now:HostResources.nowMilliseconds(),uptime:Int64(ProcessInfo.processInfo.systemUptime*1000),admission:&handoffAdmission,source:{_ in handoffBinding})
+        for event in events[handoffJob] ?? [] {
             if case .text(_,let text)=event {handoffAnswer+=text}
             if case .complete=event {handoffComplete=true}
         }
         Thread.sleep(forTimeInterval:0.01)
     }
-    guard handoffComplete,handoffAnswer=="MOCK_ONLY",handoffWorker.reaped,
+    guard handoffComplete,handoffAnswer=="MOCK_ONLY",!handoffBroker.active(job:handoffJob),
           try handoffJournal.activeLaunchCount()==0,try handoffJournal.unresolvedCount()==1,
-          try handoffJournal.inferenceScope(job:handoffJob,attempt:0)?.state == .uncertain else {fatalError("Bound child lost header or cleared native hold")}
-    print("PASS: installed private Python child forwards full-width original root on one mock POST; completion/reap retains native uncertainty")
+          try handoffJournal.inferenceScope(job:handoffJob,attempt:0)?.state == .uncertain else {fatalError("Bound coordinator child lost header or cleared native hold")}
+    print("PASS: broker durably dispatches before off-loop registration, checkpoints original root before child launch and forwards it on one installed mock POST; completion/reap retains native uncertainty")
     let reaped=HostResources.nowMilliseconds()
     try admission.reserveWorker(key:"reaped-one",sample:resources(reaped),now:reaped)
     try admission.reserveWorker(key:"reaped-two",sample:resources(reaped),now:reaped)
@@ -468,4 +459,56 @@ private func runHandoffNeverSpawnedTests(factory:PythonWorkerFactory)throws {
     do {try journal.recordWorkerNeverSpawned(job:job,attempt:0,evidence:proof);fatalError("Handoff cancellation replay accepted")}catch JournalError.conflict {}
     }
     print("PASS: original full-width native root binds once-only launch; local no-spawn cancellation releases only local slot and preserves both native claims")
+}
+
+// Held synthetic registration proves manager responsiveness and spawn ordering.
+private final class FixtureHandoffSource:NativeHandoffPreparing,@unchecked Sendable {
+    let peer:NativeControlPeer
+    let entered=DispatchSemaphore(value:0),release=DispatchSemaphore(value:0)
+    let wrongRoot:Bool
+    init(peer:NativeControlPeer,wrongRoot:Bool=false) {self.peer=peer;self.wrongRoot=wrongRoot}
+    func registerHandoff(instance:String,correlationID:String)throws->NativeHandoffSample {
+        entered.signal()
+        guard release.wait(timeout:.now()+2) == .success else {throw NativeControlError.deadline}
+        return NativeHandoffSample(peer:peer,sampledAt:HostResources.nowMilliseconds(),result:NativeHandoffResult(operation:.register,instance:instance,correlationID:correlationID,rootSequence:UInt64.max,sampleSequence:1,state:.pending,uncertain:false))
+    }
+    func lineage(instance:String,correlationID:String)throws->NativeRequestLineageSample {
+        NativeRequestLineageSample(peer:peer,sampledAt:HostResources.nowMilliseconds(),lineage:NativeRequestLineage(instance:instance,correlationID:correlationID,sampleSequence:2,rootSequence:wrongRoot ? 7:UInt64.max,found:true,uncertain:false,references:1,owners:1,ingress:1,preparing:0,active:0,responding:0))
+    }
+}
+
+private func runHandoffPreparationFailureTests(factory:PythonWorkerFactory)throws {
+    for cancelled in [false,true] {
+        let directory=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer {try? FileManager.default.removeItem(at:directory)}
+        let journal=try Journal(directory:directory),now=HostResources.nowMilliseconds()
+        let base="http://127.0.0.1:1/v1",epoch=String(repeating:"1",count:32)
+        let snapshot=NativeSnapshot(host:"fixture-host",endpointHash:PythonWorkerFactory.digest(base),nativeEpoch:epoch,sequence:1,sampledAt:now,allClientLifecycleCoverage:true,residentModel:nil,outstandingOwners:0,loading:false)
+        let binding=WorkerDispatchBinding(baseURL:base,guardPath:"/fixture/observe.sock",host:"fixture-host",profileHash:String(repeating:"f",count:64),managerEpoch:UUID().uuidString.lowercased(),canonicalModel:"fixture/model",nativeModel:"fixture/model",nativeSnapshot:snapshot,nativeCompatibilityAccepted:true,apiKey:nil)
+        let peer=NativeControlPeer(pid:42,start:99,executable:try VerifiedExecutable(path:"/fixture/native",sha256:String(repeating:"d",count:64)))
+        let source=FixtureHandoffSource(peer:peer,wrongRoot:!cancelled)
+        let broker=ModelBroker(journal:journal,factory:factory,handoffSource:source)
+        let id=UUID().uuidString.lowercased(),owner=String(repeating:"a",count:64)
+        _=try journal.reserveJob(DurableJob(id:id,idempotency:UUID().uuidString.lowercased(),ownerHash:owner,requestHash:String(repeating:"b",count:64),created:now))
+        try journal.transitionJob(id:id,to:.running)
+        var admission=AdmissionPolicy()
+        let sample=ResourceSample(sampledAt:now,physical:128<<30,available:64<<30,vmAvailable:nil,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal)
+        try broker.submit(job:id,owner:owner,requestID:UUID().uuidString.lowercased(),context:[ModelText(role:"user",content:"fixture")],binding:binding,nativeCapacityProven:true,sample:sample,admission:&admission,now:now)
+        guard source.entered.wait(timeout:.now()+1) == .success else {throw RuntimeError.deadline}
+        let uptime=Int64(ProcessInfo.processInfo.systemUptime*1000)
+        if cancelled {try broker.cancel(job:id,uptime:uptime)}
+        let began=ProcessInfo.processInfo.systemUptime
+        _=try broker.poll(now:now,uptime:uptime,admission:&admission,source:{_ in binding})
+        guard ProcessInfo.processInfo.systemUptime-began<0.1,broker.active(job:id),try journal.workerGrants().isEmpty else {fatalError("Preparation blocked poll or spawned prematurely")}
+        source.release.signal()
+        let end=ProcessInfo.processInfo.systemUptime+2
+        while broker.active(job:id) && ProcessInfo.processInfo.systemUptime<end {
+            _=try broker.poll(now:HostResources.nowMilliseconds(),uptime:Int64(ProcessInfo.processInfo.systemUptime*1000),admission:&admission,source:{_ in binding})
+            Thread.sleep(forTimeInterval:0.005)
+        }
+        guard !broker.active(job:id),try journal.activeLaunchCount()==0,try journal.workerGrants().isEmpty,
+              try journal.unresolvedCount()==1,try journal.uncertainCount()==1,
+              try journal.inferenceScope(job:id,attempt:0)?.state == .uncertain else {fatalError("Preparation failure/cancel spawned or cleared native uncertainty")}
+    }
+    print("PASS: broker registration mismatch and mid-registration cancellation never spawn; responsive poll and exact local release retain native uncertainty")
 }

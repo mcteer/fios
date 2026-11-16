@@ -6741,3 +6741,28 @@ in19812ms. Final terminal-preservation test reruns pass (25148ms Debug,19206ms o
 with pinned uv, locked/no-editable before installed tests. No real inference,
 native installation/activation or whole task closure. Production automatic root
 acquisition and genuine completion/all-client reconciliation remain open.
+
+
+### 2026-11-15 connected native-root coordinator (source/mock only)
+
+ModelBroker's trusted optional native-control port now performs durable dispatch
+→ off-loop root registration/read → exact peer/instance/correlation/root/sequence
+validation → journal checkpoint → once-only bound launch → installed Python
+mock POST. A held synthetic registration verifies that the manager poll remains
+responsive and no worker grant exists before the root is returned. Actual mock
+HTTP requires the full-width root and native-instance headers. Its fake SSE
+completion and child reap retain the independent native claim. Separate root
+mismatch and mid-registration cancellation cases spawn no child, release only
+the local launch reservation and preserve uncertain native scope. No model or
+new model engine executes.
+
+198 Node/API and108 installed Python tests pass
+(`/private/tmp/fios-009-coordinator-npm.log`). The final manager-composed Debug
+suite passes in25428ms (`/private/tmp/fios-009-coordinator-debug-final.log`);
+optimized final run passes in19708ms in
+`/private/tmp/fios-009-coordinator-release-final.log`. Prior coordinator Debug/
+optimized runs pass in25574/19656ms before the final manager port connection.
+An earlier Debug build was invalidated by a concurrent source edit; its log is
+retained at `/private/tmp/fios-009-coordinator-debug3.log`, and it is not counted
+as a pass. Native all-client/terminal proof, atomic admission, production
+enrollment, installation and whole-task completion remain open.39/55 unchanged.

@@ -69,7 +69,7 @@ public enum ManagerRuntime {
         let workerRecovery=try WorkerReconciler(journal:journal,admission:&admission)
         let audit=try AuditLog(directory:directory.appendingPathComponent("audit"),telemetry:telemetry)
         let artifacts=AsyncArtifacts(store:try ArtifactStore(directory:directory.appendingPathComponent("artifacts")))
-        let tasks=TaskController(journal:journal,broker:ModelBroker(journal:journal,factory:activeExecution?.workerFactory))
+        let tasks=TaskController(journal:journal,broker:ModelBroker(journal:journal,factory:activeExecution?.workerFactory,handoffSource:activeNativeControl))
         let executor:any SandboxExecuting = try activeExecution?.makeExecutor() ?? UnavailableSandboxRuntime()
         let jobs=JobController(journal:journal,executor:executor,collectVM:activeExecution?.vmSource == .ownedContainer)
         let sandboxes=SandboxTaskController(journal:journal,jobs:jobs,tasks:tasks,artifacts:artifacts,

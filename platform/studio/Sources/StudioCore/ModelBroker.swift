@@ -20,8 +20,20 @@ final class ModelBroker {
         let started:Int64
         let packet:Data
         let binding:WorkerDispatchBinding
+        var hasNativeHandoff=false
         var revoked=false
     }
+    private struct Preparing {
+        let operation:PendingNativeHandoff
+        let plan:PlannedWorkerStart
+        let key:String
+        let started:Int64
+        let packet:Data
+        let binding:WorkerDispatchBinding
+        var revoked=false
+    }
+    private var preparing:[String:Preparing]=[:]
+    private let handoffSource:(any NativeHandoffPreparing)?
     private var starting:[String:Starting]=[:]
     private let journal:Journal
     private let factory:PythonWorkerFactory?
@@ -37,8 +49,8 @@ final class ModelBroker {
             try admission.restoreWorker(key:"model:\(launch.job):\(launch.attempt)")
         }
     }
-    init(journal:Journal,factory:PythonWorkerFactory?=nil) {
-        self.journal=journal;self.factory=factory
+    init(journal:Journal,factory:PythonWorkerFactory?=nil,handoffSource:(any NativeHandoffPreparing)?=nil) {
+        self.journal=journal;self.factory=factory;self.handoffSource=handoffSource
     }
     private func job(_ id:String,owner:String?=nil,now:Int64) throws -> DurableJob {
         guard var found=try journal.jobs().first(where:{$0.id==id}),
@@ -69,13 +81,13 @@ final class ModelBroker {
         guard let factory else {throw PolicyError.invalidObservation}
         try validate(context:context)
         let owned=try job(id,owner:owner,now:now)
-        guard nativeCapacityProven,entries[id]==nil,starting[id]==nil,launchHolds.isEmpty,
+        guard nativeCapacityProven,entries[id]==nil,starting[id]==nil,preparing[id]==nil,launchHolds.isEmpty,
               try NativeAdmission.permitsDispatch(binding,now:now)
         else { throw AdmissionError.capacity }
         let scope=Self.scopeIdentity(binding)
         guard scopes[id]==nil || scopes[id]==scope else { throw JournalError.conflict }
         let ownedGrants=Set(entries.map { "\($0.key):\($0.value.attempt)" })
-        guard try journal.activeLaunchCount()==entries.count+starting.count,
+        guard try journal.activeLaunchCount()==entries.count+starting.count+preparing.count,
               try journal.workerGrants().allSatisfy({ownedGrants.contains("\($0.job):\($0.attempt)")}) else { throw AdmissionError.capacity }
         let ordinal=try journal.requestCount(job:id)
         guard ordinal<4 else { throw JournalError.trackingLimit }
@@ -91,6 +103,14 @@ final class ModelBroker {
         do {
             let plan=try journal.planWorkerStart(job:id,attempt:ordinal)
             let started=Int64(ProcessInfo.processInfo.systemUptime*1000)
+            if let handoffSource {
+                _=try NativeControlWire.instanceBytes(plan.scope.nativeEpoch)
+                let correlation=try plan.scope.nativeRequestCorrelationID(job:id,attempt:ordinal)
+                try journal.markDispatched(job:id,attempt:ordinal)
+                let operation=PendingNativeHandoff(source:handoffSource,instance:plan.scope.nativeEpoch,correlationID:correlation)
+                preparing[id]=Preparing(operation:operation,plan:plan,key:key,started:started,packet:packet,binding:binding)
+                return
+            }
             let operation=try factory.beginStart(binding:binding,plan:plan,started:started,now:now)
             starting[id]=Starting(operation:operation,attempt:ordinal,key:key,nonce:plan.nonce,started:started,packet:packet,binding:binding)
         } catch {
@@ -113,6 +133,10 @@ final class ModelBroker {
     }
     func cancel(job:String,uptime:Int64) throws {
         if let entry=entries[job] { try entry.worker.cancel(now:uptime) }
+        if var pending=preparing[job],!pending.revoked {
+            pending.revoked=true;preparing[job]=pending
+            try journal.markUncertain(job:job,attempt:pending.plan.attempt)
+        }
         if var pending=starting[job],!pending.revoked {
             pending.revoked=true;pending.operation.cancel();starting[job]=pending
             try journal.markUncertain(job:job,attempt:pending.attempt)
@@ -123,13 +147,48 @@ final class ModelBroker {
               source:(String)throws->WorkerDispatchBinding?) throws -> [String:[ModelWorkerEvent]] {
         launchHolds=try Self.reconcileFailedLaunches(launchHolds,journal:journal,admission:&admission)
         var result:[String:[ModelWorkerEvent]]=[:]
+        for (id,var pending) in preparing {
+            let lease=(try? job(id,now:now)) != nil
+            let current=try? source(id)
+            let coherent=current.map {binding in
+                Self.scopeIdentity(binding)==Self.scopeIdentity(pending.binding)
+                    && binding.nativeSnapshot.sequence>=pending.binding.nativeSnapshot.sequence
+                    && ((try? NativeAdmission.retainsSource(binding,now:now)) ?? false)
+            } ?? false
+            if !pending.revoked && (!lease || !coherent || uptime<pending.started || uptime-pending.started>=10000) {
+                pending.revoked=true
+                if lease {try journal.transitionJob(id:id,to:.revoking,now:now)}
+                try journal.markUncertain(job:id,attempt:pending.plan.attempt)
+            }
+            preparing[id]=pending
+            guard let finished=pending.operation.take() else {continue}
+            preparing.removeValue(forKey:id)
+            do {
+                let value=try finished.get(),peer=value.registration.peer
+                guard !pending.revoked,let factory,
+                      value.registration.sampledAt<=value.lineage.sampledAt,
+                      value.registration.sampledAt>=0,now>=value.registration.sampledAt,
+                      now-value.registration.sampledAt<=5000 else {throw NativeControlError.unavailable}
+                guard case .live=try journal.observeLineage(job:id,attempt:pending.plan.attempt,scope:pending.plan.scope,peer:peer,sample:value.lineage,now:now) else {throw NativeControlError.unavailable}
+                let handoff=try WorkerHandoffBinding.capture(plan:pending.plan,journal:journal,peer:peer)
+                let operation=try factory.beginStart(binding:pending.binding,plan:pending.plan,started:pending.started,now:now,handoff:handoff)
+                starting[id]=Starting(operation:operation,attempt:pending.plan.attempt,key:pending.key,nonce:pending.plan.nonce,started:pending.started,packet:pending.packet,binding:pending.binding,hasNativeHandoff:true)
+            }catch {
+                // This preparation path has never called the worker factory.
+                // Release its local slot only; registration may have succeeded.
+                try journal.markUncertain(job:id,attempt:pending.plan.attempt)
+                try journal.recordWorkerNotStarted(job:id,attempt:pending.plan.attempt,nonce:pending.plan.nonce)
+                admission.releaseWorkerAfterReap(key:pending.key)
+                result[id]=pending.revoked ? [.interrupted]:[.failed(code:"model_unavailable")]
+            }
+        }
         for (id,var pending) in starting {
             let lease=(try? job(id,now:now)) != nil
             let current=try? source(id)
             let eligible=current.map { binding in
                 Self.scopeIdentity(binding)==Self.scopeIdentity(pending.binding)
                     && binding.nativeSnapshot.sequence>=pending.binding.nativeSnapshot.sequence
-                    && ((try? NativeAdmission.permitsDispatch(binding,now:now)) ?? false)
+                    && ((try? pending.hasNativeHandoff ? NativeAdmission.retainsSource(binding,now:now):NativeAdmission.permitsDispatch(binding,now:now)) ?? false)
             } ?? false
             if !pending.revoked && (!lease || !eligible || uptime<pending.started || uptime-pending.started>=10000) {
                 pending.revoked=true;pending.operation.cancel()
@@ -190,8 +249,8 @@ final class ModelBroker {
         // <=256000/job even across crashes. Terminal history is never refunded.
         return result
     }
-    func canonicalModel(forJob id:String)->String? {entries[id]?.binding.canonicalModel ?? starting[id]?.binding.canonicalModel}
-    func active(job:String)->Bool { entries[job] != nil || starting[job] != nil }
-    var activeWorkers:Int { entries.count+starting.count }
+    func canonicalModel(forJob id:String)->String? {entries[id]?.binding.canonicalModel ?? starting[id]?.binding.canonicalModel ?? preparing[id]?.binding.canonicalModel}
+    func active(job:String)->Bool { entries[job] != nil || starting[job] != nil || preparing[job] != nil }
+    var activeWorkers:Int { entries.count+starting.count+preparing.count }
     var hasUnresolvedLaunch:Bool { !launchHolds.isEmpty }
 }
