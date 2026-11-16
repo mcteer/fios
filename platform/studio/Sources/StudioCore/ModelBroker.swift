@@ -24,6 +24,8 @@ final class ModelBroker {
         var preparation:WorkerPreparationBinding?=nil
         var hasNativeHandoff=false
         var revoked=false
+        var completion:Result<StartedPythonWorker,WorkerStartFailure>?
+        var acknowledgementRecorded=false
     }
     private struct Preparing {
         let operation:PendingNativeHandoff
@@ -102,6 +104,14 @@ final class ModelBroker {
               context.allSatisfy({["user","assistant"].contains($0.role)}),
               context.reduce(factory.metadata.policy_input_units,{$0+$1.content.utf16.count})<=128000 else { throw ControlError.invalid_request }
     }
+    // The caller has already durably reserved this exact plan. This only
+    // retains the once-only asynchronous result; it grants no launch authority.
+    func retainStart(operation:PendingPythonWorker,plan:PlannedWorkerStart,binding:WorkerDispatchBinding,packet:Data,started:Int64)throws {
+        guard !active(job:plan.job),try journal.activeLaunches().contains(where:{$0.job==plan.job && $0.attempt==plan.attempt && $0.nonce==plan.nonce}),
+              try plan.scope.encoded()==binding.inferenceScope().encoded() else {throw RuntimeError.identity}
+        starting[plan.job]=Starting(operation:operation,attempt:plan.attempt,key:"model:\(plan.job):\(plan.attempt)",nonce:plan.nonce,
+            started:started,packet:packet,binding:binding)
+    }
     func submit(job id:String,owner:String,requestID:String,context:[ModelText],binding:WorkerDispatchBinding,
                 nativeCapacityProven:Bool,sample:ResourceSample,admission:inout AdmissionPolicy,now:Int64) throws {
         guard try ServiceAdmissionPolicy.permits(journal:journal,model:true,sandbox:false) else {throw AdmissionError.capacity}
@@ -148,7 +158,7 @@ final class ModelBroker {
                 return
             }
             let operation=try factory.beginStart(binding:binding,plan:plan,started:started,now:now)
-            starting[id]=Starting(operation:operation,attempt:ordinal,key:key,nonce:plan.nonce,started:started,packet:packet,binding:binding)
+            try retainStart(operation:operation,plan:plan,binding:binding,packet:packet,started:started)
         } catch {
             try journal.markUncertain(job:id,attempt:ordinal)
             // Do not guess away a possibly spawned child or free its512MiB.
@@ -361,8 +371,18 @@ final class ModelBroker {
                 launchHolds.insert(WorkerLaunchKey(job:id,attempt:pending.attempt))
             }
             starting[id]=pending
-            guard let finished=pending.operation.take() else {continue}
-            starting.removeValue(forKey:id)
+            if pending.completion == nil {pending.completion=pending.operation.take()}
+            starting[id]=pending
+            guard let finished=pending.completion else {continue}
+            // A no-process acknowledgement is repeatable journal I/O, but its
+            // opaque once-only producer result must survive a storage failure.
+            // A started transport cannot be rebound after ownership transfer.
+            let retainOnStorageFailure:Bool
+            switch finished {
+            case .failure(.neverSpawned),.failure(.cancelled):retainOnStorageFailure=true
+            default:retainOnStorageFailure=false
+            }
+            if !retainOnStorageFailure {starting.removeValue(forKey:id)}
             do {
                 switch finished {
                 case .success(let transport):
@@ -372,12 +392,18 @@ final class ModelBroker {
                     entries[id]=Entry(worker:worker,attempt:pending.attempt,key:pending.key,binding:pending.binding,preparation:pending.preparation)
                     launchHolds.remove(WorkerLaunchKey(job:id,attempt:pending.attempt))
                 case .failure(.cancelled):
-                    try journal.recordWorkerNotStarted(job:id,attempt:pending.attempt,nonce:pending.nonce)
+                    if !pending.acknowledgementRecorded {
+                        try journal.recordWorkerNotStarted(job:id,attempt:pending.attempt,nonce:pending.nonce)
+                        pending.acknowledgementRecorded=true;starting[id]=pending
+                    }
                     admission.releaseWorkerAfterReap(key:pending.key)
                     launchHolds.remove(WorkerLaunchKey(job:id,attempt:pending.attempt))
                     result[id]=[.interrupted]
                 case .failure(.neverSpawned(let evidence)):
-                    try journal.recordWorkerNeverSpawned(job:id,attempt:pending.attempt,evidence:evidence)
+                    if !pending.acknowledgementRecorded {
+                        try journal.recordWorkerNeverSpawned(job:id,attempt:pending.attempt,evidence:evidence)
+                        pending.acknowledgementRecorded=true;starting[id]=pending
+                    }
                     if evidence.handoff != nil {try nonDispatch?.enqueue(.neverSpawned(evidence))}
                     if let preparation=evidence.preparation {enqueuePreparationWithdrawal(preparation,scope:try pending.binding.inferenceScope(),job:id,attempt:pending.attempt)}
                     preparationObservations.removeValue(forKey:id)
@@ -386,7 +412,14 @@ final class ModelBroker {
                     result[id]=[.interrupted]
                 case .failure(.unavailable):throw RuntimeError.launch
                 }
+                starting.removeValue(forKey:id)
+            }catch JournalError.storage where retainOnStorageFailure {
+                pending.revoked=true
+                starting[id]=pending
+                launchHolds.insert(WorkerLaunchKey(job:id,attempt:pending.attempt))
+                continue
             }catch {
+                starting.removeValue(forKey:id)
                 try journal.markUncertain(job:id,attempt:pending.attempt)
                 launchHolds.insert(WorkerLaunchKey(job:id,attempt:pending.attempt))
                 result[id]=pending.revoked ? [.interrupted]:[.failed(code:"internal_error")]

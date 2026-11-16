@@ -7639,3 +7639,19 @@ An intermediate compile rejected an unused optional binding; changed to a boolea
 - `/private/tmp/fios-009-preparation-broker-npm-test.log` SHA256 `ba87e0b22ff0c36ae8fd9e9d85df1ce60a7c721a2b1e4a455a693c8c521ed220`.
 
 Metadata3 runtime candidate61242be8… has been built and byte-reviewed before/after116 copied-prefix tests, but current-Core factory and fresh clean package qualification are still pending. Old candidates remain separately scoped historical evidence. Whole39/55 unchanged. Exact published1d430c7 CI43832556877 is all seven jobs green; this queued batch requires its own exact-head CI. No merge, delivery, installation or Studio actuation occurs.
+
+### Clean broker package and preparation3 runtime qualification (2026-11-16)
+
+Clean revision84089c2e511f34ec0fb959187d7a42f61f036b0f packages183 declared source inputs and9 inactive artifacts. Manifest SHA256 `54f5046ea6555895e1256843ef47486fb8fa58976ee68bed280fe460d5b1f39a`, declared projection `a07d8e6cd8114447d18b43f84a6c20ea3ffed8b8c849dd1ecd860b4f0574a792`. Both Studio configuration reviews stay blocked with zero privileged commands;4 plists lint. Packaged CLI verifies/restores the stopped backup, preserves the prior independent uncertain claim and refuses the previous reader without database mutation. This is package-declared provenance, not whole-repository/native or publisher authenticity.
+
+Copied Python runtime `61242be88fc51f595680cdec49eeddab757bea6f1b49c185b2d9dd6a58ffbf0b` passes116 copied-prefix tests with byte-identical before/after review; actual Core factory accepts metadata3/preparation1 without dispatch. Qualification receipt `/private/tmp/fios-009-preparation-broker-package-6hpsym_2/qualification.json`, SHA256 `19889e9ffb4093f86320fbb8e8353964d513dc1e91172cf4923e346b4bd639c4`. These checks performed no real inference, installation, activation, enrollment, merge or deployment. Later working-tree recovery changes are outside this package receipt and need separate tests/package qualification. Whole39/55 unchanged.
+
+### Retained local no-spawn completion during storage recovery (2026-11-16)
+
+The starting broker now retains the opaque once-only cancellation/no-spawn completion until its durable local acknowledgement succeeds. Repeated SQLite storage failures revoke the start and retain the reservation; successful acknowledgement is tracked separately from subsequent cleanup so it cannot replay. Started transports are not rebound or respawned by this path. An internal shared retention method checks the original durable launch nonce and exact scope; it grants no launch authority.
+
+The real factory produces a pre-spawn cancellation, then three polls encounter a genuine isolated SQLite BEGIN IMMEDIATE writer lock. The original completion and launch remain held; after rollback the same completion reaps the local launch exactly once, retains request history1 and creates no child. Full Debug compile30382ms/runtime35832ms and optimized63771ms/30555ms pass. Boundary/diff checks pass. This fixture has no native parent: native-parent no-spawn separation is covered by earlier preparation tests, but started-transport bind storage failure remains a separate unresolved recovery path. No whole task closes;39/55 unchanged.
+
+- `/private/tmp/fios-009-start-completion-debug.log` SHA256 `91749ab4018b4e5536e1e213f6f95f35a75c2c0f548e08274cf996150deb8ca5`.
+- `/private/tmp/fios-009-start-completion-release.log` SHA256 `6e7553824beb456f30f7fd171c1a5e0a360a629addfb47f9684688321febd4f7`.
+- `/private/tmp/fios-009-start-completion-boundary.log` SHA256 `c48954b6e815c6287f37d4ce266bfce48c958980163a31438c5166be14e0a469`.
