@@ -14,7 +14,8 @@ import {verifyNativeReview} from './lib/platform-native-review.mjs';
 const args=process.argv.slice(2);
 let protocolVersion=2;
 function option(flag){const index=args.indexOf(flag);assert.equal(args.filter(value=>value===flag).length,index<0?0:1);if(index>=0)args.splice(index,1);return index>=0;}
-const withLineage=option('--lineage'),withBackendFences=option('--backend-fences'),withPrimaryActivity=option('--primary-activity'),withSDKBackground=option('--sdk-background'),withSlowIngress=option('--slow-ingress'),readOnly=option('--read-only'),dynamicObserver=option('--dynamic-observer');
+const withLineage=option('--lineage'),withBackendFences=option('--backend-fences'),withPrimaryActivity=option('--primary-activity'),withSDKBackground=option('--sdk-background'),withSlowIngress=option('--slow-ingress'),readOnly=option('--read-only'),dynamicObserver=option('--dynamic-observer'),observationOnlyServer=option('--observation-only-server');
+assert(!observationOnlyServer||readOnly);
 assert(!dynamicObserver||readOnly);
 assert(!readOnly||(withBackendFences&&withPrimaryActivity&&withSDKBackground));
 assert(!withSDKBackground||withBackendFences);
@@ -25,6 +26,7 @@ assert.equal(process.platform,'darwin');assert.notEqual(process.getuid(),0);
 const capsule=verifyNativeReview(args[2],args[4]),binary=capsule.binary;
 if(withBackendFences){assert.equal(protocolVersion,3);assert.equal(capsule.receipt.declared_inputs.native_backend_fences_version,2);}
 if(withSDKBackground)assert.equal(capsule.receipt.declared_inputs.native_background_coverage_version,1);
+if(observationOnlyServer)assert.equal(capsule.receipt.declared_inputs.native_observation_bootstrap_version,1);
 if(withPrimaryActivity){assert.equal(protocolVersion,3);assert.equal(capsule.receipt.declared_inputs.native_primary_activity_version,3);}
 const binarySHA=capsule.receipt.files['bin/mlx-serve'].sha256;
 const root=resolve(import.meta.dirname,'..'),directory=mkdtempSync('/private/tmp/f9-native-status-');
@@ -49,7 +51,7 @@ const bin=run('swift',['build','-j','2','--package-path','platform/studio','--sh
 const reservation=createServer();await new Promise((accept,reject)=>{reservation.once('error',reject);reservation.listen(0,'127.0.0.1',accept);});
 const port=reservation.address().port;await new Promise(accept=>reservation.close(accept));
 const env={PATH:'/usr/bin:/bin',HOME:directory,LANG:'C',LC_ALL:'C',XDG_CACHE_HOME:join(directory,'cache'),
- FIOS_NATIVE_CONTROL:'isolated-source-fixture',FIOS_NATIVE_STARTUP:'isolated-source-fixture'};
+ FIOS_NATIVE_CONTROL:observationOnlyServer?'isolated-source-observation-fixture':'isolated-source-fixture',FIOS_NATIVE_STARTUP:'isolated-source-fixture'};
 if(withSDKBackground)env.MLX_METAL_RESIDENCY_REFRESH_INTERVAL_MS='25';
 const children=[];
 const exited=child=>child.exitCode!==null||child.signalCode!==null;
@@ -69,6 +71,7 @@ try{
  assert.deepEqual(sourceHealth,{healthy:true,identity_proven:false,native_idle_proven:false});
  const control=join(directory,'.fios-native-control/control.sock');
  await until(()=>existsSync(control));
+ if(observationOnlyServer)assert.deepEqual(JSON.parse(run(fixture,['--isolated-observation-bridge',state,control,binary,binarySHA,'source-fixture-only',String(native.pid)],15000)),{denied_native_management:3,ingress_unchanged:true,models:0,native_authority:false});
  const lineageSeed=withLineage?JSON.parse(run(fixture,['--isolated-seed-lineage',state,control,binary,binarySHA,'source-fixture-only',String(native.pid)],5000)):null;
  if(withLineage)assert.deepEqual(lineageSeed,{seeded_unit_scope:true,model_requests:0,native_authority:false});
  if(readOnly)assert.deepEqual(JSON.parse(run(fixture,['--isolated-seed-maintenance',state],5000)),{durable_desired_verified:true,native_action:false});
@@ -167,7 +170,7 @@ try{
  if(withLineage){assert.equal(lineageReceipt.persisted_source_sample,true);assert.equal(lineageReceipt.unresolved_uncertainty_retained,true);writeFileSync(join(directory,'lineage-receipt.json'),JSON.stringify(lineageReceipt)+'\n',{mode:0o600});}
  native.kill('SIGTERM');await until(()=>exited(native),7000);
  if(withSlowIngress){assert.deepEqual(slowInputs(),slowSource);writeFileSync(join(directory,'slow-ingress-inputs.json'),JSON.stringify({scope:'runner_and_fixture_bytes_not_whole_native_provenance',files:slowSource,native_review_sha256:args[4],models:0,native_authority:false},null,2)+'\n',{mode:0o600});}
- console.log(JSON.stringify({ok:true,protocol_version:protocolVersion,source_health_probe:true,source_ingress_roundtrip:true,automatic_lineage_checkpoint:withLineage,automatic_backend_fences:withBackendFences,automatic_primary_activity:withPrimaryActivity,automatic_sdk_background:withSDKBackground,slow_ingress_owner_retained:withSlowIngress,observation_only:readOnly,dynamic_observer:dynamicObserver,model_requests:0,installed_service_actions:0,authoritative:false,review_directory:directory}));
+ console.log(JSON.stringify({ok:true,protocol_version:protocolVersion,source_health_probe:true,source_ingress_roundtrip:true,automatic_lineage_checkpoint:withLineage,automatic_backend_fences:withBackendFences,automatic_primary_activity:withPrimaryActivity,automatic_sdk_background:withSDKBackground,slow_ingress_owner_retained:withSlowIngress,observation_only:readOnly,dynamic_observer:dynamicObserver,native_observation_only:observationOnlyServer,model_requests:0,installed_service_actions:0,authoritative:false,review_directory:directory}));
 }finally{
  for(const child of [...children].reverse())if(!exited(child)){child.kill('SIGTERM');try{await until(()=>exited(child),7000);}catch{child.kill('SIGKILL');await until(()=>exited(child),3000);}}
  // Retain only private source-test data; process exit grants no native proof.

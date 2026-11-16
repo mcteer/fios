@@ -1,0 +1,386 @@
+diff --git a/src/fios/control_transport.zig b/src/fios/control_transport.zig
+--- a/src/fios/control_transport.zig
++++ b/src/fios/control_transport.zig
+@@ -1,10 +1,12 @@
+-// Source-fixture-only private operator transport. Disabled in ordinary builds.
++// Reviewed installed observation transport; full control stays source-fixture-only.
+ // UID-authenticated AF_UNIX, one finite frame per connection, no subprocesses.
+ // No model-facing management route, lifecycle signal or quiescence authority.
+ const std = @import("std");
+ const ownership = @import("request_ownership.zig");
+ const protocol = @import("control_protocol.zig");
+ const preparation = @import("preparation_protocol.zig");
++const observation_access = @import("observation_access.zig");
++const observation_policy = @import("observation_policy.zig");
+ pub const OwnerBarrier = protocol.OwnerBarrier;
+ pub const BackendFenceReadings = protocol.BackendFenceReadings;
+ pub const BackendFenceSource = protocol.BackendFenceSource;
+@@ -22,6 +24,8 @@
+     current_backend_fences: ?CurrentBackendFenceSource = null,
+     registry_activity: ?RegistryActivitySource = null,
+     preparation_source: ?preparation.Source = null,
++    observation_only: bool = false,
++    policy: ?observation_policy.Policy = null,
+     path: [256:0]u8,
+     identity: c.Stat,
+     stopped: std.atomic.Value(bool) = .init(false),
+@@ -41,10 +45,22 @@
+     }
+     pub fn startWithPreparation(io: std.Io, allocator: std.mem.Allocator, version: []const u8, barrier: ?OwnerBarrier, backend_fences: ?BackendFenceSource, current_backend_fences: ?CurrentBackendFenceSource, registry_activity: ?RegistryActivitySource, preparation_source: ?preparation.Source) !?*Bridge {
+         const enabled = c.getenv("FIOS_NATIVE_CONTROL");
+-        if (enabled == null) return null;
+-        if (!std.mem.eql(u8, std.mem.span(enabled.?), "isolated-source-fixture") or
+-            !std.mem.endsWith(u8, version, "-fios-source-fixture") or c.getuid() == 0 or c.geteuid() != c.getuid())
+-            return error.ControlUnavailable;
++        var policy: ?observation_policy.Policy = null;
++        errdefer if (policy) |*value| value.close();
++        var observation_only = false;
++        if (try observation_policy.imageKind()) {
++            // A fixed installed image never honors fixture environment flags.
++            if (enabled != null) return error.ControlUnavailable;
++            policy = try observation_policy.Policy.load(version);
++            observation_only = true;
++        } else {
++            if (std.mem.endsWith(u8, version, "-fios-platform")) return error.ControlUnavailable;
++            if (enabled == null) return null;
++            observation_only = std.mem.eql(u8, std.mem.span(enabled.?), "isolated-source-observation-fixture");
++            if ((!observation_only and !std.mem.eql(u8, std.mem.span(enabled.?), "isolated-source-fixture")) or
++                !std.mem.endsWith(u8, version, "-fios-source-fixture") or c.getuid() == 0 or c.geteuid() != c.getuid())
++                return error.ControlUnavailable;
++        }
+         const home = c.getenv("HOME");
+         if (home == null) return error.ControlUnavailable;
+         var directory_buffer: [256]u8 = undefined;
+@@ -74,8 +90,9 @@
+             return error.ControlUnavailable;
+         const self = try allocator.create(Bridge);
+         errdefer allocator.destroy(self);
+-        self.* = .{ .io = io, .allocator = allocator, .fd = fd, .barrier = barrier, .backend_fences = backend_fences, .current_backend_fences = current_backend_fences, .registry_activity = registry_activity, .preparation_source = preparation_source, .path = path_buffer, .identity = info };
++        self.* = .{ .io = io, .allocator = allocator, .fd = fd, .barrier = if (observation_only) null else barrier, .backend_fences = backend_fences, .current_backend_fences = current_backend_fences, .registry_activity = registry_activity, .preparation_source = if (observation_only) null else preparation_source, .observation_only = observation_only, .policy = policy, .path = path_buffer, .identity = info };
+         self.thread = try std.Thread.spawn(.{}, run, .{self});
++        policy = null; // Ownership transferred once, after successful spawn.
+         return self;
+     }
+     pub fn stop(self: *Bridge) void {
+@@ -87,6 +104,7 @@
+         if (c.fstatat(c.AT.FDCWD, &self.path, &info, c.AT.SYMLINK_NOFOLLOW) == 0 and info.dev == self.identity.dev and
+             info.ino == self.identity.ino and info.uid == self.identity.uid and
+             (info.mode & c.S.IFMT) == c.S.IFSOCK) _ = c.unlink(&self.path);
++        if (self.policy) |*value| value.close();
+         self.allocator.destroy(self);
+     }
+     fn secureFD(fd: c_int) bool {
+@@ -120,6 +138,7 @@
+         }
+     }
+     fn handle(self: *Bridge, peer: c_int) void {
++        if (self.policy) |*value| if (!value.unchanged()) return;
+         var uid: c.uid_t = 0;
+         var gid: c.gid_t = 0;
+         var no_sigpipe: c_int = 1;
+@@ -136,6 +155,8 @@
+             count += @intCast(n);
+             if (count > preparation.request_size) return;
+         } else return;
++        // Readonly denial precedes every tracker, callback and mutation path.
++        if (self.observation_only and !observation_access.permits(input[0..count])) return;
+         var storage: [protocol.registry_response_size]u8 = undefined;
+         const response: []const u8 = if (count == preparation.request_size and std.mem.eql(u8, input[0..4], "FIP9")) prepared: {
+             const value = preparation.dispatch(ownership.shared(), self.io, input[0..preparation.request_size], self.preparation_source);
+@@ -182,6 +203,7 @@
+             @memcpy(storage[0..protocol.lineage_response_size], &value);
+             break :lineage storage[0..protocol.lineage_response_size];
+         } else return;
++        if (self.policy) |*value| if (!value.unchanged()) return;
+         var sent: usize = 0;
+         while (sent < response.len and self.ready(peer, c.POLL.OUT, deadline)) {
+             const n = c.write(peer, response[sent..].ptr, response.len - sent);
+diff --git a/src/fios/startup_guard.zig b/src/fios/startup_guard.zig
+--- a/src/fios/startup_guard.zig
++++ b/src/fios/startup_guard.zig
+@@ -2,6 +2,7 @@
+ // all-client coverage or permission to launch an application.
+ const std = @import("std");
+ const c = std.c;
++const observation_policy = @import("observation_policy.zig");
+ extern "c" fn acl_get_fd_np(fd: c_int, kind: c_int) ?*anyopaque;
+ extern "c" fn acl_free(value: *anyopaque) c_int;
+ extern "c" fn __error() *c_int;
+@@ -10,9 +11,14 @@
+     fd: c_int,
+     retain_until_exit: bool = false,
+     pub fn start(version: []const u8) !?Guard {
++        if (try observation_policy.imageKind()) {
++            if (!std.mem.eql(u8, version, "26.11.2-fios-platform")) return error.StartupGuardUnavailable;
++        }
+         if (std.mem.endsWith(u8, version, "-fios-platform")) {
+-            if (!std.mem.eql(u8, version, "26.10.3-fios-platform") or c.getenv("FIOS_NATIVE_STARTUP") != null)
++            if (!std.mem.eql(u8, version, "26.11.2-fios-platform") or c.getenv("FIOS_NATIVE_STARTUP") != null)
+                 return error.StartupGuardUnavailable;
++            var proof = try observation_policy.Policy.load(version);
++            defer proof.close();
+             return try installed();
+         }
+         const flag = c.getenv("FIOS_NATIVE_STARTUP") orelse return null;
+diff --git a/src/fios/observation_access.zig b/src/fios/observation_access.zig
+new file mode 100644
+--- /dev/null
++++ b/src/fios/observation_access.zig
+@@ -0,0 +1,31 @@
++// Envelope allowlist only; never an enrollment, caller or native-idle proof.
++const std = @import("std");
++pub fn permits(request: []const u8) bool {
++    if (request.len != 32) return false;
++    if (std.mem.eql(u8, request[0..4], "FIC9")) {
++        return request[4] == 3 and std.mem.allEqual(u8, request[5..32], 0);
++    }
++    if ((std.mem.eql(u8, request[0..4], "FIA9") and request[4] == 4) or
++        (std.mem.eql(u8, request[0..4], "FIB9") and request[4] == 3))
++    {
++        return std.mem.allEqual(u8, request[5..8], 0) and std.mem.allEqual(u8, request[24..32], 0);
++    }
++    return false;
++}
++
++test "observation allowlist accepts only the three explicit readonly envelopes" {
++    var request: [32]u8 = @splat(0);
++    @memcpy(request[0..4], "FIC9");request[4] = 3;
++    try std.testing.expect(permits(&request));
++    for (1..4) |operation| {request[5] = @intCast(operation);try std.testing.expect(!permits(&request));}
++    request[5] = 0;request[16] = 1;try std.testing.expect(!permits(&request));
++    request[16] = 0;
++    inline for (.{ "FIA9", "FIB9" }, .{ @as(u8, 4), @as(u8, 3) }) |magic, version| {
++        @memcpy(request[0..4], magic);request[4] = version;request[8] = 7;
++        try std.testing.expect(permits(&request));
++        request[4] = 2;try std.testing.expect(!permits(&request));request[4] = version;
++        request[31] = 1;try std.testing.expect(!permits(&request));request[31] = 0;
++    }
++    inline for (.{ "FIJ9", "FIE9", "FIQ9", "FIP9" }) |magic| {@memcpy(request[0..4], magic);try std.testing.expect(!permits(&request));}
++    try std.testing.expect(!permits(request[0..31]));
++}
+diff --git a/src/fios/observation_policy.zig b/src/fios/observation_policy.zig
+new file mode 100644
+--- /dev/null
++++ b/src/fios/observation_policy.zig
+@@ -0,0 +1,221 @@
++// Fixed installed namespace for observation ONLY. Root bytes/path checks are
++// not mapped-code, publisher, all-client or native completion attestation.
++const std = @import("std");
++const c = std.c;
++extern "c" fn proc_pidpath(pid: c_int, buffer: *anyopaque, size: u32) c_int;
++extern "c" fn gethostname(buffer: [*]u8, size: usize) c_int;
++extern "c" fn acl_get_fd_np(fd: c_int, kind: c_int) ?*anyopaque;
++extern "c" fn acl_free(value: *anyopaque) c_int;
++extern "c" fn __error() *c_int;
++pub const image_path = "/Library/Application Support/Fios/Studio/native/bin/mlx-serve";
++const directory_path = "/Library/Application Support/Fios/Studio";
++const name = "native-serving-launch.json";
++const Err = error{ObservationUnavailable};
++
++pub fn imageKind() Err!bool {
++    var buffer: [4096]u8 = @splat(0);
++    const n = proc_pidpath(c.getpid(), &buffer, buffer.len);
++    if (n<=0 or n>=buffer.len) return error.ObservationUnavailable;
++    return std.mem.eql(u8, std.mem.sliceTo(&buffer, 0), image_path);
++}
++fn same(a: c.Stat, b: c.Stat) bool {
++    return a.dev == b.dev and a.ino == b.ino and a.uid == b.uid and a.gid == b.gid and a.mode == b.mode and
++        a.nlink == b.nlink and a.size == b.size and a.mtimespec.sec == b.mtimespec.sec and
++        a.mtimespec.nsec == b.mtimespec.nsec and a.ctimespec.sec == b.ctimespec.sec and a.ctimespec.nsec == b.ctimespec.nsec;
++}
++fn noACL(fd: c_int) bool {
++    __error().* = 0;
++    if (acl_get_fd_np(fd, 0x100)) |value| {_ = acl_free(value);return false;}
++    return __error().* == @intFromEnum(c.E.NOENT);
++}
++fn protectedDirectory(fd: c_int) bool {
++    var info: c.Stat = undefined;
++    return c.fstat(fd, &info) == 0 and info.uid == 0 and info.mode & c.S.IFMT == c.S.IFDIR and info.mode & 0o7022 == 0 and noACL(fd);
++}
++fn rootDirectory() Err!c_int {
++    var parent = c.openat(c.AT.FDCWD, "/", .{ .DIRECTORY = true, .NOFOLLOW = true, .CLOEXEC = true });
++    if (parent < 0) return error.ObservationUnavailable;
++    errdefer _ = c.close(parent);
++    if (!protectedDirectory(parent)) return error.ObservationUnavailable;
++    for ([_][*:0]const u8{ "Library", "Application Support", "Fios", "Studio" }) |component| {
++        const next = c.openat(parent, component, .{ .DIRECTORY = true, .NOFOLLOW = true, .CLOEXEC = true });
++        if (next < 0) return error.ObservationUnavailable;
++        if (!protectedDirectory(next)) {_ = c.close(next);return error.ObservationUnavailable;}
++        _ = c.close(parent);parent = next;
++    }
++    return parent;
++}
++fn nowMs() Err!u64 {
++    var stamp: c.timespec = undefined;
++    if (c.clock_gettime(.MONOTONIC, &stamp) != 0 or stamp.sec < 0 or stamp.nsec < 0) return error.ObservationUnavailable;
++    return std.math.add(u64, std.math.mul(u64, @intCast(stamp.sec), 1000) catch return error.ObservationUnavailable, @as(u64, @intCast(stamp.nsec)) / 1000000) catch error.ObservationUnavailable;
++}
++fn beforeDeadline(deadline: u64) Err!void {if (try nowMs() >= deadline) return error.ObservationUnavailable;}
++fn string(value: std.json.Value) Err![]const u8 {return switch (value) {.string => |s| s, else => error.ObservationUnavailable};}
++fn field(object: std.json.ObjectMap, key: []const u8) Err![]const u8 {return string(object.get(key) orelse return error.ObservationUnavailable);}
++fn canonical(path: []const u8, allow_root: bool) bool {
++    if (path.len == 0 or path.len >= 4096 or path[0] != '/' or std.mem.indexOfScalar(u8, path, 0) != null) return false;
++    if (allow_root and std.mem.eql(u8, path, "/")) return true;
++    var parts = std.mem.splitScalar(u8, path[1..], '/');
++    while (parts.next()) |part| if (part.len == 0 or std.mem.eql(u8, part, ".") or std.mem.eql(u8, part, "..")) return false;
++    return true;
++}
++fn digest(text: []const u8) Err![32]u8 {
++    if (text.len != 64) return error.ObservationUnavailable;
++    for (text) |byte| if (!(byte >= '0' and byte <= '9') and !(byte >= 'a' and byte <= 'f')) return error.ObservationUnavailable;
++    var result: [32]u8 = undefined;
++    _ = std.fmt.hexToBytes(&result, text) catch return error.ObservationUnavailable;
++    return result;
++}
++// Metadata projection only. The manager's complete launch document parser is
++// still independently required; this does not validate launch argv/credentials.
++pub const Projection = struct {home: []const u8, server_sha256: [32]u8};
++pub fn project(value: std.json.Value, uid: c.uid_t, host: []const u8) Err!Projection {
++    const object = switch (value) {.object => |v| v, else => return error.ObservationUnavailable};
++    const keys = [_][]const u8{ "version", "purpose", "host", "uid", "review_sha256", "manager_sha256", "supervisor_sha256", "server_sha256", "application_sha256", "revision", "state_path", "working_directory", "arguments", "environment", "credential_channel", "server_artifact" };
++    if (object.count() != keys.len) return error.ObservationUnavailable;
++    for (keys) |key| if (!object.contains(key)) return error.ObservationUnavailable;
++    if (object.get("version").? != .integer or object.get("version").?.integer != 2 or
++        object.get("uid").? != .integer or object.get("uid").?.integer <= 0 or object.get("uid").?.integer != uid or
++        !std.mem.eql(u8, try field(object, "purpose"), "reviewed_native_serving_launch") or
++        !std.mem.eql(u8, try field(object, "server_artifact"), "reviewed_fios_native") or
++        (!std.mem.eql(u8, host, "fios-edge-a.lab") and !std.mem.eql(u8, host, "fios-edge-b.lab")) or
++        !std.mem.eql(u8, try field(object, "host"), host)) return error.ObservationUnavailable;
++    for ([_][]const u8{ "review_sha256", "manager_sha256", "supervisor_sha256", "application_sha256" }) |key| _ = try digest(try field(object, key));
++    const server = try digest(try field(object, "server_sha256"));
++    if (!canonical(try field(object, "state_path"), false) or !canonical(try field(object, "working_directory"), true)) return error.ObservationUnavailable;
++    const revision = try field(object, "revision");
++    if (revision.len != 36) return error.ObservationUnavailable;
++    for (revision, 0..) |byte, index| {
++        if (index==8 or index==13 or index==18 or index==23) {if (byte!='-') return error.ObservationUnavailable;}
++        else if (!(byte>='0' and byte<='9') and !(byte>='a' and byte<='f')) return error.ObservationUnavailable;
++    }
++    const channel = try field(object, "credential_channel");
++    if (!std.mem.eql(u8, channel, "argument") and !std.mem.eql(u8, channel, "environment")) return error.ObservationUnavailable;
++    const arguments = switch (object.get("arguments").?) {.array => |v| v.items, else => return error.ObservationUnavailable};
++    if (arguments.len<1 or arguments.len>128) return error.ObservationUnavailable;
++    var credential_slots: usize = 0;
++    for (arguments, 0..) |argument, index| {
++        const text = try string(argument);
++        if (text.len>4096 or std.mem.indexOfScalar(u8, text, 0)!=null) return error.ObservationUnavailable;
++        if (std.mem.eql(u8, text, "<fios-serving-credential>")) {
++            credential_slots+=1;
++            if (index==0 or !std.mem.eql(u8, try string(arguments[index-1]), "--api-key")) return error.ObservationUnavailable;
++        }
++        if (std.mem.eql(u8, channel, "environment") and std.mem.eql(u8, text, "--api-key")) return error.ObservationUnavailable;
++    }
++    if (credential_slots != @as(usize, if (std.mem.eql(u8, channel, "argument")) 1 else 0)) return error.ObservationUnavailable;
++    const env = switch (object.get("environment").?) {.object => |v| v, else => return error.ObservationUnavailable};
++    if (env.count() > 6 or !std.mem.eql(u8, try field(env, "PATH"), "/usr/bin:/bin") or
++        !std.mem.eql(u8, try field(env, "LANG"), "C") or !std.mem.eql(u8, try field(env, "LC_ALL"), "C")) return error.ObservationUnavailable;
++    var entries = env.iterator();
++    while (entries.next()) |entry| {
++        var known = false;
++        for ([_][]const u8{ "PATH", "HOME", "LANG", "LC_ALL", "DYLD_LIBRARY_PATH", "MLX_METAL_PATH" }) |key| {if (std.mem.eql(u8, key, entry.key_ptr.*)) {known = true;break;}}
++        const text = try string(entry.value_ptr.*);
++        if (!known or text.len > 4096 or std.mem.indexOfScalar(u8, text, 0) != null) return error.ObservationUnavailable;
++    }
++    const home = try field(env, "HOME");
++    if (!canonical(home, false) or !std.mem.startsWith(u8, home, "/Users/") or home.len + "/.fios-native-control/control.sock".len >= 104) return error.ObservationUnavailable;
++    return .{ .home = home, .server_sha256 = server };
++}
++
++pub const Policy = struct {
++    parent: c_int,
++    fd: c_int,
++    identity: c.Stat,
++    parent_identity: c.Stat,
++    home: [128:0]u8,
++    home_len: usize,
++    pub fn close(self: *Policy) void {if (self.fd>=0) _ = c.close(self.fd);if (self.parent>=0) _ = c.close(self.parent);self.fd = -1;self.parent = -1;}
++    pub fn unchanged(self: *const Policy) bool {
++        var file: c.Stat = undefined;var named: c.Stat = undefined;var directory: c.Stat = undefined;
++        return c.fstat(self.fd, &file) == 0 and c.fstatat(self.parent, name, &named, c.AT.SYMLINK_NOFOLLOW) == 0 and
++            same(self.identity, file) and same(file, named) and noACL(self.fd) and protectedDirectory(self.parent) and
++            c.fstatat(c.AT.FDCWD, directory_path, &directory, c.AT.SYMLINK_NOFOLLOW) == 0 and same(self.parent_identity, directory);
++    }
++    pub fn load(version: []const u8) !Policy {
++        if (!std.mem.eql(u8, version, "26.11.2-fios-platform") or !(try imageKind()) or c.getuid() == 0 or c.getuid() != c.geteuid()) return error.ObservationUnavailable;
++        const deadline = try std.math.add(u64, try nowMs(), 2000);
++        const parent = try rootDirectory();errdefer _ = c.close(parent);
++        var parent_info: c.Stat = undefined;if (c.fstat(parent, &parent_info) != 0) return error.ObservationUnavailable;
++        const fd = c.openat(parent, name, .{ .NOFOLLOW = true, .CLOEXEC = true, .NONBLOCK = true });
++        if (fd < 0) return error.ObservationUnavailable;errdefer _ = c.close(fd);
++        var info: c.Stat = undefined;
++        if (c.fstat(fd, &info) != 0 or info.uid != 0 or info.mode & c.S.IFMT != c.S.IFREG or info.nlink != 1 or
++            (info.mode & 0o7777 != 0o444 and info.mode & 0o7777 != 0o644) or info.size < 1 or info.size > 32768 or !noACL(fd)) return error.ObservationUnavailable;
++        var bytes: [32769]u8 = undefined;var length: usize = 0;
++        while (length < bytes.len) {
++            try beforeDeadline(deadline);
++            const n = c.read(fd, bytes[length..].ptr, bytes.len - length);
++            if (n < 0 and __error().* == @intFromEnum(c.E.INTR)) continue;
++            if (n < 0) return error.ObservationUnavailable;if (n == 0) break;length += @intCast(n);
++        }
++        if (length != info.size) return error.ObservationUnavailable;
++        var arena: [256 * 1024]u8 = undefined;var fba = std.heap.FixedBufferAllocator.init(&arena);
++        const parsed = try std.json.parseFromSlice(std.json.Value, fba.allocator(), bytes[0..length], .{ .duplicate_field_behavior = .@"error", .allocate = .alloc_always, .max_value_len = 32768 });
++        defer parsed.deinit();
++        var host: [256]u8 = @splat(0);if (gethostname(&host, host.len - 1) != 0) return error.ObservationUnavailable;
++        const projection = try project(parsed.value, c.getuid(), std.mem.sliceTo(&host, 0));
++        const live_home = c.getenv("HOME") orelse return error.ObservationUnavailable;
++        if (!std.mem.eql(u8, std.mem.span(live_home), projection.home)) return error.ObservationUnavailable;
++        var home: [128:0]u8 = @splat(0);@memcpy(home[0..projection.home.len], projection.home);
++        try verifyImage(parent, projection.server_sha256, deadline);
++        var result: Policy = .{ .parent = parent, .fd = fd, .identity = info, .parent_identity = parent_info, .home = home, .home_len = projection.home.len };
++        if (!result.unchanged()) return error.ObservationUnavailable;
++        try beforeDeadline(deadline);
++        return result;
++    }
++};
++fn verifyImage(parent: c_int, expected: [32]u8, deadline: u64) !void {
++    var directory = c.dup(parent);if (directory < 0) return error.ObservationUnavailable;defer _ = c.close(directory);
++    for ([_][*:0]const u8{ "native", "bin" }) |component| {
++        const next = c.openat(directory, component, .{ .DIRECTORY = true, .NOFOLLOW = true, .CLOEXEC = true });
++        if (next < 0) return error.ObservationUnavailable;
++        if (!protectedDirectory(next)) {_ = c.close(next);return error.ObservationUnavailable;}
++        _ = c.close(directory);directory = next;
++    }
++    const fd = c.openat(directory, "mlx-serve", .{ .NOFOLLOW = true, .NONBLOCK = true, .CLOEXEC = true });
++    if (fd < 0) return error.ObservationUnavailable;defer _ = c.close(fd);
++    var initial: c.Stat = undefined;
++    if (c.fstat(fd, &initial) != 0 or initial.uid != 0 or initial.mode & c.S.IFMT != c.S.IFREG or initial.nlink != 1 or
++        (initial.mode & 0o7777 != 0o555 and initial.mode & 0o7777 != 0o755) or initial.size < 1 or initial.size > 512 * 1024 * 1024 or !noACL(fd)) return error.ObservationUnavailable;
++    var hash = std.crypto.hash.sha2.Sha256.init(.{});var bytes: [32768]u8 = undefined;var total: u64 = 0;
++    while (true) {
++        try beforeDeadline(deadline);const n = c.read(fd, &bytes, bytes.len);
++        if (n < 0 and __error().* == @intFromEnum(c.E.INTR)) continue;
++        if (n < 0) return error.ObservationUnavailable;if (n == 0) break;total += @intCast(n);
++        if (total > initial.size) return error.ObservationUnavailable;hash.update(bytes[0..@intCast(n)]);
++    }
++    var actual: [32]u8 = undefined;hash.final(&actual);
++    var after: c.Stat = undefined;var named: c.Stat = undefined;
++    if (total != initial.size or !std.mem.eql(u8, &actual, &expected) or c.fstat(fd, &after) != 0 or
++        c.fstatat(directory, "mlx-serve", &named, c.AT.SYMLINK_NOFOLLOW) != 0 or !same(initial, after) or !same(after, named) or !noACL(fd)) return error.ObservationUnavailable;
++}
++
++// The genuine private test image must refuse before opening installed metadata.
++test "installed observation requires its exact protected image" {
++    try std.testing.expect(!(try imageKind()));
++    try std.testing.expectError(error.ObservationUnavailable, Policy.load("26.11.2-fios-platform"));
++    try std.testing.expectError(error.ObservationUnavailable, Policy.load("26.11.2-fios-source-fixture"));
++}
++
++test "observation metadata projection is strict but supplies no installed authority" {
++    const raw =
++        \\{"version":2,"purpose":"reviewed_native_serving_launch","host":"fios-edge-a.lab","uid":501,"review_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","manager_sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","supervisor_sha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","server_sha256":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd","application_sha256":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee","revision":"00000000-0000-4000-8000-000000000009","state_path":"/Users/mcteer/Library/Application Support/Fios/Studio","working_directory":"/Users/mcteer","arguments":["serve","--api-key-env","FIOS_MLX_SERVING_API_KEY"],"environment":{"PATH":"/usr/bin:/bin","HOME":"/Users/mcteer","LANG":"C","LC_ALL":"C"},"credential_channel":"environment","server_artifact":"reviewed_fios_native"}
++    ;
++    const allocator=std.testing.allocator;
++    const parsed=try std.json.parseFromSlice(std.json.Value,allocator,raw,.{.duplicate_field_behavior=.@"error"});defer parsed.deinit();
++    const projection=try project(parsed.value,501,"fios-edge-a.lab");
++    try std.testing.expectEqualStrings("/Users/mcteer",projection.home);
++    try std.testing.expectEqual(@as([32]u8,@splat(0xdd)),projection.server_sha256);
++    try std.testing.expectError(error.ObservationUnavailable,project(parsed.value,502,"fios-edge-a.lab"));
++    try std.testing.expectError(error.ObservationUnavailable,project(parsed.value,501,"fios-edge-b.lab"));
++    try std.testing.expectError(error.ObservationUnavailable,project(parsed.value,501,"fios-core"));
++    var changed=parsed.value;
++    try changed.object.put(allocator,"version",.{.integer=1});
++    try std.testing.expectError(error.ObservationUnavailable,project(changed,501,"fios-edge-a.lab"));
++    try changed.object.put(allocator,"version",.{.integer=2});
++    try changed.object.put(allocator,"arguments",.{.string="serve"});
++    try std.testing.expectError(error.ObservationUnavailable,project(changed,501,"fios-edge-a.lab"));
++}
