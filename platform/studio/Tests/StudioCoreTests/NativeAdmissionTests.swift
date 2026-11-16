@@ -31,6 +31,16 @@ func runNativeAdmissionBindingTests() throws {
     guard !(try NativeAdmission.retainsSource(foreign,now:1000)) else {
         fatalError("NATIVE_SOURCE_ACCEPTED_FOREIGN_BUSY_MODEL")
     }
+    // Loading must not hide a conflicting or unidentified outstanding owner.
+    for resident in ["fixture/other-model", nil] as [String?] {
+        guard !(try NativeAdmission.retainsSource(binding(host:host,hash:hash,resident:resident,owners:1,loading:true),now:1000)) else {
+            fatalError("NATIVE_SOURCE_LOADING_MASKED_OUTSTANDING_OWNER")
+        }
+    }
+    guard try NativeAdmission.retainsSource(binding(host:host,hash:hash,resident:"fixture/other-model",owners:0,loading:true),now:1000),
+          try NativeAdmission.retainsSource(binding(host:host,hash:hash,resident:"fixture/model",owners:1,loading:true),now:1000) else {
+        fatalError("NATIVE_SOURCE_REJECTED_NONCONFLICTING_PREPARATION")
+    }
     guard try NativeAdmission.retainsSource(binding(host:host,hash:hash,resident:"fixture/model",owners:1),now:1000),
           try NativeAdmission.retainsSource(binding(host:host,hash:hash,loading:true),now:1000),
           try NativeAdmission.retainsSource(binding(host:host,hash:hash),now:1000) else {throw PolicyError.invalidObservation}

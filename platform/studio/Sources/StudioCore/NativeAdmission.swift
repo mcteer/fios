@@ -22,7 +22,15 @@ enum NativeAdmission {
         // retains source quality, rather than granting another dispatch.
         switch try ActivityPolicy.evaluate(binding.nativeSnapshot,now:now) {
         case .busy(let model):return WireScalar.exactModel(model,binding.canonicalModel)
-        case .idle,.preparing:return true
+        case .idle:return true
+        case .preparing:
+            // Preparation may retain an idle previous resident during a model
+            // replacement. An outstanding owner is different: loading must not
+            // mask a conflicting or unidentified active model.
+            let snapshot=binding.nativeSnapshot
+            guard snapshot.outstandingOwners>0 else {return true}
+            guard let model=snapshot.residentModel else {return false}
+            return WireScalar.exactModel(model,binding.canonicalModel)
         case .unknown:return false
         }
     }
