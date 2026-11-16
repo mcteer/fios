@@ -1,5 +1,6 @@
 import Foundation
-func runCurrentBackendFenceWireTests(nativeFrame:String?=nil)throws {
+func runCurrentBackendFenceWireTests(nativeFrame:String?=nil,backgroundFrame:String?=nil)throws {
+    try runBackgroundCoverageWireTests()
     let instance=String(repeating:"07",count:16),request=try NativeBackendFenceWire.currentRequest(instance:instance)
     guard request.count==32,request.prefix(5)==Data("FIB9".utf8)+Data([2]) else {fatalError("Current backend request version changed")}
     var frame=Data(repeating:0,count:64);frame.replaceSubrange(0..<4,with:Data("FIF9".utf8));frame[4]=2;frame[6]=127
@@ -45,4 +46,49 @@ func runCurrentBackendFenceWireTests(nativeFrame:String?=nil)throws {
         let value=try NativeBackendFenceWire.currentReply(Data(contentsOf:URL(fileURLWithPath:nativeFrame)),instance:String(repeating:"79",count:16))
         guard value.current==NativeCurrentBackendFlags(available:127,uncertain:127) else {fatalError("Actual native flag frame disagreed with manager")}
     }
+    if let backgroundFrame {
+        let value=try NativeBackendFenceWire.backgroundReply(Data(contentsOf:URL(fileURLWithPath:backgroundFrame)),instance:String(repeating:"79",count:16))
+        guard value.current==NativeCurrentBackendFlags(available:1,uncertain:0),
+              value.backgroundCoverage?.sdkResidencyRefreshUntracked==true else {fatalError("Actual native background frame disagreed with manager")}
+    }
+}
+
+private func runBackgroundCoverageWireTests()throws {
+    let instance=String(repeating:"07",count:16)
+    guard try NativeBackendFenceWire.backgroundRequest(instance:instance)[4]==3 else {throw NativeControlError.invalid}
+    var frame=Data(repeating:0,count:64);frame.replaceSubrange(0..<4,with:Data("FIF9".utf8));frame[4]=3;frame[6]=127
+    frame.replaceSubrange(8..<24,with:Data(repeating:7,count:16));frame[31]=2;frame[38]=3;frame[39]=232
+    let peer=NativeControlPeer(pid:42,start:100,executable:try VerifiedExecutable(path:"/fixture/native",sha256:String(repeating:"a",count:64)))
+    func sample(_ code:UInt8,_ sequence:UInt8=2)throws->NativeBackendFenceSample {
+        var data=frame;data[40]=code;data[31]=sequence
+        return NativeBackendFenceSample(peer:peer,receivedAt:1000,fences:try NativeBackendFenceWire.backgroundReply(data,instance:instance))
+    }
+    for code:UInt8 in [0,1,2] {
+        let value=try sample(code)
+        guard value.fences.backgroundCoverage != nil,
+              value.fences.backgroundCoverage?.sdkResidencyRefreshUntracked==(code==0 ? nil:code==2),
+              value.fences.current?.uncertain==0 else {fatalError("Background coverage was confused with cleanup failure")}
+    }
+    for (offset,value) in [(40,UInt8(3)),(41,1),(63,1),(4,2)] {
+        var bad=frame;bad[offset]=value
+        do {_=try NativeBackendFenceWire.backgroundReply(bad,instance:instance);fatalError("Malformed background frame accepted")}
+        catch NativeControlError.invalid {}
+    }
+    do {_=try NativeBackendFenceWire.currentReply(frame,instance:instance);fatalError("Background frame silently fell back to v2")}
+    catch NativeControlError.invalid {}
+    var diagnostics=NativeBackendFenceDiagnostics(configured:true,observeBackground:true)
+    diagnostics.completed(try sample(1),expectedInstance:instance,now:1000)
+    diagnostics.completed(try sample(2,3),expectedInstance:instance,now:1000)
+    let observed=diagnostics.summary(now:1000),background=observed["source_background"] as? [String:Any]
+    guard observed["frame_version"] as? Int==3,observed["retained_uncertainty"] as? Bool==false,
+          observed["retained_coverage_gap"] as? Bool==true,background?["sdk_residency_refresh_untracked"] as? Bool==true,
+          observed["coverage"] as? String=="unknown",observed["authority"] as? Bool==false else {fatalError("Background gap gained authority or became cleanup failure")}
+    diagnostics.failed()
+    guard diagnostics.summary(now:1000)["retained_coverage_gap"] as? Bool==true else {fatalError("Missing source cleared prior coverage gap")}
+    diagnostics.completed(try sample(1,4),expectedInstance:instance,now:1000)
+    guard diagnostics.summary(now:1000)["state"] as? String=="fenced" else {fatalError("Background source regression cleared sticky gap")}
+    var unavailable=NativeBackendFenceDiagnostics(configured:true,observeBackground:true)
+    unavailable.completed(try sample(0),expectedInstance:instance,now:1000)
+    guard (unavailable.summary(now:1000)["source_background"] as? [String:Any])?["sdk_residency_refresh_untracked"] is NSNull else {fatalError("Unavailable background observation became false")}
+    print("PASS: explicit v3 background coverage stays separate from cleanup failure, preserves availability and sticky gaps, no authority or fallback")
 }

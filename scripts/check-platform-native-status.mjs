@@ -13,12 +13,14 @@ import {verifyNativeReview} from './lib/platform-native-review.mjs';
 const args=process.argv.slice(2);
 let protocolVersion=2;
 function option(flag){const index=args.indexOf(flag);assert.equal(args.filter(value=>value===flag).length,index<0?0:1);if(index>=0)args.splice(index,1);return index>=0;}
-const withLineage=option('--lineage'),withBackendFences=option('--backend-fences'),withPrimaryActivity=option('--primary-activity');
+const withLineage=option('--lineage'),withBackendFences=option('--backend-fences'),withPrimaryActivity=option('--primary-activity'),withSDKBackground=option('--sdk-background');
+assert(!withSDKBackground||withBackendFences);
 if(args.length===7){assert.equal(args[5],'--protocol-version');assert.equal(args[6],'3');protocolVersion=3;args.splice(5,2);}
 assert(args.length===5&&args[0]==='--isolated'&&args[1]==='--capsule'&&args[3]==='--sha256');
 assert.equal(process.platform,'darwin');assert.notEqual(process.getuid(),0);
 const capsule=verifyNativeReview(args[2],args[4]),binary=capsule.binary;
 if(withBackendFences){assert.equal(protocolVersion,3);assert.equal(capsule.receipt.declared_inputs.native_backend_fences_version,2);}
+if(withSDKBackground)assert.equal(capsule.receipt.declared_inputs.native_background_coverage_version,1);
 if(withPrimaryActivity){assert.equal(protocolVersion,3);assert.equal(capsule.receipt.declared_inputs.native_primary_activity_version,3);}
 const binarySHA=capsule.receipt.files['bin/mlx-serve'].sha256;
 const root=resolve(import.meta.dirname,'..'),directory=mkdtempSync('/private/tmp/f9-native-status-');
@@ -29,14 +31,20 @@ function run(program,arguments_,timeout=180000){
  const result=spawnSync(program,arguments_,{cwd:root,encoding:'utf8',timeout,maxBuffer:2<<20});
  assert.equal(result.status,0,`Native status fixture command failed: ${result.stderr}`);return result.stdout.trim();
 }
-run('swiftc',['-swift-version','6','-warnings-as-errors','-I',join(root,'platform/studio/Sources/CSQLite'),
+if(withSDKBackground){
+ assert.equal(run('/usr/sbin/scutil',['--get','LocalHostName'],2000),'fios-core');
+ assert.equal(run('/usr/sbin/sysctl',['-n','hw.memsize'],2000),String(24*2**30));
+ assert.match(run('/usr/sbin/sysctl',['-n','machdep.cpu.brand_string'],2000),/^Apple M4/);
+}
+run('swiftc',['-swift-version','6','-warnings-as-errors','-j2','-I',join(root,'platform/studio/Sources/CSQLite'),
  ...readdirSync(core).filter(name=>name.endsWith('.swift')).sort().map(name=>join(core,name)),source,'-o',fixture]);
-run('swift',['build','--package-path','platform/studio','--disable-automatic-resolution','--product','studioctl']);
-const bin=run('swift',['build','--package-path','platform/studio','--show-bin-path']),cli=join(bin,'studioctl');
+run('swift',['build','-j','2','--package-path','platform/studio','--disable-automatic-resolution','--product','studioctl']);
+const bin=run('swift',['build','-j','2','--package-path','platform/studio','--show-bin-path']),cli=join(bin,'studioctl');
 const reservation=createServer();await new Promise((accept,reject)=>{reservation.once('error',reject);reservation.listen(0,'127.0.0.1',accept);});
 const port=reservation.address().port;await new Promise(accept=>reservation.close(accept));
 const env={PATH:'/usr/bin:/bin',HOME:directory,LANG:'C',LC_ALL:'C',XDG_CACHE_HOME:join(directory,'cache'),
  FIOS_NATIVE_CONTROL:'isolated-source-fixture',FIOS_NATIVE_STARTUP:'isolated-source-fixture'};
+if(withSDKBackground)env.MLX_METAL_RESIDENCY_REFRESH_INTERVAL_MS='25';
 const children=[];
 const exited=child=>child.exitCode!==null||child.signalCode!==null;
 async function until(check,timeout=15000){const end=performance.now()+timeout;while(performance.now()<end){const value=await check();if(value)return value;await delay(25);}throw Error('Ordinary native status deadline');}
@@ -57,7 +65,8 @@ try{
  await until(()=>existsSync(control));
  const lineageSeed=withLineage?JSON.parse(run(fixture,['--isolated-seed-lineage',state,control,binary,binarySHA,'source-fixture-only',String(native.pid)],5000)):null;
  if(withLineage)assert.deepEqual(lineageSeed,{seeded_unit_scope:true,model_requests:0,native_authority:false});
- const manager=spawn(fixture,[withPrimaryActivity?(withBackendFences?'--isolated-manager-primary':'--isolated-manager-primary-only'):withBackendFences?'--isolated-manager-fences':protocolVersion===3?'--isolated-manager-v3':'--isolated-manager',state,control,binary,binarySHA,'source-fixture-only',String(native.pid)],{cwd:root,env,stdio:['ignore','ignore','pipe']});children.push(manager);
+ const mode=withSDKBackground?(withPrimaryActivity?'--isolated-manager-background-primary':'--isolated-manager-background'):withPrimaryActivity?(withBackendFences?'--isolated-manager-primary':'--isolated-manager-primary-only'):withBackendFences?'--isolated-manager-fences':protocolVersion===3?'--isolated-manager-v3':'--isolated-manager';
+ const manager=spawn(fixture,[mode,state,control,binary,binarySHA,'source-fixture-only',String(native.pid)],{cwd:root,env,stdio:['ignore','ignore','pipe']});children.push(manager);
  let managerErrors='';manager.stderr.on('data',part=>{managerErrors+=part.toString();});
  const initial=await until(()=>{assert(!exited(manager),`Private manager exited: ${managerErrors}`);return command(['status']);});
  assert(['waiting','received'].includes(initial.native_control.state));assert.equal(initial.native_control.authoritative,false);
@@ -67,7 +76,9 @@ try{
  assert.equal(opened.native_ingress_admissions,'admissionsOpen');
  const diagnostic=opened.native_control;
  if(withBackendFences){
-  const fences=diagnostic.backend_fences;assert.equal(fences.scope,'independent_partial_backend_fences');assert.equal(fences.frame_version,2);assert.equal(Object.keys(fences.current_sources).length,7);assert(Object.values(fences.current_sources).some(value=>typeof value==='boolean'));assert(Object.values(fences.current_sources).every(value=>value===null||value===false));assert.equal(fences.coverage,'unknown');assert.equal(fences.authority,false);assert.equal(fences.source_instance,diagnostic.source_instance);
+  const fences=diagnostic.backend_fences;assert.equal(fences.scope,'independent_partial_backend_fences');assert.equal(fences.frame_version,withSDKBackground?3:2);assert.equal(Object.keys(fences.current_sources).length,7);assert(Object.values(fences.current_sources).some(value=>typeof value==='boolean'));assert(Object.values(fences.current_sources).every(value=>value===null||value===false));assert.equal(fences.coverage,'unknown');assert.equal(fences.authority,false);assert.equal(fences.source_instance,diagnostic.source_instance);
+  if(withSDKBackground){assert.equal(fences.source_background?.sdk_residency_refresh_untracked,true);assert.equal(fences.retained_coverage_gap,true);assert.equal(fences.retained_uncertainty,false);}
+  else assert(!Object.hasOwn(fences,'source_background'));
   assert.equal(fences.mimo_warm_uncertain,null);assert.equal(fences.ds4_metal_uncertainty,null);assert.equal(fences.ds4_host_uncertainty,null);assert.equal(fences.retained_uncertainty,false);
   assert(fences.source_sequence>0&&fences.source_age_ms>=-1000&&fences.source_age_ms<=5000);
  }
@@ -131,7 +142,7 @@ try{
  const lineageReceipt=withLineage?JSON.parse(run(fixture,['--isolated-check-lineage',state,diagnostic.source_instance],5000)):null;
  if(withLineage){assert.equal(lineageReceipt.persisted_source_sample,true);assert.equal(lineageReceipt.unresolved_uncertainty_retained,true);writeFileSync(join(directory,'lineage-receipt.json'),JSON.stringify(lineageReceipt)+'\n',{mode:0o600});}
  native.kill('SIGTERM');await until(()=>exited(native),7000);
- console.log(JSON.stringify({ok:true,protocol_version:protocolVersion,source_health_probe:true,source_ingress_roundtrip:true,automatic_lineage_checkpoint:withLineage,automatic_backend_fences:withBackendFences,automatic_primary_activity:withPrimaryActivity,model_requests:0,installed_service_actions:0,authoritative:false,review_directory:directory}));
+ console.log(JSON.stringify({ok:true,protocol_version:protocolVersion,source_health_probe:true,source_ingress_roundtrip:true,automatic_lineage_checkpoint:withLineage,automatic_backend_fences:withBackendFences,automatic_primary_activity:withPrimaryActivity,automatic_sdk_background:withSDKBackground,model_requests:0,installed_service_actions:0,authoritative:false,review_directory:directory}));
 }finally{
  for(const child of [...children].reverse())if(!exited(child)){child.kill('SIGTERM');try{await until(()=>exited(child),7000);}catch{child.kill('SIGKILL');await until(()=>exited(child),3000);}}
  // Retain only private source-test data; process exit grants no native proof.

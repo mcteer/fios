@@ -1,0 +1,92 @@
+diff --git a/src/fios/control_protocol.zig b/src/fios/control_protocol.zig
+index d442a41..e354b6b 100644
+--- a/src/fios/control_protocol.zig
++++ b/src/fios/control_protocol.zig
+@@ -58,12 +58,13 @@ pub const CurrentBackendFenceReadings = struct {
+     ds4_gpu_uncertain: ?bool = null,
+     ane_reported_uncertain: ?bool = null,
+     ane_native_uncertain: ?bool = null,
++    sdk_residency_refresh_untracked: ?bool = null,
+ };
+ pub const CurrentBackendFenceSource = *const fn () CurrentBackendFenceReadings;
+ pub fn dispatchCurrentBackendFences(tracker: *ownership.Tracker, io: std.Io, request: *const [backend_request_size]u8, source: ?CurrentBackendFenceSource) [backend_response_size]u8 {
+     var response: [backend_response_size]u8 = @splat(0);
+-    @memcpy(response[0..4], "FIF9");response[4] = 2;
+-    if (!std.mem.eql(u8, request[0..4], "FIB9") or request[4] != 2 or
++    @memcpy(response[0..4], "FIF9");response[4] = if (request[4] == 3) 3 else 2;
++    if (!std.mem.eql(u8, request[0..4], "FIB9") or (request[4] != 2 and request[4] != 3) or
+         !std.mem.allEqual(u8, request[5..8], 0) or !std.mem.allEqual(u8, request[24..32], 0)) {
+         response[5] = @intFromEnum(Status.invalid);return response;
+     }
+@@ -78,13 +79,18 @@ pub fn dispatchCurrentBackendFences(tracker: *ownership.Tracker, io: std.Io, req
+         response[5] = @intFromEnum(Status.wrong_instance);return response;
+     }
+     const readings: CurrentBackendFenceReadings = if (source) |read| read() else .{};
+-    inline for (@typeInfo(CurrentBackendFenceReadings).@"struct".field_names, 0..) |field, index| {
++    inline for (.{ "sdk_uncertain", "llama_uncertain", "streamed_pool_uncertain", "ds4_host_uncertain", "ds4_gpu_uncertain", "ane_reported_uncertain", "ane_native_uncertain" }, 0..) |field, index| {
+         if (@field(readings, field)) |value| {
+             const bit: u8 = @as(u8, 1) << @as(u3, @intCast(index));
+             response[6] |= bit;
+             if (value) response[7] |= bit;
+         }
+     }
++    // Version2 preserves every reserved byte. This separate tri-state is a
++    // coverage observation, never another cleanup-failure bit.
++    if (request[4] == 3) {
++        if (readings.sdk_residency_refresh_untracked) |value| response[40] = if (value) 2 else 1;
++    }
+     return response;
+ }
+ 
+diff --git a/src/fios/control_transport.zig b/src/fios/control_transport.zig
+index 2f50f36..1fabcc6 100644
+--- a/src/fios/control_transport.zig
++++ b/src/fios/control_transport.zig
+@@ -153,7 +153,7 @@ pub const Bridge = struct {
+             const value = protocol.dispatchPrimaryActivity(ownership.shared(), self.io, input[0..protocol.primary_request_size]);
+             @memcpy(storage[0..protocol.primary_response_size], &value);
+             break :primary storage[0..protocol.primary_response_size];
+-        } else if (count == protocol.backend_request_size and input[4] == 2 and std.mem.eql(u8, input[0..4], "FIB9")) current_fences: {
++        } else if (count == protocol.backend_request_size and (input[4] == 2 or input[4] == 3) and std.mem.eql(u8, input[0..4], "FIB9")) current_fences: {
+             const value = protocol.dispatchCurrentBackendFences(ownership.shared(), self.io, input[0..protocol.backend_request_size], self.current_backend_fences);
+             @memcpy(storage[0..protocol.backend_response_size], &value);
+             break :current_fences storage[0..protocol.backend_response_size];
+diff --git a/src/fios/current_sdk_owners.cpp b/src/fios/current_sdk_owners.cpp
+index 388f7a9..e5f33cd 100644
+--- a/src/fios/current_sdk_owners.cpp
++++ b/src/fios/current_sdk_owners.cpp
+@@ -43,3 +43,13 @@ __attribute__((constructor)) void enable_current_source_sdk_owners() {
+ extern "C" int fios_current_sdk_known_uncertain() {
+     return mlx::core::fios_known_source_uncertain() ? 1 : 0;
+ }
++
++// Unsupported participation is independent of failed cleanup. Old SDKs expose
++// unavailability instead of synthesizing an observed false value.
++extern "C" int fios_current_sdk_background_untracked() {
++#ifdef MLX_FIOS_RESIDENCY_REFRESH_REFUSAL
++    return mlx::core::fios_untracked_residency_refresh_seen() ? 1 : 0;
++#else
++    return -1;
++#endif
++}
+diff --git a/src/fios/current_backend_fences.zig b/src/fios/current_backend_fences.zig
+index a1f77b4..d5d9c2a 100644
+--- a/src/fios/current_backend_fences.zig
++++ b/src/fios/current_backend_fences.zig
+@@ -8,13 +8,16 @@ fn enabled(comptime name: []const u8) bool {
+ pub fn read() protocol.CurrentBackendFenceReadings {
+     const Source = struct {
+         extern "c" fn fios_current_sdk_known_uncertain() c_int;
++        extern "c" fn fios_current_sdk_background_untracked() c_int;
+         extern "c" fn mlx_llama_source_uncertainty() c_int;
+         extern "c" fn fios_q3ld_cleanup_uncertain() c_int;
+         extern "c" fn ds4_host_source_uncertainty() u32;
+         extern "c" fn ds4_gpu_source_uncertainty() u32;
+         extern "c" fn msv_ane_source_uncertainty() u32;
+     };
++    const refresh = if (comptime enabled("fios_source_sdk")) Source.fios_current_sdk_background_untracked() else -1;
+     return .{
++        .sdk_residency_refresh_untracked = if (refresh == 0) false else if (refresh == 1) true else null,
+         .sdk_uncertain = if (comptime enabled("fios_source_sdk")) Source.fios_current_sdk_known_uncertain() != 0 else null,
+         .llama_uncertain = if (comptime enabled("llama_engine")) Source.mlx_llama_source_uncertainty() != 0 else null,
+         .streamed_pool_uncertain = if (comptime enabled("mlx_stream")) Source.fios_q3ld_cleanup_uncertain() != 0 else null,

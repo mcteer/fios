@@ -120,8 +120,10 @@ struct NativeControlClient:Sendable {
     let version:UInt8
     let observesBackendFences:Bool
     let observesPrimaryActivity:Bool
-    init(path:String,peer:NativeControlPeer,version:UInt8=2,observeBackendFences:Bool=false,observePrimaryActivity:Bool=false) {
+    let observesSDKBackground:Bool
+    init(path:String,peer:NativeControlPeer,version:UInt8=2,observeBackendFences:Bool=false,observePrimaryActivity:Bool=false,observeSDKBackground:Bool=false) {
         self.path=path;self.peer=peer;self.version=version;observesBackendFences=observeBackendFences;observesPrimaryActivity=observePrimaryActivity
+        observesSDKBackground=observeSDKBackground
     }
     func request(operation:NativeControlOperation,instance:String?=nil,sequence:UInt64=0) throws -> NativeIngressStatus {
         let data=try NativeControlWire.request(operation:operation,instance:instance,sequence:sequence,version:version)
@@ -180,8 +182,13 @@ struct NativeControlClient:Sendable {
         return NativePreparationSample(peer:peer,requestedAt:began,receivedAt:completed,acknowledgement:value)
     }
     func backendFences(instance:String,after sequence:UInt64=0)throws->NativeBackendFenceSample {
+        guard !observesSDKBackground || observesBackendFences else {throw NativeControlError.invalid}
         let began=HostResources.nowMilliseconds()
-        let value=try NativeBackendFenceWire.currentReply(exchange(NativeBackendFenceWire.currentRequest(instance:instance),maximum:64),instance:instance,after:sequence)
+        // Explicit reviewed composition only; a rejected v3 observation never
+        // retries or falls back to a v2 frame without coverage metadata.
+        let request=try observesSDKBackground ? NativeBackendFenceWire.backgroundRequest(instance:instance):NativeBackendFenceWire.currentRequest(instance:instance)
+        let bytes=try exchange(request,maximum:64)
+        let value=try observesSDKBackground ? NativeBackendFenceWire.backgroundReply(bytes,instance:instance,after:sequence):NativeBackendFenceWire.currentReply(bytes,instance:instance,after:sequence)
         let completed=HostResources.nowMilliseconds()
         guard (0...ActivityPolicy.maximumTimestamp).contains(began),completed>=began,
               completed<=ActivityPolicy.maximumTimestamp,completed-began<=5000,

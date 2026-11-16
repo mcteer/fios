@@ -22,8 +22,8 @@ struct NativeControlDiagnostics {
     private var seenUncertainty=false
     private var backendObservations:NativeBackendFenceDiagnostics
     private var primaryObservations:NativePrimaryActivityDiagnostics
-    init(configured:Bool,backendFencesConfigured:Bool=false,primaryActivityConfigured:Bool=false) {
-        self.configured=configured;backendObservations=NativeBackendFenceDiagnostics(configured:backendFencesConfigured);primaryObservations=NativePrimaryActivityDiagnostics(configured:primaryActivityConfigured)
+    init(configured:Bool,backendFencesConfigured:Bool=false,primaryActivityConfigured:Bool=false,sdkBackgroundConfigured:Bool=false) {
+        self.configured=configured;backendObservations=NativeBackendFenceDiagnostics(configured:backendFencesConfigured,observeBackground:sdkBackgroundConfigured);primaryObservations=NativePrimaryActivityDiagnostics(configured:primaryActivityConfigured)
     }
     mutating func begin(retainingObservation:Bool=false) {
         if !retainingObservation {value=nil;receivedAt=nil;unavailable=false}

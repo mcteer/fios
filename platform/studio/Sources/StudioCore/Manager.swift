@@ -59,7 +59,7 @@ public enum ManagerRuntime {
         let nativeQueue=activeNativeControl.map {AsyncNativeControl(client:$0)}
         let nativeLineage=activeNativeControl.map {NativeLineagePoller(journal:journal,source:$0)}
         let nativeCoverage:NativeCoverage = nativeQueue == nil ? .unsupported:.unknown
-        var nativeDiagnostics=NativeControlDiagnostics(configured:nativeQueue != nil,backendFencesConfigured:activeNativeControl?.observesBackendFences ?? false,primaryActivityConfigured:activeNativeControl?.observesPrimaryActivity ?? false)
+        var nativeDiagnostics=NativeControlDiagnostics(configured:nativeQueue != nil,backendFencesConfigured:activeNativeControl?.observesBackendFences ?? false,primaryActivityConfigured:activeNativeControl?.observesPrimaryActivity ?? false,sdkBackgroundConfigured:activeNativeControl?.observesSDKBackground ?? false)
         func enqueueNative(_ command:NativeMaintenanceCommand) {
             guard let nativeQueue else {return}
             do {try nativeQueue.submit(command);nativeDiagnostics.begin(retainingObservation:nativeMaintenance.observationOnly)} catch {nativeMaintenance.failed(id:command.id);nativeDiagnostics.failed()}

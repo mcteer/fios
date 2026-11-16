@@ -23,7 +23,7 @@ test "fios current backend fence wire all independent bit combinations" {
     };
     const req = request();var frame: [64]u8 = undefined;
     for (0..128) |mask| {
-        inline for (@typeInfo(wire.CurrentBackendFenceReadings).@"struct".field_names, 0..) |field,index| {
+        inline for (.{ "sdk_uncertain", "llama_uncertain", "streamed_pool_uncertain", "ds4_host_uncertain", "ds4_gpu_uncertain", "ane_reported_uncertain", "ane_native_uncertain" }, 0..) |field,index| {
             @field(Source.readings, field) = mask & (@as(usize, 1) << @as(u3,@intCast(index))) != 0;
         }
         frame = wire.dispatchCurrentBackendFences(&tracker, io, &req, Source.read);
