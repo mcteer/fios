@@ -34,6 +34,18 @@ struct WorkerPreparationBinding:Sendable {
         return Self(plan:plan,registration:registration,checkpoint:try journal.preparationBindingCheckpoint(plan:plan,peer:registration.peer,root:ack.rootSequence))
     }
     var launchNonce:String {plan.nonce}
+    func validateIdentity(plan expected:PlannedWorkerStart,scope:InferenceScope)throws {
+        guard plan===expected else {throw RuntimeError.identity}
+        try validateIdentity(job:plan.job,attempt:plan.attempt,scope:scope)
+    }
+    // Identity only, for an already-started/reaped child or unused-plan cleanup.
+    // This cannot renew a lease or authorize launch after a source change.
+    func validateIdentity(job:String,attempt:Int,scope:InferenceScope)throws {
+        guard job==plan.job,attempt==plan.attempt,try plan.scope.encoded()==scope.encoded(),rootSequence>0,
+              scope.nativeEpoch==registration.acknowledgement.instance,
+              scope.nativeModel.utf8.elementsEqual(registration.acknowledgement.model.utf8),
+              correlationID == (try scope.nativeRequestCorrelationID(job:job,attempt:attempt)) else {throw RuntimeError.identity}
+    }
     func validate(plan expected:PlannedWorkerStart,scope:InferenceScope,journal:Journal,now:Int64)throws {
         guard plan===expected,try plan.scope.encoded()==scope.encoded(),
               try journal.preparationBindingCheckpoint(plan:plan,peer:peer,root:rootSequence)==checkpoint,

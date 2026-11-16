@@ -47,7 +47,10 @@ struct WorkerDispatchBinding:Sendable {
 struct WorkerNeverSpawnedEvidence:Sendable {
     let plan:PlannedWorkerStart
     let handoff:WorkerHandoffBinding?
-    fileprivate init(plan:PlannedWorkerStart,handoff:WorkerHandoffBinding?=nil) {self.plan=plan;self.handoff=handoff}
+    let preparation:WorkerPreparationBinding?
+    fileprivate init(plan:PlannedWorkerStart,handoff:WorkerHandoffBinding?=nil,preparation:WorkerPreparationBinding?=nil) {
+        self.plan=plan;self.handoff=handoff;self.preparation=preparation
+    }
 }
 
 final class PythonWorkerFactory:Sendable {
@@ -101,6 +104,28 @@ final class PythonWorkerFactory:Sendable {
             catch {return .failure(.unavailable)}
         }
     }
+    func beginPreparationStart(binding:WorkerDispatchBinding,plan:PlannedWorkerStart,preparation:WorkerPreparationBinding,
+                               observation:NativePreparationObservation,journal:Journal,started:Int64,now:Int64,initiallyCancelled:Bool=false)throws->PendingPythonWorker {
+        guard metadata.native_preparation_version==1 else {throw RuntimeError.identity}
+        try validate(binding,now:now)
+        guard WireScalar.uuid(plan.nonce),started>=0,started<=ActivityPolicy.maximumTimestamp-2000 else {throw RuntimeError.invalid}
+        let scope=try binding.inferenceScope()
+        try preparation.validate(plan:plan,scope:scope,journal:journal,now:now)
+        let subject=try NativePreparationSubject(payload:["job_id":plan.job,"attempt":plan.attempt,"root_sequence":String(preparation.rootSequence),"correlation_id":preparation.correlationID])
+        _=try observation.encoded(subject:subject,managerEpoch:binding.managerEpoch,journal:journal,now:now)
+        guard try plan.scope.encoded()==scope.encoded(),plan.consume() else {throw RuntimeError.identity}
+        return PendingPythonWorker(initiallyCancelled:initiallyCancelled) { [self] cancelled in
+            do {return .success(try spawnTransport(binding:binding,launchID:plan.nonce,preparation:preparation,cancelled:cancelled))}
+            catch WorkerStartFailure.cancelled {return .failure(.neverSpawned(WorkerNeverSpawnedEvidence(plan:plan,preparation:preparation)))}
+            catch {return .failure(.unavailable)}
+        }
+    }
+    // Local plan only: no native withdrawal or native terminal claim.
+    func withdrawUnstartedPreparation(plan:PlannedWorkerStart,preparation:WorkerPreparationBinding)throws->WorkerNeverSpawnedEvidence {
+        try preparation.validateIdentity(plan:plan,scope:plan.scope)
+        guard WireScalar.uuid(plan.nonce),plan.consume() else {throw RuntimeError.identity}
+        return WorkerNeverSpawnedEvidence(plan:plan,preparation:preparation)
+    }
     // Consume only an original, still-unused plan. This executes no process,
     // refreshes no permission and needs no live model-admission observation.
     // A native registration requires paired native cancellation separately.
@@ -110,10 +135,11 @@ final class PythonWorkerFactory:Sendable {
         guard WireScalar.uuid(plan.nonce),plan.consume() else {throw RuntimeError.identity}
         return WorkerNeverSpawnedEvidence(plan:plan,handoff:handoff)
     }
-    private func spawnTransport(binding:WorkerDispatchBinding,launchID:String,handoff:WorkerHandoffBinding?=nil,cancelled:@Sendable ()->Bool)throws->StartedPythonWorker {
+    private func spawnTransport(binding:WorkerDispatchBinding,launchID:String,handoff:WorkerHandoffBinding?=nil,preparation:WorkerPreparationBinding?=nil,cancelled:@Sendable ()->Bool)throws->StartedPythonWorker {
         guard !cancelled() else {throw WorkerStartFailure.cancelled}
         try Self.verifyInvocation(invocation,executable:executable)
         guard !cancelled() else {throw WorkerStartFailure.cancelled}
+        guard handoff == nil || preparation == nil else {throw RuntimeError.identity}
         let process=Process(),input=Pipe(),output=Pipe()
         var env=Self.environment
         env["FIOS_PLATFORM_LAUNCH_ID"]=launchID
@@ -131,13 +157,17 @@ final class PythonWorkerFactory:Sendable {
             env["FIOS_PLATFORM_HANDOFF_ROOT"]=String(handoff.rootSequence)
             env["FIOS_PLATFORM_HANDOFF_CORRELATION"]=handoff.correlationID
         }
+        if let preparation {
+            env["FIOS_PLATFORM_PREPARATION_ROOT"]=String(preparation.rootSequence)
+            env["FIOS_PLATFORM_PREPARATION_CORRELATION"]=preparation.correlationID
+        }
         process.executableURL=URL(fileURLWithPath:invocation);process.arguments=Self.arguments
         process.environment=env;process.currentDirectoryURL=URL(fileURLWithPath:"/var/empty")
         process.standardInput=input;process.standardOutput=output;process.standardError=FileHandle.nullDevice
         do {
             try process.run()
             let grant=try? WorkerGrant.capture(pid:process.processIdentifier)
-            return StartedPythonWorker(process:process,input:input.fileHandleForWriting,output:output.fileHandleForReading,grant:grant,handoff:handoff)
+            return StartedPythonWorker(process:process,input:input.fileHandleForWriting,output:output.fileHandleForReading,grant:grant,handoff:handoff,preparation:preparation)
         }catch {
             try? input.fileHandleForWriting.close();try? output.fileHandleForReading.close()
             if process.isRunning {kill(process.processIdentifier,SIGKILL)}

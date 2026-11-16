@@ -20,6 +20,7 @@ final class PrivateWorker {
     private let attempt:Int
     private let inferenceScope:InferenceScope?
     private let nativeHandoff:WorkerHandoffBinding?
+    private let nativePreparation:WorkerPreparationBinding?
     private var parser:ModelWorkerProtocol
     private var memory:WorkerMemoryGuard
     private let started:Int64
@@ -38,17 +39,23 @@ final class PrivateWorker {
     private(set) var memorySamples=0
     var outputEOFObserved:Bool {eof}
 
-    init(process:Process,input:FileHandle,output:FileHandle,journal:Journal,job:String,attempt:Int,started:Int64,readyAt:Int64?=nil,capturedGrant:WorkerGrant?=nil,launchNonce:String?=nil,nativeHandoff:WorkerHandoffBinding?=nil) throws {
+    init(process:Process,input:FileHandle,output:FileHandle,journal:Journal,job:String,attempt:Int,started:Int64,readyAt:Int64?=nil,capturedGrant:WorkerGrant?=nil,launchNonce:String?=nil,nativeHandoff:WorkerHandoffBinding?=nil,nativePreparation:WorkerPreparationBinding?=nil) throws {
         guard process.processIdentifier>1,try journal.hasClaim(job:job,attempt:attempt) else { throw JournalError.invalid }
         grant=try capturedGrant ?? WorkerGrant.capture(pid:process.processIdentifier)
         guard grant.pid==process.processIdentifier else {throw RuntimeError.identity}
         self.process=process;self.input=input;self.output=output;self.journal=journal;self.job=job;self.attempt=attempt
         inferenceScope=try journal.inferenceScope(job:job,attempt:attempt)?.scope
-        self.nativeHandoff=nativeHandoff
+        guard nativeHandoff == nil || nativePreparation == nil else {throw RuntimeError.identity}
+        self.nativeHandoff=nativeHandoff;self.nativePreparation=nativePreparation
         if let nativeHandoff {
             guard let inferenceScope else {throw RuntimeError.identity}
             try nativeHandoff.validate(job:job,attempt:attempt,scope:inferenceScope)
             guard try journal.originalNativeRoot(job:job,attempt:attempt,scope:inferenceScope,peer:nativeHandoff.peer)==nativeHandoff.rootSequence else {throw RuntimeError.identity}
+        }
+        if let nativePreparation {
+            guard let inferenceScope else {throw RuntimeError.identity}
+            try nativePreparation.validateIdentity(job:job,attempt:attempt,scope:inferenceScope)
+            guard try journal.originalNativeRoot(job:job,attempt:attempt,scope:inferenceScope,peer:nativePreparation.peer)==nativePreparation.rootSequence else {throw RuntimeError.identity}
         }
         let observed=readyAt ?? started
         guard observed>=started else {throw RuntimeError.invalid}
@@ -82,7 +89,7 @@ final class PrivateWorker {
               expiry>now,expiry-now<=5000 else { throw ControlError.invalid_request }
         if let inferenceScope {
             let state=try journal.inferenceScope(job:job,attempt:attempt)?.state
-            if nativeHandoff != nil {
+            if nativeHandoff != nil || nativePreparation != nil {
                 guard state == .dispatched else {throw ControlError.invalid_request}
                 dispatchRecorded=true // Native identity was durably bound before this launch.
             } else {guard state == .reserved else {throw ControlError.invalid_request}}
@@ -117,9 +124,9 @@ final class PrivateWorker {
         try journal.markUncertain(job:job,attempt:attempt)
     }
     private func resolve(_ outcome:InferenceState) throws {
-        if nativeHandoff != nil {
+        if nativeHandoff != nil || nativePreparation != nil {
             // A zero-POST/local child outcome does not close the independently
-            // registered native handoff. Keep its claim for native reconciliation.
+            // registered native parent. Keep its claim for native reconciliation.
             try retainNativeUncertainty();return
         }
         if let inferenceScope {

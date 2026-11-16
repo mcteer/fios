@@ -7610,3 +7610,17 @@ An initial compile found a mutating JobLease check on a let copy; changed to a l
 - `/private/tmp/fios-009-activity-worker-wbgwfs/receipt.json` SHA256 `16c322e57522a7ccd20e94cae3f3e3eaa009609dd08cc9edcfbeb25cbe377bb2`.
 
 Fresh Core/package and metadata3 runtime qualification remain pending; earlier candidates are historical. Broker/factory preparation dispatch, full native positive coverage/proof/capacity and protected installation remain unfinished. No native activation, real inference, installation, merge or deployment occurs;39/55 whole tasks remains complete. Published1d430c7 CI43832556877 passed all seven jobs; these queued source batches require their own exact-head CI.
+
+### Original preparation factory and installed-child transport (2026-11-16)
+
+The explicit preparation factory entry requires negotiated preparation1, original live plan/current journal stamp/lease and checked observation before consuming the plan once and spawning off-loop. Only preparation environment fields are sent. StartedPythonWorker/PrivateWorker retain preparation identity separately from handoff; prebound dispatch and every local terminal/zero-POST/reap outcome preserve native uncertainty. Local unused-plan withdrawal or pre-spawn cancellation emits typed factory no-spawn evidence, and its durable local acknowledgement retains the original native root, uncertain row and spent history. No old handoff cancellation producer or fake not_sent proof accepts preparation evidence.
+
+Actual installed-child tests use the actual checked Core export, private Unix guard and mock HTTP. The accepted case sends one exact preparation-root/correlation/instance header with no handoff header; an unavailable guard sends0 and never queries global activity. Both reap locally with the original native claim uncertain/history1 and no legacy zero-POST evidence. Cancellation and unused-plan cases create no process, reap only the local launch and reject repeated plan consumption. The fixed mock validates exact headers/subject and records two preparation queries only.
+
+Initial compiles found missing try on scope conversion and a test's outdated event/poll signature; corrected before final validation. Earlier no-spawn-only Debug is narrower. Final full Debug compile29521ms/runtime30299ms and optimized60693ms/25482ms pass; actual manager default/closed/missing-source and installed model-only mock IPC still pass. Boundary/diff checks pass. The final source changes after these runs are comments only.
+
+- `/private/tmp/fios-009-preparation-factory-transport-debug-final.log` SHA256 `522070b1c09527f45c66882cf63a086b4de4b06dfa5d2ca6dbdbcc5b557f377e`.
+- `/private/tmp/fios-009-preparation-factory-release.log` SHA256 `8628d3888c9f702a08e305875b2ef4ae615ccdfbe9d9a3e292c2e1b336bbc666`.
+- `/private/tmp/fios-009-preparation-factory-manager.log` SHA256 `be2993c142b192b53d2387492d380a41a8eeea24949c8f1d99432cfb522bf78a`.
+
+No public preparation broker/issuer, complete native coverage/proof/capacity or installed policy is enabled. Broker dispatch/observation composition and native withdrawal reconciliation remain unfinished. All artifacts/runtimes need fresh qualification for current inputs;39/55 whole tasks unchanged. No native actuation, real inference, installation, merge or deployment occurs.

@@ -31,6 +31,15 @@ async def main():
                 size = struct.unpack('!I', await reader.readexactly(4))[0]
                 assert 0 < size <= 65536
                 request = json.loads(await reader.readexactly(size))
+                if Path(directory,'preparation-mode').exists():
+                    with Path(directory,'preparation-queries').open('a') as trace:trace.write(request['operation']+'\n')
+                if request['operation']=='preparation':
+                    snapshot_path=Path(directory,'preparation.json')
+                    value=json.loads(snapshot_path.read_text()) if snapshot_path.exists() else None
+                    if value is not None:
+                        assert request['payload']=={key:value[key] for key in ('job_id','attempt','root_sequence','correlation_id')}
+                    response=body({'version':1,'id':request['id'],'ok':True,'epoch':epoch,'preparation':value})
+                    writer.write(struct.pack('!I',len(response))+response);await writer.drain();return
                 assert request['operation'] == 'activity' and request['payload'] == {}
                 sequence += 1
                 snapshot = {'version': 1, 'host': 'fixture-host', 'endpoint_hash': endpoint_hash,
@@ -70,7 +79,13 @@ async def main():
                 elif method == 'POST' and route == '/v1/chat/completions':
                     if os.path.exists(directory + '/native-epoch'):
                         assert fields.get('x-fios-native-instance') == Path(directory, 'native-epoch').read_text(encoding='ascii')
-                        assert fields.get('x-fios-handoff-root') == '18446744073709551615'
+                        if 'x-fios-preparation-root' in fields:
+                            preparation=json.loads(Path(directory,'preparation.json').read_text())
+                            assert fields['x-fios-preparation-root']==preparation['root_sequence']
+                            assert fields.get('x-fios-request-id')==preparation['correlation_id']
+                            assert 'x-fios-handoff-root' not in fields
+                        else:
+                            assert fields.get('x-fios-handoff-root') == '18446744073709551615'
                         assert len(fields.get('x-fios-request-id', '')) == 64
                     posts += 1
                     print(json.dumps({'posts': posts}), flush=True)

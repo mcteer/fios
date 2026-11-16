@@ -214,3 +214,122 @@ private func runOwnedPreparationCoherenceTests(peer:NativeControlPeer)throws {
           evaluate(current,at:registration.sample.requestedAt+5000)==nil else {fatalError("Multiple ready models/expired lease accepted")}
     guard source.counts.0==1,source.counts.1==1 else {fatalError("Owned preparation consistency repeated native IO")}
 }
+
+func runPreparationFactoryNeverSpawnedTests(factory:PythonWorkerFactory)throws {
+    for withdraw in [false,true] {
+        let directory=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer {try? FileManager.default.removeItem(at:directory)}
+        let journal=try Journal(directory:directory),job=UUID().uuidString.lowercased(),created=HostResources.nowMilliseconds()
+        let endpoint="http://127.0.0.1:1/v1",epoch=UUID().uuidString.lowercased()
+        let snapshot=NativeSnapshot(host:"fixture-host",endpointHash:PythonWorkerFactory.digest(endpoint),nativeEpoch:String(repeating:"a",count:32),sequence:1,
+            sampledAt:created,allClientLifecycleCoverage:true,residentModel:nil,outstandingOwners:0,loading:false)
+        let dispatch=WorkerDispatchBinding(baseURL:endpoint,guardPath:"/fixture/observe.sock",host:"fixture-host",profileHash:String(repeating:"b",count:64),managerEpoch:epoch,
+            canonicalModel:"fixture/model",nativeModel:"fixture/model",nativeSnapshot:snapshot,nativeCompatibilityAccepted:true,apiKey:nil)
+        let scope=try dispatch.inferenceScope()
+        _=try journal.reserveJob(DurableJob(id:job,idempotency:UUID().uuidString.lowercased(),ownerHash:String(repeating:"c",count:64),requestHash:String(repeating:"d",count:64),created:created))
+        try journal.transitionJob(id:job,to:.running,now:created)
+        try journal.claim(job:job,attempt:0,model:scope.canonicalModel,scope:scope)
+        let plan=try journal.planWorkerStart(job:job,attempt:0);try journal.markDispatched(job:job,attempt:0)
+        let peer=NativeControlPeer(pid:42,start:99,executable:try VerifiedExecutable(path:"/fixture/native",sha256:String(repeating:"e",count:64)))
+        let source=PreparationReservationSource(peer:peer,mode:.healthy);source.release.signal()
+        let request=PendingNativePreparation(source:source,instance:scope.nativeEpoch,correlationID:try scope.nativeRequestCorrelationID(job:job,attempt:0),model:scope.nativeModel,after:10)
+        let deadline=ProcessInfo.processInfo.systemUptime+2
+        var result:Result<PreparedNativeReservation,NativeControlError>?
+        while result==nil && ProcessInfo.processInfo.systemUptime<deadline {result=request.take();if result==nil {usleep(1000)}}
+        guard let result else {throw NativeControlError.deadline}
+        let prepared=try result.get(),now=HostResources.nowMilliseconds()
+        guard try journal.observePreparationRegistration(job:job,attempt:0,scope:scope,peer:peer,sample:prepared.registration,now:now),let lineage=prepared.lineage else {throw RuntimeError.identity}
+        let preparation=try WorkerPreparationBinding.capture(plan:plan,journal:journal,prepared:prepared,now:now)
+        let primary=NativePrimaryActivity(phaseVersion:4,instance:scope.nativeEpoch,sampleSequence:13,sampledAt:now,uncertain:false,
+            owners:1,ingress:0,preparing:1,queued:0,active:0,responding:0,models:[NativePrimaryModelActivity(model:scope.nativeModel,preparing:1,queued:0,active:0,responding:0)])
+        let activity=NativePrimaryActivitySample(peer:peer,receivedAt:now,registry:NativeRegistryActivity(primary:primary,registryGeneration:7,transitioning:false,models:[
+            NativeRegistryModelFact(model:scope.nativeModel,readyDeclared:false,transitioning:false,uncertain:false,claimable:true,counts:NativePhaseCounts(ingress:0,preparing:1,queued:0,active:0,responding:0))]))
+        guard let observation=try preparation.observation(lineage:lineage,activity:activity,journal:journal,sourceCoverage:.all_clients,now:now) else {throw RuntimeError.identity}
+        let evidence:WorkerNeverSpawnedEvidence
+        if withdraw {
+            try journal.markUncertain(job:job,attempt:0)
+            evidence=try factory.withdrawUnstartedPreparation(plan:plan,preparation:preparation)
+        }else {
+            let pending=try factory.beginPreparationStart(binding:dispatch,plan:plan,preparation:preparation,observation:observation,journal:journal,
+                started:Int64(ProcessInfo.processInfo.systemUptime*1000),now:now,initiallyCancelled:true)
+            var outcome:Result<StartedPythonWorker,WorkerStartFailure>?
+            let end=ProcessInfo.processInfo.systemUptime+2
+            while outcome==nil && ProcessInfo.processInfo.systemUptime<end {outcome=pending.take();if outcome==nil {usleep(1000)}}
+            guard case .failure(.neverSpawned(let captured))=outcome,pending.take()==nil else {throw RuntimeError.identity}
+            evidence=captured
+        }
+        guard evidence.handoff==nil,evidence.preparation?.rootSequence==UInt64.max,try journal.workerGrants().isEmpty else {fatalError("Preparation became legacy cancellation evidence or created a process")}
+        try journal.recordWorkerNeverSpawned(job:job,attempt:0,evidence:evidence)
+        guard try journal.activeLaunchCount()==0,try journal.unresolvedCount()==1,try journal.uncertainCount()==1,
+              try journal.requestCount(job:job)==1,try journal.inferenceScope(job:job,attempt:0)?.state == .uncertain,
+              try journal.originalNativeRoot(job:job,attempt:0,scope:scope,peer:peer)==UInt64.max else {fatalError("Local no-spawn acknowledgement cleared native preparation uncertainty/history")}
+        do{_=try factory.withdrawUnstartedPreparation(plan:plan,preparation:preparation);fatalError("Preparation plan consumed twice")}catch RuntimeError.identity {}
+    }
+    print("PASS: original preparation factory cancellation/unused withdrawal reap local launch only; typed root, native uncertainty and spent history retained")
+}
+
+func runPreparationFactoryTransportTests(factory:PythonWorkerFactory,base:String,guardDirectory:URL,epoch:String)throws {
+    let cache=guardDirectory.appendingPathComponent("preparation.json"),mode=guardDirectory.appendingPathComponent("preparation-mode")
+    try Data("fixture".utf8).write(to:mode)
+    defer {try? FileManager.default.removeItem(at:cache);try? FileManager.default.removeItem(at:mode)}
+    try Data(String(repeating:"3",count:32).utf8).write(to:guardDirectory.appendingPathComponent("native-epoch"))
+    for available in [true,false] {
+        let directory=guardDirectory.appendingPathComponent(UUID().uuidString)
+        let journal=try Journal(directory:directory),job=UUID().uuidString.lowercased(),created=HostResources.nowMilliseconds()
+        let snapshot=NativeSnapshot(host:"fixture-host",endpointHash:PythonWorkerFactory.digest(base),nativeEpoch:String(repeating:"3",count:32),sequence:1,
+            sampledAt:created,allClientLifecycleCoverage:true,residentModel:nil,outstandingOwners:0,loading:false)
+        let dispatch=WorkerDispatchBinding(baseURL:base,guardPath:guardDirectory.appendingPathComponent("observe.sock").path,host:"fixture-host",profileHash:String(repeating:"f",count:64),managerEpoch:epoch,
+            canonicalModel:"fixture/model",nativeModel:"fixture/model",nativeSnapshot:snapshot,nativeCompatibilityAccepted:true,apiKey:nil)
+        let scope=try dispatch.inferenceScope()
+        _=try journal.reserveJob(DurableJob(id:job,idempotency:UUID().uuidString.lowercased(),ownerHash:String(repeating:"c",count:64),requestHash:String(repeating:"d",count:64),created:created))
+        try journal.transitionJob(id:job,to:.running,now:created)
+        try journal.claim(job:job,attempt:0,model:scope.canonicalModel,scope:scope)
+        let plan=try journal.planWorkerStart(job:job,attempt:0);try journal.markDispatched(job:job,attempt:0)
+        let peer=NativeControlPeer(pid:42,start:99,executable:try VerifiedExecutable(path:"/fixture/native",sha256:String(repeating:"e",count:64)))
+        let source=PreparationReservationSource(peer:peer,mode:.healthy);source.release.signal()
+        let pending=PendingNativePreparation(source:source,instance:scope.nativeEpoch,correlationID:try scope.nativeRequestCorrelationID(job:job,attempt:0),model:scope.nativeModel,after:10)
+        var result:Result<PreparedNativeReservation,NativeControlError>?
+        let deadline=ProcessInfo.processInfo.systemUptime+2
+        while result==nil && ProcessInfo.processInfo.systemUptime<deadline {result=pending.take();if result==nil {usleep(1000)}}
+        guard let result else {throw NativeControlError.deadline}
+        let prepared=try result.get(),now=HostResources.nowMilliseconds()
+        guard try journal.observePreparationRegistration(job:job,attempt:0,scope:scope,peer:peer,sample:prepared.registration,now:now),let lineage=prepared.lineage else {throw RuntimeError.identity}
+        let preparation=try WorkerPreparationBinding.capture(plan:plan,journal:journal,prepared:prepared,now:now)
+        let primary=NativePrimaryActivity(phaseVersion:4,instance:scope.nativeEpoch,sampleSequence:13,sampledAt:now,uncertain:false,
+            owners:1,ingress:0,preparing:1,queued:0,active:0,responding:0,models:[NativePrimaryModelActivity(model:scope.nativeModel,preparing:1,queued:0,active:0,responding:0)])
+        let activity=NativePrimaryActivitySample(peer:peer,receivedAt:now,registry:NativeRegistryActivity(primary:primary,registryGeneration:7,transitioning:false,models:[
+            NativeRegistryModelFact(model:scope.nativeModel,readyDeclared:false,transitioning:false,uncertain:false,claimable:true,counts:NativePhaseCounts(ingress:0,preparing:1,queued:0,active:0,responding:0)),
+            NativeRegistryModelFact(model:"fixture/idle-other",readyDeclared:true,transitioning:false,uncertain:false,claimable:true,counts:.zero)]))
+        guard let observation=try preparation.observation(lineage:lineage,activity:activity,journal:journal,sourceCoverage:.all_clients,now:now) else {throw RuntimeError.identity}
+        let subject=try NativePreparationSubject(payload:["job_id":job,"attempt":0,"root_sequence":String(UInt64.max),"correlation_id":preparation.correlationID])
+        if available {try observation.encoded(subject:subject,managerEpoch:epoch,journal:journal,now:now).write(to:cache)}else {try FileManager.default.removeItem(at:cache)}
+        let started=Int64(ProcessInfo.processInfo.systemUptime*1000)
+        let operation=try factory.beginPreparationStart(binding:dispatch,plan:plan,preparation:preparation,observation:observation,journal:journal,started:started,now:now)
+        var transport:Result<StartedPythonWorker,WorkerStartFailure>?
+        let spawnedBy=ProcessInfo.processInfo.systemUptime+2
+        while transport==nil && ProcessInfo.processInfo.systemUptime<spawnedBy {transport=operation.take();if transport==nil {usleep(1000)}}
+        guard let transport else {throw RuntimeError.deadline}
+        let worker=try transport.get().bind(journal:journal,key:WorkerLaunchKey(job:job,attempt:0),nonce:plan.nonce,started:started,readyAt:Int64(ProcessInfo.processInfo.systemUptime*1000))
+        let packet=try JSONSerialization.data(withJSONObject:["v":1,"type":"run","job_id":job,"attempt":0,"model":scope.nativeModel,"epoch":epoch,
+            "endpoint_hash":scope.endpointHash,"expires_at":prepared.registration.sample.requestedAt+4900,"context":[["role":"user","content":"fixture preparation"]]])
+        try worker.enqueue(packet,expectedModel:scope.nativeModel,endpointHash:scope.endpointHash,epoch:epoch,now:HostResources.nowMilliseconds())
+        var posts:Int?,done:String?,text=""
+        let finishBy=ProcessInfo.processInfo.systemUptime+10
+        while !worker.reaped && ProcessInfo.processInfo.systemUptime<finishBy {
+            for event in try worker.poll(now:Int64(ProcessInfo.processInfo.systemUptime*1000),authorized:true) {
+                if case .usage(let count,_)=event {posts=count}
+                if case .complete=event {done="complete"}
+                if case .failed=event {done="error"}
+                if case .text(_,let part)=event {text+=part}
+            }
+            usleep(5000)
+        }
+        guard worker.reaped,posts == (available ? 1:0),done == (available ? "complete":"error"),!available || text.contains("MOCK_ONLY"),
+              try journal.activeLaunchCount()==0,try journal.unresolvedCount()==1,try journal.uncertainCount()==1,
+              try journal.requestCount(job:job)==1,try journal.inferenceScope(job:job,attempt:0)?.state == .uncertain,
+              worker.zeroPostEvidence==nil else {fatalError("Preparation transport lost exact scope or promoted local output/reap into native proof")}
+    }
+    let queries=try String(contentsOf:guardDirectory.appendingPathComponent("preparation-queries"),encoding:.utf8).split(separator:"\n")
+    guard queries==["preparation","preparation"] else {fatalError("Scoped preparation retried or fell back to global activity")}
+    print("PASS: actual metadata3 factory/installed private child/scoped Unix guard/exact preparation header;1 mock POST or0 on unknown, native uncertainty/history retained")
+}

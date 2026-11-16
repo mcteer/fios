@@ -4,7 +4,7 @@ Private worker metadata3 adds native_preparation_version1 while retaining
 pipe1/handoff1. Current Core accepts strict metadata2 for the legacy handoff
 path and strict metadata3 with preparation1; mixed/missing/unknown fields and
 unsupported versions refuse. This is protocol support, not native authority.
-The broker/factory preparation dispatch and native source issuer remain unfinished.
+The broker preparation dispatch and native source issuer remain unfinished.
 
 An original preparation is selected only by the private parent environment's
 FIOS_PLATFORM_PREPARATION_ROOT and FIOS_PLATFORM_PREPARATION_CORRELATION. Both
@@ -49,3 +49,14 @@ changes an inference row or spent budget. The broker has not yet connected its
 preparation producer/dispatch composition. The client cannot grant production eligibility: native source guards,
 all-client proof/capacity and installed enrollment remain closed. Fixture
 responses do not qualify those capabilities or complete T022/T045.
+
+The factory's explicit preparation entry requires metadata3/preparation1, the
+original live plan/binding, current checked observation/journal and the original
+independent dispatch binding. It consumes once before off-loop Process.run and
+sets only the preparation root/correlation environment. The live child retains
+the typed preparation identity separately from handoff identity; successful
+output, zero POSTs and local reap cannot resolve the registered native claim.
+Cancellation before Process.run or withdrawal of the original unused plan
+produces local no-spawn evidence only. Its durable acknowledgement reaps the
+local launch while retaining native uncertainty and spent history. It cannot
+enter the old handoff cancellation/not_sent producer.

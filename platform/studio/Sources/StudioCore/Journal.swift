@@ -862,20 +862,21 @@ public final class Journal {
     }
     // Only the original live factory can produce this evidence, after its
     // consumed plan exits before Process.run. It proves this attempt was not
-    // sent; it proves nothing about any older request or native completion.
+    // spawned locally; registered native ownership and older requests remain independent.
     func recordWorkerNeverSpawned(job:String,attempt:Int,evidence:WorkerNeverSpawnedEvidence)throws {
         try validate(job:job,attempt:attempt)
         let plan=evidence.plan,boot=try HostBoot.identity()
         guard plan.job==job,plan.attempt==attempt,WireScalar.uuid(plan.nonce) else {throw JournalError.conflict}
-        let expected=try plan.scope.encoded()
+        let expected=try plan.scope.encoded(),hasNativeParent=evidence.handoff != nil || evidence.preparation != nil
         try transaction {
             guard let record=try inferenceScope(job:job,attempt:attempt),
-                  (evidence.handoff == nil ? [.reserved,.uncertain].contains(record.state):[.dispatched,.uncertain,.complete,.not_sent].contains(record.state)),try record.scope.encoded()==expected,
+                  (!hasNativeParent ? [.reserved,.uncertain].contains(record.state):[.dispatched,.uncertain,.complete,.not_sent].contains(record.state)),try record.scope.encoded()==expected,
                   try scalar("SELECT count(*) FROM worker_grants WHERE job=? AND attempt=?",[job,String(attempt)])==0 else {throw JournalError.conflict}
             try evidence.handoff?.validate(plan:plan,scope:record.scope)
+            try evidence.preparation?.validateIdentity(plan:plan,scope:record.scope)
             try execute("UPDATE worker_launches SET reaped=1 WHERE job=? AND attempt=? AND nonce=? AND boot=? AND reaped=0",[job,String(attempt),plan.nonce,boot])
             guard sqlite3_changes(db)==1 else {throw JournalError.conflict}
-            if evidence.handoff != nil {
+            if hasNativeParent {
                 if [.complete,.not_sent].contains(record.state) {return} // Preserve independent terminal proof.
                 try execute("UPDATE inference SET uncertain=1 WHERE job=? AND attempt=?",[job,String(attempt)])
                 guard sqlite3_changes(db)==1 else {throw JournalError.conflict}
