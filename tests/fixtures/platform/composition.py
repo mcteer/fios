@@ -243,6 +243,43 @@ class CompositionTests(unittest.TestCase):
             self.assertTrue((partial/'python-enrollment.json').is_file())
             self.assertFalse((partial/'stage-receipt.json').exists());self.assertFalse(args[4].exists())
 
+    def test_policy_install_review_rechecks_staged_bytes_context_and_boolean_types(self):
+        with tempfile.TemporaryDirectory(dir=Path('/tmp').resolve()) as temporary:
+            root=Path(temporary);args=self.fixture(root);output=root/'combined'
+            result=API['compose'](*args[:4],output);stage=root/'policy-stage'
+            REVIEW['stage_python_enrollment'](output,result['composition_sha256'],'fios-edge-a.lab','501',
+                '/Users/mcteer/Library/Application Support/Fios/Studio','e'*64,stage)
+            digest=sha((stage/'stage-receipt.json').read_bytes())
+            command=['node',str(ROOT/'scripts/install-platform.mjs'),'propose-python-policy-install',
+                     '--candidate',str(output),'--sha256',result['composition_sha256'],'--host','fios-edge-a.lab',
+                     '--bundle',str(stage),'--bundle-sha256',digest]
+            run=subprocess.run(command,capture_output=True,timeout=10)
+            self.assertEqual(run.returncode,0,run.stderr);value=json.loads(run.stdout)
+            self.assertEqual(value['state'],'blocked');self.assertFalse(value['commands_authorized'])
+            self.assertEqual(value['privileged_commands'],[]);self.assertTrue(value['staged_policy_rechecked'])
+            self.assertTrue(value['requires_operator_execution']);self.assertFalse(value['policy_written'])
+            self.assertFalse(value['installed']);self.assertFalse(value['native_authority'])
+            self.assertEqual(len(value['proposed_file_commands']),1)
+            item=value['proposed_file_commands'][0]
+            self.assertEqual(item['program'],'/usr/bin/install')
+            self.assertEqual(item['argv'],['-o','root','-g','wheel','-m','0644',str(stage/'python-enrollment.json'),
+                '/Library/Application Support/Fios/Studio/python-enrollment.json'])
+            copied=root/'private-policy-copy.json'
+            subprocess.run(['/usr/bin/install','-m','0644',item['source'],str(copied)],check=True,timeout=2)
+            self.assertEqual(sha(copied.read_bytes()),item['sha256'])
+            with self.assertRaises(ValueError):
+                REVIEW['python_policy_install_proposal'](output,result['composition_sha256'],'fios-edge-b.lab',stage,digest)
+            original=(stage/'python-enrollment.json').read_bytes()
+            (stage/'python-enrollment.json').write_bytes(b'changed')
+            with self.assertRaises(ValueError):
+                REVIEW['python_policy_install_proposal'](output,result['composition_sha256'],'fios-edge-a.lab',stage,digest)
+            (stage/'python-enrollment.json').write_bytes(original)
+            receipt=json.loads((stage/'stage-receipt.json').read_bytes());receipt['approved']=0
+            altered=json.dumps(receipt).encode();(stage/'stage-receipt.json').write_bytes(altered)
+            with self.assertRaises(ValueError):
+                REVIEW['python_policy_install_proposal'](output,result['composition_sha256'],'fios-edge-a.lab',stage,sha(altered))
+            self.assertFalse(args[4].exists())
+
     def test_copy_failure_retains_partial_data_without_receipt_or_authority(self):
         with tempfile.TemporaryDirectory(dir=Path('/tmp').resolve()) as temporary:
             root=Path(temporary);args=self.fixture(root);output=root/'partial';original=API['API']['write_data']

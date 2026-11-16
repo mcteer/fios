@@ -377,3 +377,18 @@ decoder against the genuine copied runtime and manager identities. The check
 also confirms private-image policy-load refusal and malformed account/host/
 authority-field rejection. It runs metadata only, with network denied and zero
 model POSTs; it does not test root protection or installed positive behavior.
+
+
+`propose-python-policy-install` accepts candidate/hash/host plus `--bundle
+ABS_PRIVATE_BUNDLE --bundle-sha256 REVIEWED_STAGE_RECEIPT_SHA`. It independently
+checks all three staged files, their exact surface/owner/modes/hashes, the typed
+boolean receipt fields, the selected Studio and a freshly derived policy for
+the current components. Stale, changed, mixed-host or malformed bundles refuse.
+
+The blocked result proposes exactly one fixed root-owned mode0644 copy to
+`/Library/Application Support/Fios/Studio/python-enrollment.json`. It performs
+no copy and authorizes no command. Separate runtime-enrollment approval, a
+reviewed merged release, the actual protected manager/runtime/context, stopped
+writers and backups, an absent destination and source/destination verification
+remain operator prerequisites. This does not inspect a remote installation,
+register a service, activate inference or complete protected acceptance.

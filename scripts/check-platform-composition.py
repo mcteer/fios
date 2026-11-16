@@ -260,6 +260,55 @@ def stage_python_enrollment(directory, expected, host, uid, state, review_sha256
         API['close_chain'](chain)  # Retain failed/partial data; never path cleanup.
 
 
+def python_policy_install_proposal(directory, expected, host, bundle, bundle_sha256):
+    require(isinstance(bundle_sha256,str) and re.fullmatch('[0-9a-f]{64}',bundle_sha256))
+    root=Path(bundle)
+    require(root.is_absolute() and root.resolve()==root and str(root).startswith(('/private/tmp/','/tmp/')))
+    chain=API['directory_chain'](root)
+    try:
+        info=os.fstat(chain[-1][0])
+        require(info.st_uid==os.getuid() and stat.S_IMODE(info.st_mode)==0o700)
+        require(set(os.listdir(chain[-1][0]))=={'python-enrollment.json','review.json','stage-receipt.json'})
+        records={}
+        for name in ('python-enrollment.json','review.json','stage-receipt.json'):
+            info=(root/name).lstat()
+            require(stat.S_ISREG(info.st_mode) and info.st_nlink==1 and info.st_uid==os.getuid() and
+                    stat.S_IMODE(info.st_mode)==0o644 and 0<info.st_size<=65536)
+            records[name]=API['read_source'](root/name,root)
+        receipt=json.loads(records['stage-receipt.json'][0],object_pairs_hook=RUNTIME['unique_object'])
+        require(sha(records['stage-receipt.json'][0])==bundle_sha256)
+        previous=json.loads(records['review.json'][0],object_pairs_hook=RUNTIME['unique_object'])
+        policy=previous['policy_candidate']
+        require(type(policy['uid']) is int and policy['host']==host)
+        current=python_enrollment_proposal(directory,expected,host,str(policy['uid']),policy['state_path'],policy['review_sha256'])
+        require(json.dumps(previous,sort_keys=True)==json.dumps(current,sort_keys=True) and
+                records['python-enrollment.json'][0]==current['policy_candidate_json'].encode('ascii'))
+        expected_receipt={'version':1,'operation':'private_python_enrollment_stage','composition_sha256':expected,
+                'policy_sha256':current['policy_candidate_sha256'],'review_sha256':sha(records['review.json'][0]),
+                'private_files_written':3,'source_rechecked':True,'approved':False,'installed_policy_written':False,
+                'installed':False,'activation':False,'native_authority':False,'state_opened':False}
+        require(json.dumps(receipt,sort_keys=True)==json.dumps(expected_receipt,sort_keys=True))
+        for name,record in records.items():
+            require(API['read_source'](root/name,root)==record)
+        API['verify_chain'](chain)
+        destination=current['destination'];source=str(root/'python-enrollment.json')
+        return {**current,'operation':'python_policy_install_command_proposal','requires_operator_execution':True,
+                'stage_receipt_sha256':bundle_sha256,'staged_policy_rechecked':True,
+                'mandatory_preconditions':['separate_operator_runtime_enrollment_approval',
+                    'reviewed_merged_release_and_exact_studio_account_state_context',
+                    'root_protected_manager_and_complete_runtime_match_reviewed_bytes',
+                    'stopped_platform_writers_and_verified_state_configuration_backup',
+                    'policy_destination_absent_no_overwrite','serialized_operator_transaction',
+                    'reverify_source_before_copy_and_protected_destination_afterward'],
+                'proposed_file_commands':[{'program':'/usr/bin/install',
+                    'argv':['-o','root','-g','wheel','-m','0644',source,destination],
+                    'source':source,'destination':destination,'sha256':current['policy_candidate_sha256'],
+                    'bytes':len(records['python-enrollment.json'][0]),'mode':0o644}],
+                'launchd_registration':'not_proposed','on_failure':'stop_retain_data_no_activation_or_cleanup'}
+    finally:
+        API['close_chain'](chain)
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--candidate',required=True)
@@ -270,16 +319,21 @@ if __name__ == '__main__':
     modes.add_argument('--uninstall-proposal',action='store_true')
     modes.add_argument('--python-enrollment-proposal',action='store_true')
     modes.add_argument('--stage-python-enrollment',action='store_true')
+    modes.add_argument('--python-policy-install-proposal',action='store_true')
     parser.add_argument('--uid')
     parser.add_argument('--state')
     parser.add_argument('--review-sha256')
     parser.add_argument('--to')
+    parser.add_argument('--bundle')
+    parser.add_argument('--bundle-sha256')
     args = parser.parse_args()
-    require(not (args.first_install_proposal or args.uninstall_proposal or args.python_enrollment_proposal or args.stage_python_enrollment) or args.host is not None)
+    require(not (args.first_install_proposal or args.uninstall_proposal or args.python_enrollment_proposal or args.stage_python_enrollment or args.python_policy_install_proposal) or args.host is not None)
     require((args.python_enrollment_proposal or args.stage_python_enrollment) or all(value is None for value in (args.uid,args.state,args.review_sha256)))
     require(args.stage_python_enrollment or args.to is None)
     require(not args.stage_python_enrollment or args.to is not None)
-    result = (stage_python_enrollment(args.candidate,args.sha256,args.host,args.uid,args.state,args.review_sha256,args.to) if args.stage_python_enrollment else
+    require(args.python_policy_install_proposal or (args.bundle is None and args.bundle_sha256 is None))
+    result = (python_policy_install_proposal(args.candidate,args.sha256,args.host,args.bundle,args.bundle_sha256) if args.python_policy_install_proposal else
+              stage_python_enrollment(args.candidate,args.sha256,args.host,args.uid,args.state,args.review_sha256,args.to) if args.stage_python_enrollment else
               python_enrollment_proposal(args.candidate,args.sha256,args.host,args.uid,args.state,args.review_sha256) if args.python_enrollment_proposal else
               uninstall_proposal(args.candidate,args.sha256,args.host) if args.uninstall_proposal else
               first_install_proposal(args.candidate,args.sha256,args.host) if args.first_install_proposal else
