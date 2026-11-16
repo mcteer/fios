@@ -14,12 +14,14 @@ struct NativeControlResult:Sendable {
 // No automatic retry, result queue growth, native process launch or fallback.
 final class AsyncNativeControl:@unchecked Sendable {
     private let client:NativeControlClient?
-    private let observer:NativeReadOnlyClient
+    private let observer:NativeReadOnlyClient?
+    private let observerSource:(any NativeReadOnlyClientSource)?
     private let lock=NSLock()
     private var busy=false
     private var result:NativeControlResult?
-    init(client:NativeControlClient) {self.client=client;observer=NativeReadOnlyClient(client)}
-    init(observer:NativeReadOnlyClient) {client=nil;self.observer=observer}
+    init(client:NativeControlClient) {self.client=client;observer=NativeReadOnlyClient(client);observerSource=nil}
+    init(observer:NativeReadOnlyClient) {client=nil;self.observer=observer;observerSource=nil}
+    init(observerSource:any NativeReadOnlyClientSource) {client=nil;observer=nil;self.observerSource=observerSource}
     func submit(_ command:NativeMaintenanceCommand) throws {
         // Refuse before reserving a worker or opening the native socket.
         guard client != nil || (command.operation == .observe && command.instance==nil && command.sequence==0) else {throw NativeControlError.unauthorized}
@@ -32,6 +34,10 @@ final class AsyncNativeControl:@unchecked Sendable {
             var primaryActivity:Result<NativePrimaryActivitySample,NativeControlError>?
             var backendFences:Result<NativeBackendFenceSample,NativeControlError>?
             do {
+                guard let observer=try self.observer ?? self.observerSource?.resolve() else {throw NativeControlError.unavailable}
+                if observerSource != nil {
+                    guard observer.version==3,observer.observesPrimaryActivity,observer.observesBackendFences,observer.observesSDKBackground else {throw NativeControlError.invalid}
+                }
                 let ingress=try client.map {try $0.request(operation:command.operation,instance:command.instance,sequence:command.sequence)} ?? observer.observe()
                 receivedAt=HostResources.nowMilliseconds() // A later backend query cannot refresh this receipt.
                 if observer.observesPrimaryActivity,command.operation == .observe {

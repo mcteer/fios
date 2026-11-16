@@ -6,13 +6,14 @@ public enum ManagerRuntime {
     // Local developer/installed entry point. Production installation must pin
     // reviewed binaries and use a private operator-owned state directory.
     public static func run(directory:URL,telemetry:any PlatformTelemetry=NoopPlatformTelemetry()) throws {
-        try run(directory:directory,nativeControl:nil,nativeReadOnlyObservation:true,orbstackReadOnlyObservation:true,resourceReadOnlyObservation:true,telemetry:telemetry)
+        try run(directory:directory,nativeControl:nil,nativeReadOnlyObservation:true,nativeActivityReadOnlyObservation:true,orbstackReadOnlyObservation:true,resourceReadOnlyObservation:true,telemetry:telemetry)
     }
     // No production issuer yet: only reviewed native enrollment may supply
     // this internal client. Never construct it from operator/model payloads.
-    static func run(directory:URL,nativeControl:NativeControlClient?,nativeObserver:NativeReadOnlyClient?=nil,serviceObservations:ServiceObservationCache?=nil,serviceHealth:MLXServiceHealthCollector?=nil,serviceHealthReadiness:@Sendable()->(Bool,Bool)={ (false,false) },orbstackHealth:ServiceHealthCollector?=nil,orbstackHealthReadiness:@Sendable()->(Bool,Bool)={ (false,false) },serviceControl:(any ServiceRecoverySending)?=nil,servingLifecycle:ServingLifecyclePorts?=nil,drainObservations:ServiceDrainObservationCache?=nil,execution:ManagerExecutionPorts?=nil,nativeReadOnlyObservation:Bool=false,orbstackReadOnlyObservation:Bool=false,resourceReadOnlyObservation:Bool=false,telemetry:any PlatformTelemetry=NoopPlatformTelemetry()) throws {
+    static func run(directory:URL,nativeControl:NativeControlClient?,nativeObserver:NativeReadOnlyClient?=nil,nativeObserverSource:(any NativeReadOnlyClientSource)?=nil,serviceObservations:ServiceObservationCache?=nil,serviceHealth:MLXServiceHealthCollector?=nil,serviceHealthReadiness:@Sendable()->(Bool,Bool)={ (false,false) },orbstackHealth:ServiceHealthCollector?=nil,orbstackHealthReadiness:@Sendable()->(Bool,Bool)={ (false,false) },serviceControl:(any ServiceRecoverySending)?=nil,servingLifecycle:ServingLifecyclePorts?=nil,drainObservations:ServiceDrainObservationCache?=nil,execution:ManagerExecutionPorts?=nil,nativeReadOnlyObservation:Bool=false,nativeActivityReadOnlyObservation:Bool=false,orbstackReadOnlyObservation:Bool=false,resourceReadOnlyObservation:Bool=false,telemetry:any PlatformTelemetry=NoopPlatformTelemetry()) throws {
         guard geteuid() != 0 else { throw ControlError.unauthorized }
-        guard nativeControl==nil || nativeObserver==nil else {throw NativeControlError.invalid}
+        guard [nativeControl != nil,nativeObserver != nil,nativeObserverSource != nil].filter({$0}).count<=1,
+              !nativeActivityReadOnlyObservation || (nativeControl==nil && nativeObserver==nil && nativeObserverSource==nil) else {throw NativeControlError.invalid}
         guard serviceHealth == nil || serviceHealth?.service == .mlx,
               orbstackHealth == nil || orbstackHealth?.service == .orbstack,
               !nativeReadOnlyObservation || serviceHealth == nil,
@@ -29,6 +30,10 @@ public enum ManagerRuntime {
         }
         let activeNativeControl=migrationHeld ? nil:nativeControl
         let activeNativeObserver=migrationHeld ? nil:nativeObserver
+        let activeNativeObserverSource=migrationHeld ? nil:nativeObserverSource
+        var nativeObserverConfigured=activeNativeObserver != nil || activeNativeObserverSource != nil
+        let nativeObservationConfiguration=nativeActivityReadOnlyObservation && !migrationHeld ? AsyncNativeObservationConfiguration(directory:directory):nil
+        var nativeObservationState:String?=nativeObservationConfiguration == nil ? nil:"loading"
         let nativeReader=activeNativeControl.map {NativeReadOnlyClient($0)} ?? activeNativeObserver
         // Trusted code-only injection. The public entry point has no issuer;
         // missing observations never become absence or a launch permission.
@@ -59,10 +64,10 @@ public enum ManagerRuntime {
         let servingStopQueue=activeServingLifecycle.map {AsyncServingStop(runtime:$0.runtime)}
         var serviceCursor=0,serviceTransportUnavailable=false
         var nativeMaintenance=NativeMaintenanceCoordinator(journal:journal)
-        let nativeQueue=activeNativeControl.map {AsyncNativeControl(client:$0)} ?? activeNativeObserver.map {AsyncNativeControl(observer:$0)}
+        var nativeQueue=activeNativeControl.map {AsyncNativeControl(client:$0)} ?? activeNativeObserver.map {AsyncNativeControl(observer:$0)} ?? activeNativeObserverSource.map {AsyncNativeControl(observerSource:$0)}
         let nativeLineage=activeNativeControl.map {NativeLineagePoller(journal:journal,source:$0)}
-        let nativeCoverage:NativeCoverage = nativeQueue == nil ? .unsupported:.unknown
-        var nativeDiagnostics=NativeControlDiagnostics(configured:nativeQueue != nil,backendFencesConfigured:nativeReader?.observesBackendFences ?? false,primaryActivityConfigured:nativeReader?.observesPrimaryActivity ?? false,sdkBackgroundConfigured:nativeReader?.observesSDKBackground ?? false)
+        var nativeCoverage:NativeCoverage = nativeQueue == nil && nativeObservationConfiguration == nil ? .unsupported:.unknown
+        var nativeDiagnostics=NativeControlDiagnostics(configured:nativeQueue != nil,backendFencesConfigured:nativeReader?.observesBackendFences ?? (activeNativeObserverSource != nil),primaryActivityConfigured:nativeReader?.observesPrimaryActivity ?? (activeNativeObserverSource != nil),sdkBackgroundConfigured:nativeReader?.observesSDKBackground ?? (activeNativeObserverSource != nil))
         func enqueueNative(_ command:NativeMaintenanceCommand) {
             guard let nativeQueue else {return}
             do {try nativeQueue.submit(command);nativeDiagnostics.begin(retainingObservation:nativeMaintenance.observationOnly)} catch {nativeMaintenance.failed(id:command.id);nativeDiagnostics.failed()}
@@ -126,6 +131,16 @@ public enum ManagerRuntime {
             // CLI run loops have no AppKit autorelease-pool turn.
             try autoreleasepool {
             let now=ProcessInfo.processInfo.systemUptime
+            if let result=nativeObservationConfiguration?.poll() {
+                switch result {
+                case .configured(let source):
+                    nativeQueue=AsyncNativeControl(observerSource:source);nativeObserverConfigured=true
+                    nativeCoverage = .unknown;nativeObservationState="configured"
+                    nativeDiagnostics=NativeControlDiagnostics(configured:true,backendFencesConfigured:true,primaryActivityConfigured:true,sdkBackgroundConfigured:true)
+                case .unconfigured:nativeObservationState="unconfigured";nativeCoverage = .unsupported
+                case .unavailable:nativeObservationState="unavailable";nativeCoverage = .unknown
+                }
+            }
             if let result=nativeHealthConfiguration?.poll() {
                 switch result {
                 case .configured(let collector):serviceHealthQueue=AsyncServiceHealth(collector:collector);nativeHealthSource="configured"
@@ -295,6 +310,7 @@ public enum ManagerRuntime {
                             serviceStates[service.rawValue]=details
                         }
                         response["services"]=serviceStates
+                        if let nativeObservationState {response["native_observation_source"]=nativeObservationState}
                         if let nativeHealthSource {response["native_health_source"]=nativeHealthSource}
                         if let orbstackHealthSource {response["orbstack_health_source"]=orbstackHealthSource}
                         if let vmResourceSource {response["vm_resource_source"]=vmResourceSource}
@@ -302,7 +318,7 @@ public enum ManagerRuntime {
                         // No production native reservation issuer is composed here yet.
                         response["native_admissions"]="unsupported"
                         response["native_ingress_admissions"]=nativeQueue == nil ? "unconfigured":nativeMaintenance.phase.rawValue
-                        if activeNativeObserver != nil {response["native_control_mode"]="observation_only"}
+                        if nativeObserverConfigured {response["native_control_mode"]="observation_only"}
                         response["native_control"]=nativeDiagnostics.summary(now:requestedAt)
                         response["migration_maintenance"]=migrationHeld
                         response["native_activity"]=nativeCoverage.rawValue

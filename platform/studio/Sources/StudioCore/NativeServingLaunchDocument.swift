@@ -20,6 +20,12 @@ struct NativeServingLaunchDocument:Sendable {
     private let environment:[String:String]
     private let argumentCredential:Bool
     var usesArgumentCredential:Bool {argumentCredential}
+    // Fixed reviewed source namespace only; exposes no credential or arbitrary
+    // endpoint selector. The vendor bundle has no reviewed private protocol.
+    var observationHome:String? {
+        guard case .reviewedFiosNative=serverArtifact else {return nil}
+        return environment["HOME"]
+    }
     init(_ bytes:Data)throws {
         do {
             try StrictJSON.validate(bytes,maximum:32768)

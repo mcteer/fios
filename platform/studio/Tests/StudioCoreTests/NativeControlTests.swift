@@ -1,5 +1,18 @@
 import Foundation
 
+private final class ObservationSourceFixture:NativeReadOnlyClientSource,@unchecked Sendable {
+    private let lock=NSLock()
+    private var count=0
+    private let client:NativeReadOnlyClient
+    init(client:NativeReadOnlyClient) {self.client=client}
+    var calls:Int {lock.lock();defer {lock.unlock()};return count}
+    func resolve()throws->NativeReadOnlyClient {
+        lock.lock();count+=1;let current=count;lock.unlock()
+        if current==1 {throw NativeControlError.unavailable}
+        return client
+    }
+}
+
 func runNativeControlTests() throws {
     let absentPeer=NativeControlPeer(pid:42,start:100,executable:try VerifiedExecutable(path:"/fixture/not-opened",sha256:String(repeating:"a",count:64)))
     let observer=AsyncNativeControl(observer:NativeReadOnlyClient(NativeControlClient(path:"/fixture/not-connected",peer:absentPeer)))
@@ -12,6 +25,22 @@ func runNativeControlTests() throws {
         catch NativeControlError.unauthorized {}
     }
     guard observer.poll()==nil else {fatalError("Rejected readonly command opened a worker slot")}
+    guard try NativeServingObservationSource.load(directory:URL(fileURLWithPath:"/fixture/no-installed-state"))==nil else {fatalError("Development image constructed installed observation")}
+    let source=ObservationSourceFixture(client:NativeReadOnlyClient(NativeControlClient(path:"/fixture/not-connected",peer:absentPeer,version:3,observeBackendFences:true,observePrimaryActivity:true,observeSDKBackground:true)))
+    let dynamic=AsyncNativeControl(observerSource:source)
+    guard source.calls==0 else {fatalError("Observer constructor resolved a process inline")}
+    do {try dynamic.submit(NativeMaintenanceCommand(id:"forbidden",operation:.pause,instance:nil,sequence:0));fatalError("Dynamic observer accepted pause")}
+    catch NativeControlError.unauthorized {}
+    guard source.calls==0 else {fatalError("Rejected management called the observation resolver")}
+    for attempt in 1...2 {
+        let id=UUID().uuidString.lowercased()
+        try dynamic.submit(NativeMaintenanceCommand(id:id,operation:.observe,instance:nil,sequence:0))
+        let end=ProcessInfo.processInfo.systemUptime+3
+        var result:NativeControlResult?
+        repeat {result=dynamic.poll();if result==nil {Thread.sleep(forTimeInterval:0.005)}} while result==nil && ProcessInfo.processInfo.systemUptime<end
+        guard let result,result.id==id,source.calls==attempt,result.primaryActivity==nil,result.backendFences==nil else {fatalError("Observer retried, resolved inline or changed the original result")}
+        guard case .failure=result.value else {fatalError("Missing source/peer became native observation")}
+    }
     try runNativePrimaryActivityWireTests()
     try runQueuedPrimaryActivityWireTests()
     try runRegistryActivityWireTests()
