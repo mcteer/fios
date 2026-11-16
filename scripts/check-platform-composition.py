@@ -195,6 +195,71 @@ def uninstall_proposal(directory, expected, host):
             'on_failure':'stop_retain_remaining_data_and_uncertainty_no_recursive_cleanup'}
 
 
+def python_enrollment_proposal(directory, expected, host, uid, state, review_sha256):
+    plan = installation_plan(directory, expected, host)
+    require(isinstance(uid,str) and re.fullmatch('[1-9][0-9]{0,9}',uid) and int(uid)<=4294967295)
+    require(isinstance(state,str) and state.startswith('/Users/mcteer/') and str(Path(state))==state and
+            len(state.encode())<1024 and '\0' not in state and all(part not in ('.','..') for part in Path(state).parts))
+    require(isinstance(review_sha256,str) and re.fullmatch('[0-9a-f]{64}',review_sha256))
+    root=Path(directory)
+    raw,_=API['read_source'](root/'composition.json',root);require(sha(raw)==expected)
+    composition=json.loads(raw,object_pairs_hook=RUNTIME['unique_object'])
+    raw,_=API['read_source'](root/'platform/release.json',root)
+    require(sha(raw)==composition['platform_manifest_sha256'])
+    platform=json.loads(raw,object_pairs_hook=RUNTIME['unique_object'])
+    raw,_=API['read_source'](root/'python-runtime/candidate.json',root)
+    require(sha(raw)==composition['python_candidate_sha256'])
+    runtime=json.loads(raw,object_pairs_hook=RUNTIME['unique_object'])
+    manager=next(item for item in platform['artifacts'] if item['path']=='bin/studio-manager')
+    interpreter=runtime['files'].get('bin/python')
+    require(isinstance(interpreter,dict) and interpreter['mode']==0o755)
+    policy={'version':1,'purpose':'reviewed_platform_python_worker','uid':int(uid),'host':host,
+            'state_path':state,'review_sha256':review_sha256,'manager_sha256':manager['sha256'],
+            'manifest_sha256':composition['python_candidate_sha256'],'python_sha256':interpreter['sha256'],
+            'uv_lock_sha256':runtime['uv_lock_sha256'],'producer_sha256':runtime['producer_sha256'],
+            'release_template_sha256':runtime['release_template_sha256'],
+            'policy_sha256':platform['python']['policy_sha256'],'python_version':'3.11.17','package_version':'0.1.0'}
+    require(all(isinstance(value,str) and re.fullmatch('[0-9a-f]{64}',value)
+                for key,value in policy.items() if key.endswith('_sha256')))
+    payload=(json.dumps(policy,indent=2)+'\n').encode();require(len(payload)<=4096)
+    return {**plan,'operation':'python_enrollment_configuration_proposal','commands_authorized':False,
+            'approved':False,'policy_written':False,'credentials_written':False,'state_opened':False,
+            'review_identity':'supplied_correlation_not_approval_or_provenance',
+            'destination':'/Library/Application Support/Fios/Studio/python-enrollment.json',
+            'policy_candidate':policy,'policy_candidate_sha256':sha(payload),
+            'policy_candidate_json':payload.decode('ascii'),
+            'policy_encoding':'UTF8_JSON_indent2_trailing_newline',
+            'configuration_scope':'declared_component_bindings_not_installed_policy_or_native_permission'}
+
+
+def stage_python_enrollment(directory, expected, host, uid, state, review_sha256, output):
+    proposal=python_enrollment_proposal(directory,expected,host,uid,state,review_sha256)
+    output=Path(output)
+    require(os.getuid()!=0 and output.is_absolute() and str(output).startswith(('/private/tmp/','/tmp/')) and
+            output.parent.resolve()==output.parent and not output.is_relative_to(Path(directory)) and
+            not Path(directory).is_relative_to(output))
+    payload=proposal['policy_candidate_json'].encode('ascii')
+    review_bytes=(json.dumps(proposal,indent=2)+'\n').encode()
+    fd,chain=API['open_output'](output)
+    try:
+        API['write_data'](fd,'python-enrollment.json',payload,False)
+        API['write_data'](fd,'review.json',review_bytes,False)
+        require(API['read_source'](output/'python-enrollment.json',output)[0]==payload)
+        require(API['read_source'](output/'review.json',output)[0]==review_bytes)
+        review(directory,expected)  # Recheck source component bytes before success.
+        API['verify_chain'](chain)
+        receipt={'version':1,'operation':'private_python_enrollment_stage','composition_sha256':expected,
+                 'policy_sha256':sha(payload),'review_sha256':sha(review_bytes),'private_files_written':3,
+                 'source_rechecked':True,'approved':False,'installed_policy_written':False,
+                 'installed':False,'activation':False,'native_authority':False,'state_opened':False}
+        API['write_data'](fd,'stage-receipt.json',(json.dumps(receipt,indent=2)+'\n').encode(),False)
+        require(set(os.listdir(fd))=={'python-enrollment.json','review.json','stage-receipt.json'})
+        API['verify_chain'](chain)
+        return receipt
+    finally:
+        API['close_chain'](chain)  # Retain failed/partial data; never path cleanup.
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--candidate',required=True)
@@ -203,9 +268,20 @@ if __name__ == '__main__':
     modes=parser.add_mutually_exclusive_group()
     modes.add_argument('--first-install-proposal',action='store_true')
     modes.add_argument('--uninstall-proposal',action='store_true')
+    modes.add_argument('--python-enrollment-proposal',action='store_true')
+    modes.add_argument('--stage-python-enrollment',action='store_true')
+    parser.add_argument('--uid')
+    parser.add_argument('--state')
+    parser.add_argument('--review-sha256')
+    parser.add_argument('--to')
     args = parser.parse_args()
-    require(not (args.first_install_proposal or args.uninstall_proposal) or args.host is not None)
-    result = (uninstall_proposal(args.candidate,args.sha256,args.host) if args.uninstall_proposal else
+    require(not (args.first_install_proposal or args.uninstall_proposal or args.python_enrollment_proposal or args.stage_python_enrollment) or args.host is not None)
+    require((args.python_enrollment_proposal or args.stage_python_enrollment) or all(value is None for value in (args.uid,args.state,args.review_sha256)))
+    require(args.stage_python_enrollment or args.to is None)
+    require(not args.stage_python_enrollment or args.to is not None)
+    result = (stage_python_enrollment(args.candidate,args.sha256,args.host,args.uid,args.state,args.review_sha256,args.to) if args.stage_python_enrollment else
+              python_enrollment_proposal(args.candidate,args.sha256,args.host,args.uid,args.state,args.review_sha256) if args.python_enrollment_proposal else
+              uninstall_proposal(args.candidate,args.sha256,args.host) if args.uninstall_proposal else
               first_install_proposal(args.candidate,args.sha256,args.host) if args.first_install_proposal else
               installation_plan(args.candidate,args.sha256,args.host) if args.host else review(args.candidate,args.sha256))
     print(json.dumps(result))

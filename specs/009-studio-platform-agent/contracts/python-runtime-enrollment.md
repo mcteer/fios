@@ -15,3 +15,21 @@ Only the fixed installed manager image may load root-protected policy bytes. The
 `makeFactory` is a separate code-only operation which must run off the serialized manager loop. It rechecks the unchanged protected policy and manager identity, performs complete declared root-protected runtime byte review, matches interpreter/lock/producer/template identities and rechecks the interpreter before the existing fixed metadata probe. The resulting Python factory still needs independent reviewed native compatibility, exact host/model binding, readiness/resources, lease/budget and durable request accounting before any model dispatch. No public startup/dispatch wiring is enabled by this source composition.
 
 Root-tree observations do not attest atomic mapped code or whole-OS/publisher provenance. Operator updates must preserve the separately reviewed stopped-process/backup/serialized-installation discipline. Positive installed constructor/factory, native guard/admission and Studio operational acceptance are unproven; ordinary metadata/private-runtime tests do not close those tasks.
+
+
+## Private configuration preparation
+
+The installer now offers `propose-python-enrollment` and
+`stage-python-enrollment`; see the deployment README for arguments. The proposal
+derives the strict document's manager/runtime/interpreter/lock/producer/template/
+policy hashes from a checked composition and binds explicit Studio, UID and
+state metadata. Its review identity is not an approval token. Staging writes
+only a fresh private temporary bundle, checks copied bytes and rechecks the
+source before its final receipt. No installed policy or credential is written.
+
+An actual Swift decoder/metadata-factory check consumes the generated policy,
+checks genuine component identities, rejects four malformed account/host/extra
+authority-field cases and confirms the real private executable cannot load an
+installed policy. The declared tree remains non-root-protected and no opaque
+policy is issued. Public job composition, root installation and positive native
+acceptance remain separate requirements.

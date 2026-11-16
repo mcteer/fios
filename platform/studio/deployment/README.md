@@ -353,3 +353,27 @@ unimplemented steps; this artifact-only proposal does not claim full uninstall
 or T049 completion. A private fixture redirects only the data operations into
 a disposable user-owned tree and verifies that unknown/enrollment/state bytes
 survive; it supplies no root ownership or native-terminal evidence.
+
+
+`propose-python-enrollment` accepts candidate/hash/host plus `--uid SERVICE_UID
+--state ABS_STATE --review-sha256 REVIEW_IDENTITY`. It derives the existing
+strict version1 Python policy fields from the checked manager/runtime/template/
+lock/policy bytes. The supplied review identity is correlation metadata, never
+approval. The result contains exact serialized candidate bytes and their hash;
+it writes no installed policy, state or credentials and remains blocked.
+
+`stage-python-enrollment` adds `--to ABS_NEW_PRIVATE_BUNDLE`. The destination
+must be a new directory under a canonical private temporary parent, outside
+the input composition. It writes `python-enrollment.json`, the original
+`review.json` proposal and a final `stage-receipt.json`; source component bytes
+are rechecked before success. Existing destinations refuse; failed/partial
+copies remain for diagnosis. These user-owned files cannot construct an opaque
+installed policy. Protected installation, native admission and activation
+retain their separate gates.
+
+The optional `--enrollment-proposal ABS_REVIEW --proposal-sha256 SHA` arguments
+to `scripts/check-platform-worker-runtime.mjs` exercise the actual Swift policy
+decoder against the genuine copied runtime and manager identities. The check
+also confirms private-image policy-load refusal and malformed account/host/
+authority-field rejection. It runs metadata only, with network denied and zero
+model POSTs; it does not test root protection or installed positive behavior.

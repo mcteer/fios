@@ -177,6 +177,72 @@ class CompositionTests(unittest.TestCase):
             self.assertEqual(unrelated.read_bytes(),b'retain');self.assertEqual(state.read_bytes(),b'uncertainty and exports')
             self.assertFalse(args[4].exists())
 
+    def test_python_enrollment_proposal_binds_components_without_issuing_policy(self):
+        with tempfile.TemporaryDirectory(dir=Path('/tmp').resolve()) as temporary:
+            root=Path(temporary);args=self.fixture(root);output=root/'combined'
+            result=API['compose'](*args[:4],output)
+            state='/Users/mcteer/Library/Application Support/Fios/Studio';identity='e'*64
+            planned=subprocess.run(['node',str(ROOT/'scripts/install-platform.mjs'),'propose-python-enrollment',
+                '--candidate',str(output),'--sha256',result['composition_sha256'],'--host','fios-edge-a.lab',
+                '--uid','501','--state',state,'--review-sha256',identity],capture_output=True,timeout=10)
+            self.assertEqual(planned.returncode,0,planned.stderr);value=json.loads(planned.stdout)
+            self.assertEqual(value['operation'],'python_enrollment_configuration_proposal')
+            self.assertEqual(value['state'],'blocked');self.assertEqual(value['privileged_commands'],[])
+            for flag in ('commands_authorized','approved','policy_written','credentials_written','state_opened','installed','activation','native_authority'):
+                self.assertFalse(value[flag])
+            payload=value['policy_candidate_json'].encode('ascii');policy=json.loads(payload)
+            self.assertEqual(policy,value['policy_candidate']);self.assertEqual(sha(payload),value['policy_candidate_sha256'])
+            self.assertLessEqual(len(payload),4096)
+            self.assertEqual(policy['uid'],501);self.assertEqual(policy['host'],'fios-edge-a.lab')
+            self.assertEqual(policy['state_path'],state);self.assertEqual(policy['review_sha256'],identity)
+            runtime=json.loads((output/'python-runtime/candidate.json').read_bytes())
+            platform=json.loads((output/'platform/release.json').read_bytes())
+            self.assertEqual(policy['manifest_sha256'],args[3])
+            self.assertEqual(policy['python_sha256'],runtime['files']['bin/python']['sha256'])
+            self.assertEqual(policy['manager_sha256'],next(item['sha256'] for item in platform['artifacts'] if item['path']=='bin/studio-manager'))
+            for field in ('uv_lock_sha256','producer_sha256','release_template_sha256'):
+                self.assertEqual(policy[field],runtime[field])
+            self.assertEqual(policy['policy_sha256'],platform['python']['policy_sha256'])
+            for uid,path,digest in [('0',state,identity),('01',state,identity),('4294967296',state,identity),
+                                    ('501','relative',identity),('501',state+'/../other',identity),('501',state,'bad')]:
+                with self.assertRaises(ValueError):
+                    REVIEW['python_enrollment_proposal'](output,result['composition_sha256'],'fios-edge-a.lab',uid,path,digest)
+            self.assertFalse(args[4].exists());self.assertFalse((root/'python-enrollment.json').exists())
+
+    def test_python_policy_staging_retains_partial_data_and_never_writes_installed_state(self):
+        with tempfile.TemporaryDirectory(dir=Path('/tmp').resolve()) as temporary:
+            root=Path(temporary);args=self.fixture(root);output=root/'combined'
+            result=API['compose'](*args[:4],output)
+            state='/Users/mcteer/Library/Application Support/Fios/Studio';identity='e'*64;staged=root/'policy-stage'
+            command=['node',str(ROOT/'scripts/install-platform.mjs'),'stage-python-enrollment',
+                     '--candidate',str(output),'--sha256',result['composition_sha256'],'--host','fios-edge-a.lab',
+                     '--uid','501','--state',state,'--review-sha256',identity,'--to',str(staged)]
+            run=subprocess.run(command,capture_output=True,timeout=10)
+            self.assertEqual(run.returncode,0,run.stderr);receipt=json.loads(run.stdout)
+            self.assertEqual(receipt['operation'],'private_python_enrollment_stage')
+            self.assertEqual(receipt['private_files_written'],3);self.assertTrue(receipt['source_rechecked'])
+            for flag in ('approved','installed_policy_written','installed','activation','native_authority','state_opened'):
+                self.assertFalse(receipt[flag])
+            self.assertEqual(set(path.name for path in staged.iterdir()),{'python-enrollment.json','review.json','stage-receipt.json'})
+            self.assertEqual(sha((staged/'python-enrollment.json').read_bytes()),receipt['policy_sha256'])
+            self.assertEqual(sha((staged/'review.json').read_bytes()),receipt['review_sha256'])
+            before={path.name:path.read_bytes() for path in staged.iterdir()}
+            rerun=subprocess.run(command,capture_output=True,timeout=10);self.assertNotEqual(rerun.returncode,0)
+            self.assertEqual({path.name:path.read_bytes() for path in staged.iterdir()},before)
+            self.assertEqual(staged.stat().st_mode & 0o7777,0o700)
+            with self.assertRaises(ValueError):
+                REVIEW['stage_python_enrollment'](output,result['composition_sha256'],'fios-edge-a.lab','501',state,identity,output/'nested')
+            self.assertFalse((output/'nested').exists())
+            partial=root/'partial-policy';write=REVIEW['API']['write_data']
+            def failing(fd,name,data,executable):
+                if name=='review.json':raise OSError('finite fixture write failure')
+                return write(fd,name,data,executable)
+            with patch.dict(REVIEW['API'],write_data=failing):
+                with self.assertRaises(OSError):
+                    REVIEW['stage_python_enrollment'](output,result['composition_sha256'],'fios-edge-a.lab','501',state,identity,partial)
+            self.assertTrue((partial/'python-enrollment.json').is_file())
+            self.assertFalse((partial/'stage-receipt.json').exists());self.assertFalse(args[4].exists())
+
     def test_copy_failure_retains_partial_data_without_receipt_or_authority(self):
         with tempfile.TemporaryDirectory(dir=Path('/tmp').resolve()) as temporary:
             root=Path(temporary);args=self.fixture(root);output=root/'partial';original=API['API']['write_data']
