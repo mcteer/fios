@@ -7580,3 +7580,5 @@ Hardened ARM64 image/recovery/stopped-volume upgrade/automatic rollback pass wit
 - `/private/tmp/fios-009-v2-guard-container.log` SHA256 `1426d9f0156e6b16768bf2d7de674914ad52688672e706c14d390e9833054685`.
 
 Positive native source/proof/capacity, owned preparation export/worker mode, full broker/operational composition and installation remain unfinished. Whole39/55 stays complete. No native activation, Studio actuation, merge or production deployment occurred. Publishedf0e1736 CI43827515868 is running; this source batch requires its own exact-head CI. See worker-activity-v2 contract.
+
+2026-11-16 current-worker integration supplement: actual disposable manager model-only IPC passes against the installed updated worker, exact mock POST/output/local reap/history/replay checks and stale-source zero-request refusal. Default/closed/missing-source manager execution refuses without worker/native request. Log `/private/tmp/fios-009-v2-manager-execution.log` SHA256 `be2993c142b192b53d2387492d380a41a8eeea24949c8f1d99432cfb522bf78a`. This is mock functional integration, not a positive native producer or Studio acceptance;39/55 unchanged.
