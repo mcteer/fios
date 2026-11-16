@@ -1,0 +1,152 @@
+const std = @import("std");
+const owners = @import("fios/request_ownership.zig");
+const leases = @import("fios/preparation_leases.zig");
+const Entry = struct { id: []const u8, state: enum { unloaded, loading, ready, error_state, evicting }, fios_load_uncertain: std.atomic.Value(bool) = .init(false) };
+const Registry = struct { mutex: std.Io.Mutex = .init, entries: std.StringHashMap(*Entry), generation: std.atomic.Value(u64) = .init(7) };
+test "preparation lease expires without removing ownership and exact withdrawal permits reuse" {
+    const io = std.testing.io;
+    var tracker: owners.Tracker = .{ .primary_guard = true };
+    try tracker.initialize(io, @splat(151));
+    var registry: Registry = .{ .entries = std.StringHashMap(*Entry).init(std.testing.allocator) };
+    defer registry.entries.deinit();
+    var a: Entry = .{ .id = "fixture/a", .state = .unloaded };
+    try registry.entries.put(a.id, &a);
+    var table: leases.Leases = .{};
+    const handle = try table.reserve(io, &tracker, &registry, a.id, @splat(1), 100, 5);
+    const ingress = try tracker.enter(io);
+    try std.testing.expectError(error.LeaseExpired, table.attach(io, &tracker, &registry, handle, ingress, a.id, 105));
+    try std.testing.expectEqual(@as(usize, 2), tracker.primarySnapshot(io).owned);
+    try table.withdraw(io, &tracker, handle, a.id);
+    try std.testing.expectEqual(@as(usize, 1), tracker.primarySnapshot(io).owned);
+    const next = try table.reserve(io, &tracker, &registry, a.id, @splat(1), 106, 5000);
+    try std.testing.expect(next.root != handle.root);
+    try std.testing.expectError(error.UnknownLease, table.withdraw(io, &tracker, handle, a.id));
+    try table.withdraw(io, &tracker, next, a.id);
+    try tracker.leave(io, ingress);
+}
+test "preparation lease attaches once and retains consumed uncertainty on stale registry" {
+    const io = std.testing.io;
+    var tracker: owners.Tracker = .{ .primary_guard = true };
+    try tracker.initialize(io, @splat(152));
+    var registry: Registry = .{ .entries = std.StringHashMap(*Entry).init(std.testing.allocator) };
+    defer registry.entries.deinit();
+    var a: Entry = .{ .id = "fixture/a", .state = .unloaded };
+    try registry.entries.put(a.id, &a);
+    var table: leases.Leases = .{};
+    const handle = try table.reserve(io, &tracker, &registry, a.id, @splat(2), 100, 5000);
+    const ingress = try tracker.enter(io);
+    try table.attach(io, &tracker, &registry, handle, ingress, a.id, 101);
+    try std.testing.expectEqual(@as(usize, 1), tracker.primarySnapshot(io).owned);
+    try std.testing.expectError(error.UnknownLease, table.attach(io, &tracker, &registry, handle, ingress, a.id, 102));
+    try tracker.leave(io, ingress);
+    const stale = try table.reserve(io, &tracker, &registry, a.id, @splat(3), 103, 5000);
+    const other = try tracker.enter(io);
+    registry.generation.store(8, .release);
+    try std.testing.expectError(error.StaleRegistryGeneration, table.attach(io, &tracker, &registry, stale, other, a.id, 104));
+    try std.testing.expectError(error.LeaseConsumed, table.withdraw(io, &tracker, stale, a.id));
+    try std.testing.expectError(error.LeaseConsumed, table.attach(io, &tracker, &registry, stale, other, a.id, 105));
+    try std.testing.expectEqual(@as(usize, 2), tracker.primarySnapshot(io).owned);
+}
+test "preparation lease refuses unsupported guard invalid limits identities and clock rollback" {
+    const io = std.testing.io;
+    var tracker: owners.Tracker = .{ .primary_guard = false };
+    try tracker.initialize(io, @splat(153));
+    var registry: Registry = .{ .entries = std.StringHashMap(*Entry).init(std.testing.allocator) };
+    defer registry.entries.deinit();
+    var a: Entry = .{ .id = "fixture/a", .state = .unloaded };
+    try registry.entries.put(a.id, &a);
+    var table: leases.Leases = .{};
+    try std.testing.expectError(error.UnsupportedSourceGuard, table.reserve(io, &tracker, &registry, a.id, @splat(4), 100, 5));
+    try std.testing.expectEqual(@as(usize, 0), tracker.primarySnapshot(io).owned);
+    try std.testing.expectError(error.InvalidLease, table.reserve(io, &tracker, &registry, a.id, @splat(4), 101, 5001));
+    try std.testing.expectError(error.ClockUncertain, table.reserve(io, &tracker, &registry, a.id, @splat(4), 99, 5));
+    try std.testing.expectError(error.ClockUncertain, table.reserve(io, &tracker, &registry, a.id, @splat(4), 102, 5));
+}
+test "preparation lease bounds outstanding claims and preserves identity on refusal" {
+    const io = std.testing.io;
+    var tracker: owners.Tracker = .{ .primary_guard = true };
+    try tracker.initialize(io, @splat(154));
+    var registry: Registry = .{ .entries = std.StringHashMap(*Entry).init(std.testing.allocator) };
+    defer registry.entries.deinit();
+    var a: Entry = .{ .id = "fixture/a", .state = .unloaded };
+    try registry.entries.put(a.id, &a);
+    var table: leases.Leases = .{};
+    var handles: [leases.capacity]leases.Handle = undefined;
+    for (&handles, 0..) |*handle, index| {
+        handle.* = try table.reserve(io, &tracker, &registry, a.id, @splat(@as(u8, @intCast(index + 1))), 100, 5000);
+    }
+    try std.testing.expectError(error.LeaseCapacity, table.reserve(io, &tracker, &registry, a.id, @splat(99), 100, 5000));
+    try std.testing.expectError(error.DuplicateCorrelation, table.reserve(io, &tracker, &registry, a.id, @splat(1), 100, 5000));
+    try std.testing.expectError(error.ModelMismatch, table.withdraw(io, &tracker, handles[0], "fixture/other"));
+    var foreign = handles[0];
+    foreign.instance[0] ^= 1;
+    try std.testing.expectError(error.UnknownLease, table.withdraw(io, &tracker, foreign, a.id));
+    try std.testing.expectEqual(@as(usize, leases.capacity), tracker.primarySnapshot(io).owned);
+    for (handles) |handle| try table.withdraw(io, &tracker, handle, a.id);
+    try std.testing.expectEqual(@as(usize, 0), tracker.primarySnapshot(io).owned);
+}
+test "preparation lease never drops independent native uncertainty on expiration" {
+    const io = std.testing.io;
+    var tracker: owners.Tracker = .{ .primary_guard = true };
+    try tracker.initialize(io, @splat(155));
+    var registry: Registry = .{ .entries = std.StringHashMap(*Entry).init(std.testing.allocator) };
+    defer registry.entries.deinit();
+    var a: Entry = .{ .id = "fixture/a", .state = .unloaded };
+    try registry.entries.put(a.id, &a);
+    var table: leases.Leases = .{};
+    const handle = try table.reserve(io, &tracker, &registry, a.id, @splat(5), 100, 5);
+    tracker.fence(io);
+    try std.testing.expectError(error.CoverageUncertain, table.withdraw(io, &tracker, handle, a.id));
+    try std.testing.expectEqual(@as(usize, 1), tracker.primarySnapshot(io).owned);
+    try std.testing.expectError(error.CoverageUncertain, table.reserve(io, &tracker, &registry, a.id, @splat(6), 106, 5));
+    try std.testing.expect(tracker.primarySnapshot(io).uncertain);
+}
+const AttachmentRace = struct {
+    io: std.Io,
+    tracker: *owners.Tracker,
+    registry: *Registry,
+    table: *leases.Leases,
+    handle: leases.Handle,
+    ingress: owners.Token,
+    start: *std.atomic.Value(bool),
+    outcome: u8 = 0,
+    fn run(self: *AttachmentRace) void {
+        while (!self.start.load(.acquire)) std.atomic.spinLoopHint();
+        self.table.attach(self.io, self.tracker, self.registry, self.handle, self.ingress, "fixture/a", 101) catch |err| {
+            self.outcome = if (err == error.UnknownLease) 2 else 3;
+            return;
+        };
+        self.outcome = 1;
+    }
+};
+test "preparation lease concurrent ingress has exactly one winner with both original owners retained" {
+    const io = std.testing.io;
+    var tracker: owners.Tracker = .{ .primary_guard = true };
+    try tracker.initialize(io, @splat(156));
+    var registry: Registry = .{ .entries = std.StringHashMap(*Entry).init(std.testing.allocator) };
+    defer registry.entries.deinit();
+    var a: Entry = .{ .id = "fixture/a", .state = .unloaded };
+    try registry.entries.put(a.id, &a);
+    var table: leases.Leases = .{};
+    const handle = try table.reserve(io, &tracker, &registry, a.id, @splat(7), 100, 5000);
+    const first = try tracker.enter(io);
+    const second = try tracker.enter(io);
+    var start: std.atomic.Value(bool) = .init(false);
+    var left: AttachmentRace = .{ .io=io, .tracker=&tracker, .registry=&registry, .table=&table, .handle=handle, .ingress=first, .start=&start };
+    var right: AttachmentRace = .{ .io=io, .tracker=&tracker, .registry=&registry, .table=&table, .handle=handle, .ingress=second, .start=&start };
+    const one = try std.Thread.spawn(.{}, AttachmentRace.run, .{&left});
+    const two = std.Thread.spawn(.{}, AttachmentRace.run, .{&right}) catch |err| {
+        start.store(true, .release);
+        one.join();
+        return err;
+    };
+    start.store(true, .release);
+    one.join();
+    two.join();
+    try std.testing.expect((left.outcome == 1 and right.outcome == 2) or (left.outcome == 2 and right.outcome == 1));
+    try std.testing.expectEqual(@as(usize, 2), tracker.primarySnapshot(io).owned);
+    try std.testing.expectEqual(@as(usize, 1), tracker.correlationSnapshot(io, @splat(7)).owners);
+    try tracker.leave(io, first);
+    try tracker.leave(io, second);
+    try std.testing.expectEqual(@as(usize, 0), tracker.primarySnapshot(io).owned);
+}

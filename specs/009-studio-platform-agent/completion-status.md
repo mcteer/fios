@@ -41,6 +41,7 @@ Completed preparation and its local reservation survive temporary journal-write
 failure; storage recovery cannot turn the old result into a delayed launch.
 An unused plan can now produce factory no-spawn evidence and close only its
 own not_sent decision when exact native cancellation independently succeeds.
+An internal bounded single-use preparation lease bridge now connects the exact registry claim to ingress; the actual native test graph also links the real ownership ports and keeps the shared ANE latch within the SDK dependency boundary. Authenticated transport/serving consumption are being implemented separately.
 These address concrete lifecycle defects; they do not close the native-authority
 workstream. Subsequent implementation must connect the producer/proof/guard and
 operational paths, rather than interpreting additional component receipts as
