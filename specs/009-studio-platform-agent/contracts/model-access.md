@@ -23,7 +23,7 @@ Source regression, disappearance or failed quality/scope checks fence that job
 before durable revocation is attempted. A newer observation cannot revive its
 original launch after a SQLite write failure. Cleanup of this local metadata
 never resolves inference ownership; manager restart does not resume the old
-worker. These are consistency refusals, not a trusted source or native proof.
+worker. These are consistency refusals, not a trusted source or native proof. A pending launch also saves cancellation and its local resource hold before journal writes. Durable job/uncertainty recording retries separately before consuming its once-only async result; manual cancellation keeps its original request-only intent. Clock recovery cannot reopen a revoked launch after a write outage.
 
 ## Budgets and command/event lifecycle
 

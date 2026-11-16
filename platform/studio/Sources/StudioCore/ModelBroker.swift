@@ -24,6 +24,8 @@ final class ModelBroker {
         var preparation:WorkerPreparationBinding?=nil
         var hasNativeHandoff=false
         var revoked=false
+        var revokeJob=false
+        var revocationRecorded=false
         var completion:Result<StartedPythonWorker,WorkerStartFailure>?
         var acknowledgementRecorded=false
     }
@@ -288,8 +290,9 @@ final class ModelBroker {
         }
         if var pending=starting[job],!pending.revoked {
             pending.revoked=true;pending.operation.cancel();starting[job]=pending
-            try journal.markUncertain(job:job,attempt:pending.attempt)
             launchHolds.insert(WorkerLaunchKey(job:job,attempt:pending.attempt))
+            try journal.markUncertain(job:job,attempt:pending.attempt)
+            pending.revocationRecorded=true;starting[job]=pending
         }
     }
     func poll(now:Int64,uptime:Int64,admission:inout AdmissionPolicy,
@@ -396,10 +399,22 @@ final class ModelBroker {
             } ?? false
             if !eligible {fenceSource(job:id,original:pending.binding)}
             if !pending.revoked && (!lease || !eligible || uptime<pending.started || uptime-pending.started>=10000) {
-                pending.revoked=true;pending.operation.cancel()
-                if lease {try journal.transitionJob(id:id,to:.revoking,now:now)}
-                try journal.markUncertain(job:id,attempt:pending.attempt)
+                // Retain cancellation before any fallible journal write. The
+                // async result may already contain the original started child.
+                pending.revoked=true;pending.revokeJob=true;pending.operation.cancel()
+                starting[id]=pending
                 launchHolds.insert(WorkerLaunchKey(job:id,attempt:pending.attempt))
+            }
+            if pending.revoked && !pending.revocationRecorded {
+                do {
+                    if pending.revokeJob && lease {try journal.transitionJob(id:id,to:.revoking,now:now)}
+                    try journal.markUncertain(job:id,attempt:pending.attempt)
+                    pending.revocationRecorded=true;starting[id]=pending
+                }catch JournalError.storage {
+                    // Retain the cancellation and once-only result; retry only
+                    // journal I/O, without binding or writing permission bytes.
+                    starting[id]=pending;continue
+                }
             }
             starting[id]=pending
             if pending.completion == nil {pending.completion=pending.operation.take()}

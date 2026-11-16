@@ -122,8 +122,8 @@ func runModelBrokerTests() throws {
         defer {sqlite3_close(continuityWriter)}
         guard sqlite3_exec(continuityWriter,"BEGIN IMMEDIATE",nil,nil,nil)==SQLITE_OK else {throw JournalError.storage}
         do {
-            _=try continuityBroker.poll(now:10_000,uptime:0,admission:&continuityAdmission,source:{_ in scenario=="missing" ? nil:observed(scenario=="clock" ? 4:2,sampledAt:scenario=="clock" ? 9999:10_000)})
-            fatalError("BROKER_SOURCE_REGRESSION_DID_NOT_REVOKE")
+            _=try continuityBroker.poll(now:scenario=="lease_clock" ? 9999:10_000,uptime:0,admission:&continuityAdmission,
+                source:{_ in scenario=="missing" ? nil:observed(scenario=="clock" || scenario=="lease_clock" ? 4:2,sampledAt:scenario=="clock" ? 9999:10_000)})
         }catch JournalError.storage {}
         guard sqlite3_exec(continuityWriter,"ROLLBACK",nil,nil,nil)==SQLITE_OK else {throw JournalError.storage}
         _=try continuityBroker.poll(now:10_000,uptime:0,admission:&continuityAdmission,source:{_ in observed(4)})
@@ -141,6 +141,6 @@ func runModelBrokerTests() throws {
               try continuityJournal.inferenceScope(job:olderID,attempt:0)?.state == .uncertain else {fatalError("Source regression lost independent uncertainty")}
         print("PASS: \(scenario) source regression survives failed durable revocation, retains both native uncertainties and never invokes a model")
     }
-    for scenario in ["sequence","clock","missing"] {try exerciseSourceContinuity(scenario)}
+    for scenario in ["sequence","clock","missing","lease_clock"] {try exerciseSourceContinuity(scenario)}
     print("PASS: broker owner lease/native-capacity fail-closed and irreversible clock fencing")
 }
