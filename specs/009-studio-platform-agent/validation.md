@@ -6876,3 +6876,16 @@ SHA256 `0ddd4731c6338862c24553eb42c2bbceedb9add488d186706aa9026f597db5e4`
 binds these receipts/logs. No real inference, installed lifecycle, enrollment or
 activation; sandbox image approval remains image-only and unchanged.39/55 whole
 tasks complete,16 open.
+
+
+Current Core/private native owned-child stop/restart also passes Debug and
+optimized qualification: four genuine empty-model native children, original
+kernel process/listener health and new-identity restart,0 model POSTs, synthetic
+reservations only and native_authority:false. Log
+`/private/tmp/fios-009-worker-v2-native-owned.log` SHA256 `f69f349f48b5b672cb1740418b1f58f05686ea328d504eee304761cd74c3cd44`;
+retained review `/private/tmp/f9-native-owned-P68u5I`. Installed services and
+independent native uncertainty are unchanged. This is not full US3/Studio
+acceptance or task closure. Published76ed210/[CI43780640488](https://github.com/mcteer/fios/actions/runs/43780640488)
+passes all seven jobs including aggregate. Superseded2f456ef run43780035321 was
+cancelled and is not an exact-head pass. Queued4f7c3a3/c59f56a source changes and
+subsequent evidence commits require their own latest-head CI after publication.
