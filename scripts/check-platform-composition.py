@@ -309,6 +309,25 @@ def python_policy_install_proposal(directory, expected, host, bundle, bundle_sha
         API['close_chain'](chain)
 
 
+def python_policy_removal_proposal(directory, expected, host, bundle, bundle_sha256):
+    plan=python_policy_install_proposal(directory,expected,host,bundle,bundle_sha256)
+    item=plan.pop('proposed_file_commands')[0]
+    return {**plan,'operation':'python_policy_removal_command_proposal','policy_removed':False,
+            'state_and_exports_retained':True,'credentials_retained':True,
+            'mandatory_preconditions':['separate_operator_runtime_enrollment_removal_approval',
+                'execute_on_exact_reviewed_studio_account_state_context',
+                'verified_stopped_state_configuration_and_program_backup',
+                'platform_writers_and_private_workers_stopped',
+                'preserve_independent_native_inference_uncertainty',
+                'serialized_operator_transaction',
+                'installed_policy_is_regular_single_link_root_owned_mode0644_no_acl',
+                'reverify_exact_installed_policy_bytes_before_removal'],
+            'proposed_file_removals':[{'program':'/bin/rm','argv':[item['destination']],
+                'destination':item['destination'],'required_sha256':item['sha256'],
+                'required_bytes':item['bytes'],'required_mode':0o644,'required_uid':0}],
+            'on_failure':'stop_retain_configuration_backups_and_uncertainty_no_recursive_cleanup'}
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--candidate',required=True)
@@ -320,6 +339,7 @@ if __name__ == '__main__':
     modes.add_argument('--python-enrollment-proposal',action='store_true')
     modes.add_argument('--stage-python-enrollment',action='store_true')
     modes.add_argument('--python-policy-install-proposal',action='store_true')
+    modes.add_argument('--python-policy-removal-proposal',action='store_true')
     parser.add_argument('--uid')
     parser.add_argument('--state')
     parser.add_argument('--review-sha256')
@@ -327,12 +347,13 @@ if __name__ == '__main__':
     parser.add_argument('--bundle')
     parser.add_argument('--bundle-sha256')
     args = parser.parse_args()
-    require(not (args.first_install_proposal or args.uninstall_proposal or args.python_enrollment_proposal or args.stage_python_enrollment or args.python_policy_install_proposal) or args.host is not None)
+    require(not (args.first_install_proposal or args.uninstall_proposal or args.python_enrollment_proposal or args.stage_python_enrollment or args.python_policy_install_proposal or args.python_policy_removal_proposal) or args.host is not None)
     require((args.python_enrollment_proposal or args.stage_python_enrollment) or all(value is None for value in (args.uid,args.state,args.review_sha256)))
     require(args.stage_python_enrollment or args.to is None)
     require(not args.stage_python_enrollment or args.to is not None)
-    require(args.python_policy_install_proposal or (args.bundle is None and args.bundle_sha256 is None))
-    result = (python_policy_install_proposal(args.candidate,args.sha256,args.host,args.bundle,args.bundle_sha256) if args.python_policy_install_proposal else
+    require((args.python_policy_install_proposal or args.python_policy_removal_proposal) or (args.bundle is None and args.bundle_sha256 is None))
+    result = (python_policy_removal_proposal(args.candidate,args.sha256,args.host,args.bundle,args.bundle_sha256) if args.python_policy_removal_proposal else
+              python_policy_install_proposal(args.candidate,args.sha256,args.host,args.bundle,args.bundle_sha256) if args.python_policy_install_proposal else
               stage_python_enrollment(args.candidate,args.sha256,args.host,args.uid,args.state,args.review_sha256,args.to) if args.stage_python_enrollment else
               python_enrollment_proposal(args.candidate,args.sha256,args.host,args.uid,args.state,args.review_sha256) if args.python_enrollment_proposal else
               uninstall_proposal(args.candidate,args.sha256,args.host) if args.uninstall_proposal else

@@ -392,3 +392,12 @@ reviewed merged release, the actual protected manager/runtime/context, stopped
 writers and backups, an absent destination and source/destination verification
 remain operator prerequisites. This does not inspect a remote installation,
 register a service, activate inference or complete protected acceptance.
+
+`propose-python-policy-removal` uses the same candidate, host and pinned staged
+bundle arguments. It revalidates that bundle and proposes removal of exactly
+the fixed Python enrollment file, conditional on matching installed bytes,
+root ownership, mode and file type. It never removes parent directories,
+credentials, state or exports. Separate operator removal approval, verified
+stopped backups and stopped writers remain required; independent native
+inference uncertainty must survive removal. The command only prints a blocked
+proposal and performs no protected operation.

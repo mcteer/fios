@@ -267,6 +267,23 @@ class CompositionTests(unittest.TestCase):
             copied=root/'private-policy-copy.json'
             subprocess.run(['/usr/bin/install','-m','0644',item['source'],str(copied)],check=True,timeout=2)
             self.assertEqual(sha(copied.read_bytes()),item['sha256'])
+            removal_command=command.copy();removal_command[2]='propose-python-policy-removal'
+            removal_run=subprocess.run(removal_command,capture_output=True,timeout=10)
+            self.assertEqual(removal_run.returncode,0,removal_run.stderr)
+            removal=json.loads(removal_run.stdout)
+            self.assertEqual(removal['operation'],'python_policy_removal_command_proposal')
+            self.assertEqual(removal['state'],'blocked');self.assertFalse(removal['commands_authorized'])
+            self.assertFalse(removal['policy_removed']);self.assertEqual(removal['privileged_commands'],[])
+            self.assertTrue(removal['state_and_exports_retained']);self.assertTrue(removal['credentials_retained'])
+            self.assertNotIn('proposed_file_commands',removal)
+            removed=removal['proposed_file_removals'];self.assertEqual(len(removed),1)
+            self.assertEqual(removed[0]['program'],'/bin/rm');self.assertEqual(removed[0]['argv'],[item['destination']])
+            self.assertEqual(removed[0]['required_sha256'],sha(copied.read_bytes()))
+            self.assertEqual(removed[0]['required_uid'],0)
+            independent=root/'independent-uncertainty';independent.write_bytes(b'retain')
+            subprocess.run(['/bin/rm',str(copied)],check=True,timeout=2)
+            self.assertFalse(copied.exists());self.assertEqual(independent.read_bytes(),b'retain')
+            self.assertTrue((stage/'python-enrollment.json').exists())
             with self.assertRaises(ValueError):
                 REVIEW['python_policy_install_proposal'](output,result['composition_sha256'],'fios-edge-b.lab',stage,digest)
             original=(stage/'python-enrollment.json').read_bytes()
