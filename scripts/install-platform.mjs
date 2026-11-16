@@ -3,7 +3,7 @@
 import {spawnSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {validatePlatformRelease} from './lib/platform-release.mjs';
-import {platformStatePlan,platformRollbackStatePlan,platformUninstallPlan,platformConfigurationPlan,stagePlatformConfiguration,verifyPlatformConfiguration,proposePlatformConfigurationInstall} from './lib/platform-state-plan.mjs';
+import {platformStatePlan,platformRollbackStatePlan,platformUninstallPlan,platformConfigurationPlan,stagePlatformConfiguration,verifyPlatformConfiguration,proposePlatformConfigurationInstall,proposePlatformConfigurationRemoval} from './lib/platform-state-plan.mjs';
 const args=process.argv.slice(2);
 const usage=`Usage: node scripts/install-platform.mjs COMMAND --release ABS_RELEASE --sha256 REVIEWED_SHA256 --host HOST [OPTIONS]
 
@@ -18,6 +18,7 @@ Commands:
   propose-python-policy-removal --candidate ABS_COMPOSITION --sha256 REVIEWED_COMPOSITION_SHA --host HOST --bundle ABS_PRIVATE_BUNDLE --bundle-sha256 REVIEWED_STAGE_RECEIPT_SHA
   plan-config          --state ABS_STATE
   stage-config         --state ABS_STATE --to ABS_NEW_PRIVATE_BUNDLE
+  propose-config-removal --bundle ABS_BUNDLE --bundle-sha256 REVIEWED_BUNDLE_SHA256
   propose-config-install --bundle ABS_BUNDLE --bundle-sha256 REVIEWED_BUNDLE_SHA256
   verify-config        --bundle ABS_BUNDLE --bundle-sha256 REVIEWED_BUNDLE_SHA256
   plan-backup          --state ABS_STATE --to ABS_NEW_BACKUP
@@ -66,13 +67,13 @@ if(args.length===1&&['--help','-h'].includes(args[0])){
   }catch{failure();}
 }else{
 try{
-  const sizes={'plan':7,'plan-config':9,'stage-config':11,'verify-config':11,'propose-config-install':11,'plan-backup':11,'plan-backup-config':13,'plan-uninstall':11,'plan-uninstall-config':13,'plan-restore':13,'plan-rollback':17,'plan-rollback-seven':17,'plan-rollback-eight':17};
+  const sizes={'plan':7,'plan-config':9,'stage-config':11,'verify-config':11,'propose-config-install':11,'propose-config-removal':11,'plan-backup':11,'plan-backup-config':13,'plan-uninstall':11,'plan-uninstall-config':13,'plan-restore':13,'plan-rollback':17,'plan-rollback-seven':17,'plan-rollback-eight':17};
   if(args.length!==sizes[args[0]]||args[1]!=='--release'||args[3]!=='--sha256'||args[5]!=='--host')throw Error('arguments');
   const verified=validatePlatformRelease(args[2],args[4]);
   if(!verified.manifest.native_inventory.hosts.includes(args[6]))throw Error('host');
-  if(['verify-config','propose-config-install'].includes(args[0])){
+  if(['verify-config','propose-config-install','propose-config-removal'].includes(args[0])){
     if(args[7]!=='--bundle'||args[9]!=='--bundle-sha256')throw Error('arguments');
-    const review=args[0]==='propose-config-install'?proposePlatformConfigurationInstall:verifyPlatformConfiguration;
+    const review=args[0]==='propose-config-removal'?proposePlatformConfigurationRemoval:args[0]==='propose-config-install'?proposePlatformConfigurationInstall:verifyPlatformConfiguration;
     console.log(JSON.stringify(review({release:args[2],verified,host:args[6],bundle:args[8],reviewSHA256:args[10]}),null,2));
   }else if(args[0]==='stage-config'){
     if(args[7]!=='--state'||args[9]!=='--to')throw Error('arguments');

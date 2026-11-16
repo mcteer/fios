@@ -409,3 +409,10 @@ to the declared LaunchDaemons/LaunchAgents destinations. It performs no copy,
 registration or activation. Approval, exact installed context, stopped backups,
 protected parents, absent destinations and source/destination rechecks remain
 operator prerequisites. Preserve partial failures and independent uncertainty.
+
+`propose-config-removal` uses the same pinned bundle to name exactly those two
+installed plist files and their required hashes, owners and modes. Its blocked
+proposal requires separately reviewed registration removal or persistent
+disablement before file removal. It never invokes launchctl, removes a parent
+directory or changes credentials/state/exports/native uncertainty. A stopped
+verified backup and explicit operator execution remain required.

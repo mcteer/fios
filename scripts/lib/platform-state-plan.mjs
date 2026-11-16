@@ -200,3 +200,22 @@ export function proposePlatformConfigurationInstall(options){
       sha256:file.sha256,mode:0o644})),
     on_failure:'stop_retain_backups_and_partial_files_without_activation'};
 }
+
+export function proposePlatformConfigurationRemoval(options){
+  const install=proposePlatformConfigurationInstall(options);
+  const {proposed_file_commands,...review}=install;
+  return {...review,operation:'platform_configuration_removal_command_proposal',
+    configuration_removed:false,state_and_exports_retained:true,credentials_retained:true,
+    mandatory_preconditions:['separate_operator_registration_and_configuration_removal_approval',
+      'exact_reviewed_studio_account_state_context',
+      'verified_stopped_state_configuration_and_program_backup',
+      'reviewed_registration_removed_or_persistently_disabled',
+      'platform_writers_stopped_and_independent_native_uncertainty_retained',
+      'serialized_operator_transaction',
+      'installed_files_regular_single_link_root_owned_mode0644_without_acl',
+      'reverify_exact_installed_bytes_before_each_removal'],
+    proposed_file_removals:proposed_file_commands.map(file=>({program:'/bin/rm',
+      argv:[file.destination],destination:file.destination,required_sha256:file.sha256,
+      required_uid:0,required_mode:0o644})),
+    on_failure:'stop_retain_backups_state_exports_credentials_and_uncertainty_no_recursive_cleanup'};
+}

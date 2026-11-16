@@ -4,7 +4,7 @@ import {mkdtempSync,mkdirSync,chmodSync,copyFileSync,readFileSync,existsSync,rmS
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {createHash} from 'node:crypto';
-import {platformConfigurationPlan,stagePlatformConfiguration,verifyPlatformConfiguration,proposePlatformConfigurationInstall} from '../scripts/lib/platform-state-plan.mjs';
+import {platformConfigurationPlan,stagePlatformConfiguration,verifyPlatformConfiguration,proposePlatformConfigurationInstall,proposePlatformConfigurationRemoval} from '../scripts/lib/platform-state-plan.mjs';
 
 test('configuration workflow renders, stages and verifies templates after state relocation',()=>{
   const directory=mkdtempSync(join(tmpdir(),'fios-configuration-workflow-'));
@@ -49,6 +49,14 @@ test('configuration workflow renders, stages and verifies templates after state 
       assert.equal(createHash('sha256').update(readFileSync(file.source)).digest('hex'),file.sha256);
     }
     assert.throws(()=>proposePlatformConfigurationInstall({release,verified,host:'fios-edge-a.lab',bundle:staged.destination,reviewSHA256:staged.review_sha256}));
+    const removal=proposePlatformConfigurationRemoval({release,verified,host:'fios-edge-b.lab',bundle:staged.destination,reviewSHA256:staged.review_sha256});
+    assert.equal(removal.state,'blocked');assert.equal(removal.commands_authorized,false);
+    assert.equal(removal.configuration_removed,false);assert.equal(removal.credentials_retained,true);
+    assert.equal(removal.state_and_exports_retained,true);assert.equal(removal.native_authority,false);
+    assert.equal(removal.proposed_file_commands,undefined);assert.deepEqual(removal.privileged_commands,[]);
+    assert.equal(removal.proposed_file_removals.length,2);
+    assert.deepEqual(removal.proposed_file_removals.map(file=>file.argv),plan.configuration_files.map(file=>[file.destination]));
+    assert(removal.mandatory_preconditions.includes('reviewed_registration_removed_or_persistently_disabled'));
     assert.equal(saved.changes_made,false);assert.equal(existsSync(state),false);
     assert.equal(existsSync(join(directory,'retained-state')),true);
 
