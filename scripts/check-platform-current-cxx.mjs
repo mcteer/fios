@@ -11,7 +11,8 @@ import {hostname} from 'node:os';
 
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const args=process.argv.slice(2);
-const residencyRefresh=args.at(-1)==='--residency-refresh';
+const residencyMetal=args.at(-1)==='--residency-refresh-metal';
+const residencyRefresh=residencyMetal||args.at(-1)==='--residency-refresh';
 if(residencyRefresh)args.pop();
 const requestEvents=args.at(-1)==='--sdk-request-events';
 if(requestEvents)args.pop();
@@ -23,9 +24,9 @@ if(healthyMetal)args.splice(13,3);
 const commandStatus=args.length===13&&args[12]==='--metal-command-status';
 if(commandStatus)args.pop();
 const callbackFence=args.length===12&&args[7]==='--metal-callback-fence'&&args[8]==='--sdk-source'&&args[10]==='--sdk-library';
-assert(!residencyRefresh||(requestEvents&&captureRefusal&&commandStatus&&callbackFence&&!healthyMetal));
-assert((args.length===7||callbackFence)&&(!commandStatus||callbackFence)&&(!healthyMetal||commandStatus)&&(!captureRefusal||commandStatus)&&(!requestEvents||(captureRefusal&&!healthyMetal))&&args[0]==='--isolated'&&args[1]==='--source'&&args[3]==='--zig'&&args[5]==='--mlx-sha256',
-  'Use --isolated --source ABS_CURRENT_NATIVE_SOURCE --zig ABS_PINNED_ZIG --mlx-sha256 REVIEWED_MLX_SHA256 [--metal-callback-fence --sdk-source ABS_SDK_SOURCE --sdk-library ABS_LIBRARY [--metal-command-status [--healthy-metal --metal-cpp-zip ABS_PINNED_ZIP]]] [--owner-capture-refusal [--sdk-request-events [--residency-refresh]]]');
+assert(!residencyRefresh||(requestEvents&&captureRefusal&&commandStatus&&callbackFence&&healthyMetal===residencyMetal));
+assert((args.length===7||callbackFence)&&(!commandStatus||callbackFence)&&(!healthyMetal||commandStatus)&&(!captureRefusal||commandStatus)&&(!requestEvents||(captureRefusal&&(!healthyMetal||residencyMetal)))&&args[0]==='--isolated'&&args[1]==='--source'&&args[3]==='--zig'&&args[5]==='--mlx-sha256',
+  'Use --isolated --source ABS_CURRENT_NATIVE_SOURCE --zig ABS_PINNED_ZIG --mlx-sha256 REVIEWED_MLX_SHA256 [--metal-callback-fence --sdk-source ABS_SDK_SOURCE --sdk-library ABS_LIBRARY [--metal-command-status [--healthy-metal --metal-cpp-zip ABS_PINNED_ZIP]]] [--owner-capture-refusal [--sdk-request-events [--residency-refresh|--residency-refresh-metal]]]');
 assert(process.platform==='darwin'&&process.arch==='arm64'&&process.getuid()>0);
 const sha=bytes=>createHash('sha256').update(bytes).digest('hex');
 const [source,zig]=[args[2],args[4]].map(value=>{
@@ -108,7 +109,7 @@ pub fn build(b:*std.Build) void {
  b.installArtifact(b.addExecutable(.{.name="cxx-control",.root_module=module}));
 }
 `);
-const receipt={version:1,scope:residencyRefresh?'current_build_helper_residency_SDK_CPU_compatibility_not_native_authority':requestEvents?'current_build_helper_event_SDK_CPU_compatibility_not_native_authority':healthyMetal?'current_build_helper_CPU_and_empty_Metal_callbacks_not_native_authority':'current_build_helper_CPU_callback_compatibility_not_native_authority',
+const receipt={version:1,scope:residencyMetal?'current_build_helper_residency_SDK_CPU_and_empty_Metal_callbacks_not_native_authority':residencyRefresh?'current_build_helper_residency_SDK_CPU_compatibility_not_native_authority':requestEvents?'current_build_helper_event_SDK_CPU_compatibility_not_native_authority':healthyMetal?'current_build_helper_CPU_and_empty_Metal_callbacks_not_native_authority':'current_build_helper_CPU_callback_compatibility_not_native_authority',
   source,library_sha256:args[6],config_sha256:sha(config),helper_sha256:sha(helper),fixture_sha256:sha(fixture),
   runner_sha256:sha(readFileSync(fileURLToPath(import.meta.url))),sdk:'27.2',selected_sdk_inputs:selectedSDK,source_patch_sha256:sha(sourcePatch),
   ...(callbackFence?{sdk_source:mlx,sdk_library:library,incremental_patch_sha256:sha(incrementalPatch),observed_source_patch_sha256:sha(observedPatch)}:{}),results:[],models:0,inference:false,
@@ -118,6 +119,11 @@ const receipt={version:1,scope:residencyRefresh?'current_build_helper_residency_
   ...(residencyRefresh?{residency_refresh_patch_sha256:sha(residencyPatch)}:{}),
   source_fixture_only:true,installed:false,activation:false,native_authority:false,whole_native_provenance:false};
 if(healthyMetal){
+  if(residencyMetal){
+    assert(['fios-core','fios-core.lab','fios-core.local'].includes(hostname()));
+    assert.equal(run('/usr/sbin/sysctl',['-n','hw.memsize']).trim(),String(24*1024**3));
+    assert(/^Apple M4(?:\s|$)/.test(run('/usr/sbin/sysctl',['-n','machdep.cpu.brand_string']).trim()));
+  }
   const metalFixture=bytes(path.join(root,'platform/studio/native/current_mlx_metal_healthy_test.cpp'),1<<20);
   const metallib=path.join(path.dirname(library),'mlx.metallib');
   const metallibSHA256=sha(bytes(metallib,256<<20));

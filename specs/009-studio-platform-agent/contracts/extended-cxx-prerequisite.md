@@ -30,3 +30,22 @@ and cleanup channel, not model competence, full native/provenance coverage or
 production eligibility. The current native artifact remains explicitly model-
 free; this new component receipt is not silently admitted by the model-
 prerequisite parser and does not replace system_cxx null there.
+
+
+### Explicit residency SDK empty-Metal supplement
+
+`--residency-refresh-metal` is a separate final option for the cumulative
+nine-file SDK projection. It requires the existing `--healthy-metal
+--metal-cpp-zip ABS` selection plus `--owner-capture-refusal
+--sdk-request-events`; `--residency-refresh` remains CPU-only. The physical
+selection additionally requires the Core hostname,24GiB and M4-family hardware.
+Both actual CPU build/run modes must pass before the three existing empty
+Metal callback/payload/capture cases run, sequentially with20s per case and
+network denied. No array, kernel or model executes in those Metal cases.
+
+Its distinct scope is
+`current_build_helper_residency_SDK_CPU_and_empty_Metal_callbacks_not_native_authority`.
+The receipt binds the cumulative SDK patch, exact library/metallib, fixture,
+archive, selected toolchain and before/after inputs. It does not replace the
+old CPU receipt or enter existing model-prerequisite parsing. It supplies no
+production artifact approval, enrollment, all-client authority or model plan.
