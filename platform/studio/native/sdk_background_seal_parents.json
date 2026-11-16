@@ -1,0 +1,6 @@
+{
+  "native_source": {
+    "src/fios/current_sdk_owners.cpp": "4014dc5d2be19bbb870b9a17c09c14a96c6d2bc09a7c9d5228a69abfdc54b4f6"
+  },
+  "legacy_sdk_header_sha256": "c897b0de477c8bf7097566e1aa24150d87027b4d4139c50c7881bee434c43022"
+}

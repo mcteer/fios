@@ -26,3 +26,9 @@ The manager exposes `source_background.sdk_residency_refresh_untracked` and `ret
 Apple describes [requestResidency](https://developer.apple.com/documentation/metal/mtlresidencyset/requestresidency%28%29) as preparatory work that may be deferred under competing memory demand. Its [residency-set guide](https://developer.apple.com/documentation/metal/simplifying-gpu-resource-management-with-residency-sets) also says sets remain attached to already committed/scheduled command buffers after removal from a queue. [endResidency](https://developer.apple.com/documentation/metal/mtlresidencyset/endresidency%28%29) indicates that backing memory can be reused; it is not presented there as a wait for other command buffers.
 
 These references do not establish a native completion receipt from the SDK refresh thread's return or join. The existing unsupported-participant signal remains correct; it must not be converted to cleanup failure, model idle or a positive all-client capability. This bounded documentation review does not qualify other writers or change any native mode, model plan or library bytes.
+
+The separate [background participant seal](sdk-background-participant-seal.md)
+now tests atomic future-start exclusion in an explicit private compile mode.
+Ordinary native startup preserves the existing1000ms refresh default and its
+unsupported coverage signal. No current profile enables the seal, tracks this
+worker or acquires positive all-client/native authority.
