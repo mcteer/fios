@@ -5,6 +5,11 @@ import CoreFoundation
 // Owns one already-launched, approved private Pydantic child. Factories must
 // reserve512MiB and durable ownership BEFORE launching; no task supplies argv.
 // Poll only from the serialized manager. No workload data enters the journal.
+struct WorkerZeroPostEvidence:Sendable {
+    let handoff:WorkerHandoffBinding
+    let grant:WorkerGrant
+    fileprivate init(handoff:WorkerHandoffBinding,grant:WorkerGrant) {self.handoff=handoff;self.grant=grant}
+}
 final class PrivateWorker {
     private let process:Process
     private let input:FileHandle
@@ -29,6 +34,7 @@ final class PrivateWorker {
     private var actualPosts:Int?
     private var dispatchRecorded=false
     private(set) var reaped=false
+    private(set) var zeroPostEvidence:WorkerZeroPostEvidence?
     private(set) var memorySamples=0
     var outputEOFObserved:Bool {eof}
 
@@ -214,11 +220,12 @@ final class PrivateWorker {
             guard (try? grant.provenGone())==true else {return events}
             try journal.recordWorkerGone(job:job,attempt:attempt,grant:grant)
             reaped=true
-            // A trustworthy once-only zero-POST summary plus correlated
-            // terminal and fully reaped child proves non-dispatch. Neither
-            // cancellation nor child exit alone supplies this evidence.
+            // This supplies the local no-POST input only. A registered native
+            // root additionally requires its exact unconsumed cancellation;
+            // neither child exit nor this summary releases that native hold.
             if !protocolBroken && terminal && actualPosts==0 && !nativeComplete {
                 try resolve(.not_sent)
+                if let nativeHandoff,!nativeComplete {zeroPostEvidence=WorkerZeroPostEvidence(handoff:nativeHandoff,grant:grant)}
             }
             if !terminal && !nativeComplete { try retainNativeUncertainty() }
         }

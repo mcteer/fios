@@ -1,0 +1,68 @@
+import Foundation
+import CryptoKit
+
+@main enum NonDispatchClientFixture {
+    static func main()throws {
+        let args=CommandLine.arguments
+        guard args.count==10,let pid=Int32(args[2]) else {throw RuntimeError.invalid}
+        let directory=URL(fileURLWithPath:args[1]),image=args[3],socket=args[4],job=args[5],instance=args[6],step=args[7]
+        let journal=try Journal(directory:directory)
+        let base="http://127.0.0.1:1/v1",epoch="00000000-0000-4000-8000-000000000002",now=HostResources.nowMilliseconds()
+        let scope=InferenceScope(host:"fixture-host",endpointHash:PythonWorkerFactory.digest(base),profileHash:String(repeating:"b",count:64),managerEpoch:epoch,nativeEpoch:instance,canonicalModel:"fixture/model-a",nativeModel:"fixture/model-a",sequence:1,sampledAt:step=="close" ? now:(try journal.inferenceScope(job:job,attempt:0)?.scope.sampledAt ?? 0))
+        let id=try scope.nativeRequestCorrelationID(job:job,attempt:0)
+        if step=="close" {
+            _=try ArtifactStore(directory:directory.appendingPathComponent("artifacts"))
+            let executable=try VerifiedExecutable(path:image,sha256:SHA256.hash(data:Data(contentsOf:URL(fileURLWithPath:image))).map{String(format:"%02x",$0)}.joined())
+            let peer=NativeControlPeer(pid:pid,start:try WorkerResources.startIdentifier(pid:pid),executable:executable)
+            let client=NativeControlClient(path:socket,peer:peer)
+            let older=UUID().uuidString.lowercased()
+            try journal.claim(job:older,attempt:0,model:scope.canonicalModel,scope:scope)
+            try journal.markDispatched(job:older,attempt:0);try journal.markUncertain(job:older,attempt:0)
+            try journal.claim(job:job,attempt:0,model:scope.canonicalModel,scope:scope)
+            let plan=try journal.planWorkerStart(job:job,attempt:0)
+            try journal.markDispatched(job:job,attempt:0)
+            let registered=try client.registerHandoff(instance:instance,correlationID:id).result
+            guard registered.state == .pending,!registered.uncertain else {throw RuntimeError.invalid}
+            let live=try client.lineage(instance:instance,correlationID:id)
+            _=try journal.observeLineage(job:job,attempt:0,scope:scope,peer:peer,sample:live,now:HostResources.nowMilliseconds())
+            let handoff=try WorkerHandoffBinding.capture(plan:plan,journal:journal,peer:peer)
+            let python=URL(fileURLWithPath:args[8]).resolvingSymlinksInPath()
+            let pythonSHA=SHA256.hash(data:try Data(contentsOf:python)).map{String(format:"%02x",$0)}.joined()
+            let factory=try PythonWorkerFactory(invocation:args[8],executableSHA256:pythonSHA,policySHA256:args[9])
+            // Synthetic pre-admission is used only to obtain genuine factory
+            // NO-SPAWN evidence. No permission bytes/model child can exist.
+            let snapshot=NativeSnapshot(host:scope.host,endpointHash:scope.endpointHash,nativeEpoch:instance,sequence:1,sampledAt:now,allClientLifecycleCoverage:true,residentModel:nil,outstandingOwners:0,loading:false)
+            let binding=WorkerDispatchBinding(baseURL:base,guardPath:directory.appendingPathComponent("observe.sock").path,host:scope.host,profileHash:scope.profileHash,managerEpoch:epoch,canonicalModel:scope.canonicalModel,nativeModel:scope.nativeModel,nativeSnapshot:snapshot,nativeCompatibilityAccepted:true,apiKey:nil)
+            let operation=try factory.beginStart(binding:binding,plan:plan,started:Int64(ProcessInfo.processInfo.systemUptime*1000),now:now,initiallyCancelled:true,handoff:handoff)
+            var evidence:WorkerNeverSpawnedEvidence?
+            let end=ProcessInfo.processInfo.systemUptime+2
+            while ProcessInfo.processInfo.systemUptime<end {
+                if let result=operation.take() {
+                    guard case .failure(.neverSpawned(let value))=result else {throw RuntimeError.invalid}
+                    evidence=value;break
+                }
+                Thread.sleep(forTimeInterval:0.005)
+            }
+            guard let evidence else {throw RuntimeError.deadline}
+            try journal.recordWorkerNeverSpawned(job:job,attempt:0,evidence:evidence)
+            guard try journal.unresolvedCount()==2,try journal.uncertainCount()==2 else {throw JournalError.conflict}
+            let coordinator=NativeHandoffNonDispatch(journal:journal,source:client)
+            try coordinator.enqueue(.neverSpawned(evidence))
+            let finish=ProcessInfo.processInfo.systemUptime+3
+            while coordinator.pending && ProcessInfo.processInfo.systemUptime<finish {
+                try coordinator.poll(now:HostResources.nowMilliseconds())
+                Thread.sleep(forTimeInterval:0.005)
+            }
+            guard !coordinator.pending,try journal.inferenceScope(job:job,attempt:0)?.state == .not_sent,
+                  try journal.unresolvedCount()==1,try journal.uncertainCount()==1,
+                  try journal.inferenceScope(job:older,attempt:0)?.state == .uncertain else {throw JournalError.conflict}
+            print("\(id) \(registered.rootSequence)")
+        }else if step=="check" {
+            guard try journal.inferenceScope(job:job,attempt:0)?.state == .not_sent,
+                  try journal.handoffNonDispatchReceipt(job:job,attempt:0)?.localProducer == "never_spawned",
+                  try journal.requestCount(job:job)==1,try journal.unresolvedCount()==1,try journal.uncertainCount()==1,
+                  try journal.activeLaunchCount()==0,try journal.workerGrants().isEmpty else {throw JournalError.conflict}
+            print("PASS: durable original-root non-dispatch decision survives restart; older native uncertainty retained")
+        }else {throw RuntimeError.invalid}
+    }
+}

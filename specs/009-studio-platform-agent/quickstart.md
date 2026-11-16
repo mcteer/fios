@@ -1454,3 +1454,21 @@ The80 stages include eight expected parent failures. The full constructor/cache
 logic uses an explicit private temporary-directory fixture port and CPU compiler
 stand-ins. It invokes no native compiler/model/device; see
 [constructor contract](contracts/ane-compile-exception.md).
+
+
+### Original-root non-dispatch source fixture
+
+With a separately reviewed private capsule declaring native_handoff_version1:
+
+```sh
+node scripts/check-platform-native-handoff.mjs --isolated --capsule /ABS/PRIVATE_SOURCE_CAPSULE --sha256 REVIEWED_CAPSULE_RECEIPT_SHA --non-dispatch
+```
+
+This finite empty-catalog workflow creates genuine factory no-spawn evidence and
+closes its original unconsumed native root, then checks the scoped not_sent
+decision across restart and a late-root HTTP denial. Synthetic pre-admission is
+used only for the never-started worker, not inference or native admission. An
+older independent uncertain claim and spent budget remain. No model is invoked.
+Version2 decision checkpoints require the current reader; rollback uses the old
+artifact's retained compatible stopped backup, not a downgrade of new state. See
+[the non-dispatch contract](contracts/handoff-non-dispatch.md).

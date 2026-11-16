@@ -342,6 +342,44 @@ func runPythonFactoryTests() throws {
           try handoffJournal.activeLaunchCount()==0,try handoffJournal.unresolvedCount()==1,
           try handoffJournal.inferenceScope(job:handoffJob,attempt:0)?.state == .uncertain else {fatalError("Bound coordinator child lost header or cleared native hold")}
     print("PASS: broker durably dispatches before off-loop registration, checkpoints original root before child launch and forwards it on one installed mock POST; completion/reap retains native uncertainty")
+    // An actual installed child's guard refuses the changed native epoch before
+    // POST. Local reap alone holds the claim; the exact mock unconsumed-root
+    // cancellation is then required to resolve only this new request.
+    try Data(String(repeating:"2",count:32).utf8).write(to:directory.appendingPathComponent("native-epoch"))
+    let zeroState=directory.appendingPathComponent("zero-post-state")
+    let zeroJob=UUID().uuidString.lowercased(),zeroTime=HostResources.nowMilliseconds()
+    do {
+    let zeroJournal=try Journal(directory:zeroState)
+    let zeroSource=FixtureHandoffSource(peer:handoffPeer,cancellationState:.cancelled)
+    let zeroBroker=ModelBroker(journal:zeroJournal,factory:factory,handoffSource:zeroSource)
+    let zeroSnapshot=NativeSnapshot(host:"fixture-host",endpointHash:hash,nativeEpoch:handoffEpoch,sequence:1,sampledAt:zeroTime,allClientLifecycleCoverage:true,residentModel:nil,outstandingOwners:0,loading:false)
+    let zeroBinding=WorkerDispatchBinding(baseURL:base,guardPath:directory.appendingPathComponent("observe.sock").path,host:"fixture-host",profileHash:String(repeating:"f",count:64),managerEpoch:epoch,canonicalModel:"fixture/model",nativeModel:"fixture/model",nativeSnapshot:zeroSnapshot,nativeCompatibilityAccepted:true,apiKey:nil)
+    _=try zeroJournal.reserveJob(DurableJob(id:zeroJob,idempotency:UUID().uuidString.lowercased(),ownerHash:owner,requestHash:String(repeating:"b",count:64),created:zeroTime))
+    try zeroJournal.transitionJob(id:zeroJob,to:.running)
+    var zeroAdmission=AdmissionPolicy()
+    try zeroBroker.submit(job:zeroJob,owner:owner,requestID:UUID().uuidString.lowercased(),context:[ModelText(role:"user",content:"fixture zero post")],binding:zeroBinding,nativeCapacityProven:true,sample:resources(zeroTime),admission:&zeroAdmission,now:zeroTime)
+    guard zeroSource.entered.wait(timeout:.now()+1) == .success else {throw RuntimeError.deadline}
+    zeroSource.release.signal()
+    var zeroUsage=false,zeroFailure=false
+    let zeroDeadline=ProcessInfo.processInfo.systemUptime+10
+    while (zeroBroker.active(job:zeroJob) || zeroBroker.nativeNonDispatchPending) && ProcessInfo.processInfo.systemUptime<zeroDeadline {
+        let events=try zeroBroker.poll(now:HostResources.nowMilliseconds(),uptime:Int64(ProcessInfo.processInfo.systemUptime*1000),admission:&zeroAdmission,source:{_ in zeroBinding})
+        for event in events[zeroJob] ?? [] {
+            if case .usage(let posts,_)=event {guard posts==0 else {fatalError("Refused epoch dispatched a model POST")};zeroUsage=true}
+            if case .failed(let code)=event,code=="model_unavailable" {zeroFailure=true}
+        }
+        Thread.sleep(forTimeInterval:0.01)
+    }
+    guard zeroUsage,zeroFailure,!zeroBroker.active(job:zeroJob),!zeroBroker.nativeNonDispatchPending,
+          try zeroJournal.unresolvedCount()==0,try zeroJournal.requestCount(job:zeroJob)==1,
+          try zeroJournal.handoffNonDispatchReceipt(job:zeroJob,attempt:0)?.localProducer == "reaped_zero_post",
+          try zeroJournal.handoffNonDispatchReceipt(job:zeroJob,attempt:0)?.grantSHA256 != nil else {fatalError("Zero-post/native closure lost bound grant, decision or spent budget")}
+    }
+    let zeroReopened=try Journal(directory:zeroState)
+    guard try zeroReopened.unresolvedCount()==0,
+          try zeroReopened.handoffNonDispatchReceipt(job:zeroJob,attempt:0)?.localProducer == "reaped_zero_post",
+          try zeroReopened.requestCount(job:zeroJob)==1 else {fatalError("Reopened zero-post decision lost original producer/budget")}
+    print("PASS: installed private child emits verified zero-POST refusal; exact native cancellation plus durable reap records only not_sent with original grant and spent budget across restart")
     let reaped=HostResources.nowMilliseconds()
     try admission.reserveWorker(key:"reaped-one",sample:resources(reaped),now:reaped)
     try admission.reserveWorker(key:"reaped-two",sample:resources(reaped),now:reaped)
@@ -472,8 +510,20 @@ private func runHandoffNeverSpawnedTests(factory:PythonWorkerFactory)throws {
           try journal.inferenceScope(job:job,attempt:0)?.state == (independentlyResolved ? .not_sent:.uncertain),
           try journal.inferenceScope(job:older,attempt:0)?.state == .uncertain else {fatalError("Local cancellation cleared native handoff or older uncertainty")}
     do {try journal.recordWorkerNeverSpawned(job:job,attempt:0,evidence:proof);fatalError("Handoff cancellation replay accepted")}catch JournalError.conflict {}
+    if !independentlyResolved {
+        guard try !journal.resolveClosedHandoff(evidence:.neverSpawned(proof),sample:nil,now:now),
+              try journal.unresolvedCount()==2 else {fatalError("Local proof without native cancellation resolved claim")}
+        let native=NativeHandoffSample(peer:peer,sampledAt:now,result:NativeHandoffResult(operation:.cancel,instance:epoch,correlationID:correlation,rootSequence:UInt64.max,sampleSequence:2,state:.cancelled,uncertain:false))
+        guard try journal.resolveClosedHandoff(evidence:.neverSpawned(proof),sample:native,now:now),
+              try journal.unresolvedCount()==1,try journal.uncertainCount()==1,
+              try journal.inferenceScope(job:job,attempt:0)?.state == .not_sent,
+              try journal.inferenceScope(job:older,attempt:0)?.state == .uncertain,
+              try journal.requestCount(job:job)==1,
+              try journal.handoffNonDispatchReceipt(job:job,attempt:0)?.localProducer == "never_spawned" else {fatalError("Native closed-handoff proof lost durable receipt or changed older uncertainty/history")}
+        do {_=try journal.resolveClosedHandoff(evidence:.neverSpawned(proof),sample:native,now:now);fatalError("Native non-dispatch proof replayed")}catch JournalError.conflict {}
     }
-    print("PASS: original full-width native root binds once-only launch; local no-spawn cancellation releases only local slot and preserves both native claims")
+    }
+    print("PASS: original full-width native root binds once-only launch; local cancellation preserves both native claims until scoped native cancellation closes only its own not_sent decision")
 }
 
 // Held synthetic registration proves manager responsiveness and spawn ordering.
@@ -481,11 +531,15 @@ private final class FixtureHandoffSource:NativeHandoffPreparing,@unchecked Senda
     let peer:NativeControlPeer
     let entered=DispatchSemaphore(value:0),release=DispatchSemaphore(value:0),lineageReady=DispatchSemaphore(value:0)
     let wrongRoot:Bool
-    init(peer:NativeControlPeer,wrongRoot:Bool=false) {self.peer=peer;self.wrongRoot=wrongRoot}
+    let cancellationState:NativeHandoffState
+    init(peer:NativeControlPeer,wrongRoot:Bool=false,cancellationState:NativeHandoffState = .handedOff) {self.peer=peer;self.wrongRoot=wrongRoot;self.cancellationState=cancellationState}
     func registerHandoff(instance:String,correlationID:String)throws->NativeHandoffSample {
         entered.signal()
         guard release.wait(timeout:.now()+2) == .success else {throw NativeControlError.deadline}
         return NativeHandoffSample(peer:peer,sampledAt:HostResources.nowMilliseconds(),result:NativeHandoffResult(operation:.register,instance:instance,correlationID:correlationID,rootSequence:UInt64.max,sampleSequence:1,state:.pending,uncertain:false))
+    }
+    func cancelHandoff(instance:String,correlationID:String,rootSequence:UInt64)throws->NativeHandoffSample {
+        NativeHandoffSample(peer:peer,sampledAt:HostResources.nowMilliseconds(),result:NativeHandoffResult(operation:.cancel,instance:instance,correlationID:correlationID,rootSequence:rootSequence,sampleSequence:4,state:cancellationState,uncertain:false))
     }
     func lineage(instance:String,correlationID:String)throws->NativeRequestLineageSample {
         let value=NativeRequestLineageSample(peer:peer,sampledAt:HostResources.nowMilliseconds(),lineage:NativeRequestLineage(instance:instance,correlationID:correlationID,sampleSequence:2,rootSequence:wrongRoot ? 7:UInt64.max,found:true,uncertain:false,references:1,owners:1,ingress:1,preparing:0,active:0,responding:0))

@@ -11,6 +11,8 @@ import path from 'node:path';
 import {verifyNativeReview} from './lib/platform-native-review.mjs';
 import {nativeReviewJSON} from './lib/platform-native-review-intent.mjs';
 const args=process.argv.slice(2),root=path.resolve(import.meta.dirname,'..');
+const nonDispatch=args.at(-1)==='--non-dispatch';if(nonDispatch)args.pop();
+const fixture='platform/studio/Tests/StudioCoreTests/'+(nonDispatch?'NativeHandoffNonDispatchClient.swift.fixture':'NativeHandoffClient.swift.fixture');
 assert(process.platform==='darwin'&&process.arch==='arm64'&&process.getuid()>0);
 assert(args.length===5&&args[0]==='--isolated'&&args[1]==='--capsule'&&args[3]==='--sha256');
 const capsule=verifyNativeReview(args[2],args[4]),review=JSON.parse(readFileSync(path.join(args[2],'review.json')));
@@ -19,7 +21,7 @@ const directory=mkdtempSync('/private/tmp/f9-handoff-'),home=path.join(directory
 const models=path.join(home,'empty-models');mkdirSync(models,{mode:0o700});
 const sha=file=>createHash('sha256').update(readFileSync(file)).digest('hex'),core='platform/studio/Sources/StudioCore';
 const files=[...readdirSync(path.join(root,core)).filter(n=>n.endsWith('.swift')).sort().map(n=>core+'/'+n),
- 'platform/studio/Tests/StudioCoreTests/NativeHandoffClient.swift.fixture','platform/studio/Tests/NativeFixtures/ObserveProcess.c.fixture',
+ fixture,'platform/studio/Tests/NativeFixtures/ObserveProcess.c.fixture',
  'platform/studio/Sources/CSQLite/shim.h','platform/studio/Sources/CSQLite/module.modulemap','tests/fixtures/platform/native-model-review.sb','scripts/check-platform-native-handoff.mjs'];
 const capture=()=>Object.fromEntries(files.map(file=>[file,sha(path.join(root,file))])),inputs=capture(),records=[];
 const env={PATH:'/usr/bin:/bin',HOME:home,LANG:'C',LC_ALL:'C'};
@@ -30,7 +32,7 @@ function run(name,program,argv,timeout=180000){
  assert(!r.error&&r.status===0,name+' failed; retain '+directory);return r.stdout.trim();
 }
 const client=path.join(directory,'client'),swift=path.join(directory,'Client.swift'),observer=path.join(directory,'observe');
-copyFileSync(path.join(root,'platform/studio/Tests/StudioCoreTests/NativeHandoffClient.swift.fixture'),swift);
+copyFileSync(path.join(root,fixture),swift);
 run('swift-build','/usr/bin/swiftc',['-swift-version','6','-warnings-as-errors','-j2','-I',path.join(root,'platform/studio/Sources/CSQLite'),
  ...files.filter(n=>n.startsWith(core+'/')).map(n=>path.join(root,n)),swift,'-o',client]);
 run('observer-build','/usr/bin/clang',['-x','c',path.join(root,'platform/studio/Tests/NativeFixtures/ObserveProcess.c.fixture'),'-O2','-o',observer],30000);
@@ -62,13 +64,25 @@ async function request(route,{method='GET',headers={},body}={}){
 }
 const unixPolicy='(version 1)(allow default)(deny network*)(allow network* (local unix-socket) (remote unix-socket))';
 const state=path.join(directory,'state'),socket=path.join(home,'.fios-native-control/control.sock');
-function invoke(step,job,instance){assert(performance.now()<deadline);observe();return run(step+'-'+job,'/usr/bin/sandbox-exec',['-p',unixPolicy,client,state,String(child.pid),capsule.binary,socket,job,instance,step],8000)}
+function invoke(step,job,instance){assert(performance.now()<deadline);observe();return run(step+'-'+job,'/usr/bin/sandbox-exec',['-p',unixPolicy,client,state,String(child.pid),capsule.binary,socket,job,instance,step,...(nonDispatch?[path.join(root,'.venv/bin/python'),JSON.parse(readFileSync(path.join(root,'tests/fixtures/platform/model.json'))).policy_sha256]:[])],8000)}
 function parseRegistration(output){const parts=output.split(' ');assert(parts.length===2&&/^[a-f0-9]{64}$/.test(parts[0])&&/^[1-9][0-9]{0,19}$/.test(parts[1]));assert(BigInt(parts[1])<=18446744073709551615n);return {id:parts[0],root:parts[1]}}
 try {
  let healthy=false;const startDeadline=Math.min(deadline,performance.now()+10000);
  while(performance.now()<startDeadline&&!healthy){assert(!error&&!exited());try{observe();healthy=(await request('/health')).status===200}catch{await delay(25)}}
  assert(healthy,'Private startup deadline');assert.deepEqual((await request('/v1/models')).value.data,[]);
  const activity=await request('/v1/fios/activity'),instance=activity.value.source_instance;assert.equal(activity.value.coverage,'unknown');assert.match(instance,/^[a-f0-9]{32}$/);
+ if(nonDispatch){
+  const job=randomUUID(),registration=parseRegistration(invoke('close',job,instance));
+  invoke('check',job,instance);
+  const late=await request('/v1/chat/completions',{method:'POST',headers:{'Content-Type':'application/json','X-Fios-Native-Instance':instance,'X-Fios-Request-ID':registration.id,'X-Fios-Handoff-Root':registration.root},body:JSON.stringify({model:'fixture/missing-model',messages:[]})});
+  assert.equal(late.status,409);assert.equal(late.value.error.type,'native_handoff_unavailable');
+  invoke('check',job,instance);observe();assert.deepEqual(capture(),inputs);
+  const result={scope:'actual_native_unconsumed_root_plus_fixed_worker_no_spawn_not_sent_only',inputs,records,capsule_receipt_sha256:args[4],source_instance:instance,job,stages:3,
+   own_request_not_sent:true,older_independent_uncertainty_retained:1,late_original_root_denied:true,request_budget_retained:true,worker_metadata_version:2,
+   private_rejected_HTTP_POSTs:attempts,real_model_POSTs:0,models:0,peak_native_process_bytes:peak,native_admission_authority:false,native_completion_proof:false,
+   synthetic_pre_admission_no_spawn_only:true,installed:false,activation:false,inputs_unchanged:true};
+  writeFileSync(path.join(directory,'receipt.json'),JSON.stringify(result,null,2)+'\n',{mode:0o600});console.log(JSON.stringify({directory,receipt_sha256:sha(path.join(directory,'receipt.json')),stages:3,native_admission_authority:false}));
+ }else{
  const cancelled=randomUUID(),cancelRegistration=parseRegistration(invoke('register',cancelled,instance));
  invoke('cancel',cancelled,instance);
  const headers=value=>({'Content-Type':'application/json','X-Fios-Native-Instance':instance,'X-Fios-Request-ID':value.id,'X-Fios-Handoff-Root':value.root});
@@ -84,6 +98,7 @@ try {
   fast_rejection_preserves_original_root:true,independent_uncertain_claims_retained:2,private_rejected_HTTP_POSTs:attempts,real_model_POSTs:0,models:0,
   peak_native_process_bytes:peak,native_authority:false,installed:false,activation:false,inputs_unchanged:true};
  writeFileSync(path.join(directory,'receipt.json'),JSON.stringify(result,null,2)+'\n',{mode:0o600});console.log(JSON.stringify({directory,receipt_sha256:sha(path.join(directory,'receipt.json')),stages:4,native_authority:false}));
+ }
 } finally {
  signal('SIGTERM');let end=performance.now()+2000;while(!exited()&&performance.now()<end)await delay(10);
  if(!exited())signal('SIGKILL');end=performance.now()+1000;while(!exited()&&performance.now()<end)await delay(10);

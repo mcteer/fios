@@ -18,6 +18,8 @@ struct WorkerHandoffBinding:Sendable {
         _=try NativeControlWire.instanceBytes(plan.scope.nativeEpoch)
         return Self(plan:plan,peer:peer,rootSequence:root,correlationID:try plan.scope.nativeRequestCorrelationID(job:plan.job,attempt:plan.attempt))
     }
+    var subject:NativeLineageRequest {NativeLineageRequest(job:plan.job,attempt:plan.attempt,scope:plan.scope)}
+    var launchNonce:String {plan.nonce}
     func validate(plan expected:PlannedWorkerStart,scope:InferenceScope)throws {
         guard plan===expected else {throw RuntimeError.identity}
         try validate(job:expected.job,attempt:expected.attempt,scope:scope)

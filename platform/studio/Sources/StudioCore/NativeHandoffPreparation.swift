@@ -1,6 +1,6 @@
 import Foundation
 
-protocol NativeHandoffPreparing:NativeLineageReading {
+protocol NativeHandoffPreparing:NativeLineageReading,NativeHandoffClosing {
     func registerHandoff(instance:String,correlationID:String)throws->NativeHandoffSample
 }
 extension NativeControlClient:NativeHandoffPreparing {}

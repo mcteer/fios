@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 import Darwin
 import CSQLite
 
@@ -519,6 +520,54 @@ public final class Journal {
         try execute("INSERT INTO native_lineages(job,attempt,payload) VALUES(?,?,?) ON CONFLICT(job,attempt) DO UPDATE SET payload=excluded.payload",[job,String(attempt),payload])
         return observation
     }
+    // Resolve only this original request as not_sent. A local acknowledgement
+    // alone, an ordinary retirement or a handed-off/unknown native root cannot.
+    @discardableResult func resolveClosedHandoff(evidence:WorkerNoPostEvidence,sample:NativeHandoffSample?,now:Int64)throws->Bool {
+        let binding=try evidence.binding(),subject=binding.subject
+        let job=subject.job,attempt=subject.attempt,scope=subject.scope
+        guard let record=try inferenceScope(job:job,attempt:attempt),[.dispatched,.uncertain].contains(record.state),
+              try record.scope.encoded()==scope.encoded(),
+              try scalar("SELECT count(*) FROM worker_launches WHERE job=? AND attempt=? AND nonce=? AND boot=? AND reaped=1",[job,String(attempt),binding.launchNonce,HostBoot.identity()])==1 else {throw JournalError.conflict}
+        switch evidence {
+        case .neverSpawned:
+            guard try scalar("SELECT count(*) FROM worker_grants WHERE job=? AND attempt=?",[job,String(attempt)])==0 else {throw JournalError.conflict}
+        case .reaped(let proof):
+            guard try scalar("SELECT count(*) FROM worker_grants WHERE job=? AND attempt=? AND payload=? AND reaped=1",[job,String(attempt),grantPayload(proof.grant)])==1 else {throw JournalError.conflict}
+        }
+        guard try originalNativeRoot(job:job,attempt:attempt,scope:scope,peer:binding.peer)==binding.rootSequence else {throw JournalError.conflict}
+        var consumer=try NativeRequestLineageConsumer(scope:scope,job:job,attempt:attempt,peer:binding.peer,checkpoint:lineageCheckpoint(job:job,attempt:attempt))
+        let accepted=consumer.acceptHandoffCancellation(sample,now:now) != nil
+        if accepted {
+            let producer:String,grantHash:String?
+            switch evidence {
+            case .neverSpawned:producer="never_spawned";grantHash=nil
+            case .reaped(let proof):
+                producer="reaped_zero_post"
+                grantHash=SHA256.hash(data:Data(try grantPayload(proof.grant).utf8)).map {String(format:"%02x",$0)}.joined()
+            }
+            try consumer.recordHandoffClosure(NativeHandoffClosureCheckpoint(version:1,localProducer:producer,workerMetadataVersion:2,handoffVersion:1,launchNonce:binding.launchNonce,grantSHA256:grantHash))
+        }
+        let payload=String(decoding:try consumer.checkpoint(scope:scope),as:UTF8.self)
+        try transaction {
+            try execute("INSERT INTO native_lineages(job,attempt,payload) VALUES(?,?,?) ON CONFLICT(job,attempt) DO UPDATE SET payload=excluded.payload",[job,String(attempt),payload])
+            if accepted {
+                try execute("DELETE FROM inference WHERE job=? AND attempt=?",[job,String(attempt)])
+                guard sqlite3_changes(db)==1 else {throw JournalError.conflict}
+                try execute("UPDATE inference_scopes SET state='not_sent' WHERE job=? AND attempt=?",[job,String(attempt)])
+            }else {
+                try execute("UPDATE inference SET uncertain=1 WHERE job=? AND attempt=?",[job,String(attempt)])
+                guard sqlite3_changes(db)==1 else {throw JournalError.conflict}
+                try execute("UPDATE inference_scopes SET state='uncertain' WHERE job=? AND attempt=?",[job,String(attempt)])
+            }
+            guard sqlite3_changes(db)==1 else {throw JournalError.conflict}
+        }
+        return accepted
+    }
+    func handoffNonDispatchReceipt(job:String,attempt:Int)throws->NativeHandoffClosureCheckpoint? {
+        guard let record=try inferenceScope(job:job,attempt:attempt),record.state == .not_sent,
+              let data=try lineageCheckpoint(job:job,attempt:attempt) else {return nil}
+        return try NativeRequestLineageConsumer.handoffClosureReceipt(data,scope:record.scope,job:job,attempt:attempt)
+    }
     private func lineageCheckpoint(job:String,attempt:Int)throws->Data? {
         try validate(job:job,attempt:attempt)
         let row=try statement("SELECT payload FROM native_lineages WHERE job=? AND attempt=?",[job,String(attempt)])
@@ -542,6 +591,20 @@ public final class Journal {
             guard let record=try inferenceScope(job:job,attempt:attempt),record.state != .reserved else {throw JournalError.invalid}
             let data=try storedBytes(rows,2,maximum:16384)
             try NativeRequestLineageConsumer.validateCheckpoint(data,scope:record.scope,job:job,attempt:attempt)
+            if let closure=try NativeRequestLineageConsumer.handoffClosureReceipt(data,scope:record.scope,job:job,attempt:attempt) {
+                guard record.state == .not_sent,
+                      try scalar("SELECT count(*) FROM worker_launches WHERE job=? AND attempt=? AND nonce=? AND reaped=1",[job,String(attempt),closure.launchNonce])==1 else {throw JournalError.invalid}
+                if closure.localProducer=="never_spawned" {
+                    guard try scalar("SELECT count(*) FROM worker_grants WHERE job=? AND attempt=?",[job,String(attempt)])==0 else {throw JournalError.invalid}
+                }else {
+                    let grant=try statement("SELECT payload,reaped FROM worker_grants WHERE job=? AND attempt=?",[job,String(attempt)])
+                    defer {sqlite3_finalize(grant)}
+                    guard sqlite3_step(grant)==SQLITE_ROW,sqlite3_column_int(grant,1)==1 else {throw JournalError.invalid}
+                    let payload=try storedBytes(grant,0,maximum:16384)
+                    guard SHA256.hash(data:payload).map({String(format:"%02x",$0)}).joined()==closure.grantSHA256,
+                          sqlite3_step(grant)==SQLITE_DONE else {throw JournalError.invalid}
+                }
+            }
             count+=1
         }
     }

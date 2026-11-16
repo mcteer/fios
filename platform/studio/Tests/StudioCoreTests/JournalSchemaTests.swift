@@ -44,6 +44,30 @@ func runJournalSchemaTests() throws {
         if before != after {failures.append("Changed rejected schema: "+name)}
     }
     guard failures.isEmpty else {fatalError(failures.joined(separator:"; "))}
+    // A syntactically valid decision cannot be adopted without its original
+    // durable local producer. This fixture has no worker launch at all.
+    let forged=root.appendingPathComponent("orphan-native-decision"),proofJob=UUID().uuidString.lowercased()
+    let proofScope=InferenceScope(host:"fixture-host",endpointHash:String(repeating:"a",count:64),profileHash:String(repeating:"b",count:64),managerEpoch:UUID().uuidString.lowercased(),nativeEpoch:String(repeating:"1",count:32),canonicalModel:"fixture/exact",nativeModel:"fixture/exact",sequence:1,sampledAt:10000)
+    let proofPeer=NativeControlPeer(pid:42,start:9,executable:try VerifiedExecutable(path:"/fixture/native",sha256:String(repeating:"c",count:64)))
+    let proofID=try proofScope.nativeRequestCorrelationID(job:proofJob,attempt:0)
+    var consumer=try NativeRequestLineageConsumer(scope:proofScope,job:proofJob,attempt:0,peer:proofPeer)
+    let live=NativeRequestLineageSample(peer:proofPeer,sampledAt:10000,lineage:NativeRequestLineage(instance:proofScope.nativeEpoch,correlationID:proofID,sampleSequence:1,rootSequence:UInt64.max,found:true,uncertain:false,references:1,owners:1,ingress:1,preparing:0,active:0,responding:0))
+    _=consumer.accept(live,now:10000)
+    let cancel=NativeHandoffSample(peer:proofPeer,sampledAt:10001,result:NativeHandoffResult(operation:.cancel,instance:proofScope.nativeEpoch,correlationID:proofID,rootSequence:UInt64.max,sampleSequence:2,state:.cancelled,uncertain:false))
+    _=consumer.acceptHandoffCancellation(cancel,now:10001)
+    try consumer.recordHandoffClosure(NativeHandoffClosureCheckpoint(version:1,localProducer:"never_spawned",workerMetadataVersion:2,handoffVersion:1,launchNonce:UUID().uuidString.lowercased(),grantSHA256:nil))
+    let payload=String(decoding:try consumer.checkpoint(scope:proofScope),as:UTF8.self).replacingOccurrences(of:"'",with:"''")
+    do {
+        let journal=try Journal(directory:forged)
+        try journal.claim(job:proofJob,attempt:0,model:proofScope.canonicalModel,scope:proofScope)
+        try journal.markDispatched(job:proofJob,attempt:0)
+        _=try journal.observeLineage(job:proofJob,attempt:0,scope:proofScope,peer:proofPeer,sample:live,now:10000)
+        try journal.resolveInference(job:proofJob,attempt:0,scope:proofScope,outcome:.not_sent)
+    }
+    try mutate(forged,"UPDATE native_lineages SET payload='"+payload+"';")
+    let proofBefore=SHA256.hash(data:try Data(contentsOf:forged.appendingPathComponent("state.sqlite")))
+    do {_=try Journal(directory:forged);fatalError("Orphan native decision adopted without original local producer")}catch JournalError.invalid {}
+    guard SHA256.hash(data:try Data(contentsOf:forged.appendingPathComponent("state.sqlite")))==proofBefore else {fatalError("Rejected decision rewrote original state")}
     // Exact current layout still reopens and preserves desired/uncertain rows.
     let valid=root.appendingPathComponent("valid"),job=UUID().uuidString.lowercased()
     do {

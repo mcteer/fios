@@ -78,6 +78,7 @@ struct NativeRequestLineageConsumer:Sendable {
     private var sequence:UInt64=0
     private(set) var rootSequence:UInt64?
     private(set) var fenced=false
+    private var handoffClosure:NativeHandoffClosureCheckpoint?
     init(scope:InferenceScope,job:String,attempt:Int,peer:NativeControlPeer,checkpoint:Data?=nil)throws {
         try scope.validate();_=try NativeControlWire.instanceBytes(scope.nativeEpoch)
         guard peer.pid>1,peer.start>0 else {throw NativeControlError.invalid}
@@ -88,7 +89,7 @@ struct NativeRequestLineageConsumer:Sendable {
             guard saved.scopeSHA256 == (try Self.scopeDigest(scope)),saved.instance==instance,saved.correlationID==correlationID else {throw JournalError.conflict}
             let original=try saved.peer()
             self.peer=original
-            previousNow=saved.previousNow;sampledAt=saved.sampledAt;sequence=saved.sequence
+            previousNow=saved.previousNow;sampledAt=saved.sampledAt;sequence=saved.sequence;handoffClosure=saved.handoffClosure
             rootSequence=UInt64(saved.root).flatMap {$0==0 ? nil:$0}
             fenced=saved.fenced || original.pid != peer.pid || original.start != peer.start ||
                 !original.executable.path.utf8.elementsEqual(peer.executable.path.utf8) || original.executable.sha256 != peer.executable.sha256
@@ -98,13 +99,17 @@ struct NativeRequestLineageConsumer:Sendable {
         let saved=try NativeLineageCheckpoint.decode(data)
         _=try NativeRequestLineageConsumer(scope:scope,job:job,attempt:attempt,peer:saved.peer(),checkpoint:data)
     }
+    static func handoffClosureReceipt(_ data:Data,scope:InferenceScope,job:String,attempt:Int)throws->NativeHandoffClosureCheckpoint? {
+        try validateCheckpoint(data,scope:scope,job:job,attempt:attempt)
+        return try NativeLineageCheckpoint.decode(data).handoffClosure
+    }
     private static func scopeDigest(_ scope:InferenceScope)throws->String {
         SHA256.hash(data:try scope.encoded()).map {String(format:"%02x",$0)}.joined()
     }
     func checkpoint(scope:InferenceScope)throws->Data {
-        let saved=NativeLineageCheckpoint(version:1,scopeSHA256:try Self.scopeDigest(scope),instance:instance,correlationID:correlationID,
+        let saved=NativeLineageCheckpoint(version:handoffClosure == nil ? 1:2,scopeSHA256:try Self.scopeDigest(scope),instance:instance,correlationID:correlationID,
             pid:peer.pid,start:String(peer.start),path:peer.executable.path,sha256:peer.executable.sha256,root:String(rootSequence ?? 0),
-            sequence:sequence,sampledAt:sampledAt,previousNow:previousNow,fenced:fenced)
+            sequence:sequence,sampledAt:sampledAt,previousNow:previousNow,fenced:fenced,handoffClosure:handoffClosure)
         let encoder=JSONEncoder();encoder.outputFormatting=[.sortedKeys]
         let data=try encoder.encode(saved)
         _=try NativeLineageCheckpoint.decode(data)
@@ -128,6 +133,31 @@ struct NativeRequestLineageConsumer:Sendable {
         guard original==value.rootSequence else {fenced=true;return nil}
         sequence=value.sampleSequence;sampledAt=sample.sampledAt
         guard value.recorded,!value.uncertain else {return nil}
+        return value
+    }
+    mutating func recordHandoffClosure(_ receipt:NativeHandoffClosureCheckpoint)throws {
+        guard !fenced,rootSequence != nil,sequence>0,sampledAt>=0 else {throw JournalError.conflict}
+        try receipt.validate();handoffClosure=receipt
+    }
+    // A cancelled original root can support only non-dispatch, and only when
+    // paired with the separately produced fixed-worker no-POST evidence.
+    mutating func acceptHandoffCancellation(_ sample:NativeHandoffSample?,now:Int64)->NativeHandoffResult? {
+        guard !fenced else {return nil}
+        guard (0...ActivityPolicy.maximumTimestamp).contains(now),now>=previousNow else {fenced=true;return nil}
+        previousNow=now
+        guard let sample else {return nil}
+        let value=sample.result
+        guard sample.peer.pid==peer.pid,sample.peer.start==peer.start,
+              sample.peer.executable.path.utf8.elementsEqual(peer.executable.path.utf8),sample.peer.executable.sha256==peer.executable.sha256,
+              value.instance==instance,value.correlationID==correlationID else {fenced=true;return nil}
+        guard let original=rootSequence else {return nil}
+        guard value.rootSequence==original,value.operation == .cancel else {fenced=true;return nil}
+        guard value.sampleSequence>sequence,value.sampleSequence<=UInt64(ActivityPolicy.maximumTimestamp),
+              (0...ActivityPolicy.maximumTimestamp).contains(sample.sampledAt),(-1000...5000).contains(now-sample.sampledAt),
+              sample.sampledAt>=sampledAt else {return nil}
+        sequence=value.sampleSequence;sampledAt=sample.sampledAt
+        if value.state == .handedOff {fenced=true;return nil}
+        guard value.state == .cancelled,!value.uncertain else {return nil}
         return value
     }
     mutating func accept(_ sample:NativeRequestLineageSample?,now:Int64)->NativeRequestLineageObservation {
@@ -173,6 +203,7 @@ private struct NativeLineageCheckpoint:Codable {
     let sampledAt:Int64
     let previousNow:Int64
     let fenced:Bool
+    let handoffClosure:NativeHandoffClosureCheckpoint?
     func peer()throws->NativeControlPeer {
         guard pid>1,let token=UInt64(start),token>0,String(token)==start else {throw JournalError.invalid}
         return NativeControlPeer(pid:pid,start:token,executable:try VerifiedExecutable(path:path,sha256:sha256))
@@ -180,8 +211,8 @@ private struct NativeLineageCheckpoint:Codable {
     static func decode(_ data:Data)throws->Self {
         try StrictJSON.validate(data,maximum:16384)
         guard let object=try JSONSerialization.jsonObject(with:data) as? [String:Any],
-              Set(object.keys)==Set(["version","scopeSHA256","instance","correlationID","pid","start","path","sha256","root","sequence","sampledAt","previousNow","fenced"]),
-              WireScalar.integer(object["version"],maximum:1)==1,WireScalar.integer(object["pid"],maximum:Int64(Int32.max)) != nil,
+              let version=WireScalar.integer(object["version"],maximum:2),[1,2].contains(version),
+              Set(object.keys)==Set(["version","scopeSHA256","instance","correlationID","pid","start","path","sha256","root","sequence","sampledAt","previousNow","fenced"]+(version==2 ? ["handoffClosure"]:[])),WireScalar.integer(object["pid"],maximum:Int64(Int32.max)) != nil,
               WireScalar.integer(object["sequence"]) != nil,
               // The initial no-sample sentinel is private persistent metadata.
               ["sampledAt","previousNow"].allSatisfy({key in
@@ -190,9 +221,34 @@ private struct NativeLineageCheckpoint:Codable {
               }) else {throw JournalError.invalid}
         let value=try JSONDecoder().decode(Self.self,from:data)
         _=try value.peer();_=try NativeControlWire.instanceBytes(value.instance)
+        if version==2 {
+            guard let closure=value.handoffClosure,let raw=object["handoffClosure"] as? [String:Any],
+                  Set(raw.keys)==Set(["version","localProducer","workerMetadataVersion","handoffVersion","launchNonce"]+(closure.grantSHA256 == nil ? []:["grantSHA256"])),
+                  WireScalar.integer(raw["version"],maximum:1)==1,
+                  WireScalar.integer(raw["workerMetadataVersion"],maximum:2)==2,
+                  WireScalar.integer(raw["handoffVersion"],maximum:1)==1 else {throw JournalError.invalid}
+            try closure.validate()
+        }else if value.handoffClosure != nil {throw JournalError.invalid}
         guard WireScalar.sha256(value.scopeSHA256),WireScalar.sha256(value.correlationID),
               let root=UInt64(value.root),String(root)==value.root,
-              (value.sequence==0 ? value.sampledAt == -1 && root==0:value.sampledAt>=0 && value.previousNow>=0) else {throw JournalError.invalid}
+              (value.sequence==0 ? value.sampledAt == -1 && root==0:value.sampledAt>=0 && value.previousNow>=0),
+              value.handoffClosure == nil || (root>0 && value.sequence>0) else {throw JournalError.invalid}
         return value
+    }
+}
+
+// Version2 lineage checkpoints retain the accepted non-dispatch decision's
+// local producer beside the original native peer/root/cancellation sequence.
+// There is deliberately no native complete, device idle or all-client field.
+struct NativeHandoffClosureCheckpoint:Codable,Sendable {
+    let version:Int
+    let localProducer:String
+    let workerMetadataVersion:Int
+    let handoffVersion:Int
+    let launchNonce:String
+    let grantSHA256:String?
+    func validate()throws {
+        guard version==1,workerMetadataVersion==2,handoffVersion==1,WireScalar.uuid(launchNonce),
+              localProducer=="never_spawned" ? grantSHA256==nil : localProducer=="reaped_zero_post" && grantSHA256.map(WireScalar.sha256)==true else {throw JournalError.invalid}
     }
 }

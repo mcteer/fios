@@ -34,6 +34,7 @@ final class ModelBroker {
     }
     private var preparing:[String:Preparing]=[:]
     private let handoffSource:(any NativeHandoffPreparing)?
+    private let nonDispatch:NativeHandoffNonDispatch?
     private var starting:[String:Starting]=[:]
     private let journal:Journal
     private let factory:PythonWorkerFactory?
@@ -51,6 +52,7 @@ final class ModelBroker {
     }
     init(journal:Journal,factory:PythonWorkerFactory?=nil,handoffSource:(any NativeHandoffPreparing)?=nil) {
         self.journal=journal;self.factory=factory;self.handoffSource=handoffSource
+        nonDispatch=handoffSource.map {NativeHandoffNonDispatch(journal:journal,source:$0)}
     }
     private func job(_ id:String,owner:String?=nil,now:Int64) throws -> DurableJob {
         guard var found=try journal.jobs().first(where:{$0.id==id}),
@@ -145,6 +147,7 @@ final class ModelBroker {
     }
     func poll(now:Int64,uptime:Int64,admission:inout AdmissionPolicy,
               source:(String)throws->WorkerDispatchBinding?) throws -> [String:[ModelWorkerEvent]] {
+        try nonDispatch?.poll(now:now)
         launchHolds=try Self.reconcileFailedLaunches(launchHolds,journal:journal,admission:&admission)
         var result:[String:[ModelWorkerEvent]]=[:]
         for (id,var pending) in preparing {
@@ -222,6 +225,7 @@ final class ModelBroker {
                     result[id]=[.interrupted]
                 case .failure(.neverSpawned(let evidence)):
                     try journal.recordWorkerNeverSpawned(job:id,attempt:pending.attempt,evidence:evidence)
+                    if evidence.handoff != nil {try nonDispatch?.enqueue(.neverSpawned(evidence))}
                     admission.releaseWorkerAfterReap(key:pending.key)
                     launchHolds.remove(WorkerLaunchKey(job:id,attempt:pending.attempt))
                     result[id]=[.interrupted]
@@ -247,6 +251,7 @@ final class ModelBroker {
             // exact epoch/profile/scope and freshness, plus its owner lease.
             result[id,default:[]]+=try entry.worker.poll(now:uptime,authorized:lease && coherent)
             if entry.worker.reaped {
+                if let proof=entry.worker.zeroPostEvidence {try nonDispatch?.enqueue(.reaped(proof))}
                 admission.releaseWorkerAfterReap(key:entry.key)
                 entries.removeValue(forKey:id)
             }
@@ -260,5 +265,6 @@ final class ModelBroker {
     func canonicalModel(forJob id:String)->String? {entries[id]?.binding.canonicalModel ?? starting[id]?.binding.canonicalModel ?? preparing[id]?.binding.canonicalModel}
     func active(job:String)->Bool { entries[job] != nil || starting[job] != nil || preparing[job] != nil }
     var activeWorkers:Int { entries.count+starting.count+preparing.count }
+    var nativeNonDispatchPending:Bool {nonDispatch?.pending ?? false}
     var hasUnresolvedLaunch:Bool { !launchHolds.isEmpty }
 }

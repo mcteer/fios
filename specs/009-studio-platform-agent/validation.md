@@ -6889,3 +6889,72 @@ acceptance or task closure. Published76ed210/[CI43780640488](https://github.com/
 passes all seven jobs including aggregate. Superseded2f456ef run43780035321 was
 cancelled and is not an exact-head pass. Queued4f7c3a3/c59f56a source changes and
 subsequent evidence commits require their own latest-head CI after publication.
+
+
+### 2026-11-15 scoped native non-dispatch reconciliation
+
+Only an opaque original handoff plus genuine factory no-spawn evidence, or the
+fixed installed worker's validated terminal/zero-POST summary after exact durable
+reap, can enter reconciliation. One off-loop native cancellation at a time (at
+most32 retained subjects) must return fresh original-peer/epoch/correlation/root
+unconsumed cancellation. Local evidence alone, handed-off/unknown roots, local
+retirement, counters and HTTP results cannot resolve the native claim. The
+transaction persists a version2 lineage/decision receipt and closes only its own
+scope as not_sent; request history and other uncertain claims remain. Startup
+requires the original reaped launch nonce and, for a reaped worker, the exact
+stored grant hash. Version1 checkpoints remain readable. No model engine, device
+completion, all-client coverage, sampled idle or new admission is introduced.
+
+Executed final policy checks: Debug26000ms
+(`/private/tmp/fios-009-nondispatch-restart-debug.log`) and optimized20227ms
+(`/private/tmp/fios-009-nondispatch-restart-release.log`). They include actual
+installed child→changed-native-epoch guard refusal→verified zero-POST/reap→mock
+original-root cancellation→durable reaped_zero_post receipt/restart, preserving
+the spent request. A syntactically valid orphan decision lacking the original
+producer is rejected without original database rewrite. Strict native-candidate
+transfer/unknown/root/replay/time and malformed nested-receipt cases pass. Final
+198 Node/API and108 installed Python tests pass
+(`/private/tmp/fios-009-nondispatch-final-npm.log`); boundary/syntax/diff checks pass.
+No Python source changed after the metadata-v2 locked/no-editable reinstall.
+
+Genuine private empty-catalog native workflow passes three client/journal
+lifetimes with actual factory no-spawn and actual native cancellation, own
+not_sent, one older independent uncertain claim, retained budget and a late
+cancelled-root HTTP409. Receipt `/private/tmp/f9-handoff-4CpWl5/receipt.json`
+SHA256 `17b4983100ccfde687345529dc0b3eb2902f20cbedc4487b2d5e8caa96974efb`.
+It uses synthetic pre-admission only to obtain a never-started worker result;
+native_admission_authority:false, native_completion_proof:false. One private
+rejected HTTP POST,0 real model POSTs/models. Existing registered/consumed/native
+retirement behavior also passes with both uncertain claims retained: receipt
+`/private/tmp/f9-handoff-36IxSF/receipt.json` SHA256
+`80f168a4c5a6c2141b0325bb2bf93e1a3496557713bb3ec000d31e8a3da995fc`,
+two private rejected HTTP POSTs,0 real inference. Both use the unchanged private
+47112580b78e9accfb6d4de2c1b5a73b5eb0fd77a68ec8b5f21dc224825275d9
+capsule with current Core; native image/SDK are not rebuilt/promoted.
+
+Final stopped backup SHA256
+`4a46fed8b26e5d535b601d0f19d28dc58045c1d0b5d54d00e831c4bfe00d4a82`
+verifies/restores to a fresh private directory. The decision, budget and older
+uncertainty survive with no native child present. A reader compiled from the
+previous clean c59f56a Core refuses the new checkpoint before adopting it;
+restored database bytes remain unchanged. Backup review
+`/private/tmp/f9-handoff-4CpWl5/backup-review.json` SHA256
+`494ec6a396d5714d1b1a86aad82e81e8d8f3eabd0da4479652d6ee4e8f2fff68`.
+Rollback must use that old reader's retained compatible original backup.
+
+Retained failures are not passes: `/private/tmp/f9-handoff-dR9kzd` initially
+refused a fixture scope/capture-time mismatch; the fixture now uses the original
+fresh scope. `/private/tmp/f9-handoff-vtGbdI/closed-backup` retains an incomplete
+first backup because the journal-only fixture lacked its export store. The
+complete fixture creates the actual empty ArtifactStore before backup. Earlier
+intermediate compilation refused a private-type access; the checkpoint decoder
+remains private behind a scope-validating receipt reader. No failed copy is
+deleted or treated as sealed evidence.
+
+This completes only the scoped non-dispatch source workflow. Positive native
+model completion/quiescence, all-client admission, complete installation and
+Studio acceptance remain open;39/55 whole tasks complete. No inference,
+installation, enrollment, activation, production deployment or merge. The c59f56a
+metadata-v2 package above predates this reconciliation/decision-codec increment
+and is not its artifact evidence. Published0945977/[CI43784036385](https://github.com/mcteer/fios/actions/runs/43784036385)
+passes all seven jobs; the current increment needs its own exact-head CI.

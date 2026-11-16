@@ -33,6 +33,7 @@ struct PolicyTestRunner {
             ("native maintenance",runNativeMaintenanceTests),
             ("native control",runNativeControlTests),
             ("native request lineage",runNativeRequestLineageTests),
+            ("native handoff cancellation",runNativeHandoffCancellationTests),
             ("native lineage consumer",runNativeLineageConsumerTests),
             ("durable native lineage",runDurableLineageTests),
             ("native lineage polling",runNativeLineagePollingTests),
