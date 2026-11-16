@@ -66,6 +66,7 @@ final class ModelBroker {
     private var entries:[String:Entry]=[:]
     private var launchHolds:Set<WorkerLaunchKey>=[]
     private var scopes:[String:[Data]]=[:]
+    private var sourceWatermarks:[String:(sequence:UInt64,sampledAt:Int64,fenced:Bool)]=[:]
     private var previous:Int64=0
     static func restoreReservations(journal:Journal,admission:inout AdmissionPolicy) throws {
         for sandbox in try journal.sandboxRecords() where !sandbox.removalProven {
@@ -98,6 +99,29 @@ final class ModelBroker {
         [binding.host,binding.profileHash,binding.managerEpoch,binding.nativeSnapshot.nativeEpoch,
          binding.nativeSnapshot.endpointHash,binding.canonicalModel,binding.nativeModel].map {Data($0.utf8)}
     }
+    // Advisory continuity for this original job scope, not a source/guard
+    // issuer. Preserve the highest capture across preparation/start/run and
+    // later attempts; a source cannot regress merely because it is still newer
+    // than the launch-time minimum. Restart never restores a live worker.
+    private func retainSourceContinuity(job:String,current:WorkerDispatchBinding,original:WorkerDispatchBinding)->Bool {
+        let snapshot=current.nativeSnapshot,initial=original.nativeSnapshot
+        let previous=sourceWatermarks[job] ?? (sequence:initial.sequence,sampledAt:initial.sampledAt,fenced:false)
+        guard !previous.fenced else {return false}
+        guard snapshot.sequence>=initial.sequence,snapshot.sampledAt>=initial.sampledAt,
+              snapshot.sequence>=previous.sequence,snapshot.sampledAt>=previous.sampledAt else {
+            // Keep refusal even if the following durable revocation cannot
+            // commit. A later source sample cannot resurrect that launch.
+            sourceWatermarks[job]=(previous.sequence,previous.sampledAt,true)
+            return false
+        }
+        sourceWatermarks[job]=(snapshot.sequence,snapshot.sampledAt,false)
+        return true
+    }
+    private func fenceSource(job:String,original:WorkerDispatchBinding) {
+        let initial=original.nativeSnapshot
+        let previous=sourceWatermarks[job] ?? (sequence:initial.sequence,sampledAt:initial.sampledAt,fenced:false)
+        sourceWatermarks[job]=(previous.sequence,previous.sampledAt,true)
+    }
     func validate(context:[ModelText]) throws {
         guard let factory else {throw PolicyError.invalidObservation}
         guard !context.isEmpty,context.count<=1024,context.last?.role=="user",
@@ -124,6 +148,7 @@ final class ModelBroker {
         else { throw AdmissionError.capacity }
         let scope=Self.scopeIdentity(binding)
         guard scopes[id]==nil || scopes[id]==scope else { throw JournalError.conflict }
+        guard retainSourceContinuity(job:id,current:binding,original:binding) else {throw AdmissionError.capacity}
         let ownedGrants=Set(entries.map { "\($0.key):\($0.value.attempt)" })
         guard try journal.activeLaunchCount()==entries.count+starting.count+preparing.count+leasePreparing.count,
               try journal.workerGrants().allSatisfy({ownedGrants.contains("\($0.job):\($0.attempt)")}) else { throw AdmissionError.capacity }
@@ -196,7 +221,9 @@ final class ModelBroker {
             if pending.completion==nil {pending.completion=pending.operation.take()}
             let lease=(try? job(id,now:now)) != nil
             let current=try? source(id)
-            let coherent=current.map{preparationCoverage() == .all_clients && Self.retainsPreparationSource($0,original:pending.binding,now:now)} ?? false
+            let coherent=current.map{preparationCoverage() == .all_clients && Self.retainsPreparationSource($0,original:pending.binding,now:now)
+                && retainSourceContinuity(job:id,current:$0,original:pending.binding)} ?? false
+            if !coherent {fenceSource(job:id,original:pending.binding)}
             if !pending.revoked && (!lease || !coherent || uptime<pending.started || uptime-pending.started>=10000) {pending.revoked=true}
             leasePreparing[id]=pending
             guard let completion=pending.completion else {continue}
@@ -281,7 +308,9 @@ final class ModelBroker {
                 Self.scopeIdentity(binding)==Self.scopeIdentity(pending.binding)
                     && binding.nativeSnapshot.sequence>=pending.binding.nativeSnapshot.sequence
                     && ((try? NativeAdmission.retainsSource(binding,now:now)) ?? false)
+                    && retainSourceContinuity(job:id,current:binding,original:pending.binding)
             } ?? false
+            if !coherent {fenceSource(job:id,original:pending.binding)}
             if !pending.revoked && (!lease || !coherent || uptime<pending.started || uptime-pending.started>=10000) {
                 pending.revoked=true;pending.revokeJob=true
             }
@@ -363,7 +392,9 @@ final class ModelBroker {
                     && binding.nativeSnapshot.sequence>=pending.binding.nativeSnapshot.sequence
                     && (pending.preparation != nil ? (preparationCoverage() == .all_clients && Self.retainsPreparationSource(binding,original:pending.binding,now:now)):
                         ((try? pending.hasNativeHandoff ? NativeAdmission.retainsSource(binding,now:now):NativeAdmission.permitsDispatch(binding,now:now)) ?? false))
+                    && retainSourceContinuity(job:id,current:binding,original:pending.binding)
             } ?? false
+            if !eligible {fenceSource(job:id,original:pending.binding)}
             if !pending.revoked && (!lease || !eligible || uptime<pending.started || uptime-pending.started>=10000) {
                 pending.revoked=true;pending.operation.cancel()
                 if lease {try journal.transitionJob(id:id,to:.revoking,now:now)}
@@ -441,7 +472,9 @@ final class ModelBroker {
                     && binding.nativeSnapshot.sequence>=entry.binding.nativeSnapshot.sequence
                     && (entry.preparation != nil ? (preparationCoverage() == .all_clients && Self.retainsPreparationSource(binding,original:entry.binding,now:now)):
                         ((try? NativeAdmission.retainsSource(binding,now:now)) ?? false))
+                    && retainSourceContinuity(job:id,current:binding,original:entry.binding)
             } ?? false
+            if !coherent {fenceSource(job:id,original:entry.binding)}
             if lease && !coherent { try journal.transitionJob(id:id,to:.revoking,now:now) }
             // Own load/compute is not mistaken for source loss. Admission
             // checks loading/conflicts; an in-flight call only checks coverage,
@@ -456,6 +489,7 @@ final class ModelBroker {
         }
         let retained=Set(try journal.jobs().filter {$0.state != .removed}.map(\.id)).union(entries.keys)
         scopes=scopes.filter {retained.contains($0.key)}
+        sourceWatermarks=sourceWatermarks.filter {retained.contains($0.key)}
         // Every parser enforces64000 UTF-16/request; durable ordinals<=4 imply
         // <=256000/job even across crashes. Terminal history is never refunded.
         return result

@@ -85,5 +85,62 @@ func runModelBrokerTests() throws {
           try recovery.inferenceScope(job:childID,attempt:0)?.state == .uncertain,
           try recovery.unresolvedCount()==1,try recovery.requestCount(job:childID)==1 else {fatalError("Started-child recovery lost uncertainty or durable local reap")}
     print("PASS: original started child survives binding storage failure for exact local kill/bind/reap, no permission bytes or respawn, native uncertainty retained")
+    func exerciseSourceContinuity(_ scenario:String)throws {
+        let continuityJournal=try Journal(directory:directory.appendingPathComponent("source-continuity-"+scenario))
+        let continuityBroker=ModelBroker(journal:continuityJournal,factory:factory)
+        var continuityAdmission=AdmissionPolicy()
+        let olderID=UUID().uuidString.lowercased()
+        _=try continuityJournal.reserveJob(DurableJob(id:olderID,idempotency:UUID().uuidString.lowercased(),ownerHash:owner,requestHash:String(repeating:"b",count:64),created:10_000))
+        try continuityJournal.transitionJob(id:olderID,to:.running,now:10_000)
+        try continuityJournal.claim(job:olderID,attempt:0,model:binding.canonicalModel,scope:binding.inferenceScope())
+        try continuityJournal.markUncertain(job:olderID,attempt:0)
+        let continuityID=UUID().uuidString.lowercased()
+        _=try continuityJournal.reserveJob(DurableJob(id:continuityID,idempotency:UUID().uuidString.lowercased(),ownerHash:owner,requestHash:String(repeating:"b",count:64),created:10_000))
+        try continuityJournal.transitionJob(id:continuityID,to:.running,now:10_000)
+        try continuityJournal.claim(job:continuityID,attempt:0,model:binding.canonicalModel,scope:binding.inferenceScope())
+        let continuityPlan=try continuityJournal.planWorkerStart(job:continuityID,attempt:0)
+        let gate=DispatchSemaphore(value:0)
+        let blocked=PendingPythonWorker {_ in
+            _=gate.wait(timeout:.now()+5)
+            return .failure(.cancelled) // This fixture never creates a process/RPC.
+        }
+        defer {gate.signal()}
+        try continuityBroker.retainStart(operation:blocked,plan:continuityPlan,binding:binding,packet:Data(),started:0)
+        try continuityAdmission.reserveWorker(key:"model:\(continuityID):0",sample:sample,now:10_000)
+        func observed(_ sequence:UInt64,sampledAt:Int64=10_000)->WorkerDispatchBinding {
+            let value=NativeSnapshot(host:binding.host,endpointHash:snapshot.endpointHash,nativeEpoch:snapshot.nativeEpoch,
+                sequence:sequence,sampledAt:sampledAt,allClientLifecycleCoverage:true,residentModel:nil,outstandingOwners:0,loading:false)
+            return WorkerDispatchBinding(baseURL:binding.baseURL,guardPath:binding.guardPath,host:binding.host,profileHash:binding.profileHash,
+                managerEpoch:binding.managerEpoch,canonicalModel:binding.canonicalModel,nativeModel:binding.nativeModel,nativeSnapshot:value,
+                nativeCompatibilityAccepted:true,apiKey:nil)
+        }
+        _=try continuityBroker.poll(now:10_000,uptime:0,admission:&continuityAdmission,source:{_ in observed(3)})
+        guard try continuityJournal.jobs().first(where:{$0.id==continuityID})?.state == .running else {fatalError("Advancing source revoked launch")}
+        var continuityWriter:OpaquePointer?
+        guard sqlite3_open_v2(directory.appendingPathComponent("source-continuity-"+scenario+"/state.sqlite").path,&continuityWriter,SQLITE_OPEN_READWRITE,nil)==SQLITE_OK,
+              let continuityWriter else {throw JournalError.storage}
+        defer {sqlite3_close(continuityWriter)}
+        guard sqlite3_exec(continuityWriter,"BEGIN IMMEDIATE",nil,nil,nil)==SQLITE_OK else {throw JournalError.storage}
+        do {
+            _=try continuityBroker.poll(now:10_000,uptime:0,admission:&continuityAdmission,source:{_ in scenario=="missing" ? nil:observed(scenario=="clock" ? 4:2,sampledAt:scenario=="clock" ? 9999:10_000)})
+            fatalError("BROKER_SOURCE_REGRESSION_DID_NOT_REVOKE")
+        }catch JournalError.storage {}
+        guard sqlite3_exec(continuityWriter,"ROLLBACK",nil,nil,nil)==SQLITE_OK else {throw JournalError.storage}
+        _=try continuityBroker.poll(now:10_000,uptime:0,admission:&continuityAdmission,source:{_ in observed(4)})
+        guard try continuityJournal.jobs().first(where:{$0.id==continuityID})?.state == .revoking,
+              try continuityJournal.inferenceScope(job:continuityID,attempt:0)?.state == .uncertain else {
+            fatalError("BROKER_SOURCE_REGRESSION_ABOVE_ORIGINAL_MINIMUM_ACCEPTED \(scenario)")
+        }
+        gate.signal()
+        let continuityDeadline=ProcessInfo.processInfo.systemUptime+3
+        while continuityBroker.active(job:continuityID) && ProcessInfo.processInfo.systemUptime<continuityDeadline {
+            _=try continuityBroker.poll(now:10_000,uptime:0,admission:&continuityAdmission,source:{_ in observed(4)});usleep(1000)
+        }
+        guard !continuityBroker.active(job:continuityID),try continuityJournal.unresolvedCount()==2,
+              try continuityJournal.inferenceScope(job:continuityID,attempt:0)?.state == .uncertain,
+              try continuityJournal.inferenceScope(job:olderID,attempt:0)?.state == .uncertain else {fatalError("Source regression lost independent uncertainty")}
+        print("PASS: \(scenario) source regression survives failed durable revocation, retains both native uncertainties and never invokes a model")
+    }
+    for scenario in ["sequence","clock","missing"] {try exerciseSourceContinuity(scenario)}
     print("PASS: broker owner lease/native-capacity fail-closed and irreversible clock fencing")
 }

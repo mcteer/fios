@@ -16,6 +16,15 @@ The shared `NativeAdmission` validator checks the selected binding's host agains
 
 New dispatch additionally requires the existing fresh activity eligibility. An in-flight call may itself be loading/preparing; retained source quality therefore preserves that allowance while still refusing a foreign host/endpoint, a different busy model or lost coverage/freshness. Loading cannot mask outstanding owners: retention refuses a different or unidentified resident when outstanding owners are nonzero. With zero owners, preparing may retain the previous resident during idle replacement; same-model ownership remains allowed. A successful consistency check is advisory, not an atomic source reservation. The missing audited all-client guard/producer remains independently required before production activation, and no source rejection clears the original journal uncertainty or authorizes replay.
 
+
+The broker also retains each job's highest accepted native sequence and source
+capture time across preparation, worker start, active work and later attempts.
+Source regression, disappearance or failed quality/scope checks fence that job
+before durable revocation is attempted. A newer observation cannot revive its
+original launch after a SQLite write failure. Cleanup of this local metadata
+never resolves inference ownership; manager restart does not resume the old
+worker. These are consistency refusals, not a trusted source or native proof.
+
 ## Budgets and command/event lifecycle
 
 - At most4 actual model POSTs/job, attempts0..3; at most1 active per job and2 active/uncertain manager-originated model requests/host (external native same-model concurrency is not prohibited).≤32 unresolved owned records/host is a separate safety bound.
