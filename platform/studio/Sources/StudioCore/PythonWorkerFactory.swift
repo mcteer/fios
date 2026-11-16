@@ -6,6 +6,7 @@ struct WorkerMetadata:Decodable,Sendable {
     let version:Int
     let pipe_version:Int
     let native_handoff_version:Int
+    let native_preparation_version:Int?
     let package_version:String
     let python_version:String
     let policy_sha256:String
@@ -13,9 +14,13 @@ struct WorkerMetadata:Decodable,Sendable {
     static func decode(_ bytes:Data,policySHA256:String,packageVersion:String="0.1.0")throws->Self {
         try StrictJSON.validate(bytes,maximum:4096)
         guard let object=try JSONSerialization.jsonObject(with:bytes) as? [String:Any],
-              Set(object.keys)==Set(["version","pipe_version","native_handoff_version","package_version","python_version","policy_sha256","policy_input_units"]) else {throw RuntimeError.identity}
+              let version=WireScalar.integer(object["version"]),[2,3].contains(version) else {throw RuntimeError.identity}
+        let base:Set<String>=["version","pipe_version","native_handoff_version","package_version","python_version","policy_sha256","policy_input_units"]
+        guard Set(object.keys)==(version==3 ? base.union(["native_preparation_version"]):base),
+              ["pipe_version","native_handoff_version","policy_input_units"].allSatisfy({WireScalar.integer(object[$0]) != nil}),
+              version != 3 || WireScalar.integer(object["native_preparation_version"])==1 else {throw RuntimeError.identity}
         let value=try JSONDecoder().decode(Self.self,from:bytes)
-        guard value.version==2,value.pipe_version==1,value.native_handoff_version==1,
+        guard value.pipe_version==1,value.native_handoff_version==1,
               value.package_version==packageVersion,value.python_version=="3.11.17",value.policy_sha256==policySHA256,
               (1...128000).contains(value.policy_input_units) else {throw RuntimeError.identity}
         return value

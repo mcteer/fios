@@ -175,9 +175,11 @@ def _peer_uid(stream):
     raise NativeGuardError()
 
 
-async def query_observation(profile, command):
+async def _query_guard(profile, command, operation, payload):
     writer = None
     try:
+        profile.validate()
+        if operation not in ('activity','preparation') or not isinstance(payload,dict):raise NativeGuardError()
         info = os.lstat(profile.path)
         parent = os.lstat(os.path.dirname(profile.path))
         if (not stat.S_ISSOCK(info.st_mode) or info.st_uid != os.geteuid() or info.st_mode & 0o077
@@ -188,26 +190,19 @@ async def query_observation(profile, command):
             if _peer_uid(writer.get_extra_info('socket')) != os.geteuid():
                 raise NativeGuardError()
             identifier = str(uuid4())
-            request = json_bytes({'version': 1, 'id': identifier, 'operation': 'activity', 'payload': {}})
+            request = json_bytes({'version': 1, 'id': identifier, 'operation': operation, 'payload': payload})
+            if len(request)>1024:raise NativeGuardError()
             writer.write(struct.pack('!I', len(request)) + request)
             await writer.drain()
             size = struct.unpack('!I', await reader.readexactly(4))[0]
             if not 0 < size <= 65536:
                 raise NativeGuardError()
             response = decode_platform_frame(await reader.readexactly(size))
-            if (not isinstance(response, dict) or set(response) != {'version', 'id', 'ok', 'epoch', 'coverage', 'activity', 'observation'}
-                    or type(response['version']) is not int or response['version'] != 1
-                    or response['id'] != identifier or response['ok'] is not True or response['epoch'] != command.epoch
-                    or not isinstance(response['observation'],dict)):
+            if (not isinstance(response,dict) or not {'version','id','ok','epoch'}.issubset(response)
+                    or type(response['version']) is not int or response['version']!=1
+                    or response['id']!=identifier or response['ok'] is not True or response['epoch']!=command.epoch):
                 raise NativeGuardError()
-            current=response['observation'].get('version')==2
-            if current:
-                if (response['coverage']!='all_clients' or response['activity']!=response['observation'].get('activity')
-                        or response['activity'] not in ('idle','queued','active')):raise NativeGuardError()
-            elif response['coverage']!='supported' or response['activity'] not in ('idle','busy'):
-                raise NativeGuardError()
-            validate_observation(response['observation'],profile,command,int(time.time()*1000))
-            return response['observation']
+            return response
     except (OSError, ValueError, TimeoutError, asyncio.IncompleteReadError, UnicodeError):
         raise NativeGuardError() from None
     finally:
@@ -218,6 +213,20 @@ async def query_observation(profile, command):
                     await writer.wait_closed()
             except (OSError, TimeoutError):
                 pass
+
+
+async def query_observation(profile, command):
+    response=await _query_guard(profile,command,'activity',{})
+    if (set(response)!={'version','id','ok','epoch','coverage','activity','observation'}
+            or not isinstance(response['observation'],dict)):raise NativeGuardError()
+    current=response['observation'].get('version')==2
+    if current:
+        if (response['coverage']!='all_clients' or response['activity']!=response['observation'].get('activity')
+                or response['activity'] not in ('idle','queued','active')):raise NativeGuardError()
+    elif response['coverage']!='supported' or response['activity'] not in ('idle','busy'):
+        raise NativeGuardError()
+    validate_observation(response['observation'],profile,command,int(time.time()*1000))
+    return response['observation']
 
 
 def json_bytes(value):
@@ -235,25 +244,83 @@ async def check_native_guard(command):
         raise NativeGuardError() from None
 
 
-def bound_handoff_root(command, native_epoch):
-    """Optional enrolled parent metadata; never selected by pipe/model data.
+def _root(value):
+    return (isinstance(value,str) and 1<=len(value)<=20 and value[0]!='0'
+            and value.isascii() and value.isdecimal() and int(value)<=18446744073709551615)
 
-    A supplied root must bind this exact permission. No partial/invalid binding
-    can downgrade to an ordinary request or a different native instance.
-    """
-    root = os.environ.get('FIOS_PLATFORM_HANDOFF_ROOT')
-    correlation = os.environ.get('FIOS_PLATFORM_HANDOFF_CORRELATION')
-    if root is None and correlation is None:
-        return None
+
+def _instance(value):
+    return (isinstance(value,str) and len(value)==32 and all(c in '0123456789abcdef' for c in value)
+            and int(value,16)!=0)
+
+
+def _bound_root(command,native_epoch,kind):
+    root=os.environ.get('FIOS_PLATFORM_'+kind+'_ROOT')
+    correlation=os.environ.get('FIOS_PLATFORM_'+kind+'_CORRELATION')
+    other='PREPARATION' if kind=='HANDOFF' else 'HANDOFF'
+    competing=any(os.environ.get('FIOS_PLATFORM_'+other+'_'+name) is not None for name in ('ROOT','CORRELATION'))
+    if kind=='HANDOFF' and competing:raise NativeGuardError()
+    if root is None and correlation is None:return None
     try:
-        profile = GuardProfile.from_environment()
-        if (not isinstance(root, str) or not 1 <= len(root) <= 20 or root[0] == '0'
-                or not root.isascii() or not root.isdecimal() or int(root) > 18446744073709551615
-                or not _digest(correlation) or correlation != request_correlation_id(command)
-                or profile.native_epoch != native_epoch or len(native_epoch) != 32
-                or any(c not in '0123456789abcdef' for c in native_epoch) or int(native_epoch, 16) == 0
-                or profile.native_model != command.model):
-            raise NativeGuardError()
+        profile=GuardProfile.from_environment()
+        if (competing or not _root(root) or not _digest(correlation) or correlation!=request_correlation_id(command)
+                or profile.native_epoch!=native_epoch or not _instance(native_epoch)
+                or profile.native_model!=command.model):raise NativeGuardError()
         return root
-    except (ValueError, TypeError, KeyError, UnicodeError):
-        raise NativeGuardError() from None
+    except (ValueError,TypeError,KeyError,UnicodeError):raise NativeGuardError() from None
+
+
+def bound_handoff_root(command,native_epoch):
+    return _bound_root(command,native_epoch,'HANDOFF')
+
+
+def bound_preparation_root(command,native_epoch):
+    return _bound_root(command,native_epoch,'PREPARATION')
+
+
+def validate_preparation_observation(value,profile,command,root,now):
+    # Original-scope advisory evidence only. Native atomic consumption remains
+    # mandatory. A global unknown/preparing activity frame cannot stand in for it.
+    profile.validate()
+    fields={'version','host','endpoint_hash','profile_hash','manager_epoch','native_epoch','job_id','attempt',
+            'canonical_model','native_model','root_sequence','correlation_id','source_coverage',
+            'reservation_sequence','lineage_sequence','native_sequence','source_sampled_at',
+            'lease_requested_at','lease_expires_at','registry_generation','registry_ready_model'}
+    if (not isinstance(value,dict) or set(value)!=fields or type(value['version']) is not int or value['version']!=1
+            or not _instance(profile.native_epoch) or not _root(root) or value['root_sequence']!=root or value['correlation_id']!=request_correlation_id(command)
+            or value['host']!=profile.host or value['endpoint_hash']!=command.endpoint_hash
+            or value['profile_hash']!=profile.profile_hash or value['manager_epoch']!=command.epoch
+            or value['native_epoch']!=profile.native_epoch or value['job_id']!=command.job_id
+            or not _integer(value['attempt'],3) or value['attempt']!=command.attempt
+            or value['canonical_model']!=profile.canonical_model or value['native_model']!=profile.native_model
+            or command.model!=profile.native_model or value['source_coverage']!='all_clients'
+            or not _integer(now) or any(not _integer(value[name]) for name in
+                ('reservation_sequence','lineage_sequence','native_sequence','source_sampled_at',
+                 'lease_requested_at','lease_expires_at','registry_generation'))):raise NativeGuardError()
+    start=value['lease_requested_at'];end=value['lease_expires_at'];stamp=value['source_sampled_at']
+    if (not 0<value['reservation_sequence']<value['lineage_sequence']<value['native_sequence']
+            or value['native_sequence']<profile.minimum_sequence or not 1<=end-start<=5000
+            or not start<=stamp<=now<end or now-stamp>5000 or now>=command.expires_at
+            or (value['registry_ready_model'] is not None and not _model(value['registry_ready_model']))):
+        raise NativeGuardError()
+
+
+async def query_preparation(profile,command,root):
+    if not _root(root):raise NativeGuardError()
+    response=await _query_guard(profile,command,'preparation',{'job_id':command.job_id,'attempt':command.attempt,
+        'root_sequence':root,'correlation_id':request_correlation_id(command)})
+    if set(response)!={'version','id','ok','epoch','preparation'}:raise NativeGuardError()
+    value=response['preparation']
+    validate_preparation_observation(value,profile,command,root,int(time.time()*1000))
+    return value
+
+
+async def check_preparation_guard(command):
+    try:
+        profile=GuardProfile.from_environment()
+        root=bound_preparation_root(command,profile.native_epoch)
+        if root is None:raise NativeGuardError()
+        value=await query_preparation(profile,command,root)
+        validate_preparation_observation(value,profile,command,root,int(time.time()*1000))
+        return profile.native_epoch,root
+    except (ValueError,TypeError,KeyError,UnicodeError):raise NativeGuardError() from None

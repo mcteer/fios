@@ -32,7 +32,16 @@ func runPythonFactoryTests() throws {
         invalid["native_handoff_version"]=unsupported
         do {_=try WorkerMetadata.decode(JSONSerialization.data(withJSONObject:invalid),policySHA256:factory.metadata.policy_sha256);fatalError("Unsupported handoff protocol accepted")}catch RuntimeError.identity {}
     }
-    print("PASS: private metadata v2 requires exact handoff protocol1 before launch; legacy and future contracts refuse")
+    var preparationMetadata=try JSONSerialization.jsonObject(with:metadataBytes) as! [String:Any]
+    preparationMetadata["version"]=3;preparationMetadata["native_preparation_version"]=1
+    guard try WorkerMetadata.decode(JSONSerialization.data(withJSONObject:preparationMetadata),policySHA256:factory.metadata.policy_sha256).native_preparation_version==1 else {fatalError("Preparation worker protocol lost")}
+    for unsupported in [0,2] {
+        var invalid=preparationMetadata;invalid["native_preparation_version"]=unsupported
+        do {_=try WorkerMetadata.decode(JSONSerialization.data(withJSONObject:invalid),policySHA256:factory.metadata.policy_sha256);fatalError("Unsupported preparation protocol accepted")}catch RuntimeError.identity {}
+    }
+    preparationMetadata["version"]=2
+    do {_=try WorkerMetadata.decode(JSONSerialization.data(withJSONObject:preparationMetadata),policySHA256:factory.metadata.policy_sha256);fatalError("Legacy metadata silently acquired preparation capability")}catch RuntimeError.identity {}
+    print("PASS: exact legacy metadata2 and scoped-preparation metadata3 contracts; unsupported or mixed versions refuse")
     guard factory.metadata.policy_input_units==fixture["policy_input_units"] as? Int else { fatalError("Installed policy units diverged from cross-language fixture") }
     try runNeverSpawnedWorkerTests(factory:factory)
     try runHandoffNeverSpawnedTests(factory:factory)

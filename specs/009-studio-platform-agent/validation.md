@@ -7582,3 +7582,17 @@ Hardened ARM64 image/recovery/stopped-volume upgrade/automatic rollback pass wit
 Positive native source/proof/capacity, owned preparation export/worker mode, full broker/operational composition and installation remain unfinished. Whole39/55 stays complete. No native activation, Studio actuation, merge or production deployment occurred. Publishedf0e1736 CI43827515868 is running; this source batch requires its own exact-head CI. See worker-activity-v2 contract.
 
 2026-11-16 current-worker integration supplement: actual disposable manager model-only IPC passes against the installed updated worker, exact mock POST/output/local reap/history/replay checks and stale-source zero-request refusal. Default/closed/missing-source manager execution refuses without worker/native request. Log `/private/tmp/fios-009-v2-manager-execution.log` SHA256 `be2993c142b192b53d2387492d380a41a8eeea24949c8f1d99432cfb522bf78a`. This is mock functional integration, not a positive native producer or Studio acceptance;39/55 unchanged.
+
+### Original-scope worker client and metadata3 negotiation (2026-11-16)
+
+The private worker implements a separate preparation query, exact original scope/root/correlation/native-model mapping, original1..5000ms lease/source-time/sequence checks and distinct preparation header. It never falls back to global activity or handoff when that scope is unknown. Private socket/peer/framing/deadline checks are shared with the existing activity query. Metadata3 declares client preparation1 while retaining pipe1/handoff1; Core strictly accepts legacy2 or explicit3 and rejects mixed/unknown capabilities. Broker/factory dispatch and the actual manager producer are still missing; production native authority remains closed.
+
+The initial new guard import fails before implementation. One intermediate worker test run exposes a missing os import (six errors/two failures); corrected before the final run. Final116 installed Python/198 Node tests and full Core Debug compile28189ms/runtime29558ms and optimized59865ms/24810ms pass. Actual private Unix fixture queries use only preparation, with exact subject payload and no activity fallback; the mock transport sends one exact full-width preparation header and rejects repeated/unknown sends with0 further POSTs. Metadata tests retain exact legacy2 and reject unsupported/mixed preparation versions. Boundary and diff checks pass. Source tests are fixtures, not native coverage or permission.
+
+- `/private/tmp/fios-009-preparation-guard-red.log` SHA256 `1717e01e052a6aae77ad0e9007980109e9e8a7f28def62a9c98bb8f6848d7bea`.
+- `/private/tmp/fios-009-preparation-client-python-final.log` SHA256 `36a0bd17a568d8bae83bf411b8d1ea84d6599958bf03c574b4757661472306a4`.
+- `/private/tmp/fios-009-preparation-client-npm-test.log` SHA256 `8b5453a090e55340d90672ad7c61c48746d514402f69bf448981c74ed6b398e5`.
+- `/private/tmp/fios-009-preparation-client-core-debug.log` SHA256 `685d5f19c85c335413362d9ed15b03dbaa93ce32000cbead3e61c5aace8cd0c1`.
+- `/private/tmp/fios-009-preparation-client-core-release.log` SHA256 `ec84deb6f41d2573f8735fc7a3e169b491e904cbccd113c679435312832aad25`.
+
+Current Core/Python need fresh package/runtime qualification; previous183-input Core package and a5f60be7 runtime remain historical for changed inputs. Whole39/55 unchanged. Exact published1d430c7 CI43832556877 passed all seven jobs; this new batch needs its own exact-head checks. No installation, activation, real inference, merge or deployment occurs. See worker-preparation-client contract.

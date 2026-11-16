@@ -2,6 +2,7 @@
 import asyncio
 from dataclasses import replace
 import json
+import os
 import hashlib
 from importlib.metadata import version
 import signal
@@ -14,7 +15,7 @@ from pydantic_ai import CancellationToken
 
 from .harness import run_agent, INSTRUCTIONS
 from .platform_protocol import decode_platform_frame, parse_platform_command, endpoint_hash, request_correlation_id
-from .platform_guard import check_native_guard, bound_handoff_root, NativeGuardError
+from .platform_guard import check_native_guard, check_preparation_guard, bound_handoff_root, NativeGuardError
 from .protocol import utf16_length
 from .transport import StreamFailure
 from .worker import Settings, pipe_streams
@@ -62,8 +63,14 @@ class PlatformTransport(httpx2.AsyncBaseTransport):
             await self.emit({'v':1,'type':'dispatched','job_id':self.command.job_id,'attempt':self.command.attempt})
             if self.token.cancelled or int(time.time()*1000)>=self.command.expires_at:
                 raise StreamFailure('invalid_request')
+            preparation_root=None
+            preparation=any(os.environ.get(name) is not None for name in
+                ('FIOS_PLATFORM_PREPARATION_ROOT','FIOS_PLATFORM_PREPARATION_CORRELATION'))
             try:
-                native_epoch = await check_native_guard(self.command)
+                if preparation:
+                    native_epoch,preparation_root=await check_preparation_guard(self.command)
+                else:
+                    native_epoch = await check_native_guard(self.command)
             except NativeGuardError:
                 raise StreamFailure('model_unavailable') from None
             # The independent read-only guard is an await boundary too. A
@@ -75,13 +82,15 @@ class PlatformTransport(httpx2.AsyncBaseTransport):
             if any(name in request.headers for name in ('x-fios-request-id','x-fios-native-instance','x-fios-handoff-root','x-fios-preparation-root')):
                 raise StreamFailure('invalid_request')
             try:
-                handoff_root = bound_handoff_root(self.command, native_epoch)
+                handoff_root = None if preparation else bound_handoff_root(self.command, native_epoch)
             except NativeGuardError:
                 raise StreamFailure('model_unavailable') from None
             request.headers['x-fios-request-id']=request_correlation_id(self.command)
             request.headers['x-fios-native-instance']=native_epoch
             if handoff_root is not None:
                 request.headers['x-fios-handoff-root']=handoff_root
+            if preparation_root is not None:
+                request.headers['x-fios-preparation-root']=preparation_root
             if self.token.cancelled or int(time.time()*1000)>=self.command.expires_at:
                 raise StreamFailure('invalid_request')
             self.actual_posts+=1
@@ -171,7 +180,7 @@ async def main():
 
 def metadata():
     # Content-free provenance only; never print the fixed policy itself.
-    return {'version':2,'pipe_version':1,'native_handoff_version':1,'package_version':version('fios-agent'),
+    return {'version':3,'pipe_version':1,'native_handoff_version':1,'native_preparation_version':1,'package_version':version('fios-agent'),
             'python_version':'.'.join(map(str,sys.version_info[:3])),
             'policy_sha256':hashlib.sha256(INSTRUCTIONS.encode()).hexdigest(),
             'policy_input_units':utf16_length(INSTRUCTIONS)}

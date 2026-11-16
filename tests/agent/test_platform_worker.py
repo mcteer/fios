@@ -129,8 +129,9 @@ class PlatformWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.stderr,b'')
         self.assertFalse(INSTRUCTIONS.encode() in result.stdout,'Fixed policy leaked')
         value=json.loads(result.stdout)
-        self.assertEqual(set(value),{'version','pipe_version','package_version','python_version','policy_sha256','policy_input_units','native_handoff_version'})
-        self.assertEqual(value['version'],2)
+        self.assertEqual(set(value),{'version','pipe_version','package_version','python_version','policy_sha256','policy_input_units','native_handoff_version','native_preparation_version'})
+        self.assertEqual(value['version'],3)
+        self.assertEqual(value['native_preparation_version'],1)
         self.assertEqual(value['native_handoff_version'],1)
         self.assertEqual(value['pipe_version'],1)
         self.assertEqual(value['policy_sha256'],hashlib.sha256(INSTRUCTIONS.encode()).hexdigest())
@@ -247,6 +248,39 @@ class PlatformWorkerTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(transport.actual_posts,0)
                 await transport.aclose()
         self.assertEqual(seen,[])
+
+    async def test_original_preparation_uses_scoped_guard_and_exact_header_once(self):
+        from pydantic_ai import CancellationToken
+        from fios_agent.platform_guard import GuardProfile,NativeGuardError
+        from fios_agent.transport import StreamFailure
+        from test_platform_preparation_guard import preparation_observation
+        permitted=parse_platform_command(command());seen=[];queries=[]
+        environment={**guard_environment(),'FIOS_PLATFORM_NATIVE_EPOCH':'1'*32,
+            'FIOS_PLATFORM_PREPARATION_ROOT':'18446744073709551615',
+            'FIOS_PLATFORM_PREPARATION_CORRELATION':request_correlation_id(permitted)}
+        async def handler(request):seen.append(dict(request.headers));return httpx2.Response(200)
+        async def emit(event):pass
+        async def eligible(profile,subject,root):
+            queries.append(root)
+            return preparation_observation(profile,subject,root,int(time.time()*1000))
+        async def no_global(_):raise AssertionError('Preparation fell back to global activity')
+        with patch.dict(os.environ,environment,clear=True),patch('fios_agent.platform_guard.query_preparation',new=eligible),patch('fios_agent.platform_worker.check_native_guard',new=no_global):
+            transport=PlatformTransport(permitted,httpx2.MockTransport(handler),emit,CancellationToken(),base_url='http://127.0.0.1:1/v1')
+            request=httpx2.Request('POST','http://127.0.0.1:1/v1/chat/completions',json={'model':permitted.model})
+            await transport.handle_async_request(request)
+            self.assertEqual(transport.actual_posts,1)
+            self.assertEqual(seen[0]['x-fios-preparation-root'],environment['FIOS_PLATFORM_PREPARATION_ROOT'])
+            self.assertNotIn('x-fios-handoff-root',seen[0])
+            with self.assertRaises(StreamFailure):await transport.handle_async_request(request)
+            self.assertEqual(queries,[environment['FIOS_PLATFORM_PREPARATION_ROOT']])
+            await transport.aclose()
+        async def unknown(*_):raise NativeGuardError()
+        with patch.dict(os.environ,environment,clear=True),patch('fios_agent.platform_guard.query_preparation',new=unknown),patch('fios_agent.platform_worker.check_native_guard',new=no_global):
+            transport=PlatformTransport(permitted,httpx2.MockTransport(handler),emit,CancellationToken(),base_url='http://127.0.0.1:1/v1')
+            with self.assertRaises(StreamFailure):
+                await transport.handle_async_request(httpx2.Request('POST','http://127.0.0.1:1/v1/chat/completions',json={'model':permitted.model}))
+            self.assertEqual(transport.actual_posts,0);self.assertEqual(len(seen),1)
+            await transport.aclose()
 
     async def test_enrolled_original_handoff_root_is_bound_to_one_permission(self):
         from pydantic_ai import CancellationToken
