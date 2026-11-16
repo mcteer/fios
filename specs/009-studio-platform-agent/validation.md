@@ -7694,3 +7694,11 @@ Actual isolated empty-catalog native cancellation plus genuine factory no-spawn 
 - `/private/tmp/fios-009-negotiated-receipt-boundary.log` SHA256 `c48954b6e815c6287f37d4ce266bfce48c958980163a31438c5166be14e0a469`.
 
 39/55 whole tasks unchanged. No native activation, enrollment, installation, real inference, merge or deployment. Published f758eaf CI43851027121 remains pending independently of these local checks.
+
+### Clean negotiated-receipt package and stopped-state compatibility (2026-11-16)
+
+Clean0545360aa21c32b3d73c4754591bf4e4fb07a727 packages183 declared inputs/9 inactive artifacts. Manifest `1a93259048499c8721c46e24c58638836c77fee96042f08aaac20144fad53aa3`, declared projection `ddc2fc8e6b5dcf903f1f1e38858a79731b71eaf7aad1660550a64e5d276e5146`. Both blocked Studio configuration reviews/4 plist checks pass with zero privileged commands. The actual current Core factory accepts the unchanged byte-reviewed metadata3 runtime61242be8… without model dispatch.
+
+Actual packaged CLI backs up, verifies and restores the closed checkpoint3 native non-dispatch fixture. Backup SHA256 `b0e043fa40322ad5e8dafbda5ce3f26c2990732de03797514d35937678a18104`; restored own not_sent, metadata3 producer, older uncertainty1 and spent history survive. The checkpoint2 reader refuses restored state without changing database bytes. Packaged CLI also verifies/restores the older checkpoint2 backup; its earlier reader continues refusing that newer decision format unchanged. No backup is promoted to native terminal/all-client authority.
+
+Qualification `/private/tmp/fios-009-negotiated-package-mitussuc/qualification.json`, SHA256 `ba253286411e8c8b356844e1f5955fb4f2cd892f3dd1ca4432a463c595a2de71`; current-format stopped-state review SHA256 `92d4163c3338304662fcddec2ec881cfc1c2616edd5768674cd011e68c0712bb`. Provenance covers package-declared inputs, not all repository/native dependencies or publisher authenticity. No installation, enrollment, activation, real inference, merge or deployment;39/55 whole tasks unchanged.
