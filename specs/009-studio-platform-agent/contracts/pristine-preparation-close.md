@@ -39,9 +39,12 @@ references. The lease lock precedes tracker locking for both close and attach.
 That review does not qualify other backend/client routes or device completion.
 
 The Core coordinator now has an isolated compound decision path. It accepts
-only the original factory's opaque metadata3 never-spawned evidence with a
-preparation binding, matching journal scope/root/peer, no worker grant and a
-durable local reap marker. It commits a version4 lineage checkpoint marked
+only original metadata3 factory never-spawned evidence or the checked private
+worker's opaque reaped zero-POST certificate. Both retain the preparation
+binding, matching journal scope/root/peer and durable local reap marker. The
+never-spawned branch requires no worker grant; the reaped branch requires the
+exact durable reaped grant payload and its digest. It commits a version4 lineage
+checkpoint marked
 `attempted` before sending at most one close request. Existing version1–3
 readers reject this new decision format; the SQLite schema version stays9.
 
@@ -53,14 +56,28 @@ A restart retains `attempted` and cannot reconstruct permission to resend. The
 standalone CPU acknowledgement, missing lineage, HTTP completion, process exit
 and reference zero remain insufficient. Other inference records are untouched.
 
-The coordinator covers never-spawned workers only. Broker cancellation now
+The version4 lineage payload uses inner preparation-closure format1 for
+never-spawned evidence, and format2 for `reaped_zero_post` with the exact grant
+SHA256. A format1 reader must reject format2 before recovery/restoration writes;
+the SQLite schema stays9. The producer issues the local certificate only after
+a valid zero-POST terminal summary, EOF, exact kernel absence and durable local
+reap. Nonzero POSTs, malformed protocol and local absence alone cannot issue it.
+The persisted attempted checkpoint binds the producer/grant before the source
+request and must match again when its reply is consumed. Broker cancellation now
 uses it when the configured preparation source supports the distinct operation.
 A cleanup-only binding can preserve authenticated historical identity without
 live lineage or a current lease; it cannot produce launch observations or worker
 permission. Sources without this operation retain ordinary weaker cleanup.
 Refusal of a strong close never triggers another close request or upgrades a
-weak withdrawal reply. Checked zero-POST/reaped preparation workers remain
-unfinished. Manual model cancellation preserves the enclosing job; automatic
+weak withdrawal reply. An unavailable close retains both original and older
+uncertainty even after the worker has been reaped. Manual model cancellation
+preserves the enclosing job; automatic
 source/storage revocation records separate job-revocation intent.
 The serving guard, production composition, installation and model effects stay
 closed. This source/component increment does not complete T002 or T021.
+
+A callback can publish after a poll captures its time. Preparation and handoff
+results whose local acquisition captures are newer than that tick remain
+retained until a later tick can observe them. No source timestamp is restamped,
+lease renewed, source query repeated or native permission issued on the old
+tick. Actual scope/source/clock regressions retain their existing refusal.

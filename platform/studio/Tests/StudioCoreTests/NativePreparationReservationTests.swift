@@ -301,7 +301,9 @@ func runPreparationFactoryTransportTests(factory:PythonWorkerFactory,base:String
     try Data("fixture".utf8).write(to:mode)
     defer {try? FileManager.default.removeItem(at:cache);try? FileManager.default.removeItem(at:mode)}
     try Data(String(repeating:"3",count:32).utf8).write(to:guardDirectory.appendingPathComponent("native-epoch"))
-    for available in [true,false] {
+    var reapedStates:[(URL,String,Bool)]=[]
+    for scenario in [(available:true,closed:false),(available:false,closed:true),(available:false,closed:false)] {
+        let available=scenario.available
         let directory=guardDirectory.appendingPathComponent(UUID().uuidString)
         let journal=try Journal(directory:directory),job=UUID().uuidString.lowercased(),created=HostResources.nowMilliseconds()
         let snapshot=NativeSnapshot(host:"fixture-host",endpointHash:PythonWorkerFactory.digest(base),nativeEpoch:String(repeating:"3",count:32),sequence:1,
@@ -330,7 +332,7 @@ func runPreparationFactoryTransportTests(factory:PythonWorkerFactory,base:String
             NativeRegistryModelFact(model:"fixture/idle-other",readyDeclared:true,transitioning:false,uncertain:false,claimable:true,counts:.zero)]))
         guard let observation=try preparation.observation(lineage:lineage,activity:activity,journal:journal,sourceCoverage:.all_clients,now:now) else {throw RuntimeError.identity}
         let subject=try NativePreparationSubject(payload:["job_id":job,"attempt":0,"root_sequence":String(UInt64.max),"correlation_id":preparation.correlationID])
-        if available {try observation.encoded(subject:subject,managerEpoch:epoch,journal:journal,now:now).write(to:cache)}else {try FileManager.default.removeItem(at:cache)}
+        if available {try observation.encoded(subject:subject,managerEpoch:epoch,journal:journal,now:now).write(to:cache)}else if FileManager.default.fileExists(atPath:cache.path) {try FileManager.default.removeItem(at:cache)}
         let started=Int64(ProcessInfo.processInfo.systemUptime*1000)
         let operation=try factory.beginPreparationStart(binding:dispatch,plan:plan,preparation:preparation,observation:observation,journal:journal,started:started,now:now)
         var transport:Result<StartedPythonWorker,WorkerStartFailure>?
@@ -356,10 +358,39 @@ func runPreparationFactoryTransportTests(factory:PythonWorkerFactory,base:String
               try journal.activeLaunchCount()==0,try journal.unresolvedCount()==1,try journal.uncertainCount()==1,
               try journal.requestCount(job:job)==1,try journal.inferenceScope(job:job,attempt:0)?.state == .uncertain,
               worker.zeroPostEvidence==nil else {fatalError("Preparation transport lost exact scope or promoted local output/reap into native proof")}
+        if available {
+            guard worker.zeroPostPreparationEvidence==nil else {fatalError("Posted preparation worker emitted no-POST evidence")}
+        }else {
+            guard let evidence=worker.zeroPostPreparationEvidence else {fatalError("PREPARATION_REAPED_ZERO_POST_EVIDENCE_MISSING")}
+            let older=UUID().uuidString.lowercased()
+            try journal.claim(job:older,attempt:0,model:scope.canonicalModel,scope:scope)
+            try journal.markDispatched(job:older,attempt:0);try journal.markUncertain(job:older,attempt:0)
+            let closing=PristineCloseFixture(peer:peer,mode:scenario.closed ? "valid":"missing")
+            closing.release.signal()
+            let coordinator=NativePreparationNonDispatch(journal:journal,source:closing)
+            try coordinator.enqueue(.reaped(evidence))
+            let closeBy=ProcessInfo.processInfo.systemUptime+3
+            while coordinator.pending && ProcessInfo.processInfo.systemUptime<closeBy {try coordinator.poll(now:HostResources.nowMilliseconds());usleep(1000)}
+            let receipt=try journal.preparationClosureReceipt(job:job,attempt:0)
+            guard !coordinator.pending,closing.count==1,
+                  try journal.inferenceScope(job:job,attempt:0)?.state == (scenario.closed ? .not_sent:.uncertain),
+                  try journal.inferenceScope(job:older,attempt:0)?.state == .uncertain,
+                  try journal.unresolvedCount()==(scenario.closed ? 1:2),try journal.uncertainCount()==(scenario.closed ? 1:2),
+                  receipt?.version==2,receipt?.localProducer=="reaped_zero_post",receipt?.grantSHA256 != nil,
+                  receipt?.state==(scenario.closed ? "not_sent":"attempted"),try journal.requestCount(job:job)==1 else {fatalError("PREPARATION_REAPED_ZERO_POST_COMPOUND_CLOSURE_FAILED")}
+            reapedStates.append((directory,job,scenario.closed))
+        }
+    }
+    for (directory,job,closed) in reapedStates {
+        let restored=try Journal(directory:directory),receipt=try restored.preparationClosureReceipt(job:job,attempt:0)
+        guard receipt?.version==2,receipt?.localProducer=="reaped_zero_post",receipt?.grantSHA256 != nil,
+              receipt?.state==(closed ? "not_sent":"attempted"),
+              try restored.inferenceScope(job:job,attempt:0)?.state == (closed ? .not_sent:.uncertain),
+              try restored.uncertainCount()==(closed ? 1:2) else {fatalError("Reaped preparation grant/decision lost across restart")}
     }
     let queries=try String(contentsOf:guardDirectory.appendingPathComponent("preparation-queries"),encoding:.utf8).split(separator:"\n")
-    guard queries==["preparation","preparation"] else {fatalError("Scoped preparation retried or fell back to global activity")}
-    print("PASS: actual metadata3 factory/installed private child/scoped Unix guard/exact preparation header;1 mock POST or0 on unknown, native uncertainty/history retained")
+    guard queries==["preparation","preparation","preparation"] else {fatalError("Scoped preparation retried or fell back to global activity")}
+    print("PASS: actual metadata3 factory/installed private child/scoped Unix guard/exact preparation header;1 mock POST or0 on unknown; reaped zero-POST plus exact pristine close resolves only original scope, unknown close retains uncertainty/history")
 }
 
 private final class ManagedPreparationSource:NativePreparationManaging,@unchecked Sendable {
@@ -595,12 +626,13 @@ func runPreparationNonDispatchTests(factory:PythonWorkerFactory)throws {
 private final class PristineManagedPreparationFixture:NativePreparationManaging,NativePristinePreparationClosing,@unchecked Sendable {
     let base:ManagedPreparationSource
     let closing:PristineCloseFixture
+    let lineageFinished=DispatchSemaphore(value:0)
     var peer:NativeControlPeer {base.peer}
     init(peer:NativeControlPeer) {base=ManagedPreparationSource(peer:peer,mode:.healthy);closing=PristineCloseFixture(peer:peer,mode:"valid")}
     func reservePreparation(instance:String,correlationID:String,model:String,lifetimeMilliseconds:UInt32,after sequence:UInt64)throws->NativePreparationSample {
         try base.reservePreparation(instance:instance,correlationID:correlationID,model:model,lifetimeMilliseconds:lifetimeMilliseconds,after:sequence)
     }
-    func lineage(instance:String,correlationID:String)throws->NativeRequestLineageSample {throw NativeControlError.unavailable}
+    func lineage(instance:String,correlationID:String)throws->NativeRequestLineageSample {defer{lineageFinished.signal()};throw NativeControlError.unavailable}
     func primaryActivity(instance:String,after sequence:UInt64)throws->NativePrimaryActivitySample {throw NativeControlError.unavailable}
     func withdrawPreparation(instance:String,correlationID:String,model:String,rootSequence:UInt64,after sequence:UInt64)throws->NativePreparationSample {
         try base.withdrawPreparation(instance:instance,correlationID:correlationID,model:model,rootSequence:rootSequence,after:sequence)
@@ -629,7 +661,20 @@ func runPristinePreparationBrokerCancellationTest(factory:PythonWorkerFactory)th
         nativeCapacityProven:true,sample:sample,admission:&admission,now:now)
     guard source.base.entered.wait(timeout:.now()+2) == .success else {throw RuntimeError.deadline}
     try broker.cancel(job:job,uptime:Int64(ProcessInfo.processInfo.systemUptime*1000))
+    let oldTick=HostResources.nowMilliseconds(),clockBy=ProcessInfo.processInfo.systemUptime+2
+    while HostResources.nowMilliseconds()<=oldTick && ProcessInfo.processInfo.systemUptime<clockBy {usleep(1000)}
+    guard HostResources.nowMilliseconds()>oldTick else {throw RuntimeError.deadline}
     source.base.release.signal();source.closing.release.signal()
+    guard source.lineageFinished.wait(timeout:.now()+2) == .success else {throw RuntimeError.deadline}
+    // The callback is newer than this poll's captured tick. Retain the exact
+    // reply without treating ordinary publication order as clock regression.
+    let oldBy=ProcessInfo.processInfo.systemUptime+2
+    while broker.active(job:job) && ProcessInfo.processInfo.systemUptime<oldBy {
+        _=try broker.poll(now:oldTick,uptime:Int64(ProcessInfo.processInfo.systemUptime*1000),admission:&admission,source:{_ in binding})
+        usleep(1000)
+    }
+    guard broker.active(job:job),source.base.counts[3]==0,source.closing.count==0 else {fatalError("PRISTINE_CALLBACK_NEWER_THAN_POLL_BECAME_SOURCE_FENCE")}
+
     let end=ProcessInfo.processInfo.systemUptime+3
     while (broker.active(job:job) || broker.nativeNonDispatchPending) && ProcessInfo.processInfo.systemUptime<end {
         _=try broker.poll(now:HostResources.nowMilliseconds(),uptime:Int64(ProcessInfo.processInfo.systemUptime*1000),admission:&admission,source:{_ in binding})

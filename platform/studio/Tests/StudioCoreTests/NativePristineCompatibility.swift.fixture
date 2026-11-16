@@ -1,10 +1,12 @@
 import Foundation
 import CSQLite
+import CryptoKit
 
 @main
 struct PristineCompatibilityFixture {
     static func main()throws {
-        guard CommandLine.arguments.count==3 else {throw RuntimeError.invalid}
+        let reaped=CommandLine.arguments.count==4 && CommandLine.arguments[3]=="--reaped"
+        guard CommandLine.arguments.count==3 || reaped else {throw RuntimeError.invalid}
         let state=URL(fileURLWithPath:CommandLine.arguments[1]),bundle=URL(fileURLWithPath:CommandLine.arguments[2])
         let job=UUID().uuidString.lowercased(),scope=InferenceScope(host:"fixture-host",endpointHash:String(repeating:"a",count:64),profileHash:String(repeating:"b",count:64),
             managerEpoch:UUID().uuidString.lowercased(),nativeEpoch:String(repeating:"c",count:32),canonicalModel:"fixture/model",nativeModel:"fixture/model",sequence:1,sampledAt:10000)
@@ -31,9 +33,19 @@ struct PristineCompatibilityFixture {
         var object=try JSONSerialization.jsonObject(with:Data(String(cString:text).utf8)) as! [String:Any]
         sqlite3_finalize(statement)
         object["version"]=4
-        object["preparationClosure"]=["version":1,"state":"attempted","launchNonce":nonce,"workerMetadataVersion":3]
+        var closure:[String:Any]=["version":reaped ? 2:1,"state":"attempted","launchNonce":nonce,"workerMetadataVersion":3]
+        var grantSQL=""
+        if reaped {
+            let grant=WorkerGrant(pid:42,start:99,boot:try HostBoot.identity())
+            let encoder=JSONEncoder();encoder.outputFormatting=[.sortedKeys]
+            let bytes=try encoder.encode(grant),payload=String(decoding:bytes,as:UTF8.self).replacingOccurrences(of:"'",with:"''")
+            closure["localProducer"]="reaped_zero_post"
+            closure["grantSHA256"]=SHA256.hash(data:bytes).map{String(format:"%02x",$0)}.joined()
+            grantSQL="INSERT INTO worker_grants VALUES('\(job)',0,'\(payload)',1); "
+        }
+        object["preparationClosure"]=closure
         let payload=String(decoding:try JSONSerialization.data(withJSONObject:object,options:[.sortedKeys]),as:UTF8.self).replacingOccurrences(of:"'",with:"''")
-        let status=sqlite3_exec(database,"BEGIN IMMEDIATE; UPDATE worker_launches SET reaped=1; UPDATE native_lineages SET payload='\(payload)'; COMMIT",nil,nil,nil)
+        let status=sqlite3_exec(database,"BEGIN IMMEDIATE; UPDATE worker_launches SET reaped=1; \(grantSQL)UPDATE native_lineages SET payload='\(payload)'; COMMIT",nil,nil,nil)
         guard sqlite3_close(database)==SQLITE_OK,status==SQLITE_OK else {throw JournalError.storage}
         do {
             let journal=try Journal(directory:state)
@@ -48,6 +60,6 @@ struct PristineCompatibilityFixture {
             guard try journal.preparationClosureReceipt(job:job,attempt:0)?.state=="attempted",try journal.uncertainCount()==1,
                   try journal.unresolvedCount()==1 else {throw JournalError.invalid}
         }
-        print(String(decoding:try JSONSerialization.data(withJSONObject:["backup_sha256":receipt.sha256,"state":"attempted","uncertain":1,"native_proof":false],options:[.sortedKeys]),as:UTF8.self))
+        print(String(decoding:try JSONSerialization.data(withJSONObject:["backup_sha256":receipt.sha256,"closure_version":reaped ? 2:1,"state":"attempted","uncertain":1,"native_proof":false],options:[.sortedKeys]),as:UTF8.self))
     }
 }

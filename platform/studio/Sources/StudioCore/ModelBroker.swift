@@ -234,7 +234,14 @@ final class ModelBroker {
             guard let completion=pending.completion else {continue}
             var registered:VerifiedNativePreparationRegistration?
             do {
-                let value=try completion.get();registered=value.registration
+                let value=try completion.get()
+                // An off-loop reply can publish after this tick captured now.
+                // Retain it for a tick that actually observes all local captures;
+                // never restamp the source, renew the lease or repeat the RPC.
+                guard value.registration.verifiedAt<=now,
+                      value.lineage.map({$0.sampledAt<=now}) ?? true,
+                      value.activity.map({$0.receivedAt<=now}) ?? true else {continue}
+                registered=value.registration
                 if !pending.identityRecorded {
                     guard try journal.observePreparationRegistration(job:id,attempt:pending.plan.attempt,scope:pending.plan.scope,
                         peer:value.registration.peer,sample:value.registration,now:now) else {throw NativeControlError.unavailable}
@@ -343,6 +350,8 @@ final class ModelBroker {
             guard let finished=pending.completion else {continue}
             do {
                 let value=try finished.get(),peer=value.registration.peer
+                guard value.registration.verifiedAt<=now,
+                      value.lineage.map({$0.sampledAt<=now}) ?? true else {continue}
                 let previousRoot=try journal.originalNativeRoot(job:id,attempt:pending.plan.attempt,scope:pending.plan.scope,peer:peer)
                 guard try journal.observeHandoffRegistration(job:id,attempt:pending.plan.attempt,scope:pending.plan.scope,
                           peer:peer,sample:value.registration,now:now),
@@ -514,6 +523,7 @@ final class ModelBroker {
             result[id,default:[]]+=try entry.worker.poll(now:uptime,authorized:lease && coherent)
             if entry.worker.reaped {
                 if let proof=entry.worker.zeroPostEvidence {try nonDispatch?.enqueue(.reaped(proof))}
+                if let proof=entry.worker.zeroPostPreparationEvidence {try preparationNonDispatch?.enqueue(.reaped(proof))}
                 admission.releaseWorkerAfterReap(key:entry.key)
                 entries.removeValue(forKey:id)
                 preparationObservations.removeValue(forKey:id)

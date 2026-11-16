@@ -90,7 +90,7 @@ not installed provenance or native authority.
 
 
 Version4 `native_lineages` payloads bind metadata3 factory never-spawned evidence
-to an exact original preparation root/peer/model and launch nonce. Their
+or checked reaped zero-POST evidence to an exact original preparation root/peer/model and launch nonce. Their
 `preparationClosure` is `attempted|not_sent`. `attempted` commits before the
 once-only native close RPC and survives missing replies/restart without retry
 authority. A fresh exact never-consumed/never-shared close may combine with the
@@ -99,3 +99,11 @@ remove its inference ownership. An acknowledgement alone, cleanup-only binding,
 expiry, local reap and historical reference zero cannot do so. Other rows remain
 independent. Older checkpoint readers must refuse version4 before recovery or
 restoration writes; same-schema9 does not imply decision compatibility.
+
+Inner preparation-closure format2 additionally records
+`localProducer=reaped_zero_post` and the exact durable worker-grant SHA256. Its
+opaque live producer requires valid terminal zero-POST usage, EOF, kernel
+absence and durable reap; restore never recreates that certificate. Both the
+attempted and accepted checkpoint bind the same producer, launch nonce and
+grant. Format1 retains its no-worker-grant contract. Readers that understand
+lineage version4 but only closure format1 must reject format2 unchanged.

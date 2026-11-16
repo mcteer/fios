@@ -11,6 +11,16 @@ struct WorkerZeroPostEvidence:Sendable {
     let workerMetadataVersion:Int
     fileprivate init(handoff:WorkerHandoffBinding,grant:WorkerGrant,workerMetadataVersion:Int) {self.handoff=handoff;self.grant=grant;self.workerMetadataVersion=workerMetadataVersion}
 }
+// Only the live, checked fixed worker can construct this local certificate.
+// It is not a native close, completion, capacity or all-client observation.
+struct WorkerPreparationZeroPostEvidence:Sendable {
+    let preparation:WorkerPreparationBinding
+    let grant:WorkerGrant
+    let workerMetadataVersion:Int
+    fileprivate init(preparation:WorkerPreparationBinding,grant:WorkerGrant,workerMetadataVersion:Int) {
+        self.preparation=preparation;self.grant=grant;self.workerMetadataVersion=workerMetadataVersion
+    }
+}
 final class PrivateWorker {
     private let process:Process
     private let input:FileHandle
@@ -39,6 +49,7 @@ final class PrivateWorker {
     private var ownsTransport=false
     private(set) var reaped=false
     private(set) var zeroPostEvidence:WorkerZeroPostEvidence?
+    private(set) var zeroPostPreparationEvidence:WorkerPreparationZeroPostEvidence?
     private(set) var memorySamples=0
     var outputEOFObserved:Bool {eof}
 
@@ -239,10 +250,15 @@ final class PrivateWorker {
             // root additionally requires its exact unconsumed cancellation;
             // neither child exit nor this summary releases that native hold.
             if !protocolBroken && terminal && actualPosts==0 && !nativeComplete {
-                try resolve(.not_sent)
                 if let nativeHandoff,!nativeComplete,let workerMetadataVersion,[2,3].contains(workerMetadataVersion) {
                     zeroPostEvidence=WorkerZeroPostEvidence(handoff:nativeHandoff,grant:grant,workerMetadataVersion:workerMetadataVersion)
                 }
+                if let nativePreparation,workerMetadataVersion==3 {
+                    zeroPostPreparationEvidence=WorkerPreparationZeroPostEvidence(preparation:nativePreparation,grant:grant,workerMetadataVersion:3)
+                }
+                // Preserve the once-produced local certificate even if the
+                // independent native-hold write encounters storage failure.
+                try resolve(.not_sent)
             }
             if !terminal && !nativeComplete { try retainNativeUncertainty() }
         }

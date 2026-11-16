@@ -1577,3 +1577,9 @@ refuse verification/restoration without changing the backup or publishing a
 destination; current restore must retain uncertainty. No fixture grants native
 completion, all-client coverage, installation, activation or model effects. A
 version4 attempted decision permits no automatic close retry after restart.
+
+For the newer reaped zero-POST decision format, append `--reaped` to the
+compatibility command and select a reviewed older format1 package. The fixture
+seeds serialization-only attempted state with a grant digest; it does not mint
+live worker/native proof. An older reader must refuse the unsupported inner
+format even when both artifacts declare SQLite schema9 and lineage version4.

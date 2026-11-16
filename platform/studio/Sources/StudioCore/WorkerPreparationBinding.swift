@@ -46,6 +46,7 @@ struct WorkerPreparationBinding:Sendable {
               try journal.originalNativeRoot(job:plan.job,attempt:plan.attempt,scope:plan.scope,peer:registration.peer)==ack.rootSequence else {throw RuntimeError.identity}
         return Self(plan:plan,registration:registration,checkpoint:nil)
     }
+    var subject:NativeLineageRequest {NativeLineageRequest(job:plan.job,attempt:plan.attempt,scope:plan.scope)}
     var launchNonce:String {plan.nonce}
     var registrationSequence:UInt64 {registration.acknowledgement.sampleSequence}
     func validateIdentity(plan expected:PlannedWorkerStart,scope:InferenceScope)throws {

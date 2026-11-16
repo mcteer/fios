@@ -205,14 +205,14 @@ struct NativeRequestLineageConsumer:Sendable {
         guard value.recorded,!value.uncertain else {return nil}
         return value
     }
-    mutating func beginPristinePreparationClose(nonce:String)throws->Bool {
+    mutating func beginPristinePreparationClose(_ value:NativePreparationClosureCheckpoint)throws->Bool {
         guard !fenced,rootSequence != nil,sequence>0,sampledAt>=0,handoffClosure==nil else {throw JournalError.conflict}
         if preparationClosure != nil {return false}
-        let value=NativePreparationClosureCheckpoint(version:1,state:"attempted",launchNonce:nonce,workerMetadataVersion:3)
-        try value.validate();preparationClosure=value;return true
+        try value.validate();guard value.state=="attempted" else {throw JournalError.conflict}
+        preparationClosure=value;return true
     }
-    mutating func acceptPristinePreparationClose(_ sample:NativePristinePreparationSample?,nonce:String,now:Int64)->Bool {
-        guard !fenced,let saved=preparationClosure,saved.state=="attempted",saved.launchNonce==nonce else {return false}
+    mutating func acceptPristinePreparationClose(_ sample:NativePristinePreparationSample?,expected:NativePreparationClosureCheckpoint,now:Int64)->Bool {
+        guard !fenced,let saved=preparationClosure,saved.state=="attempted",saved==expected else {return false}
         guard (0...ActivityPolicy.maximumTimestamp).contains(now),now>=previousNow else {fenced=true;return false}
         previousNow=now
         guard let sample else {return false}
@@ -227,7 +227,7 @@ struct NativeRequestLineageConsumer:Sendable {
               stamp>=sample.requestedAt,stamp<=sample.receivedAt,sample.receivedAt<=now,
               now-sample.requestedAt<=5000 else {return false}
         sequence=value.sampleSequence;sampledAt=stamp
-        preparationClosure=NativePreparationClosureCheckpoint(version:1,state:"not_sent",launchNonce:nonce,workerMetadataVersion:3)
+        preparationClosure=NativePreparationClosureCheckpoint(version:saved.version,state:"not_sent",launchNonce:saved.launchNonce,workerMetadataVersion:3,localProducer:saved.localProducer,grantSHA256:saved.grantSHA256)
         return true
     }
     static func preparationClosureReceipt(_ data:Data,scope:InferenceScope,job:String,attempt:Int)throws->NativePreparationClosureCheckpoint? {
@@ -331,8 +331,8 @@ private struct NativeLineageCheckpoint:Codable {
         }else if value.handoffClosure != nil {throw JournalError.invalid}
         if version==4 {
             guard let closure=value.preparationClosure,let raw=object["preparationClosure"] as? [String:Any],
-                  Set(raw.keys)==Set(["version","state","launchNonce","workerMetadataVersion"]),
-                  WireScalar.integer(raw["version"],maximum:1)==1,
+                  Set(raw.keys)==Set(["version","state","launchNonce","workerMetadataVersion"]+(closure.version==2 ? ["localProducer","grantSHA256"]:[])),
+                  WireScalar.integer(raw["version"],maximum:2)==Int64(closure.version),
                   WireScalar.integer(raw["workerMetadataVersion"],maximum:3)==3 else {throw JournalError.invalid}
             try closure.validate()
         }else if value.preparationClosure != nil {throw JournalError.invalid}
@@ -363,12 +363,19 @@ struct NativeHandoffClosureCheckpoint:Codable,Sendable {
 
 // Version4 checkpoints are deliberately unreadable by older decision readers.
 // An attempted command survives restart without authorizing a retry or release.
-struct NativePreparationClosureCheckpoint:Codable,Sendable {
+struct NativePreparationClosureCheckpoint:Codable,Equatable,Sendable {
     let version:Int
     let state:String
     let launchNonce:String
     let workerMetadataVersion:Int
+    let localProducer:String?
+    let grantSHA256:String?
     func validate()throws {
-        guard version==1,["attempted","not_sent"].contains(state),WireScalar.uuid(launchNonce),workerMetadataVersion==3 else {throw JournalError.invalid}
+        guard ["attempted","not_sent"].contains(state),WireScalar.uuid(launchNonce),workerMetadataVersion==3 else {throw JournalError.invalid}
+        switch version {
+        case 1:guard localProducer==nil,grantSHA256==nil else {throw JournalError.invalid}
+        case 2:guard localProducer=="reaped_zero_post",grantSHA256.map(WireScalar.sha256)==true else {throw JournalError.invalid}
+        default:throw JournalError.invalid
+        }
     }
 }

@@ -663,7 +663,19 @@ private func runUnusedPreparationCancellationTest(factory:PythonWorkerFactory)th
     let sample=ResourceSample(sampledAt:now,physical:128<<30,available:64<<30,vmAvailable:nil,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal)
     try broker.submit(job:id,owner:owner,requestID:UUID().uuidString.lowercased(),context:[ModelText(role:"user",content:"fixture")],binding:binding,nativeCapacityProven:true,sample:sample,admission:&admission,now:now)
     guard source.entered.wait(timeout:.now()+1) == .success else {throw RuntimeError.deadline}
-    try broker.cancel(job:id,uptime:Int64(ProcessInfo.processInfo.systemUptime*1000));source.release.signal()
+    try broker.cancel(job:id,uptime:Int64(ProcessInfo.processInfo.systemUptime*1000))
+    let oldTick=HostResources.nowMilliseconds(),clockBy=ProcessInfo.processInfo.systemUptime+2
+    while HostResources.nowMilliseconds()<=oldTick && ProcessInfo.processInfo.systemUptime<clockBy {usleep(1000)}
+    guard HostResources.nowMilliseconds()>oldTick else {throw RuntimeError.deadline}
+    source.release.signal()
+    guard source.lineageReady.wait(timeout:.now()+2) == .success else {throw RuntimeError.deadline}
+    let oldBy=ProcessInfo.processInfo.systemUptime+2
+    while broker.active(job:id) && ProcessInfo.processInfo.systemUptime<oldBy {
+        _=try broker.poll(now:oldTick,uptime:Int64(ProcessInfo.processInfo.systemUptime*1000),admission:&admission,source:{_ in binding})
+        usleep(1000)
+    }
+    guard broker.active(job:id),source.cancellations==0 else {fatalError("Handoff callback crossed its captured poll tick")}
+
     let end=ProcessInfo.processInfo.systemUptime+3
     while (broker.active(job:id) || broker.nativeNonDispatchPending) && ProcessInfo.processInfo.systemUptime<end {
         _=try broker.poll(now:HostResources.nowMilliseconds(),uptime:Int64(ProcessInfo.processInfo.systemUptime*1000),admission:&admission,source:{_ in binding})
