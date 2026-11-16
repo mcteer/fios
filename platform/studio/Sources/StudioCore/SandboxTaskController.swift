@@ -64,8 +64,10 @@ final class SandboxTaskController {
             }
         }
         let events=try tasks.tick(now:now,uptime:clock,admission:&admission,source:source)
-        let sandboxIDs=Set(try journal.sandboxRecords().map(\.configuration.job))
-        updates.model=events.filter {!sandboxIDs.contains($0.key)}
+        if !events.isEmpty {
+            let sandboxIDs=Set(try journal.sandboxRecords().map(\.configuration.job))
+            updates.model=events.filter {!sandboxIDs.contains($0.key)}
+        }
         for (id,frames) in try tasks.sandboxModelData(events) {
             guard let session=sessions[id],!session.stream.terminal,!session.stream.revoked else {continue}
             do {for frame in frames {try session.stream.response(frame)}}

@@ -11,6 +11,8 @@ struct TaskMailbox {
     private struct Queue {var messages:[Message]=[];var bytes=0}
     private var queues:[String:Queue]=[:]
     private var counters:[String:Int]=[:]
+    // Empty queues can still own an event ordinal until journal retention ends.
+    var hasRetainedState:Bool {!queues.isEmpty || !counters.isEmpty}
     mutating func append(job:String,fields:[String:Any],now:Int64) throws {
         guard UUID(uuidString:job)?.uuidString.lowercased()==job,(0...ActivityPolicy.maximumTimestamp-2000).contains(now) else {throw MailboxError.invalid}
         var queue=queues[job] ?? Queue()

@@ -11,12 +11,12 @@ function run(command,args,timeout=120000){
   return result.stdout.trim();
 }
 try{
-  run('swift',['build','--package-path','platform/studio','-c','release']);
-  const bin=run('swift',['build','--package-path','platform/studio','-c','release','--show-bin-path']);
+  run('swift',['build','-j','2','--package-path','platform/studio','-c','release']);
+  const bin=run('swift',['build','-j','2','--package-path','platform/studio','-c','release','--show-bin-path']);
   const source=join(directory,'IdleLive.swift'),binary=join(directory,'idle-live');
   writeFileSync(source,readFileSync(join(root,'platform/studio/Tests/StudioCoreTests/IdleLive.swift.fixture')));
   // Whole-module fixture compilation has its own finite allowance; the
   // measurement below keeps its independent duration and cleanup deadline.
-  run('/usr/bin/env',['swiftc','-swift-version','6','-O','-warnings-as-errors','-I',join(root,'platform/studio/Sources/CSQLite'),...run('/usr/bin/find',[join(root,'platform/studio/Sources/StudioCore'),'-name','*.swift']).split('\n').sort(),source,'-o',binary],300000);
+  run('/usr/bin/env',['swiftc','-swift-version','6','-O','-whole-module-optimization','-num-threads','2','-warnings-as-errors','-I',join(root,'platform/studio/Sources/CSQLite'),...run('/usr/bin/find',[join(root,'platform/studio/Sources/StudioCore'),'-name','*.swift']).split('\n').sort(),source,'-o',binary],300000);
   console.log(run(binary,[join(bin,'studio-supervisor'),args[1]],(Number(args[1])+30)*1000));
 }finally{rmSync(directory,{recursive:true,force:true});}

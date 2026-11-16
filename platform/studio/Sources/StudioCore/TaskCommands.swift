@@ -196,6 +196,8 @@ final class TaskCommands {
         }
     }
     func tick(now:Int64,uptime:Int64,artifactResults:[ArtifactServiceResult],output:[SandboxTaskOutput]=[],model:[String:[ModelWorkerEvent]]=[:],finished:[SandboxTaskFinished]=[]) throws {
+        guard !uploads.isEmpty || !downloads.isEmpty || mailbox.hasRetainedState || !outputLost.isEmpty || !outcomes.isEmpty ||
+              !artifactResults.isEmpty || !output.isEmpty || !model.isEmpty || !finished.isEmpty else {return}
         let allJobs=try journal.jobs()
         let retained=Set(allJobs.map(\.id));outputLost.formIntersection(retained)
         outcomes=outcomes.filter {retained.contains($0.key)}

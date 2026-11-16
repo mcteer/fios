@@ -143,13 +143,18 @@ final class TaskController {
     func tick(now:Int64,uptime:Int64,admission:inout AdmissionPolicy,
               source:(String)throws->WorkerDispatchBinding?) throws -> [String:[ModelWorkerEvent]] {
         let data=try broker.poll(now:now,uptime:uptime,admission:&admission,source:source)
+        let allJobs=try journal.jobs()
+        let unsettled=allJobs.filter {$0.state == .running || $0.state == .revoking || $0.state == .reconciling}
+        // Terminal history remains durable. It needs no per-loop sets or local
+        // cleanup action when there are no retained sandbox model channels.
+        if sandboxScopes.isEmpty && unsettled.isEmpty {return data}
         let sandboxIDs=Set(try journal.sandboxRecords().map {$0.configuration.job})
-        let running=Set(try journal.jobs().filter {$0.state == .running}.map(\.id))
+        let running=Set(allJobs.filter {$0.state == .running}.map(\.id))
         for id in sandboxScopes.keys where !running.contains(id) {
             sandboxScopes[id]?.channel.revoke()
             if !broker.active(job:id) { sandboxScopes.removeValue(forKey:id) }
         }
-        for job in try journal.jobs() where !sandboxIDs.contains(job.id) {
+        for job in unsettled where !sandboxIDs.contains(job.id) {
             let terminal=(data[job.id] ?? []).contains { event in
                 switch event { case .complete,.failed: return true;default:return false }
             }

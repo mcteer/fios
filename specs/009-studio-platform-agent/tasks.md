@@ -1032,3 +1032,5 @@ Clean cc87e92 observer-source package qualifies184 inputs/9 inactive artifacts, 
 Native observation-only bootstrap source passes35/32/20 compile,6 metadata cases, actual3-operation server denial, dynamic/normal manager and all5 handoff modes. Current production stamp remains refused by the preserved private-SDK guard; no eligible production composition, positive root acceptance or native proof is claimed. Whole39/55 unchanged; production provenance/composition and all-client authority remain unfinished.
 
 Current exact nine-file SDK now has distinct Debug/ReleaseFast CPU C++ compatibility qualification; the checker keeps legacy modes exact and the new receipt outside existing model-prerequisite acceptance. Model-free/production guards remain closed;39/55 whole tasks unchanged.
+
+Published9edea7f CI failed idle CPU5.05% against5%. No-work terminal-history allocations and completed-loader polling are removed without changing active retention/cleanup. Local300s2.51% CPU/28MiB/0 growth, full Debug/optimized,200 Node and actual isolated manager/runner pass. Thresholds unchanged; new exact-head CI/package pending,39/55 whole tasks.

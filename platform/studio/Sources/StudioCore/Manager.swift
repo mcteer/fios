@@ -32,24 +32,24 @@ public enum ManagerRuntime {
         let activeNativeObserver=migrationHeld ? nil:nativeObserver
         let activeNativeObserverSource=migrationHeld ? nil:nativeObserverSource
         var nativeObserverConfigured=activeNativeObserver != nil || activeNativeObserverSource != nil
-        let nativeObservationConfiguration=nativeActivityReadOnlyObservation && !migrationHeld ? AsyncNativeObservationConfiguration(directory:directory):nil
+        var nativeObservationConfiguration=nativeActivityReadOnlyObservation && !migrationHeld ? AsyncNativeObservationConfiguration(directory:directory):nil
         var nativeObservationState:String?=nativeObservationConfiguration == nil ? nil:"loading"
         let nativeReader=activeNativeControl.map {NativeReadOnlyClient($0)} ?? activeNativeObserver
         // Trusted code-only injection. The public entry point has no issuer;
         // missing observations never become absence or a launch permission.
         // Fixed installed-role metadata only, off-loop. It grants neither
         // credential readiness nor native admission/recovery/lifecycle ports.
-        let nativeHealthConfiguration=nativeReadOnlyObservation ? AsyncNativeHealthConfiguration {
+        var nativeHealthConfiguration=nativeReadOnlyObservation ? AsyncNativeHealthConfiguration {
             let configuration=try NativeServingReviewedConfiguration.load(directory:directory)
             return try configuration?.makeHealthCollector()
         }:nil
-        let orbstackHealthConfiguration=orbstackReadOnlyObservation ? AsyncNativeHealthConfiguration(service:.orbstack) {
+        var orbstackHealthConfiguration=orbstackReadOnlyObservation ? AsyncNativeHealthConfiguration(service:.orbstack) {
             try OrbStackHealthConfiguration.load(directory:directory)
         }:nil
         // Execution compositions already own one shared resource/lifecycle
         // executor. The observation-only entry must never add a second pool
         // beside it or perform work while a migration holds this manager.
-        let vmResourceConfiguration=resourceReadOnlyObservation && activeExecution == nil && !migrationHeld ? AsyncVMObservationConfiguration {
+        var vmResourceConfiguration=resourceReadOnlyObservation && activeExecution == nil && !migrationHeld ? AsyncVMObservationConfiguration {
             try VMObservationConfiguration.load(directory:directory)
         }:nil
         var vmResourceSource:String?=vmResourceConfiguration == nil ? nil:"loading"
@@ -132,6 +132,7 @@ public enum ManagerRuntime {
             try autoreleasepool {
             let now=ProcessInfo.processInfo.systemUptime
             if let result=nativeObservationConfiguration?.poll() {
+                nativeObservationConfiguration=nil // One-shot configuration has no further outcomes.
                 switch result {
                 case .configured(let source):
                     nativeQueue=AsyncNativeControl(observerSource:source);nativeObserverConfigured=true
@@ -142,6 +143,7 @@ public enum ManagerRuntime {
                 }
             }
             if let result=nativeHealthConfiguration?.poll() {
+                nativeHealthConfiguration=nil // One-shot configuration has no further outcomes.
                 switch result {
                 case .configured(let collector):serviceHealthQueue=AsyncServiceHealth(collector:collector);nativeHealthSource="configured"
                 case .unconfigured:nativeHealthSource="unconfigured"
@@ -149,6 +151,7 @@ public enum ManagerRuntime {
                 }
             }
             if let result=orbstackHealthConfiguration?.poll() {
+                orbstackHealthConfiguration=nil // One-shot configuration has no further outcomes.
                 switch result {
                 case .configured(let collector):orbstackHealthQueue=AsyncServiceHealth(collector:collector);orbstackHealthSource="configured"
                 case .unconfigured:orbstackHealthSource="unconfigured"
@@ -156,6 +159,7 @@ public enum ManagerRuntime {
                 }
             }
             if let result=vmResourceConfiguration?.poll() {
+                vmResourceConfiguration=nil // One-shot configuration has no further outcomes.
                 switch result {
                 case .configured(let work):readOnlyVM=ReadOnlyVMResources(work:work);vmResourceSource="configured"
                 case .unconfigured:vmResourceSource="unconfigured"
