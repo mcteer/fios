@@ -127,15 +127,19 @@ private func runPreparationPlanBindingTests(peer:NativeControlPeer)throws {
     do{_=try WorkerPreparationBinding.capture(plan:plan,journal:journal,prepared:prepared,now:now);fatalError("Uncheckpointed preparation became bound")}catch RuntimeError.identity {}
     guard try journal.observePreparationRegistration(job:job,attempt:0,scope:scope,peer:peer,sample:prepared.registration,now:now) else {fatalError("Original preparation identity not stored")}
     let binding=try WorkerPreparationBinding.capture(plan:plan,journal:journal,prepared:prepared,now:now)
-    try binding.validate(plan:plan,scope:scope,now:now)
+    try binding.validate(plan:plan,scope:scope,journal:journal,now:now)
     guard binding.rootSequence==UInt64.max,binding.launchNonce==plan.nonce else {fatalError("Original plan/root identity lost")}
     let missing=PreparedNativeReservation(registration:prepared.registration,lineage:nil)
     do{_=try WorkerPreparationBinding.capture(plan:plan,journal:journal,prepared:missing,now:now);fatalError("Missing lineage became launch-plan binding")}catch RuntimeError.identity {}
     try journal.claim(job:other,attempt:0,model:scope.canonicalModel,scope:scope)
     let otherPlan=try journal.planWorkerStart(job:other,attempt:0)
-    do{try binding.validate(plan:otherPlan,scope:scope,now:now);fatalError("Preparation crossed original plan")}catch RuntimeError.identity {}
+    do{try binding.validate(plan:otherPlan,scope:scope,journal:journal,now:now);fatalError("Preparation crossed original plan")}catch RuntimeError.identity {}
     let expiry=prepared.registration.sample.requestedAt+Int64(prepared.registration.acknowledgement.lifetimeMilliseconds)
-    do{try binding.validate(plan:plan,scope:scope,now:expiry);fatalError("Expired preparation binding renewed")}catch RuntimeError.identity {}
+    do{try binding.validate(plan:plan,scope:scope,journal:journal,now:expiry);fatalError("Expired preparation binding renewed")}catch RuntimeError.identity {}
+    _=try journal.observeLineage(job:job,attempt:0,scope:scope,peer:peer,sample:nil,now:now)
+    do{try binding.validate(plan:plan,scope:scope,journal:journal,now:now);fatalError("Unknown lineage poll retained launch binding")}catch RuntimeError.identity {}
+    try journal.markUncertain(job:job,attempt:0)
+    do{try binding.validate(plan:plan,scope:scope,journal:journal,now:now+1);fatalError("Uncertain inference retained launch binding")}catch RuntimeError.identity {}
     guard plan.consume(),!plan.consume(),source.counts.0==1,source.counts.1==1 else {fatalError("Binding created a process/consumed plan or retried native RPC")}
 }
 

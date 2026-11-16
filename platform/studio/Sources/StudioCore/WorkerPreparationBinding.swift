@@ -6,11 +6,12 @@ import Foundation
 struct WorkerPreparationBinding:Sendable {
     private let plan:PlannedWorkerStart
     private let registration:VerifiedNativePreparationRegistration
+    private let checkpoint:PreparationBindingCheckpoint
     let peer:NativeControlPeer
     let rootSequence:UInt64
     let correlationID:String
-    private init(plan:PlannedWorkerStart,registration:VerifiedNativePreparationRegistration) {
-        self.plan=plan;self.registration=registration;peer=registration.peer
+    private init(plan:PlannedWorkerStart,registration:VerifiedNativePreparationRegistration,checkpoint:PreparationBindingCheckpoint) {
+        self.plan=plan;self.registration=registration;self.checkpoint=checkpoint;peer=registration.peer
         rootSequence=registration.acknowledgement.rootSequence;correlationID=registration.acknowledgement.correlationID
     }
     static func capture(plan:PlannedWorkerStart,journal:Journal,prepared:PreparedNativeReservation,now:Int64)throws->Self {
@@ -30,11 +31,12 @@ struct WorkerPreparationBinding:Sendable {
               try journal.activeLaunches().contains(where:{$0.job==plan.job && $0.attempt==plan.attempt && $0.nonce==plan.nonce}),
               try journal.originalNativeRoot(job:plan.job,attempt:plan.attempt,scope:plan.scope,peer:registration.peer)==ack.rootSequence else {throw RuntimeError.identity}
         try lineage.lineage.validate()
-        return Self(plan:plan,registration:registration)
+        return Self(plan:plan,registration:registration,checkpoint:try journal.preparationBindingCheckpoint(plan:plan,peer:registration.peer,root:ack.rootSequence))
     }
     var launchNonce:String {plan.nonce}
-    func validate(plan expected:PlannedWorkerStart,scope:InferenceScope,now:Int64)throws {
+    func validate(plan expected:PlannedWorkerStart,scope:InferenceScope,journal:Journal,now:Int64)throws {
         guard plan===expected,try plan.scope.encoded()==scope.encoded(),
+              try journal.preparationBindingCheckpoint(plan:plan,peer:peer,root:rootSequence)==checkpoint,
               registration.leaseWindowIsCurrent(now:now),rootSequence>0,
               scope.nativeEpoch==registration.acknowledgement.instance,
               scope.nativeModel.utf8.elementsEqual(registration.acknowledgement.model.utf8),

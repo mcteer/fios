@@ -32,6 +32,13 @@ no process or bearer permission and cannot be reused for another plan. The
 factory's once-only plan consumption and independent source/resource/budget/
 native admission checks remain necessary. The broker must revoke on subsequent
 source loss; this binding is not a replacement for current source eligibility.
+Validation now also rechecks the serialized journal's dispatched scope, active
+launch and original root against a private journal-instance/observation stamp.
+Any committed lineage poll conservatively invalidates the captured stamp,
+including an unknown reply in the same millisecond. A restarted journal cannot
+reconstruct the live stamp. Changed inference state, root or launch also refuses.
+This is a local revocation fence, not a fresh native observation or a grant.
+The manager must still serialize validation with its launch decision.
 
 Tests use finite semaphore-controlled native-source ports, never models. Twelve
 receipt scenarios exercise held off-loop work, once-only calls/results, lookup
@@ -43,7 +50,10 @@ without consuming a plan or starting a process. Full Debug/optimized policy/mock
 suites cover the existing handoff path after shared identity-validation changes.
 
 This layer is not yet the model-broker/worker preparation mode. The current
-Python metadata2/handoff1 path is unchanged. Production execution composition,
+Python metadata2/handoff1 protocol remains unchanged. The worker also rejects
+caller-supplied preparation-root headers along with its other reserved native
+identity headers, before counting or sending a model POST. This does not enable
+a preparation worker mode. Production execution composition,
 owned-preparation observation, the atomic worker transport contract and full
 positive native coverage/proof/capacity remain unfinished. No enrollment,
 installation, native activation or whole-task closure follows;39/55 remains.

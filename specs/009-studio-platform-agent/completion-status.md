@@ -1,6 +1,6 @@
 # Spec009 completion status
 
-Updated2026-11-15. **39/55 whole tasks complete;16 open.**
+Updated2026-11-16. **39/55 whole tasks complete;16 open.**
 
 The central missing capability is a trustworthy, atomic native admission and
 completion boundary. Current source provides ownership tracking, conservative

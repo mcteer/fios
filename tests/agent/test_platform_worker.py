@@ -233,6 +233,21 @@ class PlatformWorkerTests(unittest.IsolatedAsyncioTestCase):
         data=command();data['expires_at']=int(time.time()*1000)-1
         with self.assertRaises(PlatformProtocolError):parse_platform_command(data)
 
+    async def test_caller_cannot_supply_native_ownership_headers(self):
+        from pydantic_ai import CancellationToken
+        from fios_agent.transport import StreamFailure
+        permitted=parse_platform_command(command());seen=[]
+        async def handler(request):seen.append(request);return httpx2.Response(200)
+        async def emit(event):pass
+        for header in ('X-Fios-Request-Id','X-Fios-Native-Instance','X-Fios-Handoff-Root','X-Fios-Preparation-Root'):
+            with self.subTest(header=header),patch('fios_agent.platform_worker.check_native_guard',return_value='1'*32):
+                transport=PlatformTransport(permitted,httpx2.MockTransport(handler),emit,CancellationToken(),base_url='http://127.0.0.1:1/v1')
+                with self.assertRaises(StreamFailure):
+                    await transport.handle_async_request(httpx2.Request('POST','http://127.0.0.1:1/v1/chat/completions',headers={header:'1'},json={'model':permitted.model}))
+                self.assertEqual(transport.actual_posts,0)
+                await transport.aclose()
+        self.assertEqual(seen,[])
+
     async def test_enrolled_original_handoff_root_is_bound_to_one_permission(self):
         from pydantic_ai import CancellationToken
         from fios_agent.transport import StreamFailure

@@ -5,6 +5,12 @@ import CSQLite
 
 public enum JournalError: Error { case invalid, locked, storage, conflict, trackingLimit }
 
+struct PreparationBindingCheckpoint:Equatable,Sendable {
+    let journalID:UUID
+    let observationRevision:UInt64
+    let lineage:Data
+}
+
 // Live, single-use handoff from a newly committed launch intent. This cannot
 // be reconstructed from a nonce, restart/census result or durable reap record.
 final class PlannedWorkerStart:@unchecked Sendable {
@@ -31,6 +37,8 @@ public final class Journal {
     private static let maximumUnresolvedInference=32
     let directory:URL
     private var db: OpaquePointer?
+    private let preparationJournalID=UUID()
+    private var lineageObservationRevision:UInt64=0
     private var lockFD: Int32 = -1
     // Single serialized owner and exclusive writer lock. Cache decoded bounded
     // records between SQL mutations; every execute/transaction edge invalidates.
@@ -493,9 +501,11 @@ public final class Journal {
               try record.scope.encoded()==scope.encoded() else {throw JournalError.conflict}
         let saved=try lineageCheckpoint(job:job,attempt:attempt)
         var consumer=try NativeRequestLineageConsumer(scope:scope,job:job,attempt:attempt,peer:peer,checkpoint:saved)
+        guard lineageObservationRevision<UInt64.max else {throw JournalError.trackingLimit}
         let observation=consumer.accept(sample,now:now)
         let payload=String(decoding:try consumer.checkpoint(scope:scope),as:UTF8.self)
         try execute("INSERT INTO native_lineages(job,attempt,payload) VALUES(?,?,?) ON CONFLICT(job,attempt) DO UPDATE SET payload=excluded.payload",[job,String(attempt),payload])
+        lineageObservationRevision+=1
         return observation
     }
     // Preserve an authenticated registration even if its subsequent lineage
@@ -533,6 +543,18 @@ public final class Journal {
         guard let saved=try lineageCheckpoint(job:job,attempt:attempt) else {return nil}
         let consumer=try NativeRequestLineageConsumer(scope:scope,job:job,attempt:attempt,peer:peer,checkpoint:saved)
         return consumer.fenced ? nil:consumer.rootSequence
+    }
+    // A local revocation stamp, never source liveness or dispatch authority.
+    // Any committed lineage poll, even unknown at the same timestamp,
+    // conservatively revokes captured bindings. Reopen cannot restore them.
+    // Changed inference state or launch withdrawal also refuses.
+    func preparationBindingCheckpoint(plan:PlannedWorkerStart,peer:NativeControlPeer,root:UInt64)throws->PreparationBindingCheckpoint {
+        guard let record=try inferenceScope(job:plan.job,attempt:plan.attempt),record.state == .dispatched,
+              try record.scope.encoded()==plan.scope.encoded(),
+              try activeLaunches().contains(where:{$0.job==plan.job && $0.attempt==plan.attempt && $0.nonce==plan.nonce}),
+              try originalNativeRoot(job:plan.job,attempt:plan.attempt,scope:plan.scope,peer:peer)==root,
+              let checkpoint=try lineageCheckpoint(job:plan.job,attempt:plan.attempt) else {throw RuntimeError.identity}
+        return PreparationBindingCheckpoint(journalID:preparationJournalID,observationRevision:lineageObservationRevision,lineage:checkpoint)
     }
     // Persist original-root/replay binding before returning local retirement
     // metadata. No inference state transition or reservation release occurs.

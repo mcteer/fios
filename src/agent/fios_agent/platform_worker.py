@@ -72,7 +72,7 @@ class PlatformTransport(httpx2.AsyncBaseTransport):
                 raise StreamFailure('invalid_request')
             if not isinstance(native_epoch,str) or not native_epoch:
                 raise StreamFailure('model_unavailable')
-            if any(name in request.headers for name in ('x-fios-request-id','x-fios-native-instance','x-fios-handoff-root')):
+            if any(name in request.headers for name in ('x-fios-request-id','x-fios-native-instance','x-fios-handoff-root','x-fios-preparation-root')):
                 raise StreamFailure('invalid_request')
             try:
                 handoff_root = bound_handoff_root(self.command, native_epoch)
