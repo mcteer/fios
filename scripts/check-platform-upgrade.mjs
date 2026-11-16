@@ -73,7 +73,7 @@ try {
   const source=join(scratch,'UpgradeLive.swift');
   writeFileSync(source,fixture);
   const found=run('/usr/bin/find',[join(root,'platform/studio/Sources/StudioCore'),'-name','*.swift']).split('\n').sort();
-  run('/usr/bin/env',['swiftc','-O','-swift-version','6','-warnings-as-errors','-I',join(root,'platform/studio/Sources/CSQLite'),...found,source,'-o',helper],120000);
+  run('/usr/bin/env',['swiftc','-O','-whole-module-optimization','-num-threads','2','-swift-version','6','-warnings-as-errors','-I',join(root,'platform/studio/Sources/CSQLite'),...found,source,'-o',helper],120000);
   run(helper,[migrateSeven?'seed-seven':migrateEight?'seed-eight':'seed',state]);
   await cycle(oldRelease,state,migrating);
   const bundle=join(scratch,'bundle');const backup=cli(oldRelease,state,['backup-state','--to',bundle]);

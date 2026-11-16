@@ -1022,3 +1022,5 @@ Installer plan-backup-config/plan-uninstall-config now connect the six-document 
 Clean4f0e2c2 declared-input package and its own installer/CLI configuration backup rehearsal now pass. Protected installed release/configuration/credential transaction and native acceptance remain open;39/55 whole tasks unchanged.
 
 Native observation now has a narrowed code-only client/worker and internal manager path independent of maintenance control. Full Debug/optimized,200 Node and actual readonly/maintenance native IPC pass; saved/new desired state cannot actuate the observer. Actual incomplete GET holds retain ownership across advancing samples until disconnect/completion. Slow model responses/all modalities, installed factory/native coverage and clean packaging remain open;39/55 whole tasks.
+
+Clean e0de598 read-only observation package and actual old/new/old manager/stopped-state recovery pass with uncertainty/export retained and future-schema refusal. Bounded2-thread recovery compilation is explicit. Root-protected installation, native observer factory/producer and operational acceptance remain open;39/55 whole tasks unchanged.
