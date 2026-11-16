@@ -67,6 +67,7 @@ class CompositionTests(unittest.TestCase):
             plan=json.loads(planned.stdout);self.assertEqual(plan['state'],'blocked');self.assertEqual(plan['privileged_commands'],[])
             self.assertFalse(plan['installed']);self.assertFalse(plan['native_authority']);self.assertFalse(args[4].exists())
             self.assertEqual([item['files'] for item in plan['installation_layout']],[10,2])
+            self.assertEqual(plan['installation_layout'][1]['destination'], '/Library/Application Support/Fios/Studio/python/runtime')
             for name,record in receipt['files'].items():
                 self.assertEqual(sha((output/name).read_bytes()),record['sha256'])
 

@@ -105,7 +105,7 @@ def installation_plan(directory, expected, host):
             'state':'blocked','changes_made':False,'privileged_commands':[],
             'installation_layout':[
                 {'source_prefix':'platform/','destination':'/Library/Application Support/Fios/Studio','files':platform_files},
-                {'source_prefix':'python-runtime/','destination':'/Library/Application Support/Fios/Studio/python-runtime','files':runtime_files}],
+                {'source_prefix':'python-runtime/','destination':'/Library/Application Support/Fios/Studio/python/runtime','files':runtime_files}],
             'service_user':'mcteer','launchd_registration':'not_proposed',
             'state_and_credentials':'separate_operator_review_not_in_bundle',
             'blockers':['development_components_not_installable_release','operator_installation_not_approved',
