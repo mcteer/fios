@@ -74,3 +74,16 @@ link and4 empty-model runtime checks pass. No numerical/worker/model-setting
 behavior, actual guard activation or
 native proof is added. Completing this participant's ownership/retirement port
 and the full all-client contract remains required; T002/T018–T022 stay open.
+
+
+### Later current-warmer qualification
+
+The subsequent current ownership port is recorded in
+[current-streamed-warm-origins](current-streamed-warm-origins.md), followed by a
+separate ten-case genuine Metal supplement. Actual original request groups now
+survive two event-blocked current warm chunks, retire after physical completion,
+and remain quarantined on independent uncertainty or injected API failure after
+real completion. This supersedes the earlier absence/CPU-only observation for
+that specific port, without establishing complete all-client/producer coverage,
+normalized native activity, positive model proof or admission. Serving code and
+settings remain unchanged;39/55 whole tasks remain complete.

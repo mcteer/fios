@@ -1472,3 +1472,17 @@ older independent uncertain claim and spent budget remain. No model is invoked.
 Version2 decision checkpoints require the current reader; rollback uses the old
 artifact's retained compatible stopped backup, not a downgrade of new state. See
 [the non-dispatch contract](contracts/handoff-non-dispatch.md).
+
+
+### Current warmer physical retirement supplement
+
+```sh
+.venv/bin/python -I -B scripts/check-platform-current-warm-metal.py --isolated --source /ABS/PRIVATE_CURRENT_NATIVE_SOURCE --zig /ABS/PINNED_ZIG
+```
+
+Requires the recorded3736ed55/current ten-path ownership port, pinned Zig and
+SDK27.2, and the selected matched libmlx/libmlxc hashes enforced by the checker.
+Ten finite Debug/ReleaseSafe cases run two tiny existing warm-kernel chunks with
+shared-event gates and five-second emergency release, no model/weights/inference.
+No serving source or configuration is changed. The ownership-disabled control is
+a test-host profile, not pristine upstream; all-client acceptance remains open.

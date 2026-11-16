@@ -948,3 +948,6 @@ Final T021 original-root handoff increment:198 Node/107 installed Python, Debug/
 
 
 2026-11-15 T021/T049 non-dispatch package: clean232e448 nine artifacts/179 declared inputs, separate unchanged Python candidate/108 copied-prefix tests, both blocked private install/config reviews and the actual packaged CLI's new-checkpoint backup/restore qualification pass. Previous reader refuses newer decision payload; scoped not_sent, older uncertainty and spent budget persist. All approval/enrollment/activation flags remain false; no whole-task closure,39/55 unchanged. Exact-head CI43788982300 is running.
+
+
+2026-11-15 T018/T021 current-warmer physical supplement:10 Debug/ReleaseSafe stages pass against actual current Engine(Metal), original current C++ queue/kernel and selected SDK. Original request survives caller release/two blocked chunks and retires only after real completion. Injected API error after genuine completion and independent uncertainty retain quarantine. Same-current-worker ownership-disabled controls fail as expected; unsupported old-parent fixture API and initial helper-link failures are retained/excluded. Kernel/source/library inputs remain unchanged; no native source delta, model, guard activation or whole-task closure.39/55 unchanged. See current-streamed-warm-origins contract and validation.

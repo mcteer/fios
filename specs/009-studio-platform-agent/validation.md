@@ -6984,3 +6984,49 @@ input and selected installed-byte evidence, not publisher/build/whole-repository
 or whole-native provenance. No approval/enrollment/installation/activation or
 native admission/completion follows;39/55 whole tasks unchanged. Published
 232e448 exact-head CI43788982300 is running, not yet an exact-head pass.
+
+
+### 2026-11-15 current streamed-warmer genuine physical retirement
+
+New finite checker `check-platform-current-warm-metal.py` and
+`current_warm_metal_origins.zig.fixture` execute the actual current generic
+Engine(Metal), original current C++ queue/kernel and real selected SDK bindings.
+Two chunks use one simdgroup/one initial FMA iteration and the existing adaptive
+second iteration count, only the existing256KiB private warm buffer. Test-owned
+shared-event gates/counters/status retention and a five-second emergency release
+are explicit instrumentation, not model/runtime/coverage authority. Kernel text
+remains unchanged and hash-bound. No model arrays, weights or inference run.
+
+Final receipt `/private/tmp/fios-009-current-warm-origins-check-qyzje4zx/receipt.json`
+SHA256 `2caf9076f9846dd92fc90713585bfdbf9f4cb97f9362e9b978cb6670cf3f58ea`:10
+expected stages across Debug/ReleaseSafe. Each includes a genuine failing
+ownership-disabled current-worker control, normal owned run, injected public API
+error after successful actual GPU completion/release, independent uncertainty
+and restored normal run. The original root remains while the second actual GPU
+chunk is blocked; normal completion eventually retires original roots/contexts.
+Both uncertainty cases retain that original root. Local pause/engine lifetime
+are not promoted to device/all-client authority. The control is the same current
+worker with ownership disabled only in its test host, not pristine upstream.
+
+Selected14 native/csrc paths, fixture/recipe/helper/checker hashes and actual
+libmlx4fc2c5d353b6a638d3cc4f3bdc57ddb429a71432dfc851543d6df80a67ee58ff /
+libmlxc25dfeb4fdf9f0bebbd18fe9701c939bbb66c148a00923fda2d9c905018b3e63b
+are unchanged before/after. This is selected-input evidence, not whole-native
+or publisher provenance. The existing native image and package179-input
+projection are unchanged; no full native rebuild is claimed or required for this
+test-only supplement.
+
+Retained excluded attempts: private prototype
+`/private/tmp/fios-009-current-warm-origins-check-8zoa0xx3` missed the fixture
+macro on the actual allocator translation unit and failed helper linkage; the
+macro now reaches the correct C++ fixture units. The direct old-parent attempt
+`/private/tmp/fios-009-current-warm-origins-check-0z29labp` lacks the newer
+fios_fixture_control field and failed compilation, so it is not an ownership
+failure. Earlier ten-case rehearsal2a55ihn_ also passes, but the final receipt
+adds original C++/shim input brackets and explicit unchanged-kernel hashing.
+
+This supplies physical acceptance only for the existing relocated warm queue.
+Other producers/modalities, all-client normalized activity, positive model
+completion/admission, installed lifecycle and Studio acceptance remain open.
+No native code, model setting, numerical algorithm, installation, enrollment or
+activation changes;39/55 whole tasks unchanged.

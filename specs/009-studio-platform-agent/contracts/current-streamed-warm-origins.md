@@ -53,3 +53,33 @@ Run the same isolated command as the default matrix, adding exactly one of
 network access is denied and zero selected tests fail validation. These
 supplements leave the native patch, installed configuration and application
 package inputs unchanged. Results are recorded separately in validation.
+
+
+## Separate physical Metal supplement
+
+`check-platform-current-warm-metal.py --isolated --source ABS_CURRENT_SOURCE
+--zig ABS_PINNED_ZIG` executes the current actual Engine(Metal), current original
+C++ warm queue/kernel and real selected SDK libraries. Two tiny chunks are
+separately held by test-owned shared events; one simdgroup/one initial iteration
+and the existing second-chunk adaptation use only the warmer's256KiB private
+buffer. No model, weights or inference is involved. A five-second emergency
+release bounds both test gates. The kernel text is hash-bound unchanged.
+
+The original request survives caller release while either real chunk is blocked,
+and retires only after both physically complete. An injected public retirement
+API error after genuine GPU completion/release quarantines that original root;
+independent prior uncertainty remains held after physical retirement. Existing
+engine-lifetime and pause ordering are checked separately from request ownership.
+
+Debug and ReleaseSafe each exercise an ownership-disabled current-worker control,
+normal owned behavior, injected API failure, independent uncertainty and restored
+normal behavior. The control genuinely loses the root and fails; it is the same
+current worker with ownership disabled in a test host, not a pristine upstream
+baseline. The original pre-port parent cannot compile this newer fixture-control
+API and that attempt is retained/excluded. Initial missing-helper linkage is
+also excluded. Exact source/csrc/library and fixture inputs are bracketed.
+
+This supplements the CPU/parent checks with physical retirement of this specific
+queue. No native source or library is changed, and no enclosing native rebuild
+or serving activation follows. It does not cover every producer/modality, prove
+all-client quiescence or issue native admission/model-completion authority.
