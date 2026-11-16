@@ -125,3 +125,9 @@ format compatibility; the production manager still has unknown coverage/activity
 and remains closed. It does not supply the missing source authority, scoped
 preparation export or broker/worker preparation transport. See
 [worker activity contract](worker-activity-v2.md).
+
+### Bounded upstream recheck (2026-11-16)
+
+The public latest release remains v26.11.2. Main92cecaaf83c47f7bcc81c21250d8e50a7bdfe462 is97 commits ahead of the pinned release and4 beyond the prior218c766 audit. The [four-commit comparison](https://github.com/ddalcu/mlx-serve/compare/218c76640228e3860f8a4a67075c9fcd1fa29cae...92cecaaf83c47f7bcc81c21250d8e50a7bdfe462) changes10 cache/prefill/accounting/sampling-related files. Those changed paths provide no new normalized activity/terminal/admission interface to adopt. This is a bounded comparison, not an exhaustive absence claim about all upstream source. No newer code or installed version was imported.
+
+The optional SDK residency-refresh participant is separately documented in [sdk-residency-refresh.md](sdk-residency-refresh.md). Its new conservative metadata refusal is under matched native build validation; it cannot close the positive all-client contract.

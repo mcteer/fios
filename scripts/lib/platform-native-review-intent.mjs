@@ -102,6 +102,15 @@ function currentCBindingInputs(inputs,dependency,cxx,message){
 // model effect. This is a refusal prerequisite, never an admission grant.
 export function nativeReviewModelInputs(inputs){
  assert(inputs?.provider_source_fixture!==true,'Provider source fixture is model-free');
+ const source=inputs??{};
+ if(Object.hasOwn(source,'source_sdk_residency_refresh_observation_version')||Object.hasOwn(source,'source_sdk_residency_refresh_enrollment_refusal_version')){
+  assert(source.source_sdk_residency_refresh_observation_version===1&&source.source_sdk_residency_refresh_enrollment_refusal_version===1,'Unsupported SDK residency source declaration');
+  assert(source.mlx_source_dependency&&typeof source.mlx_source_dependency==='object'&&!Array.isArray(source.mlx_source_dependency),'Residency SDK source requires its SDK dependency declaration');
+ }
+ if(Object.hasOwn(source,'model_effects')){
+  assert(source.model_effects==='forbidden','Unknown source model-effect declaration');
+  assert.fail('Source composition is explicitly model-free');
+ }
  const dependency=inputs?.mlx_source_dependency;
  if(dependency!==undefined&&dependency!==null){
   assert(dependency.source_fixture_only===true&&dependency.native_authority===false&&dependency.features?.safetensors===true,'Source SDK lacks required Safetensors support');

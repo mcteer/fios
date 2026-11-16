@@ -3,6 +3,13 @@ import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import {readFileSync} from 'node:fs';
 import {nativeReviewIntent,nativeReviewHTTPFailure,nativeReviewJSON,nativeReviewActivity,nativeReviewModelInputs,nativeReviewLineage,nativeReviewComponents} from '../scripts/lib/platform-native-review-intent.mjs';
+
+test('model-free SDK compositions cannot enter model prerequisites through legacy metadata',()=>{
+ assert.throws(()=>nativeReviewModelInputs({model_effects:'forbidden'}),/model-free/);
+ assert.throws(()=>nativeReviewModelInputs({model_effects:'permitted'}),/Unknown/);
+ assert.throws(()=>nativeReviewModelInputs({source_sdk_residency_refresh_observation_version:1,source_sdk_residency_refresh_enrollment_refusal_version:1}),/SDK dependency declaration/);
+ assert.throws(()=>nativeReviewModelInputs({source_sdk_residency_refresh_observation_version:2,source_sdk_residency_refresh_enrollment_refusal_version:1,model_effects:'forbidden'}),/Unsupported/);
+});
 test('native review JSON is bounded while reading, before parsing',async()=>{
  assert.deepEqual(await nativeReviewJSON(new Response('{"ok":true}'),11),{ok:true});
  await assert.rejects(nativeReviewJSON(new Response('{"ok":true}'),10),/response limit/);
