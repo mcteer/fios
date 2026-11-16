@@ -37,7 +37,11 @@ extension StoppedStateBackup {
         }
         // Verify the copied tree, not just the previously observed source. A
         // changed/linked/extra file cannot become a published restoration.
-        _=try verify(directory:temporary,expectedSHA256:expectedSHA256,journalSchema:migrateFrom ?? 9)
+        if migrateFrom == nil {
+            _=try verifyCompatibility(directory:temporary,expectedSHA256:expectedSHA256)
+        }else {
+            _=try verify(directory:temporary,expectedSHA256:expectedSHA256,journalSchema:migrateFrom ?? 9)
+        }
         // Fresh working-state locks are not copied from a backup. Create them
         // only after verifying the private copy, so a stopped restored state
         // can be backed up again without first starting any controller/store.

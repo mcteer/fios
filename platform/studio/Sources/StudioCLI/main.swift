@@ -72,8 +72,8 @@ do {
             result=["ok":true,"scope":receipt.scope,"bytes":receipt.bytes,"artifacts":receipt.artifacts,"sha256":receipt.sha256,"started":false,"installed":false,"activation":false]
         }
     } else if verifyBackup {
-        let receipt=try StoppedStateBackup.verify(directory:directory,expectedSHA256:arguments[5])
-        result=["ok":true,"scope":receipt.scope,"bytes":receipt.bytes,"artifacts":receipt.artifacts,"sha256":receipt.sha256,"installed":false,"activation":false]
+        let receipt=try StoppedStateBackup.verifyCompatibility(directory:directory,expectedSHA256:arguments[5])
+        result=["ok":true,"scope":receipt.scope,"bytes":receipt.bytes,"artifacts":receipt.artifacts,"sha256":receipt.sha256,"journal_compatible":true,"installed":false,"activation":false]
     } else if offlineBackup || configurationBackup {
         if arguments[3]=="backup-state" {
             let receipt=try StoppedStateBackup.create(directory:directory,destination:URL(fileURLWithPath:arguments[configurationBackup ? 7:5]),configuration:configurationBackup ? URL(fileURLWithPath:arguments[5]):nil)

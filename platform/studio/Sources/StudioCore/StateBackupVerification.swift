@@ -3,6 +3,20 @@ import Darwin
 import CryptoKit
 
 extension StoppedStateBackup {
+    // Byte verification alone cannot establish that this executable understands
+    // persisted decision formats inside an otherwise unchanged journal schema.
+    // Inspect/recover only disposable private copies; never adopt the backup.
+    public static func verifyCompatibility(directory:URL,expectedSHA256:String)throws->StateBackupReceipt {
+        let receipt=try verify(directory:directory,expectedSHA256:expectedSHA256)
+        let snapshot=try JournalSchemaSnapshot(source:directory)
+        do {
+            let inspected=try Journal(directory:snapshot.directory)
+            withExtendedLifetime(inspected) {}
+        }
+        withExtendedLifetime(snapshot) {}
+        _=try verify(directory:directory,expectedSHA256:expectedSHA256)
+        return receipt
+    }
     public static func verify(directory:URL,expectedSHA256:String)throws->StateBackupReceipt {
         try verify(directory:directory,expectedSHA256:expectedSHA256,journalSchema:9)
     }

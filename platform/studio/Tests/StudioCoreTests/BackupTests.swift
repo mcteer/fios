@@ -224,6 +224,35 @@ func runBackupTests() throws {
     guard FileManager.default.fileExists(atPath:failedBundle.appendingPathComponent("state.sqlite").path),
           !FileManager.default.fileExists(atPath:failedBundle.appendingPathComponent("backup.json").path) else {fatalError("Failed backup evidence removed or sealed")}
     try indexBefore.write(to:indexPath)
+    try runBackupDecisionCompatibilityTests(root:root)
     print("PASS: bounded configuration bytes and absences privately restored without enrollment; independent uncertainty and failed partial backup retained")
     print("PASS: supervisor+custody+manager-fenced stopped-only bounded platform-marked SQLite backup, immutable receipt/no overwrite and independent uncertainty preserved on restore; no Fios database access")
+}
+
+private func runBackupDecisionCompatibilityTests(root:URL)throws {
+    let state=root.appendingPathComponent("future-decision"),bundle=root.appendingPathComponent("future-decision-backup"),target=root.appendingPathComponent("future-decision-restored")
+    let job=UUID().uuidString.lowercased()
+    let scope=InferenceScope(host:"fixture-host",endpointHash:String(repeating:"a",count:64),profileHash:String(repeating:"b",count:64),
+        managerEpoch:UUID().uuidString.lowercased(),nativeEpoch:String(repeating:"c",count:32),canonicalModel:"fixture/model",nativeModel:"fixture/model",sequence:1,sampledAt:10000)
+    do {
+        let journal=try Journal(directory:state)
+        try journal.claim(job:job,attempt:0,model:scope.canonicalModel,scope:scope)
+        try journal.markDispatched(job:job,attempt:0)
+        _=try ArtifactStore(directory:state.appendingPathComponent("artifacts"))
+    }
+    var writer:OpaquePointer?
+    guard sqlite3_open_v2(state.appendingPathComponent("state.sqlite").path,&writer,SQLITE_OPEN_READWRITE,nil)==SQLITE_OK,let writer else {throw JournalError.storage}
+    let status=sqlite3_exec(writer,"INSERT INTO native_lineages(job,attempt,payload) VALUES('\(job)',0,'{\"version\":99}')",nil,nil,nil)
+    guard sqlite3_close(writer)==SQLITE_OK,status==SQLITE_OK else {throw JournalError.storage}
+    let receipt=try StoppedStateBackup.create(directory:state,destination:bundle)
+    _=try StoppedStateBackup.verify(directory:bundle,expectedSHA256:receipt.sha256)
+    let databaseBefore=try Data(contentsOf:bundle.appendingPathComponent("state.sqlite")),namesBefore=try FileManager.default.contentsOfDirectory(atPath:bundle.path).sorted()
+    do {_=try StoppedStateBackup.verifyCompatibility(directory:bundle,expectedSHA256:receipt.sha256);fatalError("Byte-valid future decision became compatible")}
+    catch JournalError.invalid {}
+    do {_=try StoppedStateBackup.restore(directory:bundle,expectedSHA256:receipt.sha256,destination:target);fatalError("Unsupported journal decision was published for restoration")}
+    catch JournalError.invalid {}
+    guard !FileManager.default.fileExists(atPath:target.path),
+          try Data(contentsOf:bundle.appendingPathComponent("state.sqlite"))==databaseBefore,
+          try FileManager.default.contentsOfDirectory(atPath:bundle.path).sorted()==namesBefore else {fatalError("Compatibility refusal mutated input or published destination")}
+    print("PASS: byte-valid unsupported journal decisions remain preservable backups but cannot pass executable compatibility or publish restored state; input unchanged")
 }

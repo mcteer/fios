@@ -39,7 +39,7 @@ export function platformStatePlan({operation,release,verified,host,source,destin
     :[command(['--state',from,'verify-backup','--sha256',backupSHA256]),command(['--state',from,'restore-state','--sha256',backupSHA256,'--to',to])];
   return {version:1,operation:`stopped_state_${operation}_review`,host,manifest_sha256:verified.manifestSHA256,
     state:'operator_review_required',changes_made:false,activation:false,privileged_commands:[],proposed_commands:commands,
-    unverified_at_review:operation==='backup'?['source_journal_identity','source_writer_stopped']:['backup_origin','backup_receipt','destination_writer_absent'],
+    unverified_at_review:operation==='backup'?['source_journal_identity','source_writer_stopped']:['backup_origin','backup_receipt','backup_journal_compatibility','destination_writer_absent'],
     blockers:['explicit_operator_review_and_execution_required'],
     preserves:['native_inference_uncertainty','platform_exports','unrelated_runtime_objects','fios_database','legacy_volume'],
     limitations:['no_installation_or_service_authority','no_native_inference','no_schema_downgrade_or_overwrite','execute_on_the_originating_host_only']};
