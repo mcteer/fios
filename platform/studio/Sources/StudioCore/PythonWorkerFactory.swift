@@ -38,7 +38,7 @@ struct WorkerDispatchBinding:Sendable {
 }
 
 // No public/memberwise initializer: only the live factory's pre-spawn
-// cancellation branch can attest that its single-use plan created no process.
+// cancellation/withdrawal branch can attest that its plan created no process.
 struct WorkerNeverSpawnedEvidence:Sendable {
     let plan:PlannedWorkerStart
     let handoff:WorkerHandoffBinding?
@@ -88,13 +88,22 @@ final class PythonWorkerFactory:Sendable {
     func beginStart(binding:WorkerDispatchBinding,plan:PlannedWorkerStart,started:Int64,now:Int64,initiallyCancelled:Bool=false,handoff:WorkerHandoffBinding?=nil)throws->PendingPythonWorker {
         try validate(binding,now:now)
         guard WireScalar.uuid(plan.nonce),started>=0,started<=ActivityPolicy.maximumTimestamp-2000 else {throw RuntimeError.invalid}
-        try handoff?.validate(plan:plan,scope:binding.inferenceScope())
+        try handoff?.validateForLaunch(plan:plan,scope:binding.inferenceScope())
         guard try plan.scope.encoded()==binding.inferenceScope().encoded(),plan.consume() else {throw RuntimeError.identity}
         return PendingPythonWorker(initiallyCancelled:initiallyCancelled) { [self] cancelled in
             do {return .success(try spawnTransport(binding:binding,launchID:plan.nonce,handoff:handoff,cancelled:cancelled))}
             catch WorkerStartFailure.cancelled {return .failure(.neverSpawned(WorkerNeverSpawnedEvidence(plan:plan,handoff:handoff)))}
             catch {return .failure(.unavailable)}
         }
+    }
+    // Consume only an original, still-unused plan. This executes no process,
+    // refreshes no permission and needs no live model-admission observation.
+    // A native registration requires paired native cancellation separately.
+    func withdrawUnstarted(plan:PlannedWorkerStart,handoff:WorkerHandoffBinding)throws->WorkerNeverSpawnedEvidence {
+        try plan.scope.validate()
+        try handoff.validate(plan:plan,scope:plan.scope)
+        guard WireScalar.uuid(plan.nonce),plan.consume() else {throw RuntimeError.identity}
+        return WorkerNeverSpawnedEvidence(plan:plan,handoff:handoff)
     }
     private func spawnTransport(binding:WorkerDispatchBinding,launchID:String,handoff:WorkerHandoffBinding?=nil,cancelled:@Sendable ()->Bool)throws->StartedPythonWorker {
         guard !cancelled() else {throw WorkerStartFailure.cancelled}

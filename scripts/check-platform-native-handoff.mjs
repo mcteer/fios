@@ -11,7 +11,7 @@ import path from 'node:path';
 import {verifyNativeReview} from './lib/platform-native-review.mjs';
 import {nativeReviewJSON} from './lib/platform-native-review-intent.mjs';
 const args=process.argv.slice(2),root=path.resolve(import.meta.dirname,'..');
-const nonDispatch=args.at(-1)==='--non-dispatch',preparationStorageFailure=args.at(-1)==='--preparation-storage-failure',preparationFailure=args.at(-1)==='--preparation-failure'||preparationStorageFailure;if(nonDispatch||preparationFailure)args.pop();
+const nonDispatch=args.at(-1)==='--non-dispatch',preparationCancel=args.at(-1)==='--preparation-cancel',preparationStorageFailure=args.at(-1)==='--preparation-storage-failure',preparationFailure=args.at(-1)==='--preparation-failure'||preparationStorageFailure||preparationCancel;if(nonDispatch||preparationFailure)args.pop();
 const fixture='platform/studio/Tests/StudioCoreTests/'+(nonDispatch?'NativeHandoffNonDispatchClient.swift.fixture':preparationFailure?'NativeHandoffPreparationFailureClient.swift.fixture':'NativeHandoffClient.swift.fixture');
 assert(process.platform==='darwin'&&process.arch==='arm64'&&process.getuid()>0);
 assert(args.length===5&&args[0]==='--isolated'&&args[1]==='--capsule'&&args[3]==='--sha256');
@@ -72,12 +72,14 @@ try {
  assert(healthy,'Private startup deadline');assert.deepEqual((await request('/v1/models')).value.data,[]);
  const activity=await request('/v1/fios/activity'),instance=activity.value.source_instance;assert.equal(activity.value.coverage,'unknown');assert.match(instance,/^[a-f0-9]{32}$/);
  if(preparationFailure){
-  const job=randomUUID(),registration=parseRegistration(invoke(preparationStorageFailure?'fail-storage':'fail',job,instance));
-  assert.deepEqual(parseRegistration(invoke('check',job,instance)),registration);
+  const job=randomUUID(),first=invoke(preparationCancel?'cancel':preparationStorageFailure?'fail-storage':'fail',job,instance);
+  const second=invoke(preparationCancel?'check-closed':'check',job,instance);
+  if(preparationCancel){assert.match(first,/^[a-f0-9]{64} closed$/);assert.equal(second,first)}
+  else assert.deepEqual(parseRegistration(second),parseRegistration(first));
   assert.equal(attempts,0);observe();assert.deepEqual(capture(),inputs);
   const result={scope:'actual_native_registration_survives_injected_lineage_failure_and_journal_restart_only',inputs,records,capsule_receipt_sha256:args[4],source_instance:instance,job,stages:2,
-   original_root_checkpointed:true,own_and_older_uncertainty_retained:2,request_budget_retained:true,worker_grants:0,model_POSTs:0,models:0,
-   synthetic_advisory_and_capacity_only:true,injected_readonly_lineage_failure:true,injected_storage_contention:preparationStorageFailure,stale_registration_is_identity_only:preparationStorageFailure,registration_RPCs:1,peak_native_process_bytes:peak,
+   original_root_checkpointed:true,own_and_older_uncertainty_retained:preparationCancel?1:2,own_not_sent:preparationCancel,request_budget_retained:true,worker_grants:0,model_POSTs:0,models:0,
+   synthetic_advisory_and_capacity_only:true,injected_readonly_lineage_failure:true,injected_storage_contention:preparationStorageFailure,stale_registration_is_identity_only:preparationStorageFailure,registration_RPCs:1,cancellation_RPCs:preparationCancel?1:0,peak_native_process_bytes:peak,
    native_admission_authority:false,native_completion_proof:false,installed:false,activation:false,inputs_unchanged:true};
   writeFileSync(path.join(directory,'receipt.json'),JSON.stringify(result,null,2)+'\n',{mode:0o600});console.log(JSON.stringify({directory,receipt_sha256:sha(path.join(directory,'receipt.json')),stages:2,native_admission_authority:false}));
  }else if(nonDispatch){

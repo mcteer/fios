@@ -7353,3 +7353,59 @@ observations, not publisher/build/whole-native provenance or installation.
 Whole39/55 stays unchanged. Exact563ade3 CI43804147768 is running; all approval,
 enrollment and activation flags remain false. No merge/deployment or model
 inference/installed lifecycle action occurred.
+
+### 2026-11-15 Pair unused preparation with scoped native cancellation
+
+The original preparation cancellation retained uncertainty despite never
+calling the child factory and having a cancellable original root. Failing-first
+mock log `/private/tmp/fios-009-unused-preparation-red.log` stops at
+`UNUSED_PREPARATION_NOT_CLOSED_BY_PAIRED_NATIVE_CANCEL`.
+
+The live factory now withdraws only an original unused plan, consuming it
+without Process.run and producing the existing opaque no-spawn evidence.
+Consumed/withdrawn plans cannot be reused. A separate cleanup-only binding
+accepts dispatched/uncertain scope with the original active nonce and durable
+root, but `beginStart` explicitly rejects it before consumption or process
+creation. It cannot become a launch capability. Unknown registration/root
+retains native doubt rather than issuing rootless completion evidence.
+
+The broker retains the evidence and durable-ack stage across storage failure,
+commits known-unstarted local history before queueing existing native closure,
+and releases only local worker reservation. Only exact authenticated native
+cancelled-root proof resolves its own not_sent. Transferred/unknown/uncertain
+native replies retain the claim; older uncertainty and nonrefundable budget
+remain independent. Model-only sandbox cancellation keeps its job running.
+
+Final full debug28149ms/optimized22612ms pass:
+`/private/tmp/fios-009-unused-preparation-final-debug.log` and
+`/private/tmp/fios-009-unused-preparation-final-release.log`. Cases cover cleanup-
+binding launch rejection without consuming the plan, withdrawal/replay/old
+launch-binding rejection, already-consumed-plan rejection, local-evidence-only
+uncertainty retention, original paired closure, older history and enclosing-job
+preservation. Earlier debug27537/27901 and optimized22595 runs are narrower
+rehearsals before final durable-ack bookkeeping.
+
+All5 current-Core/private780bd7ea… native modes pass. New preparation-cancel
+mode uses actual registration, unused-plan factory evidence and actual native
+cancellation, then a separate journal reader. Own not_sent/older uncertainty1,
+history1, one registration/cancellation and0 model POSTs/grants are checked.
+Its stdout is correlation plus `closed`, not a fabricated root or live claim.
+Receipt `/private/tmp/f9-handoff-aEhfYn/receipt.json`, SHA256
+`f31de9fcfff8f558f619b26557f613796c5a7c766a996113c8e4d9d4dccac3d1`.
+The other receipts are: storage `/private/tmp/f9-handoff-9Rg9ZP/receipt.json`
+SHA256 `92e734b39e8836cd5342307e42032d01a1762859ae4d4edb2bc88174529f5b10`;
+lookup failure `/private/tmp/f9-handoff-LUzUD1/receipt.json`
+SHA256 `0648dde6889a56d37c5b4c12d7798b40da61b457fca990440b6af244ba3d4594`;
+default `/private/tmp/f9-handoff-wt62Dg/receipt.json`
+SHA256 `579db3aa3ac100ad039f60fd3b9579fb6f70c728639161c0fd0a60d1a7bfac1d`;
+paired non-dispatch `/private/tmp/f9-handoff-yOvWQK/receipt.json`
+SHA256 `124b15a09ff50b70c4b7cb60f0f0679aad3d7500ded5a7df08a4f692cc4945b2`.
+Default/paired modes retain their2/1 rejected private HTTP POSTs and0 real
+inference. Synthetic advisory/capacity values remain
+explicit fixtures; no native coverage/admission or positive completion follows.
+
+Native/Python source and metadata versions remain unchanged. Three Core inputs
+change; fresh clean packaging is required. No installation, activation, native
+model actuation, new inference plan, merge or deployment occurred. Whole39/55
+remains unchanged. Exact563ade3 CI43804147768 is still running; this new source
+batch requires its own exact-head CI.

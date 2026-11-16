@@ -37,6 +37,8 @@ func runPythonFactoryTests() throws {
     try runNeverSpawnedWorkerTests(factory:factory)
     try runHandoffNeverSpawnedTests(factory:factory)
     try runHandoffPreparationFailureTests(factory:factory)
+    try runUnusedPreparationCancellationTest(factory:factory)
+    try runUnusedFactoryWithdrawalTests(factory:factory)
     do {
         _=try PythonWorkerFactory(invocation:invocation.path,executableSHA256:String(repeating:"0",count:64),policySHA256:fixture["policy_sha256"] as! String)
         fatalError("Wrong interpreter hash accepted")
@@ -493,6 +495,7 @@ private func runHandoffNeverSpawnedTests(factory:PythonWorkerFactory)throws {
     guard handoff.rootSequence==UInt64.max,handoff.correlationID==correlation else {throw JournalError.conflict}
     do {try handoff.validate(job:older,attempt:0,scope:scope);fatalError("Foreign handoff accepted")}catch RuntimeError.identity {}
     let operation=try factory.beginStart(binding:binding,plan:plan,started:Int64(ProcessInfo.processInfo.systemUptime*1000),now:now,initiallyCancelled:true,handoff:handoff)
+    do {_=try factory.withdrawUnstarted(plan:plan,handoff:handoff);fatalError("Consumed factory plan produced withdrawal proof")}catch RuntimeError.identity {}
     let deadline=ProcessInfo.processInfo.systemUptime+2
     var proof:WorkerNeverSpawnedEvidence?
     while ProcessInfo.processInfo.systemUptime<deadline {
@@ -536,7 +539,9 @@ private final class FixtureHandoffSource:NativeHandoffPreparing,@unchecked Senda
     let cancellationState:NativeHandoffState
     private let counterLock=NSLock()
     private var registrationCount=0
+    private var cancellationCount=0
     var registrations:Int {counterLock.lock();defer {counterLock.unlock()};return registrationCount}
+    var cancellations:Int {counterLock.lock();defer {counterLock.unlock()};return cancellationCount}
     init(peer:NativeControlPeer,wrongRoot:Bool=false,lineageUnavailable:Bool=false,cancellationState:NativeHandoffState = .handedOff) {self.peer=peer;self.wrongRoot=wrongRoot;self.lineageUnavailable=lineageUnavailable;self.cancellationState=cancellationState}
     func registerHandoff(instance:String,correlationID:String)throws->NativeHandoffSample {
         counterLock.lock();registrationCount+=1;counterLock.unlock()
@@ -545,7 +550,8 @@ private final class FixtureHandoffSource:NativeHandoffPreparing,@unchecked Senda
         return NativeHandoffSample(peer:peer,sampledAt:HostResources.nowMilliseconds(),result:NativeHandoffResult(operation:.register,instance:instance,correlationID:correlationID,rootSequence:UInt64.max,sampleSequence:1,state:.pending,uncertain:false))
     }
     func cancelHandoff(instance:String,correlationID:String,rootSequence:UInt64)throws->NativeHandoffSample {
-        NativeHandoffSample(peer:peer,sampledAt:HostResources.nowMilliseconds(),result:NativeHandoffResult(operation:.cancel,instance:instance,correlationID:correlationID,rootSequence:rootSequence,sampleSequence:4,state:cancellationState,uncertain:false))
+        counterLock.lock();cancellationCount+=1;counterLock.unlock()
+        return NativeHandoffSample(peer:peer,sampledAt:HostResources.nowMilliseconds(),result:NativeHandoffResult(operation:.cancel,instance:instance,correlationID:correlationID,rootSequence:rootSequence,sampleSequence:4,state:cancellationState,uncertain:false))
     }
     func lineage(instance:String,correlationID:String)throws->NativeRequestLineageSample {
         if lineageUnavailable {lineageReady.signal();throw NativeControlError.unavailable}
@@ -621,6 +627,69 @@ private func runHandoffPreparationFailureTests(factory:PythonWorkerFactory)throw
         }
     }
     print("PASS: broker lineage failure/cancel and finite writer contention retain one original registration through durable retry and stale-identity storage; no delayed spawn/RPC retry/native release or whole-job model-cancel revocation")
+}
+
+private func runUnusedPreparationCancellationTest(factory:PythonWorkerFactory)throws {
+    let directory=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer {try? FileManager.default.removeItem(at:directory)}
+    let journal=try Journal(directory:directory),now=HostResources.nowMilliseconds(),base="http://127.0.0.1:1/v1",epoch=String(repeating:"1",count:32)
+    let snapshot=NativeSnapshot(host:"fixture-host",endpointHash:PythonWorkerFactory.digest(base),nativeEpoch:epoch,sequence:1,sampledAt:now,allClientLifecycleCoverage:true,residentModel:nil,outstandingOwners:0,loading:false)
+    let binding=WorkerDispatchBinding(baseURL:base,guardPath:"/fixture/observe.sock",host:snapshot.host,profileHash:String(repeating:"f",count:64),managerEpoch:UUID().uuidString.lowercased(),canonicalModel:"fixture/model",nativeModel:"fixture/model",nativeSnapshot:snapshot,nativeCompatibilityAccepted:true,apiKey:nil)
+    let scope=try binding.inferenceScope(),peer=NativeControlPeer(pid:42,start:99,executable:try VerifiedExecutable(path:"/fixture/native",sha256:String(repeating:"d",count:64)))
+    let older=UUID().uuidString.lowercased()
+    try journal.claim(job:older,attempt:0,model:scope.canonicalModel,scope:scope)
+    try journal.markDispatched(job:older,attempt:0);try journal.markUncertain(job:older,attempt:0)
+    let source=FixtureHandoffSource(peer:peer,cancellationState:.cancelled),broker=ModelBroker(journal:journal,factory:factory,handoffSource:source)
+    let id=UUID().uuidString.lowercased(),owner=String(repeating:"a",count:64)
+    _=try journal.reserveJob(DurableJob(id:id,idempotency:UUID().uuidString.lowercased(),ownerHash:owner,requestHash:String(repeating:"b",count:64),created:now))
+    try journal.transitionJob(id:id,to:.running)
+    var admission=AdmissionPolicy()
+    let sample=ResourceSample(sampledAt:now,physical:128<<30,available:64<<30,vmAvailable:nil,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal)
+    try broker.submit(job:id,owner:owner,requestID:UUID().uuidString.lowercased(),context:[ModelText(role:"user",content:"fixture")],binding:binding,nativeCapacityProven:true,sample:sample,admission:&admission,now:now)
+    guard source.entered.wait(timeout:.now()+1) == .success else {throw RuntimeError.deadline}
+    try broker.cancel(job:id,uptime:Int64(ProcessInfo.processInfo.systemUptime*1000));source.release.signal()
+    let end=ProcessInfo.processInfo.systemUptime+3
+    while (broker.active(job:id) || broker.nativeNonDispatchPending) && ProcessInfo.processInfo.systemUptime<end {
+        _=try broker.poll(now:HostResources.nowMilliseconds(),uptime:Int64(ProcessInfo.processInfo.systemUptime*1000),admission:&admission,source:{_ in binding})
+        Thread.sleep(forTimeInterval:0.005)
+    }
+    guard !broker.active(job:id),!broker.nativeNonDispatchPending,source.registrations==1,source.cancellations==1,
+          try journal.inferenceScope(job:id,attempt:0)?.state == .not_sent,
+          try journal.inferenceScope(job:older,attempt:0)?.state == .uncertain,
+          try journal.unresolvedCount()==1,try journal.uncertainCount()==1,
+          try journal.requestCount(job:id)==1,try journal.workerGrants().isEmpty,
+          try journal.activeLaunchCount()==0,try journal.jobs().first(where:{$0.id==id})?.state == .running,
+          try journal.handoffNonDispatchReceipt(job:id,attempt:0)?.localProducer=="never_spawned" else {fatalError("UNUSED_PREPARATION_NOT_CLOSED_BY_PAIRED_NATIVE_CANCEL")}
+    print("PASS: cancelled unused preparation pairs live no-spawn and exact native cancellation, preserving older uncertainty/history and enclosing sandbox job")
+}
+
+private func runUnusedFactoryWithdrawalTests(factory:PythonWorkerFactory)throws {
+    let directory=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer {try? FileManager.default.removeItem(at:directory)}
+    let journal=try Journal(directory:directory),now=HostResources.nowMilliseconds(),base="http://127.0.0.1:1/v1",epoch=String(repeating:"1",count:32)
+    let snapshot=NativeSnapshot(host:"fixture-host",endpointHash:PythonWorkerFactory.digest(base),nativeEpoch:epoch,sequence:1,sampledAt:now,allClientLifecycleCoverage:true,residentModel:nil,outstandingOwners:0,loading:false)
+    let binding=WorkerDispatchBinding(baseURL:base,guardPath:"/fixture/observe.sock",host:snapshot.host,profileHash:String(repeating:"f",count:64),managerEpoch:UUID().uuidString.lowercased(),canonicalModel:"fixture/model",nativeModel:"fixture/model",nativeSnapshot:snapshot,nativeCompatibilityAccepted:true,apiKey:nil)
+    let scope=try binding.inferenceScope(),job=UUID().uuidString.lowercased(),peer=NativeControlPeer(pid:42,start:99,executable:try VerifiedExecutable(path:"/fixture/native",sha256:String(repeating:"d",count:64)))
+    try journal.claim(job:job,attempt:0,model:scope.canonicalModel,scope:scope)
+    let plan=try journal.planWorkerStart(job:job,attempt:0);try journal.markDispatched(job:job,attempt:0)
+    do {_=try WorkerHandoffBinding.captureForNonDispatch(plan:plan,journal:journal,peer:peer);fatalError("Rootless cleanup binding accepted")}catch RuntimeError.identity {}
+    let id=try scope.nativeRequestCorrelationID(job:job,attempt:0)
+    let sample=NativeRequestLineageSample(peer:peer,sampledAt:now,lineage:NativeRequestLineage(instance:epoch,correlationID:id,sampleSequence:1,rootSequence:UInt64.max,found:true,uncertain:false,references:1,owners:1,ingress:1,preparing:0,active:0,responding:0))
+    _=try journal.observeLineage(job:job,attempt:0,scope:scope,peer:peer,sample:sample,now:now)
+    let launch=try WorkerHandoffBinding.capture(plan:plan,journal:journal,peer:peer)
+    try journal.markUncertain(job:job,attempt:0)
+    do {_=try WorkerHandoffBinding.capture(plan:plan,journal:journal,peer:peer);fatalError("Uncertain scope acquired launch binding")}catch RuntimeError.identity {}
+    let cleanup=try WorkerHandoffBinding.captureForNonDispatch(plan:plan,journal:journal,peer:peer)
+    do {_=try factory.beginStart(binding:binding,plan:plan,started:Int64(ProcessInfo.processInfo.systemUptime*1000),now:now,handoff:cleanup);fatalError("Cleanup binding started a worker")}catch RuntimeError.identity {}
+    let proof=try factory.withdrawUnstarted(plan:plan,handoff:cleanup)
+    do {_=try factory.withdrawUnstarted(plan:plan,handoff:cleanup);fatalError("Withdrawal evidence replay accepted")}catch RuntimeError.identity {}
+    do {_=try factory.beginStart(binding:binding,plan:plan,started:Int64(ProcessInfo.processInfo.systemUptime*1000),now:now,handoff:launch);fatalError("Withdrawn plan launched through old binding")}catch RuntimeError.identity {}
+    try journal.recordWorkerNeverSpawned(job:job,attempt:0,evidence:proof)
+    guard try journal.activeLaunchCount()==0,try journal.workerGrants().isEmpty,
+          try journal.inferenceScope(job:job,attempt:0)?.state == .uncertain,
+          try journal.unresolvedCount()==1,try journal.requestCount(job:job)==1,
+          try !journal.resolveClosedHandoff(evidence:.neverSpawned(proof),sample:nil,now:now) else {throw JournalError.conflict}
+    print("PASS: cleanup-only original binding cannot launch, withdrawal consumes one unused plan without process and local evidence alone retains native uncertainty/history")
 }
 
 private struct FactoryMetadataFixture:Encodable {

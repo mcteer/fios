@@ -31,6 +31,8 @@ final class ModelBroker {
         let packet:Data
         let binding:WorkerDispatchBinding
         var completion:Result<PreparedNativeHandoff,NativeControlError>?
+        var noSpawnEvidence:WorkerNeverSpawnedEvidence?
+        var noSpawnRecorded=false
         var revoked=false
         var revokeJob=false
     }
@@ -203,10 +205,30 @@ final class ModelBroker {
                 pending.revoked=true;pending.revokeJob=true;preparing[id]=pending
             }catch {
                 // This preparation path has never called the worker factory.
-                // Release its local slot only; registration may have succeeded.
+                // An unused plan can produce factory evidence, but it cannot
+                // resolve native ownership without exact native cancellation.
                 do {
                     try journal.markUncertain(job:id,attempt:pending.plan.attempt)
-                    try journal.recordWorkerNotStarted(job:id,attempt:pending.plan.attempt,nonce:pending.plan.nonce)
+                    if pending.noSpawnEvidence == nil,let factory,
+                       case .success(let registered)=finished {
+                        var cleanup:WorkerHandoffBinding?
+                        do {cleanup=try WorkerHandoffBinding.captureForNonDispatch(plan:pending.plan,journal:journal,peer:registered.registration.peer)}
+                        catch RuntimeError.identity {cleanup=nil}
+                        if let cleanup {
+                            pending.noSpawnEvidence=try factory.withdrawUnstarted(plan:pending.plan,handoff:cleanup)
+                            preparing[id]=pending
+                        }
+                    }
+                    if let evidence=pending.noSpawnEvidence {
+                        if !pending.noSpawnRecorded {
+                            try journal.recordWorkerNeverSpawned(job:id,attempt:pending.plan.attempt,evidence:evidence)
+                            pending.noSpawnRecorded=true;preparing[id]=pending
+                        }
+                        try nonDispatch?.enqueue(.neverSpawned(evidence))
+                    }else {
+                        // No authenticated original root: retain native doubt.
+                        try journal.recordWorkerNotStarted(job:id,attempt:pending.plan.attempt,nonce:pending.plan.nonce)
+                    }
                 }catch JournalError.storage {
                     pending.revoked=true;pending.revokeJob=true;preparing[id]=pending;continue
                 }

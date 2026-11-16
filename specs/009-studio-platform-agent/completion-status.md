@@ -39,6 +39,8 @@ Original native registration identity now also survives failed follow-up
 lineage lookup without starting a worker or resolving uncertainty.
 Completed preparation and its local reservation survive temporary journal-write
 failure; storage recovery cannot turn the old result into a delayed launch.
+An unused plan can now produce factory no-spawn evidence and close only its
+own not_sent decision when exact native cancellation independently succeeds.
 These address concrete lifecycle defects; they do not close the native-authority
 workstream. Subsequent implementation must connect the producer/proof/guard and
 operational paths, rather than interpreting additional component receipts as

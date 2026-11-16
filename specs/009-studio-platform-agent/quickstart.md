@@ -1547,3 +1547,9 @@ contention case. The same actual registration must survive local write retry
 and a6000ms fixture consumer-clock advance without another RPC, model POST,
 worker grant or ownership release. Only original identity is checkpointed;
 the simulated clock is not a measured native outage or fresh admission proof.
+
+`--preparation-cancel` instead tests original unused-plan withdrawal and actual
+scoped native cancellation, with a separate journal reader checking own
+not_sent/older uncertainty/history. Cleanup bindings cannot launch a worker;
+an unknown/transferred native root cannot resolve the claim. This mode runs
+without model POSTs, worker grants, installed actions or native admission.

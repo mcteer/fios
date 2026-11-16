@@ -79,3 +79,29 @@ not supply the unfinished normalized producer, positive native proof issuer or
 atomic dispatch guard, nor qualify arbitrary I/O failure or complete crash
 recovery. T021 and whole-task completion remain open; exact evidence belongs in
 validation.
+
+### Withdraw an unused original launch plan
+
+The live factory can consume an original unused plan without executing a child
+and produce the existing opaque no-spawn evidence. A consumed plan cannot be
+withdrawn or launched again. Cleanup-only handoff capture accepts an original
+dispatched/uncertain scope with its active nonce and checkpointed root; that
+binding is explicitly rejected by the factory's launch path. It carries no
+worker-start capability.
+
+On preparation failure/cancellation, the broker retains the produced evidence
+through local storage failure and commits its known-unstarted marker before
+using the existing non-dispatch coordinator. Only authenticated cancellation of
+the exact original unconsumed root can then resolve its own not_sent. Missing,
+changed, transferred or uncertain native results retain uncertainty. Unknown
+registration cannot produce rootless evidence that clears the native claim.
+Older claims and nonrefundable history remain independent; model-only sandbox
+cancellation does not revoke the whole job.
+
+The private actual-native mode is `--preparation-cancel`. It pairs the real
+registration with unused-plan factory evidence and a real native cancellation,
+then reopens the journal to check its own decision, older uncertainty and spent
+history. Its stdout reports the correlation and `closed`, not a fabricated root
+number or a live-root claim. Like the other preparation modes, it uses synthetic
+advisory/capacity values and starts no model worker or inference. This does not
+issue positive completion, coverage or native admission authority.
