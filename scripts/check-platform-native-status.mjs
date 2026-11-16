@@ -7,14 +7,17 @@ import {spawn,spawnSync} from 'node:child_process';
 import {mkdtempSync,mkdirSync,readdirSync,readFileSync,copyFileSync,writeFileSync,existsSync} from 'node:fs';
 import {createServer} from 'node:net';
 import {request} from 'node:http';
+import {createHash} from 'node:crypto';
 import {join,resolve} from 'node:path';
 import {setTimeout as delay} from 'node:timers/promises';
 import {verifyNativeReview} from './lib/platform-native-review.mjs';
 const args=process.argv.slice(2);
 let protocolVersion=2;
 function option(flag){const index=args.indexOf(flag);assert.equal(args.filter(value=>value===flag).length,index<0?0:1);if(index>=0)args.splice(index,1);return index>=0;}
-const withLineage=option('--lineage'),withBackendFences=option('--backend-fences'),withPrimaryActivity=option('--primary-activity'),withSDKBackground=option('--sdk-background');
+const withLineage=option('--lineage'),withBackendFences=option('--backend-fences'),withPrimaryActivity=option('--primary-activity'),withSDKBackground=option('--sdk-background'),withSlowIngress=option('--slow-ingress'),readOnly=option('--read-only');
+assert(!readOnly||(withBackendFences&&withPrimaryActivity&&withSDKBackground));
 assert(!withSDKBackground||withBackendFences);
+assert(!withSlowIngress||withPrimaryActivity);
 if(args.length===7){assert.equal(args[5],'--protocol-version');assert.equal(args[6],'3');protocolVersion=3;args.splice(5,2);}
 assert(args.length===5&&args[0]==='--isolated'&&args[1]==='--capsule'&&args[3]==='--sha256');
 assert.equal(process.platform,'darwin');assert.notEqual(process.getuid(),0);
@@ -24,6 +27,8 @@ if(withSDKBackground)assert.equal(capsule.receipt.declared_inputs.native_backgro
 if(withPrimaryActivity){assert.equal(protocolVersion,3);assert.equal(capsule.receipt.declared_inputs.native_primary_activity_version,3);}
 const binarySHA=capsule.receipt.files['bin/mlx-serve'].sha256;
 const root=resolve(import.meta.dirname,'..'),directory=mkdtempSync('/private/tmp/f9-native-status-');
+const slowInputs=()=>Object.fromEntries(['scripts/check-platform-native-status.mjs','tests/fixtures/platform/native-slow-ingress.py'].map(name=>[name,createHash('sha256').update(readFileSync(join(root,name))).digest('hex')]));
+const slowSource=withSlowIngress?slowInputs():null;
 const models=join(directory,'empty-models'),state=join(directory,'manager');mkdirSync(models,{mode:0o700});
 const core=join(root,'platform/studio/Sources/StudioCore'),source=join(directory,'NativeControlLive.swift'),fixture=join(directory,'native-manager');
 copyFileSync(join(root,'platform/studio/Tests/StudioCoreTests/NativeControlLive.swift.fixture'),source);
@@ -65,15 +70,16 @@ try{
  await until(()=>existsSync(control));
  const lineageSeed=withLineage?JSON.parse(run(fixture,['--isolated-seed-lineage',state,control,binary,binarySHA,'source-fixture-only',String(native.pid)],5000)):null;
  if(withLineage)assert.deepEqual(lineageSeed,{seeded_unit_scope:true,model_requests:0,native_authority:false});
- const mode=withSDKBackground?(withPrimaryActivity?'--isolated-manager-background-primary':'--isolated-manager-background'):withPrimaryActivity?(withBackendFences?'--isolated-manager-primary':'--isolated-manager-primary-only'):withBackendFences?'--isolated-manager-fences':protocolVersion===3?'--isolated-manager-v3':'--isolated-manager';
+ if(readOnly)assert.deepEqual(JSON.parse(run(fixture,['--isolated-seed-maintenance',state],5000)),{durable_desired_verified:true,native_action:false});
+ const mode=readOnly?'--isolated-manager-observation':withSDKBackground?(withPrimaryActivity?'--isolated-manager-background-primary':'--isolated-manager-background'):withPrimaryActivity?(withBackendFences?'--isolated-manager-primary':'--isolated-manager-primary-only'):withBackendFences?'--isolated-manager-fences':protocolVersion===3?'--isolated-manager-v3':'--isolated-manager';
  const manager=spawn(fixture,[mode,state,control,binary,binarySHA,'source-fixture-only',String(native.pid)],{cwd:root,env,stdio:['ignore','ignore','pipe']});children.push(manager);
  let managerErrors='';manager.stderr.on('data',part=>{managerErrors+=part.toString();});
  const initial=await until(()=>{assert(!exited(manager),`Private manager exited: ${managerErrors}`);return command(['status']);});
  assert(['waiting','received'].includes(initial.native_control.state));assert.equal(initial.native_control.authoritative,false);
  assert.equal(command(['service','mlx','running']).applied,false);
- const opened=await until(()=>{const value=command(['status']);return value?.native_control.state==='received'&&(value.native_ingress_admissions??value.native_admissions)==='admissionsOpen'&&(!withBackendFences||value.native_control.backend_fences?.state==='received')&&(!withPrimaryActivity||value.native_control.primary_activity?.state==='received') ? value:null;});
+ const opened=await until(()=>{const value=command(['status']);return value?.native_control.state==='received'&&(value.native_ingress_admissions??value.native_admissions)===(readOnly?'unknown':'admissionsOpen')&&(!withBackendFences||value.native_control.backend_fences?.state==='received')&&(!withPrimaryActivity||value.native_control.primary_activity?.state==='received') ? value:null;});
  assert.equal(opened.native_admissions,'unsupported','FIO_INGRESS_ACK_EXPOSED_NATIVE_ADMISSION');
- assert.equal(opened.native_ingress_admissions,'admissionsOpen');
+ assert.equal(opened.native_ingress_admissions,readOnly?'unknown':'admissionsOpen');if(readOnly)assert.equal(opened.native_control_mode,'observation_only');
  const diagnostic=opened.native_control;
  if(withBackendFences){
   const fences=diagnostic.backend_fences;assert.equal(fences.scope,'independent_partial_backend_fences');assert.equal(fences.frame_version,withSDKBackground?3:2);assert.equal(Object.keys(fences.current_sources).length,7);assert(Object.values(fences.current_sources).some(value=>typeof value==='boolean'));assert(Object.values(fences.current_sources).every(value=>value===null||value===false));assert.equal(fences.coverage,'unknown');assert.equal(fences.authority,false);assert.equal(fences.source_instance,diagnostic.source_instance);
@@ -100,6 +106,22 @@ try{
  const activity=command(['activity']);assert.equal(activity.coverage,'unknown');
  assert.equal(activity.observation.coverage,'unknown');assert.equal(activity.observation.outstanding_owners,null);
  if(withLineage){assert.equal(activity.observation.local_ownership.unresolved_count,1);assert.equal(activity.observation.local_ownership.blocked,true);}
+ if(withSlowIngress)for(const ending of ['release','drain']){
+  const reader=spawn(join(root,'.venv/bin/python'),['-I',join(root,'tests/fixtures/platform/native-slow-ingress.py'),String(port)],{cwd:directory,env,stdio:['pipe','pipe','pipe']});children.push(reader);
+  let output='',errors='';reader.stdout.on('data',part=>{output+=part.toString();assert(output.length<4096);});reader.stderr.on('data',part=>{errors+=part.toString();assert(errors.length<4096);});
+  await until(()=>{assert(!exited(reader),`Slow ingress reader exited: ${errors}`);return output.includes('\n');},5000);
+  const ready=JSON.parse(output);assert.equal(ready.ready,true);assert.equal(ready.model_requests,0);
+  const held=await until(()=>{const value=command(['status']);return value?.native_control.reported_counts.owners===1&&value.native_control.primary_activity?.reported_counts.owners===1?value:null;},4000);
+  const retained=await until(()=>{const value=command(['status']);return value?.native_control.source_sequence>held.native_control.source_sequence&&value.native_control.primary_activity?.source_sequence>held.native_control.primary_activity.source_sequence?value:null;},4000);
+  assert.equal(retained.native_control.reported_counts.owners,1);assert.equal(retained.native_control.source_instance,diagnostic.source_instance);
+  assert.equal(retained.native_control.primary_activity.reported_counts.owners,1);assert.equal(retained.native_control.primary_activity.model_identities,0);assert.equal(retained.native_activity,'unknown');assert.equal(retained.native_control.authoritative,false);
+  reader.stdin.end(ending+'\n');await until(()=>exited(reader),5000);assert.equal(reader.exitCode,0);assert.equal(errors,'');
+  const lines=output.trim().split('\n');assert.equal(lines.length,ending==='drain'?2:1);
+  if(ending==='drain'){const completion=JSON.parse(lines[1]);assert.equal(completion.complete,true);assert(completion.body_bytes>256*1024&&completion.body_bytes<=2*1024*1024);}
+  const released=await until(()=>{const value=command(['status']);return value?.native_control.reported_counts.owners===0&&value.native_control.primary_activity?.reported_counts.owners===0?value:null;},4000);
+  assert.equal(released.native_control.source_instance,diagnostic.source_instance);assert.equal(released.native_activity,'unknown');
+  writeFileSync(join(directory,'slow-ingress-'+ending+'-receipt.json'),JSON.stringify({ending,ready,held,retained,released,models:0,native_authority:false},null,2)+'\n',{mode:0o600});
+ }
  if(protocolVersion===3){
   assert.equal(activity.observation.native_epoch,diagnostic.source_instance);
   assert.equal(activity.observation.native_sequence,diagnostic.source_sequence);
@@ -130,19 +152,21 @@ try{
   assert.equal(refreshed.source_instance,first.source_instance);assert(refreshed.source_sampled_at>=first.source_sampled_at);
  }
  assert.equal(command(['service','mlx','maintenance']).applied,false);
- const paused=await until(()=>{const value=command(['status']);return value?.native_control.state==='received'&&value.native_control.ingress_closed===true&&value.native_ingress_admissions==='admissionsClosed' ? value:null;});
+ const paused=await until(()=>{const value=command(['status']);return value?.native_control.state==='received'&&(protocolVersion!==3||value.native_control.source_sequence>diagnostic.source_sequence)&&value.native_control.ingress_closed===!readOnly&&value.native_ingress_admissions===(readOnly?'unknown':'admissionsClosed') ? value:null;});
  assert.equal(paused.native_control.source_instance,diagnostic.source_instance);
  assert.equal(command(['service','mlx','running']).applied,false);
- const resumed=await until(()=>{const value=command(['status']);return value?.native_control.state==='received'&&value.native_control.ingress_closed===false&&value.native_ingress_admissions==='admissionsOpen' ? value:null;});
+ const resumed=await until(()=>{const value=command(['status']);return value?.native_control.state==='received'&&(protocolVersion!==3||value.native_control.source_sequence>paused.native_control.source_sequence)&&value.native_control.ingress_closed===false&&value.native_ingress_admissions===(readOnly?'unknown':'admissionsOpen') ? value:null;});
  assert.equal(resumed.native_control.source_instance,diagnostic.source_instance);
  if(protocolVersion===3)assert(resumed.native_control.source_sequence>paused.native_control.source_sequence&&paused.native_control.source_sequence>diagnostic.source_sequence);
  assert.equal(resumed.native_control.authoritative,false);assert.deepEqual(readdirSync(models),[]);
  writeFileSync(join(directory,'status-receipts.json'),JSON.stringify({sourceHealth,initial,opened,paused,resumed},null,2)+'\n',{mode:0o600});
  manager.kill('SIGTERM');await until(()=>exited(manager),5000);assert.equal(manager.exitCode,0);assert.equal(managerErrors,'');
+ if(readOnly)assert.deepEqual(JSON.parse(run(fixture,['--isolated-check-running',state],5000)),{durable_desired_verified:true,native_action:false});
  const lineageReceipt=withLineage?JSON.parse(run(fixture,['--isolated-check-lineage',state,diagnostic.source_instance],5000)):null;
  if(withLineage){assert.equal(lineageReceipt.persisted_source_sample,true);assert.equal(lineageReceipt.unresolved_uncertainty_retained,true);writeFileSync(join(directory,'lineage-receipt.json'),JSON.stringify(lineageReceipt)+'\n',{mode:0o600});}
  native.kill('SIGTERM');await until(()=>exited(native),7000);
- console.log(JSON.stringify({ok:true,protocol_version:protocolVersion,source_health_probe:true,source_ingress_roundtrip:true,automatic_lineage_checkpoint:withLineage,automatic_backend_fences:withBackendFences,automatic_primary_activity:withPrimaryActivity,automatic_sdk_background:withSDKBackground,model_requests:0,installed_service_actions:0,authoritative:false,review_directory:directory}));
+ if(withSlowIngress){assert.deepEqual(slowInputs(),slowSource);writeFileSync(join(directory,'slow-ingress-inputs.json'),JSON.stringify({scope:'runner_and_fixture_bytes_not_whole_native_provenance',files:slowSource,native_review_sha256:args[4],models:0,native_authority:false},null,2)+'\n',{mode:0o600});}
+ console.log(JSON.stringify({ok:true,protocol_version:protocolVersion,source_health_probe:true,source_ingress_roundtrip:true,automatic_lineage_checkpoint:withLineage,automatic_backend_fences:withBackendFences,automatic_primary_activity:withPrimaryActivity,automatic_sdk_background:withSDKBackground,slow_ingress_owner_retained:withSlowIngress,observation_only:readOnly,model_requests:0,installed_service_actions:0,authoritative:false,review_directory:directory}));
 }finally{
  for(const child of [...children].reverse())if(!exited(child)){child.kill('SIGTERM');try{await until(()=>exited(child),7000);}catch{child.kill('SIGKILL');await until(()=>exited(child),3000);}}
  // Retain only private source-test data; process exit grants no native proof.

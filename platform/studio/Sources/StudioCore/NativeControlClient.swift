@@ -114,6 +114,20 @@ struct NativeControlPeer:Sendable {
     }
 }
 
+// Code-only narrowing for observation compositions. No task/enrollment JSON
+// constructs this value, and it exposes no maintenance/barrier operation.
+struct NativeReadOnlyClient:Sendable {
+    private let client:NativeControlClient
+    init(_ client:NativeControlClient) {self.client=client}
+    var observesBackendFences:Bool {client.observesBackendFences}
+    var observesPrimaryActivity:Bool {client.observesPrimaryActivity}
+    var observesSDKBackground:Bool {client.observesSDKBackground}
+    var version:UInt8 {client.version}
+    func observe()throws->NativeIngressStatus {try client.request(operation:.observe)}
+    func primaryActivity(instance:String,after:UInt64)throws->NativePrimaryActivitySample {try client.primaryActivity(instance:instance,after:after)}
+    func backendFences(instance:String,after:UInt64)throws->NativeBackendFenceSample {try client.backendFences(instance:instance,after:after)}
+}
+
 struct NativeControlClient:Sendable {
     let path:String
     let peer:NativeControlPeer

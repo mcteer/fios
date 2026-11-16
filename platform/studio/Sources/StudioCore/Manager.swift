@@ -10,8 +10,9 @@ public enum ManagerRuntime {
     }
     // No production issuer yet: only reviewed native enrollment may supply
     // this internal client. Never construct it from operator/model payloads.
-    static func run(directory:URL,nativeControl:NativeControlClient?,serviceObservations:ServiceObservationCache?=nil,serviceHealth:MLXServiceHealthCollector?=nil,serviceHealthReadiness:@Sendable()->(Bool,Bool)={ (false,false) },orbstackHealth:ServiceHealthCollector?=nil,orbstackHealthReadiness:@Sendable()->(Bool,Bool)={ (false,false) },serviceControl:(any ServiceRecoverySending)?=nil,servingLifecycle:ServingLifecyclePorts?=nil,drainObservations:ServiceDrainObservationCache?=nil,execution:ManagerExecutionPorts?=nil,nativeReadOnlyObservation:Bool=false,orbstackReadOnlyObservation:Bool=false,resourceReadOnlyObservation:Bool=false,telemetry:any PlatformTelemetry=NoopPlatformTelemetry()) throws {
+    static func run(directory:URL,nativeControl:NativeControlClient?,nativeObserver:NativeReadOnlyClient?=nil,serviceObservations:ServiceObservationCache?=nil,serviceHealth:MLXServiceHealthCollector?=nil,serviceHealthReadiness:@Sendable()->(Bool,Bool)={ (false,false) },orbstackHealth:ServiceHealthCollector?=nil,orbstackHealthReadiness:@Sendable()->(Bool,Bool)={ (false,false) },serviceControl:(any ServiceRecoverySending)?=nil,servingLifecycle:ServingLifecyclePorts?=nil,drainObservations:ServiceDrainObservationCache?=nil,execution:ManagerExecutionPorts?=nil,nativeReadOnlyObservation:Bool=false,orbstackReadOnlyObservation:Bool=false,resourceReadOnlyObservation:Bool=false,telemetry:any PlatformTelemetry=NoopPlatformTelemetry()) throws {
         guard geteuid() != 0 else { throw ControlError.unauthorized }
+        guard nativeControl==nil || nativeObserver==nil else {throw NativeControlError.invalid}
         guard serviceHealth == nil || serviceHealth?.service == .mlx,
               orbstackHealth == nil || orbstackHealth?.service == .orbstack,
               !nativeReadOnlyObservation || serviceHealth == nil,
@@ -27,6 +28,8 @@ public enum ManagerRuntime {
             guard let native=activeServiceControl as? NativeServingRecoveryTransport,native.owns(activeServingLifecycle.runtime) else {throw ServiceError.invalid}
         }
         let activeNativeControl=migrationHeld ? nil:nativeControl
+        let activeNativeObserver=migrationHeld ? nil:nativeObserver
+        let nativeReader=activeNativeControl.map {NativeReadOnlyClient($0)} ?? activeNativeObserver
         // Trusted code-only injection. The public entry point has no issuer;
         // missing observations never become absence or a launch permission.
         // Fixed installed-role metadata only, off-loop. It grants neither
@@ -56,15 +59,15 @@ public enum ManagerRuntime {
         let servingStopQueue=activeServingLifecycle.map {AsyncServingStop(runtime:$0.runtime)}
         var serviceCursor=0,serviceTransportUnavailable=false
         var nativeMaintenance=NativeMaintenanceCoordinator(journal:journal)
-        let nativeQueue=activeNativeControl.map {AsyncNativeControl(client:$0)}
+        let nativeQueue=activeNativeControl.map {AsyncNativeControl(client:$0)} ?? activeNativeObserver.map {AsyncNativeControl(observer:$0)}
         let nativeLineage=activeNativeControl.map {NativeLineagePoller(journal:journal,source:$0)}
         let nativeCoverage:NativeCoverage = nativeQueue == nil ? .unsupported:.unknown
-        var nativeDiagnostics=NativeControlDiagnostics(configured:nativeQueue != nil,backendFencesConfigured:activeNativeControl?.observesBackendFences ?? false,primaryActivityConfigured:activeNativeControl?.observesPrimaryActivity ?? false,sdkBackgroundConfigured:activeNativeControl?.observesSDKBackground ?? false)
+        var nativeDiagnostics=NativeControlDiagnostics(configured:nativeQueue != nil,backendFencesConfigured:nativeReader?.observesBackendFences ?? false,primaryActivityConfigured:nativeReader?.observesPrimaryActivity ?? false,sdkBackgroundConfigured:nativeReader?.observesSDKBackground ?? false)
         func enqueueNative(_ command:NativeMaintenanceCommand) {
             guard let nativeQueue else {return}
             do {try nativeQueue.submit(command);nativeDiagnostics.begin(retainingObservation:nativeMaintenance.observationOnly)} catch {nativeMaintenance.failed(id:command.id);nativeDiagnostics.failed()}
         }
-        if nativeQueue != nil,let command=try nativeMaintenance.beginReconciliation() {enqueueNative(command)}
+        if activeNativeControl != nil,let command=try nativeMaintenance.beginReconciliation() {enqueueNative(command)}
         var admission=AdmissionPolicy()
         let workerRecovery=try WorkerReconciler(journal:journal,admission:&admission)
         let audit=try AuditLog(directory:directory.appendingPathComponent("audit"),telemetry:telemetry)
@@ -299,6 +302,7 @@ public enum ManagerRuntime {
                         // No production native reservation issuer is composed here yet.
                         response["native_admissions"]="unsupported"
                         response["native_ingress_admissions"]=nativeQueue == nil ? "unconfigured":nativeMaintenance.phase.rawValue
+                        if activeNativeObserver != nil {response["native_control_mode"]="observation_only"}
                         response["native_control"]=nativeDiagnostics.summary(now:requestedAt)
                         response["migration_maintenance"]=migrationHeld
                         response["native_activity"]=nativeCoverage.rawValue
@@ -349,7 +353,7 @@ public enum ManagerRuntime {
                         }
                         do {
                             let progress=try drainer.begin(service:service,role:client.role,now:requestedAt,uptime:Int64(now*1000))
-                            if service == .mlx,nativeQueue != nil,let command=try nativeMaintenance.beginReconciliation() {enqueueNative(command)}
+                            if service == .mlx,activeNativeControl != nil,let command=try nativeMaintenance.beginReconciliation() {enqueueNative(command)}
                             response["drain"]=ServiceDrainController.summary(progress)
                             response["maintenance_applied"]=true;response["native_action_applied"]=false
                         }catch ServiceError.stale {
@@ -370,7 +374,7 @@ public enum ManagerRuntime {
                               let desired=request.payload["desired"] as? String else { throw ControlError.invalid_request }
                         if service==ManagedService.mlx.rawValue,let typed=ServiceDesired(rawValue:desired) {
                             try nativeMaintenance.setDesired(typed,role:client.role)
-                            if nativeQueue != nil,let command=try nativeMaintenance.beginReconciliation() {enqueueNative(command)}
+                            if activeNativeControl != nil,let command=try nativeMaintenance.beginReconciliation() {enqueueNative(command)}
                         } else {try journal.setDesired(service:service,desired:desired)}
                         if desired == ServiceDesired.running.rawValue,let typed=ManagedService(rawValue:service) {drainer?.supersede(service:typed)}
                         try audit.record(.desiredChanged,now:timestamp())

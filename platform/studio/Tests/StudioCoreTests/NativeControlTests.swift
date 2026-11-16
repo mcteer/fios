@@ -1,6 +1,17 @@
 import Foundation
 
 func runNativeControlTests() throws {
+    let absentPeer=NativeControlPeer(pid:42,start:100,executable:try VerifiedExecutable(path:"/fixture/not-opened",sha256:String(repeating:"a",count:64)))
+    let observer=AsyncNativeControl(observer:NativeReadOnlyClient(NativeControlClient(path:"/fixture/not-connected",peer:absentPeer)))
+    for operation:NativeControlOperation in [.pause,.resume,.ownerBarrier] {
+        do {try observer.submit(NativeMaintenanceCommand(id:"readonly",operation:operation,instance:nil,sequence:0));fatalError("Readonly observer accepted native management")}
+        catch NativeControlError.unauthorized {}
+    }
+    for (instance,sequence) in [(String(repeating:"07",count:16),UInt64(0)),(nil,UInt64(1))] as [(String?,UInt64)] {
+        do {try observer.submit(NativeMaintenanceCommand(id:"readonly",operation:.observe,instance:instance,sequence:sequence));fatalError("Readonly observer accepted scoped command metadata")}
+        catch NativeControlError.unauthorized {}
+    }
+    guard observer.poll()==nil else {fatalError("Rejected readonly command opened a worker slot")}
     try runNativePrimaryActivityWireTests()
     try runQueuedPrimaryActivityWireTests()
     try runRegistryActivityWireTests()

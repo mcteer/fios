@@ -13,12 +13,16 @@ struct NativeControlResult:Sendable {
 // One bounded native connection/hash operation off the manager heartbeat loop.
 // No automatic retry, result queue growth, native process launch or fallback.
 final class AsyncNativeControl:@unchecked Sendable {
-    private let client:NativeControlClient
+    private let client:NativeControlClient?
+    private let observer:NativeReadOnlyClient
     private let lock=NSLock()
     private var busy=false
     private var result:NativeControlResult?
-    init(client:NativeControlClient) {self.client=client}
+    init(client:NativeControlClient) {self.client=client;observer=NativeReadOnlyClient(client)}
+    init(observer:NativeReadOnlyClient) {client=nil;self.observer=observer}
     func submit(_ command:NativeMaintenanceCommand) throws {
+        // Refuse before reserving a worker or opening the native socket.
+        guard client != nil || (command.operation == .observe && command.instance==nil && command.sequence==0) else {throw NativeControlError.unauthorized}
         lock.lock()
         guard !busy,result==nil else {lock.unlock();throw RuntimeError.capacity}
         busy=true;lock.unlock()
@@ -28,19 +32,19 @@ final class AsyncNativeControl:@unchecked Sendable {
             var primaryActivity:Result<NativePrimaryActivitySample,NativeControlError>?
             var backendFences:Result<NativeBackendFenceSample,NativeControlError>?
             do {
-                let ingress=try client.request(operation:command.operation,instance:command.instance,sequence:command.sequence)
+                let ingress=try client.map {try $0.request(operation:command.operation,instance:command.instance,sequence:command.sequence)} ?? observer.observe()
                 receivedAt=HostResources.nowMilliseconds() // A later backend query cannot refresh this receipt.
-                if client.observesPrimaryActivity,command.operation == .observe {
+                if observer.observesPrimaryActivity,command.operation == .observe {
                     do {
-                        guard client.version==3,let sequence=ingress.nativeSampleSequence else {throw NativeControlError.invalid}
-                        primaryActivity = .success(try client.primaryActivity(instance:ingress.instance,after:sequence))
+                        guard observer.version==3,let sequence=ingress.nativeSampleSequence else {throw NativeControlError.invalid}
+                        primaryActivity = .success(try observer.primaryActivity(instance:ingress.instance,after:sequence))
                     } catch let error as NativeControlError {primaryActivity = .failure(error)}
                     catch {primaryActivity = .failure(.unavailable)}
                 }
-                if client.observesBackendFences,command.operation == .observe {
+                if observer.observesBackendFences,command.operation == .observe {
                     do {
-                        guard client.version==3,let sequence=ingress.nativeSampleSequence else {throw NativeControlError.invalid}
-                        backendFences = .success(try client.backendFences(instance:ingress.instance,after:sequence))
+                        guard observer.version==3,let sequence=ingress.nativeSampleSequence else {throw NativeControlError.invalid}
+                        backendFences = .success(try observer.backendFences(instance:ingress.instance,after:sequence))
                     } catch let error as NativeControlError {backendFences = .failure(error)}
                     catch {backendFences = .failure(.unavailable)}
                 }
