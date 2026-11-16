@@ -171,7 +171,7 @@ async def main():
 
 def metadata():
     # Content-free provenance only; never print the fixed policy itself.
-    return {'version':1,'pipe_version':1,'package_version':version('fios-agent'),
+    return {'version':2,'pipe_version':1,'native_handoff_version':1,'package_version':version('fios-agent'),
             'python_version':'.'.join(map(str,sys.version_info[:3])),
             'policy_sha256':hashlib.sha256(INSTRUCTIONS.encode()).hexdigest(),
             'policy_input_units':utf16_length(INSTRUCTIONS)}

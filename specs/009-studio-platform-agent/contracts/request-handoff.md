@@ -96,3 +96,12 @@ reply received after cancellation can checkpoint its original root, but cannot
 start a worker or release native uncertainty. The installed-child fixture holds
 registration and captures the older lineage before checkpointing a newer
 diagnostic, exercising this ordering with valid monotonically ordered captures.
+
+
+Private worker startup metadata now uses version2 with
+`native_handoff_version:1`, independently of unchanged pipe version1 and package
+version0.1.0. The factory requires the exact metadata shape and handoff version
+before accepting a runtime. Older policy/package-identical workers and unknown
+future handoff contracts refuse before launch. This is protocol compatibility,
+not publisher/build provenance, immutable-runtime enrollment or native authority;
+those checks remain independent. Ordinary007 worker metadata is unchanged.

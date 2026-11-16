@@ -6778,5 +6778,66 @@ Changed/fenced roots still refuse launch. Final Debug25286ms and optimized19666m
 pass (`/private/tmp/fios-009-coordinator-order-debug-final.log`,
 `/private/tmp/fios-009-coordinator-order-release-final.log`). No native completion
 proof or inference occurs. Isolated quickstart idle/resource/watchdog measurements
-are pending at `/private/tmp/fios-009-coordinator-isolated-metrics.log`; these are
+subsequently pass at `/private/tmp/fios-009-coordinator-isolated-metrics.log`; these are
 separate from Studio/native acceptance.39/55 whole tasks unchanged.
+
+
+### 2026-11-15 isolated measurements and clean coordinator development package
+
+Quickstart `node scripts/check-platform.mjs --isolated-metrics` exits0. Actual
+manager/supervisor with256 terminal tombstones (128 never-created sandboxes)
+passes300s idle: combined peak28MiB, growth0MiB, CPU2.57% of one core. Six
+actual resource samples retain original timestamps and monotonic epoch/sequence;
+maximum observed signal age1811ms; unenrolled VM stays unknown. The disposable
+runtime fixture enforces workspace128MiB and tmp64MiB ENOSPC,512MiB memory/OOM,
+one-core quota and64 PID ceiling. One exact owned full-ID sandbox is removed
+and confirmed absent in239ms. The isolated watchdog retains its three-start
+budget across restart and refuses timer-only heartbeat progress. These are
+finite local fixtures, not Studio/global-VM/native/model acceptance. Log:
+`/private/tmp/fios-009-coordinator-isolated-metrics.log`, SHA256
+`eab56f4370f56b2c3d0262cb2984f03af70c742124b5b0f2eec13d6bca8faae2`.
+
+A separate clean detached4f7c3a3838457e68fe09657ea24741ea014d3386 checkout
+produces nine inactive development artifacts at
+`/private/tmp/fios-009-coordinator-package-fw9bqj4n/release`. Manifest SHA256
+`e67e2da9a152f60021780c296aa11798c519e0e7d5cd335aa8ceee1c700c82ff`;
+178 declared inputs reproduce projection
+`11bce978edba33cc9b3528f8c0449523d79868bf6426a7a801e90b0cf491dd5a`.
+This excludes unrelated uncommitted003 work and binds package-declared inputs,
+not whole-repository/publisher/native provenance. Both per-host install reviews
+remain blocked and emit zero privileged commands; four separately staged private
+configuration plists verify and lint without installation.
+
+A separate private copied Python candidate contains4461 files/113994620 bytes,
+receipt SHA256 `0c06b2b303143c78bcfc96ea157b11c3a1e24abb55395b337b67e6cc2637dae7`.
+Read-only byte/tree review and all108 tests against the copied isolated prefix
+pass. It is not included in the nine-artifact manifest, approved, enrolled or
+activated. Aggregate `/private/tmp/fios-009-coordinator-package-fw9bqj4n/final-review.json`
+SHA256 `aeee72a12a5e86355ae0649dc3116229b741815a153b8f840a4587bd597e75a8`
+binds those receipts and metric log. This4f7c3a3 package predates the subsequent
+private metadata-v2 compatibility increment; do not represent it as that later
+worker/factory artifact. Native acceptance and all16 open whole tasks remain
+open;39/55 unchanged. No model, installation, enrollment or service activation.
+
+
+### 2026-11-15 private worker metadata compatibility
+
+An older platform worker reports the same0.1.0 package and policy hash while
+lacking the original-root header contract. Private startup metadata now requires
+version2 and native_handoff_version1; pipe version1, request budgets, ordinary007
+metadata and model behavior remain unchanged. The factory validates exact shape
+and versions before creating a worker. Pure decoded legacy/missing and unknown
+future handoff versions refuse; the actual installed-child POST still passes.
+This advertises protocol compatibility only, not runtime authenticity/enrollment
+or any native/all-client capability.
+
+Actual installed-old red:18 targeted Python tests,1 metadata-shape failure
+(`/private/tmp/fios-009-worker-metadata-red.log`). After pinned uv locked/no-editable
+package reinstall (`/private/tmp/fios-009-worker-metadata-install.log`), all108
+installed Python tests pass;198 Node/API plus108 Python pass under npm test
+(`/private/tmp/fios-009-worker-metadata-npm.log`). Full Debug25822ms and optimized
+19424ms pass (`/private/tmp/fios-009-worker-metadata-debug.log`,
+`/private/tmp/fios-009-worker-metadata-release.log`); boundary/diff checks pass.
+No inference, enrollment, installation or whole-task completion. The separately
+retained4f7c3a3 package/Python candidate above predates this change and must not be
+used as metadata-v2 artifact evidence.39/55 unchanged.

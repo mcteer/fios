@@ -21,6 +21,17 @@ func runPythonFactoryTests() throws {
     progress("metadata begin")
     let factory=try PythonWorkerFactory(invocation:invocation.path,executableSHA256:sha,policySHA256:fixture["policy_sha256"] as! String)
     progress("metadata ready")
+    let metadataBytes=try JSONEncoder().encode(FactoryMetadataFixture(version:2,pipe_version:1,native_handoff_version:1,package_version:"0.1.0",python_version:"3.11.17",policy_sha256:factory.metadata.policy_sha256,policy_input_units:factory.metadata.policy_input_units))
+    _=try WorkerMetadata.decode(metadataBytes,policySHA256:factory.metadata.policy_sha256)
+    var legacy=try JSONSerialization.jsonObject(with:metadataBytes) as! [String:Any]
+    legacy.removeValue(forKey:"native_handoff_version");legacy["version"]=1
+    do {_=try WorkerMetadata.decode(JSONSerialization.data(withJSONObject:legacy),policySHA256:factory.metadata.policy_sha256);fatalError("Legacy private worker accepted without handoff contract")}catch RuntimeError.identity {}
+    for unsupported in [0,2] {
+        var invalid=try JSONSerialization.jsonObject(with:metadataBytes) as! [String:Any]
+        invalid["native_handoff_version"]=unsupported
+        do {_=try WorkerMetadata.decode(JSONSerialization.data(withJSONObject:invalid),policySHA256:factory.metadata.policy_sha256);fatalError("Unsupported handoff protocol accepted")}catch RuntimeError.identity {}
+    }
+    print("PASS: private metadata v2 requires exact handoff protocol1 before launch; legacy and future contracts refuse")
     guard factory.metadata.policy_input_units==fixture["policy_input_units"] as? Int else { fatalError("Installed policy units diverged from cross-language fixture") }
     try runNeverSpawnedWorkerTests(factory:factory)
     try runHandoffNeverSpawnedTests(factory:factory)
@@ -519,4 +530,14 @@ private func runHandoffPreparationFailureTests(factory:PythonWorkerFactory)throw
               try journal.inferenceScope(job:id,attempt:0)?.state == .uncertain else {fatalError("Preparation failure/cancel spawned or cleared native uncertainty")}
     }
     print("PASS: broker registration mismatch and mid-registration cancellation never spawn; responsive poll and exact local release retain native uncertainty")
+}
+
+private struct FactoryMetadataFixture:Encodable {
+    let version:Int
+    let pipe_version:Int
+    let native_handoff_version:Int
+    let package_version:String
+    let python_version:String
+    let policy_sha256:String
+    let policy_input_units:Int
 }

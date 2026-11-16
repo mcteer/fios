@@ -5,10 +5,21 @@ import CryptoKit
 struct WorkerMetadata:Decodable,Sendable {
     let version:Int
     let pipe_version:Int
+    let native_handoff_version:Int
     let package_version:String
     let python_version:String
     let policy_sha256:String
     let policy_input_units:Int
+    static func decode(_ bytes:Data,policySHA256:String,packageVersion:String="0.1.0")throws->Self {
+        try StrictJSON.validate(bytes,maximum:4096)
+        guard let object=try JSONSerialization.jsonObject(with:bytes) as? [String:Any],
+              Set(object.keys)==Set(["version","pipe_version","native_handoff_version","package_version","python_version","policy_sha256","policy_input_units"]) else {throw RuntimeError.identity}
+        let value=try JSONDecoder().decode(Self.self,from:bytes)
+        guard value.version==2,value.pipe_version==1,value.native_handoff_version==1,
+              value.package_version==packageVersion,value.python_version=="3.11.17",value.policy_sha256==policySHA256,
+              (1...128000).contains(value.policy_input_units) else {throw RuntimeError.identity}
+        return value
+    }
 }
 
 // Constructed only by trusted, reviewed enrollment, never by task IPC. Profile
@@ -47,13 +58,7 @@ final class PythonWorkerFactory:Sendable {
         executable=try VerifiedExecutable(path:URL(fileURLWithPath:invocation).resolvingSymlinksInPath().path,sha256:executableSHA256)
         try Self.verifyInvocation(invocation,executable:executable)
         let bytes=try Self.probe(invocation:invocation,executable:executable)
-        try StrictJSON.validate(bytes,maximum:4096)
-        guard let object=try JSONSerialization.jsonObject(with:bytes) as? [String:Any],
-              Set(object.keys)==Set(["version","pipe_version","package_version","python_version","policy_sha256","policy_input_units"]) else { throw RuntimeError.identity }
-        metadata=try JSONDecoder().decode(WorkerMetadata.self,from:bytes)
-        guard metadata.version==1,metadata.pipe_version==1,metadata.package_version==packageVersion,
-              metadata.python_version=="3.11.17",metadata.policy_sha256==policySHA256,
-              (1...128000).contains(metadata.policy_input_units) else { throw RuntimeError.identity }
+        metadata=try WorkerMetadata.decode(bytes,policySHA256:policySHA256,packageVersion:packageVersion)
     }
     private static func verifyInvocation(_ path:String,executable:VerifiedExecutable) throws {
         var info=stat()
