@@ -1,10 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtempSync,mkdirSync,chmodSync,copyFileSync,readFileSync,existsSync,rmSync,renameSync} from 'node:fs';
+import {mkdtempSync,mkdirSync,chmodSync,copyFileSync,readFileSync,existsSync,rmSync,renameSync,writeFileSync} from 'node:fs';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {createHash} from 'node:crypto';
-import {platformConfigurationPlan,stagePlatformConfiguration,verifyPlatformConfiguration,proposePlatformConfigurationInstall,proposePlatformConfigurationRemoval} from '../scripts/lib/platform-state-plan.mjs';
+import {platformConfigurationPlan,stagePlatformConfiguration,verifyPlatformConfiguration,proposePlatformConfigurationInstall,proposePlatformConfigurationRemoval,proposePlatformRegistration} from '../scripts/lib/platform-state-plan.mjs';
 
 test('configuration workflow renders, stages and verifies templates after state relocation',()=>{
   const directory=mkdtempSync(join(tmpdir(),'fios-configuration-workflow-'));
@@ -57,6 +57,27 @@ test('configuration workflow renders, stages and verifies templates after state 
     assert.equal(removal.proposed_file_removals.length,2);
     assert.deepEqual(removal.proposed_file_removals.map(file=>file.argv),plan.configuration_files.map(file=>[file.destination]));
     assert(removal.mandatory_preconditions.includes('reviewed_registration_removed_or_persistently_disabled'));
+    const registrationOptions={release,verified,host:'fios-edge-b.lab',bundle:staged.destination,reviewSHA256:staged.review_sha256,uid:'501'};
+    const activation=proposePlatformRegistration({...registrationOptions,operation:'activate'});
+    assert.equal(activation.state,'blocked');assert.equal(activation.commands_authorized,false);
+    assert.equal(activation.registration_changed,false);assert.equal(activation.desired_service_state_changed,false);
+    assert.equal(activation.native_inference_uncertainty_retained,true);assert.deepEqual(activation.privileged_commands,[]);
+    const expected=[['enable','system/lab.fios.studio.supervisor'],['enable','gui/501/lab.fios.studio.session'],
+      ['bootstrap','system','/Library/LaunchDaemons/lab.fios.studio.supervisor.plist'],
+      ['bootstrap','gui/501','/Library/LaunchAgents/lab.fios.studio.session.plist']];
+    assert.deepEqual(activation.proposed_registration_commands.map(command=>command.argv),expected);
+    const unregister=proposePlatformRegistration({...registrationOptions,operation:'remove'});
+    assert.deepEqual(unregister.proposed_registration_commands.map(command=>command.argv),[
+      ['disable','system/lab.fios.studio.supervisor'],['disable','gui/501/lab.fios.studio.session'],
+      ['bootout','system/lab.fios.studio.supervisor'],['bootout','gui/501/lab.fios.studio.session']]);
+    assert(unregister.after_commands.includes('create_and_verify_stopped_state_configuration_backup_before_file_removal'));
+    for(const uid of ['0','01','4294967296','501/name','501\n','501\r',501,true])assert.throws(()=>proposePlatformRegistration({...registrationOptions,uid,operation:'activate'}));
+    const reordered=JSON.parse(readFileSync(join(staged.destination,'review.json')));
+    reordered.files.reverse();reordered.configuration_files.reverse();
+    const reorderedBytes=JSON.stringify(reordered,null,2)+'\n';writeFileSync(join(staged.destination,'review.json'),reorderedBytes);
+    const reorderedSHA=createHash('sha256').update(reorderedBytes).digest('hex');
+    const reorderedActivation=proposePlatformRegistration({...registrationOptions,reviewSHA256:reorderedSHA,operation:'activate'});
+    assert.deepEqual(reorderedActivation.proposed_registration_commands.map(command=>command.argv),expected);
     assert.equal(saved.changes_made,false);assert.equal(existsSync(state),false);
     assert.equal(existsSync(join(directory,'retained-state')),true);
 

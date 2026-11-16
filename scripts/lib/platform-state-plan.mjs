@@ -219,3 +219,39 @@ export function proposePlatformConfigurationRemoval(options){
       required_uid:0,required_mode:0o644})),
     on_failure:'stop_retain_backups_state_exports_credentials_and_uncertainty_no_recursive_cleanup'};
 }
+
+// Review launchd registration separately from copying configuration. These
+// fixed argv are data only; this module never invokes launchctl.
+export function proposePlatformRegistration(options){
+  const {uid,operation,...configuration}=options;
+  if(typeof uid!=='string'||!/^[1-9][0-9]{0,9}$/.test(uid)||BigInt(uid)>4294967295n||!['activate','remove'].includes(operation))fail();
+  const install=proposePlatformConfigurationInstall(configuration);
+  const {proposed_file_commands,mandatory_preconditions,on_failure,...review}=install;
+  const supervisor='system/lab.fios.studio.supervisor',session=`gui/${uid}/lab.fios.studio.session`;
+  const supervisorFile=proposed_file_commands.find(file=>file.destination==='/Library/LaunchDaemons/lab.fios.studio.supervisor.plist');
+  const sessionFile=proposed_file_commands.find(file=>file.destination==='/Library/LaunchAgents/lab.fios.studio.session.plist');
+  if(!supervisorFile||!sessionFile)fail();
+  const command=argv=>({program:'/bin/launchctl',argv,execution:'operator_only'});
+  const commands=operation==='activate'?
+    [command(['enable',supervisor]),command(['enable',session]),
+     command(['bootstrap','system',supervisorFile.destination]),
+     command(['bootstrap',`gui/${uid}`,sessionFile.destination])]:
+    [command(['disable',supervisor]),command(['disable',session]),
+     command(['bootout',supervisor]),command(['bootout',session])];
+  return {...review,operation:operation==='activate'?'platform_registration_activation_command_proposal':'platform_registration_removal_command_proposal',
+    service_uid:uid,registration_changed:false,desired_service_state_changed:false,
+    state_and_exports_retained:true,credentials_retained:true,native_inference_uncertainty_retained:true,
+    required_installed_files:proposed_file_commands.map(file=>({path:file.destination,sha256:file.sha256,uid:0,mode:0o644})),
+    mandatory_preconditions:[operation==='activate'?'separate_operator_native_installation_and_activation_approval':'separate_operator_registration_removal_and_disruption_approval',
+      'reviewed_complete_merged_release_and_exact_studio_account_state_context',
+      'service_uid_matches_reviewed_mcteer_account_and_active_aqua_session',
+      'record_previous_registration_and_disabled_states_for_exact_labels',
+      'verify_protected_installed_files_regular_single_link_owner_mode_no_acl_and_exact_bytes',
+      ...(operation==='activate'?['verified_stopped_state_configuration_and_program_backup','both_registrations_absent_and_explicit_desired_activation_reviewed']:
+        ['admission_closed_and_native_children_reconciled_without_clearing_independent_uncertainty','owned_native_children_absent_or_separately_reviewed_retained_custody_before_bootout','retain_previous_known_backup_and_review_stop_then_stopped_backup_sequence']),
+      'serialized_operator_transaction'],
+    proposed_registration_commands:commands,
+    after_commands:operation==='remove'?['verify_exact_platform_writer_process_absence','create_and_verify_stopped_state_configuration_backup_before_file_removal','retain_exports_credentials_and_independent_native_uncertainty']:['verify_exact_helper_identities_and_authenticated_metadata_without_inference'],
+    rollback:'separately_review_restore_of_exact_recorded_registration_disabled_states_and_configuration_no_blanket_enable',
+    on_failure:'stop_retain_backups_configuration_and_uncertainty_no_automatic_restart'};
+}

@@ -416,3 +416,23 @@ proposal requires separately reviewed registration removal or persistent
 disablement before file removal. It never invokes launchctl, removes a parent
 directory or changes credentials/state/exports/native uncertainty. A stopped
 verified backup and explicit operator execution remain required.
+
+`propose-registration-activation` and `propose-registration-removal` accept
+release/hash/host, the pinned configuration bundle and `--uid` with the explicitly
+reviewed service-account UID. They verify the bundle and derive only the two
+fixed Studio labels. Configuration-array ordering never selects a launchd domain.
+
+Activation proposes enable then bootstrap for the system supervisor and selected
+Aqua-session adapter. It requires separate native installation/activation approval,
+a complete reviewed release, exact account/session context, verified stopped
+backups, absent registrations and protected installed plist bytes. Removal
+proposes disable then bootout for those exact labels. Admission must already be
+closed, and owned native children must be absent or in separately reviewed
+retained custody; reconciliation never clears independent inference uncertainty.
+Verify all platform writers are absent and take the stopped configuration/state
+backup before removing any files. No blanket enable is a rollback: preserve and
+restore only the recorded previous registration/disabled states after review.
+
+Both commands print blocked, unauthorized proposals and invoke no launchctl,
+change no durable desired service state and write no registration, credentials
+or state. Partial failure stops the transaction with backups/uncertainty retained.
