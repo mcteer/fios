@@ -11,3 +11,22 @@ A separate data-only check reuses the genuine existing four-overlay receipt `/pr
 This accepts only the CPU callback compatibility prerequisite for the declared selected inputs. It does not attest mapped OS runtime, whole SDK/native provenance, loaded-model competence, device completion or all-client coverage. Existing runtime capsules without a matching `system_cxx` declaration remain refused by the unchanged missing-record condition; no capsule or model plan is modified here. Current native guard/coverage/admission gates and five consumed Core plans remain unchanged. No whole task closes.
 
 Final focused checks pass133 platform Node tests and102 native review/source tests, zero skips, plus boundary/syntax/whitespace. Existing-receipt data binding SHA256bbed6082c9dd57029c503c6fbe389c4e2a0f93a56d3a2109459b2625690efee8 binds current reader6abcdd0d3e32fc9653666a0d95db72658a977e3de51a17f56275d5e9e156bd6f. All new controls are data/parser checks; no CPP build, physical Metal, model plan/POST or runtime capsule modified.
+
+## Residency-refresh SDK CPU compatibility
+
+The checker has a separate explicit `--residency-refresh` mode, following
+`--owner-capture-refusal --sdk-request-events`, for the exact cumulative nine-file
+SDK patch. It requires the existing callback/status/capture/event options and
+refuses healthy-Metal mode in this composition. It reconstructs the selected
+base files plus the cumulative patch and checks every observed byte before
+compiling. Older modes retain their previous exact compositions.
+
+The new receipt scope is
+`current_build_helper_residency_SDK_CPU_compatibility_not_native_authority`, with
+its own cumulative patch digest. It does not reuse an older eight-file receipt.
+Actual Debug/ReleaseFast checks pass against SDK d0d0758e… using the current
+reviewed system-C++ build helper. This tests the finite CPU callback/error ABI
+and cleanup channel, not model competence, full native/provenance coverage or
+production eligibility. The current native artifact remains explicitly model-
+free; this new component receipt is not silently admitted by the model-
+prerequisite parser and does not replace system_cxx null there.

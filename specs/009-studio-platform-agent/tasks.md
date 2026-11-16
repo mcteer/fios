@@ -1030,3 +1030,5 @@ Readonly native observation now has an off-loop protected-profile factory and pe
 Clean cc87e92 observer-source package qualifies184 inputs/9 inactive artifacts, actual public private-image refusal and old/new/old recovery. Positive installed factory and production native observation bootstrap remain unfinished;39/55 whole tasks unchanged.
 
 Native observation-only bootstrap source passes35/32/20 compile,6 metadata cases, actual3-operation server denial, dynamic/normal manager and all5 handoff modes. Current production stamp remains refused by the preserved private-SDK guard; no eligible production composition, positive root acceptance or native proof is claimed. Whole39/55 unchanged; production provenance/composition and all-client authority remain unfinished.
+
+Current exact nine-file SDK now has distinct Debug/ReleaseFast CPU C++ compatibility qualification; the checker keeps legacy modes exact and the new receipt outside existing model-prerequisite acceptance. Model-free/production guards remain closed;39/55 whole tasks unchanged.

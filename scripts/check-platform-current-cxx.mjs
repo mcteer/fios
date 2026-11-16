@@ -11,6 +11,8 @@ import {hostname} from 'node:os';
 
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const args=process.argv.slice(2);
+const residencyRefresh=args.at(-1)==='--residency-refresh';
+if(residencyRefresh)args.pop();
 const requestEvents=args.at(-1)==='--sdk-request-events';
 if(requestEvents)args.pop();
 const captureRefusal=args.at(-1)==='--owner-capture-refusal';
@@ -21,8 +23,9 @@ if(healthyMetal)args.splice(13,3);
 const commandStatus=args.length===13&&args[12]==='--metal-command-status';
 if(commandStatus)args.pop();
 const callbackFence=args.length===12&&args[7]==='--metal-callback-fence'&&args[8]==='--sdk-source'&&args[10]==='--sdk-library';
+assert(!residencyRefresh||(requestEvents&&captureRefusal&&commandStatus&&callbackFence&&!healthyMetal));
 assert((args.length===7||callbackFence)&&(!commandStatus||callbackFence)&&(!healthyMetal||commandStatus)&&(!captureRefusal||commandStatus)&&(!requestEvents||(captureRefusal&&!healthyMetal))&&args[0]==='--isolated'&&args[1]==='--source'&&args[3]==='--zig'&&args[5]==='--mlx-sha256',
-  'Use --isolated --source ABS_CURRENT_NATIVE_SOURCE --zig ABS_PINNED_ZIG --mlx-sha256 REVIEWED_MLX_SHA256 [--metal-callback-fence --sdk-source ABS_SDK_SOURCE --sdk-library ABS_LIBRARY [--metal-command-status [--healthy-metal --metal-cpp-zip ABS_PINNED_ZIP]]] [--owner-capture-refusal [--sdk-request-events]]');
+  'Use --isolated --source ABS_CURRENT_NATIVE_SOURCE --zig ABS_PINNED_ZIG --mlx-sha256 REVIEWED_MLX_SHA256 [--metal-callback-fence --sdk-source ABS_SDK_SOURCE --sdk-library ABS_LIBRARY [--metal-command-status [--healthy-metal --metal-cpp-zip ABS_PINNED_ZIP]]] [--owner-capture-refusal [--sdk-request-events [--residency-refresh]]]');
 assert(process.platform==='darwin'&&process.arch==='arm64'&&process.getuid()>0);
 const sha=bytes=>createHash('sha256').update(bytes).digest('hex');
 const [source,zig]=[args[2],args[4]].map(value=>{
@@ -58,11 +61,13 @@ const sourcePatch=readFileSync(path.join(root,'platform/studio/native/mlx-c69303
 const observedPatch=git('diff','--no-ext-diff','--no-textconv','HEAD');
 const paths=['mlx/backend/cpu/eval.cpp','mlx/backend/metal/device.cpp','mlx/backend/metal/device.h','mlx/backend/metal/eval.cpp','mlx/scheduler.cpp','mlx/stream.cpp','mlx/stream.h'];
 if(requestEvents){paths.push('mlx/backend/metal/event.cpp');paths.sort();}
+if(residencyRefresh){paths.push('mlx/backend/metal/resident.cpp');paths.sort();}
 assert.deepEqual(git('status','--porcelain','--untracked-files=all','--ignored=matching').trimEnd().split('\n'),paths.map(name=>' M '+name));
 let incrementalPatch=null;
 const statusPatch=commandStatus?readFileSync(path.join(root,'platform/studio/native/mlx-c69303b-metal-callback-status.patch'),'utf8'):null;
 const capturePatch=captureRefusal?readFileSync(path.join(root,'platform/studio/native/mlx-c69303b-owner-capture-refusal.patch'),'utf8'):null;
 const eventPatches=requestEvents?['mlx-c69303b-host-request-events.patch','mlx-c69303b-metal-request-events.patch'].map(name=>[name,readFileSync(path.join(root,'platform/studio/native',name),'utf8')]):[];
+const residencyPatch=residencyRefresh?readFileSync(path.join(root,'platform/studio/native/mlx-c69303b-residency-refresh-refusal.patch'),'utf8'):null;
 if(callbackFence){
   incrementalPatch=readFileSync(path.join(root,'platform/studio/native/mlx-c69303b-metal-callback-fence.patch'),'utf8');
   const composed=path.join(directory,'reviewed-sdk-source');mkdirSync(composed);
@@ -70,7 +75,8 @@ if(callbackFence){
     const destination=path.join(composed,name);mkdirSync(path.dirname(destination),{recursive:true});
     writeFileSync(destination,execFileSync('/usr/bin/git',['--no-replace-objects','-C',mlx,'show','HEAD:'+name],{env,timeout:15000,maxBuffer:4<<20}));
   }
-  for(const [name,patch] of [['base.patch',sourcePatch],['increment.patch',incrementalPatch],...(commandStatus?[['status.patch',statusPatch]]:[]),...(captureRefusal?[['capture-refusal.patch',capturePatch]]:[]),...eventPatches]){
+  const composition=residencyRefresh?[['residency.patch',residencyPatch]]:[['base.patch',sourcePatch],['increment.patch',incrementalPatch],...(commandStatus?[['status.patch',statusPatch]]:[]),...(captureRefusal?[['capture-refusal.patch',capturePatch]]:[]),...eventPatches];
+  for(const [name,patch] of composition){
     const file=path.join(directory,name);writeFileSync(file,patch);
     execFileSync('/usr/bin/git',['apply',file],{cwd:composed,env,timeout:15000,maxBuffer:4<<20});
   }
@@ -102,13 +108,14 @@ pub fn build(b:*std.Build) void {
  b.installArtifact(b.addExecutable(.{.name="cxx-control",.root_module=module}));
 }
 `);
-const receipt={version:1,scope:requestEvents?'current_build_helper_event_SDK_CPU_compatibility_not_native_authority':healthyMetal?'current_build_helper_CPU_and_empty_Metal_callbacks_not_native_authority':'current_build_helper_CPU_callback_compatibility_not_native_authority',
+const receipt={version:1,scope:residencyRefresh?'current_build_helper_residency_SDK_CPU_compatibility_not_native_authority':requestEvents?'current_build_helper_event_SDK_CPU_compatibility_not_native_authority':healthyMetal?'current_build_helper_CPU_and_empty_Metal_callbacks_not_native_authority':'current_build_helper_CPU_callback_compatibility_not_native_authority',
   source,library_sha256:args[6],config_sha256:sha(config),helper_sha256:sha(helper),fixture_sha256:sha(fixture),
   runner_sha256:sha(readFileSync(fileURLToPath(import.meta.url))),sdk:'27.2',selected_sdk_inputs:selectedSDK,source_patch_sha256:sha(sourcePatch),
   ...(callbackFence?{sdk_source:mlx,sdk_library:library,incremental_patch_sha256:sha(incrementalPatch),observed_source_patch_sha256:sha(observedPatch)}:{}),results:[],models:0,inference:false,
   ...(commandStatus?{command_status_patch_sha256:sha(statusPatch)}:{}),
   ...(captureRefusal?{capture_refusal_patch_sha256:sha(capturePatch)}:{}),
   ...(requestEvents?{request_event_patches:Object.fromEntries(eventPatches.map(([name,patch])=>[name,sha(patch)]))}:{}),
+  ...(residencyRefresh?{residency_refresh_patch_sha256:sha(residencyPatch)}:{}),
   source_fixture_only:true,installed:false,activation:false,native_authority:false,whole_native_provenance:false};
 if(healthyMetal){
   const metalFixture=bytes(path.join(root,'platform/studio/native/current_mlx_metal_healthy_test.cpp'),1<<20);
@@ -157,6 +164,7 @@ receipt.declared_inputs_unchanged=bytes(path.join(source,'build/config.zig'),1<<
   (statusPatch===null||readFileSync(path.join(root,'platform/studio/native/mlx-c69303b-metal-callback-status.patch'),'utf8')===statusPatch)&&
   (capturePatch===null||readFileSync(path.join(root,'platform/studio/native/mlx-c69303b-owner-capture-refusal.patch'),'utf8')===capturePatch)&&
   eventPatches.every(([name,patch])=>readFileSync(path.join(root,'platform/studio/native',name),'utf8')===patch)&&
+  (residencyPatch===null||readFileSync(path.join(root,'platform/studio/native/mlx-c69303b-residency-refresh-refusal.patch'),'utf8')===residencyPatch)&&
   (!healthyMetal||(sha(bytes(metalZIP,64<<20))===receipt.healthy_metal.metal_cpp_zip_sha256&&
     sha(bytes(path.join(path.dirname(library),'mlx.metallib'),256<<20))===receipt.healthy_metal.metallib_sha256&&
     sha(bytes(path.join(root,'platform/studio/native/current_mlx_metal_healthy_test.cpp'),1<<20))===receipt.healthy_metal.fixture_sha256))&&
