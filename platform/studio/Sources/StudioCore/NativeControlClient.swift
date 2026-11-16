@@ -162,6 +162,23 @@ struct NativeControlClient:Sendable {
         guard (0...ActivityPolicy.maximumTimestamp).contains(began),completed>=began,completed<=ActivityPolicy.maximumTimestamp,completed-began<=5000 else {throw NativeControlError.invalid}
         return NativeRequestRetirementSample(peer:peer,sampledAt:began,retirement:value)
     }
+    func reservePreparation(instance:String,correlationID:String,model:String,lifetimeMilliseconds:UInt32=5000,after sequence:UInt64=0)throws->NativePreparationSample {
+        try preparation(operation:.reserve,instance:instance,correlationID:correlationID,model:model,rootSequence:0,lifetimeMilliseconds:lifetimeMilliseconds,after:sequence)
+    }
+    func withdrawPreparation(instance:String,correlationID:String,model:String,rootSequence:UInt64,after sequence:UInt64=0)throws->NativePreparationSample {
+        try preparation(operation:.withdraw,instance:instance,correlationID:correlationID,model:model,rootSequence:rootSequence,lifetimeMilliseconds:0,after:sequence)
+    }
+    private func preparation(operation:NativePreparationOperation,instance:String,correlationID:String,model:String,rootSequence:UInt64,lifetimeMilliseconds:UInt32,after sequence:UInt64)throws->NativePreparationSample {
+        guard version==3,sequence<=UInt64(ActivityPolicy.maximumTimestamp) else {throw NativeControlError.invalid}
+        let began=HostResources.nowMilliseconds()
+        let data=try NativePreparationWire.request(operation:operation,instance:instance,correlationID:correlationID,model:model,rootSequence:rootSequence,lifetimeMilliseconds:lifetimeMilliseconds)
+        let value=try NativePreparationWire.reply(exchange(data,maximum:NativePreparationWire.responseSize),operation:operation,instance:instance,correlationID:correlationID,model:model,rootSequence:rootSequence,lifetimeMilliseconds:lifetimeMilliseconds,after:sequence)
+        let completed=HostResources.nowMilliseconds()
+        guard (0...ActivityPolicy.maximumTimestamp).contains(began),completed>=began,completed<=ActivityPolicy.maximumTimestamp,completed-began<=5000 else {throw NativeControlError.invalid}
+        // Preserve acknowledged identity separately from source clock quality.
+        // Neither this receipt nor local round-trip time is admission authority.
+        return NativePreparationSample(peer:peer,requestedAt:began,receivedAt:completed,acknowledgement:value)
+    }
     func backendFences(instance:String,after sequence:UInt64=0)throws->NativeBackendFenceSample {
         let began=HostResources.nowMilliseconds()
         let value=try NativeBackendFenceWire.currentReply(exchange(NativeBackendFenceWire.currentRequest(instance:instance),maximum:64),instance:instance,after:sequence)
@@ -181,7 +198,7 @@ struct NativeControlClient:Sendable {
         return NativePrimaryActivitySample(peer:peer,receivedAt:completed,registry:value)
     }
     private func exchange(_ data:Data,maximum:Int)throws->Data {
-        guard [32,64].contains(data.count),[64,80,88,112,NativePrimaryActivityWire.responseSize,NativePrimaryActivityWire.queuedResponseSize,NativeRegistryActivityWire.responseSize].contains(maximum) else {throw NativeControlError.invalid}
+        guard [32,64,NativePreparationWire.requestSize].contains(data.count),[64,80,88,112,NativePrimaryActivityWire.responseSize,NativePrimaryActivityWire.queuedResponseSize,NativeRegistryActivityWire.responseSize].contains(maximum) else {throw NativeControlError.invalid}
         guard path.hasPrefix("/"),path.utf8.count<104,!path.contains("\0") else {throw NativeControlError.invalid}
         var parent=stat(),socketInfo=stat()
         let directory=URL(fileURLWithPath:path).deletingLastPathComponent().path

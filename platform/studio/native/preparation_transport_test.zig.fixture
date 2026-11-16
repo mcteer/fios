@@ -1,0 +1,96 @@
+const std = @import("std");
+const owners = @import("fios/request_ownership.zig");
+const leases = @import("fios/preparation_leases.zig");
+const protocol = @import("fios/preparation_protocol.zig");
+const control = @import("fios/control_protocol.zig");
+const transport = @import("fios/control_transport.zig");
+const c = std.c;
+const Entry = struct { id: []const u8, state: enum { unloaded, loading, ready, error_state, evicting }, fios_load_uncertain: std.atomic.Value(bool) = .init(false) };
+const Registry = struct { mutex: std.Io.Mutex = .init, entries: std.StringHashMap(*Entry), generation: std.atomic.Value(u64) = .init(7) };
+const Context = struct {
+    registry: *Registry,
+    table: leases.Leases = .{},
+    calls: std.atomic.Value(usize) = .init(0),
+    fn reserve(raw: *anyopaque, model: []const u8, id: owners.CorrelationID, lifetime: u32) !leases.Handle {
+        const self: *Context = @ptrCast(@alignCast(raw));_ = self.calls.fetchAdd(1,.acq_rel);
+        return self.table.reserve(std.testing.io, owners.shared(), self.registry, model, id, 100, lifetime);
+    }
+    fn withdraw(raw: *anyopaque, handle: leases.Handle, model: []const u8) !void {
+        const self: *Context = @ptrCast(@alignCast(raw));_ = self.calls.fetchAdd(1,.acq_rel);
+        return self.table.withdraw(std.testing.io, owners.shared(), handle, model);
+    }
+    fn source(self: *Context) protocol.Source {return .{.context=self,.reserve=reserve,.withdraw=withdraw};}
+};
+fn request(instance: [16]u8) [protocol.request_size]u8 {
+    var bytes: [protocol.request_size]u8 = @splat(0);
+    @memcpy(bytes[0..4],"FIP9");bytes[4]=1;bytes[5]=1;@memcpy(bytes[8..24],&instance);@memset(bytes[24..56],21);
+    std.mem.writeInt(u16,bytes[64..66],9,.big);std.mem.writeInt(u32,bytes[68..72],5000,.big);@memcpy(bytes[80..89],"fixture/a");return bytes;
+}
+const Reply = struct { bytes: [89]u8 = @splat(0), len: usize = 0 };
+fn exchange(path: [:0]const u8, bytes: []const u8, half_close: bool) !Reply {
+    const fd=c.socket(c.AF.UNIX,c.SOCK.STREAM,0);if(fd<0)return error.ClientSocket;
+    defer _=c.close(fd);
+    var address:c.sockaddr.un=std.mem.zeroes(c.sockaddr.un);address.family=c.AF.UNIX;address.len=@sizeOf(c.sockaddr.un);
+    if(path.len>=address.path.len)return error.ClientPath;
+    @memcpy(address.path[0..path.len],path);
+    if(c.connect(fd,@ptrCast(&address),@sizeOf(c.sockaddr.un))!=0)return error.ClientConnect;
+    const written=c.write(fd,bytes.ptr,bytes.len);
+    if(written<0 or @as(usize,@intCast(written))!=bytes.len)return error.ClientWrite;
+    if(half_close and c.shutdown(fd,c.SHUT.WR)!=0)return error.ClientShutdown;
+    var result:Reply=.{};
+    while(result.len<result.bytes.len){
+        var pending:c.pollfd=.{.fd=fd,.events=c.POLL.IN,.revents=0};
+        if(c.poll(@ptrCast(&pending),1,3000)<=0)return error.ClientDeadline;
+        const n=c.read(fd,result.bytes[result.len..].ptr,result.bytes.len-result.len);
+        if(n<0)return error.ClientRead;
+        if(n==0)return result;
+        result.len+=@intCast(n);
+    }
+    return error.ClientOversizedReply;
+}
+fn start(context:*Context)!*transport.Bridge {
+    return (try transport.Bridge.startWithPreparation(std.testing.io,std.testing.allocator,"26.11.2-fios-source-fixture",null,null,null,null,context.source())) orelse error.BridgeDisabled;
+}
+test "preparation transport actual private socket reserves and withdraws one original CPU claim" {
+    const io=std.testing.io;const tracker=owners.shared();tracker.primary_guard=true;try tracker.initialize(io,@splat(171));tracker.sequence=std.math.maxInt(u64)-1;
+    var registry:Registry=.{.entries=std.StringHashMap(*Entry).init(std.testing.allocator)};defer registry.entries.deinit();
+    var a:Entry=.{.id="fixture/a",.state=.unloaded};try registry.entries.put(a.id,&a);
+    var context:Context=.{.registry=&registry};const bridge=try start(&context);defer bridge.stop();
+    var bytes=request(@splat(171));const reply=try exchange(std.mem.sliceTo(bridge.path[0..],0),&bytes,true);
+    try std.testing.expectEqual(@as(usize,88),reply.len);try std.testing.expectEqual(@intFromEnum(control.Status.ok),reply.bytes[5]);
+    const root=std.mem.readInt(u64,reply.bytes[40..48],.big);try std.testing.expectEqual(std.math.maxInt(u64),root);
+    try std.Io.Dir.cwd().writeFile(io,.{.sub_path="preparation-native-reserve.bin",.data=reply.bytes[0..reply.len]});
+    try std.testing.expectEqual(@as(usize,1),tracker.primarySnapshot(io).owned);
+    bytes[5]=2;std.mem.writeInt(u64,bytes[56..64],root,.big);std.mem.writeInt(u32,bytes[68..72],0,.big);
+    const withdrawn=try exchange(std.mem.sliceTo(bridge.path[0..],0),&bytes,true);
+    try std.testing.expectEqual(@as(usize,88),withdrawn.len);try std.testing.expectEqual(@intFromEnum(control.Status.ok),withdrawn.bytes[5]);
+    try std.testing.expectEqual(@as(usize,0),tracker.primarySnapshot(io).owned);
+    try std.Io.Dir.cwd().writeFile(io,.{.sub_path="preparation-native-withdraw.bin",.data=withdrawn.bytes[0..withdrawn.len]});
+    try std.testing.expectEqual(@as(usize,2),context.calls.load(.acquire));
+    try std.testing.expect(a.state==.unloaded);
+}
+test "preparation transport actual private socket retains unsupported guard and rejects incomplete frames" {
+    const io=std.testing.io;const tracker=owners.shared();tracker.primary_guard=false;try tracker.initialize(io,@splat(172));
+    var registry:Registry=.{.entries=std.StringHashMap(*Entry).init(std.testing.allocator)};defer registry.entries.deinit();
+    var a:Entry=.{.id="fixture/a",.state=.unloaded};try registry.entries.put(a.id,&a);
+    var context:Context=.{.registry=&registry};const bridge=try start(&context);defer bridge.stop();
+    const bytes=request(@splat(172));const refused=try exchange(std.mem.sliceTo(bridge.path[0..],0),&bytes,true);
+    try std.testing.expectEqual(@as(usize,88),refused.len);try std.testing.expectEqual(@intFromEnum(control.Status.maintenance),refused.bytes[5]);
+    try std.testing.expectEqual(@as(usize,1),context.calls.load(.acquire));
+    var foreign=bytes;foreign[8]^=1;const changed=try exchange(std.mem.sliceTo(bridge.path[0..],0),&foreign,true);
+    try std.testing.expectEqual(@intFromEnum(control.Status.wrong_instance),changed.bytes[5]);
+    var malformed=bytes;malformed[72]=1;const invalid=try exchange(std.mem.sliceTo(bridge.path[0..],0),&malformed,true);
+    try std.testing.expectEqual(@intFromEnum(control.Status.invalid),invalid.bytes[5]);
+    var trailing:[protocol.request_size+1]u8=@splat(0);@memcpy(trailing[0..bytes.len],&bytes);
+    const extra=try exchange(std.mem.sliceTo(bridge.path[0..],0),&trailing,true);try std.testing.expectEqual(@as(usize,0),extra.len);
+    const incomplete=try exchange(std.mem.sliceTo(bridge.path[0..],0),&bytes,false);try std.testing.expectEqual(@as(usize,0),incomplete.len);
+    try std.testing.expectEqual(@as(usize,1),context.calls.load(.acquire));try std.testing.expectEqual(@as(usize,0),tracker.primarySnapshot(io).owned);
+}
+
+test "preparation transport full-width root header rejects ambiguity before source use" {
+    const header=@import("fios/preparation_header.zig");
+    try std.testing.expectEqual(@as(?u64,7),try header.parse("X-Fios-Preparation-Root:7\r\n"));
+    try std.testing.expectEqual(@as(?u64,std.math.maxInt(u64)),try header.parse("X-Fios-Preparation-Root:18446744073709551615\r\n"));
+    try std.testing.expectError(error.DuplicatePreparationHeader,header.parse("X-Fios-Preparation-Root:7\r\nx-fios-preparation-root:8\r\n"));
+    try std.testing.expectEqual(@as(?u64,null),try header.parse("X-Fios-Handoff-Root:7\r\n"));
+}

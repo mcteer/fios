@@ -9,13 +9,14 @@ import pathlib,subprocess,socket,tempfile,os,time,http.client,json,signal,sys,st
 assert sys.platform=="darwin" and os.geteuid()>0
 assert len(sys.argv) in [4,5] and sys.argv[1]=="--isolated"
 mode=sys.argv[4] if len(sys.argv)==5 else None
-assert mode in [None,"--expected-instance","--exact-target","--startup","--correlation","--activity","--retirement"]
-check_instance=mode in ["--expected-instance","--exact-target","--correlation","--retirement"]
-check_target=mode in ["--exact-target","--correlation","--retirement"]
+assert mode in [None,"--expected-instance","--exact-target","--startup","--correlation","--activity","--retirement","--preparation"]
+check_instance=mode in ["--expected-instance","--exact-target","--correlation","--retirement","--preparation"]
+check_target=mode in ["--exact-target","--correlation","--retirement","--preparation"]
 check_correlation=mode in ["--correlation","--retirement"]
 check_retirement=mode=="--retirement"
 check_startup=mode=="--startup"
 check_activity=mode=="--activity"
+check_preparation=mode=="--preparation"
 binary=pathlib.Path(sys.argv[2]);expected=sys.argv[3]
 assert binary.is_absolute() and str(binary).startswith("/private/tmp/") and binary.name=="mlx-serve"
 info=binary.lstat();assert binary.is_file() and not binary.is_symlink() and info.st_uid==os.geteuid() and info.st_nlink==1 and not info.st_mode&0o022 and 0<info.st_size<=64*1024*1024
@@ -220,7 +221,43 @@ try:
 
   else:
    assert legacy==matching and legacy[0]>=400,"CURRENT_NATIVE_MATCHING_EPOCH_CHANGED_LEGACY_SELECTION"
- receipt={"binary_sha256":hashlib.sha256(binary.read_bytes()).hexdigest(),"native_pid":proc.pid,"source_instance":instance,"source_sequence":sequence,"source_sampled_at":stamp,"http_connection_counts":list(counts),"accepted_connection_observed":True,"original_http_connection_retired":True,"private_home":str(home),"models":0,"model_requests":9 if check_correlation else (7 if check_target else (3 if check_instance else 0)),"expected_instance_guard_checked":check_instance,"exact_target_guard_checked":check_target,"correlation_header_checked":check_correlation,"retired_lineage_is_unknown":check_correlation,"local_retirement_record_checked":check_retirement,"http_activity_checked":check_activity,"startup_reservation_checked":check_startup,"startup_reacquired_after_original_exit":check_startup,"metadata_available_while_reserved":check_startup,"inference_started":False,"coverage":"unknown","native_admission_authority":False,"peer_authentication_proven":False,"installed":False}
+ if check_preparation:
+  # Actual empty-native surface only: no advertised model can execute.
+  preparation=bytearray(1104);preparation[:4]=b"FIP9";preparation[4]=1;preparation[5]=1
+  preparation[8:24]=bytes.fromhex(instance);preparation[24:56]=bytes([0xcc])*32
+  target=b"fixture/missing-model";preparation[64:66]=struct.pack(">H",len(target));preparation[68:72]=struct.pack(">I",5000);preparation[80:80+len(target)]=target
+  def preparation_exchange(payload):
+   channel=socket.socket(socket.AF_UNIX);channel.settimeout(2);channel.connect(str(control));channel.sendall(payload);channel.shutdown(socket.SHUT_WR);result=b""
+   try:
+    while len(result)<88:
+     part=channel.recv(88-len(result));assert part;result+=part
+    assert channel.recv(1)==b""
+   finally:channel.close()
+   return result
+  refused=preparation_exchange(preparation)
+  assert refused[:8]==b"FIV9"+bytes([1,2,1,0]) and refused[8:]==bytes(80),"CURRENT_NATIVE_PREPARATION_UNSUPPORTED_SOURCE_GRANTED"
+  preparation[5]=2;preparation[56:64]=bytes([255])*8;preparation[68:72]=bytes(4)
+  withdrawn=preparation_exchange(preparation)
+  assert withdrawn[:8]==b"FIV9"+bytes([1,2,2,0]) and withdrawn[8:]==bytes(80),"CURRENT_NATIVE_UNKNOWN_PREPARATION_WITHDRAWN"
+  def preparation_post(path,headers):
+   channel=http.client.HTTPConnection("127.0.0.1",port,timeout=2)
+   try:
+    channel.request("POST",path,body,{"Content-Type":"application/json",**headers})
+    result=channel.getresponse();payload=result.read(65537);assert len(payload)<=65536
+    return result.status,json.loads(payload)["error"]["type"]
+   finally:channel.close()
+  bound={"X-Fios-Native-Instance":instance,"X-Fios-Request-ID":"d"*64,"X-Fios-Preparation-Root":str(2**64-1)}
+  assert preparation_post("/v1/chat/completions",{"X-Fios-Preparation-Root":str(2**64-1)})==(400,"invalid_preparation_identity"),"CURRENT_NATIVE_PREPARATION_IDENTITY_NOT_REQUIRED"
+  assert preparation_post("/v1/chat/completions",{**bound,"X-Fios-Handoff-Root":"7"})==(400,"invalid_preparation_identity"),"CURRENT_NATIVE_PREPARATION_HANDOFF_FALLBACK_ALLOWED"
+  assert preparation_post("/v1/load-model",bound)==(400,"invalid_preparation_route"),"CURRENT_NATIVE_PREPARATION_ADMIN_ROUTE_ALLOWED"
+  assert preparation_post("/v1/chat/completions",bound)==(404,"native_target_not_found"),"CURRENT_NATIVE_PREPARATION_UNREGISTERED_TARGET_ALLOWED"
+  end=time.monotonic()+2
+  while time.monotonic()<end:
+   current,_=snapshot()
+   if current[0]==0:break
+   time.sleep(.025)
+  assert current[0]==0,"CURRENT_NATIVE_REJECTED_PREPARATION_HTTP_OWNER_RETAINED"
+ receipt={"binary_sha256":hashlib.sha256(binary.read_bytes()).hexdigest(),"native_pid":proc.pid,"source_instance":instance,"source_sequence":sequence,"source_sampled_at":stamp,"http_connection_counts":list(counts),"accepted_connection_observed":True,"original_http_connection_retired":True,"private_home":str(home),"models":0,"model_requests":(9 if check_correlation else (7 if check_target else (3 if check_instance else 0)))+(4 if check_preparation else 0),"preparation_control_refused":check_preparation,"preparation_http_guards_checked":check_preparation,"expected_instance_guard_checked":check_instance,"exact_target_guard_checked":check_target,"correlation_header_checked":check_correlation,"retired_lineage_is_unknown":check_correlation,"local_retirement_record_checked":check_retirement,"http_activity_checked":check_activity,"startup_reservation_checked":check_startup,"startup_reacquired_after_original_exit":check_startup,"metadata_available_while_reserved":check_startup,"inference_started":False,"coverage":"unknown","native_admission_authority":False,"peer_authentication_proven":False,"installed":False}
  (home/"receipt.json").write_text(json.dumps(receipt,indent=2)+"\n");print(json.dumps(receipt))
 finally:
  if proc.poll() is None:proc.terminate()

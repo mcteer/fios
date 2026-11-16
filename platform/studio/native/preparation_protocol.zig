@@ -29,7 +29,7 @@ pub fn decode(data: *const [request_size]u8) !Request {
     const root = std.mem.readInt(u64, data[56..64], .big);
     const lifetime = std.mem.readInt(u32, data[68..72], .big);
     if (operation == .reserve and (root != 0 or lifetime == 0 or lifetime > 5000)) return error.InvalidPreparationFrame;
-    if (operation == .withdraw and (root == 0 or root > owners.maximum_sample_sequence or lifetime != 0)) return error.InvalidPreparationFrame;
+    if (operation == .withdraw and (root == 0 or lifetime != 0)) return error.InvalidPreparationFrame;
     return .{ .operation = operation, .instance = data[8..24].*, .correlation = data[24..56].*, .root = root, .lifetime = lifetime, .model = model };
 }
 pub const Source = struct {
@@ -52,7 +52,7 @@ pub fn dispatch(tracker: *owners.Tracker, io: std.Io, data: *const [request_size
     var root = request.root;
     if (request.operation == .reserve) {
         const handle = provider.reserve(provider.context, request.model, request.correlation, request.lifetime) catch {response[5] = @intFromEnum(Status.maintenance);return response;};
-        if (handle.root == 0 or handle.root > owners.maximum_sample_sequence or !std.mem.eql(u8, &handle.instance, &request.instance) or !std.mem.eql(u8, &handle.correlation, &request.correlation)) return response;
+        if (handle.root == 0 or !std.mem.eql(u8, &handle.instance, &request.instance) or !std.mem.eql(u8, &handle.correlation, &request.correlation)) return response;
         root = handle.root;
     } else {
         provider.withdraw(provider.context, .{.instance=request.instance,.correlation=request.correlation,.root=request.root}, request.model) catch {response[5] = @intFromEnum(Status.maintenance);return response;};
