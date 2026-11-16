@@ -7655,3 +7655,16 @@ The real factory produces a pre-spawn cancellation, then three polls encounter a
 - `/private/tmp/fios-009-start-completion-debug.log` SHA256 `91749ab4018b4e5536e1e213f6f95f35a75c2c0f548e08274cf996150deb8ca5`.
 - `/private/tmp/fios-009-start-completion-release.log` SHA256 `6e7553824beb456f30f7fd171c1a5e0a360a629addfb47f9684688321febd4f7`.
 - `/private/tmp/fios-009-start-completion-boundary.log` SHA256 `c48954b6e815c6287f37d4ce266bfce48c958980163a31438c5166be14e0a469`.
+
+### Fenced original preparation identity retention (2026-11-16)
+
+An already authenticated preparation receipt can retain its original peer/model/correlation/root identity after a sticky peer/clock fence or a local clock rollback. This metadata path never clears the fence or refreshes a live observation; originalNativeRoot still refuses it, native ownership remains uncertain, and incompatible existing roots are rejected. Restored consumers remain unknown. Tests cover both original lineage-failure and expired receipts across clock, peer and registration-time rollback cases.
+
+The first compile exposed a test access to a private checkpoint helper. The fixture now reads its own isolated database through read-only SQLite without widening the production API. Final Debug compile31836ms/runtime35641ms passes; optimized compile67380ms and the complete runtime suite pass. Full198 Node/116 installed Python also pass. No real inference, native activation or whole-task completion is claimed.
+
+- `/private/tmp/fios-009-fenced-preparation-debug-final.log` SHA256 `6e5f005302d7acc4b78b52c98333ae521f06bcbdd8c3beff460b731f48795846`.
+- `/private/tmp/fios-009-fenced-preparation-release.log` SHA256 `5823779c70b420019651ee079c9003101795b5147e4026933e5f1a694048a63e`.
+- `/private/tmp/fios-009-recovery-npm-test.log` SHA256 `b2262f1a8197be307390c01e6e0fcc636c36f39c371f04fa255720f3d9a00381`.
+- `/private/tmp/fios-009-preparation3-container.log` SHA256 `e36c330c3cfd6afd15cf53c0e7570741f75ca57d842617a4f229a1911544c178`.
+
+Current metadata3 hardened ARM64 container passes installed worker/search mock checks, observer expiry/recovery, old→new→old rollback and backup restore; peak636MiB. This is isolated container evidence, not deployed application or native authority. Whole39/55 unchanged.

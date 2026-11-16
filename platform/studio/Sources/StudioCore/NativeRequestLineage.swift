@@ -126,6 +126,25 @@ struct NativeRequestLineageConsumer:Sendable {
     }
     mutating func acceptRegistration(_ verified:VerifiedNativePreparationRegistration,now:Int64)->Bool {
         let sample=verified.sample,ack=sample.acknowledgement
+        if fenced || now<previousNow || now<verified.verifiedAt {
+            // Preserve authenticated historical identity even after live-source
+            // refusal. Never un-fence, refresh observation time or issue proof.
+            fenced=true
+            guard (0...ActivityPolicy.maximumTimestamp).contains(now),
+                  sample.peer.pid==peer.pid,sample.peer.start==peer.start,
+                  sample.peer.executable.path.utf8.elementsEqual(peer.executable.path.utf8),
+                  sample.peer.executable.sha256==peer.executable.sha256,
+                  ack.instance==instance,ack.correlationID==correlationID,
+                  ack.model.utf8.elementsEqual(nativeModel.utf8),
+                  ack.operation == .reserve,ack.rootSequence>0,
+                  rootSequence == nil || rootSequence==ack.rootSequence else {return false}
+            rootSequence=ack.rootSequence
+            if sequence==0 {
+                sequence=ack.sampleSequence;sampledAt=sample.receivedAt
+            }
+            previousNow=max(previousNow,max(now,verified.verifiedAt))
+            return true
+        }
         return acceptRootIdentity(suppliedPeer:sample.peer,suppliedInstance:ack.instance,suppliedCorrelation:ack.correlationID,
             suppliedModel:ack.model,root:ack.rootSequence,sampleSequence:ack.sampleSequence,capturedAt:sample.receivedAt,
             observedAt:verified.verifiedAt,now:now,validRegistration:ack.operation == .reserve && (1...5000).contains(ack.lifetimeMilliseconds))

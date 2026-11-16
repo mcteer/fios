@@ -105,6 +105,34 @@ private func runPreparationIdentityPersistenceTests(peer:NativeControlPeer)throw
                   try restored.uncertainCount()==2,try restored.unresolvedCount()==2 else {fatalError("Preparation identity/older uncertainty lost across restart")}
         }
         guard source.counts.0==1,source.counts.1==1 else {fatalError("Persistence retried original native operations")}
+        for fence in ["clock","peer","rollback"] {
+            let fencedDirectory=directory.appendingPathComponent(fence),journal=try Journal(directory:fencedDirectory)
+            try journal.claim(job:job,attempt:0,model:scope.canonicalModel,scope:scope)
+            try journal.markDispatched(job:job,attempt:0)
+            try journal.markUncertain(job:job,attempt:0)
+            _=try journal.observeLineage(job:job,attempt:0,scope:scope,peer:peer,sample:nil,now:late+10)
+            if fence=="clock" {
+                _=try journal.observeLineage(job:job,attempt:0,scope:scope,peer:peer,sample:nil,now:late+9)
+            }else if fence=="peer" {
+                let changed=NativeControlPeer(pid:peer.pid+1,start:peer.start,executable:peer.executable)
+                _=try journal.observeLineage(job:job,attempt:0,scope:scope,peer:changed,sample:nil,now:late+11)
+            }
+            guard try journal.observePreparationRegistration(job:job,attempt:0,scope:scope,peer:peer,sample:registration,now:fence=="rollback" ? late+9:late+12) else {fatalError("Fenced original preparation identity was discarded")}
+            var reader:OpaquePointer?,row:OpaquePointer?
+            guard sqlite3_open_v2(fencedDirectory.appendingPathComponent("state.sqlite").path,&reader,SQLITE_OPEN_READONLY,nil)==SQLITE_OK,let reader else {throw JournalError.storage}
+            defer {sqlite3_close(reader)}
+            guard sqlite3_prepare_v2(reader,"SELECT payload FROM native_lineages",-1,&row,nil)==SQLITE_OK,let row else {throw JournalError.storage}
+            defer {sqlite3_finalize(row)}
+            guard sqlite3_step(row)==SQLITE_ROW,let bytes=sqlite3_column_text(row,0) else {throw JournalError.storage}
+            let checkpoint=Data(String(cString:bytes).utf8)
+            guard
+                  let value=try JSONSerialization.jsonObject(with:checkpoint) as? [String:Any],
+                  value["root"] as? String==String(UInt64.max),value["fenced"] as? Bool==true,
+                  try journal.originalNativeRoot(job:job,attempt:0,scope:scope,peer:peer)==nil,
+                  try journal.unresolvedCount()==1,try journal.uncertainCount()==1 else {fatalError("Historical preparation identity cleared a live-source fence")}
+            var consumer=try NativeRequestLineageConsumer(scope:scope,job:job,attempt:0,peer:peer,checkpoint:checkpoint)
+            guard case .unknown=consumer.accept(nil,now:late+20),consumer.fenced else {fatalError("Restored historical identity regained live authority")}
+        }
     }
 }
 
