@@ -176,3 +176,27 @@ export function verifyPlatformConfiguration({release,verified,host,bundle,review
     bundle:directory,manifest_sha256:verified.manifestSHA256,review_sha256:reviewSHA256,files:2,
     state:'review_required',installed:false,activation:false,changes_made:false};
 }
+
+// A reviewed command proposal only; privileged execution remains manual.
+export function proposePlatformConfigurationInstall(options){
+  const checked=verifyPlatformConfiguration(options);
+  const bytes=readFileSync(join(checked.bundle,'review.json'));
+  if(createHash('sha256').update(bytes).digest('hex')!==checked.review_sha256)fail();
+  const review=JSON.parse(bytes);
+  return {...checked,operation:'platform_configuration_install_command_proposal',
+    state:'blocked',commands_authorized:false,requires_operator_execution:true,
+    privileged_commands:[],native_authority:false,credentials_written:false,state_opened:false,
+    mandatory_preconditions:['separate_operator_installation_approval',
+      'reviewed_merged_release_and_exact_studio_account_state_context',
+      'verified_stopped_state_configuration_and_program_backup',
+      'platform_writers_stopped_and_independent_native_uncertainty_retained',
+      'serialized_operator_transaction_and_both_destinations_absent',
+      'protected_parent_directories_root_owned_without_acl_or_symlink',
+      'reverify_source_bytes_before_copy_and_installed_bytes_after_copy',
+      'registration_and_activation_require_separate_review'],
+    proposed_file_commands:review.files.map(file=>({program:'/usr/bin/install',
+      argv:['-o','root','-g','wheel','-m','0644',join(checked.bundle,file.path),file.installation_destination],
+      source:join(checked.bundle,file.path),destination:file.installation_destination,
+      sha256:file.sha256,mode:0o644})),
+    on_failure:'stop_retain_backups_and_partial_files_without_activation'};
+}

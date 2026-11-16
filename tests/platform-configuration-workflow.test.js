@@ -4,7 +4,7 @@ import {mkdtempSync,mkdirSync,chmodSync,copyFileSync,readFileSync,existsSync,rmS
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {createHash} from 'node:crypto';
-import {platformConfigurationPlan,stagePlatformConfiguration,verifyPlatformConfiguration} from '../scripts/lib/platform-state-plan.mjs';
+import {platformConfigurationPlan,stagePlatformConfiguration,verifyPlatformConfiguration,proposePlatformConfigurationInstall} from '../scripts/lib/platform-state-plan.mjs';
 
 test('configuration workflow renders, stages and verifies templates after state relocation',()=>{
   const directory=mkdtempSync(join(tmpdir(),'fios-configuration-workflow-'));
@@ -38,6 +38,17 @@ test('configuration workflow renders, stages and verifies templates after state 
     const saved=verifyPlatformConfiguration({release,verified,host:'fios-edge-b.lab',bundle:staged.destination,reviewSHA256:staged.review_sha256});
     assert.equal(saved.scope,'declared_configuration_files');assert.equal(saved.files,2);
     assert.equal(saved.state,'review_required');assert.equal(saved.installed,false);assert.equal(saved.activation,false);
+    const proposal=proposePlatformConfigurationInstall({release,verified,host:'fios-edge-b.lab',bundle:staged.destination,reviewSHA256:staged.review_sha256});
+    assert.equal(proposal.state,'blocked');assert.equal(proposal.commands_authorized,false);
+    assert.equal(proposal.requires_operator_execution,true);assert.equal(proposal.native_authority,false);
+    assert.deepEqual(proposal.privileged_commands,[]);assert.equal(proposal.proposed_file_commands.length,2);
+    assert.deepEqual(proposal.proposed_file_commands.map(file=>file.destination),plan.configuration_files.map(file=>file.destination));
+    for(const file of proposal.proposed_file_commands){
+      assert.equal(file.program,'/usr/bin/install');
+      assert.deepEqual(file.argv,['-o','root','-g','wheel','-m','0644',file.source,file.destination]);
+      assert.equal(createHash('sha256').update(readFileSync(file.source)).digest('hex'),file.sha256);
+    }
+    assert.throws(()=>proposePlatformConfigurationInstall({release,verified,host:'fios-edge-a.lab',bundle:staged.destination,reviewSHA256:staged.review_sha256}));
     assert.equal(saved.changes_made,false);assert.equal(existsSync(state),false);
     assert.equal(existsSync(join(directory,'retained-state')),true);
 

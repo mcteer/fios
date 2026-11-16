@@ -401,3 +401,11 @@ credentials, state or exports. Separate operator removal approval, verified
 stopped backups and stopped writers remain required; independent native
 inference uncertainty must survive removal. The command only prints a blocked
 proposal and performs no protected operation.
+
+`propose-config-install` takes the same release/hash/host and pinned
+`--bundle`/`--bundle-sha256` arguments as `verify-config`. After verifying the
+review and both rendered plists it proposes two fixed root-owned0644 copies
+to the declared LaunchDaemons/LaunchAgents destinations. It performs no copy,
+registration or activation. Approval, exact installed context, stopped backups,
+protected parents, absent destinations and source/destination rechecks remain
+operator prerequisites. Preserve partial failures and independent uncertainty.
