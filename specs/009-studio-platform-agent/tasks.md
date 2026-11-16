@@ -1018,3 +1018,5 @@ Explicit SDK background observation now travels through actual native protocol3 
 Clean29576ed package and actual packaged compatibility/refusal qualification pass; both Studio plans stay blocked with0 privileged commands. Background observation source batch is tested without native activation, installation or model requests. All-client/native admission, protected installation and whole tasks remain open;39/55.
 
 Installer plan-backup-config/plan-uninstall-config now connect the six-document opaque configuration backup to operator proposals.200 Node tests and actual packaged CLI proposal→backup→verify→restore pass with uncertainty/export retention; fresh declared-input packaging pending. Full protected installation/switch/removal and credentials are still unfinished;39/55 whole tasks unchanged.
+
+Clean4f0e2c2 declared-input package and its own installer/CLI configuration backup rehearsal now pass. Protected installed release/configuration/credential transaction and native acceptance remain open;39/55 whole tasks unchanged.
