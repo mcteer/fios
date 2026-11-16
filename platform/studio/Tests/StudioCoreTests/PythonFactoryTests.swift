@@ -313,6 +313,10 @@ func runPythonFactoryTests() throws {
           try handoffJournal.workerGrants().isEmpty,
           try handoffJournal.inferenceScope(job:handoffJob,attempt:0)?.state == .dispatched else {fatalError("Coordinator blocked or spawned before registration")}
     handoffSource.release.signal()
+    guard handoffSource.lineageReady.wait(timeout:.now()+1) == .success else {throw RuntimeError.deadline}
+    let handoffScope=try handoffBinding.inferenceScope()
+    let diagnostic=NativeRequestLineageSample(peer:handoffPeer,sampledAt:HostResources.nowMilliseconds(),lineage:NativeRequestLineage(instance:handoffEpoch,correlationID:try handoffScope.nativeRequestCorrelationID(job:handoffJob,attempt:0),sampleSequence:3,rootSequence:UInt64.max,found:true,uncertain:false,references:1,owners:1,ingress:1,preparing:0,active:0,responding:0))
+    _=try handoffJournal.observeLineage(job:handoffJob,attempt:0,scope:handoffScope,peer:handoffPeer,sample:diagnostic,now:HostResources.nowMilliseconds())
     var handoffAnswer="",handoffComplete=false
     let handoffDeadline=ProcessInfo.processInfo.systemUptime+10
     while handoffBroker.active(job:handoffJob) && ProcessInfo.processInfo.systemUptime<handoffDeadline {
@@ -464,7 +468,7 @@ private func runHandoffNeverSpawnedTests(factory:PythonWorkerFactory)throws {
 // Held synthetic registration proves manager responsiveness and spawn ordering.
 private final class FixtureHandoffSource:NativeHandoffPreparing,@unchecked Sendable {
     let peer:NativeControlPeer
-    let entered=DispatchSemaphore(value:0),release=DispatchSemaphore(value:0)
+    let entered=DispatchSemaphore(value:0),release=DispatchSemaphore(value:0),lineageReady=DispatchSemaphore(value:0)
     let wrongRoot:Bool
     init(peer:NativeControlPeer,wrongRoot:Bool=false) {self.peer=peer;self.wrongRoot=wrongRoot}
     func registerHandoff(instance:String,correlationID:String)throws->NativeHandoffSample {
@@ -473,7 +477,8 @@ private final class FixtureHandoffSource:NativeHandoffPreparing,@unchecked Senda
         return NativeHandoffSample(peer:peer,sampledAt:HostResources.nowMilliseconds(),result:NativeHandoffResult(operation:.register,instance:instance,correlationID:correlationID,rootSequence:UInt64.max,sampleSequence:1,state:.pending,uncertain:false))
     }
     func lineage(instance:String,correlationID:String)throws->NativeRequestLineageSample {
-        NativeRequestLineageSample(peer:peer,sampledAt:HostResources.nowMilliseconds(),lineage:NativeRequestLineage(instance:instance,correlationID:correlationID,sampleSequence:2,rootSequence:wrongRoot ? 7:UInt64.max,found:true,uncertain:false,references:1,owners:1,ingress:1,preparing:0,active:0,responding:0))
+        let value=NativeRequestLineageSample(peer:peer,sampledAt:HostResources.nowMilliseconds(),lineage:NativeRequestLineage(instance:instance,correlationID:correlationID,sampleSequence:2,rootSequence:wrongRoot ? 7:UInt64.max,found:true,uncertain:false,references:1,owners:1,ingress:1,preparing:0,active:0,responding:0))
+        lineageReady.signal();return value
     }
 }
 
@@ -505,6 +510,9 @@ private func runHandoffPreparationFailureTests(factory:PythonWorkerFactory)throw
         while broker.active(job:id) && ProcessInfo.processInfo.systemUptime<end {
             _=try broker.poll(now:HostResources.nowMilliseconds(),uptime:Int64(ProcessInfo.processInfo.systemUptime*1000),admission:&admission,source:{_ in binding})
             Thread.sleep(forTimeInterval:0.005)
+        }
+        if cancelled {
+            guard try journal.originalNativeRoot(job:id,attempt:0,scope:binding.inferenceScope(),peer:peer)==UInt64.max else {fatalError("Cancellation discarded verified original identity")}
         }
         guard !broker.active(job:id),try journal.activeLaunchCount()==0,try journal.workerGrants().isEmpty,
               try journal.unresolvedCount()==1,try journal.uncertainCount()==1,

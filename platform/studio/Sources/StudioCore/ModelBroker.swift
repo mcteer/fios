@@ -165,11 +165,19 @@ final class ModelBroker {
             preparing.removeValue(forKey:id)
             do {
                 let value=try finished.get(),peer=value.registration.peer
-                guard !pending.revoked,let factory,
-                      value.registration.sampledAt<=value.lineage.sampledAt,
+                guard value.registration.sampledAt<=value.lineage.sampledAt,
                       value.registration.sampledAt>=0,now>=value.registration.sampledAt,
                       now-value.registration.sampledAt<=5000 else {throw NativeControlError.unavailable}
-                guard case .live=try journal.observeLineage(job:id,attempt:pending.plan.attempt,scope:pending.plan.scope,peer:peer,sample:value.lineage,now:now) else {throw NativeControlError.unavailable}
+                if let original=try journal.originalNativeRoot(job:id,attempt:pending.plan.attempt,scope:pending.plan.scope,peer:peer) {
+                    // A readonly poll can checkpoint a newer sample before this
+                    // asynchronous reply is drained. Preserve that checkpoint.
+                    guard original==value.registration.result.rootSequence else {throw NativeControlError.invalid}
+                }else {
+                    guard case .live=try journal.observeLineage(job:id,attempt:pending.plan.attempt,scope:pending.plan.scope,peer:peer,sample:value.lineage,now:now) else {throw NativeControlError.unavailable}
+                }
+                // Cancellation still records known original identity, but can
+                // never turn that metadata into a process or permission bytes.
+                guard !pending.revoked,let factory else {throw NativeControlError.unavailable}
                 let handoff=try WorkerHandoffBinding.capture(plan:pending.plan,journal:journal,peer:peer)
                 let operation=try factory.beginStart(binding:pending.binding,plan:pending.plan,started:pending.started,now:now,handoff:handoff)
                 starting[id]=Starting(operation:operation,attempt:pending.plan.attempt,key:pending.key,nonce:pending.plan.nonce,started:pending.started,packet:pending.packet,binding:pending.binding,hasNativeHandoff:true)

@@ -930,3 +930,6 @@ Final T021 original-root handoff increment:198 Node/107 installed Python, Debug/
 
 
 2026-11-15 T021/T045 connected coordinator increment: trusted native-control composition now registers original roots off-loop after durable dispatch intent, validates registration/lineage identity and checkpoints the root before starting the bound installed worker. Preparation counts against the existing worker budget; cancellation and root mismatch start no child, release only local launch slots and retain native claims.198 Node/108 installed Python and Debug/optimized policy suites pass. Public startup remains observation-only, native proof/atomic admission and installed enrollment remain open.39/55 whole tasks unchanged.
+
+
+2026-11-15 T021/T045 reply-ordering follow-up: collecting an older registration result preserves a newer same-root readonly checkpoint; a valid cancelled registration retains its original root while spawning no worker. Final Debug/optimized suites pass in25286/19666ms, including the actual installed child/mock POST and cancellation/mismatch cases. Five-minute isolated idle/resource/watchdog measurements are running separately.39/55 unchanged; no native proof or installed authority is added.

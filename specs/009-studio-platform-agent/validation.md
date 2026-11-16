@@ -6766,3 +6766,17 @@ An earlier Debug build was invalidated by a concurrent source edit; its log is
 retained at `/private/tmp/fios-009-coordinator-debug3.log`, and it is not counted
 as a pass. Native all-client/terminal proof, atomic admission, production
 enrollment, installation and whole-task completion remain open.39/55 unchanged.
+
+
+Coordinator reply-ordering regression: a held native source captures registration
+and lineage, then the journal records a newer same-root readonly diagnostic before
+the coordinator collects the older result. Original identity is reused without
+replaying that older sample through the monotonic consumer, and the installed
+child's single mock POST succeeds. A separate cancellation case now retains the
+verified original root while starting no child and holding its native claim.
+Changed/fenced roots still refuse launch. Final Debug25286ms and optimized19666ms
+pass (`/private/tmp/fios-009-coordinator-order-debug-final.log`,
+`/private/tmp/fios-009-coordinator-order-release-final.log`). No native completion
+proof or inference occurs. Isolated quickstart idle/resource/watchdog measurements
+are pending at `/private/tmp/fios-009-coordinator-isolated-metrics.log`; these are
+separate from Studio/native acceptance.39/55 whole tasks unchanged.

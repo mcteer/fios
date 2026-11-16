@@ -86,3 +86,13 @@ is treated as native completion. Source retention allows this request's own
 preparation after initial admission, rather than mistaking its root for a new
 conflicting dispatch. The atomic all-client guard and proof issuer remain open;
 this wiring supplies neither admission authority nor production enrollment.
+
+
+Reply ordering preserves original identity: if a readonly poll has already
+checkpointed the same original root from the same peer/scope, collecting an older
+registration/lineage pair does not replay it through the monotonic diagnostic
+consumer. A changed or fenced root still refuses launch. A verified registration
+reply received after cancellation can checkpoint its original root, but cannot
+start a worker or release native uncertainty. The installed-child fixture holds
+registration and captures the older lineage before checkpointing a newer
+diagnostic, exercising this ordering with valid monotonically ordered captures.
