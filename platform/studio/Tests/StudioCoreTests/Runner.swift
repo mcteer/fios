@@ -4,6 +4,7 @@ import Darwin
 @main
 struct PolicyTestRunner {
     static func main() throws {
+        let activityTests=ActivityTests()
         let checks:[(String,()throws->Void)]=[
             ("mock support",runMockSupportTests),
             ("operator commands",runOperatorServiceCommandTests),
@@ -129,43 +130,50 @@ struct PolicyTestRunner {
             ("ownership records",runOwnershipRecordTests),
             ("job lease limits",runJobLeaseLimitTests),
             ("job journal",runJobJournalTests),
-            ("watchdog",runWatchdogTests)
+            ("watchdog",runWatchdogTests),
+            ("activity coherence",ActivityCoherenceTests.run),
+            ("detailed observations",DetailedObservationTests.run),
+            ("inference scopes",InferenceScopeTests.run),
+            ("worker RSS breach",runWorkerRSSBreachTests),
+            ("async worker start",runAsyncWorkerStartTests),
+            ("late worker recovery",runLateWorkerRecoveryTests),
+            ("migration",MigrationTests.run),
+            ("release staging",runReleaseStagingTests),
+            ("activity idle authority",activityTests.testIdleRequiresAuthoritativeAllClientCoverage),
+            ("activity owned phases",activityTests.testQueuedPreparingAndResponseOwnersAreBusy),
+            ("activity invalid samples",activityTests.testStaleFutureAndMalformedSamplesReject),
+            ("activity idle replacement",activityTests.testIdleReplacementIsAllowedButBusySwitchIsNot),
+            ("activity independent uncertainty",activityTests.testNewerSuccessDoesNotClearEarlierUncertainty),
+            ("activity duplicate completion",activityTests.testDuplicateAndUnknownCompletionFailClosed),
+            ("activity bounded restart",activityTests.testOwnershipIsBoundedAndRestartDoesNotRelease)
         ]
-        func progress(_ name:String) {
-            FileHandle.standardError.write(Data(("Policy suite starting: "+name+"\n").utf8))
+        let names=checks.map { $0.0 }
+        guard Set(names).count==names.count else {throw PolicyError.invalidObservation}
+        let arguments=Array(CommandLine.arguments.dropFirst())
+        if arguments==["--list-checks"] {
+            print(String(decoding:try JSONSerialization.data(withJSONObject:names),as:UTF8.self));return
         }
-        for (name,check) in checks {
-            progress(name)
+        var partition:Int?
+        if !arguments.isEmpty {
+            guard arguments.count==4,arguments[0]=="--partition",arguments[2]=="--partitions",arguments[3]=="2",
+                  let value=Int(arguments[1]),(0..<2).contains(value),
+                  ProcessInfo.processInfo.environment["FIOS_PLATFORM_TEST_RECEIPT"] != nil else {throw PolicyError.invalidObservation}
+            partition=value
+        }
+        let selected=checks.enumerated().filter {partition==nil || $0.offset%2==partition!}
+        for (_,item) in selected {
+            let (name,check)=item
+            FileHandle.standardError.write(Data(("Policy suite starting: "+name+"\n").utf8))
             do {try check();fflush(nil)} catch {
-                // Suite name only: no SQL, argv, credentials or workload data.
                 FileHandle.standardError.write(Data(("Policy suite failed: "+name+"\n").utf8))
                 throw error
             }
         }
-        progress("activity coherence")
-        try ActivityCoherenceTests.run()
-        progress("detailed observations")
-        try DetailedObservationTests.run()
-        progress("inference scopes")
-        try InferenceScopeTests.run()
-        progress("worker RSS breach")
-        try runWorkerRSSBreachTests()
-        progress("async worker start")
-        try runAsyncWorkerStartTests()
-        progress("late worker recovery")
-        try runLateWorkerRecoveryTests()
-        progress("migration")
-        try MigrationTests.run()
-        progress("release staging")
-        try runReleaseStagingTests()
-        let tests = ActivityTests()
-        try tests.testIdleRequiresAuthoritativeAllClientCoverage()
-        try tests.testQueuedPreparingAndResponseOwnersAreBusy()
-        tests.testStaleFutureAndMalformedSamplesReject()
-        try tests.testIdleReplacementIsAllowedButBusySwitchIsNot()
-        try tests.testNewerSuccessDoesNotClearEarlierUncertainty()
-        try tests.testDuplicateAndUnknownCompletionFailClosed()
-        try tests.testOwnershipIsBoundedAndRestartDoesNotRelease()
-        print("PASS: 7 activity/ownership policy tests (no native side effects)")
+        if let partition,let receipt=ProcessInfo.processInfo.environment["FIOS_PLATFORM_TEST_RECEIPT"] {
+            let value:[String:Any]=["version":1,"partition":partition,"partitions":2,
+                "checks":selected.map {$0.element.0},"completed":selected.count]
+            try JSONSerialization.data(withJSONObject:value,options:[.sortedKeys]).write(to:URL(fileURLWithPath:receipt),options:.atomic)
+        }
+        print("PASS: \(selected.count) selected policy checks")
     }
 }

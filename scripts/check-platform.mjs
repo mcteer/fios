@@ -1,3 +1,5 @@
+import assert from 'node:assert/strict';
+import {validatePolicyPlan,verifyPolicyCoverage} from './lib/platform-policy-coverage.mjs';
 import { spawnSync } from 'node:child_process';
 import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -131,19 +133,35 @@ try {
   const compileMode=process.argv[3]==='--release'
     ? ['-O','-whole-module-optimization','-num-threads','2']
     : ['-j2'];
-  for (const [command, args] of [
-    ['swiftc', ['-swift-version', '6', '-warnings-as-errors', ...compileMode, '-I', resolve(root, 'platform/studio/Sources/CSQLite'), ...sources, '-o', binary]],
-    ['/usr/bin/sandbox-exec', ['-D', `FIOS_MOCK_ENDPOINT=localhost:${port}`, '-f', resolve(root, 'tests/fixtures/platform/mock-network.sb'), binary]],
-  ]) {
-    // Compilation has its own finite hosted-runner allowance. Runtime tests
-    // retain120s; no model, IPC, native-command or cleanup deadline is raised.
-    const phase=command==='swiftc'?'compile':'runtime',began=performance.now();
+  const env={...process.env,FIOS_PLATFORM_MOCK_PORT:String(port),FIOS_PLATFORM_SETID_FIXTURE:setidFixture,
+    FIOS_PLATFORM_LOCK_SETID_FIXTURE:setidLock,FIOS_PLATFORM_CENSUS_FIXTURE:censusBinary,FIOS_PLATFORM_ENDPOINT_FIXTURE:endpointBinary,
+    FIOS_PLATFORM_VM_STATUS_FIXTURE:vmStatusBinary,FIOS_PLATFORM_VM_INVENTORY_FIXTURE:vmInventoryBinary,
+    FIOS_PLATFORM_RSS_FIXTURE:rssBinary,FIOS_PLATFORM_SANDBOX_REMOVAL_FIXTURE:removalBinary};
+  function checked(command,args,phase,timeout,extra={}){
+    const began=performance.now();
     console.log(`Policy ${phase} begin; mode=${process.argv[3]==='--release'?'optimized':'debug'}; source_files=${sources.length}`);
-    const result = spawnSync(command, args, { cwd: root, stdio: 'inherit', timeout: command==='swiftc'?300_000:120_000, env: { ...process.env, FIOS_PLATFORM_MOCK_PORT: String(port), FIOS_PLATFORM_SETID_FIXTURE: setidFixture, FIOS_PLATFORM_LOCK_SETID_FIXTURE: setidLock, FIOS_PLATFORM_CENSUS_FIXTURE:censusBinary, FIOS_PLATFORM_ENDPOINT_FIXTURE:endpointBinary, FIOS_PLATFORM_VM_STATUS_FIXTURE:vmStatusBinary, FIOS_PLATFORM_VM_INVENTORY_FIXTURE:vmInventoryBinary, FIOS_PLATFORM_RSS_FIXTURE:rssBinary, FIOS_PLATFORM_SANDBOX_REMOVAL_FIXTURE:removalBinary } });
+    const result=spawnSync(command,args,{cwd:root,stdio:'inherit',timeout,env:{...env,...extra}});
     console.log(`Policy ${phase} returned; elapsed_ms=${Math.ceil(performance.now()-began)}; status=${result.status??'unknown'}`);
-    if (result.error) throw result.error;
-    if (result.status !== 0) throw new Error(`Platform policy validation failed (${result.status ?? result.signal})`);
+    if(result.error)throw result.error;
+    if(result.status!==0)throw Error(`Platform policy validation failed (${result.status??result.signal})`);
   }
+  checked('swiftc',['-swift-version','6','-warnings-as-errors',...compileMode,'-I',resolve(root,'platform/studio/Sources/CSQLite'),...sources,'-o',binary],'compile',300_000);
+  const sandbox=['-D',`FIOS_MOCK_ENDPOINT=localhost:${port}`,'-f',resolve(root,'tests/fixtures/platform/mock-network.sb'),binary];
+  const listing=spawnSync('/usr/bin/sandbox-exec',[...sandbox,'--list-checks'],{cwd:root,env,encoding:'utf8',timeout:5000,maxBuffer:65536});
+  if(listing.error)throw listing.error;
+  assert.equal(listing.status,0);
+  const plan=validatePolicyPlan(JSON.parse(listing.stdout)),records=[];
+  // Every named check runs exactly once. Each process keeps the original120s
+  // ceiling; product/worker/IPC/native/cleanup deadlines are unchanged.
+  for(let partition=0;partition<2;partition++){
+    const receipt=join(directory,`partition-${partition}.json`);
+    checked('/usr/bin/sandbox-exec',[...sandbox,'--partition',String(partition),'--partitions','2'],`runtime partition=${partition+1}/2`,120_000,{FIOS_PLATFORM_TEST_RECEIPT:receipt});
+    const record=JSON.parse(readFileSync(receipt,'utf8'));
+    records.push(record);
+  }
+  verifyPolicyCoverage(plan,records);
+  console.log(`PASS: all ${plan.length} named policy checks completed exactly once across two bounded partitions`);
+
 } finally {
   rmSync(directory, { recursive: true, force: true });
 }
