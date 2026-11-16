@@ -56,6 +56,25 @@ node scripts/install-platform.mjs plan --release /ABSOLUTE/RELEASE_DIRECTORY --s
 
 The expected digest must come from the reviewed build receipt, not an untrusted package's own claim. File review rejects special/set-ID files before reading, opens nonblocking/no-follow to cover a raced FIFO, and checks exact descriptor/named inode metadata and byte count after reading. These are per-file observations, not an atomic whole-tree reservation; future installation must stage and independently reverify protected destination bytes before activation. The reviewer verifies the finite tree, receipt and every byte/mode, rejects links/extra files, and emits explicit blockers. Current packages cannot produce privileged commands. No SSH, launchctl, app/runtime lifecycle, inference, RDMA/network change or deletion is performed. Unknown/apply/rollback/uninstall commands fail closed. This is a review scaffold, **not completion of T049**.
 
+## Repeatable private package check
+
+After producing and independently reviewing a development package, run:
+
+```sh
+node scripts/check-platform-release.mjs --isolated --release /private/tmp/PRIVATE_PARENT/RELEASE --sha256 REVIEWED_MANIFEST_SHA256
+```
+
+This requires the canonical owned0700 private release path. It verifies all
+artifact bytes, stages and verifies both hosts' configuration proposals in new
+private data, lints the four plists, and starts only the private packaged manager
+with fresh state. Actual CLI status must report observation unconfigured,
+native admission unsupported and sandbox admission disabled. The child stops
+within finite deadlines; release bytes are rechecked and the private receipt is
+retained. A wrong expected digest refuses before startup. No host is contacted,
+program installed, service activated or model invoked. This command does not
+verify installed root-policy behavior or whole-native provenance. Use the
+separate old/new/old recovery rehearsal for stopped-state backup and rollback.
+
 ## Per-host configuration review
 
 Render the actual two packaged launchd templates against an existing private state directory, without writing or installing them:

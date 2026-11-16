@@ -167,9 +167,13 @@ jobs:
           if-no-files-found: ignore
 
   platform:
-    name: Native platform mock and process tests
+    name: Native platform (${{ matrix.lane }})
     runs-on: macos-15
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        lane: [policy, process, idle]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -181,7 +185,7 @@ jobs:
         with:
           version: "0.13.5"
           python-version: "3.11.17"
-      - name: Build native package and run disposable local checks
+      - name: Prepare native compatibility toolchain
         run: |
           uv sync --locked --no-editable
           # This job is the macOS15 compatibility/mock lane, not a release
@@ -193,8 +197,11 @@ jobs:
           console.log(version.trim());
           console.log('Compatibility SDK: '+execFileSync('/usr/bin/xcrun',['--show-sdk-version'],{encoding:'utf8'}).trim());
           NODE
-          swift build --package-path platform/studio
-          swift test --package-path platform/studio --filter StudioOpenTelemetryTests
+          swift build --package-path platform/studio --jobs 2
+      - name: Check policy, worker and observation compatibility
+        if: matrix.lane == 'policy'
+        run: |
+          swift test --package-path platform/studio --jobs 2 --filter StudioOpenTelemetryTests
           node scripts/check-platform-observability.mjs --isolated
           node scripts/check-platform-supervisor-observability.mjs --isolated
           .venv/bin/python -I -B scripts/check-platform-current-metal-callback.py --mock
@@ -204,6 +211,9 @@ jobs:
           node scripts/check-platform.mjs --mock
           node scripts/check-platform.mjs --mock --release
           node scripts/check-platform-activity-worker-frames.mjs --isolated
+      - name: Check isolated process, service and recovery behavior
+        if: matrix.lane == 'process'
+        run: |
           node scripts/check-platform-process.mjs --isolated
           node scripts/check-platform-boot.mjs --isolated
           node scripts/check-platform-boot-state.mjs --isolated
@@ -219,6 +229,9 @@ jobs:
           node scripts/check-platform-supervisor-budget.mjs --isolated
           node scripts/check-platform-supervisor-publication.mjs --isolated
           node scripts/check-platform-watchdog.mjs --isolated
+      - name: Measure five-minute idle CPU and RSS on a separate runner
+        if: matrix.lane == 'idle'
+        run: |
           node scripts/check-platform-idle.mjs --isolated 300
           plutil -lint platform/studio/deployment/*.plist
       # No SSH, native lifecycle, live inference, launchd install or host socket
