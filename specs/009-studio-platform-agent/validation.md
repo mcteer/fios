@@ -6958,3 +6958,29 @@ installation, enrollment, activation, production deployment or merge. The c59f56
 metadata-v2 package above predates this reconciliation/decision-codec increment
 and is not its artifact evidence. Published0945977/[CI43784036385](https://github.com/mcteer/fios/actions/runs/43784036385)
 passes all seven jobs; the current increment needs its own exact-head CI.
+
+
+### 2026-11-15 non-dispatch development artifact qualification
+
+Clean detached232e448c2680c78ef234160a23a38259ecf7f72e builds nine inactive
+artifacts at `/private/tmp/fios-009-nondispatch-package-pxgc2pdv/release`.
+Manifest SHA256 `549fbf5790c926eb5002fcc88390e3bb0c8fadfae8a989b08ed5823ea00c95b2`;
+179 declared source inputs reproduce projection
+`8fdfe8f43be66060947bd097cc1594ecea8222a606dd655aed61a8bdd81558a2`.
+The separate4461-file/113994647-byte Python runtime remains byte-identical to
+candidate receipt `d29ab3a0f26fef07c3e470838312bdd38a2b91baa85b80b47223b185f7c8f3e3`,
+passes independent byte/tree review, actual metadata2/handoff1 and all108 tests
+against its copied prefix. It is not part of the nine-artifact manifest.
+
+Both per-host install reviews remain blocked with0 privileged commands; four
+private config plists verify/lint. The actual newly packaged release CLI verifies
+and restores the accepted decision's stopped backup to a fresh private directory.
+The current reader confirms own not_sent, older uncertainty and spent history;
+the previous c59f56a reader refuses the new payload. Aggregate
+`/private/tmp/fios-009-nondispatch-package-pxgc2pdv/final-review.json` SHA256
+`e16836e53ee2ac6bb6e222088672fcba23cd8e74d534d711b980bd37658ee0e3`
+binds package/source/runtime/config/state receipts. This is package-declared
+input and selected installed-byte evidence, not publisher/build/whole-repository
+or whole-native provenance. No approval/enrollment/installation/activation or
+native admission/completion follows;39/55 whole tasks unchanged. Published
+232e448 exact-head CI43788982300 is running, not yet an exact-head pass.
