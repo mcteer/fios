@@ -42,6 +42,13 @@ failure; storage recovery cannot turn the old result into a delayed launch.
 An unused plan can now produce factory no-spawn evidence and close only its
 own not_sent decision when exact native cancellation independently succeeds.
 An internal bounded single-use preparation lease bridge now connects the exact registry claim to ingress; the actual native test graph also links the real ownership ports and keeps the shared ANE latch within the SDK dependency boundary. A private source-fixture reservation transport, exact serving consumer and typed Core acknowledgement client now pass local checks. The all-client proof/capacity issuer and production execution composition remain unfinished.
+The pristine preparation path now combines a never-consumed/never-shared lease
+close with original factory never-spawned evidence for only that request's
+`not_sent` decision. Its durable attempted checkpoint prevents close replay after
+a crash. Cleanup-only identity cannot authorize launch; manual model cancellation
+preserves its enclosing job. The raw CPU acknowledgement still proves neither
+device completion nor all-client idle. Checked zero-POST preparation workers,
+positive native completion and the serving admission guard remain unfinished.
 These address concrete lifecycle defects; they do not close the native-authority
 workstream. Subsequent implementation must connect the producer/proof/guard and
 operational paths, rather than interpreting additional component receipts as

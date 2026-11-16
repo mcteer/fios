@@ -80,6 +80,7 @@ struct NativeRequestLineageConsumer:Sendable {
     private(set) var rootSequence:UInt64?
     private(set) var fenced=false
     private var handoffClosure:NativeHandoffClosureCheckpoint?
+    private var preparationClosure:NativePreparationClosureCheckpoint?
     init(scope:InferenceScope,job:String,attempt:Int,peer:NativeControlPeer,checkpoint:Data?=nil)throws {
         try scope.validate();_=try NativeControlWire.instanceBytes(scope.nativeEpoch)
         guard peer.pid>1,peer.start>0 else {throw NativeControlError.invalid}
@@ -90,7 +91,7 @@ struct NativeRequestLineageConsumer:Sendable {
             guard saved.scopeSHA256 == (try Self.scopeDigest(scope)),saved.instance==instance,saved.correlationID==correlationID else {throw JournalError.conflict}
             let original=try saved.peer()
             self.peer=original
-            previousNow=saved.previousNow;sampledAt=saved.sampledAt;sequence=saved.sequence;handoffClosure=saved.handoffClosure
+            previousNow=saved.previousNow;sampledAt=saved.sampledAt;sequence=saved.sequence;handoffClosure=saved.handoffClosure;preparationClosure=saved.preparationClosure
             rootSequence=UInt64(saved.root).flatMap {$0==0 ? nil:$0}
             fenced=saved.fenced || original.pid != peer.pid || original.start != peer.start ||
                 !original.executable.path.utf8.elementsEqual(peer.executable.path.utf8) || original.executable.sha256 != peer.executable.sha256
@@ -108,9 +109,9 @@ struct NativeRequestLineageConsumer:Sendable {
         SHA256.hash(data:try scope.encoded()).map {String(format:"%02x",$0)}.joined()
     }
     func checkpoint(scope:InferenceScope)throws->Data {
-        let saved=NativeLineageCheckpoint(version:handoffClosure.map {$0.workerMetadataVersion == 3 ? 3:2} ?? 1,scopeSHA256:try Self.scopeDigest(scope),instance:instance,correlationID:correlationID,
+        let saved=NativeLineageCheckpoint(version:preparationClosure != nil ? 4:(handoffClosure.map {$0.workerMetadataVersion == 3 ? 3:2} ?? 1),scopeSHA256:try Self.scopeDigest(scope),instance:instance,correlationID:correlationID,
             pid:peer.pid,start:String(peer.start),path:peer.executable.path,sha256:peer.executable.sha256,root:String(rootSequence ?? 0),
-            sequence:sequence,sampledAt:sampledAt,previousNow:previousNow,fenced:fenced,handoffClosure:handoffClosure)
+            sequence:sequence,sampledAt:sampledAt,previousNow:previousNow,fenced:fenced,handoffClosure:handoffClosure,preparationClosure:preparationClosure)
         let encoder=JSONEncoder();encoder.outputFormatting=[.sortedKeys]
         let data=try encoder.encode(saved)
         _=try NativeLineageCheckpoint.decode(data)
@@ -204,6 +205,35 @@ struct NativeRequestLineageConsumer:Sendable {
         guard value.recorded,!value.uncertain else {return nil}
         return value
     }
+    mutating func beginPristinePreparationClose(nonce:String)throws->Bool {
+        guard !fenced,rootSequence != nil,sequence>0,sampledAt>=0,handoffClosure==nil else {throw JournalError.conflict}
+        if preparationClosure != nil {return false}
+        let value=NativePreparationClosureCheckpoint(version:1,state:"attempted",launchNonce:nonce,workerMetadataVersion:3)
+        try value.validate();preparationClosure=value;return true
+    }
+    mutating func acceptPristinePreparationClose(_ sample:NativePristinePreparationSample?,nonce:String,now:Int64)->Bool {
+        guard !fenced,let saved=preparationClosure,saved.state=="attempted",saved.launchNonce==nonce else {return false}
+        guard (0...ActivityPolicy.maximumTimestamp).contains(now),now>=previousNow else {fenced=true;return false}
+        previousNow=now
+        guard let sample else {return false}
+        let value=sample.closure
+        guard sample.peer.pid==peer.pid,sample.peer.start==peer.start,
+              sample.peer.executable.path.utf8.elementsEqual(peer.executable.path.utf8),sample.peer.executable.sha256==peer.executable.sha256,
+              value.instance==instance,value.correlationID==correlationID,value.model.utf8.elementsEqual(nativeModel.utf8),
+              value.rootSequence==rootSequence else {fenced=true;return false}
+        guard value.sampleSequence>sequence,value.sampleSequence<=UInt64(ActivityPolicy.maximumTimestamp),
+              let stamp=value.sourceSampledAt,(1...ActivityPolicy.maximumTimestamp).contains(stamp),
+              (0...ActivityPolicy.maximumTimestamp).contains(sample.requestedAt),sample.requestedAt>=sampledAt,
+              stamp>=sample.requestedAt,stamp<=sample.receivedAt,sample.receivedAt<=now,
+              now-sample.requestedAt<=5000 else {return false}
+        sequence=value.sampleSequence;sampledAt=stamp
+        preparationClosure=NativePreparationClosureCheckpoint(version:1,state:"not_sent",launchNonce:nonce,workerMetadataVersion:3)
+        return true
+    }
+    static func preparationClosureReceipt(_ data:Data,scope:InferenceScope,job:String,attempt:Int)throws->NativePreparationClosureCheckpoint? {
+        try validateCheckpoint(data,scope:scope,job:job,attempt:attempt)
+        return try NativeLineageCheckpoint.decode(data).preparationClosure
+    }
     mutating func recordHandoffClosure(_ receipt:NativeHandoffClosureCheckpoint)throws {
         guard !fenced,rootSequence != nil,sequence>0,sampledAt>=0 else {throw JournalError.conflict}
         try receipt.validate();handoffClosure=receipt
@@ -273,6 +303,7 @@ private struct NativeLineageCheckpoint:Codable {
     let previousNow:Int64
     let fenced:Bool
     let handoffClosure:NativeHandoffClosureCheckpoint?
+    let preparationClosure:NativePreparationClosureCheckpoint?
     func peer()throws->NativeControlPeer {
         guard pid>1,let token=UInt64(start),token>0,String(token)==start else {throw JournalError.invalid}
         return NativeControlPeer(pid:pid,start:token,executable:try VerifiedExecutable(path:path,sha256:sha256))
@@ -280,8 +311,8 @@ private struct NativeLineageCheckpoint:Codable {
     static func decode(_ data:Data)throws->Self {
         try StrictJSON.validate(data,maximum:16384)
         guard let object=try JSONSerialization.jsonObject(with:data) as? [String:Any],
-              let version=WireScalar.integer(object["version"],maximum:3),[1,2,3].contains(version),
-              Set(object.keys)==Set(["version","scopeSHA256","instance","correlationID","pid","start","path","sha256","root","sequence","sampledAt","previousNow","fenced"]+(version>=2 ? ["handoffClosure"]:[])),WireScalar.integer(object["pid"],maximum:Int64(Int32.max)) != nil,
+              let version=WireScalar.integer(object["version"],maximum:4),[1,2,3,4].contains(version),
+              Set(object.keys)==Set(["version","scopeSHA256","instance","correlationID","pid","start","path","sha256","root","sequence","sampledAt","previousNow","fenced"]+(version==4 ? ["preparationClosure"]:version>=2 ? ["handoffClosure"]:[])),WireScalar.integer(object["pid"],maximum:Int64(Int32.max)) != nil,
               WireScalar.integer(object["sequence"]) != nil,
               // The initial no-sample sentinel is private persistent metadata.
               ["sampledAt","previousNow"].allSatisfy({key in
@@ -290,7 +321,7 @@ private struct NativeLineageCheckpoint:Codable {
               }) else {throw JournalError.invalid}
         let value=try JSONDecoder().decode(Self.self,from:data)
         _=try value.peer();_=try NativeControlWire.instanceBytes(value.instance)
-        if version>=2 {
+        if version==2 || version==3 {
             guard let closure=value.handoffClosure,let raw=object["handoffClosure"] as? [String:Any],
                   Set(raw.keys)==Set(["version","localProducer","workerMetadataVersion","handoffVersion","launchNonce"]+(closure.grantSHA256 == nil ? []:["grantSHA256"])),
                   WireScalar.integer(raw["version"],maximum:1)==1,
@@ -298,10 +329,17 @@ private struct NativeLineageCheckpoint:Codable {
                   WireScalar.integer(raw["handoffVersion"],maximum:1)==1 else {throw JournalError.invalid}
             try closure.validate()
         }else if value.handoffClosure != nil {throw JournalError.invalid}
+        if version==4 {
+            guard let closure=value.preparationClosure,let raw=object["preparationClosure"] as? [String:Any],
+                  Set(raw.keys)==Set(["version","state","launchNonce","workerMetadataVersion"]),
+                  WireScalar.integer(raw["version"],maximum:1)==1,
+                  WireScalar.integer(raw["workerMetadataVersion"],maximum:3)==3 else {throw JournalError.invalid}
+            try closure.validate()
+        }else if value.preparationClosure != nil {throw JournalError.invalid}
         guard WireScalar.sha256(value.scopeSHA256),WireScalar.sha256(value.correlationID),
               let root=UInt64(value.root),String(root)==value.root,
               (value.sequence==0 ? value.sampledAt == -1 && root==0:value.sampledAt>=0 && value.previousNow>=0),
-              value.handoffClosure == nil || (root>0 && value.sequence>0) else {throw JournalError.invalid}
+              (value.handoffClosure == nil && value.preparationClosure == nil) || (root>0 && value.sequence>0) else {throw JournalError.invalid}
         return value
     }
 }
@@ -320,5 +358,17 @@ struct NativeHandoffClosureCheckpoint:Codable,Sendable {
     func validate()throws {
         guard version==1,[2,3].contains(workerMetadataVersion),handoffVersion==1,WireScalar.uuid(launchNonce),
               localProducer=="never_spawned" ? grantSHA256==nil : localProducer=="reaped_zero_post" && grantSHA256.map(WireScalar.sha256)==true else {throw JournalError.invalid}
+    }
+}
+
+// Version4 checkpoints are deliberately unreadable by older decision readers.
+// An attempted command survives restart without authorizing a retry or release.
+struct NativePreparationClosureCheckpoint:Codable,Sendable {
+    let version:Int
+    let state:String
+    let launchNonce:String
+    let workerMetadataVersion:Int
+    func validate()throws {
+        guard version==1,["attempted","not_sent"].contains(state),WireScalar.uuid(launchNonce),workerMetadataVersion==3 else {throw JournalError.invalid}
     }
 }

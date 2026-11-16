@@ -1,6 +1,6 @@
 # Data model: Studio platform agent
 
-Required data model; implementation remains partial. The separate development journal is FIS9/schema9. Schema8 introduced native dispatch scope/outcome metadata; schema9 adds `native_lineages`, keyed by `(job,attempt)`, retaining scope hash, exact native instance/request/root identity, peer PID/start/path/hash, last accepted sequence/time, consumer clock and sticky refusal state. Full-width native tokens are canonical decimal strings. A checkpoint is correlation metadata, never native terminal/admission proof or a restored live observation. Unresolved records remain independent of worker slots and never expire. Completed correlation metadata is pruned only with its eligible job tombstone after no unresolved inference or unreaped worker remains.
+Required data model; implementation remains partial. The separate development journal is FIS9/schema9. Schema8 introduced native dispatch scope/outcome metadata; schema9 adds `native_lineages`, keyed by `(job,attempt)`, retaining scope hash, exact native instance/request/root identity, peer PID/start/path/hash, last accepted sequence/time, consumer clock and sticky refusal state. Full-width native tokens are canonical decimal strings. An ordinary checkpoint is correlation metadata, never native terminal/admission proof or a restored live observation. Version2/3 handoff closures and version4 pristine-preparation closures separately record only original-scope compound non-dispatch decisions; none establishes device completion, all-client idle or capacity. Unresolved records remain independent of worker slots and never expire. Completed correlation metadata is pruned only with its eligible job tombstone after no unresolved inference or unreaped worker remains.
 
 One manager exclusively owns the separate per-Studio SQLite journal; Fios SQLite is never opened. Existing schema9 is validated in a bounded private snapshot before any original recovery write. Ordinary startup refuses schema7/8 unchanged. Explicit `migrate-state-seven` and `migrate-state-eight` accept reviewed same-host/UID stopped backups and convert only new private copies to schema9, preserving original scope/history/uncertainty and publishing with a durable execution/native-control hold. Unknown old lineage is never fabricated. Backup format3 preserves the hold. Rollback uses the matching retained old artifact and original stopped backup, preserving the evolved copy. Production enrollment, complete native reconciliation and installed acceptance remain unfinished.
 
@@ -87,3 +87,15 @@ That document includes host/account/state/review/revision and separate image pin
 The recovery-file version remains3; mismatched profile history refuses unchanged.
 Private helper configuration remains in its version1 fingerprint domain and is
 not installed provenance or native authority.
+
+
+Version4 `native_lineages` payloads bind metadata3 factory never-spawned evidence
+to an exact original preparation root/peer/model and launch nonce. Their
+`preparationClosure` is `attempted|not_sent`. `attempted` commits before the
+once-only native close RPC and survives missing replies/restart without retry
+authority. A fresh exact never-consumed/never-shared close may combine with the
+original no-spawn evidence to atomically mark only that scope `not_sent` and
+remove its inference ownership. An acknowledgement alone, cleanup-only binding,
+expiry, local reap and historical reference zero cannot do so. Other rows remain
+independent. Older checkpoint readers must refuse version4 before recovery or
+restoration writes; same-schema9 does not imply decision compatibility.

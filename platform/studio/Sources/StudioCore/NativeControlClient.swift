@@ -184,6 +184,16 @@ struct NativeControlClient:Sendable {
     func withdrawPreparation(instance:String,correlationID:String,model:String,rootSequence:UInt64,after sequence:UInt64=0)throws->NativePreparationSample {
         try preparation(operation:.withdraw,instance:instance,correlationID:correlationID,model:model,rootSequence:rootSequence,lifetimeMilliseconds:0,after:sequence)
     }
+    func closePristinePreparation(instance:String,correlationID:String,model:String,rootSequence:UInt64,after sequence:UInt64)throws->NativePristinePreparationSample {
+        guard version==3,sequence<=UInt64(ActivityPolicy.maximumTimestamp) else {throw NativeControlError.invalid}
+        let began=HostResources.nowMilliseconds()
+        let request=try NativePristinePreparationWire.request(instance:instance,correlationID:correlationID,model:model,rootSequence:rootSequence)
+        let value=try NativePristinePreparationWire.reply(exchange(request,maximum:NativePristinePreparationWire.responseSize),
+            instance:instance,correlationID:correlationID,model:model,rootSequence:rootSequence,after:sequence)
+        let completed=HostResources.nowMilliseconds()
+        guard (0...ActivityPolicy.maximumTimestamp).contains(began),completed>=began,completed<=ActivityPolicy.maximumTimestamp,completed-began<=5000 else {throw NativeControlError.invalid}
+        return NativePristinePreparationSample(peer:peer,requestedAt:began,receivedAt:completed,closure:value)
+    }
     private func preparation(operation:NativePreparationOperation,instance:String,correlationID:String,model:String,rootSequence:UInt64,lifetimeMilliseconds:UInt32,after sequence:UInt64)throws->NativePreparationSample {
         guard version==3,sequence<=UInt64(ActivityPolicy.maximumTimestamp) else {throw NativeControlError.invalid}
         let began=HostResources.nowMilliseconds()

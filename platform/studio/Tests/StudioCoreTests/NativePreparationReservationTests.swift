@@ -490,3 +490,163 @@ func runPreparationBrokerTests(factory:PythonWorkerFactory,base:String,guardDire
     }
     print("PASS: broker off-loop original preparation/checked scope/actual installed child; generic unknown stays closed; source failures reap local launch and retain native uncertainty")
 }
+
+private final class PristineCloseFixture:NativePristinePreparationClosing,@unchecked Sendable {
+    let peer:NativeControlPeer
+    let mode:String
+    let entered=DispatchSemaphore(value:0),release=DispatchSemaphore(value:0),finished=DispatchSemaphore(value:0)
+    private let lock=NSLock()
+    private var calls=0
+    var count:Int {lock.lock();defer{lock.unlock()};return calls}
+    init(peer:NativeControlPeer,mode:String) {self.peer=peer;self.mode=mode}
+    func closePristinePreparation(instance:String,correlationID:String,model:String,rootSequence:UInt64,after sequence:UInt64)throws->NativePristinePreparationSample {
+        lock.lock();calls+=1;lock.unlock();entered.signal()
+        defer{finished.signal()}
+        guard release.wait(timeout:.now()+2) == .success else {throw NativeControlError.deadline}
+        if mode=="missing" {throw NativeControlError.unavailable}
+        let now=HostResources.nowMilliseconds()
+        return NativePristinePreparationSample(peer:peer,requestedAt:mode=="stale" ? now-6000:now,receivedAt:now,
+            closure:NativePristinePreparationClosure(instance:mode=="epoch" ? String(repeating:"f",count:32):instance,
+                correlationID:correlationID,model:mode=="model" ? "fixture/other":model,
+                rootSequence:mode=="root" ? 1:rootSequence,sampleSequence:10000,
+                sourceSampledAt:mode=="clock" ? nil:now))
+    }
+}
+func runPreparationNonDispatchTests(factory:PythonWorkerFactory)throws {
+    let peer=NativeControlPeer(pid:42,start:99,executable:try VerifiedExecutable(path:"/fixture/native",sha256:String(repeating:"d",count:64)))
+    for mode in ["valid","cleanup","storage","restart","missing","epoch","model","root","clock","stale"] {
+        let directory=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer {try? FileManager.default.removeItem(at:directory)}
+        let job=UUID().uuidString.lowercased(),older=UUID().uuidString.lowercased(),now=HostResources.nowMilliseconds()
+        do {
+        let journal=try Journal(directory:directory)
+        let scope=InferenceScope(host:"fixture-host",endpointHash:String(repeating:"a",count:64),profileHash:String(repeating:"b",count:64),
+            managerEpoch:"00000000-0000-4000-8000-000000000002",nativeEpoch:String(repeating:"a",count:32),
+            canonicalModel:"fixture/model",nativeModel:"fixture/model",sequence:1,sampledAt:now)
+        try journal.claim(job:job,attempt:0,model:scope.canonicalModel,scope:scope)
+        let plan=try journal.planWorkerStart(job:job,attempt:0);try journal.markDispatched(job:job,attempt:0)
+        let reserving=ManagedPreparationSource(peer:peer,mode:.healthy);reserving.release.signal()
+        let pending=PendingNativePreparation(source:reserving,instance:scope.nativeEpoch,correlationID:try scope.nativeRequestCorrelationID(job:job,attempt:0),model:scope.nativeModel,after:10)
+        var prepared:Result<PreparedNativeReservation,NativeControlError>?
+        let deadline=ProcessInfo.processInfo.systemUptime+2
+        while prepared==nil && ProcessInfo.processInfo.systemUptime<deadline {prepared=pending.take();if prepared==nil{usleep(1000)}}
+        guard let prepared else {throw RuntimeError.deadline}
+        let reservation=try prepared.get(),captured=HostResources.nowMilliseconds()
+        guard try journal.observePreparationRegistration(job:job,attempt:0,scope:scope,peer:peer,sample:reservation.registration,now:captured) else {throw JournalError.conflict}
+        let binding:WorkerPreparationBinding
+        if mode=="cleanup" {
+            let expired=reservation.registration.sample.requestedAt+5000
+            do{_=try WorkerPreparationBinding.capture(plan:plan,journal:journal,prepared:reservation,now:expired);fatalError("Expired preparation acquired launch binding")}catch RuntimeError.identity{}
+            binding=try WorkerPreparationBinding.captureForNonDispatch(plan:plan,journal:journal,registration:reservation.registration)
+            do{try binding.validate(plan:plan,scope:scope,journal:journal,now:captured);fatalError("Cleanup preparation binding authorized launch")}catch RuntimeError.identity{}
+        }else {binding=try WorkerPreparationBinding.capture(plan:plan,journal:journal,prepared:reservation,now:captured)}
+        let evidence=try factory.withdrawUnstartedPreparation(plan:plan,preparation:binding)
+        try journal.recordWorkerNeverSpawned(job:job,attempt:0,evidence:evidence)
+        try journal.claim(job:older,attempt:0,model:scope.canonicalModel,scope:scope)
+        try journal.markDispatched(job:older,attempt:0);try journal.markUncertain(job:older,attempt:0)
+        let source=PristineCloseFixture(peer:peer,mode:mode)
+        let coordinator=NativePreparationNonDispatch(journal:journal,source:source)
+        try coordinator.enqueue(evidence)
+        if mode=="restart" {
+            guard try journal.beginPristinePreparationClose(evidence:evidence) else {throw JournalError.conflict}
+            guard try journal.preparationClosureReceipt(job:job,attempt:0)?.state=="attempted" else {fatalError("Pristine attempt lost on restart")}
+            try coordinator.poll(now:HostResources.nowMilliseconds())
+            guard !coordinator.pending,source.count==0,try journal.uncertainCount()==2 else {fatalError("Restart retried native close or released uncertainty")}
+        }else {
+        var blocker:OpaquePointer?
+        if mode=="storage" {
+            guard sqlite3_open(directory.appendingPathComponent("state.sqlite").path,&blocker)==SQLITE_OK,let blocker,
+                  sqlite3_exec(blocker,"BEGIN IMMEDIATE",nil,nil,nil)==SQLITE_OK else {throw JournalError.storage}
+            do {try coordinator.poll(now:HostResources.nowMilliseconds());fatalError("Pristine intent ignored SQLite writer outage")}catch JournalError.storage{}
+            guard source.count==0,coordinator.pending,sqlite3_exec(blocker,"ROLLBACK",nil,nil,nil)==SQLITE_OK else {fatalError("RPC preceded durable pristine attempt")}
+        }
+        try coordinator.poll(now:HostResources.nowMilliseconds())
+        guard source.entered.wait(timeout:.now()+2) == .success,
+              try journal.preparationClosureReceipt(job:job,attempt:0)?.state=="attempted" else {fatalError("Close started before durable intent")}
+        if let blocker {guard sqlite3_exec(blocker,"BEGIN IMMEDIATE",nil,nil,nil)==SQLITE_OK else {throw JournalError.storage}}
+        source.release.signal()
+        guard source.finished.wait(timeout:.now()+2) == .success else {throw RuntimeError.deadline}
+        usleep(2000)
+        if let blocker {
+            do {try coordinator.poll(now:HostResources.nowMilliseconds());fatalError("Pristine result ignored SQLite writer outage")}catch JournalError.storage{}
+            guard coordinator.pending,source.count==1,sqlite3_exec(blocker,"ROLLBACK",nil,nil,nil)==SQLITE_OK,
+                  sqlite3_close(blocker)==SQLITE_OK else {fatalError("Storage recovery lost/repeated pristine result")}
+        }
+        let finish=ProcessInfo.processInfo.systemUptime+2
+        while coordinator.pending && ProcessInfo.processInfo.systemUptime<finish {try coordinator.poll(now:HostResources.nowMilliseconds());usleep(1000)}
+        let accepted=mode=="valid" || mode=="cleanup" || mode=="storage"
+        guard !coordinator.pending,source.count==1,
+              try journal.inferenceScope(job:job,attempt:0)?.state == (accepted ? .not_sent:.uncertain),
+              try journal.inferenceScope(job:older,attempt:0)?.state == .uncertain,
+              try journal.unresolvedCount()==(accepted ? 1:2),try journal.uncertainCount()==(accepted ? 1:2),
+              try journal.workerGrants().isEmpty,try journal.activeLaunchCount()==0,
+              try journal.preparationClosureReceipt(job:job,attempt:0)?.state==(accepted ? "not_sent":"attempted") else {fatalError("PRISTINE_COMPOUND_DECISION_INVALID_\(mode)")}
+        }
+        } // Release the original journal/coordinator before a new application opens it.
+        let accepted=mode=="valid" || mode=="cleanup" || mode=="storage"
+        let restored=try Journal(directory:directory)
+        guard try restored.preparationClosureReceipt(job:job,attempt:0)?.state==(accepted ? "not_sent":"attempted"),
+              try restored.inferenceScope(job:job,attempt:0)?.state == (accepted ? .not_sent:.uncertain),
+              try restored.uncertainCount()==(accepted ? 1:2) else {fatalError("Pristine compound decision changed across restart")}
+    }
+    print("PASS: pristine close durable intent precedes one RPC, writer outages retain exact result, crash refuses replay, scoped no-spawn decisions preserve older uncertainty")
+}
+
+private final class PristineManagedPreparationFixture:NativePreparationManaging,NativePristinePreparationClosing,@unchecked Sendable {
+    let base:ManagedPreparationSource
+    let closing:PristineCloseFixture
+    var peer:NativeControlPeer {base.peer}
+    init(peer:NativeControlPeer) {base=ManagedPreparationSource(peer:peer,mode:.healthy);closing=PristineCloseFixture(peer:peer,mode:"valid")}
+    func reservePreparation(instance:String,correlationID:String,model:String,lifetimeMilliseconds:UInt32,after sequence:UInt64)throws->NativePreparationSample {
+        try base.reservePreparation(instance:instance,correlationID:correlationID,model:model,lifetimeMilliseconds:lifetimeMilliseconds,after:sequence)
+    }
+    func lineage(instance:String,correlationID:String)throws->NativeRequestLineageSample {throw NativeControlError.unavailable}
+    func primaryActivity(instance:String,after sequence:UInt64)throws->NativePrimaryActivitySample {throw NativeControlError.unavailable}
+    func withdrawPreparation(instance:String,correlationID:String,model:String,rootSequence:UInt64,after sequence:UInt64)throws->NativePreparationSample {
+        try base.withdrawPreparation(instance:instance,correlationID:correlationID,model:model,rootSequence:rootSequence,after:sequence)
+    }
+    func closePristinePreparation(instance:String,correlationID:String,model:String,rootSequence:UInt64,after sequence:UInt64)throws->NativePristinePreparationSample {
+        try closing.closePristinePreparation(instance:instance,correlationID:correlationID,model:model,rootSequence:rootSequence,after:sequence)
+    }
+}
+func runPristinePreparationBrokerCancellationTest(factory:PythonWorkerFactory)throws {
+    let directory=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer {try? FileManager.default.removeItem(at:directory)}
+    let journal=try Journal(directory:directory),now=HostResources.nowMilliseconds(),base="http://127.0.0.1:1/v1",epoch=String(repeating:"a",count:32)
+    let snapshot=NativeSnapshot(host:"fixture-host",endpointHash:PythonWorkerFactory.digest(base),nativeEpoch:epoch,sequence:1,sampledAt:now,
+        allClientLifecycleCoverage:true,residentModel:nil,outstandingOwners:0,loading:false)
+    let binding=WorkerDispatchBinding(baseURL:base,guardPath:"/fixture/observe.sock",host:snapshot.host,profileHash:String(repeating:"f",count:64),
+        managerEpoch:UUID().uuidString.lowercased(),canonicalModel:"fixture/model",nativeModel:"fixture/model",nativeSnapshot:snapshot,nativeCompatibilityAccepted:true,apiKey:nil)
+    let scope=try binding.inferenceScope(),older=UUID().uuidString.lowercased(),job=UUID().uuidString.lowercased(),owner=String(repeating:"c",count:64)
+    try journal.claim(job:older,attempt:0,model:scope.canonicalModel,scope:scope);try journal.markDispatched(job:older,attempt:0);try journal.markUncertain(job:older,attempt:0)
+    _=try journal.reserveJob(DurableJob(id:job,idempotency:UUID().uuidString.lowercased(),ownerHash:owner,requestHash:String(repeating:"d",count:64),created:now))
+    try journal.transitionJob(id:job,to:.running,now:now)
+    let peer=NativeControlPeer(pid:42,start:99,executable:try VerifiedExecutable(path:"/fixture/native",sha256:String(repeating:"d",count:64)))
+    let source=PristineManagedPreparationFixture(peer:peer),broker=ModelBroker(journal:journal,factory:factory,preparationSource:source,preparationCoverage:{.all_clients})
+    var admission=AdmissionPolicy()
+    let sample=ResourceSample(sampledAt:now,physical:128<<30,available:64<<30,vmAvailable:nil,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal)
+    try broker.submit(job:job,owner:owner,requestID:UUID().uuidString.lowercased(),context:[ModelText(role:"user",content:"fixture")],binding:binding,
+        nativeCapacityProven:true,sample:sample,admission:&admission,now:now)
+    guard source.base.entered.wait(timeout:.now()+2) == .success else {throw RuntimeError.deadline}
+    try broker.cancel(job:job,uptime:Int64(ProcessInfo.processInfo.systemUptime*1000))
+    source.base.release.signal();source.closing.release.signal()
+    let end=ProcessInfo.processInfo.systemUptime+3
+    while (broker.active(job:job) || broker.nativeNonDispatchPending) && ProcessInfo.processInfo.systemUptime<end {
+        _=try broker.poll(now:HostResources.nowMilliseconds(),uptime:Int64(ProcessInfo.processInfo.systemUptime*1000),admission:&admission,source:{_ in binding})
+        usleep(1000)
+    }
+    let checks:[String:Bool]=[
+        "inactive":!broker.active(job:job),"close_finished":!broker.nativeNonDispatchPending,
+        "one_reserve":source.base.counts[0]==1,"no_weak_withdraw":source.base.counts[3]==0,"one_close":source.closing.count==1,
+        "own_not_sent":try journal.inferenceScope(job:job,attempt:0)?.state == .not_sent,
+        "receipt":try journal.preparationClosureReceipt(job:job,attempt:0)?.state=="not_sent",
+        "older_uncertain":try journal.inferenceScope(job:older,attempt:0)?.state == .uncertain,
+        "one_uncertain":try journal.uncertainCount()==1,"one_unresolved":try journal.unresolvedCount()==1,
+        "no_grant":try journal.workerGrants().isEmpty,"no_launch":try journal.activeLaunchCount()==0,
+        "one_request":try journal.requestCount(job:job)==1,"enclosing_job_running":try journal.jobs().first(where:{$0.id==job})?.state == .running]
+    guard checks.values.allSatisfy({$0}) else {
+        FileHandle.standardError.write(Data(("PRISTINE_BROKER_FAILED_CHECKS "+checks.filter{!$0.value}.keys.sorted().joined(separator:",")+"\n").utf8))
+        fatalError("PRISTINE_BROKER_ORIGINAL_CANCELLATION_NOT_CLOSED")
+    }
+    print("PASS: broker cancellation with missing live lineage combines original cleanup-only preparation/no-spawn/one pristine close; older uncertainty and enclosing job retained")
+}

@@ -34,3 +34,9 @@ Final selected-source checks pass:2 original-interface witnesses/8 controls/
 4 empty-model runtime checks and post-run byte review. Aggregated2a3eb52…
 binds exact scopes in validation. No transport/serving caller or inference
 proof/admission authority follows from this subset; whole tasks remain open.
+
+The separate [pristine preparation closure](pristine-preparation-close.md) adds
+monotonic retention history and a distinct version2/op3 operation. It does not
+upgrade this withdrawal acknowledgement. Only its complete original-scope
+compound no-spawn/close decision path can record `not_sent`; neither operation
+establishes device completion, capacity or all-client idle.

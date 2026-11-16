@@ -1,0 +1,7 @@
+{
+  "src/fios/request_ownership.zig": "81e4ce4f19493867d23b88a2114f59f0204815b78aa6ef8d2b607c5bff524562",
+  "src/fios/preparation_leases.zig": "d3fc5a47a2146ae1014006b243eae689d1333abb157041fb83dfc019bebd67ca",
+  "src/fios/preparation_protocol.zig": "203f40616e0ac11c84e562d23a6f9598f1e9566a231aca24832c3b67f3dfb9fc",
+  "src/host/registry/registry.zig": "5596af3fea020332351c4688084df1814e40ad3ba3b7565b227e032e35be7a0e",
+  "src/host/http/server.zig": "5bbca6ef9408af36bf97a8c3a81806b4aadda9321ffdf5a73b61ba6cc41b33fa"
+}

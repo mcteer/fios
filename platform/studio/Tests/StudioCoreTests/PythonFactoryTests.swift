@@ -47,6 +47,8 @@ func runPythonFactoryTests() throws {
     try runHandoffNeverSpawnedTests(factory:factory)
     try runHandoffPreparationFailureTests(factory:factory)
     try runUnusedPreparationCancellationTest(factory:factory)
+    try runPreparationNonDispatchTests(factory:factory)
+    try runPristinePreparationBrokerCancellationTest(factory:factory)
     try runUnusedFactoryWithdrawalTests(factory:factory)
     try runPreparationFactoryNeverSpawnedTests(factory:factory)
     do {

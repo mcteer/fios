@@ -6,11 +6,11 @@ import Foundation
 struct WorkerPreparationBinding:Sendable {
     private let plan:PlannedWorkerStart
     private let registration:VerifiedNativePreparationRegistration
-    private let checkpoint:PreparationBindingCheckpoint
+    private let checkpoint:PreparationBindingCheckpoint?
     let peer:NativeControlPeer
     let rootSequence:UInt64
     let correlationID:String
-    private init(plan:PlannedWorkerStart,registration:VerifiedNativePreparationRegistration,checkpoint:PreparationBindingCheckpoint) {
+    private init(plan:PlannedWorkerStart,registration:VerifiedNativePreparationRegistration,checkpoint:PreparationBindingCheckpoint?) {
         self.plan=plan;self.registration=registration;self.checkpoint=checkpoint;peer=registration.peer
         rootSequence=registration.acknowledgement.rootSequence;correlationID=registration.acknowledgement.correlationID
     }
@@ -33,6 +33,19 @@ struct WorkerPreparationBinding:Sendable {
         try lineage.lineage.validate()
         return Self(plan:plan,registration:registration,checkpoint:try journal.preparationBindingCheckpoint(plan:plan,peer:registration.peer,root:ack.rootSequence))
     }
+    // Historical identity only. Missing/expired live observations cannot
+    // authorize launch, but need not discard an exact original cleanup subject.
+    static func captureForNonDispatch(plan:PlannedWorkerStart,journal:Journal,registration:VerifiedNativePreparationRegistration)throws->Self {
+        let ack=registration.acknowledgement
+        guard ack.operation == .reserve,ack.rootSequence>0,ack.instance==plan.scope.nativeEpoch,
+              ack.model.utf8.elementsEqual(plan.scope.nativeModel.utf8),
+              ack.correlationID == (try plan.scope.nativeRequestCorrelationID(job:plan.job,attempt:plan.attempt)),
+              let record=try journal.inferenceScope(job:plan.job,attempt:plan.attempt),[.dispatched,.uncertain].contains(record.state),
+              try record.scope.encoded()==plan.scope.encoded(),
+              try journal.activeLaunches().contains(where:{$0.job==plan.job && $0.attempt==plan.attempt && $0.nonce==plan.nonce}),
+              try journal.originalNativeRoot(job:plan.job,attempt:plan.attempt,scope:plan.scope,peer:registration.peer)==ack.rootSequence else {throw RuntimeError.identity}
+        return Self(plan:plan,registration:registration,checkpoint:nil)
+    }
     var launchNonce:String {plan.nonce}
     var registrationSequence:UInt64 {registration.acknowledgement.sampleSequence}
     func validateIdentity(plan expected:PlannedWorkerStart,scope:InferenceScope)throws {
@@ -48,7 +61,7 @@ struct WorkerPreparationBinding:Sendable {
               correlationID == (try scope.nativeRequestCorrelationID(job:job,attempt:attempt)) else {throw RuntimeError.identity}
     }
     func validate(plan expected:PlannedWorkerStart,scope:InferenceScope,journal:Journal,now:Int64)throws {
-        guard plan===expected,try plan.scope.encoded()==scope.encoded(),
+        guard let checkpoint,plan===expected,try plan.scope.encoded()==scope.encoded(),
               try journal.preparationBindingCheckpoint(plan:plan,peer:peer,root:rootSequence)==checkpoint,
               registration.leaseWindowIsCurrent(now:now),rootSequence>0,
               scope.nativeEpoch==registration.acknowledgement.instance,
@@ -102,7 +115,7 @@ struct NativePreparationObservation:Sendable {
 extension WorkerPreparationBinding {
     func observation(lineage:NativeRequestLineageSample,activity:NativePrimaryActivitySample,journal:Journal,
                      sourceCoverage:NativeCoverage = .unknown,now:Int64)throws->NativePreparationObservation? {
-        guard let value=NativeOwnedPreparationCoherence.evaluate(registration:registration,lineage:lineage,activity:activity,sourceCoverage:sourceCoverage,now:now),
+        guard let checkpoint,let value=NativeOwnedPreparationCoherence.evaluate(registration:registration,lineage:lineage,activity:activity,sourceCoverage:sourceCoverage,now:now),
               let stamp=activity.registry?.primary.sampledAt,try journal.unresolvedCount()==1,
               var job=try journal.jobs().first(where:{$0.id==plan.job}),job.state == .running,job.lease.valid(now:now) else {return nil}
         let ack=registration.acknowledgement

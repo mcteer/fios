@@ -612,6 +612,62 @@ public final class Journal {
         }
         return accepted
     }
+    // The attempted checkpoint is committed BEFORE the once-only source RPC.
+    // Reopening/re-enqueuing an attempted command cannot authorize another call.
+    func beginPristinePreparationClose(evidence:WorkerNeverSpawnedEvidence)throws->Bool {
+        var permitted=false
+        try transaction {
+            let binding=try validatePristinePreparationSubject(evidence),plan=evidence.plan
+            var consumer=try NativeRequestLineageConsumer(scope:plan.scope,job:plan.job,attempt:plan.attempt,peer:binding.peer,
+                checkpoint:lineageCheckpoint(job:plan.job,attempt:plan.attempt))
+            guard try consumer.beginPristinePreparationClose(nonce:plan.nonce) else {return}
+            let payload=String(decoding:try consumer.checkpoint(scope:plan.scope),as:UTF8.self)
+            try execute("UPDATE native_lineages SET payload=? WHERE job=? AND attempt=?",[payload,plan.job,String(plan.attempt)])
+            guard sqlite3_changes(db)==1 else {throw JournalError.conflict}
+            permitted=true
+        }
+        return permitted
+    }
+    private func validatePristinePreparationSubject(_ evidence:WorkerNeverSpawnedEvidence)throws->WorkerPreparationBinding {
+        let plan=evidence.plan
+        guard evidence.workerMetadataVersion==3,evidence.handoff==nil,let binding=evidence.preparation,
+              let record=try inferenceScope(job:plan.job,attempt:plan.attempt),[.dispatched,.uncertain].contains(record.state),
+              try record.scope.encoded()==plan.scope.encoded(),
+              try scalar("SELECT count(*) FROM worker_launches WHERE job=? AND attempt=? AND nonce=? AND boot=? AND reaped=1",
+                [plan.job,String(plan.attempt),plan.nonce,HostBoot.identity()])==1,
+              try scalar("SELECT count(*) FROM worker_grants WHERE job=? AND attempt=?",[plan.job,String(plan.attempt)])==0,
+              try originalNativeRoot(job:plan.job,attempt:plan.attempt,scope:plan.scope,peer:binding.peer)==binding.rootSequence else {throw JournalError.conflict}
+        try binding.validateIdentity(plan:plan,scope:plan.scope)
+        return binding
+    }
+    @discardableResult func resolvePristinePreparationClose(evidence:WorkerNeverSpawnedEvidence,sample:NativePristinePreparationSample?,now:Int64)throws->Bool {
+        var resolved=false
+        try transaction {
+            let binding=try validatePristinePreparationSubject(evidence),plan=evidence.plan
+            var consumer=try NativeRequestLineageConsumer(scope:plan.scope,job:plan.job,attempt:plan.attempt,peer:binding.peer,
+                checkpoint:lineageCheckpoint(job:plan.job,attempt:plan.attempt))
+            let accepted=consumer.acceptPristinePreparationClose(sample,nonce:plan.nonce,now:now)
+            let payload=String(decoding:try consumer.checkpoint(scope:plan.scope),as:UTF8.self)
+            try execute("UPDATE native_lineages SET payload=? WHERE job=? AND attempt=?",[payload,plan.job,String(plan.attempt)])
+            guard sqlite3_changes(db)==1 else {throw JournalError.conflict}
+            if accepted {
+                try execute("DELETE FROM inference WHERE job=? AND attempt=?",[plan.job,String(plan.attempt)])
+                guard sqlite3_changes(db)==1 else {throw JournalError.conflict}
+                try execute("UPDATE inference_scopes SET state='not_sent' WHERE job=? AND attempt=?",[plan.job,String(plan.attempt)])
+            }else {
+                try execute("UPDATE inference SET uncertain=1 WHERE job=? AND attempt=?",[plan.job,String(plan.attempt)])
+                guard sqlite3_changes(db)==1 else {throw JournalError.conflict}
+                try execute("UPDATE inference_scopes SET state='uncertain' WHERE job=? AND attempt=?",[plan.job,String(plan.attempt)])
+            }
+            guard sqlite3_changes(db)==1 else {throw JournalError.conflict}
+            resolved=accepted
+        }
+        return resolved
+    }
+    func preparationClosureReceipt(job:String,attempt:Int)throws->NativePreparationClosureCheckpoint? {
+        guard let record=try inferenceScope(job:job,attempt:attempt),let data=try lineageCheckpoint(job:job,attempt:attempt) else {return nil}
+        return try NativeRequestLineageConsumer.preparationClosureReceipt(data,scope:record.scope,job:job,attempt:attempt)
+    }
     func handoffNonDispatchReceipt(job:String,attempt:Int)throws->NativeHandoffClosureCheckpoint? {
         guard let record=try inferenceScope(job:job,attempt:attempt),record.state == .not_sent,
               let data=try lineageCheckpoint(job:job,attempt:attempt) else {return nil}
@@ -653,6 +709,11 @@ public final class Journal {
                     guard SHA256.hash(data:payload).map({String(format:"%02x",$0)}).joined()==closure.grantSHA256,
                           sqlite3_step(grant)==SQLITE_DONE else {throw JournalError.invalid}
                 }
+            }
+            if let closure=try NativeRequestLineageConsumer.preparationClosureReceipt(data,scope:record.scope,job:job,attempt:attempt) {
+                guard (closure.state=="not_sent" ? record.state == .not_sent:[.dispatched,.uncertain].contains(record.state)),
+                      try scalar("SELECT count(*) FROM worker_launches WHERE job=? AND attempt=? AND nonce=? AND reaped=1",[job,String(attempt),closure.launchNonce])==1,
+                      try scalar("SELECT count(*) FROM worker_grants WHERE job=? AND attempt=?",[job,String(attempt)])==0 else {throw JournalError.invalid}
             }
             count+=1
         }

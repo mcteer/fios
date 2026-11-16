@@ -1555,3 +1555,25 @@ scoped native cancellation, with a separate journal reader checking own
 not_sent/older uncertainty/history. Cleanup bindings cannot launch a worker;
 an unknown/transferred native root cannot resolve the claim. This mode runs
 without model POSTs, worker grants, installed actions or native admission.
+
+
+### Pristine preparation CPU closure and decision compatibility
+
+The source-only overlay and finite fixtures are described in
+[pristine preparation closure](contracts/pristine-preparation-close.md). Run the
+exact parent projection and actual tracker/lease/protocol checks with:
+
+```sh
+.venv/bin/python -I scripts/check-platform-pristine-preparation.py --source /private/tmp/REVIEWED_NATIVE_SOURCE --zig /private/tmp/REVIEWED_PINNED_ZIG
+node scripts/check-platform-preparation-cross-frames.mjs --isolated --receipt /private/tmp/REVIEWED_PRISTINE_CHECK/receipt.json --sha256 REVIEWED_RECEIPT_SHA256 --pristine
+node scripts/check-platform-pristine-compatibility.mjs --isolated --previous /private/tmp/REVIEWED_OLDER_RELEASE --sha256 REVIEWED_RELEASE_SHA256
+```
+
+The first command runs12 named CPU cases in Debug/ReleaseSafe, including3 legacy
+protocol regressions, with120s per execution and network denied. The second
+checks actual native dispatch frames with current Core Debug/optimized decoders.
+The third uses serialization-only attempted state: the older executable must
+refuse verification/restoration without changing the backup or publishing a
+destination; current restore must retain uncertainty. No fixture grants native
+completion, all-client coverage, installation, activation or model effects. A
+version4 attempted decision permits no automatic close retry after restart.

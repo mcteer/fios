@@ -53,6 +53,7 @@ final class ModelBroker {
         var identityRecorded=false
         var noSpawn:WorkerNeverSpawnedEvidence?
         var revoked=false
+        var revokeJob=false
     }
     private var leasePreparing:[String:LeasePreparing]=[:]
     private var preparationObservations:[String:NativePreparationObservation]=[:]
@@ -62,6 +63,7 @@ final class ModelBroker {
     private var preparing:[String:Preparing]=[:]
     private let handoffSource:(any NativeHandoffPreparing)?
     private let nonDispatch:NativeHandoffNonDispatch?
+    private let preparationNonDispatch:NativePreparationNonDispatch?
     private var starting:[String:Starting]=[:]
     private let journal:Journal
     private let factory:PythonWorkerFactory?
@@ -83,6 +85,7 @@ final class ModelBroker {
         self.journal=journal;self.factory=factory;self.handoffSource=handoffSource
         self.preparationSource=preparationSource;self.preparationCoverage=preparationCoverage
         nonDispatch=handoffSource.map {NativeHandoffNonDispatch(journal:journal,source:$0)}
+        preparationNonDispatch=(preparationSource as? any NativePristinePreparationClosing).map {NativePreparationNonDispatch(journal:journal,source:$0)}
     }
     private func job(_ id:String,owner:String?=nil,now:Int64) throws -> DurableJob {
         guard var found=try journal.jobs().first(where:{$0.id==id}),
@@ -226,7 +229,7 @@ final class ModelBroker {
             let coherent=current.map{preparationCoverage() == .all_clients && Self.retainsPreparationSource($0,original:pending.binding,now:now)
                 && retainSourceContinuity(job:id,current:$0,original:pending.binding)} ?? false
             if !coherent {fenceSource(job:id,original:pending.binding)}
-            if !pending.revoked && (!lease || !coherent || uptime<pending.started || uptime-pending.started>=10000) {pending.revoked=true}
+            if !pending.revoked && (!lease || !coherent || uptime<pending.started || uptime-pending.started>=10000) {pending.revoked=true;pending.revokeJob=true}
             leasePreparing[id]=pending
             guard let completion=pending.completion else {continue}
             var registered:VerifiedNativePreparationRegistration?
@@ -246,20 +249,32 @@ final class ModelBroker {
                         packet:pending.packet,binding:pending.binding,preparation:binding)
                     preparationObservations[id]=observation;leasePreparing.removeValue(forKey:id);continue
                 }
+                if !pending.revoked {pending.revokeJob=true}
                 pending.revoked=true
             }catch JournalError.storage {
+                if !pending.revoked {pending.revokeJob=true}
                 pending.revoked=true;leasePreparing[id]=pending;continue // Retain once-only completion; never a delayed launch.
-            }catch {pending.revoked=true}
+            }catch {if !pending.revoked {pending.revokeJob=true};pending.revoked=true}
             leasePreparing[id]=pending
             do {
-                if lease {try journal.transitionJob(id:id,to:.revoking,now:now)}
+                if lease && pending.revokeJob {try journal.transitionJob(id:id,to:.revoking,now:now)}
                 try journal.markUncertain(job:id,attempt:pending.plan.attempt)
                 // Known registration facts must commit before dropping them.
                 if registered != nil && !pending.identityRecorded {continue}
-                if pending.noSpawn==nil,let factory {pending.noSpawn=try factory.withdrawUnstartedNativeAttempt(plan:pending.plan,journal:journal);leasePreparing[id]=pending}
+                if pending.noSpawn==nil,let factory {
+                    var cleanup:WorkerPreparationBinding?
+                    if preparationNonDispatch != nil,let registered {
+                        do {cleanup=try WorkerPreparationBinding.captureForNonDispatch(plan:pending.plan,journal:journal,registration:registered)}
+                        catch RuntimeError.identity { /* No bound subject: preserve independent uncertainty. */ }
+                    }
+                    if let cleanup {pending.noSpawn=try factory.withdrawUnstartedPreparation(plan:pending.plan,preparation:cleanup)}
+                    else {pending.noSpawn=try factory.withdrawUnstartedNativeAttempt(plan:pending.plan,journal:journal)}
+                    leasePreparing[id]=pending
+                }
                 guard let evidence=pending.noSpawn else {continue}
                 try journal.recordWorkerNeverSpawned(job:id,attempt:pending.plan.attempt,evidence:evidence)
-                if let registered {
+                if evidence.preparation != nil,let preparationNonDispatch {try preparationNonDispatch.enqueue(evidence)}
+                else if let registered {
                     let ack=registered.acknowledgement
                     enqueuePreparationWithdrawal(instance:ack.instance,correlation:ack.correlationID,model:ack.model,root:ack.rootSequence,after:ack.sampleSequence,key:"\(id):\(pending.plan.attempt)")
                 }
@@ -298,6 +313,7 @@ final class ModelBroker {
     func poll(now:Int64,uptime:Int64,admission:inout AdmissionPolicy,
               source:(String)throws->WorkerDispatchBinding?) throws -> [String:[ModelWorkerEvent]] {
         try nonDispatch?.poll(now:now)
+        try preparationNonDispatch?.poll(now:now)
         launchHolds=try Self.reconcileFailedLaunches(launchHolds,journal:journal,admission:&admission)
         var result:[String:[ModelWorkerEvent]]=[:]
         for (key,operation) in preparationWithdrawals where operation.take() != nil {preparationWithdrawals.removeValue(forKey:key)}
@@ -454,7 +470,8 @@ final class ModelBroker {
                         pending.acknowledgementRecorded=true;starting[id]=pending
                     }
                     if evidence.handoff != nil {try nonDispatch?.enqueue(.neverSpawned(evidence))}
-                    if let preparation=evidence.preparation {enqueuePreparationWithdrawal(preparation,scope:try pending.binding.inferenceScope(),job:id,attempt:pending.attempt)}
+                    if evidence.preparation != nil,let preparationNonDispatch {try preparationNonDispatch.enqueue(evidence)}
+                    else if let preparation=evidence.preparation {enqueuePreparationWithdrawal(preparation,scope:try pending.binding.inferenceScope(),job:id,attempt:pending.attempt)}
                     preparationObservations.removeValue(forKey:id)
                     admission.releaseWorkerAfterReap(key:pending.key)
                     launchHolds.remove(WorkerLaunchKey(job:id,attempt:pending.attempt))
@@ -512,6 +529,6 @@ final class ModelBroker {
     func canonicalModel(forJob id:String)->String? {entries[id]?.binding.canonicalModel ?? starting[id]?.binding.canonicalModel ?? preparing[id]?.binding.canonicalModel ?? leasePreparing[id]?.binding.canonicalModel}
     func active(job:String)->Bool { entries[job] != nil || starting[job] != nil || preparing[job] != nil || leasePreparing[job] != nil }
     var activeWorkers:Int { entries.count+starting.count+preparing.count+leasePreparing.count }
-    var nativeNonDispatchPending:Bool {nonDispatch?.pending ?? false}
+    var nativeNonDispatchPending:Bool {(nonDispatch?.pending ?? false) || (preparationNonDispatch?.pending ?? false)}
     var hasUnresolvedLaunch:Bool { !launchHolds.isEmpty }
 }
