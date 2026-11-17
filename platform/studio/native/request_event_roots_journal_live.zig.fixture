@@ -98,6 +98,29 @@ fn normalBookOverlap(io: std.Io) !void {
     if (!second_work.finish(io) or finished != 2 or tracker.snapshot(io).owned != 0) return error.BookOverlapUnavailable;
 }
 
+const GraphWorker = struct {
+    io: std.Io,
+    book: *book_mod.Book,
+    request: *book_mod.Req,
+    failure: ?anyerror = null,
+    succeeded: bool = false,
+    fn run(self: *GraphWorker) void {
+        self.perform() catch |err| { self.failure = err; return; };
+        self.succeeded = true;
+    }
+    fn perform(self: *GraphWorker) !void {
+        if (owners.current().* != null or owners.current_group().* != null) return error.CallerContextPresent;
+        if (self.book.next(false) != self.request) return error.QueuePickupUnavailable;
+        var work = (try actor.retain(self.io, @as([]const *book_mod.Req, &.{self.request}))) orelse return error.QueuePickupUnavailable;
+        try work.enter(self.io);
+        var advance: [1]u8 = undefined;
+        if (std.c.read(0, &advance, 1) != 1) return error.InputUnavailable;
+        if (fios_bridge_gpu_graph() != 1) return error.GPUCallbackUnavailable;
+        self.book.done(self.request, .stop, "");
+        if (!work.finish(self.io) or owners.current().* != null or owners.current_group().* != null) return error.QueueRetirementUnavailable;
+    }
+};
+
 pub fn main() !void {
     _ = alarm(30);
     const io = std.Io.Threaded.global_single_threaded.io();
@@ -153,13 +176,11 @@ pub fn main() !void {
         book.done(request, .cancelled, "");
         if (finished != 1) return error.QueueRetirementUnavailable;
     } else {
-        if (book.next(false) != request) return error.QueuePickupUnavailable;
-        var work = (try actor.retain(io, @as([]const *book_mod.Req, &.{request}))) orelse return error.QueuePickupUnavailable;
-        try work.enter(io);
-        if (std.c.read(0, &advance, 1) != 1) return error.InputUnavailable;
-        if (fios_bridge_gpu_graph() != 1) return error.GPUCallbackUnavailable;
-        book.done(request, .stop, "");
-        if (finished != 1 or !work.finish(io)) return error.QueueRetirementUnavailable;
+        var worker: GraphWorker = .{ .io = io, .book = &book, .request = request };
+        const thread = try std.Thread.spawn(.{ .stack_size = 4 << 20 }, GraphWorker.run, .{&worker});
+        thread.join();
+        if (worker.failure) |err| return err;
+        if (!worker.succeeded or finished != 1) return error.QueueRetirementUnavailable;
     }
     owners.current().* = null; owners.current_group().* = null;
     try owners.shared().responding(io, incoming);

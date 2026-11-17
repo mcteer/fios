@@ -1323,3 +1323,8 @@ caller release, independent original roots, first active/second queued, and
 first finish preserving the second queued request. Actual queue-aware frames
 are checked; no model weights/computation run in this setup. This is partial
 T018/T020 coverage, not HTTP/all-modality/Studio acceptance. Whole39/55.
+
+The normal graph path now also passes on a separate bounded native worker
+thread with empty initial/final TLS. Actual Book/actor entry restores the
+original root for SDK callbacks; overlap and queued cancellation remain green
+in both modes. No model adapter/HTTP acceptance or whole task closes;39/55.

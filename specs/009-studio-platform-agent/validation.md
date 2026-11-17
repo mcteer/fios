@@ -9403,3 +9403,28 @@ POSTs or installed actions. This covers the shared Book's source metadata,
 not actual HTTP overlap, each adapter/modality or native terminal authority.
 Whole tasks remain39/55 complete,16 open. Native installation/acceptance and
 positive all-client completion/admission remain outstanding.
+
+### Existing Book/actor handoff on a separate thread — 2026-11-17
+
+The graph case now starts one finite4MiB-stack native worker thread after queue
+publication. Its initial request TLS must be empty; it selects the existing
+Book entry, restores original attribution through actor entry, executes the
+same four-value GPU graph, retires through Book/actor cleanup and returns to
+empty TLS. The fixture joins only its own worker before retaining the incoming
+HTTP-shaped owner in responding. Thread exit/join does not resolve inference.
+The cancellation case still starts no worker and executes no GPU graph.
+
+All12 compile/runtime stages pass in Debug/ReleaseSafe, including overlap setup,
+normal graph and queued cancellation:
+`/private/tmp/fios-009-event-journal-k2fwpcw5/receipt.json`, SHA256
+`702c3acf0a2a74e5d1fa41fe00c80a58952b7885875b80b3e1d262c10d7335dc`.
+No engine implementation, SDK library, production source/package input or
+scheduling policy changes. Two four-value GPU graphs, zero weight loads,
+model POSTs or installed actions. This is actual generic Book/actor thread
+handoff, not a real model adapter/HTTP response-lifetime acceptance.
+
+The locked non-editable harness was refreshed with pinned uv0.13.5 using
+uv sync --locked --no-editable --reinstall-package fios-agent after checker
+Python edits; it succeeds. Whole tasks remain39/55 complete,16 open.
+Published queue head f983046 CI44189304785 is running; exact-head status stays
+separate from prior df0a4b8's7 successful functional jobs and failed audit/gate.
