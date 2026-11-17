@@ -11,6 +11,7 @@ struct ConfigurationBackup {
         let bytes:Int?
         let sha256:String?
         let originalUID:UInt32?
+        var originalGID:UInt32? = nil
         let originalMode:UInt16?
     }
     struct Manifest:Codable {let version:Int;let scope:String;let files:[File]}
@@ -52,7 +53,7 @@ struct ConfigurationBackup {
                 if count==0 {break};data.append(contentsOf:buffer.prefix(count))
             }
             guard data.count==before.st_size,fstat(fd,&after)==0,fstatat(parent,name,&named,AT_SYMLINK_NOFOLLOW)==0,stable(before,after),stable(after,named),noACL(fd) else {throw JournalError.invalid}
-            files.append(File(name:name,bytes:data.count,sha256:digest(data),originalUID:before.st_uid,originalMode:before.st_mode&0o7777));payloads[name]=data;identities[name]=after
+            files.append(File(name:name,bytes:data.count,sha256:digest(data),originalUID:before.st_uid,originalGID:before.st_gid,originalMode:before.st_mode&0o7777));payloads[name]=data;identities[name]=after
         }
         guard fstat(parent,&final)==0,stable(initial,final),lstat(directory.path,&namedParent)==0,stable(final,namedParent),noACL(parent) else {throw JournalError.invalid}
         return ConfigurationBackup(files:files,payloads:payloads,identities:identities,directoryIdentity:final)
@@ -64,7 +65,7 @@ struct ConfigurationBackup {
     func write(directory:URL)throws->(sha256:String,bytes:Int64) {
         guard mkdir(directory.path,0o700)==0 else {throw JournalError.conflict}
         for (name,data) in payloads {try AtomicState.write(data,to:directory.appendingPathComponent(name))}
-        let data=try JSONEncoder().encode(Manifest(version:1,scope:"opaque_configuration_data_only",files:files))
+        let data=try JSONEncoder().encode(Manifest(version:2,scope:"opaque_configuration_data_only",files:files))
         try AtomicState.write(data,to:directory.appendingPathComponent("manifest.json"))
         let fd=open(directory.path,O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC)
         guard fd>=0 else {throw JournalError.storage};defer {close(fd)}
@@ -91,18 +92,21 @@ struct ConfigurationBackup {
         guard fstat(manifestFD,&after)==0,fstatat(fd,"manifest.json",&named,AT_SYMLINK_NOFOLLOW)==0,stable(info,after),stable(after,named),noACL(manifestFD),offset==info.st_size,digest(data)==expected else {throw JournalError.invalid}
         try StrictJSON.validate(data,maximum:65536)
         guard let raw=try JSONSerialization.jsonObject(with:data) as? [String:Any],Set(raw.keys)==Set(["version","scope","files"]),
-              let rows=raw["files"] as? [[String:Any]],rows.count==names.count,
-              rows.allSatisfy({Set($0.keys)==Set(["name"]) || Set($0.keys)==Set(["name","bytes","sha256","originalUID","originalMode"])}) else {throw JournalError.invalid}
+              let rows=raw["files"] as? [[String:Any]],rows.count==names.count else {throw JournalError.invalid}
         let manifest=try JSONDecoder().decode(Manifest.self,from:data)
-        guard manifest.version==1,manifest.scope=="opaque_configuration_data_only",manifest.files.map(\.name)==names else {throw JournalError.invalid}
+        guard [1,2].contains(manifest.version),manifest.scope=="opaque_configuration_data_only",manifest.files.map(\.name)==names else {throw JournalError.invalid}
+        let presentKeys:Set<String>=Set(["name","bytes","sha256","originalUID","originalMode"]+(manifest.version==2 ? ["originalGID"]:[]))
+        guard rows.allSatisfy({Set($0.keys)==Set(["name"]) || Set($0.keys)==presentKeys}) else {throw JournalError.invalid}
         let snapshot=try capture(directory:directory)
         var present=Set(["manifest.json"]),total=Int64(data.count)
         for (declared,actual) in zip(manifest.files,snapshot.files) {
             guard declared.bytes==actual.bytes,declared.sha256==actual.sha256 else {throw JournalError.invalid}
             if let bytes=declared.bytes {
                 guard (0...65536).contains(bytes),let uid=declared.originalUID,[0,geteuid()].contains(uid),let mode=declared.originalMode,mode&0o7022==0,actual.originalUID==geteuid(),actual.originalMode==0o600 else {throw JournalError.invalid}
+                if manifest.version==2 {guard declared.originalGID != nil else {throw JournalError.invalid}}
+                else {guard declared.originalGID==nil else {throw JournalError.invalid}}
                 present.insert(declared.name);total+=Int64(bytes)
-            } else {guard declared.originalUID==nil,declared.originalMode==nil,declared.sha256==nil else {throw JournalError.invalid}}
+            } else {guard declared.originalUID==nil,declared.originalGID==nil,declared.originalMode==nil,declared.sha256==nil else {throw JournalError.invalid}}
         }
         guard Set(try FileManager.default.contentsOfDirectory(atPath:directory.path))==present else {throw JournalError.invalid}
         return total

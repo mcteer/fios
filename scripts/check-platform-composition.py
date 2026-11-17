@@ -351,31 +351,32 @@ def configuration_removal_proposal(directory, expected, host, configuration, con
         records['manifest.json']=read('manifest.json')
         require(sha(records['manifest.json'][0])==configuration_sha256)
         manifest=json.loads(records['manifest.json'][0],object_pairs_hook=RUNTIME['unique_object'])
-        require(isinstance(manifest,dict) and set(manifest)=={'version','scope','files'} and type(manifest['version']) is int and manifest['version']==1 and
+        require(isinstance(manifest,dict) and set(manifest)=={'version','scope','files'} and type(manifest['version']) is int and manifest['version'] in (1,2) and
                 manifest['scope']=='opaque_configuration_data_only' and isinstance(manifest['files'],list) and len(manifest['files'])==6)
         removals=[]
         for name,row in zip(names,manifest['files']):
             require(isinstance(row,dict) and row.get('name')==name)
             if set(row)=={'name'}:
                 continue
-            require(set(row)=={'name','bytes','sha256','originalUID','originalMode'} and
+            require(set(row)==({'name','bytes','sha256','originalUID','originalMode'} | ({'originalGID'} if manifest['version']==2 else set())) and
                     type(row['bytes']) is int and 0<=row['bytes']<=65536 and
                     isinstance(row['sha256'],str) and re.fullmatch('[0-9a-f]{64}',row['sha256']) and
                     type(row['originalUID']) is int and row['originalUID'] in (0,os.getuid()) and
                     type(row['originalMode']) is int and 0<=row['originalMode']<=0o7777 and not row['originalMode']&0o7022)
+            if manifest['version']==2:require(type(row['originalGID']) is int and 0<=row['originalGID']<=4294967295)
             records[name]=read(name)
             require(len(records[name][0])==row['bytes'] and sha(records[name][0])==row['sha256'])
             destination='/Library/Application Support/Fios/Studio/'+name
             removals.append({'program':'/bin/rm','argv':[destination],'destination':destination,
                 'required_sha256':row['sha256'],'required_bytes':row['bytes'],'required_uid':0,
-                'required_mode':row['originalMode'],'snapshot_original_uid':row['originalUID']})
+                'required_mode':row['originalMode'],'snapshot_original_uid':row['originalUID'],'snapshot_original_gid':row.get('originalGID')})
         require(set(os.listdir(chain[-1][0]))==set(records))
         for name,record in records.items():require(read(name)==record)
         API['verify_chain'](chain)
         return {**plan,'operation':'configuration_removal_command_proposal','commands_authorized':False,
                 'requires_operator_execution':True,'configuration_removed':False,'credentials_written':False,
                 'state_opened':False,'state_and_exports_retained':True,'credentials_retained':True,
-                'native_inference_uncertainty_retained':True,'configuration_manifest_sha256':configuration_sha256,
+                'native_inference_uncertainty_retained':True,'configuration_manifest_sha256':configuration_sha256,'configuration_snapshot_version':manifest['version'],
                 'configuration_snapshot_rechecked':True,'configuration_documents_interpreted':False,
                 'stopped_state_backup_verified':False,'proposed_file_removals':removals,
                 'mandatory_preconditions':['separate_operator_enrollment_removal_approval',
@@ -396,7 +397,8 @@ def configuration_restore_proposal(directory, expected, host, configuration, con
     removals=plan.pop('proposed_file_removals')
     # Protected enrollment was root-owned. Do not silently promote a user-owned
     # snapshot into a protected policy or change the original owner on rollback.
-    require(all(item['snapshot_original_uid']==0 for item in removals))
+    require(all(item['snapshot_original_uid']==0 and item['snapshot_original_gid'] in (None,0) for item in removals))
+    group_recorded=plan['configuration_snapshot_version']==2
     commands=[]
     for item in removals:
         source=str(Path(configuration)/Path(item['destination']).name)
@@ -408,8 +410,8 @@ def configuration_restore_proposal(directory, expected, host, configuration, con
     return {**plan,'operation':'configuration_restore_command_proposal','configuration_restored':False,
             'proposed_file_restorations':commands,
             'absent_snapshot_entries':'must_remain_absent_no_removal_proposed',
-            'snapshot_host_binding_verified':False,'original_group_recorded':False,
-            'proposed_group':'wheel_requires_independent_previous_enrollment_review',
+            'snapshot_host_binding_verified':False,'original_group_recorded':group_recorded,
+            'proposed_group':'wheel_from_recorded_gid' if group_recorded else 'wheel_requires_independent_previous_enrollment_review',
             'mandatory_preconditions':['separate_operator_configuration_rollback_approval',
                 'execute_on_original_studio_account_state_and_previous_release_context',
                 'independently_verify_snapshot_origin_host_and_previous_configuration_group_wheel',

@@ -173,8 +173,26 @@ func runBackupTests() throws {
     guard configuredReceipt.scope=="platform_journal_exports_and_configuration" else {fatalError("Missing configuration scope")}
     _=try StoppedStateBackup.verify(directory:configured,expectedSHA256:configuredReceipt.sha256)
     let configurationManifest=try JSONDecoder().decode(ConfigurationBackup.Manifest.self,from:Data(contentsOf:configured.appendingPathComponent("configuration/manifest.json")))
-    guard configurationManifest.files.count==6,configurationManifest.files[0].originalMode==0o644,
+    guard configurationManifest.version==2,configurationManifest.files.count==6,configurationManifest.files[0].originalMode==0o644,
+          configurationManifest.files[0].originalGID==getegid(),configurationManifest.files[1].originalGID==getegid(),
+          configurationManifest.files[2].originalGID==nil,
           configurationManifest.files[1].bytes==0,configurationManifest.files[2].bytes==nil else {fatalError("Configuration original metadata/absence lost")}
+
+    // Old v1 snapshots retain unknown group; v2 must retain the observed group.
+    let legacy=root.appendingPathComponent("legacy-configuration")
+    try FileManager.default.copyItem(at:configured.appendingPathComponent("configuration"),to:legacy)
+    let legacyManifest=legacy.appendingPathComponent("manifest.json")
+    var legacyRaw=try JSONSerialization.jsonObject(with:Data(contentsOf:legacyManifest)) as! [String:Any]
+    legacyRaw["version"]=1
+    legacyRaw["files"]=(legacyRaw["files"] as! [[String:Any]]).map {row in var value=row;value.removeValue(forKey:"originalGID");return value}
+    let legacyData=try JSONSerialization.data(withJSONObject:legacyRaw)
+    try AtomicState.write(legacyData,to:legacyManifest)
+    _=try ConfigurationBackup.verify(directory:legacy,expected:ConfigurationBackup.digest(legacyData))
+    legacyRaw["version"]=2
+    let missingGroup=try JSONSerialization.data(withJSONObject:legacyRaw)
+    try AtomicState.write(missingGroup,to:legacyManifest)
+    do {_=try ConfigurationBackup.verify(directory:legacy,expected:ConfigurationBackup.digest(missingGroup));fatalError("v2 lost original group")}
+    catch JournalError.invalid {}
 
     let configuredRestore=root.appendingPathComponent("configured-restore")
     _=try StoppedStateBackup.restore(directory:configured,expectedSHA256:configuredReceipt.sha256,destination:configuredRestore)

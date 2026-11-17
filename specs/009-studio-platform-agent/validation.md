@@ -8145,3 +8145,24 @@ Deployment tests4/4 and the hardened ARM64 container stopped-backup/upgrade/
 automatic-rollback rehearsal pass (peak612MiB). No production app transaction,
 privileged command, native activation or new real model plan/POST occurred.
 Package-declared inputs are not whole-repository/native provenance.
+
+### Configuration snapshot original group continuation
+
+New private snapshot version2 captures original GID alongside UID/mode from the
+existing stable descriptor. The reader supports original version1 with unknown
+group, requires group on every present version2 entry and rejects it on absent
+entries. The independent Python reviewer requires strict integer UInt32 group
+metadata for version2. Restore proposals refuse known non-wheel groups; version1
+still requires independent previous-group review. Neither version attests origin
+host or grants enrollment. Retain the prior release's original backup: no claim
+that an older utility reads a new version2 snapshot.
+
+Debug policy140 named checks, composition12, Node208 and installed Python116
+pass after locked noneditable reinstall. Actual producer Debug/optimized compile/
+run checks pass and compare every recorded GID to source-file stat metadata.
+Receipt `/private/tmp/fios-009-configuration-group-2c85w56t/receipt.json`, SHA256
+`522c8dc7af69fc15f8ea9e461974badef559fa57e6001a1eee38af0f8bc5d24f`.
+Native policy tests verify actual v2 capture/private restore, v1 compatibility
+and v2 missing-group refusal; Python tests reject bool/negative/overflow and
+known non-wheel group. No root-owned original, privileged restore, model request
+or native authority was exercised. Clean updated package checks remain pending.

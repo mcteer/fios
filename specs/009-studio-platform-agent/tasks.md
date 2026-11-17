@@ -1088,3 +1088,10 @@ from the existing opaque snapshot. It preserves recorded byte identity/mode,
 refuses nonroot originals and requires absent destinations, original-host/group
 review and separate operator execution. No privileged operation runs; installed
 rollback remains open. Whole-task count stays **39/55**.
+
+T049 snapshot metadata continuation: version2 captures original GID from the
+same stable descriptor as UID/mode/bytes. Version1 remains readable with unknown
+group; the restore proposal refuses a known non-wheel original group. Debug
+policy140/140, composition12/12, Node208/208, installed Python116/116 and actual
+Debug/optimized snapshot producer checks pass. This is private metadata/review
+behavior, with no protected write or whole-task completion; **39/55**.

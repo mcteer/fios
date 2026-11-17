@@ -344,6 +344,13 @@ class CompositionTests(unittest.TestCase):
                 self.assertEqual(plan['absent_snapshot_entries'],'must_remain_absent_no_removal_proposed')
                 self.assertNotIn(payload,completed.stdout)
             self.assertEqual(before,{p.name:p.read_bytes() for p in snapshot.iterdir()})
+            manifest['version']=2;rows[0]['originalGID']=0;digest=write_manifest()
+            plan=REVIEW['configuration_restore_proposal'](output,result['composition_sha256'],'fios-edge-a.lab',snapshot,digest)
+            self.assertTrue(plan['original_group_recorded']);self.assertEqual(plan['proposed_group'],'wheel_from_recorded_gid')
+            for bad_group in [True,-1,4294967296,20]:
+                rows[0]['originalGID']=bad_group;digest=write_manifest()
+                with self.assertRaises(ValueError):REVIEW['configuration_restore_proposal'](output,result['composition_sha256'],'fios-edge-a.lab',snapshot,digest)
+            rows[0]['originalGID']=0
             rows[0]['originalUID']=os.getuid();digest=write_manifest()
             with self.assertRaises(ValueError):REVIEW['configuration_restore_proposal'](output,result['composition_sha256'],'fios-edge-a.lab',snapshot,digest)
             rows[0]['originalUID']=0;digest=write_manifest();(snapshot/names[0]).write_bytes(b'changed')

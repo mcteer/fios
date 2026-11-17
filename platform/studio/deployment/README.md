@@ -458,8 +458,11 @@ and emits root-owned file-copy proposals for present originals only. It requires
 root original ownership and preserves the recorded mode/size/hash; absent entries
 must remain absent. Every destination must be absent: no overwrite or cleanup is
 proposed. It executes no install, registration, credential or native operation.
-The snapshot records neither original group nor authenticated host: independently
-review its originating host/previous release and previous group `wheel` before
-execution. Preserve failed configuration/state/credentials for diagnosis, keep
+Version1 snapshots record no group; version2 snapshots preserve the observed
+original GID and require the fixed protected group0 for a restoration proposal.
+Both versions leave authenticated origin host unverified. Independently review
+the originating host/previous release and, for version1, previous group `wheel`
+before execution. New readers retain version1 support; keep the original prior
+release backup for rollback rather than assuming an old binary reads version2. Preserve failed configuration/state/credentials for diagnosis, keep
 writers stopped and require separate rollback approval. This is partial T049
 review tooling, not implemented or accepted installed rollback.
