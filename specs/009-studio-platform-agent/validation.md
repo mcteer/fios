@@ -8166,3 +8166,21 @@ Native policy tests verify actual v2 capture/private restore, v1 compatibility
 and v2 missing-group refusal; Python tests reject bool/negative/overflow and
 known non-wheel group. No root-owned original, privileged restore, model request
 or native authority was exercised. Clean updated package checks remain pending.
+
+Clean committed4303fcb package qualification passes190 declared inputs/9 inactive
+artifacts, public startup/source recheck, both-host proposals/worker-policy
+checks and old9→new9→old9 stopped recovery. Manifest SHA256
+`d5db409055557198850e88ccacf03fe52ed98b4a38acc5f768fe82b6f946b5fc`;
+projection `3199b7d5d8e5935bf1f9e7d8c2626cdfee50a051c38dab62cb8784fa85b08655`.
+Qualification `/private/tmp/fios-009-group-package-96msol0x/qualification.json`,
+SHA256 `124138d0729f9f6be2cce7a8d59115a9e5c887cb7097621e9b2d166b0d30f72d`.
+The actual Swift v2 user-owned snapshot is refused by the clean restore CLI;
+explicit synthetic root:wheel metadata exercises both-host positive proposals,
+not installed root acceptance. Restore receipt SHA256
+`c6359a8a6ff2208e21cefe3b94def1443607aa66ac31f8133dbc7c0242e9b1ca`.
+No model, protected lifecycle or native admission operation occurred.
+
+Exact published26afcce CI44005840590 subsequently passed all nine checks.
+Earlierd7846c2 CI44003744229 was superseded/cancelled, not green. Restoration
+and group metadata commits require their own latest-head CI. No merge or
+production application/native rollout is established. Whole tasks remain39/55.
