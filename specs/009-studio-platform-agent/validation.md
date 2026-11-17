@@ -9074,3 +9074,35 @@ No real model or installed-service action occurs. CI for the publishedb511760
 has passed both Node versions, browser, ARM64 container and native policy/idle
 jobs; native process remains running and the existing audit job has failed.
 Its findings remain untouched. New source requires its own exact-head CI.
+
+### Owner job status with current SDK observations — 2026-11-17
+
+The existing owner job.status response now optionally includes current cached
+native_request_events for that job's attempts. Root sequences remain decimal
+strings; capture/receipt times and optional CPU/Metal counts remain separate.
+Unavailable or expired samples omit the field. Reads perform no native RPC,
+lease extension, worker dispatch or inference resolution. The default source
+option remains off; installed read-only configuration is unchanged.
+
+Normal combined polling/owner status/existing lineage tests pass both Swift
+modes: `/private/tmp/fios-009-request-event-polling-hDtDIg/receipt.json`, SHA256
+`bd994434e6b323d3a6e9cbcad48fb4d6c9e38942d70d58bbabae61ba912635b3`.
+The normal test serializes the full-width UInt64 root as a string, keeps the
+request unresolved after callback retirement, and omits observations after
+ordinary source unavailability.
+
+Actual native SDK/journal/poller/owner-handler integration also passes both
+modes: `/private/tmp/fios-009-event-journal-nixnag93/receipt.json`, SHA256
+`992837c1a3a2723a017cbcbe2f1411497c770f41f05a4de1099a89a1a5f401e4`.
+Each synthetic local job closes removed and its actual owner status includes
+its genuine two-origin/two-retirement Metal observations plus unresolved1.
+Each mode runs one four-value GPU graph,0 models and0 model POSTs. Local job
+state and initial scope/resources are fixture inputs; this does not demonstrate
+native model admission, whole-request completion or Studio acceptance. The
+selected SDK library is also checked by the fixture's existing mapped-library
+helper. No SDK library or engine code changes.
+
+The earlier publishedb511760 CI44161211642 completed: all7 functional Node,
+browser, container and native jobs passed. Dependency audits and the aggregate
+CI gate failed; no findings were investigated. The current source requires its
+own exact-head checks. Whole tasks remain39/55 complete,16 open.

@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 
 private final class NormalRequestEventSource:NativeRequestEventsReading,@unchecked Sendable {
     let peer:NativeControlPeer
@@ -30,6 +31,9 @@ func runNativeRequestEventPollingTests()throws {
     let scope=InferenceScope(host:"fixture-host",endpointHash:String(repeating:"a",count:64),profileHash:String(repeating:"b",count:64),
         managerEpoch:UUID().uuidString.lowercased(),nativeEpoch:String(repeating:"1",count:32),canonicalModel:"test/model",nativeModel:"test/model",sequence:1,sampledAt:10000)
     let peer=NativeControlPeer(pid:42,start:99,executable:try VerifiedExecutable(path:"/fixture/native",sha256:String(repeating:"c",count:64)))
+    let token=TaskOwner.newToken(),owner=try TaskOwner(token:token,peerUID:geteuid()).hash
+    _=try journal.reserveJob(DurableJob(id:job,idempotency:UUID().uuidString.lowercased(),ownerHash:owner,requestHash:String(repeating:"d",count:64),created:1000))
+    try journal.transitionJob(id:job,to:.running)
     try journal.claim(job:job,attempt:0,model:scope.canonicalModel,scope:scope);try journal.markDispatched(job:job,attempt:0)
     func poll(_ poller:NativeLineagePoller)throws {
         guard try poller.beginNext() else {throw JournalError.invalid}
@@ -41,6 +45,18 @@ func runNativeRequestEventPollingTests()throws {
         throw NativeControlError.deadline
     }
     let source=NormalRequestEventSource(peer:peer,enabled:true),poller=NativeLineagePoller(journal:journal,source:source)
+    let tasks=TaskController(journal:journal,broker:ModelBroker(journal:journal))
+    let jobs=JobController(journal:journal,executor:UnavailableSandboxRuntime())
+    let artifacts=AsyncArtifacts(store:try ArtifactStore(directory:directory.appendingPathComponent("exports"),availableBytes:{50<<30}))
+    let sandbox=SandboxTaskController(journal:journal,jobs:jobs,tasks:tasks,artifacts:artifacts,socket:"/fixture/unused.sock",peerUID:geteuid())
+    let commands=TaskCommands(journal:journal,tasks:tasks,sandbox:sandbox,artifacts:artifacts,approvedImages:[],peerUID:geteuid(),
+        nativeRequestEvents:{job,now in try poller.requestEventStatuses(job:job,now:now)})
+    var admission=AdmissionPolicy()
+    let resources=ResourceSample(sampledAt:10001,physical:24<<30,available:16<<30,vmAvailable:nil,diskFree:50<<30,cpu:10,pressure:.normal,thermal:.nominal)
+    func status()throws->[String:Any] {
+        let request=try ControlRequest.decode(JSONSerialization.data(withJSONObject:["version":1,"id":UUID().uuidString.lowercased(),"operation":"job.status","payload":["owner":token,"job":job]]))
+        return try commands.handle(request,role:.task,sample:resources,admission:&admission,binding:{_ in nil},nativeCapacityProven:false,now:10001,uptime:10001)
+    }
     try poll(poller)
     guard let pending=try poller.requestEvents(job:job,attempt:0,now:10001),pending.events.rootSequence==UInt64.max,
           pending.events.metal?.pending==1,source.eventReads==1 else {throw JournalError.invalid}
@@ -48,10 +64,16 @@ func runNativeRequestEventPollingTests()throws {
     guard let retired=try poller.requestEvents(job:job,attempt:0,now:10001),retired.events.metal?.retired==2,
           retired.events.metal?.pending==0,try journal.inferenceScope(job:job,attempt:0)?.state == .dispatched,
           try journal.unresolvedCount()==1 else {throw JournalError.invalid}
+    let response=try status()
+    guard let rows=response["native_request_events"] as? [[String:Any]],rows.count==1,
+          rows[0]["root_sequence"] as? String == String(UInt64.max),let metal=rows[0]["metal"] as? [String:Any],
+          metal["pending"] as? UInt64 == 0,response["unresolved_managed_requests"] as? Int==1,
+          response["state"] as? String == "running" else {throw JournalError.invalid}
+    _=try JSONSerialization.data(withJSONObject:response)
     guard try poller.requestEvents(job:job,attempt:0,now:16001)==nil else {throw JournalError.invalid}
     // A normal source outage replaces the current observation with absence.
     try poll(poller)
-    guard try poller.requestEvents(job:job,attempt:0,now:10001)==nil,try journal.unresolvedCount()==1 else {throw JournalError.invalid}
+    guard try poller.requestEvents(job:job,attempt:0,now:10001)==nil,try status()["native_request_events"]==nil,try journal.unresolvedCount()==1 else {throw JournalError.invalid}
     let disabled=NormalRequestEventSource(peer:peer,enabled:false),plain=NativeLineagePoller(journal:journal,source:disabled)
     try poll(plain)
     guard disabled.eventReads==0,try plain.requestEvents(job:job,attempt:0,now:10001)==nil else {throw JournalError.invalid}

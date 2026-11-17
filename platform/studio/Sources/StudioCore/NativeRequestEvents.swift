@@ -49,6 +49,24 @@ struct NativeRequestEventsSample:Sendable {
     let events:NativeRequestEvents
 }
 
+struct NativeRequestEventStatus:Sendable {
+    let attempt:Int
+    let sample:NativeRequestEventsSample
+    var object:[String:Any] {
+        let value=sample.events
+        var result:[String:Any]=["attempt":attempt,"native_epoch":value.instance,"correlation_id":value.correlationID,
+            "root_sequence":String(value.rootSequence),"sample_sequence":value.sampleSequence,"sampled_at":value.sampledAt,
+            "received_at":sample.receivedAt,"identity_known":value.identityKnown,"sdk_initialized":value.sdkInitialized,"source_uncertain":value.sourceUncertain]
+        func counts(_ row:NativeRequestEventCounts)->[String:Any] {
+            ["sequence":row.sequence,"originated":row.originated,"retired":row.retired,"pending":row.pending,
+             "history_retained":row.historyRetained,"uncertain":row.uncertain]
+        }
+        if let host=value.host {result["host"]=counts(host)}
+        if let metal=value.metal {result["metal"]=counts(metal)}
+        return result
+    }
+}
+
 enum NativeRequestEventsWire {
     static let responseSize=160
     static func request(instance:String,correlationID:String,rootSequence:UInt64)throws->Data {

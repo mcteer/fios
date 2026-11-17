@@ -81,3 +81,14 @@ The normal CLI/manager/installed-harness check includes UTF-8 request text split
 inside an emoji at the32KiB upload boundary. The mock compares the final received
 user-text digest with the generated original, covering CJK, combining text and
 newline through chunk reassembly. It performs no real inference.
+
+For a code-only client that explicitly collects SDK request observations,
+`job.status` can include `native_request_events`, one entry per current attempt
+(up to four). Entries carry the original root as a decimal string, native epoch,
+correlation, original capture/receipt times and optional host/Metal callback
+counts. Missing or expired observations omit the field. Status reads only the
+existing local polling cache; they do not issue a native query or renew a lease.
+These SDK callback observations are separate from job state and
+`unresolved_managed_requests`: a removed local job can report retired callbacks
+while its independent native request remains unresolved. Existing owner status
+handling supplies the job; no task input selects a native root or observation.

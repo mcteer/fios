@@ -21,6 +21,7 @@ final class TaskCommands {
     private let approvedImages:Set<String>
     private let enrolled:Bool
     private let admissionOpen:()->Bool
+    private let nativeRequestEvents:(String,Int64)throws->[NativeRequestEventStatus]
     private let peerUID:uid_t
     private var uploads:[String:Upload]=[:]
     private var mailbox=TaskMailbox()
@@ -29,9 +30,11 @@ final class TaskCommands {
     private struct Download {let owner:String;var stream:ArtifactDownload?;var failure=false;let created:Int64}
     private var downloads:[String:Download]=[:]
     init(journal:Journal,tasks:TaskController,sandbox:SandboxTaskController,artifacts:AsyncArtifacts,
-         approvedImages:Set<String>,enrolled:Bool=false,peerUID:uid_t,admissionOpen:@escaping ()->Bool={false}) {
+         approvedImages:Set<String>,enrolled:Bool=false,peerUID:uid_t,
+         nativeRequestEvents:@escaping (String,Int64)throws->[NativeRequestEventStatus]={_,_ in []},admissionOpen:@escaping ()->Bool={false}) {
         self.journal=journal;self.tasks=tasks;self.sandbox=sandbox;self.artifacts=artifacts
         self.approvedImages=approvedImages;self.enrolled=enrolled;self.peerUID=peerUID;self.admissionOpen=admissionOpen
+        self.nativeRequestEvents=nativeRequestEvents
     }
     private func integer(_ value:Any?)->Int64? {
         guard let number=value as? NSNumber,CFGetTypeID(number) != CFBooleanGetTypeID(),!["d","f"].contains(String(cString:number.objCType)),number.doubleValue>=0,number.doubleValue<=Double(ActivityPolicy.maximumTimestamp) else {return nil}
@@ -71,6 +74,11 @@ final class TaskCommands {
                     result.merge(status(try owned(id,owner),now:now)) {_,updated in updated}
                     result["unresolved_managed_requests"]=try journal.unresolvedCount(job:id)
                     result["output_lost"]=true
+                }
+                // Existing owner status only; read the current local cache,
+                // without a native RPC or a change to request ownership.
+                if let observations=try? nativeRequestEvents(id,now),!observations.isEmpty {
+                    result["native_request_events"]=observations.map { $0.object }
                 }
             }
             return result

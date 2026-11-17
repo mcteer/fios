@@ -86,7 +86,8 @@ public enum ManagerRuntime {
         let sandboxes=SandboxTaskController(journal:journal,jobs:jobs,tasks:tasks,artifacts:artifacts,
             socket:activeExecution?.runtime?.socket ?? "/var/empty/fios-runtime-unenrolled.sock",peerUID:geteuid(),endpointPolicy:activeExecution?.runtime?.endpointPolicy)
         let taskCommands=TaskCommands(journal:journal,tasks:tasks,sandbox:sandboxes,artifacts:artifacts,
-            approvedImages:activeExecution?.approvedImages ?? [],enrolled:activeExecution != nil,peerUID:geteuid(),admissionOpen:activeExecution?.admissionOpen ?? {false})
+            approvedImages:activeExecution?.approvedImages ?? [],enrolled:activeExecution != nil,peerUID:geteuid(),
+            nativeRequestEvents:{job,now in try nativeLineage?.requestEventStatuses(job:job,now:now) ?? []},admissionOpen:activeExecution?.admissionOpen ?? {false})
         func applyingVM(to sample:ResourceSample,now:Int64)->ResourceSample {
             if let readOnlyVM {return readOnlyVM.applying(to:sample,now:now)}
             if activeExecution?.vmSource == .cached {return sample}

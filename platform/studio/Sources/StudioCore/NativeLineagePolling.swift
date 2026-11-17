@@ -99,4 +99,13 @@ final class NativeLineagePoller:@unchecked Sendable {
               (try? value.validate()) != nil else {return nil}
         return sample
     }
+    func requestEventStatuses(job:String,now:Int64)throws->[NativeRequestEventStatus] {
+        var result:[NativeRequestEventStatus]=[]
+        for request in try journal.lineageRequests() where request.job==job {
+            if let sample=try requestEvents(job:job,attempt:request.attempt,now:now) {
+                result.append(NativeRequestEventStatus(attempt:request.attempt,sample:sample))
+            }
+        }
+        return result
+    }
 }

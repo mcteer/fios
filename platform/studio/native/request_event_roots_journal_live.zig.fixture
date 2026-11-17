@@ -3,12 +3,14 @@ const owners = @import("fios/request_ownership.zig");
 const sdk = @import("fios/sdk_request_ownership.zig");
 const transport = @import("fios/control_transport.zig");
 extern fn fios_bridge_gpu_graph() c_int;
+extern fn fios_bridge_library_matches([*:0]const u8) c_int;
 extern "c" fn alarm(c_uint) c_uint;
 pub fn main() !void {
     _ = alarm(30);
     const io = std.Io.Threaded.global_single_threaded.io();
     try owners.shared().initialize(io, @splat(7));
     try sdk.initialize(io);
+    if (fios_bridge_library_matches(@import("build_options").sdk_library) != 1) return error.SDKUnavailable;
     const bridge = (try transport.Bridge.startWithRequestEvents(io, std.heap.c_allocator, "events-fios-source-fixture", null, null, null, null, null, sdk.requestEventDiagnostic)) orelse return error.MissingBridge;
     defer bridge.stop();
     const ready = "{\"ready\":true}\n";

@@ -12,6 +12,9 @@ import CryptoKit
         let scope=InferenceScope(host:"fixture-host",endpointHash:String(repeating:"a",count:64),profileHash:String(repeating:"b",count:64),managerEpoch:UUID().uuidString.lowercased(),
             nativeEpoch:String(repeating:"07",count:16),canonicalModel:"fixture/native-events",nativeModel:"fixture/native-events",sequence:1,sampledAt:now)
         let journal=try Journal(directory:URL(fileURLWithPath:args[4]))
+        let token=TaskOwner.newToken(),owner=try TaskOwner(token:token,peerUID:geteuid()).hash
+        _=try journal.reserveJob(DurableJob(id:job,idempotency:UUID().uuidString.lowercased(),ownerHash:owner,requestHash:String(repeating:"d",count:64),created:now))
+        try journal.transitionJob(id:job,to:.running)
         try journal.claim(job:job,attempt:0,model:scope.canonicalModel,scope:scope);try journal.markDispatched(job:job,attempt:0)
         let correlation=try scope.nativeRequestCorrelationID(job:job,attempt:0)
         let registration=try client.registerHandoff(instance:scope.nativeEpoch,correlationID:correlation)
@@ -38,8 +41,22 @@ import CryptoKit
             if let sample=try poller.requestEvents(job:job,attempt:0,now:HostResources.nowMilliseconds()),let metal=sample.events.metal,metal.originated>0,metal.pending==0 {
                 guard metal.retired==metal.originated,sample.events.rootSequence==registration.result.rootSequence,
                       try journal.inferenceScope(job:job,attempt:0)?.state == .dispatched,try journal.unresolvedCount()==1 else {throw JournalError.invalid}
+                let observedAt=HostResources.nowMilliseconds()
+                try journal.transitionJob(id:job,to:.revoking,now:observedAt);try journal.transitionJob(id:job,to:.removed,now:observedAt)
+                let tasks=TaskController(journal:journal,broker:ModelBroker(journal:journal))
+                let jobs=JobController(journal:journal,executor:UnavailableSandboxRuntime())
+                let artifacts=AsyncArtifacts(store:try ArtifactStore(directory:URL(fileURLWithPath:args[4]).appendingPathComponent("exports"),availableBytes:{50<<30}))
+                let sandbox=SandboxTaskController(journal:journal,jobs:jobs,tasks:tasks,artifacts:artifacts,socket:"/fixture/unused.sock",peerUID:geteuid())
+                let commands=TaskCommands(journal:journal,tasks:tasks,sandbox:sandbox,artifacts:artifacts,approvedImages:[],peerUID:geteuid(),nativeRequestEvents:{job,now in try poller.requestEventStatuses(job:job,now:now)})
+                let request=try ControlRequest.decode(JSONSerialization.data(withJSONObject:["version":1,"id":UUID().uuidString.lowercased(),"operation":"job.status","payload":["owner":token,"job":job]]))
+                let resources=ResourceSample(sampledAt:observedAt,physical:24<<30,available:16<<30,vmAvailable:nil,diskFree:50<<30,cpu:10,pressure:.normal,thermal:.nominal)
+                var admission=AdmissionPolicy()
+                let status=try commands.handle(request,role:.task,sample:resources,admission:&admission,binding:{_ in nil},nativeCapacityProven:false,now:observedAt,uptime:1000)
+                guard let rows=status["native_request_events"] as? [[String:Any]],rows.count==1,
+                      rows[0]["root_sequence"] as? String==String(sample.events.rootSequence),
+                      status["unresolved_managed_requests"] as? Int==1,status["state"] as? String=="removed" else {throw JournalError.invalid}
                 try output(["ok":true,"original_root":String(sample.events.rootSequence),"metal_originated":metal.originated,"metal_retired":metal.retired,
-                            "unresolved_requests":1,"model_requests":0,"native_authority":false]);return
+                            "unresolved_requests":1,"owner_status_observation":true,"local_job_state":"removed","model_requests":0,"native_authority":false]);return
             }
             Thread.sleep(forTimeInterval:0.01)
         }
