@@ -1,0 +1,21 @@
+import Foundation
+import Darwin
+
+// Normal pre-existing local exports, then the real observation-only manager.
+@main struct TaskArtifactLive {
+    static func main()throws {
+        guard CommandLine.arguments.count==2 else {throw ControlError.invalid_request}
+        let directory=URL(fileURLWithPath:CommandLine.arguments[1])
+        let token=TaskOwner.newToken(),owner=try TaskOwner(token:token,peerUID:geteuid()).hash
+        let content=Data(String(repeating:"Hello, Studio 👋\n",count:4096).utf8)
+        let artifacts:[String]
+        do {
+            let store=try ArtifactStore(directory:directory.appendingPathComponent("artifacts"),availableBytes:{50<<30})
+            let job=UUID().uuidString.lowercased(),now=HostResources.nowMilliseconds()
+            artifacts=[try store.publish(job:job,ownerHash:owner,data:content,now:now),
+                       try store.publish(job:job,ownerHash:owner,data:Data(),now:now)]
+        }
+        try AtomicState.write(JSONSerialization.data(withJSONObject:["owner":token,"artifacts":artifacts]),to:directory.appendingPathComponent("fixture.json"))
+        try ManagerRuntime.run(directory:directory)
+    }
+}

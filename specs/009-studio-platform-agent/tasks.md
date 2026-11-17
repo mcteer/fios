@@ -1210,3 +1210,11 @@ and optimized builds afterward. The optimized actual CLI preserves ID/payload
 for job.status and artifact.read with a local mock server. No model request,
 runtime action or installed service change; T045 remains open and whole-task
 progress remains39/55.
+
+
+2026-11-17 functional artifact integration (T045): real observation-only
+manager + actual CLI now have a normal download regression for77,824-byte
+Unicode text (3 chunks) and an empty export (0 chunks). Original RPC/stream
+correlation, metadata and reconstructed bytes match. Existing process CI runs
+the test with private state and no model/runtime/installed service action.
+Full sandbox/model/native composition remains open;39/55 whole tasks unchanged.

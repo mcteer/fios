@@ -8677,3 +8677,25 @@ Shared-client regression: normal real-manager/CLI status integration passes
 `/private/tmp/fios-009-task-client-service-regression.log`; private fixture
 `/private/tmp/fios-009-service-status-EIHMbv`. This checks the existing
 generated-ID observation/operator call path alongside the preserved-ID task path.
+
+
+### Functional real-manager artifact downloads — 2026-11-17
+
+A new ordinary export fixture seeds two private existing artifacts, releases
+the store, then runs the real observation-only manager. The actual CLI reads
+each through task.sock and the existing asynchronous artifact service. The
+77,824-byte Unicode text export transfers in3 ordered chunks; the empty export
+completes with0 chunks. Both retain the original RPC UUID, bind the initial
+stream ID, match declared length/SHA256 and reconstruct the exact expected
+bytes. No direct artifact reads substitute for the download protocol.
+
+`node scripts/check-platform-task-artifacts.mjs --isolated` passes; receipt
+`/private/tmp/fios009-artifacts-M8FtWO/receipt.json`, SHA256
+`5a3eb5def500e72739c20beb5ad5878deb62bf0296cd1c81f09c61fbc99e767f`.
+The first driver assumed flat task results; it was corrected to use the existing
+result envelope before acceptance. This was test setup, not a product defect.
+The fixture denies IP networking, uses fresh private state, stops only its own
+manager, and invokes no model, runtime or installed service. CI now includes
+this normal workflow in its existing process slice; the quickstart lists it.
+This extends functional integration coverage without completing T045 or native
+acceptance. Whole tasks remain39/55 complete,16 open.
