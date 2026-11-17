@@ -9315,3 +9315,32 @@ whole-native provenance, all-client coverage or installed authority. The live
 queue stages currently call existing tracker ticket APIs directly; a normal
 existing Book/actor queue integration is the next functional check. Whole
 39/55 tasks complete; security-related work remains excluded.
+
+### Existing native Book/actor queue to owner status — 2026-11-17
+
+The normal private fixture now publishes through the existing native Book.add,
+selects through Book.next and enters through current_slot_origins actor entry.
+That entry activates the original queue ticket and restores its original owner
+for the genuine four-value GPU graph. Book.done and actor.finish retire local
+queue/actor ownership. Owner status observes queued→active→responding on the
+original journal root while the independent inference claim stays unresolved.
+The fixture uses the generic existing request book with a bounded descriptor;
+no model weights, numerical model engine or model POST are invoked. No engine
+implementation or SDK library changes are made.
+
+The first fixture compile omitted the newly imported Book/actor/ABI modules
+from its copied input closure (`/private/tmp/fios-009-event-journal-c95wgub9`).
+The driver now declares and recursively captures those inputs and the required
+existing build-option flags. No runtime result from that setup failure is used.
+Final Debug/ReleaseSafe integration passes all ten stages:
+`/private/tmp/fios-009-event-journal-w8vuq4j_/receipt.json`, SHA256
+`8ad3123c2ffb5366ce62daf9378a1bbf4aed3cdd6cbd4a155e4a46d99e7b577f`.
+Both modes also retain legacy1, clock-only2 and queue-aware3 reads, actual
+private IPC, journal polling and owner status. Two four-value GPU graphs,
+zero model loads/POSTs or installed actions. This exercises the real shared
+Book/actor implementation, not each model adapter, an actual model scheduler
+workload, all modalities or either Studio's operational acceptance.
+
+The production source is unchanged from the preceding fully built/package-
+smoked queue increment, so those builds are not repeated for this fixture-only
+change. Whole tasks remain39/55 complete,16 open; all009 requirements remain.

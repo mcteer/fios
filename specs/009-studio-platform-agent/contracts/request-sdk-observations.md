@@ -68,3 +68,9 @@ remain covered. An explicit local GPU/native/journal fixture registers a real
 native handoff for a generated journal request, executes the four-value graph,
 and reads its Metal observations through the actual off-loop poller. This
 fixture issues no model request or native admission authority.
+
+The normal live queue fixture additionally uses the actual existing native
+request Book and actor entry before the four-value GPU graph. Its queue-aware
+lineage shows queued/active operations on the same original root, then
+responding after Book/actor cleanup and callback retirement. The fixture loads
+no model; this does not qualify all model adapters or infer native completion.

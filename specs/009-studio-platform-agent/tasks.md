@@ -1302,3 +1302,11 @@ legacy1/clock-only2 reads against the queue-aware server. Enclosing builds
 and the clean package/manager/CLI smoke pass. These normal tracker API calls
 are separate from actual model-scheduler/all-client acceptance. Whole tasks
 remain39/55 complete.
+
+Normal existing native Book/actor integration now also passes Debug/ReleaseSafe:
+Book publication, selection and actor entry supply queued/active observations
+on the original managed root before the four-value GPU callback graph and
+responding phase. This replaces direct queue API calls in the live path; a
+separate normal tracker metadata case remains. No engine implementation,
+model weights/POSTs, installed action or all-modality acceptance is involved.
+Whole tasks remain39/55 complete,16 open.

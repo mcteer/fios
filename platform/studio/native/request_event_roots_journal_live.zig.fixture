@@ -3,6 +3,9 @@ const owners = @import("fios/request_ownership.zig");
 const sdk = @import("fios/sdk_request_ownership.zig");
 const transport = @import("fios/control_transport.zig");
 const protocol = @import("fios/control_protocol.zig");
+const book_mod = @import("engines/own_thread/book.zig");
+const actor = @import("fios/current_slot_origins.zig");
+const abi = @import("abi/engine.zig");
 extern fn fios_bridge_gpu_graph() c_int;
 extern fn fios_bridge_library_matches([*:0]const u8) c_int;
 extern "c" fn alarm(c_uint) c_uint;
@@ -71,15 +74,30 @@ pub fn main() !void {
     owners.current().* = incoming;
     const group = [_]owners.Token{incoming};
     owners.current_group().* = &group;
-    const origins = (try owners.retainCurrent(io)) orelse return error.MissingOriginalRoot;
-    const queued = try owners.shared().beginQueued(io, &origins);
-    origins.release(io);
+    // Reuse the actual native request Book and actor entry; no model is loaded.
+    var book: book_mod.Book = .{ .gpa = std.heap.c_allocator, .max_waiting = 1 };
+    defer book.deinit();
+    const Sink = struct {
+        fn event(context: *anyopaque, _: u64, event_value: *const abi.Event) callconv(.c) abi.Action {
+            const finished: *u8 = @ptrCast(@alignCast(context));
+            if (event_value.kind == .finished) finished.* += 1;
+            return .go;
+        }
+    };
+    var finished: u8 = 0;
+    var verdict: abi.Verdict = .{};
+    const request = book.add(.{}, 1, &.{ .prompt = abi.span(u32, &.{1}), .max_tokens = 1 },
+        .{ .ctx = &finished, .event = Sink.event }, &verdict) orelse return error.QueuePublicationUnavailable;
+    if (verdict.code != .ok) return error.QueuePublicationUnavailable;
     var advance: [1]u8 = undefined;
     if (std.c.read(0, &advance, 1) != 1) return error.InputUnavailable;
-    try owners.shared().activateQueued(io, queued);
+    if (book.next(false) != request) return error.QueuePickupUnavailable;
+    var work = (try actor.retain(io, @as([]const *book_mod.Req, &.{request}))) orelse return error.QueuePickupUnavailable;
+    try work.enter(io);
     if (std.c.read(0, &advance, 1) != 1) return error.InputUnavailable;
     if (fios_bridge_gpu_graph() != 1) return error.GPUCallbackUnavailable;
-    try owners.shared().retireQueued(io, queued);
+    book.done(request, .stop, "");
+    if (finished != 1 or !work.finish(io)) return error.QueueRetirementUnavailable;
     owners.current().* = null; owners.current_group().* = null;
     try owners.shared().responding(io, incoming);
     const done = "{\"graph_done\":true}\n";

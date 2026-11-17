@@ -9,7 +9,7 @@ a=p.parse_args();repo=Path(__file__).resolve().parents[1]
 for value in [a.source,a.zig,a.sdk_source,a.sdk_library]:assert value.is_absolute() and value.exists()
 w=Path(tempfile.mkdtemp(prefix='fios-009-event-journal-',dir='/private/tmp'));unit=w/'unit';unit.mkdir()
 sha=lambda file:hashlib.sha256(file.read_bytes()).hexdigest()
-inputs={};pending=['fios/control_transport.zig','fios/sdk_request_ownership.zig']
+inputs={};pending=['fios/control_transport.zig','fios/sdk_request_ownership.zig','engines/own_thread/book.zig','fios/current_slot_origins.zig','abi/engine.zig']
 while pending:
  name=pending.pop()
  if name in inputs:continue
@@ -20,7 +20,7 @@ while pending:
 cpp=repo/'platform/studio/native/request_event_roots_gpu.cpp.fixture';bridge=a.source/'src/fios/current_sdk_owners.cpp'
 fixture=repo/'platform/studio/native/request_event_roots_journal_live.zig.fixture';client_fixture=repo/'platform/studio/Tests/StudioCoreTests/NativeRequestEventPollingLive.swift.fixture'
 (unit/'live.zig').write_bytes(fixture.read_bytes());swift=w/'Main.swift';swift.write_bytes(client_fixture.read_bytes())
-(unit/'options.zig').write_text('pub const fios_source_ane=false;\npub const sdk_library='+json.dumps(str(a.sdk_library))+';\n')
+(unit/'options.zig').write_text('pub const fios_source_ane=false;\npub const fios_source_sdk=true;\npub const llama_engine=false;\npub const sdk_library='+json.dumps(str(a.sdk_library))+';\n')
 core=sorted((repo/'platform/studio/Sources/StudioCore').glob('*.swift'))
 selected={str(file):sha(file) for file in [Path(__file__),cpp,bridge,fixture,client_fixture,a.zig,a.sdk_library,*core]}
 sdk=Path(subprocess.check_output(['/usr/bin/xcrun','--show-sdk-path'],text=True).strip());stub=sdk/'usr/lib/libc++.tbd'
