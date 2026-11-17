@@ -279,11 +279,13 @@ public enum ManagerRuntime {
                 clients.append(PendingControl(fd:fd,role:roles[index],now:ProcessInfo.processInfo.systemUptime))
             }
             for client in clients {
+                var requestID:String?
                 do {
                     guard let bytes=try client.read(now:ProcessInfo.processInfo.systemUptime) else {
                         try client.flush(now:ProcessInfo.processInfo.systemUptime);continue
                     }
                     let request=try ControlRequest.decode(bytes)
+                    requestID=request.id
                     guard client.role.allows(request.operation) else { throw ControlError.unauthorized }
                     let requestedAt=timestamp(),requestResources=artifacts.reservingDisk(in:applyingVM(to:resourceSample,now:requestedAt))
                     var response:[String:Any] = ["version":1,"id":request.id,"ok":true,"epoch":epoch]
@@ -427,7 +429,9 @@ public enum ManagerRuntime {
                     case PolicyError.invalidObservation:code="native_unsupported"
                     default:code="internal"
                     }
-                    let data=try JSONSerialization.data(withJSONObject:["version":1,"ok":false,"error":code])
+                    var response:[String:Any]=["version":1,"ok":false,"error":code]
+                    if let requestID {response["id"]=requestID}
+                    let data=try JSONSerialization.data(withJSONObject:response)
                     if !client.closed {
                         do {
                             try client.respond(data,now:ProcessInfo.processInfo.systemUptime)

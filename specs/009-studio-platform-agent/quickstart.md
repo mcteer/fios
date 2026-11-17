@@ -234,6 +234,8 @@ node scripts/check-platform-service-status.mjs --isolated
 # Normal task CLI correlation and real-manager multi-chunk/empty exports only.
 node scripts/check-platform-task-client.mjs --isolated
 node scripts/check-platform-task-artifacts.mjs --isolated
+# Normal installed-harness model-job flow; local mock only, no real inference.
+node scripts/check-platform-task-model-flow.mjs --isolated
 node scripts/check-platform-boot.mjs --isolated
 node scripts/check-platform-boot-state.mjs --isolated
 node scripts/check-platform-manager-execution.mjs --mock --models

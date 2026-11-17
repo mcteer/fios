@@ -8699,3 +8699,40 @@ manager, and invokes no model, runtime or installed service. CI now includes
 this normal workflow in its existing process slice; the quickstart lists it.
 This extends functional integration coverage without completing T045 or native
 acceptance. Whole tasks remain39/55 complete,16 open.
+
+
+### Functional task error correlation and full CLI model flow — 2026-11-17
+
+Normal model-job integration now has a dedicated CLI workflow using the
+existing synthetic manager composition, installed no-tools Python harness and
+local mock endpoint. A52,830-byte Unicode input uploads in2 chunks. A status
+read preserves lease expiry; renewal extends expiry while preserving the
+absolute deadline. Ordered text/done events produce MOCK_ONLY/complete, and
+the job reaches removed. Exactly1 mock POST,0 real inference requests and0
+runtime actions. Initial receipt:
+`/private/tmp/f9-manager-cli-hj8zhS/receipt.json`, SHA256
+`ed3ef2b7f2c05bee15bef3d5d79ead0788cf008e87eb5cb1c0ce93794f7bba96`.
+These sources/capacities are synthetic; this is not native or installed Studio
+acceptance. The existing process CI slice now includes this ordinary workflow.
+
+A normal renewal of the owner's finished job also exposed that manager
+application-error replies omitted the original request UUID. The actual CLI
+regression fails at “Normal task reply lost its original request ID” in
+`/private/tmp/fios-009-task-error-before.log`. The manager now retains the
+decoded UUID through its existing error handler and includes it in the reply.
+The existing job_conflict code and request behavior remain unchanged. The
+normal fixture uses legitimate finished-job history and existing retained
+exports, rather than fabricated invalid requests.
+
+The finished-job status/error and normal3-chunk/empty export workflows pass
+afterward: `/private/tmp/fios009-artifacts-knQUFz/receipt.json`, SHA256
+`e379f802662ed6b92c307650659a69c89f5942cf8d39dd1423a5b72383ff1083`.
+No real model, runtime, installed service, deployment or whole-task completion
+is claimed. Whole tasks remain39/55 complete,16 open.
+
+The full normal CLI model workflow also passes against the current manager
+source after the error-reply correction:
+`/private/tmp/f9-manager-cli-4oioHr/receipt.json`, SHA256
+`57bba502278b1c5a7f0f96052dc27aa13bd0b5387cb74d7c43a910708cbd446e`.
+It retains2 upload chunks/2 ordered output events, one mock POST, unchanged
+absolute deadline, removed job state and0 real model/runtime actions.

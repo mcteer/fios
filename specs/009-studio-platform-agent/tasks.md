@@ -1218,3 +1218,13 @@ Unicode text (3 chunks) and an empty export (0 chunks). Original RPC/stream
 correlation, metadata and reconstructed bytes match. Existing process CI runs
 the test with private state and no model/runtime/installed service action.
 Full sandbox/model/native composition remains open;39/55 whole tasks unchanged.
+
+
+2026-11-17 functional task error replies and CLI model job (T045): decoded
+request UUIDs now survive ordinary manager application errors, verified by
+renewing an owner's legitimately finished job through the actual CLI. Normal
+finished-job status and3-chunk/empty exports pass. A dedicated normal CLI
+model-job workflow exercises52,830-byte2-chunk input, read/renew lease timing,
+ordered streamed text/done and removed completion through the installed harness
+and one local mock POST. No real inference/runtime action or native acceptance;
+whole tasks remain39/55 and T045 remains open.

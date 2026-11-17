@@ -8,14 +8,21 @@ import Darwin
         let directory=URL(fileURLWithPath:CommandLine.arguments[1])
         let token=TaskOwner.newToken(),owner=try TaskOwner(token:token,peerUID:geteuid()).hash
         let content=Data(String(repeating:"Hello, Studio 👋\n",count:4096).utf8)
+        let job=UUID().uuidString.lowercased(),now=HostResources.nowMilliseconds()
+        do {
+            let journal=try Journal(directory:directory)
+            let historical=try DurableJob(id:job,idempotency:UUID().uuidString.lowercased(),ownerHash:owner,requestHash:String(repeating:"b",count:64),created:now)
+            _=try journal.reserveJob(historical)
+            try journal.transitionJob(id:job,to:.revoking,now:now)
+            try journal.transitionJob(id:job,to:.removed,now:now)
+        }
         let artifacts:[String]
         do {
             let store=try ArtifactStore(directory:directory.appendingPathComponent("artifacts"),availableBytes:{50<<30})
-            let job=UUID().uuidString.lowercased(),now=HostResources.nowMilliseconds()
             artifacts=[try store.publish(job:job,ownerHash:owner,data:content,now:now),
                        try store.publish(job:job,ownerHash:owner,data:Data(),now:now)]
         }
-        try AtomicState.write(JSONSerialization.data(withJSONObject:["owner":token,"artifacts":artifacts]),to:directory.appendingPathComponent("fixture.json"))
+        try AtomicState.write(JSONSerialization.data(withJSONObject:["owner":token,"artifacts":artifacts,"finished_job":job]),to:directory.appendingPathComponent("fixture.json"))
         try ManagerRuntime.run(directory:directory)
     }
 }
