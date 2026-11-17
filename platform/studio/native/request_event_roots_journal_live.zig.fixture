@@ -2,14 +2,53 @@ const std = @import("std");
 const owners = @import("fios/request_ownership.zig");
 const sdk = @import("fios/sdk_request_ownership.zig");
 const transport = @import("fios/control_transport.zig");
+const protocol = @import("fios/control_protocol.zig");
 extern fn fios_bridge_gpu_graph() c_int;
 extern fn fios_bridge_library_matches([*:0]const u8) c_int;
 extern "c" fn alarm(c_uint) c_uint;
+fn normalQueueCapture(io: std.Io) !void {
+    const tracker = owners.shared();
+    const a = try tracker.enter(io);
+    try tracker.associate(io, a, @splat(9));
+    try tracker.bind(io, a, "fixture/native-events");
+    try tracker.active(io, a);
+    const b = try tracker.enter(io);
+    try tracker.associate(io, b, @splat(8));
+    try tracker.bind(io, b, "fixture/native-events");
+    try tracker.active(io, b);
+    const a_origins = try tracker.retainTokens(io, &.{a});
+    const b_origins = try tracker.retainTokens(io, &.{b});
+    const first = try tracker.beginQueued(io, &a_origins);
+    const second = try tracker.beginQueued(io, &a_origins);
+    const other = try tracker.beginQueued(io, &b_origins);
+    a_origins.release(io); b_origins.release(io);
+    var request: [64]u8 = @splat(0);
+    @memcpy(request[0..4], "FIQ9"); request[4] = 3;
+    @memset(request[8..24], 7); @memset(request[24..56], 9);
+    var reply = protocol.dispatchQueuedLineage(tracker, io, &request);
+    if (reply[4] != 3 or reply[5] != 0 or reply[7] != 0 or
+        std.mem.readInt(u32, reply[112..116], .big) != 2 or
+        std.mem.readInt(u32, reply[116..120], .big) != 0) return error.QueueCaptureUnavailable;
+    try tracker.activateQueued(io, first);
+    reply = protocol.dispatchQueuedLineage(tracker, io, &request);
+    if (std.mem.readInt(u32, reply[112..116], .big) != 1 or
+        std.mem.readInt(u32, reply[116..120], .big) != 1) return error.QueueCaptureUnavailable;
+    const separate = tracker.correlationSnapshot(io, @splat(8));
+    if (separate.queued_operations != 1 or separate.active_operations != 0) return error.QueueCaptureUnavailable;
+    try tracker.leave(io, a);
+    const retained = tracker.correlationSnapshot(io, @splat(9));
+    if (!retained.found or retained.queued_operations != 1 or retained.active_operations != 1) return error.QueueCaptureUnavailable;
+    try tracker.retireQueued(io, first); try tracker.retireQueued(io, second);
+    try tracker.retireQueued(io, other); try tracker.leave(io, b);
+    if (tracker.snapshot(io).owned != 0) return error.QueueCaptureUnavailable;
+}
+
 pub fn main() !void {
     _ = alarm(30);
     const io = std.Io.Threaded.global_single_threaded.io();
     try owners.shared().initialize(io, @splat(7));
     try sdk.initialize(io);
+    try normalQueueCapture(io);
     if (fios_bridge_library_matches(@import("build_options").sdk_library) != 1) return error.SDKUnavailable;
     const bridge = (try transport.Bridge.startWithRequestEvents(io, std.heap.c_allocator, "events-fios-source-fixture", null, null, null, null, null, sdk.requestEventDiagnostic)) orelse return error.MissingBridge;
     defer bridge.stop();
@@ -32,7 +71,15 @@ pub fn main() !void {
     owners.current().* = incoming;
     const group = [_]owners.Token{incoming};
     owners.current_group().* = &group;
+    const origins = (try owners.retainCurrent(io)) orelse return error.MissingOriginalRoot;
+    const queued = try owners.shared().beginQueued(io, &origins);
+    origins.release(io);
+    var advance: [1]u8 = undefined;
+    if (std.c.read(0, &advance, 1) != 1) return error.InputUnavailable;
+    try owners.shared().activateQueued(io, queued);
+    if (std.c.read(0, &advance, 1) != 1) return error.InputUnavailable;
     if (fios_bridge_gpu_graph() != 1) return error.GPUCallbackUnavailable;
+    try owners.shared().retireQueued(io, queued);
     owners.current().* = null; owners.current_group().* = null;
     try owners.shared().responding(io, incoming);
     const done = "{\"graph_done\":true}\n";

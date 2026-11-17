@@ -7,7 +7,7 @@ import CryptoKit
         guard args.count==5,let pid=Int32(args[2]) else {throw NativeControlError.invalid}
         let executable=try VerifiedExecutable(path:args[1],sha256:SHA256.hash(data:try Data(contentsOf:URL(fileURLWithPath:args[1]))).map {String(format:"%02x",$0)}.joined())
         let peer=NativeControlPeer(pid:pid,start:try WorkerResources.startIdentifier(pid:pid),executable:executable)
-        let client=NativeControlClient(path:args[3],peer:peer,version:3,observeRequestEvents:true,sourceLineageClock:true)
+        let client=NativeControlClient(path:args[3],peer:peer,version:3,observeRequestEvents:true,sourceLineageClock:true,queuedLineage:true)
         let now=HostResources.nowMilliseconds(),job=UUID().uuidString.lowercased()
         let scope=InferenceScope(host:"fixture-host",endpointHash:String(repeating:"a",count:64),profileHash:String(repeating:"b",count:64),managerEpoch:UUID().uuidString.lowercased(),
             nativeEpoch:String(repeating:"07",count:16),canonicalModel:"fixture/native-events",nativeModel:"fixture/native-events",sequence:1,sampledAt:now)
@@ -20,7 +20,10 @@ import CryptoKit
         let registration=try client.registerHandoff(instance:scope.nativeEpoch,correlationID:correlation)
         let legacy=NativeControlClient(path:args[3],peer:peer,version:3)
         let legacyRead=try legacy.lineage(instance:scope.nativeEpoch,correlationID:correlation)
-        guard legacyRead.lineage.sourceCapturedAt==nil else {throw NativeControlError.invalid}
+        guard legacyRead.lineage.sourceCapturedAt==nil,legacyRead.lineage.operations==nil else {throw NativeControlError.invalid}
+        let clockOnly=NativeControlClient(path:args[3],peer:peer,version:3,sourceLineageClock:true)
+        let clockRead=try clockOnly.lineage(instance:scope.nativeEpoch,correlationID:correlation)
+        guard clockRead.lineage.sourceCapturedAt != nil,clockRead.lineage.operations==nil else {throw NativeControlError.invalid}
         let poller=NativeLineagePoller(journal:journal,source:client)
         func poll()throws {
             guard try poller.beginNext() else {throw JournalError.invalid}
@@ -38,6 +41,20 @@ import CryptoKit
             FileHandle.standardOutput.write(try JSONSerialization.data(withJSONObject:value,options:[.sortedKeys]));FileHandle.standardOutput.write(Data([10]))
         }
         try output(["correlation_id":correlation,"root":String(registration.result.rootSequence)])
+        for expected in ["queued","active"] {
+            let deadline=ProcessInfo.processInfo.systemUptime+5
+            var found=false
+            while ProcessInfo.processInfo.systemUptime<deadline {
+                try poll()
+                if let phase=try poller.requestEventStatuses(job:job,now:HostResources.nowMilliseconds()).first?.object["request"] as? [String:Any],
+                   phase["state"] as? String==expected,let operations=phase["operations"] as? [String:Int],operations[expected]==1 {
+                    found=true;break
+                }
+                Thread.sleep(forTimeInterval:0.01)
+            }
+            guard found,try journal.unresolvedCount()==1 else {throw JournalError.invalid}
+            try output(["observed_operation":expected])
+        }
         let end=ProcessInfo.processInfo.systemUptime+10
         while ProcessInfo.processInfo.systemUptime<end {
             try poll()
@@ -62,7 +79,7 @@ import CryptoKit
                       (rows[0]["request"] as? [String:Any])?["state"] as? String=="responding",
                       status["unresolved_managed_requests"] as? Int==1,status["state"] as? String=="removed" else {throw JournalError.invalid}
                 try output(["ok":true,"original_root":String(sample.events.rootSequence),"metal_originated":metal.originated,"metal_retired":metal.retired,
-                            "unresolved_requests":1,"owner_status_observation":true,"local_job_state":"removed","native_request_state":"responding","native_lineage_capture_time":true,"legacy_lineage_still_available":true,"model_requests":0,"native_authority":false]);return
+                            "unresolved_requests":1,"owner_status_observation":true,"local_job_state":"removed","native_request_state":"responding","queued_and_active_observed":true,"native_lineage_capture_time":true,"legacy_lineage_still_available":true,"clock_only_lineage_still_available":true,"model_requests":0,"native_authority":false]);return
             }
             Thread.sleep(forTimeInterval:0.01)
         }

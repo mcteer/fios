@@ -1,0 +1,5 @@
+{
+  "src/fios/request_ownership.zig": "e15e79904f2d624b916ac8e576c44c9e2e1f76863c279af7b0ea73b8798a0026",
+  "src/fios/control_protocol.zig": "9b635ad839d2caf3b448d250b9eb8bb29e0eb0c66548dd43396ff575dc37c2b5",
+  "src/fios/control_transport.zig": "29d44251bd8df34bddb94b4e77b83a93ca1cac1e74854d1f786f7d3b08b5e9c6"
+}

@@ -9238,3 +9238,53 @@ Together with the genuine native IPC/legacy read and clean packaged smoke,
 this completes validation of this functional clock increment. Whole tasks
 remain39/55 complete; no all-client producer, completion issuer or Studio
 acceptance is claimed. Security-related work remains excluded.
+
+### Original-request queued operation visibility — 2026-11-17
+
+This functional source increment reuses existing tracker queue tickets and
+adds no engine, model algorithm, dispatch or installed action. One original
+request's handler counts and queued/active operation counts now share one
+mutex capture/sequence. A separate request's ticket does not enter its counts;
+retained tickets survive creator release. The opt-in128-byte lineage version3
+also carries the native capture clock. Legacy versions remain112 bytes and
+default behavior stays unchanged. Owner status can show queued or active
+operation state before native responding; SDK callback retirement and local
+job removal still do not resolve inference.
+
+The first genuine integration compiled both sides and passed native queue
+metadata checks, then the client refused the new128-byte response size, which
+had been omitted from its fixed supported-size list. That is corrected without
+changing other sizes or deadlines. Retained initial failure:
+`/private/tmp/fios-009-event-journal-owrs7lpj`; no result from it is promoted.
+A concurrent unit check passed Debug but its optimized compiler correctly
+refused a source file changed during the client fix:
+`/private/tmp/fios-009-lineage-clock-JaKOEr`. A fixed-source rerun is pending.
+
+The corrected genuine native/GPU/journal/owner integration passes both modes:
+`/private/tmp/fios-009-event-journal-g97s7ong/receipt.json`, SHA256
+`93570b2d72ac50377deff113a5bf4aa2d64208e2a95596f5ea728b78b7448534`.
+It observes queued→active→responding for original root3 through the actual
+poller/owner status, while one independent inference claim remains unresolved.
+Its separate normal metadata fixture checks two queued operations on one root,
+one on a second root, active pickup and creator release. These are explicit
+existing tracker API calls, not actual model scheduler/all-modality acceptance.
+The genuine SDK graph remains four values; two graphs, zero model POSTs.
+
+Selected three-file patch projection reverses to the declared parents and
+reapplies byte-exactly:
+`/private/tmp/fios-009-request-queue-projection-obbhke74/receipt.json`, SHA256
+`04aeba613b5f34f0caeeca05a59142a361faee857e829d9dd2f356d813b1dbdb`.
+This is selected projection evidence, not whole-native provenance. Additional
+legacy1/timestamp-only2 reads, final fixed-source tests, enclosing builds and
+clean packaging remain pending. Whole tasks remain39/55 complete,16 open.
+
+Final fixed-source unit/owner-state and existing lineage polling checks pass
+Debug/optimized: `/private/tmp/fios-009-lineage-clock-R5JlZJ/receipt.json`, SHA256
+`f35a99184c6891167d89e8318e2edf2ca468c82f7d2023d2c317f9edb72bcd08`.
+The final genuine integration also checks legacy1 (no native clock/operations),
+clock-only2 (native clock/no operations) and queue-aware3 against one server.
+Both modes pass: `/private/tmp/fios-009-event-journal-0xie0wn0/receipt.json`, SHA256
+`6a6e0029207e86449d9b26e43c02c7546684358be9ca6a9f956172cc09aaaccb`.
+Each mode uses one four-value GPU graph, zero models or installed actions.
+Enclosing compilation remains in progress; clean package validation follows.
+Whole tasks remain39/55 complete.

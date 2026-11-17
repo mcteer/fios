@@ -46,6 +46,9 @@ for mode,opt,swift_opt in [('Debug','-O0',[]),('ReleaseSafe','-O2',['-O'])]:
    socket=home/'.fios-native-control/control.sock'
    swift_child=subprocess.Popen([str(client),str(native),str(native_child.pid),str(socket),str(home/'journal')],cwd=repo,env=env,stdout=subprocess.PIPE,stderr=client_log)
    identity=packet(swift_child);native_child.stdin.write(bytes.fromhex(identity['correlation_id']));native_child.stdin.flush()
+   for phase in ['queued','active']:
+    assert packet(swift_child)=={'observed_operation':phase}
+    native_child.stdin.write(b'1');native_child.stdin.flush()
    result=packet(swift_child);swift_child.wait(timeout=3);assert swift_child.returncode==0 and result['ok'] and result['original_root']==identity['root'] and result['unresolved_requests']==1
    assert packet(native_child)=={'graph_done':True};finished=True
    records.append({'mode':mode,'stage':'live','status':0,'result':result})

@@ -94,7 +94,7 @@ while its independent native request remains unresolved. Existing owner status
 handling supplies the job; no task input selects a native root or observation.
 
 Each optional native request-event entry also has a `request.state` diagnostic:
-`ingress|preparing|active|responding|unknown`. A positive phase comes only from
+`ingress|preparing|queued|active|responding|unknown`. A positive phase comes only from
 an accepted live original-root lineage sample. Its `queried_at` is the existing
 client query timestamp, separate from the SDK response's native `sampled_at`;
 the two reads are not an atomic all-client snapshot. Phase counts are the
@@ -106,3 +106,9 @@ An explicitly selected native lineage clock additionally supplies optional
 request.captured_at, distinct from request.queried_at and the SDK observation
 capture clock. Legacy lineage has no captured_at. Expired native lineage
 returns request.state unknown even if a separate SDK history remains fresh.
+
+The code-only queued-lineage option adds request.operations queued/active
+counts from the same original-root lineage capture. Positive active operations
+win over queued operations; positive queued operations precede handler phases.
+Operation counts are a separate domain from owner counts and SDK callbacks.
+Their disappearance never resolves the independent inference reservation.

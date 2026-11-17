@@ -26,5 +26,20 @@ func runNativeLineageClockTests()throws {
     observed=NativeRequestLineage(instance:instance,correlationID:id,sampleSequence:2,rootSequence:UInt64.max,found:true,uncertain:false,references:1,owners:1,ingress:0,preparing:0,active:1,responding:0,sourceCapturedAt:10000)
     // A later client query cannot refresh an old native capture.
     guard case .unknown=consumer.accept(NativeRequestLineageSample(peer:peer,sampledAt:16000,lineage:observed),now:16001),consumer.rootSequence==UInt64.max else {throw NativeControlError.invalid}
+    // The opt-in queue frame keeps operation counts separate from handler owners.
+    number(100,10000)
+    frame[4]=3;frame.append(Data(repeating:0,count:16));number(112,1,4)
+    var queued=try NativeRequestLineageWire.reply(frame,instance:instance,correlationID:correlation,version:3)
+    guard queued.operations?.queued==1,queued.operations?.active==0,queued.active==1 else {throw NativeControlError.invalid}
+    let events=NativeRequestEventsSample(peer:peer,requestedAt:10000,receivedAt:10001,
+        events:NativeRequestEvents(instance:instance,correlationID:correlation,rootSequence:UInt64.max,sampleSequence:1,sampledAt:10000,
+            identityKnown:true,sdkInitialized:true,sourceUncertain:false,host:nil,metal:nil))
+    func state(_ value:NativeRequestLineage)->String? {
+        let sample=NativeRequestLineageSample(peer:peer,sampledAt:10000,lineage:value)
+        return (NativeRequestEventStatus(attempt:0,sample:events,lineage:sample).object["request"] as? [String:Any])?["state"] as? String
+    }
+    guard state(queued)=="queued" else {throw NativeControlError.invalid}
+    number(116,1,4);queued=try NativeRequestLineageWire.reply(frame,instance:instance,correlationID:correlation,version:3)
+    guard state(queued)=="active",queued.operations?.queued==1,queued.operations?.active==1 else {throw NativeControlError.invalid}
     print("PASS: native lineage capture time stays separate from query time; legacy and unavailable clocks remain explicit; later queries do not refresh old native captures")
 }

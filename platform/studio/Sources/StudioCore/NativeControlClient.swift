@@ -137,11 +137,12 @@ struct NativeControlClient:Sendable {
     let observesSDKBackground:Bool
     let observesRequestEvents:Bool
     let sourceLineageClock:Bool
-    init(path:String,peer:NativeControlPeer,version:UInt8=2,observeBackendFences:Bool=false,observePrimaryActivity:Bool=false,observeSDKBackground:Bool=false,observeRequestEvents:Bool=false,sourceLineageClock:Bool=false) {
+    let queuedLineage:Bool
+    init(path:String,peer:NativeControlPeer,version:UInt8=2,observeBackendFences:Bool=false,observePrimaryActivity:Bool=false,observeSDKBackground:Bool=false,observeRequestEvents:Bool=false,sourceLineageClock:Bool=false,queuedLineage:Bool=false) {
         self.path=path;self.peer=peer;self.version=version;observesBackendFences=observeBackendFences;observesPrimaryActivity=observePrimaryActivity
         observesSDKBackground=observeSDKBackground
         observesRequestEvents=observeRequestEvents
-        self.sourceLineageClock=sourceLineageClock
+        self.sourceLineageClock=sourceLineageClock;self.queuedLineage=queuedLineage
     }
     func request(operation:NativeControlOperation,instance:String?=nil,sequence:UInt64=0) throws -> NativeIngressStatus {
         let data=try NativeControlWire.request(operation:operation,instance:instance,sequence:sequence,version:version)
@@ -154,12 +155,12 @@ struct NativeControlClient:Sendable {
     }
     func lineage(instance:String,correlationID:String)throws->NativeRequestLineageSample {
         let stamp=HostResources.nowMilliseconds()
-        let lineageVersion:UInt8=sourceLineageClock ? 2:1
+        let lineageVersion:UInt8=queuedLineage ? 3:sourceLineageClock ? 2:1
         let data=try NativeRequestLineageWire.request(instance:instance,correlationID:correlationID,version:lineageVersion)
-        let value=try NativeRequestLineageWire.reply(exchange(data,maximum:112),instance:instance,correlationID:correlationID,version:lineageVersion)
+        let value=try NativeRequestLineageWire.reply(exchange(data,maximum:queuedLineage ? 128:112),instance:instance,correlationID:correlationID,version:lineageVersion)
         let completed=HostResources.nowMilliseconds()
         guard stamp>=0,completed<=ActivityPolicy.maximumTimestamp,completed>=stamp,completed-stamp<=5000 else {throw NativeControlError.invalid}
-        if sourceLineageClock {
+        if sourceLineageClock || queuedLineage {
             guard let captured=value.sourceCapturedAt,(-1000...5000).contains(completed-captured) else {throw NativeControlError.unavailable}
         }
         return NativeRequestLineageSample(peer:peer,sampledAt:stamp,lineage:value)
@@ -247,7 +248,7 @@ struct NativeControlClient:Sendable {
         return NativePrimaryActivitySample(peer:peer,receivedAt:completed,registry:value)
     }
     private func exchange(_ data:Data,maximum:Int)throws->Data {
-        guard [32,64,NativePreparationWire.requestSize].contains(data.count),[64,80,88,112,NativeRequestEventsWire.responseSize,NativePrimaryActivityWire.responseSize,NativePrimaryActivityWire.queuedResponseSize,NativeRegistryActivityWire.responseSize].contains(maximum) else {throw NativeControlError.invalid}
+        guard [32,64,NativePreparationWire.requestSize].contains(data.count),[64,80,88,112,128,NativeRequestEventsWire.responseSize,NativePrimaryActivityWire.responseSize,NativePrimaryActivityWire.queuedResponseSize,NativeRegistryActivityWire.responseSize].contains(maximum) else {throw NativeControlError.invalid}
         guard path.hasPrefix("/"),path.utf8.count<104,!path.contains("\0") else {throw NativeControlError.invalid}
         var parent=stat(),socketInfo=stat()
         let directory=URL(fileURLWithPath:path).deletingLastPathComponent().path

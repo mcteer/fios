@@ -396,3 +396,27 @@ to a reused buffer, raw/foreign SDK work, all native backends or a complete
 native model/instance reservation. Null/unattributed contexts remain unknown.
 No source marker, zero callback count, original local release or completed tiny
 fixture grants all-client idle, device completion or installed admission.
+
+## Optional per-request queue observation
+
+An explicit code-only queuedLineage client selects FIQ9/FIP9 version3.
+The request remains64 bytes. The reply is128 bytes: the first112 bytes have
+version2 lineage/capture-clock fields, with version byte3; bytes112–115 hold
+queued operation count,116–119 active operation count (u32 big-endian), and
+120–127 remain zero. Both counts are0..256 with sum at most256. Versions1/2
+retain their112-byte format. The default client remains version1; no downgrade
+or installed configuration change is introduced.
+
+The existing tracker captures handler owners and queue operations under one
+mutex and one capture sequence. A queue ticket counts once for the original
+correlated request even if it retains several associated owner tokens. Other
+requests' tickets stay separate. These are existing scheduled-operation
+metadata counts, distinct from handler-owner phase counts and SDK callbacks;
+no engine algorithm or scheduling policy changes. Native capture time is
+required for this opt-in version as it is for the version2 clock option.
+
+Owner diagnostics additionally expose request.operations.{queued,active}.
+Positive active operations take state priority, then queued operations, then
+the existing handler phases. Zero operations leave handler/SDK/inference
+ownership independent. This does not certify all-client coverage, completion,
+residency or grant a dispatch reservation.
