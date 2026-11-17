@@ -8824,3 +8824,37 @@ execution label; sandbox frames keep their existing schema. Whole tasks remain
 
 Full CLI service-failure receipt SHA256:
 `5a1de89ca1c6f4e73cb886810691aedee2acbcc61d0752ac7280460add98bddd`.
+
+
+### Functional graceful manager reconnect — 2026-11-17
+
+The normal full CLI model workflow now also stops its completed private
+manager gracefully, waits for exit, and starts a replacement on the same
+private state with execution unconfigured. The replacement has a new epoch;
+the owner's completed job remains removed with revoked lease and its retained
+unresolved request. No old output is replayed. Repeating upload-end returns
+status with the original absolute deadline, no second model POST and no worker
+reservation. The two managers never open the SQLite file concurrently.
+
+Complete/reconnect, owner cancel and service-unavailable cases all pass:
+`/private/tmp/f9-manager-cli-eqiTJk/receipt.json`, SHA256
+`4a86c6b3fb6bb50561dd6fc9a8a3f3abba567bd57336f3e8ea639f0e8a1e342b`.
+Each case makes1 mock POST, ends removed with0 worker slots and retains1
+unresolved request. There is no real inference, runtime or installed-service
+action. This is a normal private manager restart, not Studio acceptance.
+
+The clean18c4e4a2a87b34bb17059cc3c693958321357b0b development package builds
+in51.965s; nine artifacts, still inactive/package_complete false. Manifest
+`f3a33bd546c8b494de507d9ab0131859d105263e8731248c181af9c5fe962921`;
+selected package-input projection
+`649e788c2ba4244ead0b936563d4f59322317e0d6eddd43f75bd746b06ebf6e7`.
+Packaged status/services/maintenance/resources/offline256GiB planning pass:
+`/private/tmp/fios-009-functional-failure-package-xkk6siur/smoke-receipt.json`,
+SHA256 `0e6cadad8f9195a7f0cf4fc64550338205b5d4b62aa78a1e7a0386bcdb0872b7`.
+The later reconnect test is separate from that package source.
+
+CI44140705982 for18c4e4a reports a failed existing Dependency audits job while
+functional platform jobs are still running. No audit findings were investigated
+and no security-related dependency work was performed, per operator scope.
+That run is not green; subsequent heads require their own exact-head result.
+Whole tasks remain39/55 complete,16 open. No merge/deployment is claimed.

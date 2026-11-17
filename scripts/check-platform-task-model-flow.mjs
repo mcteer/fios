@@ -66,7 +66,17 @@ try {
  assert.equal(posts,1);assert.equal(final.lease.deadline_at,deadline);assert.equal(final.lease.revoked,true);
  await until(()=>JSON.parse(command(cli,['--state',state,'status'],3000)).worker_reservations===0);
  assert.equal(final.unresolved_managed_requests,1);
- return {scenario,input_bytes:data.length,input_chunks:chunks,output_events:ordinal,terminal:terminal??null,failure_code:failureCode??null,state:final.state,cancelled_while_running:wasRunning,lease_read_did_not_extend:true,renewal_extended_expiry:true,deadline_unchanged:true,mock_model_posts:posts,worker_slots_after_completion:0};
+ let restartChecked=false;
+ if(scenario==='complete'){
+  manager.kill('SIGTERM');await until(()=>exited(manager),5000);
+  manager=spawn(binary,[state,standin,sha(readFileSync(standin)),'/fixture/unused.sock','sha256:'+'a'.repeat(64),'disabled'],{cwd:root,env:environment,stdio:'ignore'});children.push(manager);
+  await until(()=>{assert(!exited(manager),'Replacement private manager exited');return existsSync(join(state,'observe.sock'));});
+  const replacement=JSON.parse(command(cli,['--state',state,'status'],3000));assert.notEqual(replacement.epoch,status.epoch);
+  const restored=task('job.status',{job});assert.equal(restored.state,'removed');assert.equal(restored.lease.revoked,true);assert.equal(restored.event,undefined);assert.equal(restored.unresolved_managed_requests,1);
+  const acknowledgement=task('job.create',{phase:'end',job});assert.equal(acknowledgement.state,'removed');assert.equal(acknowledgement.lease.deadline_at,deadline);
+  await delay(50);assert.equal(posts,1);assert.equal(JSON.parse(command(cli,['--state',state,'status'],3000)).worker_reservations,0);restartChecked=true;
+ }
+ return {scenario,restart_checked:restartChecked,input_bytes:data.length,input_chunks:chunks,output_events:ordinal,terminal:terminal??null,failure_code:failureCode??null,state:final.state,cancelled_while_running:wasRunning,lease_read_did_not_extend:true,renewal_extended_expiry:true,deadline_unchanged:true,mock_model_posts:posts,worker_slots_after_completion:0};
 } finally {
  if(manager&&!exited(manager))manager.kill('SIGTERM');if(mock&&!exited(mock))mock.stdin.end();
  await until(()=>children.every(exited),5000);

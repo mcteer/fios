@@ -1253,3 +1253,12 @@ frame reproduces the dropped label before the fix and passes Debug/optimized
 afterward. Full CLI/installed-harness complete/cancel/mock503 cases pass with
 1 mock POST/case,0 worker slots afterward and no real inference/runtime action.
 No native or installed acceptance; T045 remains open and39/55 whole tasks.
+
+
+2026-11-17 functional reconnect (T045): actual private manager graceful
+replacement preserves completed owner status, revoked lease, original deadline
+and unresolved request, with no old output or upload-end inference replay.
+The normal three-case CLI/harness workflow passes;1 mock POST/case and0 worker
+slots afterward. Clean18c4e4a package smoke also passes. Existing CI audit-job
+failure remains outside this functional work and prevents a green overall run.
+No whole-task/native/installed acceptance;39/55 complete,16 open.
