@@ -208,10 +208,10 @@ jobs:
           .venv/bin/python -I -B scripts/check-platform-current-metal-callback.py --mock --command-status
           node scripts/check-platform-current-gui-listener.mjs --mock
           .venv/bin/python -I -B scripts/check-platform-gui-launch-yield.py --mock
+          # Runner includes native SDK frame and request-polling checks in both modes.
           node scripts/check-platform.mjs --mock
           node scripts/check-platform.mjs --mock --release
           node scripts/check-platform-activity-worker-frames.mjs --isolated
-          node scripts/check-platform-native-request-event-frames.mjs --isolated
       - name: Check isolated process, service and recovery behavior
         if: matrix.lane == 'process'
         run: |

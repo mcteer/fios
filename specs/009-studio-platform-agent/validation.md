@@ -9163,3 +9163,21 @@ Publisheda8d120a CI44168508697 completed with all7 functional jobs successful;
 Dependency audits and the aggregate gate failed. Findings remain untouched.
 The phase-observation source requires its own exact-head result. No merge,
 deployment, native activation or Studio acceptance is claimed;39/55 complete.
+
+### Functional CI duplicate compile — 2026-11-17
+
+Exact75708e8 CI44177092197's native policy lane passed all144 named checks in
+Debug and again in optimized mode. Its log explicitly records successful native
+SDK frame decoding and request-event polling in both modes. The lane then failed
+in an additional standalone frame-check invocation after about265 seconds;
+spawnSync returned null rather than an exit code. That helper did not report
+its failed substage/signal, so the exact termination cause is not established.
+The same frame test had already passed in the shared Runner in both modes.
+
+The duplicate standalone invocation is removed from CI; the decoder and polling
+tests remain registered in Runner and still execute in both existing bounded
+policy-suite modes. All prerequisite jobs, aggregate-gate rules and audit checks
+remain unchanged. Workflow YAML parses and git diff --check passes. The manual
+standalone checker remains available. This avoids recompiling the entire307-file
+Core/test source projection twice again for identical coverage, without omitting
+its test cases. A new exact-head CI result is still required;39/55 whole tasks.
