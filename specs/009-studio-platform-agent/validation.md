@@ -8125,3 +8125,23 @@ pass. The first full run failed only the wrapper's obsolete11-case assertion;
 that wrapper now requires12, and the complete suite was rerun successfully.
 Logs: `/private/tmp/fios-009-configuration-restore-{tests-final,npm-final,uv}.log`.
 Clean committed-source package qualification remains pending below.
+
+Clean committed1e76c9c qualification subsequently passes190 declared package
+inputs/9 inactive artifacts, both host artifact/configuration/registration/
+Python-policy proposals, actual public package startup, source recheck and
+old9→new9→old9 stopped recovery. Manifest SHA256
+`0ff3d67f5044137fd1ef6226309caec56dc19a52a06ff10c8a762fa96e63d945`;
+source projection `b05e0759e5cb9600c1fb187dd2db80a88d79ff66d7d245812d2d775dcdd6e204`.
+Qualification `/private/tmp/fios-009-restore-package-b3ql1zqu/qualification.json`,
+SHA256 `a53f2bbb6b99febbda4422a68e61e84dc137bbf4de800e1eba0e03800c283479`.
+
+Both clean-source restore CLIs correctly refuse the actual Swift-produced
+snapshot of user-owned originals. Their positive controls deliberately use
+synthetic root originalUID metadata and preserve original/synthetic bytes;
+this is not actual root-owned configuration or installed rollback acceptance.
+Restore receipt SHA256
+`ecd718b6ce5ab4ee365e6e798b46b4495eba430ee48741ad71dd3b432d3620f5`.
+Deployment tests4/4 and the hardened ARM64 container stopped-backup/upgrade/
+automatic-rollback rehearsal pass (peak612MiB). No production app transaction,
+privileged command, native activation or new real model plan/POST occurred.
+Package-declared inputs are not whole-repository/native provenance.
