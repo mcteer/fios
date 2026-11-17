@@ -1,0 +1,52 @@
+// Actual patched context method, synthetic backend ports only.
+#include <cstdint>
+#include <cstdio>
+#include <cstring>
+#include <memory>
+#include <stdexcept>
+#include <utility>
+#include <vector>
+struct Backend { bool cpu=false,device=true,registry=true,available=true,throws=false;int32_t status=1; };
+using ggml_backend_t=Backend*;
+static int status_calls=0;
+static bool ggml_backend_is_cpu(Backend* b) {return b->cpu;}
+static Backend* ggml_backend_get_device(Backend* b) {return b->device?b:nullptr;}
+static Backend* ggml_backend_dev_backend_reg(Backend* b) {return b->registry?b:nullptr;}
+static int32_t checked_backend(Backend* b) {++status_calls;if(b->throws)throw std::runtime_error("modeled callback");return b->status;}
+static void* ggml_backend_reg_get_proc_address(Backend* b,const char* name) {
+ return b->available&&std::strcmp(name,"ggml_backend_fios_synchronize_checked_v1")==0?reinterpret_cast<void*>(&checked_backend):nullptr;
+}
+struct llama_context {
+ bool fios_sync_uncertain=false,throw_sync=false;
+ int calls=0;
+ std::vector<std::unique_ptr<Backend>> backends;
+ void synchronize() {++calls;if(throw_sync)throw std::runtime_error("modeled sync");}
+ int32_t fios_synchronize_checked();
+};
+// FIOS_ACTUAL_CHECKED_METHOD
+int main(int argc,char** argv) {
+ if(argc!=2)return 2;
+ llama_context ctx;const char* mode=argv[1];
+ if(std::strcmp(mode,"empty")!=0)ctx.backends.emplace_back(std::make_unique<Backend>());
+ if(std::strcmp(mode,"null-backend")==0)ctx.backends[0].reset();
+ else if(std::strcmp(mode,"cpu")==0)ctx.backends[0]->cpu=true;
+ else if(std::strcmp(mode,"unsupported")==0)ctx.backends[0]->available=false;
+ else if(std::strcmp(mode,"no-device")==0)ctx.backends[0]->device=false;
+ else if(std::strcmp(mode,"no-registry")==0)ctx.backends[0]->registry=false;
+ else if(std::strcmp(mode,"failure")==0)ctx.backends[0]->status=0;
+ else if(std::strcmp(mode,"invalid-status")==0)ctx.backends[0]->status=2;
+ else if(std::strcmp(mode,"exception")==0)ctx.backends[0]->throws=true;
+ else if(std::strcmp(mode,"sync-exception")==0)ctx.throw_sync=true;
+ else if(std::strcmp(mode,"limit")==0)for(int i=0;i<64;++i)ctx.backends.emplace_back(std::make_unique<Backend>());
+ const bool healthy=std::strcmp(mode,"cpu")==0||std::strcmp(mode,"healthy")==0;
+ const int32_t result=ctx.fios_synchronize_checked();
+ if(result!=(healthy?1:0)||ctx.fios_sync_uncertain==healthy)return 3;
+ if(healthy) {if(ctx.calls!=1||status_calls!=(std::strcmp(mode,"cpu")==0?0:1))return 4;}
+ else {
+  const int calls=ctx.calls,status=status_calls;
+  for(auto& b:ctx.backends)if(b){b->cpu=true;b->status=1;b->throws=false;}
+  ctx.throw_sync=false;
+  if(ctx.fios_synchronize_checked()!=0||ctx.calls!=calls||status_calls!=status)return 5;
+ }
+ std::puts("PASS: actual source context checked synchronization, synthetic ports; no native authority");
+}

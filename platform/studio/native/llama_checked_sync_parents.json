@@ -1,0 +1,9 @@
+{
+  "include/llama.h": "c9a5f025ad7dbf07eda6660c8ff2c32cd80c07ba440d80728707a9c9d13c1bc3",
+  "src/llama-context.h": "9cd5945e65ad5a47906a9af5303895b1e7b305da285c64421cc50841e5c2ae58",
+  "src/llama-context.cpp": "904c41cb688900936db135159f37c1b9803bdb79ce04a25c326400078a82532f",
+  "ggml/src/ggml-metal/ggml-metal-context.h": "9f2d9d91ecc54470a6b0d19109a55871cc362212bfe79ba7ea8d4a7798068b98",
+  "ggml/src/ggml-metal/ggml-metal-context.m": "9b68c01cd68c6a9e79fbf6b0fcfcc5108eb6d0b614b5de48c8be30681ae55acf",
+  "ggml/src/ggml-metal/ggml-metal.cpp": "3392a2ecedd51fda5f90d3b152dd7f9eb7d819a56fbf2d6ac71b9b0bb4b1976c",
+  "ggml/src/ggml-blas/ggml-blas.cpp": "6dc134386348b01749e8b7d403ed63f8662ffe53cb526269191fec2c6c4db24b"
+}
