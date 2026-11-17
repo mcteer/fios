@@ -8650,3 +8650,30 @@ The package remains observation-only and `package_complete:false`. No installed
 service action, model request, installation or deployment occurred. Published
 f80c053 CI44120434840 completed successfully; this package has the separately
 identified6c3545f source. Whole tasks remain39/55 complete,16 open.
+
+
+### Functional task CLI request correlation — 2026-11-17
+
+An ordinary local socket round trip reproduced the CLI replacing the request
+UUID supplied on stdin: `/private/tmp/fios-009-task-client-zHNvVx/debug-run.log`
+reports “Task CLI replaced the caller request ID.” An initial test compile
+needed a whitespace correction; it was not counted as a behavior failure.
+The client now forwards its already-decoded request unchanged; existing clients
+without an incoming request still generate their normal fresh UUID.
+
+Normal stdin/socket/JSON request-reply checks pass Debug and optimized, four
+compile/run records: `/private/tmp/fios-009-task-client-LBfyoR/receipt.json`,
+SHA256 `d10c93351ae4a14c0d33f9538f84d46b7097b808cdc8ea78249d6b50e843fc31`.
+The test is registered with the normal platform runner. A release studioctl
+build passes in27.93s; the actual rebuilt CLI preserves both original UUID and
+payload for job.status and artifact.read against a private local mock server,
+including the artifact stream ID: `/private/tmp/fios009-cli-jxcgh3mu/receipt.json`.
+No model, runtime, installed service, activation or deployment action occurred.
+The earlier clean6c3545f development package does not include this later fix.
+Whole tasks remain39/55 complete,16 open.
+
+Shared-client regression: normal real-manager/CLI status integration passes
+9 states,18 service views and2 aged views, with0 native actions. Log
+`/private/tmp/fios-009-task-client-service-regression.log`; private fixture
+`/private/tmp/fios-009-service-status-EIHMbv`. This checks the existing
+generated-ID observation/operator call path alongside the preserved-ID task path.

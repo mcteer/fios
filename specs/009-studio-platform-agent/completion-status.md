@@ -1,6 +1,23 @@
 # Spec009 completion status
 
-Updated2026-11-16. **39/55 whole tasks complete;16 open.**
+Updated2026-11-17. **39/55 whole tasks complete;16 open.**
+
+
+## Current continuation scope
+
+The operator has repeatedly excluded security-related work. Continue ordinary
+functional implementation and normal workflow tests only; do not resume native
+engine lifetime/fault campaigns or security hardening. The uncommitted native
+reader work is set aside. No task becomes complete because excluded work is
+skipped. Installed activation, disruptive acceptance and merge remain separately
+gated.
+
+The latest functional increments add readable service status, restart-window
+waiting status, job lease timing and current state after output-timeout
+cancellation. Normal Debug/optimized workflows and clean packaged manager/CLI
+checks pass; they do not close a whole task. See validation for exact source and
+package revisions. The task CLI also preserves the submitted request UUID; normal Debug/optimized
+socket round trips and two actual rebuilt-CLI workflows pass.
 
 The central missing capability is a trustworthy, atomic native admission and
 completion boundary. Current source provides ownership tracking, conservative

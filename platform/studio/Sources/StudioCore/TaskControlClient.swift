@@ -26,6 +26,6 @@ public enum TaskControlClient {
         }
         let request=try ControlRequest.decode(data)
         guard ControlRole.task.allows(request.operation) else {throw ControlError.unauthorized}
-        return try ControlClient.request(path:directory.appendingPathComponent("task.sock").path,operation:request.operation,payload:request.payload)
+        return try ControlClient.request(path:directory.appendingPathComponent("task.sock").path,request:request)
     }
 }

@@ -1199,3 +1199,14 @@ job state, lease details and unresolved-request count after cancellation.
 Ordinary JSON job-flow checks reproduce the earlier stale response and pass
 Debug/optimized after the fix. Output retention and cancellation behavior are
 unchanged; no runtime/model operation occurs. Whole39/55 complete,16 open.
+
+
+2026-11-17 functional task CLI correlation (T045): the stdin task request
+now reaches the local task socket with its original UUID. Previously the
+forwarder silently generated a second ID, preventing callers from matching
+responses or request-bound streams to their submitted request. The ordinary
+local round trip reproduces the mismatch before the fix and passes in Debug
+and optimized builds afterward. The optimized actual CLI preserves ID/payload
+for job.status and artifact.read with a local mock server. No model request,
+runtime action or installed service change; T045 remains open and whole-task
+progress remains39/55.

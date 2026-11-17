@@ -68,6 +68,7 @@ struct PolicyTestRunner {
             ("task mailbox",runTaskMailboxTests),
             ("composed pressure",runComposedPressureTests),
             ("task commands",runTaskCommandTests),
+            ("task CLI round trip",runTaskClientTests),
             ("task owner",runTaskOwnerTests),
             ("async artifacts",runAsyncArtifactTests),
             ("artifact disk admission",runArtifactDiskAdmissionTests),

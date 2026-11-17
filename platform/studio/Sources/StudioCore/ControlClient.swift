@@ -3,6 +3,10 @@ import Darwin
 
 public enum ControlClient {
     public static func request(path:String,operation:ControlOperation,payload:[String:Any] = [:]) throws -> [String:Any] {
+        try request(path:path,request:ControlRequest(id:UUID().uuidString.lowercased(),operation:operation,payload:payload))
+    }
+    // Forward an already decoded request without changing its correlation ID.
+    static func request(path:String,request:ControlRequest) throws -> [String:Any] {
         guard path.hasPrefix("/"), path.utf8.count < 104, !path.contains("\0") else { throw ControlError.invalid_request }
         let fd=socket(AF_UNIX,SOCK_STREAM,0)
         guard fd >= 0 else { throw ControlError.internal_error }; defer { close(fd) }
@@ -20,8 +24,8 @@ public enum ControlClient {
         var uid:uid_t=0, gid:gid_t=0
         guard getpeereid(fd,&uid,&gid) == 0, uid == geteuid() else { throw ControlError.unauthorized }
         _ = fcntl(fd,F_SETFL,O_NONBLOCK)
-        let id=UUID().uuidString.lowercased()
-        let data=try JSONSerialization.data(withJSONObject:["version":1,"id":id,"operation":operation.rawValue,"payload":payload])
+        let id=request.id
+        let data=try JSONSerialization.data(withJSONObject:["version":1,"id":id,"operation":request.operation.rawValue,"payload":request.payload])
         let deadline=ProcessInfo.processInfo.systemUptime + 2
         try ControlFrames.write(fd:fd,data:data,deadline:deadline)
         let received=try ControlFrames.read(fd:fd,deadline:deadline)
