@@ -11,3 +11,8 @@ The isolated checker reverses/reapplies the exact one-path patch and checks pare
 ```
 
 Selected source qualification passes, including four unbound-object ABI checks, enabled35/35 semantic and32/32 link steps, unit-boundary validation and four private empty-model/current-Core checks. T002/T018–T022 remain open;39/55 whole tasks complete. No additional inference plan, installation or native activation is authorized by this component.
+
+The later optional [bounded cleanup increment](engram-bounded-cleanup.md) adds
+CPU join preflight, sticky cleanup failure and parent retention checks. It keeps
+the original unproven-participant fence and all native/installed acceptance gaps;
+its actual Shared object controls remain separate from modeled table/host ports.

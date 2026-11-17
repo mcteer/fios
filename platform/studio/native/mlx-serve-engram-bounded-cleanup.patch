@@ -1,0 +1,171 @@
+--- a/src/plugins/deepseek_v41/engram.zig
++++ b/src/plugins/deepseek_v41/engram.zig
+@@ -619,6 +619,13 @@
+ /// Engram rows read ahead on a thread of its own: per grid (a run of `len` tokens from position `at`),
+ /// layer by layer and span by span, the order the forward asks for them, so the SSD reads hide behind
+ /// the GPU work of the spans, layers and chunks before.
++const fios_prefetch_cleanup_failed = @import("../../sdk/util/engram_prefetch_uncertainty.zig").cleanup_storage;
++pub fn fiosPrefetchCleanupUncertain() bool { return fios_prefetch_cleanup_failed.get().load(.acquire); }
++fn fiosMarkPrefetchCleanupUncertain() void {
++    fios_prefetch_cleanup_failed.get().store(true, .release);
++    if (comptime @import("build_options").fios_source_sdk) fios_origins.fios_native_request_owners_uncertain();
++}
++
+ pub const Prefetch = struct {
+     gpa: std.mem.Allocator,
+     tables: []const *const Table,
+@@ -627,6 +634,8 @@
+     nc: usize,
+     stop: std.atomic.Value(bool) = .init(false),
+     thread: ?std.Thread = null,
++    fios_join_pending: bool = false,
++    fios_joined: std.atomic.Value(bool) = .init(false),
+     // Original host-owned request group only; no positive native proof.
+     fios_origin: ?*anyopaque = null,
+     fios_origin_retirement_known: std.atomic.Value(bool) = .init(true),
+@@ -661,6 +670,7 @@
+     }
+ 
+     fn startOrdered(gpa: std.mem.Allocator, tables: []const *const Table, specs: []const Spec, nc: usize, span: usize, across: bool) !*Prefetch {
++        if (comptime @import("build_options").fios_source_sdk) if (fiosPrefetchCleanupUncertain()) return error.FiosPrefetchCleanupUncertain;
+         const self = try gpa.create(Prefetch);
+         errdefer gpa.destroy(self);
+         const own_tables = try gpa.dupe(*const Table, tables);
+@@ -763,10 +773,50 @@
+         return error.EngramRead;
+     }
+ 
++    fn fiosJoin(self: *Prefetch, thread: std.Thread) void {
++        thread.join();
++        // Last access from the joiner; the parent retains this stable allocation.
++        self.fios_joined.store(true, .release);
++    }
++    // Serialized parent-only CPU preflight. It neither frees storage nor
++    // supplies native/device terminality. Refusal permanently retains custody.
++    pub fn fiosStopWithin(self: *Prefetch, timeout_ns: u64) bool {
++        if (fiosPrefetchCleanupUncertain()) return false;
++        self.stop.store(true, .release);
++        if (!self.fios_join_pending) {
++            if (self.thread) |thread| {
++                const joiner = std.Thread.spawn(.{}, fiosJoin, .{ self, thread }) catch {
++                    fiosMarkPrefetchCleanupUncertain(); return false;
++                };
++                self.fios_join_pending = true;
++                self.thread = null;
++                joiner.detach();
++            } else self.fios_joined.store(true, .release);
++        }
++        const io = std.Io.Threaded.global_single_threaded.io();
++        const began = std.Io.Timestamp.now(io, .boot);
++        while (!self.fios_joined.load(.acquire)) {
++            const elapsed = began.untilNow(io, .boot).nanoseconds;
++            if (elapsed < 0 or elapsed >= timeout_ns) {
++                fiosMarkPrefetchCleanupUncertain(); return false;
++            }
++            const delay: std.c.timespec = .{ .sec = 0, .nsec = std.time.ns_per_ms };
++            _ = std.c.nanosleep(&delay, null);
++        }
++        if (!self.fios_origin_retirement_known.load(.acquire) or fiosPrefetchCleanupUncertain()) {
++            fiosMarkPrefetchCleanupUncertain(); return false;
++        }
++        return true;
++    }
++
+     /// Stops the thread, frees what was never taken and the prefetch itself.
+     pub fn finish(self: *Prefetch) void {
+-        self.stop.store(true, .release);
+-        if (self.thread) |t| t.join();
++        if (comptime @import("build_options").fios_source_sdk) {
++            if (!self.fiosStopWithin(2 * std.time.ns_per_s)) return;
++        } else {
++            self.stop.store(true, .release);
++            if (self.thread) |t| t.join();
++        }
+         if (comptime @import("build_options").fios_source_sdk) {
+             if (self.fios_origin) |origin| {
+                 if (self.fios_origin_retirement_known.load(.acquire)) {
+--- a/src/plugins/deepseek_v41/deepseek_v41.zig
++++ b/src/plugins/deepseek_v41/deepseek_v41.zig
+@@ -465,14 +465,25 @@
+     /// The last draft's time, host sync included (`DsparkProfile`).
+     ds_draft_ns: u64 = 0,
+ 
+-    fn dropAhead(self: *Dsv41Model) void {
++    pub fn fiosPreparePrefetchRelease(self: *Dsv41Model) bool {
++        if (comptime @import("build_options").fios_source_sdk) {
++            if (engram.fiosPrefetchCleanupUncertain()) return false;
++            if (self.ahead) |a| if (!a.fiosStopWithin(2 * std.time.ns_per_s)) return false;
++        }
++        return true;
++    }
++    fn dropAhead(self: *Dsv41Model) bool {
++        if (!self.fiosPreparePrefetchRelease()) return false;
+         if (self.ahead) |a| a.finish();
++        if (comptime @import("build_options").fios_source_sdk) if (engram.fiosPrefetchCleanupUncertain()) return false;
+         self.ahead = null;
++        return true;
+     }
+ 
+     pub fn deinit(self: *Dsv41Model) void {
++        if (!self.fiosPreparePrefetchRelease()) return;
+         if (self.dec_state) |*st| st.deinit();
+-        self.dropAhead();
++        if (!self.dropAhead()) return;
+         self.gpa.free(self.prompt);
+         for (self.engrams) |*e| e.table.close();
+         self.gpa.free(self.engrams);
+@@ -3833,6 +3844,7 @@
+ /// previous chunk started for it, or a new one; either way the prompt's next chunk is read behind. `m.ahead`
+ /// keeps a prefetch that still has a chunk to hand over; the caller finishes the other.
+ fn engramPrefetch(m: *Dsv41Model, gpa: std.mem.Allocator, st: *State, tables: []const *const engram.Table, ids: []const u32, rows: []const u32, span: usize, images: bool) !*engram.Prefetch {
++    if (comptime @import("build_options").fios_source_sdk) if (engram.fiosPrefetchCleanupUncertain()) return error.FiosPrefetchCleanupUncertain;
+     const hs = &m.hash.?;
+     const p0 = st.n;
+     const L = ids.len;
+@@ -3840,7 +3852,7 @@
+     const mine = p1 <= m.prompt.len and std.mem.eql(u32, ids, m.prompt[p0..p1]);
+     const adopted: ?*engram.Prefetch = if (m.ahead) |a| if (mine and a.covers(p0, L)) a else null else null;
+     errdefer if (adopted) |a| a.finish();
+-    if (m.ahead != null and adopted == null) m.dropAhead();
++    if (m.ahead != null and adopted == null and !m.dropAhead()) return error.FiosPrefetchCleanupUncertain;
+     m.ahead = null;
+ 
+     // The next chunk is expected as wide as this one; hist already holds this chunk.
+@@ -5058,7 +5070,7 @@
+ 
+ /// Arms only this live State; candidate identity covers the boundary's ids and image rows.
+ pub fn armPrompt(m: *Dsv41Model, prompt: []const u32, vision_rows: ?A, capture: bool) !void {
+-    m.dropAhead();
++    if (!m.dropAhead()) return error.FiosPrefetchCleanupUncertain;
+     m.gpa.free(m.prompt);
+     m.prompt = &.{};
+     m.prompt = try m.gpa.dupe(u32, prompt);
+--- a/src/plugins/deepseek_v41/plugin.zig
++++ b/src/plugins/deepseek_v41/plugin.zig
+@@ -346,6 +346,7 @@
+ 
+ fn unload(mp: *anyopaque) callconv(.c) void {
+     const m: *Model = @ptrCast(@alignCast(mp));
++    if (!m.mdl.fiosPreparePrefetchRelease()) return;
+     if (!prepareBankRelease(m)) return;
+     closeBank(m);
+     if (m.tower) |*t| t.deinit();
+@@ -354,6 +355,7 @@
+     m.parked.deinit(gpa);
+     if (m.idle) |*k| k.deinit();
+     m.mdl.deinit();
++    if (!m.mdl.fiosPreparePrefetchRelease()) return;
+     m.weights.deinit();
+     gpa.destroy(m);
+ }
+--- a/src/sdk/util/engram_prefetch_uncertainty.zig
++++ b/src/sdk/util/engram_prefetch_uncertainty.zig
+@@ -3,4 +3,7 @@
+ const std = @import("std");
+ const shared_util = @import("shared.zig");
+ pub const storage = shared_util.Shared(std.atomic.Value(bool), "fios_current_engram_prefetch_uncertainty", .init(false));
+-pub fn known() bool { return storage.get().load(.acquire); }
++// Separate sticky cleanup failure. Host and plugin units must resolve this
++// same storage; a joined worker never clears either independent latch.
++pub const cleanup_storage = shared_util.Shared(std.atomic.Value(bool), "fios_engram_prefetch_cleanup_failed", .init(false));
++pub fn known() bool { return storage.get().load(.acquire) or cleanup_storage.get().load(.acquire); }

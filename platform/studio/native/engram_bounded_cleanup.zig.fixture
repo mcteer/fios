@@ -1,0 +1,79 @@
+const std=@import("std");
+const options=@import("build_options");
+const fios_origins=@import("../../sdk/util/warm_request_origins.zig");
+const fios_unproven_prefetch=@import("../../sdk/util/engram_prefetch_uncertainty.zig").storage;
+threadlocal var context:u64=0;
+var captures=std.atomic.Value(u32).init(0);
+var releases=std.atomic.Value(u32).init(0);
+var uncertainty_calls=std.atomic.Value(u32).init(0);
+var reads=std.atomic.Value(u32).init(0);
+var observed=std.atomic.Value(u64).init(0);
+var blocked=std.atomic.Value(bool).init(false);
+var unblock=std.atomic.Value(bool).init(false);
+var missing=false;
+var refuse_enter=false;
+var refuse_leave=false;
+// MODELED_HOST_ABI_BEGIN
+export fn fios_native_request_owners_capture() ?*anyopaque {if(missing)return null;_=captures.fetchAdd(1,.acq_rel);return @ptrFromInt(4096);}
+export fn fios_native_request_owners_enter(p:?*anyopaque)u64 {if(p==null or refuse_enter)return 0;context=17;return 1;}
+export fn fios_native_request_owners_leave(p:u64)c_int {if(p!=1 or context!=17 or refuse_leave)return 1;context=0;return 0;}
+export fn fios_native_request_owners_release(_: ?*anyopaque)void {_=releases.fetchAdd(1,.acq_rel);}
+export fn fios_native_request_owners_uncertain()void {_=uncertainty_calls.fetchAdd(1,.acq_rel);}
+// MODELED_HOST_ABI_END
+const Table=struct {
+ const Raw=struct {fn deinit(_: @This(),_:std.mem.Allocator)void{}};
+ fn read(_: *const Table,_:std.mem.Allocator,_:[]const u32)!Raw {observed.store(context,.release);_=reads.fetchAdd(1,.acq_rel);while(blocked.load(.acquire) and !unblock.load(.acquire))tick();return .{};}
+};
+fn tick()void {const ts:std.c.timespec=.{.sec=0,.nsec=std.time.ns_per_ms};_=std.c.nanosleep(&ts,null);}
+fn waitRead()!void {for(0..2000)|_| {if(reads.load(.acquire)>0)return;tick();}return error.TestTimeout;}
+fn start()!*Prefetch {const t=struct{var value=Table{};};return Prefetch.start(std.heap.c_allocator,&.{&t.value},&.{.{.at=0,.len=1,.ids=&.{7}}},1,1);}
+fn waitJoined(p:*Prefetch)!void {for(0..2000)|_| {if(p.fios_joined.load(.acquire))return;tick();}return error.JoinTimeout;}
+const engram=@This();
+const Dsv41Model=struct {
+ ahead:?*Prefetch=null,
+ @@MODEL_PREFLIGHT@@
+};
+test "bounded model preflight refuses before modeled parent destruction" {
+ blocked.store(true,.release);const p=try start();try waitRead();var model=Dsv41Model{.ahead=p};
+ var destroyed:u32=0;if(model.fiosPreparePrefetchRelease())destroyed+=1;
+ try std.testing.expectEqual(@as(u32,0),destroyed);try std.testing.expect(fiosPrefetchCleanupUncertain());
+ try std.testing.expect(model.ahead==p and p.grids.len==1 and p.fios_origin!=null);
+ unblock.store(true,.release);try waitJoined(p);
+ try std.testing.expect(!model.fiosPreparePrefetchRelease());try std.testing.expectEqual(@as(u32,0),releases.load(.acquire));
+}
+test "bounded prefetch healthy join precedes release" {
+ const p=try start();try waitRead();try std.testing.expect(p.fiosStopWithin(std.time.ns_per_s));
+ try std.testing.expectEqual(@as(u32,0),releases.load(.acquire));
+ p.finish();try std.testing.expectEqual(@as(u32,1),releases.load(.acquire));
+ try std.testing.expect(!fiosPrefetchCleanupUncertain());
+ try std.testing.expect(fios_unproven_prefetch.get().load(.acquire));
+}
+test "bounded prefetch timeout retains allocation and original after late join" {
+ blocked.store(true,.release);const p=try start();try waitRead();
+ try std.testing.expect(!p.fiosStopWithin(std.time.ns_per_ms));
+ try std.testing.expect(fiosPrefetchCleanupUncertain());try std.testing.expectEqual(@as(u32,0),releases.load(.acquire));
+ try std.testing.expect(p.grids.len==1 and p.tables.len==1 and p.fios_origin!=null);
+ try std.testing.expectError(error.FiosPrefetchCleanupUncertain,start());
+ try std.testing.expectEqual(@as(u32,1),captures.load(.acquire));
+ unblock.store(true,.release);try waitJoined(p);
+ try std.testing.expect(!p.fiosStopWithin(std.time.ns_per_s));p.finish();
+ try std.testing.expectEqual(@as(u32,0),releases.load(.acquire));
+ try std.testing.expect(p.grids.len==1 and p.fios_origin!=null and uncertainty_calls.load(.acquire)>0);
+}
+test "bounded prefetch restoration failure quarantines complete object" {
+ refuse_leave=true;const p=try start();try waitRead();
+ try std.testing.expect(!p.fiosStopWithin(std.time.ns_per_s));p.finish();
+ try std.testing.expect(fiosPrefetchCleanupUncertain());try std.testing.expectEqual(@as(u32,0),releases.load(.acquire));
+ try std.testing.expect(p.grids.len==1 and p.fios_origin!=null);
+}
+test "bounded prefetch entry refusal quarantines without IO" {
+ refuse_enter=true;const p=try start();
+ try std.testing.expect(!p.fiosStopWithin(std.time.ns_per_s));p.finish();
+ try std.testing.expectEqual(@as(u32,0),reads.load(.acquire));try std.testing.expectEqual(@as(u32,0),releases.load(.acquire));
+ try std.testing.expect(p.grids.len==1 and p.fios_origin!=null);
+}
+test "bounded prefetch legacy finish remains ordinary" {
+ const p=try start();try waitRead();p.finish();try std.testing.expectEqual(@as(u32,0),captures.load(.acquire));
+ try std.testing.expect(!fiosPrefetchCleanupUncertain());
+}
+@@PREFETCH@@

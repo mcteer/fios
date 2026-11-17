@@ -1,0 +1,4 @@
+pub const mlx_serve_unit=true;
+const marker=@import("sdk/util/engram_prefetch_uncertainty.zig");
+export fn fios_fixture_unit_mark()void {marker.cleanup_storage.get().store(true,.release);}
+export fn fios_fixture_unit_known()c_int {return if(marker.known())1 else 0;}

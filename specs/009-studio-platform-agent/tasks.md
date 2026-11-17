@@ -1109,3 +1109,17 @@ preparation/retirement regressions (105 candidate refusal POSTs, zero inference)
 Actual manager integration and208 Node/116 installed Python checks pass.
 These partial T018/T019 controls close no whole task: **39/55**. Full positive
 modality/slow-response/all-client completion/admission acceptance remains required.
+
+T018/T021/T027 continuation: the optional Engram bounded CPU cleanup increment
+has22 component records, including two expected old void-join failures, actual
+Prefetch/model-preflight methods with modeled IO/host ports and actual shared
+host/plugin object linkage. Full corrected native compilation/startup is in
+progress. The prior negative coverage marker remains sticky; no whole task or
+positive native authority is completed. **39/55** whole tasks remain complete.
+
+The corrected Engram increment subsequently passes strict35/32/20 and default
+native builds, both startup modes and actual manager v3 integration, plus the
+22 component records and208 Node/116 installed Python tests. Four source paths
+change within8,395 rechecked selected files. This does not qualify complete model
+parent/physical fault/native acceptance or remove the older coverage gap;
+T002/T018–T022/T027 remain open, **39/55** whole tasks complete.

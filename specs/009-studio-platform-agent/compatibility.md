@@ -659,3 +659,17 @@ It checks declarations without executing them. This resolves the compatibility
 reader gap for new data-only metadata; historical refused capsules remain
 unchanged. G2/all-client native admission, physical completion and installed
 acceptance remain open; no model plan or POST occurs.
+
+## Current authorized hardware/OS refresh —2026-11-16
+
+Using the existing strict-host-key, batch-only read-only SSH inventory scope,
+fixed `sysctl -n hw.memsize hw.model machdep.cpu.brand_string` and
+`sw_vers -productVersion` queries succeeded on both exact `.lab` host aliases.
+Both report274,877,906,944 bytes (256GiB), hardware modelMac15,14, Apple M3 Ultra
+and macOS27.2.1. Earlier27.0.1 inventory remains historical. This refresh does
+not requalify old native receipts, attest installed artifacts or establish
+all-client/native admission, GPU idle or Studio resource acceptance. No model request or runtime/service actuation occurred; SSH/key and network
+configuration were unchanged.
+Receipt `/private/tmp/fios-009-studio-inventory-ru5zla9p/receipt.json`, SHA256
+`25dd7ce74c1c4477493472c9ac94e72709c2e9ce00a5b8c66700f88cc4794e05`.
+G2/T002 and installed/operational acceptance remain open.

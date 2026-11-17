@@ -8233,3 +8233,58 @@ Exact e658354 CI44008196270 passed all nine checks. This later route increment
 requires its own latest-head CI; no merge, deployment or native installation
 is established. Whole tasks remain39/55; positive modality/slow-response/all-client
 native acceptance remains open.
+
+### Engram bounded CPU cleanup continuation
+
+The original joined Prefetch finish could wait without a finite parent budget.
+The optional four-file increment adds source-mode bounded join preflight,
+permanent cleanup failure, original descriptor/storage quarantine, publication
+refusal after failure and enclosing model/unload/prompt-replacement checks.
+Legacy behavior and the independent unproven-participant marker are retained.
+
+22 component records pass, including two expected failures of old void-join
+compatibility controls,12 actual-function CPU/thread controls and six actual
+host/plugin object build/link/runtime stages in Debug/ReleaseSafe. Synthetic
+table/host ABI ports are explicit; the model destruction edge is modeled.
+No actual loaded model, GPU work or physical backend fault is exercised.
+Receipt `/private/tmp/fios-009-engram-bounded-h56fcdr0/receipt.json`, SHA256
+`cd92b7dc2f53f6f8bf8cab1ab5f5bc7bd9ca65c94b5ecd8961646e85e270fa33`.
+
+An earlier candidate placed the latch in the plugin module rather than the
+existing host-visible SDK utility. Its private compiler process group was
+stopped after92.58s with status-15; no native/model process was stopped. Retained
+workspace `/private/tmp/fios-009-engram-cleanup-native-p1gtl2mz` is superseded,
+not qualified. The corrected build is separate and still in progress. Neither
+local join nor later cleanup can clear independent native uncertainty or supply
+positive completion/admission. Whole tasks remain39/55.
+
+Existing authorized read-only strict-host-key SSH hardware/OS queries succeeded
+on both Studios. Both remain256GiB M3 Ultra/Mac15,14 and now reportmacOS27.2.1.
+Receipt `/private/tmp/fios-009-studio-inventory-ru5zla9p/receipt.json`, SHA256
+`25dd7ce74c1c4477493472c9ac94e72709c2e9ce00a5b8c66700f88cc4794e05`.
+This updates only current inventory facts, not native compatibility, capacity,
+readiness, source provenance or prior acceptance. No inference, privileged/service actuation or configuration change occurred.
+Earlier27.0.1 inventory is historical.
+
+Corrected Engram source qualification subsequently passes strict35/35 semantic,
+32/32 link and20/20 unit-compiler graphs, default build, strict/default startup
+and actual manager v3 lineage/backend/primary/background integration. All8,395
+selected source/staged hashes remain stable; exactly four pinned source paths
+change. No loaded model or model request occurs in those enclosure controls.
+208 Node/116 installed Python tests and the agent boundary check pass after
+locked noneditable reinstall. Qualification
+`/private/tmp/fios-009-engram-shared-native-n8mknakc/qualification.json`, SHA256
+`6a29ac427110032c92a8a050c862cdef83adf0e50e819d70f883ea4b01c9c367`.
+Actual private runtime receipt SHA256
+`4b65f9a98fc91aeac6e71e294ff6e44c99ab6f4e0978c27c89fee927e67714ea`.
+Strict startup receipt SHA256
+`48931af312dc466ec3b0173839cb1417a87b5a761f4daa1f78df964863f64bd0`.
+These are selected component/build and empty-catalog checks, not complete model
+parent runtime, publisher/whole-native provenance, native authority or installed
+acceptance. Joiner OS-spawn failure remains unexercised; the source refusal branch
+is not labeled physical fault acceptance. The older unproven-participant marker
+is retained, and whole tasks remain39/55.
+
+Exact publishedeb96734 CI44010201085 passed all nine checks. This subsequent
+Engram increment still requires its own exact-head CI. No merge, production
+application delivery or native rollout follows from these results.
