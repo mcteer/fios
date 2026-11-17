@@ -8633,3 +8633,20 @@ checks pass Debug/optimized, four compile/run records:
 The returned state matches the newly stored state, lease revocation matches the
 stored lease, output loss is reported and the runtime submission count stays0.
 No deployment or whole-task completion is claimed;39/55 complete,16 open.
+
+
+### Functional package after output-reply correction — 2026-11-17
+
+Clean detached source6c3545f64b5bd7a7c5b055e554b2c7fa58ffb859 builds
+the nine-artifact development package in53.039s. Normal packaged manager/CLI
+startup, aggregate and both service views, maintenance intent, resource response
+and offline256GiB memory planning pass in fresh private state. Receipt:
+`/private/tmp/fios-009-functional-final-package-xa4wucqg/smoke-receipt.json`.
+Manifest SHA256
+`cb06049b3a141bf20b09b2ac29987560e163755760d7c2ad10669d1d66b994f1`;
+selected package-input projection
+`2611a1da099f38377cb03857e35b9356f4e9f7f769c5c3721658bd0bd0ec6a1e`.
+The package remains observation-only and `package_complete:false`. No installed
+service action, model request, installation or deployment occurred. Published
+f80c053 CI44120434840 completed successfully; this package has the separately
+identified6c3545f source. Whole tasks remain39/55 complete,16 open.
