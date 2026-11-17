@@ -9106,3 +9106,18 @@ The earlier publishedb511760 CI44161211642 completed: all7 functional Node,
 browser, container and native jobs passed. Dependency audits and the aggregate
 CI gate failed; no findings were investigated. The current source requires its
 own exact-head checks. Whole tasks remain39/55 complete,16 open.
+
+Clean5e91a33bb8bc928369f65481061e653e7a04ac15 builds nine development
+artifacts. Manifest SHA256
+`72055cfaa8210e401f02e0745abf1aa82cc9cc3d464d9ee5cb2291c0cf8eb84c`;
+selected package-input projection
+`8fa86cd81e4b8b49239f7fbd2fc4e4c7cf59536b8c6128cd34cf370e5f5ab019`.
+Packaged status/services/maintenance intent/resources/offline planning pass:
+`/private/tmp/fios-009-request-status-package-0ws40ezj/smoke-receipt.json`,
+SHA256 `a785472f594203cc13d5b572b8fd2888cd0ce1d590139c3670d1567aa52b7c79`.
+All five default-client CLI/manager/installed-harness cases pass:
+`/private/tmp/f9-manager-cli-DPBSwL/receipt.json`, SHA256
+`820059787ac41d7a5dc833c7b519a4386ed95d36b43a1388d9316953b3929a50`.
+The package stays inactive/package_complete false, with no installed service,
+real model request or native admission granted. Source-only status observations
+are not full platform-job, all-client or Studio acceptance;39/55 whole tasks.
