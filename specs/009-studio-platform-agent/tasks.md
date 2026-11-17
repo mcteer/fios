@@ -1277,3 +1277,11 @@ CPU SDK/root and transport checks are in progress; see validation evidence and
 `contracts/request-sdk-observations.md`. This is partial T020/T021 integration,
 not a native completion issuer or Studio acceptance. Whole tasks remain39/55
 complete,16 open. Security-related work remains excluded by operator direction.
+
+Functional native continuation2026-11-17: an explicit default-off code-only
+option now carries original-request SDK observations through the existing
+journal lineage poller. Normal mock and genuine four-value GPU/native IPC/
+journal checks pass in both modes; callback retirement leaves the request
+unresolved. A clean source package and five default model-flow cases pass.
+This remains partial T020/T021/T045 integration;39/55 whole tasks complete,
+16 open, with native admission and Studio acceptance still unfulfilled.

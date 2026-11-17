@@ -9057,3 +9057,20 @@ promoted. The corrected driver retains its own state and closes both children.
 This is selected source/component integration, not whole-native provenance,
 all-client completion, native admission or Studio acceptance. A new clean
 package/default-client regression is pending. Whole tasks remain39/55,16 open.
+
+The clean20fc94b3e4bd99f80509403acc432374c86427e2 development package builds
+nine artifacts, still inactive/package_complete false. Manifest SHA256
+`3316af42a89aabdd59b9e589610d73cdfba29086fe87dae920d0820b17fb0349`;
+selected package-input projection
+`bd96b8af4e1d6c673ff3f3bd6026fb38e7b7dc86f78440b818c683f61ea58fd4`.
+Normal packaged manager/CLI status, both service views, maintenance intent,
+resources and offline256GiB planning pass:
+`/private/tmp/fios-009-request-polling-package-jo__nt8b/smoke-receipt.json`,
+SHA256 `41b4f86bda69e0c146f85170bc019a6932979adb38d1ed1bd6d1d622123ef349`.
+The default-client full CLI/manager/installed-harness regression also passes all
+five normal cases: `/private/tmp/f9-manager-cli-SNsyzy/receipt.json`, SHA256
+`9a34912d06ec63b432cf95aef00f6b6d462f634b627809c975377d867d55b8ad`.
+No real model or installed-service action occurs. CI for the publishedb511760
+has passed both Node versions, browser, ARM64 container and native policy/idle
+jobs; native process remains running and the existing audit job has failed.
+Its findings remain untouched. New source requires its own exact-head CI.
