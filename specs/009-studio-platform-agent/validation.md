@@ -9193,8 +9193,9 @@ and SDK capture clocks remain separate; none proves request completion.
 Normal clock/consumer and existing polling tests pass in Debug/optimized modes:
 `/private/tmp/fios-009-lineage-clock-1crFcD/receipt.json`, SHA256
 `ed255afa3bd5182095a02520c258952726d6422996aaa2597bedb9804a2a647f`.
-The helper's comment/error label was clarified afterward; its final rerun is
-pending. Genuine private native/GPU/journal/owner status passes both modes:
+After clarifying the helper's comment/error label, the final rerun also passes:
+`/private/tmp/fios-009-lineage-clock-xoo8qa/receipt.json`, SHA256
+`da27d330f19cdacdbc347a3de1ded376a8fc013e664bd0aef1f425c911abf39c`. Genuine private native/GPU/journal/owner status passes both modes:
 `/private/tmp/fios-009-event-journal-y_kh2y8g/receipt.json`, SHA256
 `b14fcd567e8c177fef4d45e5cd74c9c511fca238b343df2ba3c3f79ac22cdd1e`.
 It checks both old lineage and new capture time while SDK callbacks retire and
@@ -9207,3 +9208,33 @@ SHA256 `87fa2b26b5c3cbf25652b6994898bbe2d534d7348966300b56c58c126f3e7f48`.
 This qualifies that one-file projection, not whole-native provenance. Enclosing
 compile and a clean source package remain pending. No installed activation or
 all-client/native admission authority follows from these observations.
+
+Clean df0a4b8ee5cfcd0885f8663d807f164c0dfd8a9b development package builds
+nine artifacts: `/private/tmp/fios-009-lineage-clock-package-wbcmuqj2`.
+Manifest SHA256 `4f06999703b96d0406ed274ed94f9d7eb2a43a520682c5c1da7d358b94225927`;
+selected package-input projection
+`f8797699a5c1f337ae741ee6be15291dc177f2df3a9f0c4453c6ed627b3dc407`.
+Normal packaged status, both service views, durable maintenance intent,
+resource response and offline256GiB planning pass. The smoke receipt SHA256 is
+`f4cc7131a77222b58f4cd8a1d2746047e8d363b899c3bb4655184ac558f5ae90`.
+The package remains inactive/package_complete false; no installed lifecycle,
+model request or native admission is exercised. Enclosing native build remains
+pending. Exact df0a4b8 CI44184503325 is running; superseded b6b3834 had six
+functional jobs pass, including the corrected native policy lane, with process
+unfinished when superseded. No aggregate green CI or delivery is claimed.
+
+The enclosing lineage-clock native build now passes all four normal modes in
+`/private/tmp/fios-009-lineage-clock-native-kcsiucza`:
+
+- semantic: Build Summary: 35/35 steps succeeded; 432.651s; receipt SHA256 `8a31be3792b5f61eaeecbb9af2d0b2bd8f7f923a29cbbb54d36b7c960553da85`.
+- link: Build Summary: 32/32 steps succeeded; 7.480s; receipt SHA256 `4ad4e8f5734f87f43dea6d0ecf12fae1c3f239ce163ba5914d4b71da11aca4ae`.
+- units-check: Build Summary: 20/20 steps succeeded; 2.649s; receipt SHA256 `39d1ec95df5ba4f8239cc56792183b5acdaf77ee81faf93fe990edf48ad70947`.
+- default-build: Build Summary: 32/32 steps succeeded; 3.500s; receipt SHA256 `228cccb15d676e3272348e661a16b9f6d664c61b1fefa6bd35d544a638b71f08`.
+
+The original two-slot compiler bound was retained; no compiler roots remained
+at each mode's end. This is selected source compile/link evidence only, not
+model ABI qualification, installed ownership or whole-native provenance.
+Together with the genuine native IPC/legacy read and clean packaged smoke,
+this completes validation of this functional clock increment. Whole tasks
+remain39/55 complete; no all-client producer, completion issuer or Studio
+acceptance is claimed. Security-related work remains excluded.

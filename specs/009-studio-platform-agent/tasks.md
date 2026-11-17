@@ -1289,7 +1289,7 @@ This remains partial T020/T021/T045 integration;39/55 whole tasks complete,
 Functional native continuation2026-11-17: explicit version2 lineage now carries
 native capture time separately from client query time; legacy version1 remains
 the default. Normal clock/consumer tests and genuine GPU/native IPC/journal/
-owner status pass in both modes, including legacy reads. Enclosing build and
-clean package validation are pending. This is partial T020/T021 work; whole
+owner status pass in both modes, including legacy reads. Enclosing semantic/link/unit-closure/default builds and the clean package
+manager/CLI smoke also pass. This is partial T020/T021 work; whole
 tasks remain39/55 complete,16 open. The operator reaffirmed keeping all009
 requirements intact and continuing functional native work.
