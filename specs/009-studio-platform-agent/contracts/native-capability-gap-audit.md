@@ -12,7 +12,7 @@ This is a bounded functional source review for T002, T018–T022 and their downs
 | Compiled streamed read pool | `build/libs.zig` compiles the C pool; original stop discarded join failures, and the Zig wrapper freed worker storage after failed cleanup. | The streamed-pool increment adds checked refusal and parent/constructor retention; source validation is partial and does not close whole-native/loaded/installed acceptance. |
 | Teardown | Scheduler shutdown and registry eviction consult retained custody and sticky uncertainty. SDK capture refuses missing registered ownership. | Creator/partial-start/error paths, CPU/transport/backend writers and public outcome propagation require complete review and native acceptance. Existing local receipts cannot certify them collectively. |
 | Native control/primary activity | Bounded authenticated control supports observation, pause/resume and owner barriers; primary activity is explicitly partial. | No positive all-client coverage issuer, complete resident/queued/device view or native proof issuer. Pause/barrier and zero counters cannot be promoted to these capabilities. |
-| Manager admission | `NativeActivityCoherence` enforces an independent coverage ceiling. `NativeAdmission` checks a supplied trusted binding and advisory observation. | An atomic native source-to-dispatch boundary remains unimplemented. Authentication and observation freshness alone do not close the external-client race. |
+| Manager admission | `NativeActivityCoherence` enforces an independent coverage ceiling. The broker, checked preparation export, private worker and exact native preparation consumer are connected through optional trusted ports. | The positive production source/proof/capacity issuer and all-client non-preemptive guard remain unfinished. The private CPU reservation transport is implemented; it cannot close the external-client race without those independent capabilities. |
 | Installed lifecycle | Reviewed configuration factories and development release tooling retain their existing gates. | No reviewed installed all-client boundary, direct-server GUI handover or two-Studio acceptance. Development package staging cannot authorize these actions. |
 
 The companion and administrative-load associations, streamed-pool cleanup refusal and watchdog uncertainty fence have now passed their separately recorded source validation. These repairs preserve the original root/correlation and ordinary unenrolled behavior. The diagnostic `primary_guard=false` remains unchanged. They do not supply the missing normalized producer, atomic admission or native proof issuer. This audit does not propose a new wire format, receipt authority or numerical engine.
@@ -106,12 +106,15 @@ The scoped preparation consistency helper requires an independent all-client
 ceiling, current original lease, fresh matching root/registry capture, exactly
 one original preparation owner, no competing work/transitions/uncertainty and
 at most one ready declaration. It separates target from registry-ready identity
-without changing generic conflicting-model unknown semantics. It is not yet an
-owned observation export or the Python/broker atomic preparation mode. The
-complete positive source/proof/capacity issuer and production composition remain
-unfinished. See [claimability](registry-claimability.md),
-[reservation](preparation-reservation.md) and
-[transport](preparation-transport.md). Whole39/55 remains unchanged.
+without changing generic conflicting-model unknown semantics. Subsequent work
+implements the original-plan/journal-bound observation, readonly manager relay,
+metadata3/preparation1 worker client and optional broker/factory preparation
+mode. These use the original lease and independent all-client ceiling; unknown
+global activity is not a fallback. The complete positive source/proof/capacity
+issuer and production composition remain unfinished. See
+[claimability](registry-claimability.md), [reservation](preparation-reservation.md),
+[transport](preparation-transport.md) and the current
+[worker preparation client](worker-preparation-client.md). Whole39/55 is unchanged.
 
 ## Current manager/worker frame compatibility
 
@@ -122,12 +125,19 @@ phase/model coherence, local uncertainty and correlated Unix envelope checks.
 Actual current Swift export frames pass through the installed Python guard in
 both build modes, with unknown/conflicting/preparing frames refused. This fixes
 format compatibility; the production manager still has unknown coverage/activity
-and remains closed. It does not supply the missing source authority, scoped
-preparation export or broker/worker preparation transport. See
-[worker activity contract](worker-activity-v2.md).
+and remains closed. The separately implemented scoped preparation export and
+broker/worker transport do not supply the missing source authority. See
+[worker activity contract](worker-activity-v2.md) and
+[worker preparation client](worker-preparation-client.md).
 
 ### Bounded upstream recheck (2026-11-16)
 
 The public latest release remains v26.11.2. Main92cecaaf83c47f7bcc81c21250d8e50a7bdfe462 is97 commits ahead of the pinned release and4 beyond the prior218c766 audit. The [four-commit comparison](https://github.com/ddalcu/mlx-serve/compare/218c76640228e3860f8a4a67075c9fcd1fa29cae...92cecaaf83c47f7bcc81c21250d8e50a7bdfe462) changes10 cache/prefill/accounting/sampling-related files. Those changed paths provide no new normalized activity/terminal/admission interface to adopt. This is a bounded comparison, not an exhaustive absence claim about all upstream source. No newer code or installed version was imported.
 
-The optional SDK residency-refresh participant is separately documented in [sdk-residency-refresh.md](sdk-residency-refresh.md). Its new conservative metadata refusal is under matched native build validation; it cannot close the positive all-client contract.
+The optional SDK residency-refresh participant is separately documented in [sdk-residency-refresh.md](sdk-residency-refresh.md). Matched SDK/C binding/native build and empty-catalog checks now pass. Explicit
+private background exclusion and the Core scalar ownership component also pass;
+ordinary refresh retains its coverage gap. These selected component receipts
+cannot close the positive all-client contract. See
+[build exclusion](native-background-seal-build.md),
+[constructor ordering](residency-constructor-refusal-order.md) and
+[GPU scalar ownership](sdk-gpu-scalar-ownership.md).

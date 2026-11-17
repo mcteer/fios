@@ -51,6 +51,12 @@ device completion nor all-client idle. Positive native completion, full process-
 admission guard remain unfinished. An asynchronous reply newer than its poll
 tick now remains retained until a later observing tick, without restamping or
 renewing its lease.
+The original preparation observation, readonly RPC, metadata3/preparation1
+worker and optional broker/factory mode are implemented. The public manager
+still supplies no execution ports and leaves source coverage unknown. The
+remaining work is the trusted positive source/proof/capacity issuer and eligible
+production composition, rather than rebuilding those existing data paths.
+
 These address concrete lifecycle defects; they do not close the native-authority
 workstream. Subsequent implementation must connect the producer/proof/guard and
 operational paths, rather than interpreting additional component receipts as

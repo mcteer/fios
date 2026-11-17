@@ -17,15 +17,18 @@ Absent source metadata, uncertain/blocked local ownership, loading, transitions,
 unknown reasons, duplicate model identities, multiple residents, conflicting
 work, unattributed work and inconsistent/overflowing phase totals all refuse.
 An idle resident may differ from the selected target; conflicting active work
-cannot. The generic preparation path stays refused pending its separate original
-reservation observation and atomic transport contract.
+cannot. Generic preparing activity remains refused. The separate original
+reservation observation and metadata3 preparation client are implemented in
+[worker preparation client](worker-preparation-client.md); they require their
+own trusted binding and native atomic consumption, with no activity fallback.
 
 The private Unix query checks peer UID, private socket/parent ownership, bounded
 framing and exact response correlation as before, then validates the current
 inner observation against the request's trusted parent mapping. No retry,
 inference, model substitution or management call is added. Legacy v1 remains
 for the existing isolated protocol fixtures; malformed/current frames cannot
-fall back to it. Metadata2/pipe1/handoff1 are unchanged.
+fall back to it. Legacy metadata2 and pipe1/handoff1 remain supported; the separate preparation
+client uses metadata3/preparation1.
 
 Finite installed-Python tests cover native versus manager sequence, valid idle
 replacement and same-model phases, conflicting busy work, source age/counter/
@@ -35,6 +38,7 @@ Debug and optimized modes and sends its exact frames to the installed Python
 guard. Fixture coverage declarations are test inputs, not native authority.
 CI executes this checker in the existing mock-only native lane.
 
-Full positive coverage/proof/capacity, broker preparation mode and production
+The optional broker preparation mode is wired through the checked original
+observation and factory. Full positive coverage/proof/capacity and production
 composition remain unfinished. No enrollment, installation, activation or
 whole-task closure follows.

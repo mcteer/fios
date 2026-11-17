@@ -49,11 +49,12 @@ Plan tests reject uncheckpointed roots, missing lineage, another plan and expiry
 without consuming a plan or starting a process. Full Debug/optimized policy/mock
 suites cover the existing handoff path after shared identity-validation changes.
 
-This layer is not yet the model-broker/worker preparation mode. The current
-Python metadata2/handoff1 protocol remains unchanged. The worker also rejects
-caller-supplied preparation-root headers along with its other reserved native
-identity headers, before counting or sending a model POST. This does not enable
-a preparation worker mode. Production execution composition,
-owned-preparation observation, the atomic worker transport contract and full
-positive native coverage/proof/capacity remain unfinished. No enrollment,
-installation, native activation or whole-task closure follows;39/55 remains.
+This reservation layer originally preceded the model-broker/worker mode. The
+subsequent [worker preparation client](worker-preparation-client.md) implements
+metadata3/preparation1, original-plan/journal-bound observation export, optional
+broker/factory wiring and the reserved atomic-consumer header. Caller-supplied
+reserved headers still refuse before counting or sending a model POST; task
+frames cannot select the preparation identity. Production execution composition
+and the positive all-client source/proof/capacity issuer remain unfinished.
+These source paths do not authorize enrollment, installation or native activation
+and do not close a whole task;39/55 remains.
