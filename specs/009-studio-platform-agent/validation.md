@@ -9504,3 +9504,22 @@ protocol 3 status observations, log SHA256
 `6cdc7635d7c11292a59ecaf37d6ba9cfd902e679f0d03e75481add6632c7f76c`.
 This check ran zero model requests and zero installed-service actions.
 Runtime tests of the three new handler tails remain open.
+
+### Paused local chat reader
+
+The local chat SSE tail ran on a real Unix socket pair with a 4 KiB kernel send
+buffer and a bounded 64 KiB usage frame. The reader waited after the first bytes
+became available. While the writer was pending, a separate tracker read found
+the same original root with one responding owner. Resuming the reader
+delivered the whole usage frame and completion marker, and the original
+ownership remained until the fixture released it.
+
+The first combined run started both tail cases in one process and the second
+case received InvalidInstance from the process-wide tracker initializer.
+Both named cases passed in fresh processes using the same compiled binary.
+The isolated receipt is
+`/private/tmp/fios-009-paused-tail-build-erg4hfo_/stream-tail-isolated-receipt.json`,
+SHA256 `b6d745f56c7fde80c795b96add43db899b4cbc48426f7ed45ed3f42c85a266d2`.
+Use one exact filter per process for these cases. The patch only adds a test.
+It covers the actual local SSE writer under kernel flow control. Live model
+generation, other API tails and Studio acceptance remain open.

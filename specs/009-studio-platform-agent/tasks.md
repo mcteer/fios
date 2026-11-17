@@ -1339,3 +1339,9 @@ Ordinary native local chat now marks the original request responding before
 writing the final SSE frames. Its focused socket-pair regression and rebuilt
 empty-model manager compatibility pass. T018 still requires real-model
 backpressure and coverage of the other serving paths. Whole tasks remain 39/55.
+
+The local native chat SSE writer now has a passing paused-reader socket-pair
+case. It observes the same original root in responding while the final write
+is pending and receives the complete tail after resuming. Live model
+streaming, other API runtime tails and all-client acceptance remain open.
+Whole tasks remain 39/55 complete.
