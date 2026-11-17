@@ -1,0 +1,18 @@
+import Foundation
+import Darwin
+import CryptoKit
+@main struct NativeRequestEventsLive {
+    static func main()throws {
+        let args=CommandLine.arguments
+        guard args.count==5,let pid=Int32(args[2]),let root=UInt64(args[4]) else {throw NativeControlError.invalid}
+        let executable=try VerifiedExecutable(path:args[1],sha256:SHA256.hash(data:try Data(contentsOf:URL(fileURLWithPath:args[1]))).map {String(format:"%02x",$0)}.joined())
+        let peer=NativeControlPeer(pid:pid,start:try WorkerResources.startIdentifier(pid:pid),executable:executable)
+        let client=NativeControlClient(path:args[3],peer:peer,version:3)
+        let sample=try client.requestEvents(instance:String(repeating:"07",count:16),correlationID:String(repeating:"09",count:32),rootSequence:root)
+        let value=sample.events
+        guard value.identityKnown,value.sdkInitialized,!value.sourceUncertain,let metal=value.metal,
+              metal.originated>0,metal.originated==metal.retired,metal.pending==0,metal.historyRetained,!metal.uncertain else {throw NativeControlError.invalid}
+        let output:[String:Any]=["ok":true,"root":String(root),"metal_originated":metal.originated,"metal_retired":metal.retired,"metal_pending":metal.pending,"native_authority":false,"model_requests":0]
+        FileHandle.standardOutput.write(try JSONSerialization.data(withJSONObject:output,options:[.sortedKeys]));FileHandle.standardOutput.write(Data([10]))
+    }
+}

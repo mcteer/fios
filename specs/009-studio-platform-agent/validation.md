@@ -8952,3 +8952,43 @@ binary's versioned link name; that attempt was retained. Recomposition used
 the same original matched WebP libraries so the existing copier could normalize
 the declared names correctly. No library code or existing capsule was changed.
 Whole tasks remain39/55 complete,16 open. No merge/deployment is claimed.
+
+### Normal GPU original-request observations — 2026-11-17
+
+The normal four-value GPU graph completes against the existing SDK and verifies
+Metal originated/retired counts for both original roots, including managed
+handoff. Debug/ReleaseSafe8 SDK stages pass:
+`/private/tmp/fios-009-request-events-flkajl3h/receipt.json`, SHA256
+`3e0676a3e2dec61ce9bdc4e74b101fd57a95f009635355007fe2e708826f8e32`.
+Initial fixture compilation omitted clang's explicit C++ language for the
+`.fixture` suffix and produced no object; this was corrected before execution.
+A subsequent test incorrectly required CPU callback records on a GPU-only path;
+the graph completed, but that assertion failed. It was corrected to require
+Metal records. Failed setup/assertion receipts are not promoted.
+
+Each normal graph has four values,64MiB allocator guideline/cache0 and a15s
+execution deadline. The guideline is not a hard GPU quota. Refresh0 and the
+existing compiled participant exclusion apply only to these private children.
+There are0 models,0 model requests and no SDK library/engine changes. Actual
+GPU native-to-Swift transport is separately in progress. Whole tasks remain
+39/55 complete,16 open; no installed or Studio acceptance is claimed.
+
+GPU native-to-Swift transport now also passes Debug/ReleaseSafe:6 native/client
+stages plus8 SDK stages in `/private/tmp/fios-009-request-events-pr6uakmc`.
+Final selected wire receipt `receipt.json`, SHA256
+`ae359af861618e4dbb099cb8cf52bc5eca0ed70afc8662a320d16f7f4485e010`.
+Each Swift response reports2 Metal origins,2 retirements,0 pending and the
+original managed root1. Genuine captured GPU response bytes are added to the
+mock-only CI decoder fixture alongside the CPU and unavailable-SDK frames;
+the updated debug/optimized captured-frame check is pending. No GPU operation
+is added to hosted CI. Across this increment7 four-value GPU graphs ran,
+including the one incorrect CPU-record assertion; none loaded a model.
+This is component/transport evidence, not native terminality or Studio acceptance.
+
+The updated normal CPU/GPU/unavailable captured-frame checks pass Swift debug
+and optimized compilation/execution:4 stages,
+`/private/tmp/fios-009-native-request-event-frames-rOCj8N/receipt.json`, SHA256
+`4495808bb1c6d30985446921bdafb7a7bc62c06648737d67729c15980e5e4e8b`.
+Only captured bytes enter CI; the genuine GPU component remains an explicit
+local fixture. This adds test evidence only to the617fb76 implementation; the
+clean package and enclosing native builds remain those recorded above.

@@ -41,3 +41,12 @@ for captured-frame checks. For genuine native component checks, use
 /absolute/matched/sdk-source --sdk-library /absolute/matched/libmlx.dylib`.
 The checker verifies reverse/reapply of the selected patch in a separate private
 projection and records component receipts. Whole-native builds remain separate.
+
+A separate normal GPU fixture uses the same original-root overlay and unchanged
+SDK with a four-value add graph. It uses a64MiB allocator guideline, zero cache,
+a finite child deadline and the existing private background-refresh exclusion.
+That guideline is not a hard GPU quota. GPU callback records need not include
+CPU host callback records. `check-platform-native-request-events-gpu.py` checks
+Metal counts for both original roots and the distinct managed incoming token;
+its private native/Swift fixture reads the same160-byte observation response.
+It does not run a model or qualify physical residency or whole-request completion.
