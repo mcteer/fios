@@ -9,7 +9,10 @@ import pathlib,subprocess,socket,tempfile,os,time,http.client,json,signal,sys,st
 assert sys.platform=="darwin" and os.geteuid()>0
 assert len(sys.argv) in [4,5] and sys.argv[1]=="--isolated"
 mode=sys.argv[4] if len(sys.argv)==5 else None
-assert mode in [None,"--expected-instance","--exact-target","--startup","--correlation","--activity","--retirement","--preparation","--pristine-preparation","--background-sealed"]
+assert mode in [None,"--expected-instance","--exact-target","--startup","--correlation","--activity","--retirement","--preparation","--pristine-preparation","--background-sealed","--route-guards","--route-legacy"]
+check_route_legacy=mode=="--route-legacy"
+check_route_guards=mode in ["--route-guards","--route-legacy"]
+route_guard_records=[]
 check_background_sealed=mode=="--background-sealed"
 check_instance=mode in ["--expected-instance","--exact-target","--correlation","--retirement","--preparation","--pristine-preparation"]
 check_target=mode in ["--exact-target","--correlation","--retirement","--preparation","--pristine-preparation"]
@@ -184,6 +187,55 @@ try:
    except subprocess.TimeoutExpired:
     if replacement.poll() is None:os.killpg(replacement.pid,signal.SIGKILL)
     replacement.wait(timeout=2)
+ if check_route_guards:
+  # All targets are deliberately absent from the private empty registry. These
+  # are refusal POSTs, not model competence or all-client completion evidence.
+  routes=["/v1/chat/completions","/v1/completions","/v1/responses","/v1/embeddings",
+          "/v1/images/generations","/v1/images/edits","/v1/audio/speech",
+          "/v1/audio/transcriptions","/v1/audio/music-generations","/v1/audio/sound-generations",
+          "/v1/video/generations","/v1/3d/generations"]
+  wrong=("0" if instance[0]!="0" else "1")+instance[1:]
+  for route in routes:
+   payload=json.dumps({"model":"fixture/missing-model","messages":[],"input":"fixture","prompt":"fixture","max_tokens":1})
+   for label,epoch,expected_result in ([] if check_route_legacy else [("stale-instance",wrong,(409,"native_instance_changed")),
+                                       ("absent-target",instance,(404,"native_target_not_found"))]):
+    connection=http.client.HTTPConnection("127.0.0.1",port,timeout=2)
+    try:
+     connection.request("POST",route,payload,{"Content-Type":"application/json","X-Fios-Native-Instance":epoch})
+     response=connection.getresponse();data=response.read(65537);assert len(data)<=65536
+     actual=(response.status,json.loads(data)["error"]["type"])
+     supported=route=="/v1/chat/completions"
+     expected_result=expected_result if supported else (400,"invalid_native_identity_route")
+     assert actual==expected_result,(route,label,actual)
+     route_guard_records.append({"path":route,"case":label,"status":actual[0],"error_type":actual[1]})
+    finally:connection.close()
+   if not check_route_legacy and route!="/v1/chat/completions":
+    for header in ["X-Fios-Request-ID","X-Fios-Handoff-Root"]:
+     connection=http.client.HTTPConnection("127.0.0.1",port,timeout=2)
+     try:
+      value="a"*64 if header=="X-Fios-Request-ID" else "1"
+      connection.request("POST",route,payload,{"Content-Type":"application/json",header:value})
+      response=connection.getresponse();data=response.read(65537);assert len(data)<=65536
+      actual=(response.status,json.loads(data)["error"]["type"])
+      assert actual==(400,"invalid_native_identity_route"),(route,header,actual)
+      route_guard_records.append({"path":route,"case":header,"status":actual[0],"error_type":actual[1]})
+     finally:connection.close()
+   connection=http.client.HTTPConnection("127.0.0.1",port,timeout=2)
+   try:
+    connection.request("POST",route,payload,{"Content-Type":"application/json"})
+    response=connection.getresponse();data=response.read(65537);assert len(data)<=65536
+    assert response.status==503 and json.loads(data)["error"]["type"]=="no_model",(route,response.status)
+    route_guard_records.append({"path":route,"case":"ordinary-unbound-empty-catalog","status":503,"error_type":"no_model"})
+   finally:connection.close()
+  assert len(route_guard_records)==(12 if check_route_legacy else 58)
+  status,catalog=get("/v1/models");assert status==200 and json.loads(catalog)["data"]==[]
+  end=time.monotonic()+2
+  while time.monotonic()<end:
+   current,counter=snapshot()
+   if current[0]==0:break
+   time.sleep(.025)
+  assert current[0]==0 and current[5]==0,"ROUTE_REFUSAL_RETAINED_LOCAL_OWNER_OR_MUTATION"
+  # Local HTTP-reference cleanup only, never independent native terminality.
  if check_instance:
   wrong=("0" if instance[0]!="0" else "1")+instance[1:]
   connection=http.client.HTTPConnection("127.0.0.1",port,timeout=2)
@@ -295,7 +347,7 @@ try:
    if current[0]==0:break
    time.sleep(.025)
   assert current[0]==0,"CURRENT_NATIVE_REJECTED_PREPARATION_HTTP_OWNER_RETAINED"
- receipt={"binary_sha256":hashlib.sha256(binary.read_bytes()).hexdigest(),"native_pid":proc.pid,"source_instance":instance,"source_sequence":sequence,"source_sampled_at":stamp,"http_connection_counts":list(counts),"accepted_connection_observed":True,"original_http_connection_retired":True,"private_home":str(home),"models":0,"model_requests":(9 if check_correlation else (7 if check_target else (3 if check_instance else 0)))+(4 if check_preparation else 0),"preparation_control_refused":check_preparation,"pristine_preparation_control_refused":check_pristine,"preparation_http_guards_checked":check_preparation,"expected_instance_guard_checked":check_instance,"exact_target_guard_checked":check_target,"correlation_header_checked":check_correlation,"retired_lineage_is_unknown":check_correlation,"local_retirement_record_checked":check_retirement,"http_activity_checked":check_activity,"startup_reservation_checked":check_startup,"startup_reacquired_after_original_exit":check_startup,"metadata_available_while_reserved":check_startup,"inference_started":False,"coverage":"unknown","native_admission_authority":False,"peer_authentication_proven":False,"installed":False}
+ receipt={"route_guard_records":route_guard_records,"guarded_refusal_posts":len(route_guard_records),"binary_sha256":hashlib.sha256(binary.read_bytes()).hexdigest(),"native_pid":proc.pid,"source_instance":instance,"source_sequence":sequence,"source_sampled_at":stamp,"http_connection_counts":list(counts),"accepted_connection_observed":True,"original_http_connection_retired":True,"private_home":str(home),"models":0,"model_requests":(9 if check_correlation else (7 if check_target else (3 if check_instance else 0)))+(4 if check_preparation else 0)+len(route_guard_records),"preparation_control_refused":check_preparation,"pristine_preparation_control_refused":check_pristine,"preparation_http_guards_checked":check_preparation,"expected_instance_guard_checked":check_instance,"exact_target_guard_checked":check_target,"correlation_header_checked":check_correlation,"retired_lineage_is_unknown":check_correlation,"local_retirement_record_checked":check_retirement,"http_activity_checked":check_activity,"startup_reservation_checked":check_startup,"startup_reacquired_after_original_exit":check_startup,"metadata_available_while_reserved":check_startup,"inference_started":False,"coverage":"unknown","native_admission_authority":False,"peer_authentication_proven":False,"installed":False}
  if check_background_sealed:
   receipt.update({"explicit_private_background_exclusion":True,"default_refresh_startup_refused":default_denial,
       "test_child_refresh_interval_ms":0,"source_background_untracked":False,"all_client_coverage":False,

@@ -1,0 +1,51 @@
+--- a/src/host/http/router.zig
++++ b/src/host/http/router.zig
+@@ -281,15 +281,28 @@
+         try sendErrorResponse(allocator, stream, "400 Bad Request", "invalid_preparation_route", "Preparation identity requires the bound chat route", 400);
+         return;
+     }
++    const expected_instance = fios_instance_header.parse(request[0..header_end_pos]) catch {
++        try sendErrorResponse(allocator, stream, "400 Bad Request", "invalid_native_instance", "Invalid native instance identity", 400);
++        return;
++    };
++    const correlation = fios_correlation_header.parse(request[0..header_end_pos]) catch {
++        try sendErrorResponse(allocator, stream, "400 Bad Request", "invalid_request_identity", "Invalid request identity", 400);
++        return;
++    };
++    const handoff_root = fios_handoff_header.parse(request[0..header_end_pos]) catch {
++        try sendErrorResponse(allocator, stream, "400 Bad Request", "invalid_request_identity", "Invalid handoff identity", 400);
++        return;
++    };
++    const fios_identity_route = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/v1/chat/completions");
++    if (!fios_identity_route and (expected_instance != null or correlation != null or handoff_root != null)) {
++        try sendErrorResponse(allocator, stream, "400 Bad Request", "invalid_native_identity_route", "Native request identity requires the bound chat route", 400);
++        return;
++    }
+     var fios_preparation: ?fios_preparation_leases.Handle = null;
+     var fios_process_bound = false;
+     // Expected process identity precedes model resolution/proxying. It does
+     // not grant admission, enroll backend lifetimes or clear old ownership.
+-    if (std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/v1/chat/completions")) {
+-        const expected_instance = fios_instance_header.parse(request[0..header_end_pos]) catch {
+-            try sendErrorResponse(allocator, stream, "400 Bad Request", "invalid_native_instance", "Invalid native instance identity", 400);
+-            return;
+-        };
++    if (fios_identity_route) {
+         if (expected_instance) |expected| {
+             fios_process_bound = true;
+             const actual = fios_ownership.shared().snapshot(stream.io);
+@@ -302,14 +315,6 @@
+                 return;
+             }
+         }
+-        const correlation = fios_correlation_header.parse(request[0..header_end_pos]) catch {
+-            try sendErrorResponse(allocator, stream, "400 Bad Request", "invalid_request_identity", "Invalid request identity", 400);
+-            return;
+-        };
+-        const handoff_root = fios_handoff_header.parse(request[0..header_end_pos]) catch {
+-            try sendErrorResponse(allocator, stream, "400 Bad Request", "invalid_request_identity", "Invalid handoff identity", 400);
+-            return;
+-        };
+         if (fios_preparation_root != null and (handoff_root != null or !fios_process_bound or correlation == null)) {
+             try sendErrorResponse(allocator, stream, "400 Bad Request", "invalid_preparation_identity", "Preparation requires one bound native request identity", 400);
+             return;

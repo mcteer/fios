@@ -1095,3 +1095,17 @@ group; the restore proposal refuses a known non-wheel original group. Debug
 policy140/140, composition12/12, Node208/208, installed Python116/116 and actual
 Debug/optimized snapshot producer checks pass. This is private metadata/review
 behavior, with no protected write or whole-task completion; **39/55**.
+
+T018/T019 continuation: a scoped identity-header route refusal and empty-catalog
+matrix are in progress. Ordinary non-chat modalities remain enabled, and their
+positive all-client/native acceptance scope is unchanged. Negative parent control
+and146 platform regressions pass their expected outcomes; candidate compilation
+and58 refusal POST controls remain pending. **39/55** whole tasks remain complete.
+
+The scoped identity-route increment subsequently passes strict35/32/20 and
+default compilation, both startup modes,58 actual empty-catalog route controls,
+all12 prior header-free baseline comparisons and existing chat correlation/
+preparation/retirement regressions (105 candidate refusal POSTs, zero inference).
+Actual manager integration and208 Node/116 installed Python checks pass.
+These partial T018/T019 controls close no whole task: **39/55**. Full positive
+modality/slow-response/all-client completion/admission acceptance remains required.

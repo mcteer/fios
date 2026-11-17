@@ -8184,3 +8184,52 @@ Exact published26afcce CI44005840590 subsequently passed all nine checks.
 Earlierd7846c2 CI44003744229 was superseded/cancelled, not green. Restoration
 and group metadata commits require their own latest-head CI. No merge or
 production application/native rollout is established. Whole tasks remain39/55.
+
+### Scoped identity headers outside the bound chat route
+
+An empty-catalog route matrix found that the existing native identity protocol
+was parsed only by `POST /v1/chat/completions`; other routes ignored the header
+and entered legacy selection. The optional source increment explicitly rejects
+those headers on unsupported routes before model resolution. Header-free
+ordinary routes remain available. This clarifies fail-closed protocol scope;
+it neither removes enabled modalities nor completes their all-client acceptance.
+
+The final matrix's genuine unchanged parent fails at `/v1/completions` with503
+`no_model` where explicit400 identity-route refusal is required. Its input-bound
+negative receipt is retained in
+`/private/tmp/fios-009-route-identity-swmfo6by/parent-route-guards-receipt.json`.
+An earlier matrix also failed there while checking an unsupported cross-route
+process-epoch expectation; that expectation was corrected to explicit refusal,
+not counted as positive epoch support. Both logs remain retained.146 platform
+Node checks and the agent boundary check pass. Candidate strict/default compiler,
+startup and58-case actual route controls are in progress; no candidate pass,
+whole-task completion or model/native authority is claimed yet.
+
+The candidate subsequently passes strict35/32/20 compiler graphs, default build,
+strict/default startup,58 actual route refusal controls and the existing exact
+chat target/correlation/preparation/pristine/retirement regressions. These make
+105 candidate guarded refusal POSTs to an empty catalog; zero real-model plans
+or inference occur. Header-free results on all12 paths exactly match the prior
+binary's baseline. The actual manager v3 lineage/backend/primary/background
+integration also passes with unknown coverage and no native authority.
+
+Final parent baseline/expected-failure receipt SHA256
+`311e7806d5d7b22ce5252290fc957d86bf5635f02b7548bef3252d7d521cafed`.
+Candidate qualification
+`/private/tmp/fios-009-route-identity-swmfo6by/qualification.json`, SHA256
+`6526d397fde6ef5d89c97f578214822d8dae618fb1506c79555b581e21ade334`.
+8,395 selected source/staged hashes remain stable; only router.zig differs from
+the qualified parent.208 Node/116 installed Python and the boundary check pass
+on the final fixture after locked noneditable reinstall.
+
+The first baseline-only fixture attempt had an undefined payload before its
+first POST; the corrected baseline passes. A candidate test then supplied a
+noncanonical leading-zero handoff root, correctly earning invalid_request_identity;
+changing the fixture to canonical decimal1 makes its route-refusal case pass.
+Both failed logs remain excluded, alongside the initial cross-route expectation
+correction. No uncertainty is cleared by local cleanup or these receipts.
+
+Exact e658354 CI44008196270 passed all nine checks. This later route increment
+requires its own latest-head CI; no merge, deployment or native installation
+is established. Whole tasks remain39/55; positive modality/slow-response/all-client
+native acceptance remains open.
