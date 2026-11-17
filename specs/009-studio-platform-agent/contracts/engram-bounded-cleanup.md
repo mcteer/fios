@@ -42,3 +42,23 @@ Complete native compiler/startup qualification is recorded separately in
 [validation](../validation.md). Neither checker nor build grants installed
 lifecycle or full all-client acceptance. The patch changes no table arithmetic,
 model IDs, generation algorithm or installed policy.
+
+The later `check-platform-engram-native-custody.py` supplement replaces the
+synthetic host ABI with the actual selected native tracker and custody module.
+Two fixture request roots are retained by the captured descriptor after their
+initiating caller clears TLS and releases both references, before table work is
+allowed to proceed. Healthy finish releases them; timed-out/late-joined cleanup
+retains them. An independently latched native uncertainty also survives otherwise
+successful CPU cleanup, keeping its descriptor and both roots. Debug/ReleaseSafe
+each run three named cases plus required unnamed import controls.
+
+The table reader remains modeled and the independent backend uncertainty probe
+is not enrolled. Fixture-created request roots are not live serving requests.
+No model, GPU operation, correlated device terminal proof or native admission
+is tested or granted. The source binary is unchanged from the separate build
+qualification; this is an additional host-custody test, not a new native profile.
+
+```sh
+.venv/bin/python -I scripts/check-platform-engram-native-custody.py \
+  --source ABS_PRIVATE_BOUNDED_CANDIDATE --zig ABS_PINNED_ZIG
+```

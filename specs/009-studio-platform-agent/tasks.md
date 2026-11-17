@@ -1123,3 +1123,11 @@ native builds, both startup modes and actual manager v3 integration, plus the
 change within8,395 rechecked selected files. This does not qualify complete model
 parent/physical fault/native acceptance or remove the older coverage gap;
 T002/T018–T022/T027 remain open, **39/55** whole tasks complete.
+
+T018/T021 actual-custody supplement: six named Debug/ReleaseSafe cases now use
+the selected real native tracker/host ABI instead of synthetic custody ports.
+Both fixture original roots survive caller release; timeout/late join and
+independent native uncertainty preserve their real descriptor/references.
+The table and request inputs remain fixtures, with no model/GPU or native/device
+terminal proof. The independent backend probe stays unenrolled; no whole task
+is completed and **39/55** remains the total.

@@ -8288,3 +8288,36 @@ is retained, and whole tasks remain39/55.
 Exact publishedeb96734 CI44010201085 passed all nine checks. This subsequent
 Engram increment still requires its own exact-head CI. No merge, production
 application delivery or native rollout follows from these results.
+
+### Engram actual native custody supplement
+
+Six named Debug/ReleaseSafe cases pass with the actual native request tracker
+and custody ABI, real CPU threads and modeled table IO. Each process also runs
+the required unnamed import control. The initiating caller clears TLS and drops
+both original roots before releasing the reader gate. The descriptor retains
+both identities through table work. Healthy cleanup retires local references;
+timeout followed by a late join preserves both roots, descriptor and Prefetch.
+Independent native uncertainty also survives successful CPU cleanup, retaining
+the actual native descriptor and roots. No field is reset to simulate recovery.
+
+Receipt `/private/tmp/fios-009-engram-native-custody-jdzkqj1y/receipt.json`, SHA256
+`7d7c88d58a98f4df1265b847eaf89881d5c3e4253657601e766fe5ecdbc5b8e7`.
+The independent backend probe is not enrolled; roots are fixture-created,
+not live serving requests. The table reader is modeled, with zero models, model
+requests or GPU work. This is actual host reference/custody behavior, not device
+completion, all-client coverage, installed acceptance or native authority.
+The compiled source remains the separately qualified126205f native candidate.
+
+Initial checker compilation omitted transitive helper sources and failed before
+runtime. After including the bounded relative-import closure, the first named
+case passed but the wrapper incorrectly expected one test rather than the named
+case plus mandatory unnamed import control. The corrected wrapper requires both;
+all six scenario runs pass. Earlier failed logs remain retained and excluded.
+Whole tasks remain39/55. Broader regression results are being recorded below.
+
+The actual-custody supplement subsequently passes208 Node/116 installed Python
+regressions after locked noneditable reinstall, plus boundary/diff checks.
+Implementation126205f CI44013892289 passed all nine prerequisites on its exact
+head. The supplement adds tests/evidence only and reuses its unchanged native
+source/binary qualification; it grants no additional model/installed authority.
+Its subsequent head still requires independent CI. No merge/deployment occurred.
