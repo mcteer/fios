@@ -46,12 +46,65 @@ fn normalQueueCapture(io: std.Io) !void {
     if (tracker.snapshot(io).owned != 0) return error.QueueCaptureUnavailable;
 }
 
+fn normalBookOverlap(io: std.Io) !void {
+    const tracker = owners.shared();
+    const a = try tracker.enter(io); const b = try tracker.enter(io);
+    try tracker.associate(io, a, @splat(6)); try tracker.associate(io, b, @splat(5));
+    try tracker.bind(io, a, "fixture/native-events"); try tracker.bind(io, b, "fixture/native-events");
+    try tracker.active(io, a); try tracker.active(io, b);
+    const Sink = struct {
+        fn event(context: *anyopaque, _: u64, value: *const abi.Event) callconv(.c) abi.Action {
+            const count: *u8 = @ptrCast(@alignCast(context));
+            if (value.kind == .finished) count.* += 1;
+            return .go;
+        }
+    };
+    const Capture = struct {
+        fn expect(io_value: std.Io, id: u8, root: u64, queued: u32, active: u32) !void {
+            var request: [64]u8 = @splat(0);
+            @memcpy(request[0..4], "FIQ9"); request[4] = 3;
+            @memset(request[8..24], 7); @memset(request[24..56], id);
+            const reply = protocol.dispatchQueuedLineage(owners.shared(), io_value, &request);
+            if (reply[5] != 0 or reply[6] != 1 or reply[7] != 0 or
+                std.mem.readInt(u64, reply[64..72], .big) != root or
+                std.mem.readInt(u32, reply[112..116], .big) != queued or
+                std.mem.readInt(u32, reply[116..120], .big) != active) return error.BookOverlapUnavailable;
+        }
+    };
+    var book: book_mod.Book = .{ .gpa = std.heap.c_allocator, .max_waiting = 2 };
+    defer book.deinit();
+    var finished: u8 = 0; var verdict: abi.Verdict = .{};
+    owners.current().* = a;
+    const first = book.add(.{}, 1, &.{ .prompt = abi.span(u32, &.{1}), .max_tokens = 1 },
+        .{ .ctx = &finished, .event = Sink.event }, &verdict) orelse return error.BookOverlapUnavailable;
+    owners.current().* = b;
+    const second = book.add(.{}, 2, &.{ .prompt = abi.span(u32, &.{2}), .max_tokens = 1 },
+        .{ .ctx = &finished, .event = Sink.event }, &verdict) orelse return error.BookOverlapUnavailable;
+    owners.current().* = null; owners.current_group().* = null;
+    try tracker.leave(io, a); try tracker.leave(io, b);
+    try Capture.expect(io, 6, a.sequence, 1, 0); try Capture.expect(io, 5, b.sequence, 1, 0);
+    if (book.next(false) != first) return error.BookOverlapUnavailable;
+    var first_work = (try actor.retain(io, @as([]const *book_mod.Req, &.{first}))) orelse return error.BookOverlapUnavailable;
+    try first_work.enter(io);
+    try Capture.expect(io, 6, a.sequence, 0, 1); try Capture.expect(io, 5, b.sequence, 1, 0);
+    book.done(first, .stop, "");
+    if (!first_work.finish(io) or finished != 1 or tracker.correlationSnapshot(io, @splat(6)).found) return error.BookOverlapUnavailable;
+    try Capture.expect(io, 5, b.sequence, 1, 0);
+    if (book.next(false) != second) return error.BookOverlapUnavailable;
+    var second_work = (try actor.retain(io, @as([]const *book_mod.Req, &.{second}))) orelse return error.BookOverlapUnavailable;
+    try second_work.enter(io);
+    try Capture.expect(io, 5, b.sequence, 0, 1);
+    book.done(second, .stop, "");
+    if (!second_work.finish(io) or finished != 2 or tracker.snapshot(io).owned != 0) return error.BookOverlapUnavailable;
+}
+
 pub fn main() !void {
     _ = alarm(30);
     const io = std.Io.Threaded.global_single_threaded.io();
     try owners.shared().initialize(io, @splat(7));
     try sdk.initialize(io);
     try normalQueueCapture(io);
+    try normalBookOverlap(io);
     if (fios_bridge_library_matches(@import("build_options").sdk_library) != 1) return error.SDKUnavailable;
     const bridge = (try transport.Bridge.startWithRequestEvents(io, std.heap.c_allocator, "events-fios-source-fixture", null, null, null, null, null, sdk.requestEventDiagnostic)) orelse return error.MissingBridge;
     defer bridge.stop();

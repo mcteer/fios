@@ -9383,3 +9383,23 @@ all7 functional jobs successful. Existing Dependency audits and the aggregate
 CI gate failed; findings are not inspected or changed. The following queue
 batch still needs its own exact-head run. No green gate, merge, deployment,
 native activation or Studio acceptance is claimed.
+
+### Normal overlapping requests in the existing Book — 2026-11-17
+
+A normal two-request setup now runs before each live case. Both exact same-
+model requests publish into one existing native Book, with separate original
+correlation roots; caller owners leave before either pickup. The actual actor
+entry makes only the first active while the second remains queued. Finishing
+the first removes only its original local lineage, and the second stays queued
+under its own original root until its separate pickup/finish. The checks use
+the actual128-byte queue-aware lineage response at each stage.
+
+Debug/ReleaseSafe setup plus all four existing normal live cases pass:
+`/private/tmp/fios-009-event-journal-xnx3n76_/receipt.json`, SHA256
+`0d1a5f391d0a40a9440d855008e7d4f2b5690e558b25c256d903664ca18fac5c`.
+The overlap setup loads no weights and executes no GPU/model computation;
+the later normal graph cases still total two four-value GPU graphs. No model
+POSTs or installed actions. This covers the shared Book's source metadata,
+not actual HTTP overlap, each adapter/modality or native terminal authority.
+Whole tasks remain39/55 complete,16 open. Native installation/acceptance and
+positive all-client completion/admission remain outstanding.

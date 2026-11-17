@@ -1317,3 +1317,9 @@ Debug/ReleaseSafe pass; owner status retains unresolved inference after local
 queue/job cleanup. Source de261a0 package/build evidence remains separate from
 fixture-only improvements. All7 functional jobs passed on df0a4b8; its existing
 audit/gate failure remains untouched. Whole39/55 complete,16 open.
+
+Normal two-request shared-Book source overlap now passes in both modes:
+caller release, independent original roots, first active/second queued, and
+first finish preserving the second queued request. Actual queue-aware frames
+are checked; no model weights/computation run in this setup. This is partial
+T018/T020 coverage, not HTTP/all-modality/Studio acceptance. Whole39/55.
