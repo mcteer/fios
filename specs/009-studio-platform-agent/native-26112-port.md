@@ -1190,3 +1190,16 @@ Default native build239.070s, unchanged declared C/Zig inputs, build receipt8851
 Final registry-claim source subset: full default native build242.535s, selected C/Zig inputs unchanged (build receipt1fea61a2f82147e17368e49197cad54eb734714300fc248f553440645e99b32e). All162 native tests pass in separate processes with zero skips,101 named/61 imported support, including actual ModelRegistry stubs/fixed shared-tracker wrapper/exact conflict and diagnostic guard refusal; binaryce190426e64f0ff18a48cd1866b300e273ca12e4cd162478711a6f3f537011cb, run receipta31947c66c33ade78f575562b276cab1a0efe84e98dac6a12e65d57fe7377837. Standalone registry-shaped fixture remains separately excluded from native-root enumeration. Strict3-path checker2533add4… passes10; patch7eff9634b3bef225b41769d08080304347a07f252340791edb9434982bc61233, fixturec4f3fe5df9f34b176ea076f8b6e83f5c26b0640c8d9f5f9f824035bb2d31a6cd, runner4535208d0db90b4409b03f96bb0852f4142920d6657836aa554b95a7be159961.
 
 Syntax/boundary/whitespace checks pass. This unused CPU metadata increment changes no platform Swift/app/Python/package inputs; no new broad app, enabled-SDK/link/runtime, model/device or installed acceptance is claimed. Current862aa76 package remains current only for its declared inputs. Whole39/55 unchanged; T002/T019–T022 and operational tasks remain open. No model plan/POST, hardware fault, installation/activation, service action, merge or deployment.
+
+## Checked context publication — 2026-11-16
+
+The optional existing Llama shim now checks target and draft synchronization
+status before returning a newly constructed context. This is a negative-only
+publication boundary, with no new model engine or positive activity/admission
+capability. The [contract](contracts/checked-context-publication.md) describes
+scope and reproducible component checks.42 constructor controls and12 genuine
+whole-shim ABI stages pass; exact receipts and the rejected resource-bound
+build are recorded in validation.md. The corrected two-slot compiler-gated native35/32/20/default builds, both
+empty-catalog startup modes and authenticated manager checks pass; qualification
+54b97159a326f36b1a1d296775246b71d9a37fe9c55c8eaec635865d3add84bc. Whole tasks remain39/55; no native installation,
+activation, model request, merge or deployment follows from this work.

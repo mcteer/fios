@@ -8352,3 +8352,70 @@ boundary and diff checks pass. No source runtime change or native rebuild is
 claimed by this fixture-only supplement; existing126205f build qualification
 remains separately bound. Latest published7edec87 CI44016046712 is still running
 at this record. No whole-task checkbox, merge, deployment or activation changes.
+
+### Checked Llama context publication and compiler admission — 2026-11-16
+
+Whole tasks remain39/55. The selected constructor invokes the existing checked
+synchronization API for target and optional draft before publishing its context.
+Non-success or an exception retains the existing uncertainty fence and parent
+objects. This adds no engine, model policy or positive completion authority.
+42 constructor controls pass, including eight expected failures against the
+parent and healthy parent baselines:
+`/private/tmp/fios-009-llama-publication-oyzgrbp8/receipt.json`, SHA256
+`45fe6cc6a95b041d7f6fb6446afe619e9f8a8fa9e83420b13420687b05ddd39a`.
+12 complete-shim compile/runtime ABI records pass using genuine headers and
+libraries, with empty metadata parents and zero model contexts:
+`/private/tmp/fios-009-publication-abi-n7waatql/receipt.json`, SHA256
+`363dafe7622b691cfefebf72d0599bf79d5fa5afe2a43aeec59b16f69fe3910f`.
+
+The first enclosing native build is rejected as resource qualification. Despite
+its `-j2` argument, three active direct compiler children were observed. Only
+the verified private build process group was terminated; no model, installed
+service or independent native uncertainty was changed. Retained receipt:
+`/private/tmp/fios-009-llama-publication-native-ewdrcgv3/resource-bound-rejection.json`.
+Prior successful builds remain functional evidence; a requested `-j2` flag alone
+is not measured proof of a two-job bound. A diagnostic bare help command also
+attempted a Homebrew metadata/cache query before failing on missing WebP input;
+no package was installed. Subsequent commands use explicit inputs, private HOME
+and disabled Homebrew auto-update.
+
+`scripts/platform-compiler-gate.py` is a one-shot development helper, outside
+runtime/native admission. Two OS file locks admit compiler root jobs and remain
+held through child wait and process-group absence. Unknown cleanup blocks new
+jobs. This bounds admitted root jobs, not compiler threads or GPU resources.
+The five-case metadata-child check covers concurrent admission, cancellation
+and reuse, deadline expiry, failed-job slot reuse, and changed-program refusal:
+`/private/tmp/fios-009-compiler-gate-check-e0x3ka16/receipt.json`, SHA256
+`f82cec7596fd01d8eae3494d60e5b6c95f5ca064e888de7f6248b0142b0798ec`.
+The initial gate rejected the 199375152-byte pinned executable against a 128MiB
+bound; its bound is now256MiB with linear chunked reading. An initial gated
+semantic run then refused the required `translate-c` compiler subcommand before
+that operation ran; it is now explicitly permitted. Failed logs remain private.
+The corrected enclosing build and startup checks pass, as recorded below.
+Published e4c761484277fa56132c413c48fc03313b029232 CI44016777725 completed
+successfully. No merge, deployment, enrollment, activation or new model request.
+
+Corrected gated workspace:
+`/private/tmp/fios-009-gated-publication-native-kdc95gtr`.
+Semantic35/35 (415.564s), link32/32 (7.076s), units-check20/20 (2.500s)
+and default build (3.159s) pass. All admission-log starts have matching successful
+ends, peak admitted compiler roots2, remaining0; wrapper/configuration/compiler
+and cached Maker bytes are separately bound. The scope is admitted compiler
+root jobs, not OS thread, GPU or inference limits.8395 selected source/stage
+files remain unchanged; only the C++ shim differs from the preceding Engram
+source snapshot. Qualification SHA256
+`54b97159a326f36b1a1d296775246b71d9a37fe9c55c8eaec635865d3add84bc`.
+Both strict/default capsules remain model-forbidden, system_cxx null, primary
+guard false and coverage unknown. Actual empty-catalog strict startup, default
+startup/reacquisition and authenticated manager v3 integration pass. Runtime
+receipt SHA256
+`806809c48e40b26f4f961643a52aa25c9c47c1b7d1ff6eb1e5a826fe77af6c2a`.
+208 Node/API and116 installed Python tests pass after locked noneditable
+reinstall, plus an independent116-test installed Python run, boundary, syntax
+and whitespace checks. Logs `/private/tmp/fios-009-publication-gated-{npm,python}.log`.
+The final five-case gate receipt binds checker/mock/gate and all event logs;
+earlier narrower receipts remain historical. No new model plan or POST,
+installation, activation, privileged command, merge or deployment. Whole tasks
+remain39/55. Current package-declared inputs and whole-native/publisher
+provenance are separate; this qualification supplies neither installed nor
+all-client authority.

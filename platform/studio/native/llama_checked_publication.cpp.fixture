@@ -1,0 +1,54 @@
+#include <atomic>
+#include <vector>
+#include <new>
+#include <cstring>
+#include <cstdio>
+#include <stdexcept>
+struct llama_context {int status=1;};
+struct Model{};struct Vocab{};struct Batch{};
+enum ggml_type {DEFAULT_TYPE};
+static constexpr int LLAMA_FLASH_ATTN_TYPE_ENABLED=1;
+struct llama_context_params {unsigned n_seq_max=1,n_ctx=1,n_ubatch=1,n_batch=8,n_rs_seq=0;bool kv_unified=true,swa_full=false;int flash_attn_type=0;ggml_type type_k=DEFAULT_TYPE,type_v=DEFAULT_TYPE;};
+struct mlx_llama_ctx_params {int n_seq=1,n_ctx=32,n_ubatch=0,type_k=0,type_v=0,mtp_drafts=0;};
+struct mlx_llama_engine {Model *model;Vocab *vocab;bool has_mtp=true;unsigned children=0;};
+struct mlx_llama_ctx {mlx_llama_engine *e=nullptr;llama_context *tgt=nullptr,*dft=nullptr;Batch *batch=nullptr,*dbatch=nullptr;int n_seq=0,n_vocab=0,n_batch=0;std::vector<int> pos,out_idx;};
+static std::atomic<bool> fios_llama_uncertain{false};
+static mlx_llama_ctx *retained=nullptr;
+static llama_context target,draft_context;static Batch batch;
+static int checks=0;static bool throw_status=false;
+static void copy_err(char *out,size_t size,const char *text){if(size){std::strncpy(out,text,size-1);out[size-1]=0;}}
+static void fios_llama_mark_uncertain(mlx_llama_engine*){fios_llama_uncertain=true;}
+static bool fios_llama_retain_parent(mlx_llama_ctx *c,mlx_llama_engine *e){c->e=e;++e->children;retained=c;return true;}
+static int llama_model_n_ctx_train(Model*){return 32;}
+static llama_context_params llama_context_default_params(){return {};}
+static int llama_vocab_n_tokens(Vocab*){return 64;}
+static llama_context *llama_init_from_model(Model*,llama_context_params){return &target;}
+static Batch *llama_batch_ext_init(llama_context*){return &batch;}
+static unsigned llama_n_batch(llama_context*){return 8;}
+static bool attach_mtp(mlx_llama_ctx *c,llama_context_params,int,char*,size_t){c->dft=&draft_context;c->dbatch=&batch;return true;}
+[[maybe_unused]] static int llama_fios_synchronize_checked_v1(llama_context *c){++checks;if(throw_status)throw std::runtime_error("fixture status exception");return c->status;}
+// FIOS_ACTUAL_CONTEXT_CREATE
+int main(int argc,char**argv){
+ if(argc!=2)return 9;const char *scenario=argv[1];bool mtp=std::strstr(scenario,"mtp")!=nullptr;
+ if(std::strstr(scenario,"target-failure"))target.status=0;
+ if(std::strstr(scenario,"draft-failure"))draft_context.status=0;
+ if(std::strstr(scenario,"invalid-status"))target.status=2;
+ if(std::strstr(scenario,"exception"))throw_status=true;
+ Model model;Vocab vocab;mlx_llama_engine engine{&model,&vocab};mlx_llama_ctx_params params;params.mtp_drafts=mtp?1:0;
+ char error[128]={};auto *published=mlx_llama_ctx_create(&engine,&params,error,sizeof(error));
+ bool failed=target.status!=1||(mtp&&draft_context.status!=1)||throw_status;
+#ifdef FIOS_EXPECT_CHECKED_PUBLICATION
+ if(failed){
+  if(published||!fios_llama_uncertain||engine.children!=1||!retained||retained->e!=&engine||retained->tgt!=&target||!retained->batch||(mtp&&(retained->dft!=&draft_context||!retained->dbatch))){puts("LLAMA_UNCHECKED_CONTEXT_PUBLICATION");return 3;}
+  if(error[0]==0||checks<1)return 4;
+ }else {
+  if(!published||fios_llama_uncertain||engine.children!=1)return 4;
+#ifndef FIOS_PARENT_CONTROL
+  if(checks!=(mtp?2:1))return 4;
+#endif
+ }
+#else
+ (void)failed;if(!published||fios_llama_uncertain||checks||engine.children!=1)return 4;
+#endif
+ puts("PASS: actual context-create publication/status control with synthetic library ports");
+}

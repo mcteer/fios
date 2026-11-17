@@ -1138,3 +1138,11 @@ modeled parent resources, including two expected prior-unload-body failures.
 A timed-out reader prevents every modeled destructive edge and retains both
 original roots after a late join. These are not real loaded-model/installed
 lifecycle or physical native acceptance; **39/55** whole tasks remain complete.
+
+2026-11-16 continuation: checked Llama constructor publication passes42 modeled
+constructor controls and12 genuine whole-shim ABI records. After rejecting an observed three-compiler run despite `-j2`, the corrected
+two-slot compiler-gated native35/32/20/default builds, both empty-catalog startup
+modes and authenticated manager checks pass. Five finite metadata-child gate
+controls also pass.
+This is component/source progress only:39/55 whole tasks complete,16 open. See
+validation.md for retained failed runs and exact evidence scopes.
