@@ -9146,3 +9146,20 @@ the client finishes does the private native fixture release that responding
 owner and close. This is a source request-lifecycle fixture, not actual HTTP
 slow-reader, model, all-client or Studio acceptance. Two GPU graphs,0 models,
 0 real model POSTs,0 installed actions. Whole tasks remain39/55 complete.
+
+The clean83caf9a263625a65b99fc2c9f34aba3a60c31e73 phase-observation package
+builds nine artifacts. Manifest SHA256
+`47349465f24af0a2609b16f2332fc2d557b899c34f12777f14bef0afedff5dbd`;
+selected package-input projection
+`dc2c0062cddcf086b2703a4438df5ba54e47aa7d715bfadc537ac7cc68b702d8`.
+Normal packaged manager/CLI smoke passes:
+`/private/tmp/fios-009-request-phase-package-g5k5ry6u/smoke-receipt.json`,
+SHA256 `be790a29ae5160205f82fe171a8fb885664bfe74c1601d1e1f54e2af69268f48`.
+The package remains inactive/package_complete false. The existing SDK build
+reports Safetensors/GGUF/Metal enabled; the selected native capsule remains
+explicitly model-free, and no new model plan or model POST was created.
+
+Publisheda8d120a CI44168508697 completed with all7 functional jobs successful;
+Dependency audits and the aggregate gate failed. Findings remain untouched.
+The phase-observation source requires its own exact-head result. No merge,
+deployment, native activation or Studio acceptance is claimed;39/55 complete.

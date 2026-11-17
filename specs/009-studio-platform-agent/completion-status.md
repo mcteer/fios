@@ -23,6 +23,16 @@ through the installed harness and a local mock endpoint. Interrupted worker
 completion now closes the local job, with Debug/optimized coverage. No real
 inference, runtime action or installed acceptance follows.
 
+The functional native path now associates existing SDK callbacks with original
+request roots, carries them through the off-loop journal poller, and exposes
+fresh optional observations in owner job status. Native request phase stays
+separate: retired SDK callbacks can coexist with a responding native request,
+a locally removed job and an unresolved native claim. Normal CPU/GPU/native/
+journal/owner checks pass in both modes. Five installed-harness/mock CLI cases
+also pass, including UTF-8 split across an upload boundary. Collection is
+explicitly default-off and installed read-only configuration is unchanged.
+These implementations do not add a model engine or close a whole task.
+
 The central missing capability is a trustworthy, atomic native admission and
 completion boundary. Current source provides ownership tracking, conservative
 refusal, partial diagnostics and original-request handoff. It does not yet
