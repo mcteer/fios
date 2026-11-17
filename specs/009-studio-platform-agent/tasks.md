@@ -1328,3 +1328,9 @@ The normal graph path now also passes on a separate bounded native worker
 thread with empty initial/final TLS. Actual Book/actor entry restores the
 original root for SDK callbacks; overlap and queued cancellation remain green
 in both modes. No model adapter/HTTP acceptance or whole task closes;39/55.
+
+The isolated native HTTP fixture now verifies overlapping loopback mock streams
+and independent original request roots. The first response completes while
+the second remains observable. Both streams use the native proxy's reported
+ingress phase. Local model response-phase and OS backpressure acceptance remain
+open under T018. Whole tasks remain 39/55 complete.

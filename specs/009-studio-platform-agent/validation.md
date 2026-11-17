@@ -9428,3 +9428,34 @@ uv sync --locked --no-editable --reinstall-package fios-agent after checker
 Python edits; it succeeds. Whole tasks remain39/55 complete,16 open.
 Published queue head f983046 CI44189304785 is running; exact-head status stays
 separate from prior df0a4b8's7 successful functional jobs and failed audit/gate.
+
+### Overlapping native HTTP streams with a mock provider
+
+The provider-enabled private MLX-Serve build completed 32/32 steps.
+The first two artifact staging attempts omitted the native base revision and
+the build-only validation fields. Staging succeeded with the existing
+base-specific size limit and build-only contract. The build did not load
+model weights or run inference.
+
+The isolated HTTP fixture held two loopback mock responses open and paused
+both client readers. Each request retained its own correlation root through
+the private native lineage client. Completing the first response left the
+second root observable. Both clients received the expected SSE content and
+completion marker. The provider proxy reported ingress while each stream was
+open. This result covers live HTTP ownership and independent retirement of
+the two roots. Responding-phase behavior, kernel send backpressure, local
+model streaming and Studio acceptance still require separate evidence.
+
+Initial passing receipt:
+`/private/tmp/f9-http-stream-qreD2h/receipt.json`, SHA256
+`9c34d346cf366183910b05b62128ae07c4fc4d99a760506760d4c7342d1613a7`.
+Two mock provider POSTs and zero real model POSTs.
+
+The published queue-observation commit f983046 passed all seven functional
+jobs in CI44189304785. The existing dependency audit and aggregate CI gate
+failed. Whole tasks remain 39/55 complete.
+
+The final checker passed the same two-stream sequence after test cleanup was
+made reliable on HTTP errors. Its receipt is
+`/private/tmp/f9-http-stream-D1EnMU/receipt.json`, SHA256
+`3835e5601ed49885280b4d2d8f541e52992c765873f9436cd07253bd43b53dc1`.
