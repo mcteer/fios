@@ -1,0 +1,106 @@
+--- a/src/host/http/conn.zig
++++ b/src/host/http/conn.zig
+@@ -1,6 +1,7 @@
+ //! StreamHeartbeat, Conn
+ 
+ const std = @import("std");
++const request_ownership = @import("../../fios/request_ownership.zig");
+ const win_io = @import("../../sdk/util/win_io.zig");
+ const builtin = @import("builtin");
+ const instr = @import("../metrics/metrics.zig");
+@@ -71,6 +72,8 @@
+     /// True once this connection has written a `text/event-stream` head: past it a generation
+     /// failure can only be an SSE `error` event. Set only in `sendSseHeaders`.
+     sse_headers_sent: bool = false,
++    /// Local owner activated by route dispatch and advanced at most once.
++    fios_response_owner: ?request_ownership.Token = null,
+     /// True once this connection has written a response head with a `Content-Length`: the body
+     /// ends by its length, not at the close, so `close` need not wait for the peer.
+     length_framed: bool = false,
+@@ -90,6 +93,14 @@
+     ablation_header: [192]u8 = undefined,
+     ablation_header_len: usize = 0,
+ 
++    pub fn beginFiosResponse(self: *Conn) void {
++        const owner = self.fios_response_owner orelse return;
++        self.fios_response_owner = null;
++        request_ownership.shared().responding(self.io, owner) catch {
++            request_ownership.shared().fence(self.io);
++        };
++    }
++
+     pub fn init(c: *Conn, stream: std.Io.net.Stream, io: std.Io) void {
+         c.stream = stream;
+         c.io = io;
+@@ -100,6 +111,7 @@
+         c.ws_mode = null;
+         c.ollama_sink = null;
+         c.sse_headers_sent = false;
++        c.fios_response_owner = null;
+         c.length_framed = false;
+         c.heartbeat = .{ .last_write_ms = nowMsMonotonic(io) };
+     }
+--- a/src/host/http/router.zig
++++ b/src/host/http/router.zig
+@@ -718,10 +718,11 @@
+     // A status read must not look like use — see `isStatusRoute`.
+     const status_read = isStatusRoute(method, path);
+     defer if (status_read) scheduler.releaseStatus(lm) else scheduler.release(lm);
+-    if (ownership_entry != null) try fios_ownership.shared().active(stream.io, ownership_token.?);
+-    defer if (ownership_entry != null) {
+-        fios_ownership.shared().responding(stream.io, ownership_token.?) catch { fios_ownership.shared().fence(stream.io); };
+-    };
++    if (ownership_entry != null) {
++        try fios_ownership.shared().active(stream.io, ownership_token.?);
++        stream.fios_response_owner = ownership_token;
++    }
++    defer stream.beginFiosResponse();
+ 
+     // A model loaded on demand freezes its own auto-context here, for the same
+     // reason the `--model` primary does at startup: the number we advertise is
+--- a/src/host/api/chat_stream.zig
++++ b/src/host/api/chat_stream.zig
+@@ -1050,6 +1050,7 @@
+     usage_json: ?[]const u8,
+     timings: ?[]const u8,
+ ) !void {
++    stream.beginFiosResponse();
+     try sendSSEChunk(allocator, stream, chat_id, model_name, .{ .role = null, .content = null }, .{ .reason = finish.reason, .details = finish.details }, null, if (usage_json == null) timings else null, .{ .logprobs_json = logprobs_json });
+     // OpenAI ships the usage chunk with an EMPTY choices array — restating
+     // finish_reason/finish_details here made every per-event client render
+@@ -1108,3 +1109,35 @@
+     try testing.expectEqual(@as(usize, 0), with_usage[1].object.get("choices").?.array.items.len);
+     try testing.expectEqual(@as(f64, 50), with_usage[1].object.get("timings").?.object.get("predicted_per_second").?.float);
+ }
++
++
++test "fios local SSE tail publishes responding and preserves ownership" {
++    const ownership = @import("../../fios/request_ownership.zig");
++    const tracker = ownership.shared();
++    const io = std.testing.io;
++    try tracker.initialize(io, @splat(27));
++    const token = try tracker.enter(io);
++    defer tracker.leave(io, token) catch {};
++    const correlation: ownership.CorrelationID = @splat(14);
++    try tracker.associate(io, token, correlation);
++    try tracker.bind(io, token, "fixture/stream-tail");
++    try tracker.active(io, token);
++    const raw = try capture(std.testing.allocator, struct {
++        fn run(conn: *Conn, owner: ownership.Token, id: ownership.CorrelationID) !void {
++            conn.fios_response_owner = owner;
++            try sendStreamTail(std.testing.allocator, conn, 1, "fixture/stream-tail", .{ .reason = "stop", .details = null }, null, null, null);
++            const current = ownership.shared().correlationSnapshot(conn.io, id);
++            try std.testing.expect(current.found and !current.uncertain);
++            try std.testing.expectEqual(owner.sequence, current.root_sequence);
++            try std.testing.expectEqual(@as(usize, 1), current.responding);
++            try std.testing.expectEqual(@as(usize, 0), current.active);
++            // The router fallback must preserve the already responding owner.
++            conn.beginFiosResponse();
++            const after_fallback = ownership.shared().correlationSnapshot(conn.io, id);
++            try std.testing.expect(after_fallback.found and !after_fallback.uncertain);
++            try std.testing.expectEqual(@as(usize, 1), after_fallback.responding);
++        }
++    }.run, .{ token, correlation });
++    defer std.testing.allocator.free(raw);
++    try std.testing.expect(std.mem.endsWith(u8, raw, "data: [DONE]\n\n"));
++}

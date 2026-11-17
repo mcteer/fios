@@ -1334,3 +1334,8 @@ and independent original request roots. The first response completes while
 the second remains observable. Both streams use the native proxy's reported
 ingress phase. Local model response-phase and OS backpressure acceptance remain
 open under T018. Whole tasks remain 39/55 complete.
+
+Ordinary native local chat now marks the original request responding before
+writing the final SSE frames. Its focused socket-pair regression and rebuilt
+empty-model manager compatibility pass. T018 still requires real-model
+backpressure and coverage of the other serving paths. Whole tasks remain 39/55.

@@ -9459,3 +9459,32 @@ The final checker passed the same two-stream sequence after test cleanup was
 made reliable on HTTP errors. Its receipt is
 `/private/tmp/f9-http-stream-D1EnMU/receipt.json`, SHA256
 `3835e5601ed49885280b4d2d8f541e52992c765873f9436cd07253bd43b53dc1`.
+
+### Local chat SSE response phase
+
+Local chat kept its original owner active through the final SSE writes. The
+response-phase patch moves the existing transition before the finish, usage
+and completion marker writes. The connection holds the token only after the
+ordinary local route activates it. The router still advances it on exits that
+skip the tail. Either path consumes the same transition once. The original
+owner remains retained by the connection and this phase provides no evidence
+of model or device completion.
+
+The three-file patch applied and reversed with exact byte matches.
+Projection receipt `/private/tmp/fios-009-response-phase-projection-ix0nv6jc/receipt.json`
+has SHA256 `18524378dc2ae7ed975c086b8aab9d1326de59d522b30c08e611869a943d9a94`.
+Private build `/private/tmp/fios-009-response-phase-build-bcbv_zup` passed
+semantic 35/35, link 32/32, unit compilation 20/20 and the default build 32/32.
+The empty-model server and Swift manager passed protocol 3 health, lineage,
+backend, primary/SDK observation and the maintenance-to-running round trip.
+Its log SHA256 is `5a6be5a9cbf2b08414092ddac3cb5299190fce26df1f83272bc34a6db04e467b`.
+The checks made zero model requests and performed zero installed-service actions.
+
+The focused socket-pair test checks the original root and phase immediately
+after the real SSE tail writes, before the router fallback, then verifies the
+fallback leaves the phase unchanged. The named runtime case passed in the
+filtered native test binary. Runtime receipt
+`/private/tmp/fios-009-response-phase-build-bcbv_zup/stream-tail-run-receipt.json`
+has SHA256 `d261ba37f03bcdc60c69e564264da4e08a07ac7916a7a1738ef7c14583546a16`.
+This covers the ordinary local chat route. Prepared admission, real-model
+backpressure, additional streaming APIs and all-client acceptance remain open.
