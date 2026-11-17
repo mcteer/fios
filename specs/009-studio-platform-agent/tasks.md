@@ -1298,5 +1298,7 @@ Functional source continuation2026-11-17: original-request queue visibility is
 in progress through explicit lineage version3, preserving default legacy reads.
 It reuses existing native queue tickets, with separate queued/active operation
 counts and no engine/scheduler changes. Native IPC and decoder/poller/owner tests pass in both modes, including
-legacy1/clock-only2 reads against the queue-aware server. The enclosing build
-and clean package are pending. Whole tasks remain39/55 complete.
+legacy1/clock-only2 reads against the queue-aware server. Enclosing builds
+and the clean package/manager/CLI smoke pass. These normal tracker API calls
+are separate from actual model-scheduler/all-client acceptance. Whole tasks
+remain39/55 complete.

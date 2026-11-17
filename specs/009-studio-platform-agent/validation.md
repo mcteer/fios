@@ -9288,3 +9288,30 @@ Both modes pass: `/private/tmp/fios-009-event-journal-0xie0wn0/receipt.json`, SH
 Each mode uses one four-value GPU graph, zero models or installed actions.
 Enclosing compilation remains in progress; clean package validation follows.
 Whole tasks remain39/55 complete.
+
+The clean de261a0489cc9373e7e4095dd14326248190b641 development package
+builds nine artifacts: `/private/tmp/fios-009-request-queue-package-04rphc13`.
+Manifest SHA256 `e89a0a1065ea21efce6f23c2020e71f066f8a3a8b024d59ab06d7fa36818ce2d`;
+selected package-input projection
+`596db74aedc3a221331656f26140367b520453c2ea1401fae8e159c1aafcd4e7`.
+Normal packaged manager/CLI smoke passes status, both service views, durable
+maintenance intent, resource response and offline256GiB planning. Receipt
+SHA256 `89622a88f71b1ccab5cbcab85979e4223e1fc5ddd4bba321263a22380f40e66d`.
+The package remains inactive/package_complete false; zero model requests or
+installed actions. Enclosing compilation is still pending. Whole39/55.
+
+The enclosing queue-observation build now passes all four modes in
+`/private/tmp/fios-009-request-queue-native-gmj9fvu7`:
+
+- semantic: Build Summary: 35/35 steps succeeded; 445.517s; receipt SHA256 `e756dccd78cf42d261fadbac8ddeb691b8ee4ae05960180a6b9f7bcc881581b1`.
+- link: Build Summary: 32/32 steps succeeded; 6.333s; receipt SHA256 `2de40c17dece81813fa923b73503980d84b8ce0ff49bbc04824157caa4889190`.
+- units-check: Build Summary: 20/20 steps succeeded; 2.698s; receipt SHA256 `1e767284421f1193f9e6e53f67c4600a55d4f6b2cb72094f4b8b4b69fe2069d2`.
+- default-build: Build Summary: 32/32 steps succeeded; 3.785s; receipt SHA256 `fadb66fe3ee3edabad0eb573901481d5720c5f0aa2766872a3d59414b333a8d2`.
+
+The two-slot compiler bound is retained with zero remaining roots at each
+mode's end. This closes normal unit/genuine IPC/enclosing build/clean package
+validation of this queue-observation increment only. It grants no model ABI,
+whole-native provenance, all-client coverage or installed authority. The live
+queue stages currently call existing tracker ticket APIs directly; a normal
+existing Book/actor queue integration is the next functional check. Whole
+39/55 tasks complete; security-related work remains excluded.
