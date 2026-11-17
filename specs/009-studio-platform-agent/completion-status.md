@@ -16,8 +16,12 @@ The latest functional increments add readable service status, restart-window
 waiting status, job lease timing and current state after output-timeout
 cancellation. Normal Debug/optimized workflows and clean packaged manager/CLI
 checks pass; they do not close a whole task. See validation for exact source and
-package revisions. The task CLI also preserves the submitted request UUID; normal Debug/optimized
-socket round trips and two actual rebuilt-CLI workflows pass.
+package revisions. The task CLI also preserves the submitted request UUID, including ordinary
+application-error replies. A full normal model-job CLI workflow covers
+multi-chunk input, lease renewal, streamed text/done and local completion
+through the installed harness and a local mock endpoint. Interrupted worker
+completion now closes the local job, with Debug/optimized coverage. No real
+inference, runtime action or installed acceptance follows.
 
 The central missing capability is a trustworthy, atomic native admission and
 completion boundary. Current source provides ownership tracking, conservative

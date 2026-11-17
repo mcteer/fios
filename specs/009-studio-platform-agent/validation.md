@@ -8736,3 +8736,28 @@ source after the error-reply correction:
 `57bba502278b1c5a7f0f96052dc27aa13bd0b5387cb74d7c43a910708cbd446e`.
 It retains2 upload chunks/2 ordered output events, one mock POST, unchanged
 absolute deadline, removed job state and0 real model/runtime actions.
+
+
+### Functional interrupted model-job completion — 2026-11-17
+
+The local model-job controller treated complete/failed as terminal but omitted
+interrupted. A normal cancelled worker-start result could therefore finish the
+worker yet leave its owner job running. The corrected, explicitly eligible
+fixture reproduces this at
+`/private/tmp/fios-009-task-completion-GINt5F/debug-run.log`: “Interrupted model
+job remains running after its worker finishes.” The first fixture used a
+mismatched endpoint digest and exercised another path; its passing receipt
+Y9aybB is excluded from this behavior evidence. The endpoint was corrected and
+an eligibility precondition added before the reproducing run.
+
+The terminal switch now includes interrupted. Its local job follows the
+existing revoking/removal path, and removal still waits for the worker. The
+normal broker/controller test passes Debug and optimized, four compile/run
+records: `/private/tmp/fios-009-task-completion-buvJ4x/receipt.json`, SHA256
+`8b147f0895a43e3122d68dd12d95afbf957ab025cb48a9a6a1cbf813d09b2d4b`.
+It verifies removed state/revoked lease, a separate nonterminal job still
+running, unchanged unresolved inference count1 and unchanged request count1.
+The fixture uses typed local cancellation metadata, creates no worker process
+and makes no network, runtime or model request. It is registered in the normal
+platform runner; the quickstart also lists the focused command. No native or
+installed acceptance or whole-task completion follows;39/55 remain complete.

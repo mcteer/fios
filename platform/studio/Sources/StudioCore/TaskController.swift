@@ -156,7 +156,7 @@ final class TaskController {
         }
         for job in unsettled where !sandboxIDs.contains(job.id) {
             let terminal=(data[job.id] ?? []).contains { event in
-                switch event { case .complete,.failed: return true;default:return false }
+                switch event { case .complete,.failed,.interrupted: return true;default:return false }
             }
             var state=job.state
             if terminal && state == .running {

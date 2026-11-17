@@ -69,6 +69,7 @@ struct PolicyTestRunner {
             ("composed pressure",runComposedPressureTests),
             ("task commands",runTaskCommandTests),
             ("task CLI round trip",runTaskClientTests),
+            ("interrupted task completion",runTaskCompletionTests),
             ("task owner",runTaskOwnerTests),
             ("async artifacts",runAsyncArtifactTests),
             ("artifact disk admission",runArtifactDiskAdmissionTests),

@@ -1228,3 +1228,11 @@ model-job workflow exercises52,830-byte2-chunk input, read/renew lease timing,
 ordered streamed text/done and removed completion through the installed harness
 and one local mock POST. No real inference/runtime action or native acceptance;
 whole tasks remain39/55 and T045 remains open.
+
+
+2026-11-17 functional interrupted completion (T045): interrupted is now a
+terminal model-worker outcome alongside complete/failed. The cancelled local
+worker result no longer leaves its job running; normal broker/controller
+Debug/optimized tests verify local removal/lease revocation, the other job
+still running and unchanged request/unresolved counts. No process/model/runtime
+action or native acceptance; T045 open,39/55 whole tasks unchanged.
