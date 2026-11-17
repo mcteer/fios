@@ -20,6 +20,7 @@ enum ServiceStatusPolicy {
     static func summary(desired:ServiceDesired,observation:ServiceObservation?,launchPending:Bool,now:Int64)->[String:Any] {
         let observed=observed(desired:desired,observation:observation,launchPending:launchPending,now:now)
         var value:[String:Any]=["desired":desired.rawValue,"observed":observed.rawValue,"launch_pending":launchPending,
+                                "message":message(desired:desired,observed:observed,observation:observation),
                                 "sampled_at":NSNull(),"age_ms":NSNull()]
         if let time=observation?.sampledAt,(0...ActivityPolicy.maximumTimestamp).contains(time),
            (0...ActivityPolicy.maximumTimestamp).contains(now) {
@@ -29,6 +30,38 @@ enum ServiceStatusPolicy {
             value["health"]=health.statusLabel
         }
         return value
+    }
+    private static func message(desired:ServiceDesired,observed:ServiceObserved,observation:ServiceObservation?)->String {
+        if observed == .unknown {return "Service status is unavailable."}
+        if observed == .ready {
+            switch desired {
+            case .running:return "Service is running."
+            case .stopped:return "Service is still running; stop is requested."
+            case .maintenance:return "Service is running; maintenance is requested."
+            }
+        }
+        if observed == .stopped {
+            switch desired {
+            case .running:return "Service is stopped; running is requested."
+            case .stopped:return "Service is stopped."
+            case .maintenance:return "Service is stopped; maintenance is requested."
+            }
+        }
+        let detail:String
+        switch observed {
+        case .starting:
+            detail=observation?.health == .loading ? "Service is loading.":
+                observation?.identity == nil ? "Service startup is pending.":"Service is starting."
+        case .waiting_session:detail="Waiting for a user session."
+        case .waiting_credentials:detail="Waiting for service credentials."
+        case .degraded:detail="Service is present but not responding."
+        case .ready,.stopped,.unknown:return "Service status is unavailable."
+        }
+        switch desired {
+        case .running:return detail
+        case .stopped:return detail+" Stop is requested."
+        case .maintenance:return detail+" Maintenance is requested."
+        }
     }
     static func observed(desired:ServiceDesired,observation:ServiceObservation?,launchPending:Bool,now:Int64)->ServiceObserved {
         guard let observation,now>=0,now<=ActivityPolicy.maximumTimestamp,

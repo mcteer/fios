@@ -1166,3 +1166,11 @@ Final table supplement also tests the actual selected Engram negative getter:
 ten records pass. Its real participant-unproven marker survives normal IO/join,
 and observing it keeps both original roots/SDK descriptor retained. This is not
 full backend-probe/coverage or model acceptance. Whole39/55 remains unchanged.
+
+
+2026-11-17 functional continuation (T027/T030): operator service status now
+includes a display message distinguishing observed running/stopped/loading from
+requested stop/maintenance/running intent. Ordinary real-manager/CLI checks pass
+nine states,18 service views, ageing and both intent workflows. Normal pending
+startup→ready and maintenance→running recovery checks pass with a counter-only
+application port. No real service action is used. Optimized CLI build and four ordinary optimized-CLI service views also pass. Whole39/55 remains unchanged; this does not complete installed recovery.

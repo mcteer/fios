@@ -8487,3 +8487,48 @@ The preceding208 Node/API run and3ca683a native qualification are retained for
 unchanged application/native implementation; they were not rerun or relabeled
 as new enclosing builds for this fixture-only supplement.3ca683a CI44021868699
 remains in progress at this checkpoint; no aggregate green result is claimed.
+
+
+### Functional service-status messages — 2026-11-17
+
+This continuation changes operator-facing status display only. The aggregate
+and per-service CLI response now include `message`, explaining stopped,
+starting, loading, running and unavailable observations while retaining the
+separate requested desired state. A requested stop does not display as a
+completed stop while the observation remains running; maintenance similarly
+remains visibly requested. Existing state classification and lifecycle
+operations are unchanged.
+
+Before implementation, the ordinary service-status integration failed because
+`message` was absent (expected string, observed undefined), retained at
+`/private/tmp/fios-009-service-messages-before.log`. After implementation,
+`check-platform-service-status.mjs --isolated` passes nine states,18 service
+views, two aged views and stop/maintenance intent display through the actual
+manager/CLI. Receipt output at
+`/private/tmp/fios-009-service-messages-after.log`, private state
+`/private/tmp/fios-009-service-status-b1WBva`. Zero native service actions.
+The normal startup-to-ready/recovery workflow also passes, including explicit
+maintenance and later running intent, with the existing counter-only application
+port: `/private/tmp/fios-009-service-messages-recovery.log`; private state
+`/tmp/fios009-session-driver-mQ8gXd`. No real service is started or stopped.
+
+The current frontend worktree builds and13 ordinary mocked browser workflows
+pass: seven catalog views/workflows, four chat/history/attachment/mobile flows,
+one text/PDF/image harness flow and one serving-host/model-availability flow.
+These tests include the existing local003 UI work; those source changes are
+preserved separately and are not included in this009 change. No security scan,
+penetration test or adversarial campaign was run for this continuation. Earlier
+uncommitted native reader work is set aside, not part of this functional change.
+Whole tasks remain39/55, with16 open. No installation, activation, merge or
+production deployment is claimed.
+
+Optimized `studioctl` builds successfully with two build jobs. Four ordinary
+service views/intents also pass with that executable and the existing isolated
+manager fixture. Receipt
+`/private/tmp/fios-009-service-messages-optimized-zplv0gw4/receipt.json`;
+build log `/private/tmp/fios-009-service-messages-release.log`.
+The first optimized smoke attempt assumed the old SwiftPM output path and
+stopped before any manager was launched; using SwiftPM's reported product
+location fixes that setup. Script syntax and whitespace checks pass. The
+prior platform package predates this status-display change; no new installed
+artifact or whole-spec completion is claimed.

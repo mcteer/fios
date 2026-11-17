@@ -18,7 +18,7 @@ function command(program,args,timeout=180000){
 const core=join(root,'platform/studio/Sources/StudioCore');
 command('swiftc',['-swift-version','6','-warnings-as-errors','-I',join(root,'platform/studio/Sources/CSQLite'),
  ...readdirSync(core).filter(name=>name.endsWith('.swift')).sort().map(name=>join(core,name)),source,'-o',binary]);
-command('swift',['build','--package-path','platform/studio','--disable-automatic-resolution','--product','studioctl']);
+command('swift',['build','--package-path','platform/studio','--disable-automatic-resolution','--product','studioctl','-j','2']);
 const bin=command('swift',['build','--package-path','platform/studio','--show-bin-path']).trim(),cli=join(bin,'studioctl');
 const exited=child=>child.exitCode!==null||child.signalCode!==null;
 async function until(check,timeout=8000){const end=performance.now()+timeout;while(performance.now()<end){const value=await check();if(value)return value;await delay(25);}throw Error('Service status integration deadline');}
@@ -26,6 +26,7 @@ const status=(state,args=['status'])=>{
  const result=spawnSync(cli,['--state',state,...args],{cwd:root,encoding:'utf8',timeout:3000});
  return result.status===0 ? JSON.parse(result.stdout):null;
 };
+const messages={unknown:'Service status is unavailable.',starting:'Service is loading.',waiting_session:'Waiting for a user session.',waiting_credentials:'Waiting for service credentials.',stopped:'Service is stopped; running is requested.',ready:'Service is running.',degraded:'Service is present but not responding.'};
 const expected=(mode,service)=>mode==='unconfigured'?'unknown':mode==='loading' ? (service==='mlx'?'starting':'ready'):mode==='mixed' ? (service==='mlx'?'ready':'degraded'):mode;
 let child;
 try{
@@ -46,6 +47,8 @@ try{
    const selected=status(state,['service',service,'status']);
    assert.equal(selected.observed,expected(mode,service));assert.equal(selected.desired,'running');assert.equal(selected.launch_pending,false);
    assert.equal(selected.observed,combined.services[service].observed);
+   assert.equal(selected.message,messages[expected(mode,service)]);
+   assert.equal(selected.message,combined.services[service].message);
    if(mode==='unknown'||mode==='unconfigured'){assert.equal(selected.sampled_at,null);assert.equal(selected.age_ms,null);}
    else{assert(Number.isSafeInteger(selected.sampled_at));assert(selected.age_ms>=0&&selected.age_ms<=5000);}
   }
@@ -55,13 +58,19 @@ try{
    for(const service of ['mlx','orbstack']){
     const aged=status(state,['service',service,'status']);
     assert.equal(aged.observed,'unknown');assert.equal(aged.desired,'running');
+    assert.equal(aged.message,messages.unknown);
     assert.equal(aged.sampled_at,combined.services[service].sampled_at);
     assert(aged.age_ms>5000);assert.equal(aged.launch_pending,false);
    }
   }
   const maintenance=status(state,['service','mlx','maintenance']);assert.equal(maintenance.applied,false);
-  assert.equal(status(state,['service','mlx','status']).desired,'maintenance');
+  const held=status(state,['service','mlx','status']);assert.equal(held.desired,'maintenance');
+  if(held.observed==='ready')assert.equal(held.message,'Service is running; maintenance is requested.');
   assert.equal(status(state,['service','orbstack','status']).desired,'running');
+  const stop=status(state,['service','orbstack','stopped']);assert.equal(stop.applied,false);
+  const stopped=status(state,['service','orbstack','status']);assert.equal(stopped.desired,'stopped');
+  if(stopped.observed==='ready')assert.equal(stopped.message,'Service is still running; stop is requested.');
+  assert.equal(status(state,['service','mlx','status']).desired,'maintenance');
   child.kill('SIGTERM');await until(()=>exited(child));assert.equal(child.exitCode,0);child=null;
  }
  console.log(JSON.stringify({ok:true,states:9,service_views:18,aged_service_views:2,native_actions:0,review_directory:directory}));

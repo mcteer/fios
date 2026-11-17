@@ -6,6 +6,17 @@ Local Unix IPC only; no native TCP listener. The development manager implements 
 
 Aggregate `status.services` and `studioctl --state DIR service mlx|orbstack status` expose each service's durable `desired` and observed state, plus `launch_pending`, source `sampled_at` (UTC milliseconds) and `age_ms` at response time. Missing observations use null timestamps/age and `unknown`; a stale observation retains its original timestamp/age for diagnosis while observed state becomes `unknown`. Pending indicates the manager's retained recovery request, not successful startup. A fresh identity-bound health reply reporting `loading` preserves the existing observed `starting` state, independently of a pending launch; it is not ready. Unknown/unavailable health retains the existing degraded classification, and stale loading metadata becomes unknown. These status fields do not operate a service or establish native idle. The per-service CLI preserves any drain detail returned by the manager.
 
+Each service summary also includes a short operator-facing `message`. The
+message describes the observed state and distinguishes it from requested
+intent. For example, desired `stopped` with observed `ready` reports
+“Service is still running; stop is requested.” Maintenance with a running
+service reports “Service is running; maintenance is requested.” A retained
+startup request with no observed process reports “Service startup is pending.”
+An observed loading service reports “Service is loading.” Unavailable or aged
+observations report “Service status is unavailable.” Aggregate and per-service
+status use the same message. Consumers should continue using `desired` and
+`observed` for programmatic decisions; the message is display text.
+
 Public manager startup reports `native_health_source` and `orbstack_health_source` as `loading|configured|unconfigured|unavailable`. Each is one retained off-loop configuration load, with no retry or duplicate worker. Configured means a readonly collector was constructed, not that a service is healthy or authorized to start. Development images return unconfigured before installed policy is read. The OrbStack collector binds the existing reviewed runtime/session manager, host/account/state and GUI image, then uses its existing fixed running-status/version probes; no credentials, native control, VM capacity or lifecycle authority follows. Missing/stale collector observations remain unknown independently of durable desired state.
 
 Activity publications have an independent manager counter and composition time for each read. The resource context retains its original sample time, and native metadata retains its own capture sequence/time; reading cached native data advances neither native field.

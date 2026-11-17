@@ -13,7 +13,7 @@ const fixture=join(directory,'Driver.swift'),binary=join(directory,'driver'),cor
 copyFileSync(join(root,'platform/studio/Tests/StudioCoreTests/SessionDriver.swift.fixture'),fixture);
 function run(program,args,timeout=180000){const r=spawnSync(program,args,{encoding:'utf8',timeout,maxBuffer:2<<20});assert.equal(r.status,0,r.stderr);return r.stdout.trim();}
 run('swiftc',['-swift-version','6','-warnings-as-errors','-I',join(root,'platform/studio/Sources/CSQLite'),...readdirSync(core).filter(n=>n.endsWith('.swift')).sort().map(n=>join(core,n)),fixture,'-o',binary]);
-run('swift',['build','--package-path',join(root,'platform/studio'),'--product','studioctl','--disable-automatic-resolution']);
+run('swift',['build','--package-path',join(root,'platform/studio'),'--product','studioctl','--disable-automatic-resolution','-j','2']);
 const cli=join(run('swift',['build','--package-path',join(root,'platform/studio'),'--show-bin-path']),'studioctl');
 const policy='(version 1)(allow default)(deny network*)(allow network* (local unix-socket) (remote unix-socket))';
 const exited=p=>p.exitCode!==null||p.signalCode!==null;
@@ -24,9 +24,10 @@ try{
  const helper=start('server','functional');await until(()=>existsSync(join(state,'session-control.json')));
  const manager=start('manager','known');
  await until(()=>{assert(!exited(helper)&&!exited(manager));return existsSync(join(state,'validation-entered'));});
- const pending=status();assert.equal(pending.observed,'starting');assert.equal(pending.recovery.budget_state,'pending');assert.equal(pending.recovery.budget_wait_ms,null);
+ const pending=status();assert.equal(pending.observed,'starting');assert.equal(pending.message,'Service startup is pending.');assert.equal(pending.recovery.budget_state,'pending');assert.equal(pending.recovery.budget_wait_ms,null);
  writeFileSync(join(state,'release-validation'),'release');
  const ready=await until(()=>{const s=status();return s?.observed==='ready'&&s.recovery.budget_state==='rate_limited' ? s:null;});
+ assert.equal(ready.message,'Service is running.');
  assert.equal(ready.recovery.starts_in_window,1);assert(ready.recovery.budget_wait_ms>0&&ready.recovery.budget_wait_ms<=10000);
  const available=await until(()=>{const s=status();return s?.recovery.budget_state==='available' ? s:null;});
  assert.equal(available.observed,'ready');assert.equal(available.recovery.starts_in_window,1);assert.equal(available.recovery.budget_wait_ms,0);
