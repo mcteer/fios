@@ -1,5 +1,12 @@
 # Shared engine request-book queued custody — partial source integration
 
+Current-state note (2026-11-16): later increments implement media queue custody,
+authenticated five-phase registry v3/v4 transport and conservative manager
+normalization. Statements below listing these as unfinished describe this
+contract's earlier checkpoint. The [current gap audit](native-capability-gap-audit.md)
+records the source mapping; positive all-client coverage/completion/capacity and
+atomic admission remain unfinished. No authority or task completion follows.
+
 Whole39/55; T020 remains open. Private source `/private/tmp/fios-009-book-queue-work-m6z11yr4/source` preserves the qualified ordinary-MLX queue parent. This increment changes shared request ownership/accounting in existing adapters; no numerical engine, model policy, wire format, native admission or installation is added.
 
 The shared book captures an independent queue ticket before publishing its copied request. The original group and correlation remain retained after the sender leaves. Selection by `Book.next` alone is not backend execution. The existing actual worker-origin entry activates the request's ticket before work; later llama batch value records preserve their original behavior.

@@ -6,12 +6,12 @@ This is a bounded functional source review for T002, T018–T022 and their downs
 | --- | --- | --- |
 | Accepted HTTP connection | `host/http/request.zig` installs the original token in TLS and retains it through connection cleanup. `host/http/router.zig` resolves and binds the primary before `ensureLoaded`. | No exhaustive enabled-route/modality and slow-reader acceptance; partial primary diagnostics cannot attest all clients. |
 | Administrative load | `host/http/router.zig` dispatches `/v1/load-model` before its normal binding; the original `host/api/models.zig` calls the loader without binding that ingress. | The administrative-load increment is locally validated: bind the exact resolved target before preparation and reuse it through a concurrent default change. This does not grant admission. |
-| Native load/generation queues | Sender and worker retain original groups; source-enabled workers refuse absent custody. Load and ANE completion check independent uncertainty before publication/requeue. | Native activity phases do not yet supply the normalized queued/device contract or authoritative issuer. Local done/join is not terminal proof. |
+| Native load/generation queues | Ordinary generation, shared engine books, and media/vision/embedding senders retain original groups and queue tickets; actual worker pickup activates tickets. Load and ANE completion retain their independent fences. | Queue accounting is implemented for these paths. Complete participant coverage, device-terminal proof and the trusted positive issuer remain missing; local acknowledgement/join is not terminal proof. |
 | Companion model preparation | `host/api/audio.zig` has two secondary `ensureLoaded` calls for diarization and alignment. Existing `bindAuxiliaryCurrent` is not called by either original path. | Concrete missing model association before the ready/cold-load boundary; the audio companion increment passes its isolated/full-source validation separately. It does not establish full modality coverage. |
 | Idle unload | Registry reserves an exact mutation before eviction. Producer preserves an original bound group, associates a single unbound ingress or reserves an internal root before queue publication. | Internal model metadata is not an authenticated native reservation, device proof or host-wide compatibility contract. |
 | Compiled streamed read pool | `build/libs.zig` compiles the C pool; original stop discarded join failures, and the Zig wrapper freed worker storage after failed cleanup. | The streamed-pool increment adds checked refusal and parent/constructor retention; source validation is partial and does not close whole-native/loaded/installed acceptance. |
 | Teardown | Scheduler shutdown and registry eviction consult retained custody and sticky uncertainty. SDK capture refuses missing registered ownership. | Creator/partial-start/error paths, CPU/transport/backend writers and public outcome propagation require complete review and native acceptance. Existing local receipts cannot certify them collectively. |
-| Native control/primary activity | Bounded authenticated control supports observation, pause/resume and owner barriers; primary activity is explicitly partial. | No positive all-client coverage issuer, complete resident/queued/device view or native proof issuer. Pause/barrier and zero counters cannot be promoted to these capabilities. |
+| Native control/primary activity | Authenticated five-phase activity and coupled registry v3/v4 transport, exact model rows, registry generation, claimability decoding and conservative manager normalization are implemented. | No positive all-client coverage issuer, physical residency/device-terminal proof or native proof issuer. Declared readiness, claimability and zero counters cannot grant these capabilities. |
 | Manager admission | `NativeActivityCoherence` enforces an independent coverage ceiling. The broker, checked preparation export, private worker and exact native preparation consumer are connected through optional trusted ports. | The positive production source/proof/capacity issuer and all-client non-preemptive guard remain unfinished. The private CPU reservation transport is implemented; it cannot close the external-client race without those independent capabilities. |
 | Installed lifecycle | Reviewed configuration factories and development release tooling retain their existing gates. | No reviewed installed all-client boundary, direct-server GUI handover or two-Studio acceptance. Development package staging cannot authorize these actions. |
 
@@ -141,3 +141,33 @@ cannot close the positive all-client contract. See
 [build exclusion](native-background-seal-build.md),
 [constructor ordering](residency-constructor-refusal-order.md) and
 [GPU scalar ownership](sdk-gpu-scalar-ownership.md).
+
+## Current queue and transport reconciliation — 2026-11-16
+
+Bounded source-read record
+`/private/tmp/fios-009-queue-map-read-mz88qdev/receipt.json`, SHA256
+`611794686be780f5fee3dda0b355f69d7ff64bc448e9c06f23ba195ce70c2b61`,
+binds seven current native and five Swift files. It is a source read, not a new
+test, exhaustive audit or positive coverage receipt. The current native source
+is separately qualified by54b97159a326f36b1a1d296775246b71d9a37fe9c55c8eaec635865d3add84bc.
+
+- `current_queued_origins` already captures exact-model tickets before sender
+  publication, clones the worker union, activates original tickets and retires
+  after acknowledgement. Generation, vision and embedding senders/workers use
+  it. Shared engine books separately retain and activate original requests.
+- Five-phase and registry transport already exist. The Swift client explicitly
+  requests registry4 and refuses an older response rather than falling back.
+  Decoding validates exact identities, phase totals, registry generation and
+  claimability consistency; these remain declared registry metadata.
+- `NativeRegistryActivity.conservativeActivity` deliberately supplies unknown
+  coverage. The reviewed readonly source resolver already selects the exact
+  authenticated peer. `NativeOwnedPreparationCoherence` requires an independent
+  all-client ceiling before returning its narrow original-preparation result.
+  None of these components supplies that ceiling or physical residency proof.
+
+Historical notes saying media queues, five-phase transport or conservative
+normalization are unimplemented describe earlier checkpoints. Do not implement
+those paths again. The remaining integration is the audited positive coverage,
+completion/capacity issuer, atomic all-client guard and eligible production
+composition. Existing source fences remain independent and unchanged;39/55
+whole tasks are complete.

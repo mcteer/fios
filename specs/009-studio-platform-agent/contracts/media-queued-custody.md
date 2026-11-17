@@ -1,5 +1,12 @@
 # Media queue custody — partial source integration
 
+Current-state note (2026-11-16): later increments implement media queue custody,
+authenticated five-phase registry v3/v4 transport and conservative manager
+normalization. Statements below listing these as unfinished describe this
+contract's earlier checkpoint. The [current gap audit](native-capability-gap-audit.md)
+records the source mapping; positive all-client coverage/completion/capacity and
+atomic admission remain unfinished. No authority or task completion follows.
+
 Whole39/55 unchanged. T018/T020 remain open. The private candidate at `/private/tmp/fios-009-media-queue-work-ngdv64gd/source` layers three source paths over the qualified shared-book candidate. It changes ownership/accounting for existing generation, vision and embedding senders; no numerical engine or model policy is added.
 
 Each sender retains the exact original group, validates membership of the actual model, and captures a queue ticket before taking the publication lock. Its existing uncancelable completion wait retains request storage. An unpublished failure retires its own operation. Actual worker entry validates/clones the merged group and activates each original request's ticket before native work. The worker scope owns a copy that survives sender acknowledgement; it never borrows request storage into worker TLS. Sender retirement occurs after acknowledgement, outside the queue lock, and cannot clear an independent backend fence. Failed retirement preserves the independently retained table entry and original ticket.

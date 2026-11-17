@@ -1146,3 +1146,23 @@ modes and authenticated manager checks pass. Five finite metadata-child gate
 controls also pass.
 This is component/source progress only:39/55 whole tasks complete,16 open. See
 validation.md for retained failed runs and exact evidence scopes.
+
+2026-11-16 source-map reconciliation: media/vision/embedding queue custody,
+authenticated five-phase registry v3/v4 transport, claimability decoding and
+conservative manager normalization are already implemented. Historical bullets
+listing these paths as missing are earlier checkpoints, not current work items.
+The missing positive all-client coverage/completion/capacity issuer and atomic
+guard remain open. No code or authority changed;39/55 whole tasks complete.
+See contracts/native-capability-gap-audit.md for the bounded source-read record.
+
+2026-11-16 actual Engram Table IO supplement: eight Debug/ReleaseSafe records
+pass using genuine selected reader/dispatch/thread/CRT methods and5120 private
+bytes, with actual native tracker/custody/Prefetch code. Original fixture roots
+remain held after caller release until local finish. No model loader,
+dequantizer, blocked-IO timeout, native backend probe or whole-model lifetime is
+certified; the participant-unproven marker stays set. Native source/binary is
+unchanged;39/55 whole tasks complete,16 open. See validation.md.
+Final table supplement also tests the actual selected Engram negative getter:
+ten records pass. Its real participant-unproven marker survives normal IO/join,
+and observing it keeps both original roots/SDK descriptor retained. This is not
+full backend-probe/coverage or model acceptance. Whole39/55 remains unchanged.

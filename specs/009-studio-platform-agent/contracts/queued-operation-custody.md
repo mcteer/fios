@@ -1,5 +1,12 @@
 # Queued operation custody — partial source integration
 
+Current-state note (2026-11-16): later increments implement media queue custody,
+authenticated five-phase registry v3/v4 transport and conservative manager
+normalization. Statements below listing these as unfinished describe this
+contract's earlier checkpoint. The [current gap audit](native-capability-gap-audit.md)
+records the source mapping; positive all-client coverage/completion/capacity and
+atomic admission remain unfinished. No authority or task completion follows.
+
 T020 remains open; whole-task progress is39/55. The private candidate is `/private/tmp/fios-009-queued-phase-work-0cg4jaeh/source`, at3736ed55 plus the parent's30-file working-tree projection and the new five-file overlay. `parent-inputs.json` records that copy. This is ordinary MLX generation accounting, with no numerical engine, installed model policy, wire change or positive coverage/admission authority.
 
 ## Operation ownership

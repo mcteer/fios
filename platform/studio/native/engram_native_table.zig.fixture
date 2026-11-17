@@ -1,0 +1,63 @@
+const std=@import("std");
+const builtin=@import("builtin");
+const options=@import("build_options");
+const owners=@import("../../fios/request_ownership.zig");
+const sdk=@import("../../fios/sdk_request_ownership.zig");
+const fios_origins=@import("../../sdk/util/warm_request_origins.zig");
+const fios_unproven_prefetch=@import("../../sdk/util/engram_prefetch_uncertainty.zig").storage;
+const crt=@import("../../sdk/util/crt.zig");
+@@QUANT_MODE@@
+@@TABLE_READ@@
+@@READ_HELPERS@@
+@@PREFETCH@@
+fn exercise(comptime kind:enum{gcd,threads,duplicates,bad_row,negative_probe})!void {
+ const io=std.testing.io;
+ // Only this private test selects the existing diagnostic enrollment path.
+ if(kind==.negative_probe)owners.shared().primary_guard=false;
+ try owners.shared().initialize(io,@splat(19));try sdk.initialize(io);
+ if(kind==.negative_probe)try owners.shared().enrollDiagnosticUncertaintyProbe(io,struct{
+  fn read()bool{return @import("../../sdk/util/engram_prefetch_uncertainty.zig").known();}
+ }.read);
+ const roots=[_]owners.Token{try owners.shared().enter(io),try owners.shared().enter(io)};
+ for(roots)|root|{try owners.shared().bind(io,root,"fixture/engram-host-bytes");try owners.shared().active(io,root);}
+ const fd=crt.openRead("rows.bin");try std.testing.expect(fd>=0);
+ var table:Table=.{.fd=fd,.rows=640,.head_dim=8,.mode=.affine,.bits=4,.group_size=8,.w_off=0,.w_stride=4,.wlen=4,.s_off=2560,.s_stride=2,.slen=2,.b_off=3840};
+ defer table.close();
+ var ids:[640]u32=undefined;
+ const n:usize=if(kind==.gcd or kind==.bad_row or kind==.negative_probe)16 else ids.len;
+ for(ids[0..n],0..)|*id,i|id.*=@intCast(if(kind==.duplicates)i%16 else i);
+ if(kind==.bad_row)ids[7]=641;
+ owners.current_group().*=&roots;
+ const p=try Prefetch.start(std.heap.c_allocator,&.{&table},&.{.{.at=0,.len=1,.ids=ids[0..n]}},n,1);
+ owners.current_group().*=null;owners.current().*=null;
+ for(roots)|root|try owners.shared().leave(io,root);
+ try std.testing.expectEqual(@as(usize,2),owners.shared().snapshot(io).owned);
+ try std.testing.expectEqual(@as(u32,1),sdk.diagnostic().active_contexts);
+ if(kind==.bad_row){try std.testing.expectError(error.EngramRead,p.take(0,0,0));}
+ else {
+  const raw=try p.take(0,0,0);defer raw.deinit(std.heap.c_allocator);
+  for(ids[0..n],0..)|id,i| {
+   try std.testing.expectEqual(id+100,std.mem.readInt(u32,raw.w[i*4..][0..4],.little));
+   try std.testing.expectEqual(@as(u16,@intCast(id+200)),std.mem.readInt(u16,raw.s[i*2..][0..2],.little));
+   try std.testing.expectEqual(@as(u16,@intCast(id+300)),std.mem.readInt(u16,raw.b[i*2..][0..2],.little));
+  }
+ }
+ if(kind==.negative_probe)try std.testing.expect(owners.shared().backendKnownUncertain(io));
+ try std.testing.expect(p.fiosStopWithin(std.time.ns_per_s));p.finish();
+ if(kind==.negative_probe){
+  try std.testing.expectEqual(@as(usize,2),owners.shared().snapshot(io).owned);
+  try std.testing.expectEqual(@as(u32,1),sdk.diagnostic().active_contexts);
+  try std.testing.expect(sdk.diagnostic().uncertain and owners.shared().knownUncertain(io));
+  try std.testing.expect(fios_unproven_prefetch.get().load(.acquire) and !fiosPrefetchCleanupUncertain());
+  return;
+ }
+ try std.testing.expectEqual(@as(usize,0),owners.shared().snapshot(io).owned);
+ try std.testing.expectEqual(@as(u32,0),sdk.diagnostic().active_contexts);
+ try std.testing.expect(!sdk.diagnostic().uncertain and !fiosPrefetchCleanupUncertain());
+ try std.testing.expect(fios_unproven_prefetch.get().load(.acquire));
+}
+test "native Engram actual table GCD host read" {try exercise(.gcd);}
+test "native Engram actual table threaded host read" {try exercise(.threads);}
+test "native Engram actual table duplicate host read" {try exercise(.duplicates);}
+test "native Engram actual table bad row host read" {try exercise(.bad_row);}
+test "native Engram actual table negative getter host read" {try exercise(.negative_probe);}

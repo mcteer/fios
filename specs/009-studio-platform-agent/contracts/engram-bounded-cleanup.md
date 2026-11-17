@@ -77,3 +77,27 @@ bank/state/weight destruction, device completion or installed lifecycle occurs.
 .venv/bin/python -I scripts/check-platform-engram-native-custody.py \
   --source ABS_PRIVATE_BOUNDED_CANDIDATE --zig ABS_PINNED_ZIG --parent-retention
 ```
+
+### Actual host row-read supplement
+
+The additional `engram_native_table.zig.fixture` uses unchanged selected Table
+read/deduplication/readAll/advise/Job methods, QuantMode, CRT, Prefetch and real
+tracker/custody ABI. It does not use the model opener or GPU dequantizer. A
+5120-byte private affine row fixture exercises GCD dispatch, joined CPU threads,
+duplicate-row ordering and ordinary bad-row refusal. The captured original
+roots outlive caller release until local finish. In a separate diagnostic-only
+case, the actual Engram negative getter is enrolled before creating requests;
+its real participant-unproven marker is observed after IO. Local join/finish
+then retains both roots and the SDK descriptor without inventing a prefetch
+cleanup failure or clearing the independent source fence. This is a selected
+negative getter, not the complete production backend observation composition.
+
+```sh
+.venv/bin/python -I scripts/check-platform-engram-native-table.py \
+  --source ABS_PRIVATE_BOUNDED_CANDIDATE --zig ABS_PINNED_ZIG
+```
+
+Each case runs separately in Debug/ReleaseSafe, with network denial, finite
+compiler/runtime timeout and no linked model/GPU library. Real blocked storage,
+model parent cleanup, device terminality and all-client authority remain outside
+this component check. Exact receipts are in validation.md; no whole task closes.

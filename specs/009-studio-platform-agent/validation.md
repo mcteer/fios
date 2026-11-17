@@ -8419,3 +8419,71 @@ installation, activation, privileged command, merge or deployment. Whole tasks
 remain39/55. Current package-declared inputs and whole-native/publisher
 provenance are separate; this qualification supplies neither installed nor
 all-client authority.
+
+
+### Existing queue/transport source-map correction — 2026-11-16
+
+Seven native and five Swift files were read without executing a model or
+changing code. Source-read receipt
+`/private/tmp/fios-009-queue-map-read-mz88qdev/receipt.json`, SHA256
+`611794686be780f5fee3dda0b355f69d7ff64bc448e9c06f23ba195ce70c2b61`.
+It confirms already implemented ordinary/shared-book/media queue ownership,
+authenticated five-phase registry v3/v4 decoding and conservative normalization.
+The resolver already fixes the authenticated peer; original preparation still
+requires the separate all-client ceiling. Some earlier checkpoint notes called
+these existing paths missing. Current gap/status documentation now distinguishes
+them from the unimplemented positive coverage/completion/capacity issuer and
+atomic all-client guard. This is bounded source review, not a new test or full
+audit. No source bit, production factory, task checkbox or39/55 count changed.
+
+### Actual Engram table host IO supplement — 2026-11-16
+
+Fixture-only supplement; native implementation and the3ca683a qualified binary
+are unchanged. `check-platform-engram-native-table.py` verifies the exact
+bounded-cleanup parent projection, copies genuine tracker/custody/CRT dependencies
+and extracts unchanged selected Table fields/read/duplicate/readAll/advise/Job,
+QuantMode and Prefetch bodies. It excludes model opening and GPU dequantization.
+No replacement Table reader, pread, dispatch callback or thread join is used.
+
+Eight records pass: actual dispatch reads,640 distinct rows through the joined
+thread path,640 repeated rows through deduplication, and ordinary out-of-range
+row refusal, each Debug/ReleaseSafe (plus the required unnamed imported tracker
+test in each process). Data is a private5120-byte affine row fixture, not model
+weights or a model-format/load acceptance case. Two original fixture roots are
+captured by the actual SDK descriptor before prefetch publication; after both
+caller references are released, both roots and that context remain held until
+checked local join/finish. Successful local cleanup retires the two fixture
+roots and context; the independent original participant-unproven marker remains
+true. No native backend probe is enrolled, no device work or terminal/native
+admission authority is inferred, and no actual blocked IO/timeout or model
+resource lifetime is certified by these healthy/ordinary-read-error controls.
+
+Receipt `/private/tmp/fios-009-engram-native-table-olizaq0x/receipt.json`, SHA256
+`c1a71c2c5586a5eae550a1dd9f35ee34cf47226533302daa96e2ad35ad7bd26a`.
+Exact file hashes remain unchanged. Compiler invocations are sequential; no
+other local compiler job was active. Earlier modeled-reader timeout/parent
+unload controls retain their separate scopes. There is no new native build
+claim for this test-only supplement, no model plan/POST, installation,
+activation, privileged operation, merge or deployment. Whole tasks39/55 remain
+complete,16 open.
+
+The final table supplement adds the genuine selected Engram negative-getter
+case and passes all ten Debug/ReleaseSafe records. Receipt
+`/private/tmp/fios-009-engram-native-table-0hk7a_fa/receipt.json`, SHA256
+`f501c47011094b90d9f1a1fe5480a75bb3d77e97206609e3d7ca9ce6bf3f0cfc`.
+The earlier eight-case receipt remains a narrower checkpoint. Only the new
+private test case selects diagnostic (primary_guard false) probe enrollment
+before creating requests; its callback is the genuine Engram uncertainty getter,
+not the complete production backend composition. After actual IO, observing the
+real participant-unproven marker latches source uncertainty. Normal checked
+CPU join/finish retains both original roots and the actual SDK descriptor;
+its independent cleanup-failure flag remains false. Thus an ordinary local
+acknowledgement does not resolve that source fence. No server/profile admission
+bit is enabled and no model/Metal/library is linked or invoked.
+Final locked noneditable reinstall and116 installed Python regressions pass;
+boundary, Python syntax and diff checks pass. Logs
+`/private/tmp/fios-009-engram-table-final-{uv,python}.log`.
+The preceding208 Node/API run and3ca683a native qualification are retained for
+unchanged application/native implementation; they were not rerun or relabeled
+as new enclosing builds for this fixture-only supplement.3ca683a CI44021868699
+remains in progress at this checkpoint; no aggregate green result is claimed.

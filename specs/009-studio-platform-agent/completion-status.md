@@ -22,7 +22,7 @@ separately gated Studio management boundary. Spec008 routing remains parked.
 
 | Remaining work | Tasks | Required outcome |
 | --- | --- | --- |
-| Native authority | T002, T018–T022 | Audited enabled-route/backend coverage; coherent normalized activity; original-request terminal/non-dispatch and process-epoch reconciliation; an atomic non-preemptive guard across native preparation and dispatch. Current negative-only and component paths are insufficient. |
+| Native authority | T002, T018–T022 | Audited enabled-route/backend coverage; trusted all-client normalized activity; original-request terminal/non-dispatch and process-epoch reconciliation; an atomic non-preemptive guard across native preparation and dispatch. Current negative-only and component paths are insufficient. |
 | Operational integration | T008, T009, T027, T028, T030, T036, T045 | Complete enrolled resource/runtime composition; desired/observed service reconciliation; bounded drain/force and full lifecycle integration; sandbox and private-worker task wiring through the native boundary. |
 | Protected installation | T049 | Actual reviewed artifact/configuration installation, switching, rollback and removal. Present tooling reviews and stages private data; it does not implement protected installation. |
 | Acceptance and delivery | T051, T055 | Separately approved scenarios on both Studios, final functional review, approved PR merge, exact merged-main CI and observed automatic application deployment. App delivery and native acceptance are separate. |
@@ -33,7 +33,7 @@ activation and disruptive acceptance remain separately gated. Small-model Core
 results do not satisfy Studio acceptance. The settled sandbox approval covers
 the exact image only.
 
-The current continuation repairs load-error reader publication and tests a
+Earlier continuation work repairs load-error reader publication and tests a
 bounded reader-join preflight that retains the complete model on refusal.
 Original native registration identity now also survives failed follow-up
 lineage lookup without starting a worker or resolving uncertainty.
@@ -56,6 +56,14 @@ worker and optional broker/factory mode are implemented. The public manager
 still supplies no execution ports and leaves source coverage unknown. The
 remaining work is the trusted positive source/proof/capacity issuer and eligible
 production composition, rather than rebuilding those existing data paths.
+
+Current source reconciliation also confirms that media/vision/embedding queue
+custody, authenticated five-phase registry v3/v4 transport, claimability decoding
+and conservative manager normalization are implemented. Older checkpoint notes
+that list them as missing are historical. Their coverage remains unknown;
+registry readiness is not physical residency or completion proof. The
+[current gap audit](contracts/native-capability-gap-audit.md) records exact
+source-read evidence and the remaining positive issuer/guard work.
 
 These address concrete lifecycle defects; they do not close the native-authority
 workstream. Subsequent implementation must connect the producer/proof/guard and
