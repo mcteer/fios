@@ -8590,3 +8590,25 @@ fixture job and an unused runtime adapter; zero runtime submissions and model
 requests occur. The new ordinary test is included in the existing task-command
 test entry point. No permission or lifecycle logic changes, installation or
 deployment is claimed. Whole tasks remain39/55 complete,16 open.
+
+
+### Functional development-package smoke — 2026-11-17
+
+A clean detached checkout of611a0887d5c9d3a39059d106bb903a3e6c6d9815
+builds the normal nine-artifact development package in53.595s. Output
+`/private/tmp/fios-009-functional-package-gr6shjg7/release`; manifest SHA256
+`da7017bb611b5b75ed334211c927ad3ba648298d5999c340a97a270d93f1f204`,
+selected package-input projection
+`3db0b317e97de6cd88491e9b95c89312336f5ac1fb014ddb19ba289a0932acfa`.
+
+The packaged manager and CLI pass normal startup/status, both service views,
+maintenance intent, resource response and offline256GiB RAM planning in fresh
+private state. The development manager correctly remains unconfigured for
+installed service management. Smoke receipt
+`/private/tmp/fios-009-functional-package-gr6shjg7/smoke-receipt.json`, SHA256
+`903a3c0abcd83c36096da5e3ae8e844ccf5ac438afc15c73628a79b5233c1d30`.
+No installed service, model request or deployment is performed. The package
+retains `package_complete:false`; this is ordinary development build/smoke
+coverage, not installed acceptance or whole-native provenance.4c325bd CI44116727953
+completed successfully;611a088 is the separately built source revision and its
+publication/check status follows independently. Whole39/55 complete,16 open.
