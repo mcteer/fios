@@ -8914,3 +8914,41 @@ The patch reverse/reapplies against its five exact parents in a separate private
 projection. This selected component receipt is not whole-native provenance.
 The installed Python package was reinstalled with pinned uv0.13.5/CPython3.11.17;
 no editable imports were used. Enclosing native build remains pending.
+
+The final captured-frame check also records the JSON fixture input:
+`/private/tmp/fios-009-native-request-event-frames-9rZUvg/receipt.json`, SHA256
+`0cce4be4a012cdd195ae181fd52dab9c05265de9b83cb9d219c91bb0679eb4c3`.
+The clean617fb76e898ec17154273f9bfb2b13089b94b6b4 development package
+builds nine artifacts. Manifest SHA256
+`096316e21795c52c186355094d03c5934a8bd72566d887d6b716f0d36d252769`;
+selected package-input projection
+`75bf1d2f668ec0909236a5a40b4df3a119f980dc437880ac62dc3fe449eb6cc7`.
+Its normal private manager/CLI status, both service views, maintenance intent,
+resource reporting and offline256GiB planning pass:
+`/private/tmp/fios-009-request-events-package-g09csvpj/smoke-receipt.json`,
+SHA256 `13d2a940509037b20eaad03b8c131fdc20d1a7ea994b123dcb9ba7768ad4472b`.
+The package remains inactive and package_complete false; no installed service
+or model action occurs. The enclosing native build is independently pending.
+
+The enclosing current native build passes35/35 semantic steps (409.633s),
+32/32 link steps (5.372s),20/20 unit-closure steps (2.688s), and32/32
+default-build steps (3.282s). Summary: `/private/tmp/fios-009-request-events-native-y9kuj_gv/functional-build-summary.json`,
+SHA256 `1b6da7bccb7abea6e6913a50bfe1eadbd9800b80e25e05a95e97fe6b63d3ca88`. Both compilation modes preserve the
+existing source SDK and native activation choices. Only the selected overlay
+and build receipts are qualified; this is not whole-native provenance.
+The default private capsule is composed from the rebuilt binary and existing
+matched dependency libraries; its empty-model manager check remains pending.
+
+The rebuilt default server passes the normal empty-catalog manager fixture:
+health, running→maintenance→running ingress intent, automatic lineage checkpoint,
+backend flags, primary activity and SDK background observations all pass using
+protocol3. Log `/private/tmp/fios-009-request-events-native-y9kuj_gv/normal-manager.log`,
+SHA256 `5b73f4a14d7fdcdce66383650fb3e8e7270c435fcbaff81316e65c026912b1fd`;
+private fixture state `/private/tmp/f9-native-status-fFh4u5`. It reports0 model
+requests,0 installed-service actions and authoritative false. The selected
+private capsule receipt is `f106c9b2a0e85976d06dfbca520f25a154e7ae787eeb083f9425ee2e3e668e22`.
+Initial capsule composition used already-normalized WebP data against the
+binary's versioned link name; that attempt was retained. Recomposition used
+the same original matched WebP libraries so the existing copier could normalize
+the declared names correctly. No library code or existing capsule was changed.
+Whole tasks remain39/55 complete,16 open. No merge/deployment is claimed.
