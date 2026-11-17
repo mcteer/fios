@@ -95,6 +95,12 @@ async def main():
                     value = json.loads(data)
                     assert value['model'] == 'fixture/model' and not value.get('tools')
                     assert value['stream'] is True and value['max_tokens'] <= 8192
+                    if any(item.get('content') == 'ordinary unavailable reply' for item in value['messages']):
+                        result = body({'error': {'message': 'Mock service unavailable'}})
+                        writer.write(('HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: ' +
+                                      str(len(result)) + '\r\n\r\n').encode() + result)
+                        await writer.drain()
+                        return
                     # Finite mock-only window to revoke an already-dispatched
                     # request. The fixture reports counts, never prompt text.
                     if any(item.get('content') in ('fixture-source-conflict', 'ordinary delayed reply') for item in value['messages']):

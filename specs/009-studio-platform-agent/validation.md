@@ -8796,3 +8796,31 @@ the packaged manager. No two application instances share a SQLite file. Receipt
 no model, runtime or installed service action. The package remains inactive and
 `package_complete:false`. Later cancellation-fixture changes are separate from
 this e6cf4bd package source. Whole tasks remain39/55 complete,16 open.
+
+
+### Functional model-worker failure reason — 2026-11-17
+
+The owner model.done relay previously discarded the fixed reason carried by
+ModelWorkerEvent.failed and returned only status failed. A normal validated
+worker error frame with upstream_timeout reproduces the loss through the real
+protocol parser, task mailbox and JSON owner status:
+`/private/tmp/fios-009-job-lease-status-ku4i58/debug-run.log` reports “Owner task
+event lost the normal worker failure reason.” The relay now preserves the
+existing fixed code label; it does not return an error body.
+
+Debug/optimized lease/read/renew/cancel/output-timeout/failure-label checks pass,
+four compile/run records:
+`/private/tmp/fios-009-job-lease-status-yq8hua/receipt.json`, SHA256
+`a90fffb30a0f62f49e6a5c6ee6020a9e6d0392cb93fe2249399ec8c441d3e9f1`.
+The installed-harness/full CLI workflow additionally passes three ordinary
+cases: complete, owner cancel while running, and a normal mock503 unavailable
+response. The last reports failed with upstream_http. Each makes exactly1 mock
+POST, ends removed with0 worker slots and retains its1 unresolved native claim.
+No automatic retry, real inference or runtime action occurs. Receipt
+`/private/tmp/f9-manager-cli-e6cquM/receipt.json`. uv0.13.5 locked noneditable
+reinstall passes. The control-plane contract now documents the owner-only
+execution label; sandbox frames keep their existing schema. Whole tasks remain
+39/55 complete,16 open; no native/installed acceptance or deployment is claimed.
+
+Full CLI service-failure receipt SHA256:
+`5a1de89ca1c6f4e73cb886810691aedee2acbcc61d0752ac7280460add98bddd`.

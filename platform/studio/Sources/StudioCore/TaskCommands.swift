@@ -224,7 +224,7 @@ final class TaskCommands {
                 switch event {
                 case .text(let kind,let content):fields=["type":"model.text","kind":kind,"content":content]
                 case .complete:fields=["type":"model.done","status":"complete"]
-                case .failed:fields=["type":"model.done","status":"failed"]
+                case .failed(let code):fields=["type":"model.done","status":"failed","code":code]
                 case .interrupted:fields=["type":"model.done","status":"interrupted"]
                 case .usage,.dispatched,.activity:continue
                 }

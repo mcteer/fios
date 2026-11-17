@@ -59,5 +59,19 @@ func runJobLeaseStatusTests()throws {
     guard delayed["output_lost"] as? Bool == true,
           try lease(delayed)["revoked"] as? Bool == current.lease.revoked,
           runtime.calls==0 else {throw JournalError.invalid}
-    print("PASS: ordinary job status reports lease expiry, renewal and cancellation without extending reads")
+    let failed=try DurableJob(id:UUID().uuidString.lowercased(),idempotency:UUID().uuidString.lowercased(),
+        ownerHash:owner,requestHash:String(repeating:"d",count:64),created:28000)
+    _=try journal.reserveJob(failed)
+    try journal.transitionJob(id:failed.id,to:.revoking,now:28000)
+    try journal.transitionJob(id:failed.id,to:.removed,now:28000)
+    var worker=ModelWorkerProtocol(job:failed.id,attempt:0)
+    let timeout=try worker.accept(JSONSerialization.data(withJSONObject:["v":1,"job_id":failed.id,"type":"error","code":"upstream_timeout"]))
+    try commands.tick(now:28000,uptime:28000,artifactResults:[],model:[failed.id:[timeout]])
+    let failedStatus=try call("job.status",28001,id:failed.id)
+    guard let event=failedStatus["event"] as? [String:Any],event["type"] as? String == "model.done",
+          event["status"] as? String == "failed",event["code"] as? String == "upstream_timeout" else {
+        throw NSError(domain:"JobLeaseStatus",code:3,userInfo:[NSLocalizedDescriptionKey:"Owner task event lost the normal worker failure reason"])
+    }
+    guard runtime.calls==0 else {throw JournalError.invalid}
+    print("PASS: normal job status reports lease timing and the worker failure reason")
 }

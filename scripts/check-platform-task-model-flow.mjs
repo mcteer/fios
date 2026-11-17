@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Normal CLI upload/renew/stream/completion and owner cancellation; local MOCK only.
+// Normal CLI completion, owner cancellation and service-unavailable reporting; local MOCK only.
 import assert from 'node:assert/strict';
 import {spawn,spawnSync} from 'node:child_process';
 import {mkdtempSync,mkdirSync,readdirSync,copyFileSync,chmodSync,readFileSync,writeFileSync,existsSync} from 'node:fs';
@@ -41,7 +41,7 @@ try {
  await until(()=>{if(streamFailure)throw streamFailure;assert(!exited(mock));return port;});
  manager.stdin.end(JSON.stringify({base:`http://127.0.0.1:${port}/v1`,path:join(nativeState,'observe.sock'),epoch:status.epoch}));
  await until(()=>existsSync(join(caseDirectory,'model-cache-ready')));
- const data=Buffer.from(JSON.stringify([{role:'user',content:scenario==='complete'?'ordinary CLI text 👋\n'.repeat(2200):'ordinary delayed reply'}]));
+ const data=Buffer.from(JSON.stringify([{role:'user',content:scenario==='complete'?'ordinary CLI text 👋\n'.repeat(2200):scenario==='cancel'?'ordinary delayed reply':'ordinary unavailable reply'}]));
  const created=task('job.create',{phase:'begin',idempotency:randomUUID(),kind:'model',length:data.length,sha256:sha(data),lifetime:60000,model:'fixture/model',image:null,memory:0,cpus:0});
  assert.equal(created.state,'reserved');const job=created.job,deadline=created.lease.deadline_at;
  const observed=task('job.status',{job});assert.equal(observed.lease.expires_at,created.lease.expires_at);
@@ -54,25 +54,26 @@ try {
   const active=task('job.status',{job});assert.equal(active.state,'running');wasRunning=true;
   const cancelled=task('job.cancel',{job});assert.equal(cancelled.lease.revoked,true);
  }
- let text='',terminal,final,ordinal=0;
+ let text='',terminal,failureCode,final,ordinal=0;
  await until(()=>{
   if(streamFailure)throw streamFailure;assert(!exited(manager)&&!exited(mock));
   const response=task('job.status',{job});
-  if(response.event){assert.equal(response.event.event_index,ordinal++);if(response.event.type==='model.text')text+=response.event.content;else if(response.event.type==='model.done')terminal=response.event.status;}
+  if(response.event){assert.equal(response.event.event_index,ordinal++);if(response.event.type==='model.text')text+=response.event.content;else if(response.event.type==='model.done'){terminal=response.event.status;failureCode=response.event.code;}}
   if(response.state==='removed'&&(scenario==='cancel'||terminal)){final=response;return true;}return false;
  },15000);
  if(scenario==='complete'){assert.equal(text,'MOCK_ONLY');assert.equal(terminal,'complete');}
+ if(scenario==='unavailable'){assert.equal(text,'');assert.equal(terminal,'failed');assert.equal(failureCode,'upstream_http');}
  assert.equal(posts,1);assert.equal(final.lease.deadline_at,deadline);assert.equal(final.lease.revoked,true);
  await until(()=>JSON.parse(command(cli,['--state',state,'status'],3000)).worker_reservations===0);
  assert.equal(final.unresolved_managed_requests,1);
- return {scenario,input_bytes:data.length,input_chunks:chunks,output_events:ordinal,terminal:terminal??null,state:final.state,cancelled_while_running:wasRunning,lease_read_did_not_extend:true,renewal_extended_expiry:true,deadline_unchanged:true,mock_model_posts:posts,worker_slots_after_completion:0};
+ return {scenario,input_bytes:data.length,input_chunks:chunks,output_events:ordinal,terminal:terminal??null,failure_code:failureCode??null,state:final.state,cancelled_while_running:wasRunning,lease_read_did_not_extend:true,renewal_extended_expiry:true,deadline_unchanged:true,mock_model_posts:posts,worker_slots_after_completion:0};
 } finally {
  if(manager&&!exited(manager))manager.kill('SIGTERM');if(mock&&!exited(mock))mock.stdin.end();
  await until(()=>children.every(exited),5000);
 }
 }
 const records=[];
-for(const scenario of ['complete','cancel'])records.push(await modelCase(scenario));
-const receipt={scope:'normal_cli_model_job_completion_and_owner_cancellation',records,real_model_requests:0,runtime_actions:0,native_acceptance:false,cli_sha256:sha(readFileSync(cli)),manager_sha256:sha(readFileSync(binary))};
+for(const scenario of ['complete','cancel','unavailable'])records.push(await modelCase(scenario));
+const receipt={scope:'normal_cli_model_job_completion_cancellation_and_service_failure',records,real_model_requests:0,runtime_actions:0,native_acceptance:false,cli_sha256:sha(readFileSync(cli)),manager_sha256:sha(readFileSync(binary))};
 writeFileSync(join(directory,'receipt.json'),JSON.stringify(receipt,null,2)+'\n');
 console.log(JSON.stringify({ok:true,directory,...receipt}));

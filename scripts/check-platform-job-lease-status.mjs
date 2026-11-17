@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Ordinary job status, lease renewal and cancellation; no runtime action.
+// Normal lease status and worker failure reporting; no runtime or model action.
 import assert from 'node:assert/strict';
 import {spawnSync} from 'node:child_process';
 import {mkdtempSync,readdirSync,readFileSync,writeFileSync} from 'node:fs';
@@ -27,6 +27,6 @@ for(const mode of ['debug','optimized']){
  }
 }
 assert(Object.entries(inputs).every(([p,digest])=>sha(p)===digest));
-const receipt={scope:'ordinary_job_lease_status_renewal_and_cancellation_with_private_journal',inputs,records,native_actions:0,model_requests:0};
+const receipt={scope:'ordinary_job_lease_status_renewal_cancellation_and_worker_failure_reason',inputs,records,native_actions:0,model_requests:0};
 const output=join(directory,'receipt.json');writeFileSync(output,JSON.stringify(receipt,null,2)+'\n');
 console.log(JSON.stringify({ok:true,directory,receipt_sha256:sha(output),records:records.length,native_actions:0}));

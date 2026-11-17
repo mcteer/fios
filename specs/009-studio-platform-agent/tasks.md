@@ -1245,3 +1245,11 @@ The clean e6cf4bd package passes normal status/resources/planning plus actual
 packaged finished-job error correlation and3-chunk/empty exports in separate
 private state. No real model/runtime/installed service actions; package remains
 inactive, T045 remains open and39/55 whole tasks complete.
+
+
+2026-11-17 functional failure reason relay (T045): owner model.done/failed
+events now preserve the existing fixed worker code. A normal worker timeout
+frame reproduces the dropped label before the fix and passes Debug/optimized
+afterward. Full CLI/installed-harness complete/cancel/mock503 cases pass with
+1 mock POST/case,0 worker slots afterward and no real inference/runtime action.
+No native or installed acceptance; T045 remains open and39/55 whole tasks.
