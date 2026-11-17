@@ -8101,3 +8101,27 @@ Strict startup receipt SHA256
 The first default-startup command referenced a nonexistent review filename and
 failed before child startup; its log remains excluded, with the corrected run
 recorded separately. No native uncertainty is cleared by these controls.
+
+### Opaque configuration restoration review continuation
+
+The new `propose-enrollment-restore` reuses the independent bounded snapshot and
+composition verification. It proposes fixed `/usr/bin/install` argv for present
+root-owned originals, preserving size/hash/mode; all six destinations must be
+absent. It emits no removal, overwrite, activation, credential write or actual
+privileged command. Missing snapshot entries must remain absent. The snapshot
+has no group or authenticated origin host, so both remain explicitly unverified
+and require independent previous-enrollment review. It does not supply a complete
+installed rollback or close T049. Whole tasks remain39/55.
+
+Isolated tests cover both host CLI selections, exact fixed argv and byte identity,
+blocked/no-authority state, no opaque content disclosure, retained source bytes,
+nonroot original refusal, changed source refusal and all-absent snapshots. Full
+composition tests, Node/installed-Python regressions and new clean package checks
+are being completed; no positive installed result is claimed by this entry.
+
+The final local run passes12 composition tests,208 Node tests and116 installed
+Python tests after locked noneditable reinstall; agent boundary and diff checks
+pass. The first full run failed only the wrapper's obsolete11-case assertion;
+that wrapper now requires12, and the complete suite was rerun successfully.
+Logs: `/private/tmp/fios-009-configuration-restore-{tests-final,npm-final,uv}.log`.
+Clean committed-source package qualification remains pending below.

@@ -452,3 +452,14 @@ exact installed context, disabled/removed registrations, stopped writers,
 retained native custody/absence and independently verified complete stopped
 backup remain prerequisites. The tool executes no removal and cannot establish
 those installed prerequisites from the snapshot.
+
+`propose-enrollment-restore` reviews the same fixed six-document opaque snapshot
+and emits root-owned file-copy proposals for present originals only. It requires
+root original ownership and preserves the recorded mode/size/hash; absent entries
+must remain absent. Every destination must be absent: no overwrite or cleanup is
+proposed. It executes no install, registration, credential or native operation.
+The snapshot records neither original group nor authenticated host: independently
+review its originating host/previous release and previous group `wheel` before
+execution. Preserve failed configuration/state/credentials for diagnosis, keep
+writers stopped and require separate rollback approval. This is partial T049
+review tooling, not implemented or accepted installed rollback.

@@ -1082,3 +1082,9 @@ partial T002/T019/T021 source evidence; it closes no whole task. **39/55** remai
 complete. Combined strict/default native compilation and startup/manager checks
 subsequently pass; all-client/installed acceptance remains separate from these
 local controls. See the checked decode validation entry.
+
+T049 continuation adds a blocked six-document configuration restoration proposal
+from the existing opaque snapshot. It preserves recorded byte identity/mode,
+refuses nonroot originals and requires absent destinations, original-host/group
+review and separate operator execution. No privileged operation runs; installed
+rollback remains open. Whole-task count stays **39/55**.

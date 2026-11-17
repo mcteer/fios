@@ -309,6 +309,50 @@ class CompositionTests(unittest.TestCase):
             self.assertTrue(output.exists());self.assertTrue((output/'platform').exists())
             self.assertFalse((output/'composition.json').exists());self.assertFalse(args[4].exists())
 
+    def test_configuration_restore_requires_root_originals_and_retains_absent_entries(self):
+        with tempfile.TemporaryDirectory(dir=Path('/tmp').resolve()) as temporary:
+            root=Path(temporary);args=self.fixture(root);output=root/'combined'
+            result=API['compose'](*args[:4],output);snapshot=root/'configuration';snapshot.mkdir(mode=0o700)
+            names=['runtime-enrollment.json','session-enrollment.json','python-enrollment.json',
+                   'resource-enrollment.json','native-serving-launch.json','sandbox-enrollment.json']
+            rows=[{'name':name} for name in names]
+            payload=b'opaque previous protected configuration'
+            (snapshot/names[0]).write_bytes(payload);(snapshot/names[0]).chmod(0o600)
+            rows[0].update(bytes=len(payload),sha256=sha(payload),originalUID=0,originalMode=0o640)
+            manifest={'version':1,'scope':'opaque_configuration_data_only','files':rows}
+            def write_manifest():
+                content=json.dumps(manifest).encode();(snapshot/'manifest.json').write_bytes(content);(snapshot/'manifest.json').chmod(0o600)
+                return sha(content)
+            digest=write_manifest();before={p.name:p.read_bytes() for p in snapshot.iterdir()}
+            for host in ['fios-edge-a.lab','fios-edge-b.lab']:
+                command=['node',str(ROOT/'scripts/install-platform.mjs'),'propose-enrollment-restore',
+                    '--candidate',str(output),'--sha256',result['composition_sha256'],'--host',host,
+                    '--configuration',str(snapshot),'--configuration-sha256',digest]
+                completed=subprocess.run(command,capture_output=True,timeout=10)
+                self.assertEqual(completed.returncode,0,completed.stderr);plan=json.loads(completed.stdout)
+                self.assertEqual(plan['operation'],'configuration_restore_command_proposal')
+                self.assertFalse(plan['snapshot_host_binding_verified']);self.assertFalse(plan['original_group_recorded'])
+                self.assertEqual(plan['state'],'blocked');self.assertFalse(plan['commands_authorized'])
+                self.assertFalse(plan['configuration_restored']);self.assertFalse(plan['state_opened'])
+                self.assertFalse(plan['stopped_state_backup_verified']);self.assertEqual(plan['privileged_commands'],[])
+                self.assertTrue(plan['configuration_snapshot_rechecked']);self.assertTrue(plan['native_inference_uncertainty_retained'])
+                self.assertNotIn('proposed_file_removals',plan)
+                item=plan['proposed_file_restorations'][0]
+                self.assertEqual(item['argv'],['-o','root','-g','wheel','-m','0640',str(snapshot/names[0]),'/Library/Application Support/Fios/Studio/'+names[0]])
+                self.assertEqual(item['sha256'],sha(payload));self.assertTrue(item['destination_must_be_absent'])
+                self.assertEqual(len(plan['proposed_file_restorations']),1)
+                self.assertEqual(plan['absent_snapshot_entries'],'must_remain_absent_no_removal_proposed')
+                self.assertNotIn(payload,completed.stdout)
+            self.assertEqual(before,{p.name:p.read_bytes() for p in snapshot.iterdir()})
+            rows[0]['originalUID']=os.getuid();digest=write_manifest()
+            with self.assertRaises(ValueError):REVIEW['configuration_restore_proposal'](output,result['composition_sha256'],'fios-edge-a.lab',snapshot,digest)
+            rows[0]['originalUID']=0;digest=write_manifest();(snapshot/names[0]).write_bytes(b'changed')
+            with self.assertRaises(ValueError):REVIEW['configuration_restore_proposal'](output,result['composition_sha256'],'fios-edge-a.lab',snapshot,digest)
+            (snapshot/names[0]).unlink();rows[0]={'name':names[0]};digest=write_manifest()
+            plan=REVIEW['configuration_restore_proposal'](output,result['composition_sha256'],'fios-edge-a.lab',snapshot,digest)
+            self.assertEqual(plan['proposed_file_restorations'],[])
+            self.assertFalse(args[4].exists())
+
     def test_configuration_removal_reviews_fixed_opaque_snapshot_without_deleting_data(self):
         with tempfile.TemporaryDirectory(dir=Path('/tmp').resolve()) as temporary:
             root=Path(temporary);args=self.fixture(root);output=root/'combined'

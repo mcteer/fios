@@ -391,6 +391,41 @@ def configuration_removal_proposal(directory, expected, host, configuration, con
         API['close_chain'](chain)
 
 
+def configuration_restore_proposal(directory, expected, host, configuration, configuration_sha256):
+    plan=configuration_removal_proposal(directory,expected,host,configuration,configuration_sha256)
+    removals=plan.pop('proposed_file_removals')
+    # Protected enrollment was root-owned. Do not silently promote a user-owned
+    # snapshot into a protected policy or change the original owner on rollback.
+    require(all(item['snapshot_original_uid']==0 for item in removals))
+    commands=[]
+    for item in removals:
+        source=str(Path(configuration)/Path(item['destination']).name)
+        commands.append({'program':'/usr/bin/install',
+            'argv':['-o','root','-g','wheel','-m',format(item['required_mode'],'04o'),source,item['destination']],
+            'source':source,'destination':item['destination'],
+            'sha256':item['required_sha256'],'bytes':item['required_bytes'],
+            'uid':0,'mode':item['required_mode'],'destination_must_be_absent':True})
+    return {**plan,'operation':'configuration_restore_command_proposal','configuration_restored':False,
+            'proposed_file_restorations':commands,
+            'absent_snapshot_entries':'must_remain_absent_no_removal_proposed',
+            'snapshot_host_binding_verified':False,'original_group_recorded':False,
+            'proposed_group':'wheel_requires_independent_previous_enrollment_review',
+            'mandatory_preconditions':['separate_operator_configuration_rollback_approval',
+                'execute_on_original_studio_account_state_and_previous_release_context',
+                'independently_verify_snapshot_origin_host_and_previous_configuration_group_wheel',
+                'registrations_removed_or_persistently_disabled_and_all_platform_writers_stopped',
+                'owned_native_children_absent_or_in_separately_reviewed_retained_custody',
+                'independently_verified_complete_stopped_state_exports_configuration_and_credential_backup',
+                'preserve_failed_release_state_configuration_and_credentials_for_diagnosis',
+                'all_six_fixed_destination_files_absent_no_overwrite',
+                'protected_root_directory_root_owned_nonwritable_no_symlink_or_acl',
+                'serialized_operator_transaction_reverify_snapshot_bytes_before_each_copy',
+                'verify_exact_destination_uid_mode_size_hash_after_each_copy',
+                'no_registration_activation_until_complete_previous_release_compatibility_review',
+                'preserve_independent_native_inference_uncertainty'],
+            'on_failure':'stop_retain_partial_restore_and_backups_no_activation_or_automatic_cleanup'}
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--candidate',required=True)
@@ -404,6 +439,7 @@ if __name__ == '__main__':
     modes.add_argument('--python-policy-install-proposal',action='store_true')
     modes.add_argument('--python-policy-removal-proposal',action='store_true')
     modes.add_argument('--configuration-removal-proposal',action='store_true')
+    modes.add_argument('--configuration-restore-proposal',action='store_true')
     parser.add_argument('--uid')
     parser.add_argument('--state')
     parser.add_argument('--review-sha256')
@@ -413,13 +449,14 @@ if __name__ == '__main__':
     parser.add_argument('--configuration')
     parser.add_argument('--configuration-sha256')
     args = parser.parse_args()
-    require(not (args.first_install_proposal or args.uninstall_proposal or args.python_enrollment_proposal or args.stage_python_enrollment or args.python_policy_install_proposal or args.python_policy_removal_proposal or args.configuration_removal_proposal) or args.host is not None)
+    require(not (args.first_install_proposal or args.uninstall_proposal or args.python_enrollment_proposal or args.stage_python_enrollment or args.python_policy_install_proposal or args.python_policy_removal_proposal or args.configuration_removal_proposal or args.configuration_restore_proposal) or args.host is not None)
     require((args.python_enrollment_proposal or args.stage_python_enrollment) or all(value is None for value in (args.uid,args.state,args.review_sha256)))
     require(args.stage_python_enrollment or args.to is None)
     require(not args.stage_python_enrollment or args.to is not None)
     require((args.python_policy_install_proposal or args.python_policy_removal_proposal) or (args.bundle is None and args.bundle_sha256 is None))
-    require(args.configuration_removal_proposal or (args.configuration is None and args.configuration_sha256 is None))
-    result = (configuration_removal_proposal(args.candidate,args.sha256,args.host,args.configuration,args.configuration_sha256) if args.configuration_removal_proposal else
+    require((args.configuration_removal_proposal or args.configuration_restore_proposal) or (args.configuration is None and args.configuration_sha256 is None))
+    result = (configuration_restore_proposal(args.candidate,args.sha256,args.host,args.configuration,args.configuration_sha256) if args.configuration_restore_proposal else
+              configuration_removal_proposal(args.candidate,args.sha256,args.host,args.configuration,args.configuration_sha256) if args.configuration_removal_proposal else
               python_policy_removal_proposal(args.candidate,args.sha256,args.host,args.bundle,args.bundle_sha256) if args.python_policy_removal_proposal else
               python_policy_install_proposal(args.candidate,args.sha256,args.host,args.bundle,args.bundle_sha256) if args.python_policy_install_proposal else
               stage_python_enrollment(args.candidate,args.sha256,args.host,args.uid,args.state,args.review_sha256,args.to) if args.stage_python_enrollment else
