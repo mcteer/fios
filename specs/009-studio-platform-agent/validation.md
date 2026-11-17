@@ -8858,3 +8858,22 @@ functional platform jobs are still running. No audit findings were investigated
 and no security-related dependency work was performed, per operator scope.
 That run is not green; subsequent heads require their own exact-head result.
 Whole tasks remain39/55 complete,16 open. No merge/deployment is claimed.
+
+
+### Functional partial-upload reconnect — 2026-11-17
+
+A fourth normal CLI case now uploads only the first32KiB chunk of declared
+52,830-byte input, gracefully stops the private manager, waits for exit and
+starts a replacement on that same private state. The partial buffer is not
+reconstructed: the recovered owner job closes locally with revoked lease,
+no output,0 unresolved requests and0 worker slots. Repeating the exact begin
+manifest returns that same removed job; repeating end returns status with the
+original deadline. The mock receives0 model POSTs throughout.
+
+The complete/reconnect, owner-cancel, normal503 failure and partial-upload/
+reconnect cases pass together:
+`/private/tmp/f9-manager-cli-rzGSVv/receipt.json`. The first three cases retain
+1 mock POST/case and their1 unresolved request; the unsubmitted partial upload
+has0. There is no real inference, runtime or installed-service action. The
+manager processes never share the SQLite writer concurrently. This extends
+normal source integration only; whole tasks remain39/55 complete,16 open.

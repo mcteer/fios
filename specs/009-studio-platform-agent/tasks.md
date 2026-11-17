@@ -1262,3 +1262,11 @@ The normal three-case CLI/harness workflow passes;1 mock POST/case and0 worker
 slots afterward. Clean18c4e4a package smoke also passes. Existing CI audit-job
 failure remains outside this functional work and prevents a green overall run.
 No whole-task/native/installed acceptance;39/55 complete,16 open.
+
+
+2026-11-17 functional partial-upload reconnect (T045): a graceful private
+manager replacement closes an unfinished32KiB-of52,830-byte upload without
+reconstructing input. Same-manifest begin/end replay returns the existing
+removed job and original deadline;0 model POSTs/workers/unresolved requests.
+The four normal CLI cases pass together with no real inference/runtime or
+installed-service action. T045 remains open;39/55 whole tasks unchanged.

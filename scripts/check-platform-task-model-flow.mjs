@@ -29,6 +29,12 @@ function task(operation,payload){
  const id=randomUUID(),result=spawnSync(cli,['--state',state,'task'],{cwd:root,encoding:'utf8',timeout:3000,input:JSON.stringify({version:1,id,operation,payload:{...payload,owner:token}})});
  assert.equal(result.status,0,'Normal CLI task request failed');const reply=JSON.parse(result.stdout);assert.equal(reply.ok,true);assert.equal(reply.id,id);assert(reply.result);return reply.result;
 }
+async function replaceManager(previousEpoch){
+ manager.kill('SIGTERM');await until(()=>exited(manager),5000);
+ manager=spawn(binary,[state,standin,sha(readFileSync(standin)),'/fixture/unused.sock','sha256:'+'a'.repeat(64),'disabled'],{cwd:root,env:environment,stdio:'ignore'});children.push(manager);
+ await until(()=>{assert(!exited(manager),'Replacement private manager exited');return existsSync(join(state,'observe.sock'));});
+ const replacement=JSON.parse(command(cli,['--state',state,'status'],3000));assert.notEqual(replacement.epoch,previousEpoch);
+}
 try {
  mkdirSync(state,{mode:0o700});mkdirSync(nativeState,{mode:0o700});
  manager=spawn(binary,[state,standin,sha(readFileSync(standin)),'/fixture/unused.sock','sha256:'+'a'.repeat(64),'models',python],{cwd:root,env:environment,stdio:['pipe','ignore','ignore']});children.push(manager);
@@ -41,12 +47,23 @@ try {
  await until(()=>{if(streamFailure)throw streamFailure;assert(!exited(mock));return port;});
  manager.stdin.end(JSON.stringify({base:`http://127.0.0.1:${port}/v1`,path:join(nativeState,'observe.sock'),epoch:status.epoch}));
  await until(()=>existsSync(join(caseDirectory,'model-cache-ready')));
- const data=Buffer.from(JSON.stringify([{role:'user',content:scenario==='complete'?'ordinary CLI text 👋\n'.repeat(2200):scenario==='cancel'?'ordinary delayed reply':'ordinary unavailable reply'}]));
- const created=task('job.create',{phase:'begin',idempotency:randomUUID(),kind:'model',length:data.length,sha256:sha(data),lifetime:60000,model:'fixture/model',image:null,memory:0,cpus:0});
+ const data=Buffer.from(JSON.stringify([{role:'user',content:['complete','upload_restart'].includes(scenario)?'ordinary CLI text 👋\n'.repeat(2200):scenario==='cancel'?'ordinary delayed reply':'ordinary unavailable reply'}]));
+ const manifest={phase:'begin',idempotency:randomUUID(),kind:'model',length:data.length,sha256:sha(data),lifetime:60000,model:'fixture/model',image:null,memory:0,cpus:0};
+ const created=task('job.create',manifest);
  assert.equal(created.state,'reserved');const job=created.job,deadline=created.lease.deadline_at;
  const observed=task('job.status',{job});assert.equal(observed.lease.expires_at,created.lease.expires_at);
  await delay(25);const renewed=task('job.renew',{job});assert(renewed.lease.expires_at>created.lease.expires_at);assert.equal(renewed.lease.deadline_at,deadline);
- let chunks=0;for(let offset=0;offset<data.length;offset+=32768){task('job.create',{phase:'chunk',job,index:chunks++,data:data.subarray(offset,offset+32768).toString('base64')});}
+ let chunks=0;for(let offset=0;offset<data.length;offset+=32768){task('job.create',{phase:'chunk',job,index:chunks++,data:data.subarray(offset,offset+32768).toString('base64')});if(scenario==='upload_restart')break;}
+ if(scenario==='upload_restart'){
+  assert.equal(posts,0);await replaceManager(status.epoch);
+  let restored;
+  await until(()=>{restored=task('job.status',{job});return restored.state==='removed';});
+  assert.equal(restored.lease.revoked,true);assert.equal(restored.unresolved_managed_requests,0);assert.equal(restored.event,undefined);
+  const replay=task('job.create',manifest);assert.equal(replay.job,job);assert.equal(replay.state,'removed');assert.equal(replay.lease.revoked,true);
+  const acknowledgement=task('job.create',{phase:'end',job});assert.equal(acknowledgement.state,'removed');assert.equal(acknowledgement.lease.deadline_at,deadline);
+  await delay(50);assert.equal(posts,0);assert.equal(JSON.parse(command(cli,['--state',state,'status'],3000)).worker_reservations,0);
+  return {scenario,restart_checked:true,input_bytes:data.length,input_chunks:chunks,partial_upload:true,replay_status_only:true,state:restored.state,mock_model_posts:posts,worker_slots_after_completion:0};
+ }
  task('job.create',{phase:'end',job});
  let wasRunning=false;
  if(scenario==='cancel'){
@@ -68,10 +85,7 @@ try {
  assert.equal(final.unresolved_managed_requests,1);
  let restartChecked=false;
  if(scenario==='complete'){
-  manager.kill('SIGTERM');await until(()=>exited(manager),5000);
-  manager=spawn(binary,[state,standin,sha(readFileSync(standin)),'/fixture/unused.sock','sha256:'+'a'.repeat(64),'disabled'],{cwd:root,env:environment,stdio:'ignore'});children.push(manager);
-  await until(()=>{assert(!exited(manager),'Replacement private manager exited');return existsSync(join(state,'observe.sock'));});
-  const replacement=JSON.parse(command(cli,['--state',state,'status'],3000));assert.notEqual(replacement.epoch,status.epoch);
+  await replaceManager(status.epoch);
   const restored=task('job.status',{job});assert.equal(restored.state,'removed');assert.equal(restored.lease.revoked,true);assert.equal(restored.event,undefined);assert.equal(restored.unresolved_managed_requests,1);
   const acknowledgement=task('job.create',{phase:'end',job});assert.equal(acknowledgement.state,'removed');assert.equal(acknowledgement.lease.deadline_at,deadline);
   await delay(50);assert.equal(posts,1);assert.equal(JSON.parse(command(cli,['--state',state,'status'],3000)).worker_reservations,0);restartChecked=true;
@@ -83,7 +97,7 @@ try {
 }
 }
 const records=[];
-for(const scenario of ['complete','cancel','unavailable'])records.push(await modelCase(scenario));
+for(const scenario of ['complete','cancel','unavailable','upload_restart'])records.push(await modelCase(scenario));
 const receipt={scope:'normal_cli_model_job_completion_cancellation_and_service_failure',records,real_model_requests:0,runtime_actions:0,native_acceptance:false,cli_sha256:sha(readFileSync(cli)),manager_sha256:sha(readFileSync(binary))};
 writeFileSync(join(directory,'receipt.json'),JSON.stringify(receipt,null,2)+'\n');
 console.log(JSON.stringify({ok:true,directory,...receipt}));
