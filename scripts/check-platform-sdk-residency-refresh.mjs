@@ -8,11 +8,14 @@ import {readFileSync,writeFileSync,mkdtempSync,lstatSync,realpathSync} from 'nod
 import {join,resolve} from 'node:path';
 import {createHash} from 'node:crypto';
 const args=process.argv.slice(2),root=resolve(import.meta.dirname,'..');
+const constructorOrder=args.includes('--constructor-order');
+if(constructorOrder){assert.equal(args.filter(value=>value==='--constructor-order').length,1);args.splice(args.indexOf('--constructor-order'),1);}
 const nativeBridge=args.at(-2)==='--native-bridge'?args.splice(-2)[1]:null;
 const sealedMetadata=args.at(-1)==='--sealed-metal-metadata';if(sealedMetadata)args.pop();
 const participantSeal=args.at(-1)==='--participant-seal';if(participantSeal)args.pop();
 const realMetadata=args.at(-1)==='--metal-metadata';if(realMetadata)args.pop();
 assert(!(participantSeal&&realMetadata));
+assert(!constructorOrder||participantSeal);
 assert(!nativeBridge||participantSeal);
 assert(!sealedMetadata||participantSeal);
 assert(process.platform==='darwin'&&process.arch==='arm64'&&process.getuid()>0);
@@ -44,7 +47,20 @@ assert.equal(git('rev-parse','HEAD').trim(),'c69303b00f5f61860436e832f23fa8c34b9
 const modified=['mlx/backend/cpu/eval.cpp','mlx/backend/metal/device.cpp','mlx/backend/metal/device.h','mlx/backend/metal/eval.cpp','mlx/backend/metal/event.cpp','mlx/backend/metal/resident.cpp','mlx/scheduler.cpp','mlx/stream.cpp','mlx/stream.h'];
 assert.deepEqual(git('status','--porcelain','--untracked-files=all','--ignored=matching').trimEnd().split('\n'),modified.map(name=>' M '+name));
 const patch=readFileSync(join(root,participantSeal?'platform/studio/native/mlx-c69303b-participant-seal.patch':'platform/studio/native/mlx-c69303b-residency-refresh-refusal.patch'));
-assert.equal(git('diff','--no-ext-diff','--no-textconv','HEAD'),patch.toString());
+const orderInputs=constructorOrder?['mlx-residency-constructor-refusal-order.patch','residency_constructor_order_parents.json'].map(name=>join(root,'platform/studio/native',name)):[];
+if(constructorOrder){
+ const {mkdirSync}=await import('node:fs');
+ const reviewDirectory=join(directory,'constructor-order'),relative='mlx/backend/metal/resident.cpp';
+ const target=join(reviewDirectory,relative);mkdirSync(resolve(target,'..'),{recursive:true,mode:0o700});
+ const candidate=readFileSync(join(source,relative));writeFileSync(target,candidate,{mode:0o600});
+ const parents=JSON.parse(readFileSync(orderInputs[1]));assert.deepEqual(Object.keys(parents),[relative]);
+ run('order-reverse','/usr/bin/git',['-C',reviewDirectory,'apply','--reverse',orderInputs[0]],5000);
+ assert.equal(sha(readFileSync(target)),parents[relative]);
+ run('order-forward','/usr/bin/git',['-C',reviewDirectory,'apply',orderInputs[0]],5000);
+ assert.equal(sha(readFileSync(target)),sha(candidate));
+ const withoutResident=text=>text.split(/(?=^diff --git )/m).filter(block=>!block.startsWith('diff --git a/'+relative+' ')).join('');
+ assert.equal(withoutResident(git('diff','--no-ext-diff','--no-textconv','HEAD')),withoutResident(patch.toString()));
+}else assert.equal(git('diff','--no-ext-diff','--no-textconv','HEAD'),patch.toString());
 const beforePath=join(resolve(document,'..'),'build-before.json');assert(lstatSync(beforePath).size>0&&lstatSync(beforePath).size<=1<<20);
 const beforeBytes=readFileSync(beforePath);assert.equal(sha(beforeBytes),review.before_sha256);
 const before=JSON.parse(beforeBytes),paths=Object.keys(before.source);assert.equal(paths.length,review.source_files);
@@ -59,7 +75,7 @@ const fixture=join(root,participantSeal?'platform/studio/native/mlx_background_p
 const bridgeInputs=nativeBridge?[nativeBridge,join(root,'platform/studio/native/sdk_background_seal_parents.json'),join(root,'platform/studio/native/mlx-serve-sdk-background-seal.patch'),join(root,'platform/studio/native/mlx_background_startup_seal_test.cpp')]:[];
 if(nativeBridge)assert(nativeBridge.startsWith('/private/tmp/')&&realpathSync(nativeBridge)===nativeBridge);
 const libraries=['libmlx.dylib','libjaccl.dylib','mlx.metallib'].map(name=>join(prefix,'lib',name));
-function capture(){return Object.fromEntries([fixture,...libraries,...bridgeInputs].map(file=>{
+function capture(){return Object.fromEntries([fixture,...libraries,...bridgeInputs,...orderInputs].map(file=>{
  const info=lstatSync(file);assert(info.isFile()&&!info.isSymbolicLink()&&info.nlink===1&&info.size>0&&info.size<=256<<20);return [file,sha(readFileSync(file))];
 }));}
 const checkerSHA256=sha(readFileSync(join(root,'scripts/check-platform-sdk-residency-refresh.mjs')));
@@ -117,5 +133,5 @@ if(nativeBridge){
 }
 assert.deepEqual(sourceCapture(),before.source);assert.deepEqual(capture(),inputs);assert.equal(sha(readFileSync(document)),args[8]);
 assert.equal(sha(readFileSync(join(root,'scripts/check-platform-sdk-residency-refresh.mjs'))),checkerSHA256);
-const result={scope:sealedMetadata?'genuine_Core_only_sealed_refresh_constructor_not_model_or_native_authority':participantSeal?'genuine_SDK_atomic_background_start_exclusion_CPU_metadata_not_native_authority':realMetadata?'genuine_Core_only_refresh_worker_device_metadata_not_model_acceptance':'genuine_SDK_metadata_and_compiled_residency_hook_not_live_refresh_acceptance',build_review_sha256:args[8],patch_sha256:sha(patch),checker_sha256:checkerSHA256,inputs,records,source_files:paths.length,inputs_unchanged:true,models:0,background_participant_seal_exercised:participantSeal,actual_native_startup_seal_exercised:!!nativeBridge,synthetic_native_callbacks:!!nativeBridge,device_metadata_exercised:realMetadata||sealedMetadata,refresh_constructor_exercised:realMetadata||sealedMetadata,refresh_worker_start_refused:sealedMetadata,whole_native_provenance:false,all_client_coverage:false,native_authority:false,installed:false,activation:false};
+const result={scope:sealedMetadata?'genuine_Core_only_sealed_refresh_constructor_not_model_or_native_authority':participantSeal?'genuine_SDK_atomic_background_start_exclusion_CPU_metadata_not_native_authority':realMetadata?'genuine_Core_only_refresh_worker_device_metadata_not_model_acceptance':'genuine_SDK_metadata_and_compiled_residency_hook_not_live_refresh_acceptance',build_review_sha256:args[8],patch_sha256:sha(patch),checker_sha256:checkerSHA256,constructor_refusal_order_patch_checked:constructorOrder,inputs,records,source_files:paths.length,inputs_unchanged:true,models:0,background_participant_seal_exercised:participantSeal,actual_native_startup_seal_exercised:!!nativeBridge,synthetic_native_callbacks:!!nativeBridge,device_metadata_exercised:realMetadata||sealedMetadata,refresh_constructor_exercised:realMetadata||sealedMetadata,refresh_worker_start_refused:sealedMetadata,whole_native_provenance:false,all_client_coverage:false,native_authority:false,installed:false,activation:false};
 const bytes=Buffer.from(JSON.stringify(result,null,2)+'\n');writeFileSync(join(directory,'receipt.json'),bytes,{mode:0o600});console.log(JSON.stringify({directory,receipt_sha256:sha(bytes),stages:records.length,native_authority:false}));
