@@ -48,3 +48,18 @@ See the exact results and failures in [validation](../validation.md).
 Source references: [public synchronization declaration](https://github.com/ggml-org/llama.cpp/blob/d81235049384534c167caea52b85a694f6103d14/include/llama.h),
 [Metal synchronization](https://github.com/ggml-org/llama.cpp/blob/d81235049384534c167caea52b85a694f6103d14/ggml/src/ggml-metal/ggml-metal-context.m),
 [BLAS execution](https://github.com/ggml-org/llama.cpp/blob/d81235049384534c167caea52b85a694f6103d14/ggml/src/ggml-blas/ggml-blas.cpp).
+
+A separate optional `mlx-serve-llama-checked-decode.patch` applies after the
+checked-cleanup increment. Target decode checks the local synchronization status
+before advancing positions or entering dependent draft catch-up. Each draft
+step checks before reading logits/hidden output, recording a draft token or
+trimming its speculative KV range. Failure uses the existing sticky uncertainty
+path and performs no void-status fallback. Prior headers preserve their original
+path. This adds no numerical operations or inference engine.
+
+`check-platform-llama-checked-decode.py --native-source ABS_PRIVATE_CHECKED_PARENT`
+extracts both actual function bodies against a pinned parent. Synthetic ports
+exercise successful status, zero, negative and invalid positive status in Debug
+and optimized builds; failed calls cannot re-enter decode. Original parent
+bodies must fail the same failure assertions. This is local control-flow evidence,
+not a real model, physical error injection, all-client completion or admission.

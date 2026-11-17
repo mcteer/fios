@@ -1,0 +1,22 @@
+--- a/lib/llama_shim/llama_shim.cpp
++++ b/lib/llama_shim/llama_shim.cpp
+@@ -493,6 +493,9 @@
+     std::fill(c->out_idx.begin(), c->out_idx.end(), -1);
+     const int32_t rc = llama_process(c->tgt, LLAMA_PROCESS_TYPE_DECODE, c->batch);
+     if (rc != 0 || fios_llama_uncertain.load(std::memory_order_acquire)) return fios_llama_failed(c);
++#ifdef LLAMA_FIOS_CHECKED_SYNC_V1
++    if (llama_fios_synchronize_checked_v1(c->tgt) != 1) return fios_llama_failed(c);
++#endif
+     for (int32_t i = 0; i < n; i++) {
+         c->pos[rows[i].seq] = rows[i].pos + 1;
+         if (i >= out_from) c->out_idx[rows[i].seq] = i;
+@@ -675,6 +678,9 @@
+         if (!llama_batch_ext_set_embd_token(c->dbatch, idx, { c->draft_h.data(), 1, w })) return fios_llama_failed(c);
+         llama_batch_ext_set_output_logits(c->dbatch, idx, true);
+         if (llama_process(c->dft, LLAMA_PROCESS_TYPE_DECODE, c->dbatch) != 0) return fios_llama_failed(c);
++#ifdef LLAMA_FIOS_CHECKED_SYNC_V1
++        if (llama_fios_synchronize_checked_v1(c->dft) != 1) return fios_llama_failed(c);
++#endif
+         const float *logits = llama_get_logits_ith(c->dft, idx);
+         const float *h = llama_get_embeddings_nextn_ith(c->dft, idx);
+         if (!logits || !h) return fios_llama_failed(c);

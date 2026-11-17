@@ -1075,3 +1075,10 @@ Source continuation2026-11-17 UTC (local2026-11-16): a Core-only four-element GP
 Status reconciliation2026-11-17 UTC: the original preparation observation, manager readonly RPC, metadata3/preparation1 Python client and optional broker/factory mode were already implemented. Older gap/activity/reservation descriptions now link the current worker-preparation contract and distinguish those completed source paths from the unfinished positive source/proof/capacity issuer and public production composition. No protocol/code change or whole-task closure;39/55 unchanged.
 
 Source continuation2026-11-17 UTC: optional checked synchronization status now spans the pinned existing vendor context/Metal/BLAS source and native shim. Unsupported/failed status stays sticky and refuses before batch/context/parent destruction; old headers preserve existing behavior.92 modeled compiler/CPU outcomes, a full3687-tracked-file two-job source build/merge preserving5025 prior exports, four real ABI/empty-backend stages and12 whole-shim empty-metadata stages pass. Full native35/32/20 compile graphs, strict/default startup and actual default manager observations pass. These are local status/component receipts, not real model/native terminal/all-client acceptance;39/55 unchanged.
+
+Continuation: optional checked target/draft decode now has26 modeled control
+records and12 genuine whole-shim empty metadata compile/runtime stages. This is
+partial T002/T019/T021 source evidence; it closes no whole task. **39/55** remain
+complete. Combined strict/default native compilation and startup/manager checks
+subsequently pass; all-client/installed acceptance remains separate from these
+local controls. See the checked decode validation entry.

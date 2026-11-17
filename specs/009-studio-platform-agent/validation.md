@@ -8063,3 +8063,41 @@ Final92 compiler/CPU metadata outcomes pass at `/private/tmp/fios-009-llama-chec
 Private source build `/private/tmp/fios-009-llama-source-build-0u_7jfoa` rechecks3687 tracked source files, uses two compiler jobs and passes core28.319s plusmtmd13.785s. Eight archives are merged following the upstream framework recipe with CPU/Metal/Apple BLAS and embedded kernels; all5025 prior exported symbol names remain (name compatibility only). Private dylib SHA256 `9f79e07a47d64993df08f981e54a0028e03d2c590f8a1884653af692cd3ad4b7`. Four genuine ABI/CPU/empty-BLAS metadata stages pass, receipt SHA256 `a1ccacef8d880065f0240297a2fc1cd71ce5655d0ac71f93c1de844e4ce50aa3`; two backend objects are created, zero llama model contexts/models. Twelve actual whole-shim compile/runtime empty-metadata stages cover old source, new source/prior header-library and new source/new header-library, SHA256 `db6c1e7ac0e136cee775e1fd98ff9a6e00e8e4d2085838e137e8eaca21bfab92`. None exercises a loaded target/draft/model.
 
 Combined native35/32/20 semantic/link/unit-compilation graphs pass;8395 selected native source/stage files differ from the qualified parent only in the shim, llama.h and rebuilt library. Strict capsule receipt `d9c35ac720428a3aeed7dab6b693c6cea353528342b1ba754108b97026249e97`, binary `92192f078717d10eeb4dffb49416052ae366531158d9a231aa70307c73b5233b`; actual strict startup checker receipt SHA256 `e35f089013745421dedc7a44fbd7d372da436497f926e09e611def3d27c83956`. Default build, startup reservation/reacquisition and actual manager v3 primary/backend/lineage/background checks pass (`/private/tmp/f9-native-status-0RooeF`), retaining background coverage uncertainty. Default capsule receipt `e5d4e4e19efb732a9f9ad321ba34bd3fd90aae3151c120fc3b5733faa2a0325f`, binary `cb209ee25cfff46ab3945be2a10ab548cedc87c983bc0849ebe9d4e3226def3f`. Final `qualification.json`, SHA256 `0d4c87d12b8d830dd95c2ed5374989543b110a3d15149273800097abd0218928`, rechecks both source snapshots and binds all receipts/logs.208 Node/116 installed-Python and boundary pass after locked noneditable reinstall. Exact30c4898 CI43994943797 passes all9; this increment requires exact-head CI. No real inference plan/model POST, installed action, native activation, merge or production deployment; selected local component/source evidence, not whole-native/publisher provenance or a model prerequisite. Whole39/55 unchanged.
+
+### Checked decode progress increment (2026-11-16 continuation)
+
+Whole-task count remains **39/55**. The separate pinned optional native shim
+increment checks the new local status after target/draft decode and before
+progress bookkeeping or output reads. Prior-header behavior remains unchanged.
+No new model plans, real-model POSTs, GPU work, installation or activation.
+
+- Actual target/draft function bodies with synthetic ports:26 records pass,
+  including six expected rejections of the unchecked parent. Debug/optimized
+  status1 succeeds;0,-1,2 latch failure before progress/read/trim and prevent a
+  second decode. Receipt `/private/tmp/fios-009-checked-decode-ycgnt0yz/receipt.json`,
+  SHA256 `22434d36b85e15b8caadd1fa6d5837b71475332543a606d79fcd0ead180fc448`.
+- Actual whole shim, genuine prior/new library/header combinations:12 compile/
+  empty-parent runtime stages pass. Receipt
+  `/private/tmp/fios-009-decode-abi-yhmzm50_/native-shim-receipt.json`, SHA256
+  `66faf84e0a6bf447c4115b2928384bca34e5b06734bf7f27a4fc54e97b30d2b0`.
+  Empty metadata controls create no model or vendor model context; these do not
+  establish inference competence or backend fault recovery.
+- Agent boundary check passes. Combined native compiler qualification for this
+  additional decode increment subsequently passed (details below). All-client coverage, positive
+  native completion/capacity/admission and installed acceptance remain open.
+- Published preceding `d7846c2` CI run44003744229 is still in progress at this
+  record; preceding30c4898 andb84504b passed all nine prerequisites.
+
+Combined decode qualification subsequently passes strict35/32/20 compilation,
+default compilation, strict startup refusal/explicit private startup, default
+startup reservation/reacquisition and actual manager v3 lineage/backend/primary/
+SDK-background integration.146 platform Node tests and the boundary check pass.
+8,395 selected source/staged hashes remain stable, with only the shim changed
+from the qualified parent. Qualification
+`/private/tmp/fios-009-decode-native-kycfw662/qualification.json`, SHA256
+`325d0212a92eaf4a15c849d2dc3f18f162e64382b049449d7f980f5b9b3b9795`.
+Strict startup receipt SHA256
+`ea80c13127d812ef20cd61942f921b7d3adc26ee0b739e95779a24382035741a`.
+The first default-startup command referenced a nonexistent review filename and
+failed before child startup; its log remains excluded, with the corrected run
+recorded separately. No native uncertainty is cleared by these controls.
