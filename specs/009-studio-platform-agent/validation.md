@@ -9026,3 +9026,34 @@ No native source, library or installed option changed for this compatibility
 check. It is separate from the earlier observer-enabled35/32/20/default builds,
 CPU/GPU component tests and normal empty-model manager integration. No full-
 native provenance or Studio acceptance is inferred;39/55 whole tasks remain.
+
+### Functional journal request-event polling — 2026-11-17
+
+The native client has an explicit code-only observeRequestEvents option,
+default false. The existing one-slot off-loop lineage poller optionally reads
+SDK events using the live original root or its journaled root after local
+retirement. Its manager-thread getter returns fresh matching observations;
+normal absence/expiry remains absent, and callback retirement never resolves a
+request. No installed configuration, native proof or management policy changes.
+
+Combined normal request-event and existing lineage polling checks pass Swift
+debug/optimized compilation/execution:
+`/private/tmp/fios-009-request-event-polling-spNSVD/receipt.json`, SHA256
+`ed28846f4bbe0c6451a81519548dd9ffcd0bf8e730894b17f2b4860c4e229b33`.
+The new test is registered in the existing mock Runner; CI runs no GPU work.
+
+The actual native bridge/Swift client/journal/poller fixture also passes both
+Debug/ReleaseSafe modes (10 compile/runtime stages):
+`/private/tmp/fios-009-event-journal-xoayryjj/receipt.json`, SHA256
+`de6c05e28cb227a83a0834c3f93074ec4fe1531d7344aa0e6865101892aeadc5`.
+A real native handoff is registered for the generated original journal request.
+Initially the source has no callback row. Each normal four-value GPU graph then
+produces2 Metal origins/2 retirements/0 pending on that same original root;
+the journal request stays dispatched/unresolved1. Two GPU graphs total,0 models,
+0 model requests and0 installed actions. An earlier driver startup used an
+incorrect Python select argument list; it stopped before the graph and is not
+promoted. The corrected driver retains its own state and closes both children.
+
+This is selected source/component integration, not whole-native provenance,
+all-client completion, native admission or Studio acceptance. A new clean
+package/default-client regression is pending. Whole tasks remain39/55,16 open.

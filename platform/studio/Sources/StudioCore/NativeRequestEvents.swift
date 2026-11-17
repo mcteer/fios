@@ -1,5 +1,11 @@
 import Foundation
 
+protocol NativeRequestEventsReading:NativeLineageReading {
+    var observesRequestEvents:Bool {get}
+    func requestEvents(instance:String,correlationID:String,rootSequence:UInt64)throws->NativeRequestEventsSample
+}
+extension NativeControlClient:NativeRequestEventsReading {}
+
 // Observed SDK callbacks for one original root. These values are neither a
 // whole-request completion proof nor authority to release inference ownership.
 struct NativeRequestEventCounts:Sendable {

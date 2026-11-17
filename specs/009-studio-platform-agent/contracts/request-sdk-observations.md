@@ -50,3 +50,21 @@ CPU host callback records. `check-platform-native-request-events-gpu.py` checks
 Metal counts for both original roots and the distinct managed incoming token;
 its private native/Swift fixture reads the same160-byte observation response.
 It does not run a model or qualify physical residency or whole-request completion.
+
+The existing off-loop `NativeLineagePoller` can now collect these observations
+when its code-only client explicitly sets `observeRequestEvents:true` (default
+false). It uses the live original root or the journal's previously observed
+root after local retirement. The same single result slot holds both metadata
+responses; no second polling worker is introduced. A manager-thread getter
+returns only the current original request's fresh sample. Unavailable or expired
+samples are absent, completed jobs are omitted, and cache contents are not
+persisted or restored on restart. Callback retirement never resolves an
+inference reservation. Installed read-only configuration does not gain this flag.
+
+Normal mock polling tests cover pending→retired observations without completing
+the journal request, ordinary unavailability, expiry, a fresh poller with no
+cached observation, and default-off collection. Existing lineage polling tests
+remain covered. An explicit local GPU/native/journal fixture registers a real
+native handoff for a generated journal request, executes the four-value graph,
+and reads its Metal observations through the actual off-loop poller. This
+fixture issues no model request or native admission authority.

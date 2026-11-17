@@ -135,9 +135,11 @@ struct NativeControlClient:Sendable {
     let observesBackendFences:Bool
     let observesPrimaryActivity:Bool
     let observesSDKBackground:Bool
-    init(path:String,peer:NativeControlPeer,version:UInt8=2,observeBackendFences:Bool=false,observePrimaryActivity:Bool=false,observeSDKBackground:Bool=false) {
+    let observesRequestEvents:Bool
+    init(path:String,peer:NativeControlPeer,version:UInt8=2,observeBackendFences:Bool=false,observePrimaryActivity:Bool=false,observeSDKBackground:Bool=false,observeRequestEvents:Bool=false) {
         self.path=path;self.peer=peer;self.version=version;observesBackendFences=observeBackendFences;observesPrimaryActivity=observePrimaryActivity
         observesSDKBackground=observeSDKBackground
+        observesRequestEvents=observeRequestEvents
     }
     func request(operation:NativeControlOperation,instance:String?=nil,sequence:UInt64=0) throws -> NativeIngressStatus {
         let data=try NativeControlWire.request(operation:operation,instance:instance,sequence:sequence,version:version)

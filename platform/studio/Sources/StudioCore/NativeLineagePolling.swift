@@ -19,7 +19,10 @@ final class NativeLineagePoller:@unchecked Sendable {
     private struct Reply:Sendable {
         let request:NativeLineageRequest
         let sample:NativeRequestLineageSample?
+        let events:NativeRequestEventsSample?
     }
+    private struct Key:Hashable {let job:String;let attempt:Int}
+    private struct EventRecord {let request:NativeLineageRequest;let sample:NativeRequestEventsSample}
     private let journal:Journal
     private let source:any NativeLineageReading
     private let peer:NativeControlPeer
@@ -27,6 +30,8 @@ final class NativeLineagePoller:@unchecked Sendable {
     private var busy=false
     private var reply:Reply?
     private var cursor=0
+    // Current diagnostics only; deliberately absent from journal checkpoints.
+    private var eventSamples:[Key:EventRecord]=[:]
     init(journal:Journal,source:any NativeLineageReading) {
         self.journal=journal;self.source=source;peer=source.peer
     }
@@ -34,16 +39,26 @@ final class NativeLineagePoller:@unchecked Sendable {
         lock.lock();let available = !busy && reply==nil;lock.unlock()
         guard available else {return false}
         let requests=try journal.lineageRequests()
+        let current=Set(requests.map {Key(job:$0.job,attempt:$0.attempt)})
+        eventSamples=eventSamples.filter {current.contains($0.key)}
         guard !requests.isEmpty else {cursor=0;return false}
         let index=cursor % requests.count,request=requests[index]
         let correlation=try request.scope.nativeRequestCorrelationID(job:request.job,attempt:request.attempt)
+        let eventSource=source as? any NativeRequestEventsReading
+        let collectEvents=eventSource?.observesRequestEvents == true
+        let originalRoot=collectEvents ? try journal.originalNativeRoot(job:request.job,attempt:request.attempt,scope:request.scope,peer:peer):nil
         lock.lock()
         guard !busy,reply==nil else {lock.unlock();return false}
         busy=true;lock.unlock()
         cursor=(index+1)%requests.count
         Thread.detachNewThread { [self] in
             let sample=try? source.lineage(instance:request.scope.nativeEpoch,correlationID:correlation)
-            lock.lock();reply=Reply(request:request,sample:sample);busy=false;lock.unlock()
+            let root=sample.flatMap {$0.lineage.found ? $0.lineage.rootSequence:nil} ?? originalRoot
+            let events:NativeRequestEventsSample?
+            if collectEvents,let root,let eventSource {
+                events=try? eventSource.requestEvents(instance:request.scope.nativeEpoch,correlationID:correlation,rootSequence:root)
+            }else {events=nil}
+            lock.lock();reply=Reply(request:request,sample:sample,events:events);busy=false;lock.unlock()
         }
         return true
     }
@@ -51,6 +66,8 @@ final class NativeLineagePoller:@unchecked Sendable {
         lock.lock();let completed=reply;reply=nil;lock.unlock()
         guard let completed else {return false}
         let request=completed.request
+        let key=Key(job:request.job,attempt:request.attempt)
+        eventSamples.removeValue(forKey:key)
         // Normal completion/pruning can happen while the readonly call runs.
         // A late diagnostic must never resurrect or rewrite terminal ownership.
         guard let current=try journal.inferenceScope(job:request.job,attempt:request.attempt),
@@ -58,6 +75,28 @@ final class NativeLineagePoller:@unchecked Sendable {
               try current.scope.encoded()==request.scope.encoded() else {return true}
         _=try journal.observeLineage(job:request.job,attempt:request.attempt,scope:request.scope,
             peer:peer,sample:completed.sample,now:now)
+        if let sample=completed.events {
+            eventSamples[key]=EventRecord(request:request,sample:sample)
+            if try requestEvents(job:request.job,attempt:request.attempt,now:now)==nil {eventSamples.removeValue(forKey:key)}
+        }
         return true
+    }
+    // Read on the manager's journal thread. Callback retirement is diagnostic;
+    // this method never resolves an inference or changes its reservation.
+    func requestEvents(job:String,attempt:Int,now:Int64)throws->NativeRequestEventsSample? {
+        guard let record=eventSamples[Key(job:job,attempt:attempt)] else {return nil}
+        let request=record.request,sample=record.sample,value=sample.events
+        guard let current=try journal.inferenceScope(job:job,attempt:attempt),
+              [.dispatched,.uncertain].contains(current.state),try current.scope.encoded()==request.scope.encoded(),
+              let root=try journal.originalNativeRoot(job:job,attempt:attempt,scope:request.scope,peer:peer),
+              root==value.rootSequence,value.instance==request.scope.nativeEpoch,
+              value.correlationID == (try request.scope.nativeRequestCorrelationID(job:job,attempt:attempt)),
+              sample.peer.pid==peer.pid,sample.peer.start==peer.start,
+              sample.peer.executable.path.utf8.elementsEqual(peer.executable.path.utf8),sample.peer.executable.sha256==peer.executable.sha256,
+              [now,sample.requestedAt,sample.receivedAt,value.sampledAt].allSatisfy({(0...ActivityPolicy.maximumTimestamp).contains($0)}),
+              sample.requestedAt<=sample.receivedAt,sample.receivedAt-sample.requestedAt<=5000,
+              (-1000...5000).contains(now-sample.receivedAt),(-1000...5000).contains(now-value.sampledAt),
+              (try? value.validate()) != nil else {return nil}
+        return sample
     }
 }
