@@ -37,25 +37,28 @@ for mode,opt,swift_opt in [('Debug','-O0',[]),('ReleaseSafe','-O2',['-O'])]:
  run('GraphCPP',['/usr/bin/clang++','-x','c++','-std=c++20',opt,'-UNDEBUG','-isysroot',str(sdk),'-I',str(a.sdk_source),'-c',str(cpp),'-o',str(obj)],mode)
  run('NativeCompile',[str(a.zig),'build-exe',str(obj),str(host),'-O'+mode,'-lc',str(stub),'--sysroot',str(sdk),str(a.sdk_library),'-rpath',str(a.sdk_library.parent),'-F/System/Library/Frameworks','-framework','Metal','-framework','Foundation','--cache-dir',str(w/'cache'),'--global-cache-dir',str(w/'global-cache'),'--dep','build_options','-Mroot='+str(unit/'live.zig'),'-Mbuild_options='+str(unit/'options.zig'),'-femit-bin='+str(native)],mode)
  run('SwiftCompile',['/usr/bin/swiftc','-swift-version','6','-warnings-as-errors',*swift_opt,'-I',str(repo/'platform/studio/Sources/CSQLite'),*[str(file) for file in core],str(swift),'-o',str(client)],mode)
- home=w/(mode+'-home');home.mkdir(mode=0o700);native_env=dict(env,HOME=str(home),FIOS_NATIVE_CONTROL='isolated-source-fixture')
- with (w/(mode+'-native.log')).open('w') as native_log,(w/(mode+'-client.log')).open('w') as client_log:
-  native_child=subprocess.Popen([str(native)],env=native_env,cwd=unit,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=native_log)
-  swift_child=None;finished=False
-  try:
-   assert packet(native_child)=={'ready':True}
-   socket=home/'.fios-native-control/control.sock'
-   swift_child=subprocess.Popen([str(client),str(native),str(native_child.pid),str(socket),str(home/'journal')],cwd=repo,env=env,stdout=subprocess.PIPE,stderr=client_log)
-   identity=packet(swift_child);native_child.stdin.write(bytes.fromhex(identity['correlation_id']));native_child.stdin.flush()
-   for phase in ['queued','active']:
-    assert packet(swift_child)=={'observed_operation':phase}
-    native_child.stdin.write(b'1');native_child.stdin.flush()
-   result=packet(swift_child);swift_child.wait(timeout=3);assert swift_child.returncode==0 and result['ok'] and result['original_root']==identity['root'] and result['unresolved_requests']==1
-   assert packet(native_child)=={'graph_done':True};finished=True
-   records.append({'mode':mode,'stage':'live','status':0,'result':result})
-  finally:
-   if swift_child is not None and swift_child.poll() is None:swift_child.terminate();swift_child.wait(timeout=3)
-   native_child.stdin.close();native_child.wait(timeout=5)
-   if finished:assert native_child.returncode==0
+ for case in ['graph','cancel-queued']:
+  home=w/('d' if mode=='Debug' else 'r')/('g' if case=='graph' else 'c');home.mkdir(mode=0o700,parents=True);native_env=dict(env,HOME=str(home),FIOS_NATIVE_CONTROL='isolated-source-fixture')
+  with (w/(mode+'-'+case+'-native.log')).open('w') as native_log,(w/(mode+'-'+case+'-client.log')).open('w') as client_log:
+   native_child=subprocess.Popen([str(native)],env=native_env,cwd=unit,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=native_log)
+   swift_child=None;finished=False
+   try:
+    assert packet(native_child)=={'ready':True}
+    socket=home/'.fios-native-control/control.sock'
+    swift_child=subprocess.Popen([str(client),str(native),str(native_child.pid),str(socket),str(home/'journal'),case],cwd=repo,env=env,stdout=subprocess.PIPE,stderr=client_log)
+    identity=packet(swift_child);native_child.stdin.write(bytes.fromhex(identity['correlation_id']));native_child.stdin.flush()
+    for phase in (['queued','active'] if case=='graph' else ['queued']):
+     assert packet(swift_child)=={'observed_operation':phase}
+     native_child.stdin.write(b'c' if case=='cancel-queued' else b'1');native_child.stdin.flush()
+    result=packet(swift_child);swift_child.wait(timeout=3);assert swift_child.returncode==0 and result['ok'] and result['original_root']==identity['root'] and result['unresolved_requests']==1
+    assert result['queue_cancelled']==(case=='cancel-queued') and result['gpu_graph_executed']==(case=='graph')
+    assert packet(native_child)=={'graph_done':case=='graph'};finished=True
+    records.append({'mode':mode,'stage':'live','case':case,'status':0,'result':result})
+    (w/'progress.json').write_text(json.dumps(records,indent=2)+'\n')
+   finally:
+    if swift_child is not None and swift_child.poll() is None:swift_child.terminate();swift_child.wait(timeout=3)
+    native_child.stdin.close();native_child.wait(timeout=5)
+    if finished:assert native_child.returncode==0
 assert all(sha(a.source/'src'/name)==digest for name,digest in inputs.items())
 assert all(sha(Path(name))==digest for name,digest in selected.items())
 receipt={'scope':'normal_genuine_GPU_native_control_original_journal_root_polling','native_inputs':inputs,'selected_inputs':selected,'records':records,'model_requests':0,'gpu_graph_elements':4,'allocator_guideline_bytes':64<<20,'allocator_guideline_is_hard_limit':False,'installed':False,'native_authority':False,'whole_native_provenance':False}

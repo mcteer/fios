@@ -1310,3 +1310,10 @@ responding phase. This replaces direct queue API calls in the live path; a
 separate normal tracker metadata case remains. No engine implementation,
 model weights/POSTs, installed action or all-modality acceptance is involved.
 Whole tasks remain39/55 complete,16 open.
+
+The normal Book/actor live check now also covers queued cancellation with no
+GPU work and cleared caller TLS before actual actor entry. Four cases across
+Debug/ReleaseSafe pass; owner status retains unresolved inference after local
+queue/job cleanup. Source de261a0 package/build evidence remains separate from
+fixture-only improvements. All7 functional jobs passed on df0a4b8; its existing
+audit/gate failure remains untouched. Whole39/55 complete,16 open.

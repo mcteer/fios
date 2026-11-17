@@ -89,18 +89,28 @@ pub fn main() !void {
     const request = book.add(.{}, 1, &.{ .prompt = abi.span(u32, &.{1}), .max_tokens = 1 },
         .{ .ctx = &finished, .event = Sink.event }, &verdict) orelse return error.QueuePublicationUnavailable;
     if (verdict.code != .ok) return error.QueuePublicationUnavailable;
+    // Worker entry must restore the request; no caller TLS may supply attribution.
+    owners.current().* = null; owners.current_group().* = null;
     var advance: [1]u8 = undefined;
     if (std.c.read(0, &advance, 1) != 1) return error.InputUnavailable;
-    if (book.next(false) != request) return error.QueuePickupUnavailable;
-    var work = (try actor.retain(io, @as([]const *book_mod.Req, &.{request}))) orelse return error.QueuePickupUnavailable;
-    try work.enter(io);
-    if (std.c.read(0, &advance, 1) != 1) return error.InputUnavailable;
-    if (fios_bridge_gpu_graph() != 1) return error.GPUCallbackUnavailable;
-    book.done(request, .stop, "");
-    if (finished != 1 or !work.finish(io)) return error.QueueRetirementUnavailable;
+    const cancelled = advance[0] == 'c';
+    if (cancelled) {
+        book.cancel(1);
+        if (!request.isCancelled()) return error.QueueCancellationUnavailable;
+        book.done(request, .cancelled, "");
+        if (finished != 1) return error.QueueRetirementUnavailable;
+    } else {
+        if (book.next(false) != request) return error.QueuePickupUnavailable;
+        var work = (try actor.retain(io, @as([]const *book_mod.Req, &.{request}))) orelse return error.QueuePickupUnavailable;
+        try work.enter(io);
+        if (std.c.read(0, &advance, 1) != 1) return error.InputUnavailable;
+        if (fios_bridge_gpu_graph() != 1) return error.GPUCallbackUnavailable;
+        book.done(request, .stop, "");
+        if (finished != 1 or !work.finish(io)) return error.QueueRetirementUnavailable;
+    }
     owners.current().* = null; owners.current_group().* = null;
     try owners.shared().responding(io, incoming);
-    const done = "{\"graph_done\":true}\n";
+    const done: []const u8 = if (cancelled) "{\"graph_done\":false}\n" else "{\"graph_done\":true}\n";
     if (std.c.write(1, done.ptr, done.len) != done.len) return error.OutputUnavailable;
     var input: [1]u8 = undefined;
     _ = std.c.read(0, &input, 1);

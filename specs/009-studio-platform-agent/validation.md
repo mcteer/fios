@@ -9344,3 +9344,42 @@ workload, all modalities or either Studio's operational acceptance.
 The production source is unchanged from the preceding fully built/package-
 smoked queue increment, so those builds are not repeated for this fixture-only
 change. Whole tasks remain39/55 complete,16 open; all009 requirements remain.
+
+### Normal queued cancellation and cleared caller context — 2026-11-17
+
+The existing Book/actor fixture now runs normal graph completion and queued
+cancellation in each mode. Cancellation uses Book.cancel and the ordinary
+cancelled completion path, without actor/GPU execution. Owner status shows
+zero queued/active operation counts, no observed Metal callback history and
+native responding, while the local job is removed and its independent claim
+remains unresolved. Absence of SDK observations is omitted, never turned into
+measured zero or completion evidence.
+
+After Book publication the fixture clears caller thread-local attribution.
+The graph's original-root SDK events must therefore come from the existing
+actor entry's restored request context. This qualifies the handoff independently
+of lingering caller TLS, without changing an engine or adding a model workload.
+
+The first new cancellation run passed Debug cases and optimized graph, then
+its long optimized cancellation home produced a109-byte Unix socket path and
+native ControlUnavailable before readiness:
+`/private/tmp/fios-009-event-journal-w9vzg3xr`. The private case-home names are
+shortened; installed paths and production transport limits are unchanged.
+A runtime progress checkpoint now retains each completed case separately.
+
+Final four normal live cases pass, with both compiled modes and all12 recorded
+compile/runtime stages:
+`/private/tmp/fios-009-event-journal-_sczzo96/receipt.json`, SHA256
+`6e091b908901c77edf495e536baa1c80125b911600a811bfb34fc6e1e22b1afa`.
+There are two four-value GPU graphs, two queued cancellations, zero model
+weight loads, model POSTs or installed actions. Legacy1, clock-only2 and queue3
+reads remain covered in every case. This is normal generic Book/actor source
+integration, not each engine/modality or either Studio's operational acceptance.
+Production source/package inputs are unchanged from the validated de261a0
+package, so unrelated builds are not repeated. Whole tasks remain39/55 complete.
+
+Exact df0a4b8ee5cfcd0885f8663d807f164c0dfd8a9b CI44184503325 completed with
+all7 functional jobs successful. Existing Dependency audits and the aggregate
+CI gate failed; findings are not inspected or changed. The following queue
+batch still needs its own exact-head run. No green gate, merge, deployment,
+native activation or Studio acceptance is claimed.
