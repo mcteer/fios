@@ -22,9 +22,9 @@ func runJobLeaseStatusTests()throws {
     let commands=TaskCommands(journal:journal,tasks:tasks,sandbox:sandbox,artifacts:artifacts,approvedImages:[],peerUID:geteuid())
     var admission=AdmissionPolicy()
     let sample=ResourceSample(sampledAt:1000,physical:24<<30,available:16<<30,vmAvailable:nil,diskFree:50<<30,cpu:10,pressure:.normal,thermal:.nominal)
-    func call(_ operation:String,_ now:Int64)throws->[String:Any] {
+    func call(_ operation:String,_ now:Int64,id:String?=nil)throws->[String:Any] {
         let request=try ControlRequest.decode(JSONSerialization.data(withJSONObject:["version":1,"id":UUID().uuidString.lowercased(),
-            "operation":operation,"payload":["owner":token,"job":job.id]]))
+            "operation":operation,"payload":["owner":token,"job":id ?? job.id]]))
         let response=try commands.handle(request,role:.task,sample:sample,admission:&admission,binding:{_ in nil},nativeCapacityProven:false,now:now,uptime:now)
         let bytes=try JSONSerialization.data(withJSONObject:response)
         guard let value=try JSONSerialization.jsonObject(with:bytes) as? [String:Any] else {throw JournalError.invalid}
@@ -46,6 +46,18 @@ func runJobLeaseStatusTests()throws {
     guard renewed["expires_at"] as? Int64 == 50000,renewed["deadline_at"] as? Int64 == 901000 else {throw JournalError.invalid}
     let cancelled=try lease(call("job.cancel",22000))
     guard cancelled["revoked"] as? Bool == true,cancelled["expires_at"] as? Int64 == 50000,
+          runtime.calls==0 else {throw JournalError.invalid}
+    let late=try DurableJob(id:UUID().uuidString.lowercased(),idempotency:UUID().uuidString.lowercased(),
+        ownerHash:owner,requestHash:String(repeating:"c",count:64),created:23000)
+    _=try journal.reserveJob(late);try journal.transitionJob(id:late.id,to:.running)
+    try commands.tick(now:24000,uptime:24000,artifactResults:[],model:[late.id:[.text(kind:"text",content:"Hello")]])
+    let delayed=try call("job.status",27001,id:late.id)
+    guard let current=try journal.jobs().first(where:{$0.id==late.id}),
+          delayed["state"] as? String == current.state.rawValue else {
+        throw NSError(domain:"JobLeaseStatus",code:2,userInfo:[NSLocalizedDescriptionKey:"Output timeout response reports an earlier job state"])
+    }
+    guard delayed["output_lost"] as? Bool == true,
+          try lease(delayed)["revoked"] as? Bool == current.lease.revoked,
           runtime.calls==0 else {throw JournalError.invalid}
     print("PASS: ordinary job status reports lease expiry, renewal and cancellation without extending reads")
 }

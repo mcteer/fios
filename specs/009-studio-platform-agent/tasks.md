@@ -1191,3 +1191,11 @@ include creation/current expiry/maximum deadline/server sample time and stored
 revocation state. Ordinary read→read→renew→cancel checks pass in Debug/optimized;
 JSON round-trip checks also pass. Status reads leave the lease
 unchanged. No runtime or model request is performed; whole39/55 complete,16 open.
+
+
+2026-11-17 functional output-timeout status (T045): when a normal late status
+poll triggers existing output-timeout cancellation, the response now refreshes
+job state, lease details and unresolved-request count after cancellation.
+Ordinary JSON job-flow checks reproduce the earlier stale response and pass
+Debug/optimized after the fix. Output retention and cancellation behavior are
+unchanged; no runtime/model operation occurs. Whole39/55 complete,16 open.

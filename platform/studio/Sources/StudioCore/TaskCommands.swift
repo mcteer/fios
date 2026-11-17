@@ -65,7 +65,13 @@ final class TaskCommands {
             if outputLost.contains(id) {result["output_lost"]=true}
             if request.operation == .jobStatus {
                 do {if let event=try mailbox.pop(job:id,now:now) {result["event"]=event}}
-                catch {outputLost.insert(id);try tasks.cancel(id:id,owner:owner,now:now,uptime:uptime);result["output_lost"]=true}
+                catch {
+                    outputLost.insert(id)
+                    try tasks.cancel(id:id,owner:owner,now:now,uptime:uptime)
+                    result.merge(status(try owned(id,owner),now:now)) {_,updated in updated}
+                    result["unresolved_managed_requests"]=try journal.unresolvedCount(job:id)
+                    result["output_lost"]=true
+                }
             }
             return result
         case .jobCreate,.modelRequest:

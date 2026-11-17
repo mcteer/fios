@@ -8612,3 +8612,24 @@ retains `package_complete:false`; this is ordinary development build/smoke
 coverage, not installed acceptance or whole-native provenance.4c325bd CI44116727953
 completed successfully;611a088 is the separately built source revision and its
 publication/check status follows independently. Whole39/55 complete,16 open.
+
+
+### Functional output-timeout reply consistency — 2026-11-17
+
+A legitimate status poll after the documented output-retention interval could
+trigger existing cancellation but return its pre-cancellation job state and
+lease. The ordinary job-output flow reproduces that stale reply:
+`/private/tmp/fios-009-job-lease-status-vvPERV/debug-run.log` reports
+“Output timeout response reports an earlier job state.” The fixture uses normal
+mocked model text and forward-moving times; no runtime or model is invoked.
+
+After cancellation in that existing status-read path, the response now refreshes
+its job/lease fields and unresolved-request count from the journal, preserving
+its other output/completion fields. The retention interval, cancellation action
+and normal output handling are unchanged. JSON read/renew/cancel and late-poll
+checks pass Debug/optimized, four compile/run records:
+`/private/tmp/fios-009-job-lease-status-XpwszT/receipt.json`, SHA256
+`45a8e1ea17dfee44e97f8a952624e128f6a07d186ec23ab8c8aecd28fb5412be`.
+The returned state matches the newly stored state, lease revocation matches the
+stored lease, output loss is reported and the runtime submission count stays0.
+No deployment or whole-task completion is claimed;39/55 complete,16 open.
