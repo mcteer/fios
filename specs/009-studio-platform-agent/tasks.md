@@ -1270,3 +1270,10 @@ reconstructing input. Same-manifest begin/end replay returns the existing
 removed job and original deadline;0 model POSTs/workers/unresolved requests.
 The four normal CLI cases pass together with no real inference/runtime or
 installed-service action. T045 remains open;39/55 whole tasks unchanged.
+
+Functional continuation2026-11-17: original-request SDK callback observations
+are implemented in a separate source overlay and private Swift client. Normal
+CPU SDK/root and transport checks are in progress; see validation evidence and
+`contracts/request-sdk-observations.md`. This is partial T020/T021 integration,
+not a native completion issuer or Studio acceptance. Whole tasks remain39/55
+complete,16 open. Security-related work remains excluded by operator direction.

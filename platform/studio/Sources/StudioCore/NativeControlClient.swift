@@ -205,6 +205,16 @@ struct NativeControlClient:Sendable {
         // Neither this receipt nor local round-trip time is admission authority.
         return NativePreparationSample(peer:peer,requestedAt:began,receivedAt:completed,acknowledgement:value)
     }
+    func requestEvents(instance:String,correlationID:String,rootSequence:UInt64)throws->NativeRequestEventsSample {
+        guard version==3 else {throw NativeControlError.invalid}
+        let began=HostResources.nowMilliseconds()
+        let request=try NativeRequestEventsWire.request(instance:instance,correlationID:correlationID,rootSequence:rootSequence)
+        let value=try NativeRequestEventsWire.reply(exchange(request,maximum:NativeRequestEventsWire.responseSize),instance:instance,correlationID:correlationID,rootSequence:rootSequence)
+        let completed=HostResources.nowMilliseconds()
+        guard (0...ActivityPolicy.maximumTimestamp).contains(began),completed>=began,completed<=ActivityPolicy.maximumTimestamp,
+              completed-began<=5000,(-1000...5000).contains(completed-value.sampledAt) else {throw NativeControlError.invalid}
+        return NativeRequestEventsSample(peer:peer,requestedAt:began,receivedAt:completed,events:value)
+    }
     func backendFences(instance:String,after sequence:UInt64=0)throws->NativeBackendFenceSample {
         guard !observesSDKBackground || observesBackendFences else {throw NativeControlError.invalid}
         let began=HostResources.nowMilliseconds()
@@ -229,7 +239,7 @@ struct NativeControlClient:Sendable {
         return NativePrimaryActivitySample(peer:peer,receivedAt:completed,registry:value)
     }
     private func exchange(_ data:Data,maximum:Int)throws->Data {
-        guard [32,64,NativePreparationWire.requestSize].contains(data.count),[64,80,88,112,NativePrimaryActivityWire.responseSize,NativePrimaryActivityWire.queuedResponseSize,NativeRegistryActivityWire.responseSize].contains(maximum) else {throw NativeControlError.invalid}
+        guard [32,64,NativePreparationWire.requestSize].contains(data.count),[64,80,88,112,NativeRequestEventsWire.responseSize,NativePrimaryActivityWire.responseSize,NativePrimaryActivityWire.queuedResponseSize,NativeRegistryActivityWire.responseSize].contains(maximum) else {throw NativeControlError.invalid}
         guard path.hasPrefix("/"),path.utf8.count<104,!path.contains("\0") else {throw NativeControlError.invalid}
         var parent=stat(),socketInfo=stat()
         let directory=URL(fileURLWithPath:path).deletingLastPathComponent().path

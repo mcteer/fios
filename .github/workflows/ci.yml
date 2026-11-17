@@ -211,6 +211,7 @@ jobs:
           node scripts/check-platform.mjs --mock
           node scripts/check-platform.mjs --mock --release
           node scripts/check-platform-activity-worker-frames.mjs --isolated
+          node scripts/check-platform-native-request-event-frames.mjs --isolated
       - name: Check isolated process, service and recovery behavior
         if: matrix.lane == 'process'
         run: |

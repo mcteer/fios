@@ -11,3 +11,8 @@ This is CPU callback evidence only. It is not Metal/device completion, whole-req
 The four-file patch layers on the selected c69303b SDK with its four prior overlays. Genuine four-value CPU graph tests use the actual native ownership module; the observer enters the real borrowed context to compare its token with the original native root. Legacy mode, registration errors, refused origin/retirement and abandoned reservations are separate cases. Normal callback evidence is genuine, while the receiver is a bounded test observer rather than a production native producer. No model, HTTP request or Metal shader dispatch runs.
 
 Selected SDK component qualification passes:14 canonical stages (four compiler stages and10 runtime scenarios), plus20 controlled delayed-refusal repetitions. A clean218.548s C++ SDK rebuild preserves991 source files,333 dependency files and its CMake input snapshot. MLX-C and a complete native serving image are not rebuilt by this component. Both Studio acceptance and all-client native proof/admission remain open;39/55 whole tasks complete.
+
+The subsequent functional native integration in
+[request-sdk-observations.md](request-sdk-observations.md) associates these
+existing callbacks with original request roots and provides a separate private
+observation query. It does not change this SDK ABI or create completion proof.

@@ -1,0 +1,42 @@
+const std = @import("std");
+const owners = @import("fios/request_ownership.zig");
+const sdk = @import("fios/sdk_request_ownership.zig");
+extern fn fios_bridge_library_matches([*:0]const u8) c_int;
+extern fn fios_bridge_cpu_graph() c_int;
+
+test "normal SDK callbacks retain original managed request roots" {
+    const io = std.testing.io;
+    try owners.shared().initialize(io, @splat(7));
+    try sdk.initialize(io);
+    try std.testing.expectEqual(@as(c_int, 1), fios_bridge_library_matches(@import("build_options").sdk_library));
+    const first = try owners.shared().enter(io);
+    try owners.shared().bind(io, first, "fixture/native-events");
+    try owners.shared().active(io, first);
+    const registration = try owners.shared().registerHandoff(io, @splat(9));
+    const incoming = try owners.shared().enter(io);
+    try owners.shared().associateHandoff(io, incoming, @splat(9), registration.root_sequence);
+    try owners.shared().bind(io, incoming, "fixture/native-events");
+    try owners.shared().active(io, incoming);
+    const group = [_]owners.Token{ first, incoming };
+    owners.current().* = first;
+    owners.current_group().* = &group;
+    defer { owners.current().* = null; owners.current_group().* = null; }
+    try std.testing.expectEqual(@as(c_int, 1), fios_bridge_cpu_graph());
+    owners.current().* = null;
+    owners.current_group().* = null;
+    try owners.shared().leave(io, first);
+    try owners.shared().leave(io, incoming);
+    const a = sdk.requestEventDiagnostic(first.sequence);
+    const b = sdk.requestEventDiagnostic(registration.root_sequence);
+    try std.testing.expect(a.initialized and b.initialized and !a.source_uncertain and !b.source_uncertain);
+    try std.testing.expect(a.host != null and b.host != null);
+    for ([_]@TypeOf(a.host.?){ a.host.?, b.host.? }) |row| {
+        try std.testing.expect(row.originated > 0 and row.originated == row.retired and row.pending == 0);
+        try std.testing.expect(row.history_retained and !row.uncertain);
+    }
+    try std.testing.expectEqual(a.host.?.originated, b.host.?.originated);
+    try std.testing.expect(incoming.sequence != registration.root_sequence);
+    try std.testing.expect(sdk.requestEventDiagnostic(incoming.sequence).host == null);
+    try std.testing.expectEqual(@as(usize, 0), owners.shared().snapshot(io).owned);
+    std.debug.print("PASS: genuine SDK CPU callbacks remain associated with both original request roots\n", .{});
+}

@@ -70,6 +70,7 @@ struct PolicyTestRunner {
             ("task commands",runTaskCommandTests),
             ("task CLI round trip",runTaskClientTests),
             ("interrupted task completion",runTaskCompletionTests),
+            ("native request SDK events",runNativeRequestEventsTests),
             ("task owner",runTaskOwnerTests),
             ("async artifacts",runAsyncArtifactTests),
             ("artifact disk admission",runArtifactDiskAdmissionTests),

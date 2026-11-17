@@ -8877,3 +8877,40 @@ reconnect cases pass together:
 has0. There is no real inference, runtime or installed-service action. The
 manager processes never share the SQLite writer concurrently. This extends
 normal source integration only; whole tasks remain39/55 complete,16 open.
+
+### Functional original-request SDK observations — 2026-11-17
+
+The new native overlay associates existing genuine SDK callbacks with original
+request roots, including a managed handoff whose incoming token differs. It adds
+bounded per-root host/Metal counters and a private source-fixture query consumed
+by the actual Swift client. It changes neither the SDK library nor model
+engines. Missing data remains absent; these observations cannot complete or
+release an independent native inference claim.
+
+Captured normal frames pass Swift debug/optimized compilation and execution:
+`/private/tmp/fios-009-native-request-event-frames-IpCf4F/receipt.json`, SHA256
+`9496cb2a1bcafea8ee76727854db32f343a91d62d3c671e541eb77670d6a7ea9`.
+The first reproducible genuine CPU SDK/root and actual Unix-to-Swift check
+passes8 SDK stages and6 native/client stages:
+`/private/tmp/fios-009-request-events-_agfcsal/summary.json`, SHA256
+`72f0366d67ed7cbb4444b442c4cd6a9d4bc81b39a73933ef11ecfd26353592e2`.
+A final checker run adding standalone root tests and selected-input capture is
+pending, as is the enclosing native build. The earlier full-build setup attempt
+stopped before compiler work because its two private concurrency-slot files
+were missing; the setup was corrected in the same new private build directory.
+The frozen qualified source and existing SDK library were not modified.
+
+No model requests, installation, native activation, device/model acceptance,
+completion issuer or all-client admission authority follows. Whole tasks remain
+39/55 complete,16 open. Published9e883f5 CI44143633102 is completed/failure;
+no security findings were investigated. No merge or deployment is claimed.
+
+Final reproducible component check passes both standalone root tests in Debug
+and ReleaseSafe,8 genuine SDK compilation/runtime stages and6 native/Swift
+transport stages. Selected inputs and unchanged source are captured in
+`/private/tmp/fios-009-request-events-nar9eygh/summary.json`, SHA256
+`a7507ad8685a585abe5134983dd833db544aa6e613ce69a1ea5732fb564a174e`.
+The patch reverse/reapplies against its five exact parents in a separate private
+projection. This selected component receipt is not whole-native provenance.
+The installed Python package was reinstalled with pinned uv0.13.5/CPython3.11.17;
+no editable imports were used. Enclosing native build remains pending.

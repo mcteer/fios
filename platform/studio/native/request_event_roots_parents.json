@@ -1,0 +1,7 @@
+{
+  "src/fios/request_ownership.zig": "cb9fe2e667c8c938fddc26f27eafc07cc73e5e8ca5c0561f8c1681c9040a6504",
+  "src/fios/sdk_request_ownership.zig": "fa2260c4b6fb8a01a7de74d74737fb844038f84ea841cad50a9aa2ed0e60111b",
+  "src/fios/control_protocol.zig": "3da637248d317cc0526e12ade97786051d549cd87864dd8213d2c1ef57010142",
+  "src/fios/control_transport.zig": "c39bab2d79a97e533b82ac951dd17618917da3ab255a86b6b2f1d6e176735460",
+  "src/host/http/server.zig": "c939ce59686b33116abbf97dc84d72c7157052b305703c8cf0572774c154ddff"
+}
