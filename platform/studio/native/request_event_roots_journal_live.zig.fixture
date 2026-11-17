@@ -34,9 +34,10 @@ pub fn main() !void {
     owners.current_group().* = &group;
     if (fios_bridge_gpu_graph() != 1) return error.GPUCallbackUnavailable;
     owners.current().* = null; owners.current_group().* = null;
-    try owners.shared().leave(io, incoming);
+    try owners.shared().responding(io, incoming);
     const done = "{\"graph_done\":true}\n";
     if (std.c.write(1, done.ptr, done.len) != done.len) return error.OutputUnavailable;
     var input: [1]u8 = undefined;
     _ = std.c.read(0, &input, 1);
+    try owners.shared().leave(io, incoming);
 }

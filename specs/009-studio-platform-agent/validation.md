@@ -9121,3 +9121,28 @@ All five default-client CLI/manager/installed-harness cases pass:
 The package stays inactive/package_complete false, with no installed service,
 real model request or native admission granted. Source-only status observations
 are not full platform-job, all-client or Studio acceptance;39/55 whole tasks.
+
+### Native request phase separate from callback retirement — 2026-11-17
+
+Owner observations now include an accepted live original request phase,
+separately from SDK callback counts. The lineage query timestamp stays labeled
+queried_at; it is not replaced with the SDK's native capture timestamp. Missing,
+unaccepted or expired lineage yields unknown. No complete phase or proof is
+inferred from retired callbacks.
+
+Combined normal polling/owner/existing-lineage tests pass both modes:
+`/private/tmp/fios-009-request-event-polling-RWhHOQ/receipt.json`, SHA256
+`0fdc16760d832997157e0bba3390495ad87599987883a611f08edcdc4d9414b7`.
+They retain active native phase after SDK retirement and unknown after native
+lineage disappears, while the original request stays unresolved.
+
+Genuine native/GPU/journal/owner integration also passes both modes:
+`/private/tmp/fios-009-event-journal-_daeuc6v/receipt.json`, SHA256
+`1537274c24b84246d2ed5126b333c87cec6b6cafaf8b4bc2d5298b30de268442`.
+The finite fixture retains the original native owner in responding after its
+four-value GPU graph completes. Owner status reports local removed, native
+responding and unresolved1 together with2 retired Metal callbacks. Only after
+the client finishes does the private native fixture release that responding
+owner and close. This is a source request-lifecycle fixture, not actual HTTP
+slow-reader, model, all-client or Studio acceptance. Two GPU graphs,0 models,
+0 real model POSTs,0 installed actions. Whole tasks remain39/55 complete.

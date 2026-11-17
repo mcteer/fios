@@ -22,7 +22,7 @@ final class NativeLineagePoller:@unchecked Sendable {
         let events:NativeRequestEventsSample?
     }
     private struct Key:Hashable {let job:String;let attempt:Int}
-    private struct EventRecord {let request:NativeLineageRequest;let sample:NativeRequestEventsSample}
+    private struct EventRecord {let request:NativeLineageRequest;let sample:NativeRequestEventsSample;let lineage:NativeRequestLineageSample?}
     private let journal:Journal
     private let source:any NativeLineageReading
     private let peer:NativeControlPeer
@@ -73,10 +73,12 @@ final class NativeLineagePoller:@unchecked Sendable {
         guard let current=try journal.inferenceScope(job:request.job,attempt:request.attempt),
               [.dispatched,.uncertain].contains(current.state),
               try current.scope.encoded()==request.scope.encoded() else {return true}
-        _=try journal.observeLineage(job:request.job,attempt:request.attempt,scope:request.scope,
+        let observation=try journal.observeLineage(job:request.job,attempt:request.attempt,scope:request.scope,
             peer:peer,sample:completed.sample,now:now)
         if let sample=completed.events {
-            eventSamples[key]=EventRecord(request:request,sample:sample)
+            let lineage:NativeRequestLineageSample?
+            if case .live=observation {lineage=completed.sample}else {lineage=nil}
+            eventSamples[key]=EventRecord(request:request,sample:sample,lineage:lineage)
             if try requestEvents(job:request.job,attempt:request.attempt,now:now)==nil {eventSamples.removeValue(forKey:key)}
         }
         return true
@@ -103,7 +105,9 @@ final class NativeLineagePoller:@unchecked Sendable {
         var result:[NativeRequestEventStatus]=[]
         for request in try journal.lineageRequests() where request.job==job {
             if let sample=try requestEvents(job:job,attempt:request.attempt,now:now) {
-                result.append(NativeRequestEventStatus(attempt:request.attempt,sample:sample))
+                let cached=eventSamples[Key(job:job,attempt:request.attempt)]?.lineage
+                let lineage=cached.flatMap {(-1000...5000).contains(now-$0.sampledAt) ? $0:nil}
+                result.append(NativeRequestEventStatus(attempt:request.attempt,sample:sample,lineage:lineage))
             }
         }
         return result

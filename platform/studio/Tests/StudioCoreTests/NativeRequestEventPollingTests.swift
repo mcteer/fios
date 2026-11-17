@@ -12,7 +12,7 @@ private final class NormalRequestEventSource:NativeRequestEventsReading,@uncheck
     func lineage(instance:String,correlationID:String)throws->NativeRequestLineageSample {
         lock.lock();sequence+=1;let next=sequence;lock.unlock()
         return NativeRequestLineageSample(peer:peer,sampledAt:10000,lineage:NativeRequestLineage(instance:instance,correlationID:correlationID,
-            sampleSequence:next,rootSequence:UInt64.max,found:true,uncertain:false,references:1,owners:1,ingress:0,preparing:0,active:1,responding:0))
+            sampleSequence:next,rootSequence:next<4 ? UInt64.max:0,found:next<4,uncertain:next>=4,references:next<4 ? 1:0,owners:next<4 ? 1:0,ingress:0,preparing:0,active:next<4 ? 1:0,responding:0))
     }
     func requestEvents(instance:String,correlationID:String,rootSequence:UInt64)throws->NativeRequestEventsSample {
         lock.lock();reads+=1;let next=reads;lock.unlock()
@@ -67,13 +67,21 @@ func runNativeRequestEventPollingTests()throws {
     let response=try status()
     guard let rows=response["native_request_events"] as? [[String:Any]],rows.count==1,
           rows[0]["root_sequence"] as? String == String(UInt64.max),let metal=rows[0]["metal"] as? [String:Any],
-          metal["pending"] as? UInt64 == 0,response["unresolved_managed_requests"] as? Int==1,
+          metal["pending"] as? UInt64 == 0,(rows[0]["request"] as? [String:Any])?["state"] as? String=="active",response["unresolved_managed_requests"] as? Int==1,
           response["state"] as? String == "running" else {throw JournalError.invalid}
     _=try JSONSerialization.data(withJSONObject:response)
     guard try poller.requestEvents(job:job,attempt:0,now:16001)==nil else {throw JournalError.invalid}
     // A normal source outage replaces the current observation with absence.
     try poll(poller)
     guard try poller.requestEvents(job:job,attempt:0,now:10001)==nil,try status()["native_request_events"]==nil,try journal.unresolvedCount()==1 else {throw JournalError.invalid}
+    // After native lineage disappears, retained callback history stays separate
+    // from an unknown current native request phase.
+    try poll(poller)
+    let closed=try status()
+    guard let history=closed["native_request_events"] as? [[String:Any]],history.count==1,
+          (history[0]["request"] as? [String:Any])?["state"] as? String=="unknown",
+          (history[0]["metal"] as? [String:Any])?["retired"] as? UInt64==2,
+          try journal.unresolvedCount()==1 else {throw JournalError.invalid}
     let disabled=NormalRequestEventSource(peer:peer,enabled:false),plain=NativeLineagePoller(journal:journal,source:disabled)
     try poll(plain)
     guard disabled.eventReads==0,try plain.requestEvents(job:job,attempt:0,now:10001)==nil else {throw JournalError.invalid}

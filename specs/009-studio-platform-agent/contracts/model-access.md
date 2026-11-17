@@ -92,3 +92,12 @@ These SDK callback observations are separate from job state and
 `unresolved_managed_requests`: a removed local job can report retired callbacks
 while its independent native request remains unresolved. Existing owner status
 handling supplies the job; no task input selects a native root or observation.
+
+Each optional native request-event entry also has a `request.state` diagnostic:
+`ingress|preparing|active|responding|unknown`. A positive phase comes only from
+an accepted live original-root lineage sample. Its `queried_at` is the existing
+client query timestamp, separate from the SDK response's native `sampled_at`;
+the two reads are not an atomic all-client snapshot. Phase counts are the
+existing four-domain lineage counts, not GPU utilization or completion. Missing,
+unaccepted or expired lineage yields unknown. Retired SDK callbacks can coexist
+with a responding native request and an independently unresolved inference.
