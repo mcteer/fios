@@ -93,6 +93,9 @@ async def main():
                     posts += 1
                     print(json.dumps({'posts': posts}), flush=True)
                     value = json.loads(data)
+                    expected_text = Path(directory, 'expected-user-text.sha256')
+                    if expected_text.exists():
+                        assert hashlib.sha256(value['messages'][-1]['content'].encode('utf-8')).hexdigest() == expected_text.read_text(encoding='ascii')
                     assert value['model'] == 'fixture/model' and not value.get('tools')
                     assert value['stream'] is True and value['max_tokens'] <= 8192
                     if any(item.get('content') == 'ordinary unavailable reply' for item in value['messages']):

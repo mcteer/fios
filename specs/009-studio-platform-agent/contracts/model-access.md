@@ -76,3 +76,8 @@ The source native server validates a sole well-formed header on text POSTs after
 Factory provenance probes use the same process-wide two-command budget and bounded exact-child launcher as native CLI queries. The operation is fixed to `-I -B -m fios_agent.platform_worker --metadata`,4096 stdout bytes,10s execution and2s termination/reap handling, with the existing fixed environment and `/var/empty` working directory. The reviewed venv invocation alias is preserved and rechecked against the pinned canonical interpreter; resolving it away would lose the installed package prefix. Public CLI environment validation is unchanged.
 
 Metadata startup never invokes a model or issues native compatibility/admission proof. A local child that cannot be proven gone retains its command reservation; neither slot release nor worker metadata clears independent native inference uncertainty. Immutable installed interpreter/profile enrollment and production factory wiring remain separate requirements.
+
+The normal CLI/manager/installed-harness check includes UTF-8 request text split
+inside an emoji at the32KiB upload boundary. The mock compares the final received
+user-text digest with the generated original, covering CJK, combining text and
+newline through chunk reassembly. It performs no real inference.

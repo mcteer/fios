@@ -8992,3 +8992,37 @@ and optimized compilation/execution:4 stages,
 Only captured bytes enter CI; the genuine GPU component remains an explicit
 local fixture. This adds test evidence only to the617fb76 implementation; the
 clean package and enclosing native builds remain those recorded above.
+
+### Normal UTF-8 upload through installed model harness — 2026-11-17
+
+The actual CLI/private manager/installed Python harness now checks an emoji
+whose four UTF-8 bytes cross the32KiB upload boundary. The32,784-byte input
+also includes CJK text, a combining character and newline. A local model mock
+compares the received user text's byte digest with the original generated text;
+normal completion therefore verifies reassembly and harness transmission.
+No real user text is logged and no real inference runs.
+
+All five normal cases pass: complete/reconnect, owner cancellation, mock503,
+partial-upload/reconnect and Unicode upload. Receipt
+`/private/tmp/f9-manager-cli-rJdh1F/receipt.json`, SHA256
+`67abdc52a1ab59cbfbd9c6959c80e0e44ef88142797ccde975bfaee14bb3c867`.
+The Unicode case makes1 mock POST, emits text/complete, closes removed and
+leaves0 worker slots while retaining its1 independent unresolved request.
+The partial upload makes0 POSTs; the other three each make1. Existing exact
+model, lease, deadline and reconnect checks continue to pass. This extends
+ordinary T045 source integration only; whole tasks remain39/55 complete,16 open.
+
+### Optional SDK observer disabled — 2026-11-17
+
+The new native callback wiring also passes the enclosing semantic graph with
+its optional source SDK observer disabled. Existing build dependencies require
+private SDK, ANE, DS4 and background-exclusion options to be disabled together;
+two incomplete option combinations refused during configuration before compiler
+work. The supported observer-off combination passes the full semantic graph in
+394.903s, with0 model requests or installed actions. Receipt
+`/private/tmp/fios-009-request-events-native-y9kuj_gv/without-observer-receipt.json`;
+log SHA256 `5170728884332a4e95d946ee746ab771de079ea61f00d7ef404b9e2de1e923cb`.
+No native source, library or installed option changed for this compatibility
+check. It is separate from the earlier observer-enabled35/32/20/default builds,
+CPU/GPU component tests and normal empty-model manager integration. No full-
+native provenance or Studio acceptance is inferred;39/55 whole tasks remain.

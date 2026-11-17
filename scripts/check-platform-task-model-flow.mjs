@@ -47,7 +47,14 @@ try {
  await until(()=>{if(streamFailure)throw streamFailure;assert(!exited(mock));return port;});
  manager.stdin.end(JSON.stringify({base:`http://127.0.0.1:${port}/v1`,path:join(nativeState,'observe.sock'),epoch:status.epoch}));
  await until(()=>existsSync(join(caseDirectory,'model-cache-ready')));
- const data=Buffer.from(JSON.stringify([{role:'user',content:['complete','upload_restart'].includes(scenario)?'ordinary CLI text 👋\n'.repeat(2200):scenario==='cancel'?'ordinary delayed reply':'ordinary unavailable reply'}]));
+ let content=['complete','upload_restart'].includes(scenario)?'ordinary CLI text 👋\n'.repeat(2200):scenario==='cancel'?'ordinary delayed reply':'ordinary unavailable reply';
+ if(scenario==='unicode'){
+  const prefix=Buffer.from(JSON.stringify([{role:'user',content:'MARKER'}])).indexOf('MARKER');
+  content='x'.repeat(32768-prefix-2)+'👋漢字e\u0301\n';
+  writeFileSync(join(nativeState,'expected-user-text.sha256'),sha(Buffer.from(content)),{mode:0o600});
+ }
+ const data=Buffer.from(JSON.stringify([{role:'user',content}]));
+ if(scenario==='unicode'){assert.equal(data[32766],0xf0);assert.equal(data[32768],0x91);}
  const manifest={phase:'begin',idempotency:randomUUID(),kind:'model',length:data.length,sha256:sha(data),lifetime:60000,model:'fixture/model',image:null,memory:0,cpus:0};
  const created=task('job.create',manifest);
  assert.equal(created.state,'reserved');const job=created.job,deadline=created.lease.deadline_at;
@@ -78,7 +85,7 @@ try {
   if(response.event){assert.equal(response.event.event_index,ordinal++);if(response.event.type==='model.text')text+=response.event.content;else if(response.event.type==='model.done'){terminal=response.event.status;failureCode=response.event.code;}}
   if(response.state==='removed'&&(scenario==='cancel'||terminal)){final=response;return true;}return false;
  },15000);
- if(scenario==='complete'){assert.equal(text,'MOCK_ONLY');assert.equal(terminal,'complete');}
+ if(['complete','unicode'].includes(scenario)){assert.equal(text,'MOCK_ONLY');assert.equal(terminal,'complete');}
  if(scenario==='unavailable'){assert.equal(text,'');assert.equal(terminal,'failed');assert.equal(failureCode,'upstream_http');}
  assert.equal(posts,1);assert.equal(final.lease.deadline_at,deadline);assert.equal(final.lease.revoked,true);
  await until(()=>JSON.parse(command(cli,['--state',state,'status'],3000)).worker_reservations===0);
@@ -90,14 +97,14 @@ try {
   const acknowledgement=task('job.create',{phase:'end',job});assert.equal(acknowledgement.state,'removed');assert.equal(acknowledgement.lease.deadline_at,deadline);
   await delay(50);assert.equal(posts,1);assert.equal(JSON.parse(command(cli,['--state',state,'status'],3000)).worker_reservations,0);restartChecked=true;
  }
- return {scenario,restart_checked:restartChecked,input_bytes:data.length,input_chunks:chunks,output_events:ordinal,terminal:terminal??null,failure_code:failureCode??null,state:final.state,cancelled_while_running:wasRunning,lease_read_did_not_extend:true,renewal_extended_expiry:true,deadline_unchanged:true,mock_model_posts:posts,worker_slots_after_completion:0};
+ return {scenario,unicode_boundary_preserved:scenario==='unicode',restart_checked:restartChecked,input_bytes:data.length,input_chunks:chunks,output_events:ordinal,terminal:terminal??null,failure_code:failureCode??null,state:final.state,cancelled_while_running:wasRunning,lease_read_did_not_extend:true,renewal_extended_expiry:true,deadline_unchanged:true,mock_model_posts:posts,worker_slots_after_completion:0};
 } finally {
  if(manager&&!exited(manager))manager.kill('SIGTERM');if(mock&&!exited(mock))mock.stdin.end();
  await until(()=>children.every(exited),5000);
 }
 }
 const records=[];
-for(const scenario of ['complete','cancel','unavailable','upload_restart'])records.push(await modelCase(scenario));
+for(const scenario of ['complete','cancel','unavailable','upload_restart','unicode'])records.push(await modelCase(scenario));
 const receipt={scope:'normal_cli_model_job_completion_cancellation_and_service_failure',records,real_model_requests:0,runtime_actions:0,native_acceptance:false,cli_sha256:sha(readFileSync(cli)),manager_sha256:sha(readFileSync(binary))};
 writeFileSync(join(directory,'receipt.json'),JSON.stringify(receipt,null,2)+'\n');
 console.log(JSON.stringify({ok:true,directory,...receipt}));
