@@ -1,0 +1,31 @@
+--- a/src/host/api/completions.zig
++++ b/src/host/api/completions.zig
+@@ -676,6 +676,7 @@
+         , .{ cmpl_id, created_ts, model_name, final_lp, finish_reason, finishDetailsField(finish_reason, ts.finish_details) });
+         defer allocator.free(final_chunk);
+ 
++        stream.beginFiosResponse();
+         logHttpSseData(final_chunk);
+         try stream.writeAllNoFlush("data: ");
+         try stream.writeAllNoFlush(final_chunk);
+--- a/src/host/api/anthropic_stream.zig
++++ b/src/host/api/anthropic_stream.zig
+@@ -835,6 +835,7 @@
+     defer if (echo_stop_seq) allocator.free(stop_seq_json);
+ 
+     if (!client_gone) {
++        stream.beginFiosResponse();
+         // Close text block if open
+         if (text_block_open) {
+             const sd = try std.fmt.allocPrint(allocator, "{{\"type\":\"content_block_stop\",\"index\":{d}}}", .{block_index});
+--- a/src/host/api/responses/handler.zig
++++ b/src/host/api/responses/handler.zig
+@@ -1451,6 +1451,8 @@
+     if (is_stream) {
+         const completed_payload = try std.fmt.allocPrint(allocator, "{{\"type\":\"response.completed\",\"response\":{s}}}", .{envelope});
+         defer allocator.free(completed_payload);
++        // A WebSocket connection can carry later turns under the same owner.
++        if (stream.ws_mode == null) stream.beginFiosResponse();
+         try sendResponsesEvent(allocator, stream, seq_num, "response.completed", completed_payload);
+         // OpenAI terminates the Responses HTTP SSE stream with the same
+         // `data: [DONE]` sentinel as chat completions; generic SSE middleware

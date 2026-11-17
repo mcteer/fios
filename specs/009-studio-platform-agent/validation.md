@@ -9488,3 +9488,19 @@ filtered native test binary. Runtime receipt
 has SHA256 `d261ba37f03bcdc60c69e564264da4e08a07ac7916a7a1738ef7c14583546a16`.
 This covers the ordinary local chat route. Prepared admission, real-model
 backpressure, additional streaming APIs and all-client acceptance remain open.
+
+The text completions, Anthropic messages and HTTP Responses handlers now call
+the same transition at their final HTTP output boundary. The Responses
+WebSocket branch keeps the connection-level fallback because later turns may
+use the same connection owner. The three-file follow-up applied and reversed
+byte-for-byte. Its projection receipt is
+`/private/tmp/fios-009-http-tail-projection-0729qxs2/receipt.json`, SHA256
+`098a23e6a1324d7b6f367bc8a274c588c54b3952c90ad2d5d7bbf81b6e598c57`.
+
+The follow-up build in `/private/tmp/fios-009-http-tail-paths-build-s96_ofcn`
+passed semantic 35/35, link 32/32, unit compilation 20/20 and default build
+32/32. The rebuilt server passed the empty-model manager round trip and
+protocol 3 status observations, log SHA256
+`6cdc7635d7c11292a59ecaf37d6ba9cfd902e679f0d03e75481add6632c7f76c`.
+This check ran zero model requests and zero installed-service actions.
+Runtime tests of the three new handler tails remain open.
