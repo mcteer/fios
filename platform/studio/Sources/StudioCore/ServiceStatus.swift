@@ -17,10 +17,10 @@ final class ServiceObservationCache:@unchecked Sendable {
 }
 
 enum ServiceStatusPolicy {
-    static func summary(desired:ServiceDesired,observation:ServiceObservation?,launchPending:Bool,now:Int64)->[String:Any] {
-        let observed=observed(desired:desired,observation:observation,launchPending:launchPending,now:now)
+    static func summary(desired:ServiceDesired,observation:ServiceObservation?,launchPending:Bool,now:Int64,restartWaiting:Bool=false)->[String:Any] {
+        let observed=observed(desired:desired,observation:observation,launchPending:launchPending,now:now,restartWaiting:restartWaiting)
         var value:[String:Any]=["desired":desired.rawValue,"observed":observed.rawValue,"launch_pending":launchPending,
-                                "message":message(desired:desired,observed:observed,observation:observation),
+                                "message":message(desired:desired,observed:observed,observation:observation,restartWaiting:restartWaiting),
                                 "sampled_at":NSNull(),"age_ms":NSNull()]
         if let time=observation?.sampledAt,(0...ActivityPolicy.maximumTimestamp).contains(time),
            (0...ActivityPolicy.maximumTimestamp).contains(now) {
@@ -31,7 +31,7 @@ enum ServiceStatusPolicy {
         }
         return value
     }
-    private static func message(desired:ServiceDesired,observed:ServiceObserved,observation:ServiceObservation?)->String {
+    private static func message(desired:ServiceDesired,observed:ServiceObserved,observation:ServiceObservation?,restartWaiting:Bool)->String {
         if observed == .unknown {return "Service status is unavailable."}
         if observed == .ready {
             switch desired {
@@ -54,7 +54,12 @@ enum ServiceStatusPolicy {
                 observation?.identity == nil ? "Service startup is pending.":"Service is starting."
         case .waiting_session:detail="Waiting for a user session."
         case .waiting_credentials:detail="Waiting for service credentials."
-        case .degraded:detail="Service is present but not responding."
+        case .degraded:
+            if desired == .running && restartWaiting {
+                detail=observation?.identity == nil ?
+                    "Service is stopped; automatic startup is waiting for the restart limit to reset.":
+                    "Service is not responding; automatic recovery is waiting for the restart limit to reset."
+            } else {detail="Service is present but not responding."}
         case .ready,.stopped,.unknown:return "Service status is unavailable."
         }
         switch desired {
@@ -63,7 +68,7 @@ enum ServiceStatusPolicy {
         case .maintenance:return detail+" Maintenance is requested."
         }
     }
-    static func observed(desired:ServiceDesired,observation:ServiceObservation?,launchPending:Bool,now:Int64)->ServiceObserved {
+    static func observed(desired:ServiceDesired,observation:ServiceObservation?,launchPending:Bool,now:Int64,restartWaiting:Bool=false)->ServiceObserved {
         guard let observation,now>=0,now<=ActivityPolicy.maximumTimestamp,
               observation.sampledAt>=0,observation.sampledAt<=ActivityPolicy.maximumTimestamp,
               (-1000...5000).contains(now-observation.sampledAt) else {return .unknown}
@@ -79,6 +84,7 @@ enum ServiceStatusPolicy {
         if desired == .running {
             if !observation.sessionReady {return .waiting_session}
             if !observation.credentialsReady {return .waiting_credentials}
+            if restartWaiting && !launchPending {return .degraded}
         }
         // Desired-running is not evidence that launch has actually begun.
         return launchPending ? .starting:.stopped

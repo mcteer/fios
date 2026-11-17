@@ -23,7 +23,15 @@ Activity publications have an independent manager counter and composition time f
 
 Aggregate status includes `runtime_cleanup`, scoped to owned sandbox runtime cleanup observed by the current manager. It reports pending sandboxes, the original controller observation time, longest observed wait and whether that wait exceeds60s. Completion/known absence removes entries from this current view. This wait includes runtime outages and is not a claim that the availability-relative cleanup deadline was missed. It neither describes nor clears native inference uncertainty; restart begins a new manager's observed waiting interval.
 
-When session recovery is configured, each service status also includes `recovery`: the existing local three-start/600s budget,10s minimum spacing, current starts in that window and remaining budget wait in milliseconds. `budget_state` is `available`, `rate_limited`, `pending`, `clock_fenced` or `unknown`. Pending/unknown/fenced states omit the numeric wait. These are local scheduling diagnostics; available budget does not establish service absence, session readiness or permission to launch. Reading the summary does not advance or consume the budget.
+When session recovery is configured, each service status also includes `recovery`: the existing local three-start/600s budget,10s minimum spacing, current starts in that window and remaining budget wait in milliseconds. `budget_state` is `available`, `rate_limited`, `pending`, `clock_fenced` or `unknown`. Pending/unknown/fenced states omit the numeric wait. These are local scheduling diagnostics; available budget does not establish service absence, session readiness or permission to launch. Reading the summary does not advance or consume the budget. When a service is requested running, is currently observed absent with its
+startup prerequisites available, and has used all three starts in the current
+window, its observed state is `degraded` and its display message explains that
+automatic startup is waiting for the restart limit to reset. A healthy service
+remains `ready` even when the restart allowance is used. Explicit stopped or
+maintenance intent keeps its ordinary observed classification. Status,
+activity context and service telemetry use this same classification; the status
+row and its recovery details evaluate the restart window at the same tick.
+This display does not change the existing retry schedule or start a service.
 
 ## Native-control diagnostic status
 

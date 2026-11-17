@@ -302,14 +302,16 @@ public enum ManagerRuntime {
                         response["capabilities"]=["local_status","resources","desired_state","owner_task_status","owner_artifact_streams"]
                         response["service_recovery"]=serviceQueue == nil ? "disabled":(serviceTransportUnavailable ? "degraded":"configured")
                         var serviceStates:[String:Any]=[:]
+                        let serviceStatusTick=Int64(ProcessInfo.processInfo.systemUptime*1000)
                         for service in ManagedService.allCases {
                             let desired=try journal.desired(service:service.rawValue)
                             guard let typed=ServiceDesired(rawValue:desired) else {throw ControlError.invalid_request}
                             // Missing/failed observation remains unknown, not
                             // absence, credential readiness or native authority.
-                            var details=ServiceStatusPolicy.summary(desired:typed,observation:serviceObservations?.snapshot(for:service),launchPending:serviceRecovery?.isPending(service) ?? false,now:requestedAt)
+                            var details=ServiceStatusPolicy.summary(desired:typed,observation:serviceObservations?.snapshot(for:service),launchPending:serviceRecovery?.isPending(service) ?? false,now:requestedAt,
+                                restartWaiting:serviceRecovery?.isWaitingForRestartWindow(service:service,tick:serviceStatusTick) ?? false)
                             details["stop_pending"]=service == .mlx && (serviceRecovery?.isStopPending() ?? false)
-                            if let recovery=serviceRecovery {details["recovery"]=recovery.summary(service:service,tick:Int64(ProcessInfo.processInfo.systemUptime*1000))}
+                            if let recovery=serviceRecovery {details["recovery"]=recovery.summary(service:service,tick:serviceStatusTick)}
                             if let progress=drainer?.status(service:service) {details["drain"]=ServiceDrainController.summary(progress)}
                             serviceStates[service.rawValue]=details
                         }
@@ -350,9 +352,11 @@ public enum ManagerRuntime {
                         response["coverage"]=nativeCoverage.rawValue; response["activity"]="unknown"
                         let ownership=try journal.activityOwnership()
                         var context=ActivityObservationContext(sampledAt:requestResources.sampledAt,pressure:requestResources.pressure,thermal:requestResources.thermal)
+                        let serviceActivityTick=Int64(ProcessInfo.processInfo.systemUptime*1000)
                         for service in ManagedService.allCases {
                             guard let desired=ServiceDesired(rawValue:try journal.desired(service:service.rawValue)) else {throw ControlError.internal_error}
-                            let observed=ServiceStatusPolicy.observed(desired:desired,observation:serviceObservations?.snapshot(for:service),launchPending:serviceRecovery?.isPending(service) ?? false,now:requestedAt)
+                            let observed=ServiceStatusPolicy.observed(desired:desired,observation:serviceObservations?.snapshot(for:service),launchPending:serviceRecovery?.isPending(service) ?? false,now:requestedAt,
+                                restartWaiting:serviceRecovery?.isWaitingForRestartWindow(service:service,tick:serviceActivityTick) ?? false)
                             if service == .mlx {context.mlx=observed}else {context.orbstack=observed}
                         }
                         let capture=nativeDiagnostics.capture(now:requestedAt)

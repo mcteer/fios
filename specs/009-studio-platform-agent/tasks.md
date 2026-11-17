@@ -1174,3 +1174,13 @@ requested stop/maintenance/running intent. Ordinary real-manager/CLI checks pass
 nine states,18 service views, ageing and both intent workflows. Normal pending
 startup→ready and maintenance→running recovery checks pass with a counter-only
 application port. No real service action is used. Optimized CLI build and four ordinary optimized-CLI service views also pass. Whole39/55 remains unchanged; this does not complete installed recovery.
+
+
+2026-11-17 functional restart-wait reporting (T027): a running-requested,
+observed-absent service now reports degraded status while its three-start
+restart window is used, with an operator-readable waiting message. Healthy,
+manual stopped/maintenance and normal window-expiry behavior remain distinct.
+Manager status/activity and service telemetry share this reporting. Ordinary
+restart scheduling/status/telemetry checks pass in Debug/optimized, along with
+the existing nine-state/18-view service regression; no service action or
+change to retry scheduling is made. Whole39/55 remains unchanged.

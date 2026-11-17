@@ -8532,3 +8532,35 @@ stopped before any manager was launched; using SwiftPM's reported product
 location fixes that setup. Script syntax and whitespace checks pass. The
 prior platform package predates this status-display change; no new installed
 artifact or whole-spec completion is claimed.
+
+
+### Functional restart-window waiting status — 2026-11-17
+
+A running-requested service with a current absent observation and ready startup
+prerequisites previously remained `stopped` after using its three starts in the
+restart window. The ordinary restart-status test reproduces that display
+mismatch before the change, retained at
+`/private/tmp/fios-009-restart-status-before-v65rozk3/run.log` (the assertion is
+reported as a top-level Swift test error; no application was launched).
+
+Service status now receives the existing controller's restart-window waiting
+state. An absent service waiting for that window reports `degraded` with an
+explanatory display message. Healthy services remain ready; explicit stopped
+and maintenance intent retain their normal classifications. Window expiry
+restores the normal absent-service display. Manager status and its budget
+details use one evaluation tick; activity context and telemetry use the same
+classification. Existing scheduling, limits and service operations are unchanged.
+
+Focused ordinary scheduling/status checks pass Debug and optimized builds,
+including independent service budgets, healthy/stopped display, normal window
+expiry and telemetry agreement. Four compile/run records:
+`/private/tmp/fios-009-service-restart-status-sT4mrg/receipt.json`, SHA256
+`ecd13718652088484220366236254e76e3a95a3657bd863668474937fe39b436`.
+These use a private journal and record no actual service or model operation.
+Existing real-manager/CLI nine-state/18-view/two-aged-view regression also
+passes at `/private/tmp/fios-009-restart-window-service-views.log`, private state
+`/private/tmp/fios-009-service-status-eUb3Zm`. The normal startup/recovery flow also passes at
+`/private/tmp/fios-009-restart-window-startup-flow.log`, private state
+`/tmp/fios009-session-driver-IZ6LSZ`, with two counter-only application calls and
+zero native actions. Syntax and whitespace checks pass. Whole39/55 tasks
+remain complete; no installation or deployment is claimed.

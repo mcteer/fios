@@ -54,13 +54,15 @@ public struct PlatformSupervisorSample:Sendable {
 }
 
 enum ServiceTelemetry {
-    static func sample(journal:Journal,observations:ServiceObservationCache?,recovery:ServiceRecoveryController?,now:Int64)->[PlatformServiceSample] {
+    static func sample(journal:Journal,observations:ServiceObservationCache?,recovery:ServiceRecoveryController?,now:Int64,uptimeTick:Int64?=nil)->[PlatformServiceSample] {
         do {
+            let tick=uptimeTick ?? Int64(ProcessInfo.processInfo.systemUptime*1000)
             return try ManagedService.allCases.map {service in
                 guard let desired=ServiceDesired(rawValue:try journal.desired(service:service.rawValue)) else {throw ServiceError.invalid}
                 let observation=observations?.snapshot(for:service)
                 let observed=ServiceStatusPolicy.observed(desired:desired,observation:observation,
-                    launchPending:recovery?.isPending(service) ?? false,now:now)
+                    launchPending:recovery?.isPending(service) ?? false,now:now,
+                    restartWaiting:recovery?.isWaitingForRestartWindow(service:service,tick:tick) ?? false)
                 return PlatformServiceSample(service:service,desired:desired,observed:observed,sampledAt:now,sourceSampledAt:observation?.sampledAt)
             }
         }catch {return []}

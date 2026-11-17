@@ -269,6 +269,13 @@ final class ServiceRecoveryController {
         state=candidate // No native inference claims or launch receipts changed.
     }
 
+    func isWaitingForRestartWindow(service:ManagedService,tick:Int64)->Bool {
+        guard !state.fenced,(0...WireScalar.maximumTimestamp).contains(tick),tick>=state.previousTick,
+              let entry=state.entries.first(where:{$0.service==service}),
+              entry.pending==nil,entry.stopPending==nil else {return false}
+        return entry.starts.filter{tick-$0<600000}.count>=3
+    }
+
     // Read-only local restart-budget diagnostics. Available budget does not
     // establish service absence/session readiness or authorize a launch.
     func summary(service:ManagedService,tick:Int64)->[String:Any] {

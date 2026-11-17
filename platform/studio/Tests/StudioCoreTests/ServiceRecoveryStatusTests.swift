@@ -20,5 +20,25 @@ func runServiceRecoveryStatusTests() throws {
           waiting["budget_wait_ms"] as? Int64 == 579000,
           recovery.summary(service:.orbstack,tick:22000)["budget_state"] as? String == "available",
           status(601000)["budget_state"] as? String == "available" else {throw ServiceError.invalid}
+    let absent=ServiceObservation(identity:nil,responding:false,sessionReady:true,credentialsReady:true,
+        nativeIdle:nil,runtimeUnmanaged:nil,sampledAt:22000)
+    let held=ServiceStatusPolicy.summary(desired:.running,observation:absent,launchPending:false,now:22000,restartWaiting:recovery.isWaitingForRestartWindow(service:.mlx,tick:22000))
+    guard held["observed"] as? String == "degraded" else {
+        throw NSError(domain:"ServiceRestartStatus",code:1,userInfo:[NSLocalizedDescriptionKey:"Restart-window wait is displayed as stopped instead of degraded"])
+    }
+    guard held["message"] as? String == "Service is stopped; automatic startup is waiting for the restart limit to reset.",
+          !recovery.isWaitingForRestartWindow(service:.orbstack,tick:22000),
+          !recovery.isWaitingForRestartWindow(service:.mlx,tick:601000) else {throw ServiceError.invalid}
+    let healthy=ServiceObservation(identity:ServiceIdentity(pid:42,start:1,sha256:hash),responding:true,
+        sessionReady:true,credentialsReady:true,nativeIdle:nil,runtimeUnmanaged:nil,sampledAt:22000)
+    guard ServiceStatusPolicy.observed(desired:.running,observation:healthy,launchPending:false,now:22000,restartWaiting:true) == .ready,
+          ServiceStatusPolicy.observed(desired:.stopped,observation:absent,launchPending:false,now:22000,restartWaiting:true) == .stopped else {throw ServiceError.invalid}
+    let current=ServiceObservation(identity:nil,responding:false,sessionReady:true,credentialsReady:true,
+        nativeIdle:nil,runtimeUnmanaged:nil,sampledAt:601000)
+    guard ServiceStatusPolicy.observed(desired:.running,observation:current,launchPending:false,now:601000,
+        restartWaiting:recovery.isWaitingForRestartWindow(service:.mlx,tick:601000)) == .stopped else {throw ServiceError.invalid}
+    let cache=ServiceObservationCache();cache.publish(absent,for:.mlx)
+    let telemetry=ServiceTelemetry.sample(journal:journal,observations:cache,recovery:recovery,now:22000,uptimeTick:22000)
+    guard telemetry.first(where:{$0.service == .mlx})?.observed == .degraded else {throw ServiceError.invalid}
     print("PASS: ordinary service recovery status reports pending, per-service budget wait and expiry")
 }
