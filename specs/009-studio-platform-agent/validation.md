@@ -8321,3 +8321,34 @@ Implementation126205f CI44013892289 passed all nine prerequisites on its exact
 head. The supplement adds tests/evidence only and reuses its unchanged native
 source/binary qualification; it grants no additional model/installed authority.
 Its subsequent head still requires independent CI. No merge/deployment occurred.
+
+### Engram unload-body retention supplement
+
+The actual plugin unload body and actual model-preflight method now run with
+modeled model/bank/state/weight/outer-storage ports, actual native custody ABI,
+two fixture roots and a real Prefetch CPU thread. Six Debug/ReleaseSafe records
+pass their expected outcomes: healthy teardown reaches eight modeled cleanup
+edges; timeout reaches none and retains the enclosing fixture model, Prefetch,
+descriptor and both original roots; a late join still permits no cleanup. Two
+expected negative records use the prior unload body with candidate helper/model
+ports and demonstrate premature cleanup calls. They are not an installed/pristine
+prior model failure or positive physical model acceptance.
+
+Receipt `/private/tmp/fios-009-engram-native-custody-x6387l8g/receipt.json`, SHA256
+`fcffbb473b839775baf376fc60b7109b740fa9662d827b6b0d95a601014e1b22`.
+All table/model resources remain fixtures; no loaded model, real bank/weights,
+GPU work or device completion is exercised. The first combined fixture used a
+global allocator-port name that conflicted with actual Prefetch parameter names;
+it failed compilation before runtime. Moving only that fixture port into its
+plugin namespace preserves both actual function bodies, and all controls pass.
+The prior native source/binary is unchanged. Whole tasks remain39/55; final
+default-mode and broader regression reruns are being recorded below.
+
+The default actual-custody mode also passes all six named cases with the final
+extended checker. Receipt `/private/tmp/fios-009-engram-native-custody-sgvxlps8/receipt.json`,
+SHA256 `cdd45d81727dd4e510cddf0f8988a19460ee2442fccf07c9044e927da18b1a31`.
+208 Node/116 installed Python regressions after locked noneditable reinstall,
+boundary and diff checks pass. No source runtime change or native rebuild is
+claimed by this fixture-only supplement; existing126205f build qualification
+remains separately bound. Latest published7edec87 CI44016046712 is still running
+at this record. No whole-task checkbox, merge, deployment or activation changes.

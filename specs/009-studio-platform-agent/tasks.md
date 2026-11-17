@@ -1131,3 +1131,10 @@ independent native uncertainty preserve their real descriptor/references.
 The table and request inputs remain fixtures, with no model/GPU or native/device
 terminal proof. The independent backend probe stays unenrolled; no whole task
 is completed and **39/55** remains the total.
+
+T018/T021/T027 unload-body supplement: actual plugin unload/model-preflight
+methods now have six Debug/ReleaseSafe controls with actual native custody and
+modeled parent resources, including two expected prior-unload-body failures.
+A timed-out reader prevents every modeled destructive edge and retains both
+original roots after a late join. These are not real loaded-model/installed
+lifecycle or physical native acceptance; **39/55** whole tasks remain complete.

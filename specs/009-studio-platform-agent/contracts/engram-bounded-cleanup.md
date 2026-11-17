@@ -62,3 +62,18 @@ qualification; this is an additional host-custody test, not a new native profile
 .venv/bin/python -I scripts/check-platform-engram-native-custody.py \
   --source ABS_PRIVATE_BOUNDED_CANDIDATE --zig ABS_PINNED_ZIG
 ```
+
+The `--parent-retention` supplement compiles the actual plugin unload body and
+model preflight with modeled model resources, using the same actual tracker/
+custody ABI and real Prefetch thread. Healthy teardown reaches all modeled
+resource edges. On blocked-reader timeout, no such edge is reached, both roots
+and the native descriptor remain retained, and a late join cannot authorize a
+second unload. The negative control uses the prior unload body with the candidate
+helper/resource ports; it is not a pristine prior loaded-model execution. Its
+premature cleanup calls must fail the assertion in both modes. No real model,
+bank/state/weight destruction, device completion or installed lifecycle occurs.
+
+```sh
+.venv/bin/python -I scripts/check-platform-engram-native-custody.py \
+  --source ABS_PRIVATE_BOUNDED_CANDIDATE --zig ABS_PINNED_ZIG --parent-retention
+```
