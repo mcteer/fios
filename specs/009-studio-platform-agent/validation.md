@@ -8564,3 +8564,29 @@ passes at `/private/tmp/fios-009-restart-window-service-views.log`, private stat
 `/tmp/fios009-session-driver-IZ6LSZ`, with two counter-only application calls and
 zero native actions. Syntax and whitespace checks pass. Whole39/55 tasks
 remain complete; no installation or deployment is claimed.
+
+
+### Functional job-lease status — 2026-11-17
+
+Job-state replies now include a `lease` object with stored creation time,
+current renewal expiry, original maximum deadline, current server sample time
+and stored revocation flag. The same status formatter is used for normal
+status/create/replay/renew/cancel replies. Existing lease scheduling and job
+operations are unchanged; status reads do not renew the lease.
+
+The ordinary owner workflow first reproduced the absent lease metadata:
+`/private/tmp/fios-009-job-lease-before-ccwko22y/run.log` reports
+“Job status does not report its lease times.” After implementation, Debug and
+optimized checks pass read→read→renew→cancel, confirming unchanged expiry on
+reads, updated expiry after renewal, unchanged maximum deadline and revocation
+after cancellation. The final checks round-trip every response through JSON.
+Receipt `/private/tmp/fios-009-job-lease-status-1Rsq4W/receipt.json`, SHA256
+`3b524eb041e8e7a8e12810b6b92aee008a09e623e95a6c50727c052f642cd729`;
+four compile/run records. The earlier direct-object receipt
+`/private/tmp/fios-009-job-lease-status-iY4kia/receipt.json`, SHA256
+`e405db893690d2105f2004d3bf4d96aa0bf709265f721523f0caa1c0c2c2e2d2`,
+is a narrower checkpoint. These tests use a private journal, an existing reserved
+fixture job and an unused runtime adapter; zero runtime submissions and model
+requests occur. The new ordinary test is included in the existing task-command
+test entry point. No permission or lifecycle logic changes, installation or
+deployment is claimed. Whole tasks remain39/55 complete,16 open.

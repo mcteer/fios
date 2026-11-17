@@ -1184,3 +1184,10 @@ Manager status/activity and service telemetry share this reporting. Ordinary
 restart scheduling/status/telemetry checks pass in Debug/optimized, along with
 the existing nine-state/18-view service regression; no service action or
 change to retry scheduling is made. Whole39/55 remains unchanged.
+
+
+2026-11-17 functional job-lease visibility (T036/T045): job-state responses now
+include creation/current expiry/maximum deadline/server sample time and stored
+revocation state. Ordinary read→read→renew→cancel checks pass in Debug/optimized;
+JSON round-trip checks also pass. Status reads leave the lease
+unchanged. No runtime or model request is performed; whole39/55 complete,16 open.

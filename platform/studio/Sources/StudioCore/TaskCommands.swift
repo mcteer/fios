@@ -40,7 +40,11 @@ final class TaskCommands {
     private func owned(_ id:String,_ owner:String) throws -> DurableJob {
         guard let job=try journal.jobs().first(where:{$0.id==id}),job.ownerHash==owner else {throw TaskCommandError.unauthorized};return job
     }
-    private func status(_ job:DurableJob)->[String:Any] {["job":job.id,"state":job.state.rawValue]}
+    private func status(_ job:DurableJob,now:Int64)->[String:Any] {
+        let lease:[String:Any]=["created_at":job.lease.created,"expires_at":job.lease.expires,
+            "deadline_at":job.lease.deadline,"sampled_at":now,"revoked":job.lease.revoked]
+        return ["job":job.id,"state":job.state.rawValue,"lease":lease]
+    }
     private func nonce()->String {SymmetricKey(size:.bits256).withUnsafeBytes {Data($0).map {String(format:"%02x",$0)}.joined()}}
     func handle(_ request:ControlRequest,role:ControlRole,sample:ResourceSample,admission:inout AdmissionPolicy,
                 binding:(String)->WorkerDispatchBinding?,nativeCapacityProven:Bool,now:Int64,uptime:Int64) throws -> [String:Any] {
@@ -55,7 +59,7 @@ final class TaskCommands {
             _=try owned(id,owner)
             if request.operation == .jobRenew {try journal.renewJob(id:id,ownerHash:owner,now:now)}
             if request.operation == .jobCancel {uploads.removeValue(forKey:id);mailbox.discard(job:id);try tasks.cancel(id:id,owner:owner,now:now,uptime:uptime)}
-            var result=status(try owned(id,owner))
+            var result=status(try owned(id,owner),now:now)
             result["unresolved_managed_requests"]=try journal.unresolvedCount(job:id)
             if let outcome=outcomes[id] {result["code_complete"]=outcome.codeComplete;result["exit_verified"]=outcome.exitVerified}
             if outputLost.contains(id) {result["output_lost"]=true}
@@ -91,7 +95,7 @@ final class TaskCommands {
                     guard old.ownerHash==owner,old.requestHash==requestHash else {throw JournalError.conflict}
                     // Lost/replayed begin never resets a stream/deadline or
                     // reconstructs code after restart. Status only.
-                    return status(old)
+                    return status(old,now:now)
                 }
                 guard enrolled,admissionOpen() else {throw TaskCommandError.native_unsupported}
                 guard uploads.count<4 else {throw TaskCommandError.resource_limit}
@@ -125,12 +129,12 @@ final class TaskCommands {
                     }
                 }
                 uploads[job.id]=Upload(owner:owner,hash:requestHash,kind:kind,binding:model,transfer:transfer)
-                return status(job)
+                return status(job,now:now)
             }
             guard phase=="chunk" || phase=="end",let id=value["job"] as? String else {throw TaskCommandError.invalid_request}
             let job=try owned(id,owner)
             guard var upload=uploads[id],upload.owner==owner else {
-                if phase=="end" {try exact(["phase","job"]);return status(job)}
+                if phase=="end" {try exact(["phase","job"]);return status(job,now:now)}
                 throw TaskCommandError.invalid_request
             }
             do {
@@ -163,7 +167,7 @@ final class TaskCommands {
                         _=try tasks.startModelUpload(id:id,owner:owner,requestHash:upload.hash,requestID:request.id,context:messages,binding:current,nativeCapacityProven:nativeCapacityProven,sample:sample,admission:&admission,now:now)
                     }
                 }
-                return status(try owned(id,owner))
+                return status(try owned(id,owner),now:now)
             } catch {
                 uploads.removeValue(forKey:id)
                 try tasks.cancel(id:id,owner:owner,now:now,uptime:uptime)

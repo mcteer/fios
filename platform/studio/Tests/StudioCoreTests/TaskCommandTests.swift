@@ -40,6 +40,7 @@ func runComposedPressureTests() throws {
 }
 
 func runTaskCommandTests() throws {
+    try runJobLeaseStatusTests()
     let directory=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer {try? FileManager.default.removeItem(at:directory)}
     let journal=try Journal(directory:directory.appendingPathComponent("state"))
