@@ -1285,3 +1285,11 @@ journal checks pass in both modes; callback retirement leaves the request
 unresolved. A clean source package and five default model-flow cases pass.
 This remains partial T020/T021/T045 integration;39/55 whole tasks complete,
 16 open, with native admission and Studio acceptance still unfulfilled.
+
+Functional native continuation2026-11-17: explicit version2 lineage now carries
+native capture time separately from client query time; legacy version1 remains
+the default. Normal clock/consumer tests and genuine GPU/native IPC/journal/
+owner status pass in both modes, including legacy reads. Enclosing build and
+clean package validation are pending. This is partial T020/T021 work; whole
+tasks remain39/55 complete,16 open. The operator reaffirmed keeping all009
+requirements intact and continuing functional native work.

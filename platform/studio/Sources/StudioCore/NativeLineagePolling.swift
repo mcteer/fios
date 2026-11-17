@@ -106,7 +106,11 @@ final class NativeLineagePoller:@unchecked Sendable {
         for request in try journal.lineageRequests() where request.job==job {
             if let sample=try requestEvents(job:job,attempt:request.attempt,now:now) {
                 let cached=eventSamples[Key(job:job,attempt:request.attempt)]?.lineage
-                let lineage=cached.flatMap {(-1000...5000).contains(now-$0.sampledAt) ? $0:nil}
+                let lineage=cached.flatMap { value->NativeRequestLineageSample? in
+                    guard (-1000...5000).contains(now-value.sampledAt) else {return nil}
+                    if let captured=value.lineage.sourceCapturedAt,!(-1000...5000).contains(now-captured) {return nil}
+                    return value
+                }
                 result.append(NativeRequestEventStatus(attempt:request.attempt,sample:sample,lineage:lineage))
             }
         }

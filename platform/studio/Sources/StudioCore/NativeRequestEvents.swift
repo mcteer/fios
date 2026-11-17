@@ -64,6 +64,7 @@ struct NativeRequestEventStatus:Sendable {
             let state=phase.active>0 ? "active":phase.preparing>0 ? "preparing":phase.responding>0 ? "responding":"ingress"
             request=["state":state,"queried_at":lineage.sampledAt,"sample_sequence":phase.sampleSequence,
                 "ingress":phase.ingress,"preparing":phase.preparing,"active":phase.active,"responding":phase.responding]
+            if let captured=phase.sourceCapturedAt {request["captured_at"]=captured}
         }
         result["request"]=request
         func counts(_ row:NativeRequestEventCounts)->[String:Any] {

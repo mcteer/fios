@@ -101,3 +101,8 @@ the two reads are not an atomic all-client snapshot. Phase counts are the
 existing four-domain lineage counts, not GPU utilization or completion. Missing,
 unaccepted or expired lineage yields unknown. Retired SDK callbacks can coexist
 with a responding native request and an independently unresolved inference.
+
+An explicitly selected native lineage clock additionally supplies optional
+request.captured_at, distinct from request.queried_at and the SDK observation
+capture clock. Legacy lineage has no captured_at. Expired native lineage
+returns request.state unknown even if a separate SDK history remains fresh.

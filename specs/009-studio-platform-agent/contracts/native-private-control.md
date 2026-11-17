@@ -137,6 +137,24 @@ The Swift client verifies the same kernel PID/start/path/FD hash before sending 
 
 This is request-lineage observation, not a terminal receipt, non-dispatch proof, all-client coverage, global idle, device completion or an admission lease. Missing/reused IDs, a reaped client, cancellation and a newer success do not clear old uncertainty. The public manager has no native enrollment issuer or journal-reconciliation hook for this result. The volatile consumer checks described below do not supply durable root binding or authoritative terminal/quiescence reconciliation; T021 and G2 stay open.
 
+### Optional native lineage capture clock
+
+An explicit code-only `sourceLineageClock:true` client selects FIQ9/FIP9
+version2 with the same64-byte request and112-byte reply. Reply bytes100–107
+carry a big-endian native wall-clock capture timestamp in milliseconds;
+bytes108–111 remain zero. The timestamp is sampled immediately before the
+native correlation snapshot. UInt64.max means unavailable. Version1 keeps
+all12 trailing bytes zero and remains the default; there is no automatic
+version downgrade.
+
+The client retains its original query timestamp separately and requires a
+present native timestamp within the existing5s age/1s future window when this
+option is selected. The consumer and cached owner view independently apply
+that window to present source timestamps. Querying again cannot refresh an
+old native capture. Owner diagnostics expose optional request.captured_at
+alongside request.queried_at. This adds observation timing only; it does not
+change journal completion, native admission or installed configuration.
+
 ### Per-request volatile consumer
 
 `NativeRequestLineageConsumer` derives the expected digest from the original durable inference scope/job/attempt and pins its native epoch plus the enrolled peer PID/start/path/SHA. It independently revalidates typed samples, requires strictly increasing accepted capture sequence and nonregressing original collection time, and applies5s age/1s future limits. A failed/unavailable query and a missing lineage return only `unknown`. They retain the last accepted counter and first observed native root; they do not reset replay state or allow a later ingress to replace the original request. Even an uncertain found sample retains its root conservatively.

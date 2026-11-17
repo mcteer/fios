@@ -136,10 +136,12 @@ struct NativeControlClient:Sendable {
     let observesPrimaryActivity:Bool
     let observesSDKBackground:Bool
     let observesRequestEvents:Bool
-    init(path:String,peer:NativeControlPeer,version:UInt8=2,observeBackendFences:Bool=false,observePrimaryActivity:Bool=false,observeSDKBackground:Bool=false,observeRequestEvents:Bool=false) {
+    let sourceLineageClock:Bool
+    init(path:String,peer:NativeControlPeer,version:UInt8=2,observeBackendFences:Bool=false,observePrimaryActivity:Bool=false,observeSDKBackground:Bool=false,observeRequestEvents:Bool=false,sourceLineageClock:Bool=false) {
         self.path=path;self.peer=peer;self.version=version;observesBackendFences=observeBackendFences;observesPrimaryActivity=observePrimaryActivity
         observesSDKBackground=observeSDKBackground
         observesRequestEvents=observeRequestEvents
+        self.sourceLineageClock=sourceLineageClock
     }
     func request(operation:NativeControlOperation,instance:String?=nil,sequence:UInt64=0) throws -> NativeIngressStatus {
         let data=try NativeControlWire.request(operation:operation,instance:instance,sequence:sequence,version:version)
@@ -152,10 +154,14 @@ struct NativeControlClient:Sendable {
     }
     func lineage(instance:String,correlationID:String)throws->NativeRequestLineageSample {
         let stamp=HostResources.nowMilliseconds()
-        let data=try NativeRequestLineageWire.request(instance:instance,correlationID:correlationID)
-        let value=try NativeRequestLineageWire.reply(exchange(data,maximum:112),instance:instance,correlationID:correlationID)
+        let lineageVersion:UInt8=sourceLineageClock ? 2:1
+        let data=try NativeRequestLineageWire.request(instance:instance,correlationID:correlationID,version:lineageVersion)
+        let value=try NativeRequestLineageWire.reply(exchange(data,maximum:112),instance:instance,correlationID:correlationID,version:lineageVersion)
         let completed=HostResources.nowMilliseconds()
         guard stamp>=0,completed<=ActivityPolicy.maximumTimestamp,completed>=stamp,completed-stamp<=5000 else {throw NativeControlError.invalid}
+        if sourceLineageClock {
+            guard let captured=value.sourceCapturedAt,(-1000...5000).contains(completed-captured) else {throw NativeControlError.unavailable}
+        }
         return NativeRequestLineageSample(peer:peer,sampledAt:stamp,lineage:value)
     }
     func registerHandoff(instance:String,correlationID:String)throws->NativeHandoffSample {

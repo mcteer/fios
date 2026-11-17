@@ -72,6 +72,7 @@ struct PolicyTestRunner {
             ("interrupted task completion",runTaskCompletionTests),
             ("native request SDK events",runNativeRequestEventsTests),
             ("native request SDK event polling",runNativeRequestEventPollingTests),
+            ("native lineage source clock",runNativeLineageClockTests),
             ("task owner",runTaskOwnerTests),
             ("async artifacts",runAsyncArtifactTests),
             ("artifact disk admission",runArtifactDiskAdmissionTests),

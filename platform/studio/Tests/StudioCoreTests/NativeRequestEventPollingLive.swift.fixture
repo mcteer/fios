@@ -7,7 +7,7 @@ import CryptoKit
         guard args.count==5,let pid=Int32(args[2]) else {throw NativeControlError.invalid}
         let executable=try VerifiedExecutable(path:args[1],sha256:SHA256.hash(data:try Data(contentsOf:URL(fileURLWithPath:args[1]))).map {String(format:"%02x",$0)}.joined())
         let peer=NativeControlPeer(pid:pid,start:try WorkerResources.startIdentifier(pid:pid),executable:executable)
-        let client=NativeControlClient(path:args[3],peer:peer,version:3,observeRequestEvents:true)
+        let client=NativeControlClient(path:args[3],peer:peer,version:3,observeRequestEvents:true,sourceLineageClock:true)
         let now=HostResources.nowMilliseconds(),job=UUID().uuidString.lowercased()
         let scope=InferenceScope(host:"fixture-host",endpointHash:String(repeating:"a",count:64),profileHash:String(repeating:"b",count:64),managerEpoch:UUID().uuidString.lowercased(),
             nativeEpoch:String(repeating:"07",count:16),canonicalModel:"fixture/native-events",nativeModel:"fixture/native-events",sequence:1,sampledAt:now)
@@ -18,6 +18,9 @@ import CryptoKit
         try journal.claim(job:job,attempt:0,model:scope.canonicalModel,scope:scope);try journal.markDispatched(job:job,attempt:0)
         let correlation=try scope.nativeRequestCorrelationID(job:job,attempt:0)
         let registration=try client.registerHandoff(instance:scope.nativeEpoch,correlationID:correlation)
+        let legacy=NativeControlClient(path:args[3],peer:peer,version:3)
+        let legacyRead=try legacy.lineage(instance:scope.nativeEpoch,correlationID:correlation)
+        guard legacyRead.lineage.sourceCapturedAt==nil else {throw NativeControlError.invalid}
         let poller=NativeLineagePoller(journal:journal,source:client)
         func poll()throws {
             guard try poller.beginNext() else {throw JournalError.invalid}
@@ -42,7 +45,7 @@ import CryptoKit
                 guard metal.retired==metal.originated,sample.events.rootSequence==registration.result.rootSequence,
                       try journal.inferenceScope(job:job,attempt:0)?.state == .dispatched,try journal.unresolvedCount()==1 else {throw JournalError.invalid}
                 let phases=try poller.requestEventStatuses(job:job,now:HostResources.nowMilliseconds())
-                guard let phase=phases.first?.object["request"] as? [String:Any],phase["state"] as? String=="responding" else {Thread.sleep(forTimeInterval:0.01);continue}
+                guard let phase=phases.first?.object["request"] as? [String:Any],phase["state"] as? String=="responding",phase["captured_at"] as? Int64 != nil else {Thread.sleep(forTimeInterval:0.01);continue}
                 let observedAt=HostResources.nowMilliseconds()
                 try journal.transitionJob(id:job,to:.revoking,now:observedAt);try journal.transitionJob(id:job,to:.removed,now:observedAt)
                 let tasks=TaskController(journal:journal,broker:ModelBroker(journal:journal))
@@ -59,7 +62,7 @@ import CryptoKit
                       (rows[0]["request"] as? [String:Any])?["state"] as? String=="responding",
                       status["unresolved_managed_requests"] as? Int==1,status["state"] as? String=="removed" else {throw JournalError.invalid}
                 try output(["ok":true,"original_root":String(sample.events.rootSequence),"metal_originated":metal.originated,"metal_retired":metal.retired,
-                            "unresolved_requests":1,"owner_status_observation":true,"local_job_state":"removed","native_request_state":"responding","model_requests":0,"native_authority":false]);return
+                            "unresolved_requests":1,"owner_status_observation":true,"local_job_state":"removed","native_request_state":"responding","native_lineage_capture_time":true,"legacy_lineage_still_available":true,"model_requests":0,"native_authority":false]);return
             }
             Thread.sleep(forTimeInterval:0.01)
         }

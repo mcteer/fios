@@ -17,8 +17,10 @@ struct NativeRequestLineage:Sendable {
     let preparing:Int
     let active:Int
     let responding:Int
+    var sourceCapturedAt:Int64? = nil
     func validate()throws {
         _=try NativeControlWire.instanceBytes(instance)
+        if let sourceCapturedAt {guard (1...ActivityPolicy.maximumTimestamp).contains(sourceCapturedAt) else {throw NativeControlError.invalid}}
         let counts=[owners,ingress,preparing,active,responding]
         guard WireScalar.sha256(correlationID),sampleSequence>0,sampleSequence<=UInt64(ActivityPolicy.maximumTimestamp),
               counts.allSatisfy({(0...256).contains($0)}),owners==counts[1...4].reduce(0,+),
@@ -38,18 +40,20 @@ enum NativeRequestLineageWire {
         func nibble(_ byte:UInt8)->UInt8 {byte<=57 ? byte-48:byte-87}
         return stride(from:0,to:64,by:2).map {nibble(bytes[$0])*16+nibble(bytes[$0+1])}
     }
-    static func request(instance:String,correlationID:String)throws->Data {
+    static func request(instance:String,correlationID:String,version:UInt8=1)throws->Data {
+        guard [1,2].contains(version) else {throw NativeControlError.invalid}
         var data=Data(repeating:0,count:64)
-        data.replaceSubrange(0..<4,with:Data("FIQ9".utf8));data[4]=1
+        data.replaceSubrange(0..<4,with:Data("FIQ9".utf8));data[4]=version
         data.replaceSubrange(8..<24,with:try NativeControlWire.instanceBytes(instance))
         data.replaceSubrange(24..<56,with:try digestBytes(correlationID))
         return data
     }
-    static func reply(_ input:Data,instance:String,correlationID:String)throws->NativeRequestLineage {
+    static func reply(_ input:Data,instance:String,correlationID:String,version:UInt8=1)throws->NativeRequestLineage {
+        guard [1,2].contains(version) else {throw NativeControlError.invalid}
         _=try NativeControlWire.instanceBytes(instance);_=try digestBytes(correlationID)
         let bytes=Array(input) // Rebase slices before fixed-offset access.
-        guard bytes.count==112,bytes.prefix(4).elementsEqual("FIP9".utf8),bytes[4]==1,bytes[5]==0,
-              bytes[6]<=1,bytes[7]<=1,bytes[100..<112].allSatisfy({$0==0}) else {throw NativeControlError.invalid}
+        guard bytes.count==112,bytes.prefix(4).elementsEqual("FIP9".utf8),bytes[4]==version,bytes[5]==0,
+              bytes[6]<=1,bytes[7]<=1,bytes[(version==1 ? 100:108)..<112].allSatisfy({$0==0}) else {throw NativeControlError.invalid}
         let actualInstance=bytes[8..<24].map {String(format:"%02x",$0)}.joined()
         let actualID=bytes[24..<56].map {String(format:"%02x",$0)}.joined()
         guard actualInstance==instance,actualID==correlationID else {throw NativeControlError.unauthorized}
@@ -57,8 +61,13 @@ enum NativeRequestLineageWire {
         let sequence=number(56,8),root=number(64,8),references=number(72,8)
         let counts=stride(from:80,to:100,by:4).map {Int(number($0,4))}
         let found=bytes[6]==1,uncertain=bytes[7]==1
-        let value=NativeRequestLineage(instance:actualInstance,correlationID:actualID,sampleSequence:sequence,rootSequence:root,
+        var value=NativeRequestLineage(instance:actualInstance,correlationID:actualID,sampleSequence:sequence,rootSequence:root,
             found:found,uncertain:uncertain,references:references,owners:counts[0],ingress:counts[1],preparing:counts[2],active:counts[3],responding:counts[4])
+        if version==2 {
+            let captured=number(100,8)
+            guard captured==UInt64.max || (captured>0 && captured<=UInt64(ActivityPolicy.maximumTimestamp)) else {throw NativeControlError.invalid}
+            value.sourceCapturedAt=captured==UInt64.max ? nil:Int64(captured)
+        }
         try value.validate();return value
     }
 }
@@ -273,6 +282,7 @@ struct NativeRequestLineageConsumer:Sendable {
               (0...ActivityPolicy.maximumTimestamp).contains(sample.sampledAt),
               (-1000...5000).contains(now-sample.sampledAt),sample.sampledAt>=sampledAt,
               value.sampleSequence>sequence else {return .unknown}
+        if let captured=value.sourceCapturedAt,!(-1000...5000).contains(now-captured) {return .unknown}
         sequence=value.sampleSequence;sampledAt=sample.sampledAt
         if value.found {
             if let original=rootSequence,original != value.rootSequence {fenced=true;return .unknown}

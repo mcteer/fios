@@ -9181,3 +9181,29 @@ remain unchanged. Workflow YAML parses and git diff --check passes. The manual
 standalone checker remains available. This avoids recompiling the entire307-file
 Core/test source projection twice again for identical coverage, without omitting
 its test cases. A new exact-head CI result is still required;39/55 whole tasks.
+
+### Native request-lineage capture time — 2026-11-17
+
+The operator reaffirmed keeping spec009 intact and continuing functional native
+work; no requirements move to a separate spec. Whole tasks remain39/55 complete.
+An explicit default-off code-only client selects the native lineage version2
+clock. Version1 still works and remains default. Native capture, local query
+and SDK capture clocks remain separate; none proves request completion.
+
+Normal clock/consumer and existing polling tests pass in Debug/optimized modes:
+`/private/tmp/fios-009-lineage-clock-1crFcD/receipt.json`, SHA256
+`ed255afa3bd5182095a02520c258952726d6422996aaa2597bedb9804a2a647f`.
+The helper's comment/error label was clarified afterward; its final rerun is
+pending. Genuine private native/GPU/journal/owner status passes both modes:
+`/private/tmp/fios-009-event-journal-y_kh2y8g/receipt.json`, SHA256
+`b14fcd567e8c177fef4d45e5cd74c9c511fca238b343df2ba3c3f79ac22cdd1e`.
+It checks both old lineage and new capture time while SDK callbacks retire and
+the native request remains responding/unresolved. Two four-value GPU graphs,
+zero models, real model POSTs or installed actions.
+
+The selected native clock patch reverses to its declared parent and reapplies
+byte-exactly: `/private/tmp/fios-009-lineage-clock-projection-z748u5d0/receipt.json`,
+SHA256 `87fa2b26b5c3cbf25652b6994898bbe2d534d7348966300b56c58c126f3e7f48`.
+This qualifies that one-file projection, not whole-native provenance. Enclosing
+compile and a clean source package remain pending. No installed activation or
+all-client/native admission authority follows from these observations.
