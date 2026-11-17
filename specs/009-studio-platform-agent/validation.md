@@ -8761,3 +8761,38 @@ The fixture uses typed local cancellation metadata, creates no worker process
 and makes no network, runtime or model request. It is registered in the normal
 platform runner; the quickstart also lists the focused command. No native or
 installed acceptance or whole-task completion follows;39/55 remain complete.
+
+
+### Functional owner cancellation and packaged task workflows — 2026-11-17
+
+The normal CLI model workflow now runs two independent private manager/mock
+cases: ordinary completion and owner cancellation during a delayed response.
+Completion preserves52,830-byte2-chunk input and ordered text/complete events.
+Cancellation begins from running, revokes the lease, delivers interrupted,
+reaches removed and releases the local worker slot. Each case makes exactly1
+mock POST and ends with0 worker slots; neither makes real inference or runtime
+requests. The unresolved managed request stays1 in each case. Receipt
+`/private/tmp/f9-manager-cli-KmC5fB/receipt.json`, SHA256
+`db549f88dea703404e7ac5bdfc0eb32c9c3ab38b2872f332d8871d26105ea217`.
+The mock uses a finite2s ordinary response delay; no production or engine code
+is changed for this test. uv0.13.5 locked noneditable package reinstall passes.
+
+A clean e6cf4bdaa3e2aee9a32781966205dd13b72220c5 checkout builds the
+nine-artifact development package in56.222s. Manifest SHA256
+`684a2c701f74204314e938a9fbe849cb5e7eb768696835c3f4db7260b285000d`;
+selected package-input projection
+`65213c3bdb17643edf1a8c5b8047c440a6b10849f22585017a5d640528216ea5`.
+Normal packaged status, both service views, maintenance intent, resources and
+offline256GiB memory planning pass:
+`/private/tmp/fios-009-functional-interruption-package-acmrnvcq/smoke-receipt.json`,
+SHA256 `8bba6c626939383aad6121b1649632c5faed5cd7fbeafe71cdffb7e12da60e22`.
+
+The actual packaged manager/CLI also passes normal finished-job status,
+request-correlated job_conflict on renewal,77,824-byte3-chunk export and empty
+export downloads. The source fixture manager had stopped; a readonly SQLite
+backup and private artifact copy provide fresh separate state before starting
+the packaged manager. No two application instances share a SQLite file. Receipt
+`/private/tmp/fios009-package-tasks-ab6sik0n/receipt.json`. These checks perform
+no model, runtime or installed service action. The package remains inactive and
+`package_complete:false`. Later cancellation-fixture changes are separate from
+this e6cf4bd package source. Whole tasks remain39/55 complete,16 open.

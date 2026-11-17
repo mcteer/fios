@@ -1236,3 +1236,12 @@ worker result no longer leaves its job running; normal broker/controller
 Debug/optimized tests verify local removal/lease revocation, the other job
 still running and unchanged request/unresolved counts. No process/model/runtime
 action or native acceptance; T045 open,39/55 whole tasks unchanged.
+
+
+2026-11-17 functional owner-cancel/package integration (T045): the normal CLI
+workflow now covers ordinary completion and cancellation during a delayed mock
+reply, exactly1 mock POST/case, revoked leases, removed jobs and0 worker slots.
+The clean e6cf4bd package passes normal status/resources/planning plus actual
+packaged finished-job error correlation and3-chunk/empty exports in separate
+private state. No real model/runtime/installed service actions; package remains
+inactive, T045 remains open and39/55 whole tasks complete.
