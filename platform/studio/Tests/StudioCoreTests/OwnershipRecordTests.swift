@@ -93,4 +93,20 @@ private func checkSandboxRetention(directory:URL,hash:String)throws {
         fatalError("Startup accepted a removed job still holding unproven sandbox custody")
     } catch JournalError.invalid {}
     guard try Data(contentsOf:file)==before else {throw JournalError.conflict}
+    let bundle=directory.deletingLastPathComponent().appendingPathComponent("sandbox-retention-bundle")
+    _=try ArtifactStore(directory:directory.appendingPathComponent("artifacts"))
+    let receipt=try StoppedStateBackup.create(directory:directory,destination:bundle)
+    let archived=try Data(contentsOf:bundle.appendingPathComponent("state.sqlite"))
+    do {
+        _=try StoppedStateBackup.verifyCompatibility(directory:bundle,expectedSHA256:receipt.sha256)
+        fatalError("Backup compatibility accepted unproven sandbox custody under a removed job")
+    } catch JournalError.invalid {}
+    let destination=directory.deletingLastPathComponent().appendingPathComponent("sandbox-retention-restore")
+    do {
+        _=try StoppedStateBackup.restore(directory:bundle,expectedSHA256:receipt.sha256,destination:destination)
+        fatalError("Restore published contradictory sandbox custody")
+    } catch JournalError.invalid {}
+    guard !FileManager.default.fileExists(atPath:destination.path),try Data(contentsOf:file)==before,
+          try Data(contentsOf:bundle.appendingPathComponent("state.sqlite"))==archived else {throw JournalError.conflict}
+    _=try StoppedStateBackup.verify(directory:bundle,expectedSHA256:receipt.sha256)
 }
