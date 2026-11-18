@@ -40,6 +40,70 @@ fn Slots(comptime capacity: usize, comptime Generation: type) type {
     };
 }
 
+fn ScopeStack(comptime Handle: type, comptime capacity: usize) type {
+    return struct {
+        const Self = @This();
+        const Frame = struct { handle: Handle, sequence: u64 };
+        frames: [capacity]Frame = undefined,
+        depth: usize = 0,
+        sequence: u64 = 0,
+        fenced: bool = false,
+
+        fn push(self: *Self, handle: Handle) ?u64 {
+            if (self.fenced or self.depth == capacity or self.sequence == std.math.maxInt(u64)) return null;
+            self.sequence += 1;
+            self.frames[self.depth] = .{ .handle = handle, .sequence = self.sequence };
+            self.depth += 1;
+            return self.sequence;
+        }
+
+        fn current(self: *const Self) ?Handle {
+            if (self.fenced or self.depth == 0) return null;
+            return self.frames[self.depth - 1].handle;
+        }
+
+        fn pop(self: *Self, sequence: u64) bool {
+            if (self.fenced or self.depth == 0) return false;
+            if (self.frames[self.depth - 1].sequence != sequence) {
+                self.fenced = true;
+                return false;
+            }
+            self.depth -= 1;
+            return true;
+        }
+    };
+}
+
+test "out of order scope exit fences descendant capture instead of restoring an old parent" {
+    const Table = Slots(3, u64);
+    var table = Table{ .epoch = 1 };
+    var stack = ScopeStack(Table.Handle, 2){};
+    const outer = table.allocate().?;
+    const outer_frame = stack.push(outer).?;
+    const inner = table.reserveChild(stack.current().?).?;
+    const inner_frame = stack.push(inner).?;
+    try std.testing.expect(!stack.pop(outer_frame));
+    try std.testing.expect(stack.current() == null);
+    try std.testing.expect(!stack.pop(inner_frame));
+    try std.testing.expect(stack.push(outer) == null);
+    try std.testing.expect(table.validate(outer) and table.validate(inner));
+}
+
+test "nested frames of one operation still have distinct scope identities" {
+    const Table = Slots(1, u64);
+    var table = Table{ .epoch = 1 };
+    var stack = ScopeStack(Table.Handle, 2){};
+    const operation = table.allocate().?;
+    const outer_frame = stack.push(operation).?;
+    const inner_frame = stack.push(operation).?;
+    try std.testing.expectEqual(outer_frame + 1, inner_frame);
+    try std.testing.expect(stack.pop(inner_frame));
+    try std.testing.expectEqual(operation, stack.current().?);
+    try std.testing.expect(!stack.pop(inner_frame));
+    try std.testing.expect(stack.current() == null);
+    try std.testing.expect(table.validate(operation));
+}
+
 test "generation saturation retires one slot without affecting another" {
     var table = Slots(2, u2){ .epoch = 1 };
     const first = table.allocate().?;
