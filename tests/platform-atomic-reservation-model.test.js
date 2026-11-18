@@ -41,6 +41,24 @@ class Gate {
     return true;
   }
 
+  upgradeConnection(hold) {
+    const owner = this.#owners.get(hold);
+    if (this.#fenced || owner?.state !== 'bound') return false;
+    owner.state = 'connection';
+    this.#revision++;
+    return true;
+  }
+
+  closeConnection(hold) {
+    return this.#owners.get(hold)?.state === 'connection' && this.#remove(hold);
+  }
+
+  publishTurn(connection) {
+    const owner = this.#owners.get(connection);
+    if (owner?.state !== 'connection') return null;
+    return this.#enter(owner.target, 'published');
+  }
+
   publishBoundIngress(hold) {
     const owner = this.#owners.get(hold);
     if (this.#fenced || owner?.state !== 'bound') return false;
@@ -124,6 +142,24 @@ test('bound ingress occupies its model before load and is abandonable only befor
   assert.equal(gate.backendTerminal(ingress), null);
   assert(gate.abandonIngress(ingress));
   assert.equal(gate.publishBoundIngress(ingress), false);
+  assert(gate.reserve(gate.observe('model/b'), 'model/b'));
+});
+
+test('persistent connection borrow and its published turns retire independently', () => {
+  const gate = new Gate({ covered: true });
+  const connection = gate.acceptIngress();
+  assert(gate.bindIngress(connection, 'model/a'));
+  assert(gate.upgradeConnection(connection));
+  const first = gate.publishTurn(connection);
+  assert(first);
+  assert(gate.releaseTerminal(first, gate.backendTerminal(first)));
+  assert.equal(gate.reserve(gate.observe('model/b'), 'model/b'), null);
+  const second = gate.publishTurn(connection);
+  assert(second);
+  assert(gate.closeConnection(connection)); // Only the connection borrow ends.
+  assert.equal(gate.publishTurn(connection), null);
+  assert.equal(gate.reserve(gate.observe('model/b'), 'model/b'), null);
+  assert(gate.releaseTerminal(second, gate.backendTerminal(second)));
   assert(gate.reserve(gate.observe('model/b'), 'model/b'));
 });
 
