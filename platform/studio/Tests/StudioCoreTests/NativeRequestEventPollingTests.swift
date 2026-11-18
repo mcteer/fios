@@ -7,15 +7,20 @@ private final class NormalRequestEventSource:NativeRequestEventsReading,@uncheck
     private let lock=NSLock()
     private var sequence:UInt64=0
     private var reads=0
-    init(peer:NativeControlPeer,enabled:Bool) {self.peer=peer;observesRequestEvents=enabled}
+    private let replacementRoot:UInt64?
+    private var lastRoot:UInt64?
+    init(peer:NativeControlPeer,enabled:Bool,replacementRoot:UInt64?=nil) {
+        self.peer=peer;observesRequestEvents=enabled;self.replacementRoot=replacementRoot
+    }
     var eventReads:Int {lock.lock();defer {lock.unlock()};return reads}
+    var lastEventRoot:UInt64? {lock.lock();defer {lock.unlock()};return lastRoot}
     func lineage(instance:String,correlationID:String)throws->NativeRequestLineageSample {
         lock.lock();sequence+=1;let next=sequence;lock.unlock()
         return NativeRequestLineageSample(peer:peer,sampledAt:10000,lineage:NativeRequestLineage(instance:instance,correlationID:correlationID,
-            sampleSequence:next,rootSequence:next<4 ? UInt64.max:0,found:next<4,uncertain:next>=4,references:next<4 ? 1:0,owners:next<4 ? 1:0,ingress:0,preparing:0,active:next<4 ? 1:0,responding:0))
+            sampleSequence:next,rootSequence:next<4 ? (replacementRoot ?? UInt64.max):0,found:next<4,uncertain:next>=4,references:next<4 ? 1:0,owners:next<4 ? 1:0,ingress:0,preparing:0,active:next<4 ? 1:0,responding:0))
     }
     func requestEvents(instance:String,correlationID:String,rootSequence:UInt64)throws->NativeRequestEventsSample {
-        lock.lock();reads+=1;let next=reads;lock.unlock()
+        lock.lock();reads+=1;lastRoot=rootSequence;let next=reads;lock.unlock()
         if next==3 {throw NativeControlError.unavailable}
         let counts=NativeRequestEventCounts(sequence:UInt64(next),originated:2,retired:next==1 ? 1:2,pending:next==1 ? 1:0,historyRetained:true,uncertain:false)
         return NativeRequestEventsSample(peer:peer,requestedAt:10000,receivedAt:10001,
@@ -87,5 +92,10 @@ func runNativeRequestEventPollingTests()throws {
     guard disabled.eventReads==0,try plain.requestEvents(job:job,attempt:0,now:10001)==nil else {throw JournalError.invalid}
     let replacement=NativeLineagePoller(journal:journal,source:source)
     guard try replacement.requestEvents(job:job,attempt:0,now:10001)==nil else {throw JournalError.invalid}
+    let changedRoot=NormalRequestEventSource(peer:peer,enabled:true,replacementRoot:7)
+    try poll(NativeLineagePoller(journal:journal,source:changedRoot))
+    guard changedRoot.lastEventRoot==UInt64.max,try journal.unresolvedCount()==1 else {
+        fatalError("Event lookup followed a replacement root instead of the original journal root")
+    }
     print("PASS: optional off-loop original-request SDK observations progress pending to retired without completing the journal request; unavailable and expired observations remain absent")
 }

@@ -9736,3 +9736,13 @@ model report unknown even when loading is true. A cold load with no
 outstanding owners still reports preparing. Both isolated policy modes
 passed all 145 checks. The normalized classifier test has synthetic
 inputs. T020 and the all-client producer requirement remain open.
+
+### Request event lookups retain the recorded root
+
+Once the journal has an original native root, the off-loop request-event
+lookup uses that root ahead of a conflicting root returned by a later
+lineage read. The regression records the root sent to the event source,
+supplies a different later reply, and checks that the original inference
+remains unresolved. Both isolated policy modes passed all 145 checks.
+This is read-only correlation under T021. Native terminal reconciliation
+remains open, with 39 of 55 whole tasks complete.

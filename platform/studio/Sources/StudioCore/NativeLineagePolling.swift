@@ -57,7 +57,7 @@ final class NativeLineagePoller:@unchecked Sendable {
         lastPolled=Key(job:request.job,attempt:request.attempt)
         Thread.detachNewThread { [self] in
             let sample=try? source.lineage(instance:request.scope.nativeEpoch,correlationID:correlation)
-            let root=sample.flatMap {$0.lineage.found ? $0.lineage.rootSequence:nil} ?? originalRoot
+            let root=originalRoot ?? sample.flatMap {$0.lineage.found ? $0.lineage.rootSequence:nil}
             let events:NativeRequestEventsSample?
             if collectEvents,let root,let eventSource {
                 events=try? eventSource.requestEvents(instance:request.scope.nativeEpoch,correlationID:correlation,rootSequence:root)
