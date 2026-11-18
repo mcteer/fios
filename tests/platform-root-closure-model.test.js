@@ -29,6 +29,8 @@ class RootClosureModel {
 
   close(key) { this.#roots.get(key).open = false; }
 
+  fence(key) { this.#roots.get(key).fenced = true; }
+
   begin(key) {
     if (!this.#roots.get(key)?.open) return null;
     return this.#publish(new Set([key]));
@@ -62,7 +64,7 @@ class RootClosureModel {
 
   closed(key) {
     const root = this.#roots.get(key);
-    return root?.open === false && root.live === 0;
+    return root?.open === false && !root.fenced && root.live === 0;
   }
 }
 
@@ -123,6 +125,18 @@ test('capacity refusal leaves parent custody intact and retired handles cannot b
   assert.equal(model.closed(root), false);
   assert(model.release(retry));
   assert.equal(model.closed(root), true);
+});
+
+test('escaped publication remains fenced after all tracked references retire', () => {
+  const model = new RootClosureModel(1);
+  const root = model.register('epoch', 'request', 1);
+  const independent = model.begin(root);
+  assert.equal(model.inherit([independent]), null);
+  // This caller cannot attest that publication was stopped before refusal.
+  model.fence(root);
+  model.close(root);
+  assert(model.release(independent));
+  assert.equal(model.closed(root), false);
 });
 
 test('exhausted generation retires the slot without reviving a stale handle', () => {
