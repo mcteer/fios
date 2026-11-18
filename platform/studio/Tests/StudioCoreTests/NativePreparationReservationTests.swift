@@ -511,7 +511,9 @@ func runPreparationBrokerTests(factory:PythonWorkerFactory,base:String,guardDire
         guard !broker.active(job:id),try journal.activeLaunchCount()==0,try journal.unresolvedCount()==1,try journal.uncertainCount()==1,
               try journal.requestCount(job:id)==1,try journal.inferenceScope(job:id,attempt:0)?.state == .uncertain else {fatalError("Preparation broker lost local/native separation")}
         if scenario == "healthy" {
-            guard completed,posts==1,native.counts==[1,1,1,0] else {fatalError("Preparation broker did not launch exact once-only original scope")}
+            guard completed,posts==1,native.counts==[1,1,1,0] else {
+                fatalError("Preparation broker did not launch exact once-only original scope: completed=\(completed), posts=\(posts.map(String.init) ?? "none"), reserve/lineage/consume/withdraw=\(native.counts)")
+            }
         }else {
             let limit=ProcessInfo.processInfo.systemUptime+1
             while scenario != "reserveFailure" && native.counts[3]==0 && ProcessInfo.processInfo.systemUptime<limit {usleep(1000)}

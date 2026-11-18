@@ -114,7 +114,40 @@ func runJobControllerTests() throws {
     }
     guard try journal.jobs().first(where:{$0.id==ids[1]})?.state == .removed else { fatalError("Owned sandbox cleanup did not finish") }
     try checkModelSandboxSourceTurnover()
+    try checkDeferredCreateRestart()
     print("PASS: asynchronous sandbox coordinator, transport-before-start fencing, newest-owned pressure revocation and proof-gated cleanup")
+}
+
+private func checkDeferredCreateRestart()throws {
+    let directory=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer {try? FileManager.default.removeItem(at:directory)}
+    let id=UUID().uuidString.lowercased(),hash=String(repeating:"a",count:64)
+    func sample(_ now:Int64)->ResourceSample {
+        ResourceSample(sampledAt:now,physical:128<<30,available:64<<30,vmAvailable:8<<30,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal,vmSampledAt:now)
+    }
+    do {
+        let journal=try Journal(directory:directory),runtime=FakeSandboxExecutor()
+        runtime.denyCreateCapacity=true
+        let controller=JobController(journal:journal,executor:runtime)
+        let config=try SandboxConfiguration(job:id,nonce:hash,image:"sha256:"+hash,memory:512<<20,cpus:1)
+        let job=try DurableJob(id:id,idempotency:UUID().uuidString.lowercased(),ownerHash:hash,requestHash:hash,created:10000)
+        _=try journal.reserveSandbox(job:job,configuration:config)
+        var admission=AdmissionPolicy()
+        try controller.tick(now:10000,sample:sample(10000),admission:&admission,transportReady:{_ in false},cancelModel:{_ in})
+        guard try journal.sandboxRecords()[0].createIssued,runtime.commands.isEmpty else {fatalError("Create was not durably precommitted and capacity-deferred")}
+    }
+    let journal=try Journal(directory:directory),runtime=FakeSandboxExecutor()
+    let controller=JobController(journal:journal,executor:runtime)
+    var admission=AdmissionPolicy()
+    for now:Int64 in [11000,11500,13000,13500] {
+        try controller.tick(now:now,sample:sample(now),admission:&admission,inputReady:{_ in false},transportReady:{_ in false},cancelModel:{_ in})
+    }
+    let retained=try journal.sandboxRecords()[0]
+    guard !runtime.commands.isEmpty,runtime.commands.allSatisfy({if case .inspect=$0 {return true};return false}),
+          retained.createIssued,retained.runtimeID==nil,!retained.removalProven,
+          controller.cleanupStatus(now:13500)["pending_sandboxes"] as? Int==1 else {
+        fatalError("Restart replayed precommitted create or inferred absence after losing local refusal history")
+    }
 }
 
 private func checkModelSandboxSourceTurnover() throws {
