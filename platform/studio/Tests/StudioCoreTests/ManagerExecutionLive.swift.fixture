@@ -38,7 +38,10 @@ private final class FixtureModelCache:@unchecked Sendable {
     func binding(_ model:String)->WorkerDispatchBinding? {
         lock.lock();let stored=value;lock.unlock()
         guard WireScalar.exactModel(model,"fixture/model"),let stored else {return nil}
-        let snapshot=NativeSnapshot(host:"fixture-host",endpointHash:PythonWorkerFactory.digest(stored.base),nativeEpoch:"native-fixture-one",sequence:1,sampledAt:HostResources.nowMilliseconds(),allClientLifecycleCoverage:true,residentModel:"fixture/idle-other",outstandingOwners:0,loading:false)
+        // Disposable mock-only switch, never a production transport input.
+        let replacement=URL(fileURLWithPath:stored.path).deletingLastPathComponent().appendingPathComponent("replace-source-epoch")
+        let nativeEpoch=FileManager.default.fileExists(atPath:replacement.path) ? "native-fixture-two":"native-fixture-one"
+        let snapshot=NativeSnapshot(host:"fixture-host",endpointHash:PythonWorkerFactory.digest(stored.base),nativeEpoch:nativeEpoch,sequence:1,sampledAt:HostResources.nowMilliseconds(),allClientLifecycleCoverage:true,residentModel:"fixture/idle-other",outstandingOwners:0,loading:false)
         return WorkerDispatchBinding(baseURL:stored.base,guardPath:stored.path,host:"fixture-host",profileHash:String(repeating:"f",count:64),managerEpoch:stored.epoch,canonicalModel:"fixture/model",nativeModel:"fixture/model",nativeSnapshot:snapshot,nativeCompatibilityAccepted:true,apiKey:nil)
     }
 }

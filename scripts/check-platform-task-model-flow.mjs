@@ -76,7 +76,8 @@ try {
   await delay(50);assert.equal(posts,0);assert.equal(JSON.parse(command(cli,['--state',state,'status'],3000)).worker_reservations,0);
   return {scenario,restart_checked:true,input_bytes:data.length,input_chunks:chunks,partial_upload:true,replay_status_only:true,state:restored.state,mock_model_posts:posts,worker_slots_after_completion:0};
  }
- if(scenario==='invalid_history'){
+ if(['invalid_history','replaced_source'].includes(scenario)){
+  if(scenario==='replaced_source')writeFileSync(join(nativeState,'replace-source-epoch'),'mock',{flag:'wx',mode:0o600});
   task('job.create',{phase:'end',job},'invalid_request');
   const final=await until(()=>{const s=task('job.status',{job});return s.state==='removed' ? s:null;});
   assert.equal(final.unresolved_managed_requests,0);
@@ -121,7 +122,7 @@ try {
 }
 }
 const records=[];
-for(const scenario of ['complete','cancel','unavailable','upload_restart','unicode','invalid_history'])records.push(await modelCase(scenario));
+for(const scenario of ['complete','cancel','unavailable','upload_restart','unicode','invalid_history','replaced_source'])records.push(await modelCase(scenario));
 const receipt={scope:'normal_cli_model_job_completion_cancellation_and_service_failure',records,real_model_requests:0,runtime_actions:0,native_acceptance:false,cli_sha256:sha(readFileSync(cli)),manager_sha256:sha(readFileSync(binary))};
 writeFileSync(join(directory,'receipt.json'),JSON.stringify(receipt,null,2)+'\n');
 console.log(JSON.stringify({ok:true,directory,...receipt}));
