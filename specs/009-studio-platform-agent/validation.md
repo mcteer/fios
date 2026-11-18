@@ -9626,3 +9626,18 @@ request and records clean process exit. See
 `/private/tmp/f9-model-run-zM7obm/result.json`. This is ordinary client
 cancellation and follow-up behavior. It does not reconcile a durable native
 terminal claim.
+
+### Durable journal correlation on the current stock build
+
+The private journal runner now accepts the current primary-activity source
+declaration and compiles the current bounded Swift input set with two jobs.
+Its zero-POST empty-catalog check verified the observer and native process
+exit. The subsequent two-token Core plan made exactly one bounded POST.
+The journal persisted original root 4 and observed two positive native
+primary samples. The observer and native server were reaped, and stopped
+inspection found the claim still uncertain.
+
+The empty check is `/private/tmp/f9-model-check-1QjPkJ/result.json`.
+The live receipt is `/private/tmp/f9-model-run-uu8qLk/result.json`.
+This uses the current native registry observation and remains administrative
+source correlation without platform dispatch or native terminal proof.

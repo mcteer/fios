@@ -13,14 +13,14 @@ export function nativeJournalInputs(root){
   'platform/studio/Sources/CSQLite/shim.h','platform/studio/Sources/CSQLite/module.modulemap',
   'platform/studio/Tests/StudioCoreTests/NativeJournalSource.swift.fixture',
   'scripts/lib/platform-native-journal-source.mjs','tests/fixtures/platform/native-journal-review.sb'];
- assert(names.length<=160);
+ assert(names.length<=256);
  return Object.fromEntries(names.map(name=>[name,hash(readFileSync(path.join(root,name)))]));
 }
 export function buildNativeJournalObserver(root,parent,nonce){
  const inputs=nativeJournalInputs(root),fixture=path.join(root,'platform/studio/Tests/StudioCoreTests/NativeJournalSource.swift.fixture');
  const source=path.join(parent,'journal-source-'+nonce+'.swift'),binary=path.join(parent,'journal-observer-'+nonce);
  writeFileSync(source,readFileSync(fixture),{flag:'wx',mode:0o400});
- execFileSync('swiftc',['-swift-version','6','-warnings-as-errors','-I',path.join(root,'platform/studio/Sources/CSQLite'),
+ execFileSync('swiftc',['-j2','-swift-version','6','-warnings-as-errors','-I',path.join(root,'platform/studio/Sources/CSQLite'),
   ...Object.keys(inputs).filter(n=>n.startsWith('platform/studio/Sources/StudioCore/')&&n.endsWith('.swift')).map(n=>path.join(root,n)),source,'-o',binary],
   {timeout:180000,maxBuffer:2<<20,stdio:'pipe'});
  chmodSync(binary,0o500);assert.deepEqual(nativeJournalInputs(root),inputs);assert.deepEqual(readFileSync(source),readFileSync(fixture));
