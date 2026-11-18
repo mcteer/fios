@@ -63,6 +63,17 @@ func runServiceDrainControllerTests()throws {
     clock.value=61
     cache.publish(try snapshot(jobs:[],requests:[other],stamp:1001),for:.mlx)
     guard try controller.poll(service:.mlx,now:1001,uptime:61000).state == .refused(.deadline) else {throw JournalError.conflict}
+    cache.publish(try snapshot(jobs:[],requests:[other],stamp:1002),for:.mlx)
+    _=try controller.begin(service:.mlx,role:.operator,now:1002,uptime:61001)
+    let newerRequest=UUID().uuidString.lowercased()
+    try journal.claim(job:queued,attempt:0,model:"fixture/model",requestID:newerRequest)
+    try journal.markUncertain(job:queued,attempt:0)
+    cache.publish(try snapshot(jobs:[],requests:[other,newerRequest],stamp:1003),for:.mlx)
+    let expanded=try controller.poll(service:.mlx,now:1003,uptime:61002)
+    guard expanded.state == .refused(.scopeChanged),expanded.revokeOwned.isEmpty,
+          try journal.uncertainCount()==2,try journal.desired(service:"mlx")=="maintenance" else {
+        fatalError("Drain expanded to include a new durable native attempt")
+    }
     let readyJournal=try Journal(directory:directory.appendingPathComponent("ready")),readyCache=ServiceDrainObservationCache()
     let ready=try ServiceDrainController(journal:readyJournal,tasks:TaskController(journal:readyJournal,broker:ModelBroker(journal:readyJournal)),managerEpoch:epoch,observations:readyCache)
     readyCache.publish(try snapshot(jobs:[],requests:[],idle:true),for:.mlx)
