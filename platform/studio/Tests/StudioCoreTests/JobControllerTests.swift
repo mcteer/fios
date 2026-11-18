@@ -66,6 +66,16 @@ func runJobControllerTests() throws {
         try admission.reserve(job:id,memory:config.memory,cpus:1,sample:sample(stamp),now:stamp)
         _=try journal.reserveSandbox(job:job,configuration:config)
     }
+    try controller.tick(now:11000,sample:sample(11000),admission:&admission,transportReady:{_ in false},cancelModel:{_ in})
+    guard runtime.values.count==2 else {fatalError("Expected two already-drained create results in fixture")}
+    runtime.values.insert(SandboxExecution(job:UUID().uuidString.lowercased(),result:.success(.acknowledged)),at:0)
+    do {
+        try controller.tick(now:11000,sample:sample(11000),admission:&admission,transportReady:{_ in false},cancelModel:{_ in})
+        fatalError("Unexpected sandbox completion did not fail the tick")
+    } catch JournalError.conflict {}
+    guard try journal.sandboxRecords().allSatisfy({$0.runtimeID != nil && !$0.startIssued}) else {
+        fatalError("Malformed sandbox completion stranded trailing create results")
+    }
     for tick in 0..<5 {
         try controller.tick(now:11000+Int64(tick*100),sample:sample(11000+Int64(tick*100)),admission:&admission,transportReady:{_ in false},cancelModel:{_ in})
     }

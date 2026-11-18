@@ -94,7 +94,12 @@ final class JobController {
                 try cancelModel(newest)
             }
         }
+        var completionError:Error?
         for completed in executor.drain() {
+            do {try apply(completed)} catch {if completionError==nil {completionError=error}}
+        }
+        if let completionError {throw completionError}
+        func apply(_ completed:SandboxExecution)throws {
             guard let command=inFlight.removeValue(forKey:completed.job) else { throw JournalError.conflict }
             switch completed.result {
             case .failure:
@@ -111,7 +116,7 @@ final class JobController {
                    let job=try journal.jobs().first(where:{$0.id==completed.job}),job.state == .creating,
                    !startIssued,(!safeFor(job.id) || !transportReady(job.id)) {
                     exitProof.removeValue(forKey:completed.job)
-                    continue
+                    return
                 }
                 // Validate ownership/causality before publishing exit status.
                 let next=try lifecycle.observed(job:completed.job,presence:presence,now:now,resourcesSafe:!rollback && (safeFor(completed.job) || completed.job != victim))
