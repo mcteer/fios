@@ -74,6 +74,7 @@ enum ServiceStatusPolicy {
               (-1000...5000).contains(now-observation.sampledAt) else {return .unknown}
         if let identity=observation.identity {
             guard identity.valid else {return .unknown}
+            if desired == .running && !observation.responding && !observation.sessionReady {return .waiting_session}
             if !observation.credentialsReady {return .waiting_credentials}
             if observation.responding {return .ready}
             if observation.health == .loading {return .starting}

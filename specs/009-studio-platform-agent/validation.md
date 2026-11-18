@@ -9684,3 +9684,20 @@ request list. The Debug and optimized mock policy suites each passed all
 145 checks. This exercises observation order and local journal state.
 Native terminal reconciliation remains open under T021. Whole tasks
 remain 39 of 55 complete.
+
+### Present serving process with an unavailable user session
+
+With running intent, an unresponsive service whose user session is
+unavailable now reports `waiting_session` even when its process identity
+is known. Debug and optimized policy runs each passed all 145 checks.
+Both isolated supervisor modes also reported `waiting_session` through
+manager IPC, with one launch, no pending stop or launch, and one unresolved
+request. Removing the simulated session outage restored ready status on
+the original launch. The rest of the owned-child exit and maintenance
+fixture passed with zero model POSTs.
+
+Receipt `/private/tmp/fios-009-serving-runtime-native-JETheS/receipt.json`,
+SHA256 `7df279004af2b2f5863e7572aaac5ccd115848e668e5d7274ff5346a10e9adac`.
+Session availability and reservation inputs were simulated. Native
+child identity and health came from the private process. T027 remains
+open for installed acceptance. Whole tasks remain 39 of 55 complete.

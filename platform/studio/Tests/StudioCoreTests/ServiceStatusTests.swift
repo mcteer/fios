@@ -11,6 +11,8 @@ func runServiceStatusTests() throws {
         (.running,sample(nil),false,.stopped),(.running,sample(nil),true,.starting),
         (.running,sample(identity,true),false,.ready),(.maintenance,sample(identity,true),false,.ready),
         (.running,sample(identity,true,false,true),false,.ready),
+        (.running,sample(identity,false,false,true),false,.waiting_session),
+        (.running,sample(identity,false,false,false),true,.waiting_session),
         (.running,sample(identity,true,true,false),false,.waiting_credentials),
         (.stopped,sample(identity,true),false,.ready), // intent is not observation
         (.running,sample(identity),false,.degraded),(.running,sample(identity),true,.starting),

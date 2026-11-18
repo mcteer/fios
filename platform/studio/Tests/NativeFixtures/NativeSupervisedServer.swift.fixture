@@ -32,10 +32,13 @@ private final class FixtureServingHealth:@unchecked Sendable {
     private let lock=NSLock()
     private var failedIdentity:ServiceIdentity?
     func failed(_ identity:ServiceIdentity)->Bool {lock.lock();defer {lock.unlock()};return failedIdentity==identity}
-    func project(_ observation:ServiceObservation?,loading:Bool,unavailable:Bool)->ServiceObservation? {
+    func project(_ observation:ServiceObservation?,loading:Bool,unavailable:Bool,sessionUnavailable:Bool)->ServiceObservation? {
         lock.lock();defer {lock.unlock()}
         if !unavailable {failedIdentity=nil}
         guard let value=observation else {return nil}
+        if sessionUnavailable {
+            return ServiceObservation(identity:value.identity,responding:false,sessionReady:false,credentialsReady:value.credentialsReady,nativeIdle:nil,runtimeUnmanaged:nil,sampledAt:value.sampledAt)
+        }
         if unavailable,failedIdentity==nil,let identity=value.identity {failedIdentity=identity}
         let state:ServiceHealthState?
         if loading {state = .loading}
@@ -155,7 +158,8 @@ extension NativeSupervisedServerFixture {
                 }
                 let projected=health.project(observation,
                     loading:FileManager.default.fileExists(atPath:directory.appendingPathComponent("fixture-loading").path),
-                    unavailable:FileManager.default.fileExists(atPath:directory.appendingPathComponent("fixture-unavailable").path))
+                    unavailable:FileManager.default.fileExists(atPath:directory.appendingPathComponent("fixture-unavailable").path),
+                    sessionUnavailable:FileManager.default.fileExists(atPath:directory.appendingPathComponent("fixture-session-unavailable").path))
                 observations.publish(projected,for:.mlx);Thread.sleep(forTimeInterval:0.025)
             }
         }
