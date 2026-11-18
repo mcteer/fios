@@ -115,7 +115,7 @@ Use `journal-same-model-pair` in the same three commands for two overlapping req
 
 Use `journal-cancel-then-success` to cancel the first of two requests after a response delta. The journal must acknowledge uncertainty for the original root before the second request starts. The second response must complete, and stopped inspection must still find the original root and both uncertain claims. The cancellation scenario allows up to eight output tokens per request within the same time and memory limits.
 
-Use `responses-websocket` in the same plan/check/run commands to exercise two chained Responses turns on one private connection. It selects the exact model at upgrade and reuses the first response ID for the second turn. The fixture checks native activity between turns and counts the two WebSocket turns separately from HTTP POSTs. Each turn has a two-token output limit. The runner retains the same request, work, cleanup and memory bounds.
+Use `responses-websocket` in the same plan/check/run commands to exercise two chained Responses turns on one private connection. It selects the exact model at upgrade and reuses the first response ID for the second turn. The fixture checks native activity between turns and checks that the local owner is gone after a normal close. It counts the two WebSocket turns separately from HTTP POSTs. Each turn has a two-token output limit. The runner retains the same request, work, cleanup and memory bounds.
 
 Ordinary idle native helper lifecycle can be checked against a fresh reviewed DS4 build:
 

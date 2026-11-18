@@ -252,7 +252,7 @@ async function requestResponsesSocket(){
  const url=new URL('ws://127.0.0.1:'+port+'/v1/responses');
  url.searchParams.set('model',ID);
  const socket=new WebSocket(url,{headers:{Authorization:'Bearer '+key}});
- const state=receipt.websocket={attempted_turns:0,completed_turns:0,observed_between_turns:false};
+ const state=receipt.websocket={attempted_turns:0,completed_turns:0,observed_between_turns:false,owner_released_after_close:false};
  let pending,problem,bytes=0;
  function fail(error){
   problem??=error;
@@ -317,6 +317,18 @@ async function requestResponsesSocket(){
    }
   }
   assert(state.completed_turns===LIMITS.websocket_turns&&!problem);
+  const closed=new Promise(resolve=>socket.addEventListener('close',resolve,{once:true}));
+  socket.close(1000);
+  const closeEvent=await bounded(closed);
+  assert(closeEvent.wasClean&&closeEvent.code===1000&&!problem);
+  const ownerDeadline=performance.now()+2000;
+  do {
+   acceptActivity(await get('/v1/fios/activity'));
+   if(activityState.active===0)break;
+   await delay(25);
+  }while(!failed&&performance.now()<ownerDeadline);
+  assert(activityState.active===0,'Local WebSocket owner remained after close');
+  state.owner_released_after_close=true;
  }finally{pending=null;socket.close();}
 }
 

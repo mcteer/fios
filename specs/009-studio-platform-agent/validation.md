@@ -9797,3 +9797,10 @@ Sampled peak footprint was 5,153,083,712 bytes. All 27 source-model
 intent tests passed. This is single-model transport and observation
 evidence under T018. Device terminality, all-client coverage and
 Studio acceptance remain open. Whole tasks remain 39 of 55 complete.
+
+The close extension passed on a fresh one-use plan. After two chained turns,
+the client and source completed a normal WebSocket close and the reported
+local active owner count returned to zero before process shutdown. Receipt
+`/private/tmp/f9-model-run-F9cfcL/result.json`, SHA256
+`0c39efc49538b520b497595f6789a563025682f86250498d371c38306c442882`.
+This measures connection ownership. T018 stays open.
