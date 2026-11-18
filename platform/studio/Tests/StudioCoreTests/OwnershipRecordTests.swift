@@ -62,5 +62,34 @@ func runOwnershipRecordTests() throws {
         if SHA256.hash(data:try Data(contentsOf:file)) != before {failures.append("Rejected ownership was rewritten: "+name)}
     }
     guard failures.isEmpty else {fatalError(failures.joined(separator:"; "))}
+    try checkSandboxRetention(directory:root.appendingPathComponent("sandbox-retention"),hash:hash)
     print("PASS: duplicate/unknown nested ownership fields and SQL/payload identity mismatch refused before recovery writes; synthetic worker metadata never acted on")
+}
+
+private func checkSandboxRetention(directory:URL,hash:String)throws {
+    let unresolved=UUID().uuidString.lowercased(),proved=UUID().uuidString.lowercased()
+    do {
+        let journal=try Journal(directory:directory)
+        for id in [unresolved,proved] {
+            let config=try SandboxConfiguration(job:id,nonce:hash,image:"sha256:"+hash,memory:512<<20,cpus:1)
+            let job=try DurableJob(id:id,idempotency:UUID().uuidString.lowercased(),ownerHash:hash,requestHash:hash,created:1000)
+            _=try journal.reserveSandbox(job:job,configuration:config)
+            try journal.transitionJob(id:id,to:.revoking,now:1000)
+            try journal.confirmSandboxAbsent(job:id)
+            try journal.transitionJob(id:id,to:.removed,now:1000)
+        }
+    }
+    // Inject a schema-shaped mismatch into disposable stopped state only.
+    do {
+        var db:OpaquePointer?
+        guard sqlite3_open_v2(directory.appendingPathComponent("state.sqlite").path,&db,SQLITE_OPEN_READWRITE,nil)==SQLITE_OK else {throw JournalError.storage}
+        defer {sqlite3_close(db)}
+        let sql="UPDATE sandboxes SET payload=json_set(payload,'$.removalProven',json('false')) WHERE job='\(unresolved)'"
+        guard sqlite3_exec(db,sql,nil,nil,nil)==SQLITE_OK,sqlite3_changes(db)==1 else {throw JournalError.storage}
+    }
+    let reopened=try Journal(directory:directory)
+    try reopened.expireTerminalJobs(now:86_401_000)
+    let records=try reopened.sandboxRecords(),jobs=try reopened.jobs()
+    guard records.count==1,records[0].configuration.job==unresolved,!records[0].removalProven,
+          jobs.count==1,jobs[0].id==unresolved,jobs[0].state == .removed else {throw JournalError.invalid}
 }
