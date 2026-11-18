@@ -509,8 +509,14 @@ final class ModelBroker {
                         ((try? NativeAdmission.retainsSource(binding,now:now)) ?? false))
                     && retainSourceContinuity(job:id,current:binding,original:entry.binding)
             } ?? false
-            if !coherent {fenceSource(job:id,original:entry.binding)}
-            if lease && !coherent { try journal.transitionJob(id:id,to:.revoking,now:now) }
+            if !coherent {
+                fenceSource(job:id,original:entry.binding)
+                // Local interruption closes the pipe and signals the bound
+                // child before any contended journal revocation. It does not
+                // release the native claim or the local slot.
+                try entry.worker.cancel(now:uptime)
+                if lease {try journal.transitionJob(id:id,to:.revoking,now:now)}
+            }
             // Own load/compute is not mistaken for source loss. Admission
             // checks loading/conflicts; an in-flight call only checks coverage,
             // exact epoch/profile/scope and freshness, plus its owner lease.

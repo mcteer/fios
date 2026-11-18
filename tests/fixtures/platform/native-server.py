@@ -106,7 +106,9 @@ async def main():
                         return
                     # Finite mock-only window to revoke an already-dispatched
                     # request. The fixture reports counts, never prompt text.
-                    if any(item.get('content') in ('fixture-source-conflict', 'ordinary delayed reply') for item in value['messages']):
+                    if any(item.get('content') == 'fixture-source-conflict' for item in value['messages']):
+                        await asyncio.sleep(4)
+                    elif any(item.get('content') == 'ordinary delayed reply' for item in value['messages']):
                         await asyncio.sleep(2)
                     chunk = {'id': 'mock-fixture', 'object': 'chat.completion.chunk', 'created': 1, 'model': 'fixture/model',
                              'choices': [{'index': 0, 'delta': {'content': 'MOCK_ONLY'}, 'finish_reason': None}]}

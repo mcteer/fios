@@ -1,5 +1,6 @@
 import Foundation
 import Darwin
+import CSQLite
 
 // Real installed pipe worker, disposable HTTP mock, synthetic source only.
 // A delayed mock response distinguishes post-dispatch source loss from a
@@ -47,9 +48,28 @@ func runBusySourceWorkerTests(directory:URL,factory:PythonWorkerFactory,original
     }
     guard let report=try JSONSerialization.jsonObject(with:reports) as? [String:Int],report["posts"]==10,
           broker.activeWorkers==1,!text,!complete else {throw RuntimeError.identity}
+    guard let grant=try journal.workerGrants().first?.grant else {throw JournalError.conflict}
+    do {
+        // Bounded writer contention in this disposable same-process fixture.
+        var blocker:OpaquePointer?
+        guard sqlite3_open_v2(directory.appendingPathComponent("state.sqlite").path,&blocker,SQLITE_OPEN_READWRITE|SQLITE_OPEN_FULLMUTEX,nil)==SQLITE_OK else {throw JournalError.storage}
+        defer {sqlite3_exec(blocker,"ROLLBACK",nil,nil,nil);sqlite3_close(blocker)}
+        guard sqlite3_exec(blocker,"BEGIN IMMEDIATE",nil,nil,nil)==SQLITE_OK else {throw JournalError.storage}
+        do {
+            _=try broker.poll(now:HostResources.nowMilliseconds(),uptime:Int64(ProcessInfo.processInfo.systemUptime*1000),admission:&admission,source:{_ in binding(conflict:true)})
+            fatalError("Fixture did not block durable revocation")
+        } catch JournalError.storage {}
+        let deadline=ProcessInfo.processInfo.systemUptime+1
+        while (try? grant.provenGone()) != true && ProcessInfo.processInfo.systemUptime<deadline {Thread.sleep(forTimeInterval:0.005)}
+        guard (try? grant.provenGone())==true,broker.activeWorkers==1,
+              try journal.jobs().first(where:{$0.id==id})?.state == .running,
+              try journal.unresolvedRequestIDs()==[request] else {
+            fatalError("Worker interruption waited for durable revoke or dropped native custody")
+        }
+    }
     let cleanup=ProcessInfo.processInfo.systemUptime+2
     while broker.activeWorkers>0,ProcessInfo.processInfo.systemUptime<cleanup {
-        let events=try broker.poll(now:HostResources.nowMilliseconds(),uptime:Int64(ProcessInfo.processInfo.systemUptime*1000),admission:&admission,source:{_ in binding(conflict:true)})
+        let events=try broker.poll(now:HostResources.nowMilliseconds(),uptime:Int64(ProcessInfo.processInfo.systemUptime*1000),admission:&admission,source:{_ in binding(conflict:false)})
         for event in events[id] ?? [] {
             if case .text=event {text=true};if case .complete=event {complete=true}
         }
