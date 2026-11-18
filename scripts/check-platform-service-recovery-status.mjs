@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Ordinary real manager/session/CLI flow with a counter-only application port.
-// Runs only the single-completion functional scenario; no native app action.
+// Exercises successful completion, maintenance revocation and helper turnover; no native app action.
 import assert from 'node:assert/strict';
 import {spawn,spawnSync} from 'node:child_process';
 import {mkdtempSync,mkdirSync,copyFileSync,readdirSync,readFileSync,existsSync,writeFileSync} from 'node:fs';
@@ -19,7 +19,7 @@ const policy='(version 1)(allow default)(deny network*)(allow network* (local un
 const exited=p=>p.exitCode!==null||p.signalCode!==null;
 async function until(check,timeout=12000){const end=performance.now()+timeout;while(performance.now()<end){const value=check();if(value)return value;await delay(25);}throw Error('Ordinary recovery status deadline');}
 function start(mode,scenario){const p=spawn('/usr/bin/sandbox-exec',['-p',policy,binary,mode,state,scenario],{stdio:'ignore'});children.push(p);return p;}
-function status(){const r=spawnSync(cli,['--state',state,'service','mlx','status'],{encoding:'utf8',timeout:2000});return r.status===0 ? JSON.parse(r.stdout):null;}
+function status(args=['service','mlx','status']){const r=spawnSync(cli,['--state',state,...args],{encoding:'utf8',timeout:2000});return r.status===0 ? JSON.parse(r.stdout):null;}
 try{
  const helper=start('server','functional');await until(()=>existsSync(join(state,'session-control.json')));
  const manager=start('manager','invalid-then-known');
@@ -67,7 +67,28 @@ try{
  assert.equal(Number(readFileSync(join(state,'calls'),'utf8')),1,'Explicit later running intent did not perform exactly one new launch');
  heldManager.kill('SIGTERM');await until(()=>exited(heldManager));assert.equal(heldManager.exitCode,0);
  heldHelper.kill('SIGTERM');await until(()=>exited(heldHelper));assert.equal(heldHelper.exitCode,0);
- console.log(JSON.stringify({ok:true,actual_manager:true,actual_session:true,application_port:'counter_only',application_calls:2,revoked_validation_calls:0,actual_validator_slot_retained:true,maintenance_survives_manager_restart:true,native_actions:0,review_directory:directory}));
+ // A replacement helper has no history for the still-pending operation.
+ // Neither failure of the pinned old connection nor an authenticated lookup
+ // returning uncertainty may let the manager issue a replacement launch.
+ state=join(directory,'helper-turnover');mkdirSync(state,{mode:0o700});
+ const firstHelper=start('server','functional');
+ const descriptor=()=>JSON.parse(readFileSync(join(state,'session-control.json'),'utf8'));
+ await until(()=>existsSync(join(state,'session-control.json')));
+ const original=descriptor();
+ let turnoverManager=start('manager','known');
+ await until(()=>existsSync(join(state,'validation-entered'))&&status()?.launch_pending);
+ firstHelper.kill('SIGTERM');await until(()=>exited(firstHelper));assert.equal(firstHelper.exitCode,0);
+ const secondHelper=start('server','functional');
+ await until(()=>descriptor().instance!==original.instance);
+ await until(()=>status(['status'])?.service_recovery==='degraded');
+ assert.equal(status().launch_pending,true);
+ turnoverManager.kill('SIGTERM');await until(()=>exited(turnoverManager));assert.equal(turnoverManager.exitCode,0);
+ turnoverManager=start('manager','known');
+ await until(()=>status()?.launch_pending);await delay(2200);
+ assert.equal(status(['status']).service_recovery,'configured');
+ assert.equal(status().launch_pending,true);assert.equal(status().recovery.starts_in_window,1);
+ assert.equal(Number(readFileSync(join(state,'calls'),'utf8')),0);
+ console.log(JSON.stringify({ok:true,actual_manager:true,actual_session:true,application_port:'counter_only',application_calls:2,revoked_validation_calls:0,actual_validator_slot_retained:true,maintenance_survives_manager_restart:true,helper_turnover_retains_pending:true,native_actions:0,review_directory:directory}));
 }catch(error){console.error('RETAINED ordinary service recovery fixture:',directory);throw error;}finally{
  for(const child of children.reverse())if(!exited(child)){child.kill('SIGTERM');try{await until(()=>exited(child),3000);}catch{child.kill('SIGKILL');await until(()=>exited(child),3000);}}
 }
