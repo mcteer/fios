@@ -103,7 +103,45 @@ func runJobControllerTests() throws {
         try controller.tick(now:19100+Int64(tick*500),sample:sample(19100+Int64(tick*500)),admission:&admission,transportReady:{_ in true},cancelModel:{_ in})
     }
     guard try journal.jobs().first(where:{$0.id==ids[1]})?.state == .removed else { fatalError("Owned sandbox cleanup did not finish") }
+    try checkModelSandboxSourceTurnover()
     print("PASS: asynchronous sandbox coordinator, transport-before-start fencing, newest-owned pressure revocation and proof-gated cleanup")
+}
+
+private func checkModelSandboxSourceTurnover() throws {
+    for createBeforeTurnover in [false,true] {
+        let directory=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer {try? FileManager.default.removeItem(at:directory)}
+        let journal=try Journal(directory:directory),runtime=FakeSandboxExecutor()
+        let jobs=JobController(journal:journal,executor:runtime)
+        let tasks=TaskController(journal:journal,broker:ModelBroker(journal:journal))
+        let artifacts=AsyncArtifacts(store:try ArtifactStore(directory:directory.appendingPathComponent("artifacts")))
+        let sandbox=SandboxTaskController(journal:journal,jobs:jobs,tasks:tasks,artifacts:artifacts,socket:"/fixture/never.sock",peerUID:geteuid())
+        let id=UUID().uuidString.lowercased(),owner=String(repeating:"a",count:64),epoch=UUID().uuidString.lowercased()
+        let base="http://127.0.0.1:11234/v1"
+        func binding(_ nativeEpoch:String,now:Int64)->WorkerDispatchBinding {
+            let snapshot=NativeSnapshot(host:"fixture-host",endpointHash:PythonWorkerFactory.digest(base),nativeEpoch:nativeEpoch,sequence:1,sampledAt:now,allClientLifecycleCoverage:true,residentModel:nil,outstandingOwners:0,loading:false)
+            return WorkerDispatchBinding(baseURL:base,guardPath:"/fixture/never.sock",host:"fixture-host",profileHash:owner,managerEpoch:epoch,canonicalModel:"fixture/model",nativeModel:"fixture/model",nativeSnapshot:snapshot,nativeCompatibilityAccepted:true,apiKey:nil)
+        }
+        let config=try SandboxConfiguration(job:id,nonce:owner,image:"sha256:"+owner,memory:512<<20,cpus:1)
+        let job=try DurableJob(id:id,idempotency:UUID().uuidString.lowercased(),ownerHash:owner,requestHash:owner,created:10000)
+        _=try journal.reserveSandbox(job:job,configuration:config)
+        try sandbox.register(id:id,owner:owner,source:Data(),inputSHA256:"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",binding:binding("original",now:10000),now:10000)
+        var admission=AdmissionPolicy()
+        func tick(_ now:Int64,_ nativeEpoch:String)throws {
+            let sample=ResourceSample(sampledAt:now,physical:128<<30,available:64<<30,vmAvailable:8<<30,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal,vmSampledAt:now)
+            _=try sandbox.tick(now:now,uptime:Double(now)/1000,sample:sample,admission:&admission,source:{_ in binding(nativeEpoch,now:now)},nativeCapacityProven:false)
+        }
+        if createBeforeTurnover {
+            try tick(10000,"original")
+            guard runtime.commands.count==1,case .create=runtime.commands[0] else {fatalError("Fixture did not issue create before turnover")}
+        }
+        for now:Int64 in [10500,11000,11500,13000,13500,14000] {try tick(now,"replacement")}
+        let record=try journal.sandboxRecords()[0],terminal=try journal.jobs()[0]
+        guard terminal.state == .removed,record.createIssued==createBeforeTurnover,record.removalProven,
+              !runtime.commands.contains(where:{if case .start=$0 {return true};return false}),
+              try journal.requestCount(job:id)==0 else {fatalError("Model sandbox turnover crossed create/start or inference custody")}
+        if !createBeforeTurnover, !runtime.commands.isEmpty {fatalError("Source turnover before create dispatched an effect")}
+    }
 }
 
 func runVMProbePermissionTests() throws {
