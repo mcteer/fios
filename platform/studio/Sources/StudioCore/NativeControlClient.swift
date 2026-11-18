@@ -220,9 +220,9 @@ struct NativeControlClient:Sendable {
         let request=try NativeRequestEventsWire.request(instance:instance,correlationID:correlationID,rootSequence:rootSequence)
         let value=try NativeRequestEventsWire.reply(exchange(request,maximum:NativeRequestEventsWire.responseSize),instance:instance,correlationID:correlationID,rootSequence:rootSequence)
         let completed=HostResources.nowMilliseconds()
-        guard (0...ActivityPolicy.maximumTimestamp).contains(began),completed>=began,completed<=ActivityPolicy.maximumTimestamp,
-              completed-began<=5000,(-1000...5000).contains(completed-value.sampledAt) else {throw NativeControlError.invalid}
-        return NativeRequestEventsSample(peer:peer,requestedAt:began,receivedAt:completed,events:value)
+        let sample=NativeRequestEventsSample(peer:peer,requestedAt:began,receivedAt:completed,events:value)
+        guard sample.captureMatchesExchange else {throw NativeControlError.invalid}
+        return sample
     }
     func backendFences(instance:String,after sequence:UInt64=0)throws->NativeBackendFenceSample {
         guard !observesSDKBackground || observesBackendFences else {throw NativeControlError.invalid}

@@ -47,6 +47,13 @@ struct NativeRequestEventsSample:Sendable {
     let requestedAt:Int64
     let receivedAt:Int64
     let events:NativeRequestEvents
+    var captureMatchesExchange:Bool {
+        let stamp=events.sampledAt
+        let bounds=0...ActivityPolicy.maximumTimestamp
+        guard bounds.contains(requestedAt),bounds.contains(receivedAt),bounds.contains(stamp),
+              (0...5000).contains(receivedAt-requestedAt) else {return false}
+        return requestedAt-stamp<=1000 && (-1000...5000).contains(receivedAt-stamp)
+    }
 }
 
 struct NativeRequestEventStatus:Sendable {
