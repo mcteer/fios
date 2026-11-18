@@ -9701,3 +9701,18 @@ SHA256 `7df279004af2b2f5863e7572aaac5ccd115848e668e5d7274ff5346a10e9adac`.
 Session availability and reservation inputs were simulated. Native
 child identity and health came from the private process. T027 remains
 open for installed acceptance. Whole tasks remain 39 of 55 complete.
+
+### Manager recovery with delayed service observations
+
+Recovery skips an expired or excessively future-dated service observation
+and can plan again on a fresh sample. Both isolated policy modes passed
+all 145 checks. The private native supervisor fixture passed in Debug
+and optimized modes. With a simulated observation delay, IPC reported
+unknown while the same manager PID and epoch published a later heartbeat.
+The original launch remained, and both the restart count and unresolved
+request count stayed at one. Fresh observations restored ready status.
+
+Receipt `/private/tmp/fios-009-serving-runtime-native-pynYxg/receipt.json`,
+SHA256 `6ea673d544ff546ee74f823f24d8c90b655d143b3043c2d005788c55edf64361`.
+The delay was simulated and the fixture made zero model POSTs.
+Installed service acceptance remains open. Whole tasks remain 39 of 55.

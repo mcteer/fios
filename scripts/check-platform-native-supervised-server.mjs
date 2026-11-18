@@ -60,6 +60,21 @@ for(const mode of ['debug','release']){
   unlinkSync(sessionMarker);
   await until(()=>custodyStatus()?.services?.mlx?.observed==='ready');
   assert.equal(custodyJSON('fixture-native-health.json').launch_id,original.launch_id);
+  const delayedMarker=join(custodyState,'fixture-delayed-observation');
+  writeFileSync(delayedMarker,'synthetic observation delay',{mode:0o600,flag:'wx'});
+  await until(()=>custodyStatus()?.services?.mlx?.observed==='unknown');
+  const priorHeartbeat=custodyJSON('progress.json');
+  await until(()=>{
+   const heartbeat=custodyJSON('progress.json');
+   return heartbeat?.pid===priorHeartbeat.pid&&heartbeat.epoch===priorHeartbeat.epoch&&heartbeat.progress>priorHeartbeat.progress;
+  },5000);
+  const delayed=custodyStatus();
+  assert.equal(delayed.services.mlx.observed,'unknown');
+  assert.equal(delayed.services.mlx.recovery.starts_in_window,1);
+  assert.equal(delayed.unresolved_requests,1);
+  unlinkSync(delayedMarker);
+  await until(()=>custodyStatus()?.services?.mlx?.observed==='ready');
+  assert.equal(custodyJSON('fixture-native-health.json').launch_id,original.launch_id);
   writeFileSync(join(custodyState,'fixture-loading'),'synthetic loading overlay',{mode:0o600,flag:'wx'});
   await until(()=>{const s=custodyStatus();return s?.services?.mlx?.observed==='starting'&&!s.services.mlx.launch_pending&&!s.services.mlx.stop_pending;},6000);
   await delay(4200);assert.equal(custodyStatus().services.mlx.recovery.starts_in_window,1);
@@ -93,7 +108,7 @@ for(const mode of ['debug','release']){
   custodian.kill('SIGTERM');await until(custodyExited,5000);assert.equal(custodian.exitCode,0);
   assert.deepEqual(readdirSync(join(custodyState,'models')),[]);
   assert.deepEqual(custodyJSON('custody-supervisor-receipt.json'),{start_validations:2,stop_validations:ownedExit?1:2,uncertain:1,native_authority:false});
-  writeFileSync(join(directory,mode+'-custody-supervisor.json'),JSON.stringify({first,second,waiting,recovered,stopped,original,replacement,state:custodyState,identity:'actual_empty_model_native_server',health:'actual_kernel_listener_and_GET',readiness_and_reservations:'synthetic',owned_child_exit_under_maintenance:ownedExit,native_authority:false})+'\n',{mode:0o600});
+  writeFileSync(join(directory,mode+'-custody-supervisor.json'),JSON.stringify({first,second,waiting,delayed,recovered,stopped,original,replacement,state:custodyState,identity:'actual_empty_model_native_server',health:'actual_kernel_listener_and_GET',readiness_and_reservations:'synthetic',owned_child_exit_under_maintenance:ownedExit,native_authority:false})+'\n',{mode:0o600});
  }catch(error){console.error('RETAINED actual supervisor custody fixture:',custodyState);throw error;}finally{
   if(!custodyExited()){custodian.kill('SIGTERM');try{await until(custodyExited,4000);}catch{custodian.kill('SIGKILL');await until(custodyExited,3000);}}
  }

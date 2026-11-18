@@ -164,6 +164,10 @@ func runServiceRecoveryTests() throws {
         }
     }
     try recovery.notSent(service:.mlx,id:first.id)
+    for sampledAt:Int64 in [694999,701001] {
+        guard try recovery.next(service:.mlx,desired:.running,observation:absent(sampledAt),now:700000,tick:700000)==nil,
+              !recovery.isPending(.mlx) else {fatalError("Out-of-window service observation created a launch")}
+    }
     guard let second=try recovery.plan(service:.mlx,desired:.running,observation:absent(700000),now:700000,tick:700000) else {fatalError("Correlated non-dispatch proof did not permit later launch")}
     do {try recovery.notSent(service:.mlx,id:first.id);fatalError("Old proof retired a newer intent")}catch ServiceError.invalid {}
     try recovery.notSent(service:.mlx,id:second.id)

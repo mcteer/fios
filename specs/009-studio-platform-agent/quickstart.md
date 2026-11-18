@@ -74,7 +74,8 @@ Each Debug/optimized case starts one supervisor and two sequential managers.
 The native child survives that manager replacement with identical PID/start/
 launch receipt. A simulated session outage reports `waiting_session` through
 manager IPC and returns to ready with the same child after the session
-observation recovers. A separate unavailable overlay requests guarded recovery
+observation recovers. A delayed observation reports unknown while the same
+manager continues its heartbeat. A separate unavailable overlay requests guarded recovery
 and explicit stopped intent retires the replacement. Healthy presence requires
 actual kernel listener identity and GET /health. Loading/failure/initial absence
 and native reservation callbacks are synthetic; this is no installed admission

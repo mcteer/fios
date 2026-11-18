@@ -327,7 +327,15 @@ final class ServiceRecoveryController {
     func plan(service:ManagedService,desired:ServiceDesired,observation:ServiceObservation?,now:Int64,tick:Int64)throws->ServiceLaunchCommand? {
         guard try observeClock(now:now,tick:tick),desired == .running,let observation else {return nil}
         if let identity=observation.identity,identity.sha256 != pins[service] {throw ServiceError.invalid}
-        guard try ServicePolicy().action(service:service,desired:desired,observation:observation,now:now) == .launch,
+        let action:ServiceAction
+        do {
+            action=try ServicePolicy().action(service:service,desired:desired,observation:observation,now:now)
+        } catch ServiceError.stale {
+            // A delayed observation can expire between capture and planning.
+            // Skip this cycle and leave the manager available for fresh data.
+            return nil
+        }
+        guard action == .launch,
               let index=state.entries.firstIndex(where:{$0.service==service}),state.entries[index].pending==nil,state.entries[index].stopPending==nil else {return nil}
         state.entries[index].starts=state.entries[index].starts.filter {tick-$0<600_000}
         guard state.entries[index].starts.count<3,
