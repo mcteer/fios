@@ -165,6 +165,7 @@ final class ModelBroker {
         let packet=try JSONSerialization.data(withJSONObject:["v":1,"type":"run","job_id":id,"attempt":ordinal,
             "model":binding.nativeModel,"epoch":binding.managerEpoch,"endpoint_hash":binding.nativeSnapshot.endpointHash,
             "expires_at":min(now+5000,owned.lease.expires),"context":context.map {["role":$0.role,"content":$0.content]}])
+        guard packet.count<=PrivateWorker.maximumCommandBytes else {throw ControlError.invalid_request}
         // Reservation precedes both durable permission and actual process spawn.
         try admission.reserveWorker(key:key,sample:sample,now:now)
         do { try journal.claim(job:id,attempt:ordinal,model:binding.canonicalModel,requestID:requestID,scope:binding.inferenceScope()) }

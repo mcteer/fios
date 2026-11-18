@@ -90,9 +90,10 @@ final class PrivateWorker {
         try? input.close();try? output.close()
         // Durable ownership is intentionally not released by destruction.
     }
+    static let maximumCommandBytes=1<<20
     func enqueue(_ command:Data,expectedModel:String,endpointHash:String,epoch:String,now:Int64) throws {
-        guard !commandAccepted,!revoked,command.count<=1<<20 else { throw ControlError.invalid_request }
-        try StrictJSON.validate(command,maximum:1<<20)
+        guard !commandAccepted,!revoked,command.count<=Self.maximumCommandBytes else { throw ControlError.invalid_request }
+        try StrictJSON.validate(command,maximum:Self.maximumCommandBytes)
         guard let value=try JSONSerialization.jsonObject(with:command) as? [String:Any] else { throw ControlError.invalid_request }
         func integer(_ key:String)->Int64? {
             guard let number=value[key] as? NSNumber,CFGetTypeID(number) != CFBooleanGetTypeID(),
