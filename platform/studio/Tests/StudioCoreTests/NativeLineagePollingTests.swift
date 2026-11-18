@@ -18,7 +18,7 @@ private final class HeldLineageSource:NativeLineageReading,@unchecked Sendable {
 func runNativeLineagePollingTests()throws {
     let directory=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer {try? FileManager.default.removeItem(at:directory)}
-    let jobs=["00000000-0000-4000-8000-000000000001","00000000-0000-4000-8000-000000000002"]
+    let jobs=["00000000-0000-4000-8000-000000000001","00000000-0000-4000-8000-000000000002","00000000-0000-4000-8000-000000000003"]
     let scope=InferenceScope(host:"fixture-host",endpointHash:String(repeating:"a",count:64),profileHash:String(repeating:"b",count:64),
         managerEpoch:UUID().uuidString.lowercased(),nativeEpoch:String(repeating:"1",count:32),canonicalModel:"test/model",nativeModel:"test/model",sequence:1,sampledAt:10000)
     let peer=NativeControlPeer(pid:42,start:99,executable:try VerifiedExecutable(path:"/fixture/native",sha256:String(repeating:"c",count:64)))
@@ -41,10 +41,15 @@ func runNativeLineagePollingTests()throws {
         // Normal completion can precede an asynchronous diagnostic reply.
         try journal.resolveInference(job:jobs[0],attempt:0,scope:scope,outcome:.complete)
         source.release.signal();try drain()
-        guard try journal.inferenceScope(job:jobs[0],attempt:0)?.state == .complete,try journal.unresolvedCount()==1 else {throw JournalError.invalid}
+        guard try journal.inferenceScope(job:jobs[0],attempt:0)?.state == .complete,try journal.unresolvedCount()==2 else {throw JournalError.invalid}
         guard try poller.beginNext(),source.entered.wait(timeout:.now()+1) == .success else {throw JournalError.invalid}
         source.release.signal();try drain()
-        guard source.count==2,try journal.inferenceScope(job:jobs[1],attempt:0)?.state == .dispatched else {throw JournalError.invalid}
+        guard source.count==2,
+              try journal.originalNativeRoot(job:jobs[1],attempt:0,scope:scope,peer:peer)==UInt64.max,
+              try journal.originalNativeRoot(job:jobs[2],attempt:0,scope:scope,peer:peer)==nil else {
+            fatalError("Completing a request skipped its successor in the lineage poll")
+        }
+        try journal.resolveInference(job:jobs[2],attempt:0,scope:scope,outcome:.complete)
     }
     do {
         let journal=try Journal(directory:directory)

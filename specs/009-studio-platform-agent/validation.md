@@ -9673,3 +9673,14 @@ policy suites each passed all 145 checks using
 `node scripts/check-platform.mjs --mock` and its `--release` variant.
 T008 remains open for installed VM/resource acceptance. Whole tasks remain
 39 of 55 complete.
+
+### Native lineage polling as requests complete
+
+A three-request journal fixture completes the first request while its
+read-only lineage lookup is pending. After the late response drains, the
+next lookup persists the second request's root and leaves the third
+untouched. Polling now resumes by job and attempt across a changing
+request list. The Debug and optimized mock policy suites each passed all
+145 checks. This exercises observation order and local journal state.
+Native terminal reconciliation remains open under T021. Whole tasks
+remain 39 of 55 complete.

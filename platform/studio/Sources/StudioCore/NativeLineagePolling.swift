@@ -29,7 +29,7 @@ final class NativeLineagePoller:@unchecked Sendable {
     private let lock=NSLock()
     private var busy=false
     private var reply:Reply?
-    private var cursor=0
+    private var lastPolled:Key?
     // Current diagnostics only; deliberately absent from journal checkpoints.
     private var eventSamples:[Key:EventRecord]=[:]
     init(journal:Journal,source:any NativeLineageReading) {
@@ -41,8 +41,12 @@ final class NativeLineagePoller:@unchecked Sendable {
         let requests=try journal.lineageRequests()
         let current=Set(requests.map {Key(job:$0.job,attempt:$0.attempt)})
         eventSamples=eventSamples.filter {current.contains($0.key)}
-        guard !requests.isEmpty else {cursor=0;return false}
-        let index=cursor % requests.count,request=requests[index]
+        guard let first=requests.first else {lastPolled=nil;return false}
+        // Journal rows are ordered by job and attempt. Preserve that order
+        // across requests completing while a read is in flight.
+        let request=lastPolled.flatMap { previous in
+            requests.first { ($0.job,$0.attempt) > (previous.job,previous.attempt) }
+        } ?? first
         let correlation=try request.scope.nativeRequestCorrelationID(job:request.job,attempt:request.attempt)
         let eventSource=source as? any NativeRequestEventsReading
         let collectEvents=eventSource?.observesRequestEvents == true
@@ -50,7 +54,7 @@ final class NativeLineagePoller:@unchecked Sendable {
         lock.lock()
         guard !busy,reply==nil else {lock.unlock();return false}
         busy=true;lock.unlock()
-        cursor=(index+1)%requests.count
+        lastPolled=Key(job:request.job,attempt:request.attempt)
         Thread.detachNewThread { [self] in
             let sample=try? source.lineage(instance:request.scope.nativeEpoch,correlationID:correlation)
             let root=sample.flatMap {$0.lineage.found ? $0.lineage.rootSequence:nil} ?? originalRoot
