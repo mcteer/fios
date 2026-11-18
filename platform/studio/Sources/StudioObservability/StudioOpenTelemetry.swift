@@ -110,8 +110,16 @@ public final class StudioOpenTelemetry:PlatformTelemetry,@unchecked Sendable {
         _=meter.gaugeBuilder(name:"fios.platform.supervisor.sample.time").setUnit("s").buildWithCallback { observation in
             if let sample=state.currentSupervisor() {observation.record(value:Double(sample.sampledAt)/1000)}
         }
+        let freshCPUTime: @Sendable (ResourceSample)->Int64? = { sample in
+            let stamp=sample.cpuSampledAt ?? sample.sampledAt
+            guard let cpu=sample.cpu,cpu.isFinite,(0...100).contains(cpu),
+                  (0...WireScalar.maximumTimestamp).contains(stamp),
+                  (-1000...5000).contains(HostResources.nowMilliseconds()-stamp) else {return nil}
+            return stamp
+        }
         let metrics:[(String,String,(ResourceSample)->Double?)]=[
-            ("fios.platform.host.cpu.utilization","1",{$0.cpu.map{$0/100}}),
+            ("fios.platform.host.cpu.utilization","1",{ sample in freshCPUTime(sample).flatMap{_ in sample.cpu.map{$0/100}} }),
+            ("fios.platform.host.cpu.sample.time","s",{ freshCPUTime($0).map{Double($0)/1000} }),
             ("fios.platform.host.memory.physical","By",{Double($0.physical)}),
             ("fios.platform.host.memory.available","By",{$0.available.map{Double($0)}}),
             ("fios.platform.host.disk.free","By",{$0.diskFree.map{Double($0)}}),

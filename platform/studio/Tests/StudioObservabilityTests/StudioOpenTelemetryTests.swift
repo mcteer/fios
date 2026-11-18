@@ -20,13 +20,16 @@ final class StudioOpenTelemetryTests:XCTestCase {
         let original=HostResources.nowMilliseconds()-1000
         let sample=HostResources.sample(statePath:NSTemporaryDirectory(),measuredCPU:12.5,measuredCPUAt:original)
         XCTAssertEqual(sample.cpu,12.5)
-        XCTAssertEqual(sample.sampledAt,original)
+        XCTAssertEqual(sample.cpuSampledAt,original)
+        XCTAssertGreaterThan(sample.sampledAt,original)
         let telemetry=StudioOpenTelemetry();telemetry.resources(sample)
         let metrics=telemetry.collectMetrics()
         let cpu=try XCTUnwrap(metrics.first{$0.name=="fios.platform.host.cpu.utilization"})
         XCTAssertEqual((cpu.data.points as! [DoublePointData]).first?.value,0.125)
-        let clock=try XCTUnwrap(metrics.first{$0.name=="fios.platform.resource.sample.time"})
+        let clock=try XCTUnwrap(metrics.first{$0.name=="fios.platform.host.cpu.sample.time"})
         XCTAssertEqual((clock.data.points as! [DoublePointData]).first?.value,Double(original)/1000)
+        let hostClock=try XCTUnwrap(metrics.first{$0.name=="fios.platform.resource.sample.time"})
+        XCTAssertEqual((hostClock.data.points as! [DoublePointData]).first?.value,Double(sample.sampledAt)/1000)
     }
 
     func testSupervisorMetricsAndLogsHaveTheirOwnServiceResource() throws {
@@ -101,6 +104,16 @@ final class StudioOpenTelemetryTests:XCTestCase {
                                            vmAvailable:nil,diskFree:4096,cpu:nil,pressure:.unknown,thermal:.nominal))
         let unavailable=telemetry.collectMetrics()
         XCTAssertFalse(unavailable.contains{$0.name=="fios.platform.host.cpu.utilization" && !$0.data.points.isEmpty})
+    }
+    func testExpiredCPUDoesNotSuppressFreshHostGauges() {
+        let telemetry=StudioOpenTelemetry(),now=HostResources.nowMilliseconds()
+        var sample=ResourceSample(sampledAt:now,physical:1024,available:512,
+                                  vmAvailable:nil,diskFree:4096,cpu:25,pressure:.normal,thermal:.nominal)
+        sample.cpuSampledAt=now-6000
+        telemetry.resources(sample)
+        let metrics=telemetry.collectMetrics()
+        XCTAssertFalse(metrics.contains{$0.name=="fios.platform.host.cpu.utilization" && !$0.data.points.isEmpty})
+        XCTAssertTrue(metrics.contains{$0.name=="fios.platform.host.memory.available" && !$0.data.points.isEmpty})
     }
     func testExpiredResourceSampleStopsPublishingGauges() {
         let telemetry=StudioOpenTelemetry()
