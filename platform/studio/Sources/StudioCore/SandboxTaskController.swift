@@ -17,7 +17,7 @@ struct SandboxTaskUpdates {
 final class SandboxTaskController {
     private struct Session {
         let owner:String
-        let binding:WorkerDispatchBinding?
+        var binding:WorkerDispatchBinding?
         let stream:SandboxTaskSession
         var attach:DockerAttach?
         var modelRegistered=false
@@ -97,9 +97,14 @@ final class SandboxTaskController {
                 // Before create or start, a missing/replaced source is not
                 // permission to launch a model-bearing sandbox. Plain code
                 // tasks and VM probes do not use this inference gate.
-                if job.state != .running,let original=session.binding,
-                   !Self.retainsPreStartSource(source(id),original:original,now:now) {
-                    throw AdmissionError.capacity
+                if job.state != .running,let checkpoint=session.binding {
+                    guard let current=source(id),Self.retainsPreStartSource(current,original:checkpoint,now:now) else {
+                        throw AdmissionError.capacity
+                    }
+                    // Save before the attach guard: a tick without a runtime
+                    // ID is still an accepted source observation.
+                    session.binding=current
+                    sessions[id]=session
                 }
                 if session.attach==nil,let runtimeID=record.runtimeID {
                     session.attach=try DockerAttach(socketPath:socket,configuration:record.configuration,savedID:runtimeID,peerUID:peerUID,now:uptime,endpointPolicy:endpointPolicy)

@@ -108,7 +108,7 @@ func runJobControllerTests() throws {
 }
 
 private func checkModelSandboxSourceTurnover() throws {
-    for createBeforeTurnover in [false,true] {
+    for (createBeforeTurnover,regress) in [(false,false),(true,false),(true,true)] {
         let directory=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer {try? FileManager.default.removeItem(at:directory)}
         let journal=try Journal(directory:directory),runtime=FakeSandboxExecutor()
@@ -118,8 +118,8 @@ private func checkModelSandboxSourceTurnover() throws {
         let sandbox=SandboxTaskController(journal:journal,jobs:jobs,tasks:tasks,artifacts:artifacts,socket:"/fixture/never.sock",peerUID:geteuid())
         let id=UUID().uuidString.lowercased(),owner=String(repeating:"a",count:64),epoch=UUID().uuidString.lowercased()
         let base="http://127.0.0.1:11234/v1"
-        func binding(_ nativeEpoch:String,now:Int64)->WorkerDispatchBinding {
-            let snapshot=NativeSnapshot(host:"fixture-host",endpointHash:PythonWorkerFactory.digest(base),nativeEpoch:nativeEpoch,sequence:1,sampledAt:now,allClientLifecycleCoverage:true,residentModel:nil,outstandingOwners:0,loading:false)
+        func binding(_ nativeEpoch:String,now:Int64,sequence:UInt64=1)->WorkerDispatchBinding {
+            let snapshot=NativeSnapshot(host:"fixture-host",endpointHash:PythonWorkerFactory.digest(base),nativeEpoch:nativeEpoch,sequence:sequence,sampledAt:now,allClientLifecycleCoverage:true,residentModel:nil,outstandingOwners:0,loading:false)
             return WorkerDispatchBinding(baseURL:base,guardPath:"/fixture/never.sock",host:"fixture-host",profileHash:owner,managerEpoch:epoch,canonicalModel:"fixture/model",nativeModel:"fixture/model",nativeSnapshot:snapshot,nativeCompatibilityAccepted:true,apiKey:nil)
         }
         let config=try SandboxConfiguration(job:id,nonce:owner,image:"sha256:"+owner,memory:512<<20,cpus:1)
@@ -127,15 +127,21 @@ private func checkModelSandboxSourceTurnover() throws {
         _=try journal.reserveSandbox(job:job,configuration:config)
         try sandbox.register(id:id,owner:owner,source:Data(),inputSHA256:"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",binding:binding("original",now:10000),now:10000)
         var admission=AdmissionPolicy()
-        func tick(_ now:Int64,_ nativeEpoch:String)throws {
+        func tick(_ now:Int64,_ nativeEpoch:String,sequence:UInt64=1)throws {
             let sample=ResourceSample(sampledAt:now,physical:128<<30,available:64<<30,vmAvailable:8<<30,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal,vmSampledAt:now)
-            _=try sandbox.tick(now:now,uptime:Double(now)/1000,sample:sample,admission:&admission,source:{_ in binding(nativeEpoch,now:now)},nativeCapacityProven:false)
+            _=try sandbox.tick(now:now,uptime:Double(now)/1000,sample:sample,admission:&admission,source:{_ in binding(nativeEpoch,now:now,sequence:sequence)},nativeCapacityProven:false)
         }
         if createBeforeTurnover {
-            try tick(10000,"original")
+            try tick(10000,"original",sequence:regress ? 3:1)
             guard runtime.commands.count==1,case .create=runtime.commands[0] else {fatalError("Fixture did not issue create before turnover")}
         }
-        for now:Int64 in [10500,11000,11500,13000,13500,14000] {try tick(now,"replacement")}
+        try tick(10500,regress ? "original":"replacement",sequence:regress ? 2:1)
+        if createBeforeTurnover {
+            guard try journal.jobs()[0].state == .revoking else {fatalError("Pending sandbox accepted a regressed source before attach")}
+        }
+        for now:Int64 in [11000,11500,13000,13500,14000] {
+            try tick(now,regress ? "original":"replacement",sequence:regress ? 2:1)
+        }
         let record=try journal.sandboxRecords()[0],terminal=try journal.jobs()[0]
         guard terminal.state == .removed,record.createIssued==createBeforeTurnover,record.removalProven,
               !runtime.commands.contains(where:{if case .start=$0 {return true};return false}),
