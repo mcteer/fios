@@ -322,7 +322,11 @@ public enum ManagerRuntime {
                             var details=ServiceStatusPolicy.summary(desired:typed,observation:approvedServiceObservation(service),launchPending:serviceRecovery?.isPending(service) ?? false,now:requestedAt,
                                 restartWaiting:serviceRecovery?.isWaitingForRestartWindow(service:service,tick:serviceStatusTick) ?? false)
                             details["stop_pending"]=service == .mlx && (serviceRecovery?.isStopPending() ?? false)
-                            if let recovery=serviceRecovery {details["recovery"]=recovery.summary(service:service,tick:serviceStatusTick)}
+                            if let recovery=serviceRecovery {
+                                var summary=recovery.summary(service:service,tick:serviceStatusTick)
+                                summary["transport_available"]=activeServiceControl?.supportsRecovery(for:service) == true
+                                details["recovery"]=summary
+                            }
                             if let progress=drainer?.status(service:service) {details["drain"]=ServiceDrainController.summary(progress)}
                             serviceStates[service.rawValue]=details
                         }

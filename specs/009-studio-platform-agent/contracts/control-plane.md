@@ -31,7 +31,7 @@ remains `ready` even when the restart allowance is used. Explicit stopped or
 maintenance intent keeps its ordinary observed classification. Status,
 activity context and service telemetry use this same classification; the status
 row and its recovery details evaluate the restart window at the same tick.
-This display does not change the existing retry schedule or start a service.
+`recovery.transport_available` separately indicates whether the current recovery composition has a transport for that service. A true value is not readiness, absence proof or a launch reservation; a false value can coexist with an available budget or a retained pending intent. This display does not change the existing retry schedule or start a service.
 
 ## Native-control diagnostic status
 

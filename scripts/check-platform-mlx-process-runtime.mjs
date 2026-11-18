@@ -65,6 +65,8 @@ for(const mode of ['debug','release']){
   const unsupported=JSON.parse(run(binary,['control-orbstack',managerState,'status'],3000));
   assert.equal(unsupported.recovery.starts_in_window,0,'Missing OrbStack actuator spent a durable launch slot');
   assert.equal(unsupported.launch_pending,false);
+  assert.equal(unsupported.recovery.transport_available,false);
+  assert.equal(ready.recovery.transport_available,true);
   const maintenance=JSON.parse(run(binary,['control',managerState,'maintenance'],3000));assert.equal(maintenance.applied,false);
   const maintained=await until(()=>{const s=status();return s?.desired==='maintenance'?s:null;});
   assert.equal(maintained.recovery.starts_in_window,1);
