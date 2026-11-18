@@ -14,9 +14,9 @@ import {setTimeout as delay} from 'node:timers/promises';
 import {createServer,createConnection} from 'node:net';
 import {verifyNativeReview} from './lib/platform-native-review.mjs';
 import {nativeJournalInputs,buildNativeJournalObserver,verifyNativeJournalObserver,startNativeJournalObserver} from './lib/platform-native-journal-source.mjs';
-import {nativeReviewIntent,nativeReviewHTTPFailure,nativeReviewJSON,nativeReviewActivity,nativeReviewModelInputs,nativeReviewLineage,nativeReviewComponents,nativeReviewModelSupports} from './lib/platform-native-review-intent.mjs';
+import {nativeReviewIntent,nativeReviewHTTPFailure,nativeReviewJSON,nativeReviewActivity,nativeReviewModelInputs,nativeReviewLineage,nativeReviewComponents,nativeReviewModelSupports,nativeReviewHTTPStream,nativeReviewHTTPStreamEvent,nativeReviewAudioInput} from './lib/platform-native-review-intent.mjs';
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..'),args=process.argv.slice(2);
-const intent=nativeReviewIntent(args),pair=intent.scenario==='same-model-pair',image=intent.scenario==='single-image';
+const intent=nativeReviewIntent(args),pair=intent.scenario==='same-model-pair',image=intent.scenario==='single-image',audio=intent.scenario==='single-audio';
 const journalCorrelation=intent.scenario==='journal-correlation';
 const cancelRequest=intent.scenario==='cancel-request';
 const followup=intent.scenario==='cancel-then-success';
@@ -25,6 +25,8 @@ const scenario=intent.scenario??'single-model',scenarioArgs=intent.scenario?['--
 if(intent.scenario)args.splice(-2,2);
 const ID='mlx-community/gemma-4-e4b-it-4bit',MODEL=path.join(homedir(),'.mlx-serve/models',ID);
 const LIMITS={context_tokens:512,output_tokens:journalCorrelation?2:8,max_concurrent:pair||followup?2:1,model_posts:pair||followup?2:1,request_ms:journalCorrelation?10000:90000,work_ms:journalCorrelation?15000:120000,cleanup_ms:7000,memory_abort_bytes:12*2**30,...(journalCorrelation?{journal_observer_memory_abort_bytes:128*2**20}:{})};
+const audioInput=audio ? nativeReviewAudioInput() : null;
+const alternateHTTPStream=nativeReviewHTTPStream(scenario,ID,LIMITS.output_tokens);
 assert(process.platform==='darwin'&&process.arch==='arm64'&&process.getuid()>0);
 function coreModelHost(){
  const read=(program,args)=>execFileSync(program,args,{encoding:'utf8',timeout:2000,maxBuffer:1024,env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C'}}).trim();
@@ -47,6 +49,7 @@ if(args[0]==='--plan'){
  nativeReviewModelInputs(capsule.receipt.declared_inputs);if(journalCorrelation)assert.equal(capsule.receipt.declared_inputs.native_primary_activity_version,1,'Source lacks primary ownership observation');
  if(journalCorrelation){assert.equal(capsule.receipt.declared_inputs.native_expected_instance_guard_version,1,'Source lacks expected-instance binding');assert.equal(capsule.receipt.declared_inputs.native_bound_local_target_guard_version,1,'Source lacks exact local target binding');assert.equal(capsule.receipt.declared_inputs.native_bound_target_json_version,1,'Source lacks decoded top-level target binding');}
  assert(realpathSync(MODEL)===MODEL);const config=json(path.join(MODEL,'config.json'),1<<20).value;assert(config.model_type==='gemma4');
+ if(audio)assert(config.audio_config?.model_type==='gemma4_audio');
  if(image)assert(config.vision_config?.model_type==='gemma4_vision'&&config.vision_soft_tokens_per_image<=280);
  const modelFiles=readdirSync(MODEL).filter(n=>n.endsWith('.safetensors')||['config.json','tokenizer.json','tokenizer_config.json','generation_config.json','processor_config.json'].includes(n)).sort();
  assert(modelFiles.some(n=>n.endsWith('.safetensors'))&&modelFiles.length<=32);
@@ -74,9 +77,9 @@ const home=path.join(directory,'home');mkdirSync(home,{mode:0o700});const models
 if(!check){mkdirSync(path.join(models,'mlx-community'),{mode:0o700});symlinkSync(MODEL,path.join(models,ID),'dir');}
 const reservation=createServer();await new Promise((ok,no)=>{reservation.once('error',no);reservation.listen(0,'127.0.0.1',ok);});const port=reservation.address().port;await new Promise(ok=>reservation.close(ok));
 const key=randomBytes(32).toString('hex'),env={PATH:'/usr/bin:/bin',HOME:home,TMPDIR:path.join(home,'tmp'),XDG_CACHE_HOME:path.join(home,'cache'),LANG:'C',LC_ALL:'C',FIOS_NATIVE_CONTROL:'isolated-source-fixture',FIOS_NATIVE_STARTUP:'isolated-source-fixture',FIOS_SOURCE_MODEL_KEY:key};
-const receipt={source_fixture_only:true,execution_host:executionHost,scenario,...(image?{image_input:{format:'png',width:64,height:64,sha256:sha(readFileSync(path.join(root,'tests/fixtures/platform/native-image-64.png')))}}:{}),synthetic_resource_fixture:plan.synthetic_resource_fixture===true,model:check?null:ID,native_inference:check?false:null,inference_requested:!check,model_post_attempts:0,actual_model_posts:0,coverage:'unknown',native_quiescence:'unproven',process_reaped:false,peak_resident:0,peak_footprint:0};
+const receipt={source_fixture_only:true,execution_host:executionHost,scenario,...(audioInput?{audio_input:{format:'wav',sample_rate:audioInput.sampleRate,frames:audioInput.samples,sha256:sha(audioInput.wav)}}:{}),...(image?{image_input:{format:'png',width:64,height:64,sha256:sha(readFileSync(path.join(root,'tests/fixtures/platform/native-image-64.png')))}}:{}),synthetic_resource_fixture:plan.synthetic_resource_fixture===true,model:check?null:ID,native_inference:check?false:null,inference_requested:!check,model_post_attempts:0,actual_model_posts:0,coverage:'unknown',native_quiescence:'unproven',process_reaped:false,peak_resident:0,peak_footprint:0};
 function save(){const temporary=path.join(directory,'.result-'+randomUUID());durableNew(temporary,JSON.stringify(receipt)+'\n',0o600);renameSync(temporary,path.join(directory,'result.json'));const fd=openSync(directory,constants.O_RDONLY);try{fsyncSync(fd);}finally{closeSync(fd);}}save();
-const child=spawn('/usr/bin/sandbox-exec',['-D','FIOS_REVIEW_ENDPOINT=localhost:'+port,'-D','FIOS_REVIEW_STATE='+home,'-D','FIOS_REVIEW_BINARY='+capsule.binary,'-f',profile,capsule.binary,'serve','--host','127.0.0.1','--port',String(port),'--model-dir',models,'--no-warmup-eager',...(image?[]:['--no-vision']),'--ctx-size','512','--max-concurrent',String(LIMITS.max_concurrent),'--api-key-env','FIOS_SOURCE_MODEL_KEY','--api-key-strict'],{env,cwd:home,stdio:['ignore','pipe','pipe']});
+const child=spawn('/usr/bin/sandbox-exec',['-D','FIOS_REVIEW_ENDPOINT=localhost:'+port,'-D','FIOS_REVIEW_STATE='+home,'-D','FIOS_REVIEW_BINARY='+capsule.binary,'-f',profile,capsule.binary,'serve','--host','127.0.0.1','--port',String(port),'--model-dir',models,'--no-warmup-eager',...(image||audio?[]:['--no-vision']),'--ctx-size','512','--max-concurrent',String(LIMITS.max_concurrent),'--api-key-env','FIOS_SOURCE_MODEL_KEY','--api-key-strict'],{env,cwd:home,stdio:['ignore','pipe','pipe']});
 const modelAbort=new AbortController();
 const requestAborts=new Map();
 let original,output=0,failed,timer,postsDone=false,stage='owned_identity';
@@ -85,7 +88,20 @@ function ended(){return child.exitCode!==null||child.signalCode!==null;}
 function observeProcess(pid){const r=spawnSync(plan.observer,[String(pid)],{encoding:'utf8',timeout:1000,maxBuffer:1024,env:{PATH:'/usr/bin:/bin',LANG:'C'}});assert(r.status===0);const p=JSON.parse(r.stdout);assert(p.pid===pid&&p.uid===process.getuid()&&/^\d+:\d+$/.test(p.start)&&Number.isSafeInteger(p.resident)&&Number.isSafeInteger(p.footprint));return p;}
 function observe(){return observeProcess(child.pid);}
 function signalOwned(signal){if(ended())return;try{const p=observe();if(original&&p.start===original.start)child.kill(signal);}catch{}}
-for(const pipe of [child.stdout,child.stderr])pipe.on('data',chunk=>{output+=chunk.length;if(output>128*1024){failed='diagnostic_output_limit';signalOwned('SIGTERM');}});
+for(const pipe of [child.stdout,child.stderr]){
+ let trailing='';
+ pipe.on('data',chunk=>{
+  output+=chunk.length;
+  if(output>128*1024){failed='diagnostic_output_limit';signalOwned('SIGTERM');return;}
+  if(!audio)return;
+  const lines=(trailing+chunk.toString('utf8')).split('\n');
+  trailing=(lines.pop()??'').slice(-512);
+  for(const line of lines){
+   const match=/POST \/v1\/chat\/completions -> 500 \(([A-Za-z][A-Za-z0-9]{0,63})\)\s*$/.exec(line);
+   if(match)receipt.audio_preparation_error=match[1];
+  }
+ });
+}
 child.once('error',()=>{failed='launch_failed';});const began=performance.now();
 async function get(route){const r=await fetch('http://127.0.0.1:'+port+route,{headers:{Authorization:'Bearer '+key},redirect:'error',signal:AbortSignal.timeout(2000)});assert(r.ok);return nativeReviewJSON(r);}
 let activityTimer,activityPending,activityStopped=false,activityState;
@@ -140,15 +156,58 @@ async function sampleLineages(){
  }
 }
 function sampleActivity(){if(activityStopped||activityPending)return;activityPending=(async()=>{acceptActivity(await get('/v1/fios/activity'));await Promise.all([sampleLineages(),sampleComponents()]);})().catch(()=>{failed='request_phase_or_lineage_observation_failed';modelAbort.abort();}).finally(()=>{activityPending=null;});}
+function chatFixtureContent(shouldCancel){
+ if(image){
+  const png=readFileSync(path.join(root,'tests/fixtures/platform/native-image-64.png')).toString('base64');
+  return [
+   {type:'text',text:'What is the dominant color? Reply with one word.'},
+   {type:'image_url',image_url:{url:'data:image/png;base64,'+png}},
+  ];
+ }
+ if(audioInput)return [
+  {type:'text',text:'What do you hear? Reply with one word.'},
+  {type:'input_audio',input_audio:{format:'wav',data:audioInput.wav.toString('base64')}},
+ ];
+ return shouldCancel?'Count from one through four.':'Reply with one word: ready.';
+}
 async function requestModel(index){
- const requestAbort=new AbortController(),shouldCancel=cancelResponse&&index===0;
+ const requestAbort=new AbortController();
+ const shouldCancel=cancelResponse&&index===0;
  requestAborts.set(index,requestAbort);
  if(journalCorrelation)await journalObserver.dispatch();
- const request={index,correlation:journalCorrelation?journalReady.correlation_id:randomBytes(32).toString('hex'),dispatched_ms:Math.round(performance.now()-began),response_complete:false};
- (receipt.requests??=[]).push(request);receipt.model_post_attempts++;assert(receipt.model_post_attempts<=LIMITS.model_posts);receipt.actual_model_posts=null;save();
- const response=await fetch('http://127.0.0.1:'+port+'/v1/chat/completions',{method:'POST',redirect:'error',headers:{Authorization:'Bearer '+key,'Content-Type':'application/json','X-Fios-Request-ID':request.correlation,...(journalCorrelation?{'X-Fios-Native-Instance':journalReady.native_instance}:{})},body:JSON.stringify({model:ID,messages:[{role:'user',content:image?[{type:'text',text:'What is the dominant color? Reply with one word.'},{type:'image_url',image_url:{url:'data:image/png;base64,'+readFileSync(path.join(root,'tests/fixtures/platform/native-image-64.png')).toString('base64')}}]:shouldCancel?'Count from one through four.':'Reply with one word: ready.'}],max_tokens:LIMITS.output_tokens,temperature:0,stream:true,stream_options:{include_usage:true}}),signal:AbortSignal.any([AbortSignal.timeout(LIMITS.request_ms),modelAbort.signal,requestAbort.signal])});
- request.http_status=response.status;receipt.actual_model_posts=receipt.requests.every(r=>r.http_status!==undefined)?receipt.model_post_attempts:null;save();
- if(!response.ok){let value;try{value=await nativeReviewJSON(response,16384);}catch{}request.http_failure=nativeReviewHTTPFailure(response.status,value);receipt.http_failure??=request.http_failure;if(image&&request.http_failure.modality_error==='vision_unavailable')failed='selected_model_vision_unavailable';throw Error('Native model request refused');}
+ let correlation=null;
+ if(!alternateHTTPStream)correlation=journalCorrelation?journalReady.correlation_id:randomBytes(32).toString('hex');
+ const request={index,correlation,dispatched_ms:Math.round(performance.now()-began),response_complete:false};
+ if(alternateHTTPStream)receipt.http_stream_route=alternateHTTPStream.route;
+ (receipt.requests??=[]).push(request);
+ receipt.model_post_attempts++;
+ assert(receipt.model_post_attempts<=LIMITS.model_posts);
+ receipt.actual_model_posts=null;
+ save();
+ const route=alternateHTTPStream?.route??'/v1/chat/completions';
+ const headers={Authorization:'Bearer '+key,'Content-Type':'application/json'};
+ if(correlation)headers['X-Fios-Request-ID']=correlation;
+ if(journalCorrelation)headers['X-Fios-Native-Instance']=journalReady.native_instance;
+ const body=alternateHTTPStream?.body??{
+  model:ID,messages:[{role:'user',content:chatFixtureContent(shouldCancel)}],
+  max_tokens:LIMITS.output_tokens,temperature:0,stream:true,stream_options:{include_usage:true},
+ };
+ const response=await fetch('http://127.0.0.1:'+port+route,{
+  method:'POST',redirect:'error',headers,body:JSON.stringify(body),
+  signal:AbortSignal.any([AbortSignal.timeout(LIMITS.request_ms),modelAbort.signal,requestAbort.signal]),
+ });
+ request.http_status=response.status;
+ receipt.actual_model_posts=receipt.requests.every(r=>r.http_status!==undefined)?receipt.model_post_attempts:null;
+ save();
+ if(!response.ok){
+  let value;
+  try{value=await nativeReviewJSON(response,16384);}catch{}
+  request.http_failure=nativeReviewHTTPFailure(response.status,value);
+  receipt.http_failure??=request.http_failure;
+  if(image&&request.http_failure.modality_error==='vision_unavailable')failed='selected_model_vision_unavailable';
+  if(audio&&request.http_failure.modality_error==='audio_unavailable')failed='selected_model_audio_unavailable';
+  throw Error('Native model request refused');
+ }
  let buffer='',bytes=0,done=false,deltas=0,completionTokens=null;const decoder=new TextDecoder('utf-8',{fatal:true});
  for await(const chunk of response.body){
   bytes+=chunk.length;assert(bytes<=65536&&!failed);
@@ -157,6 +216,16 @@ async function requestModel(index){
   while((at=buffer.indexOf('\n'))>=0){
    const line=buffer.slice(0,at).trim();buffer=buffer.slice(at+1);if(!line.startsWith('data:'))continue;
    const data=line.slice(5).trim();if(data==='[DONE]'){done=true;continue;}const value=JSON.parse(data);assert(!value.error);
+   if(alternateHTTPStream){
+    const event=nativeReviewHTTPStreamEvent(scenario,value);
+    if(event.delta)deltas++;
+    if(event.terminal)done=true;
+    if(event.tokens!==undefined){
+     assert(Number.isSafeInteger(event.tokens)&&event.tokens>=0&&event.tokens<=LIMITS.output_tokens);
+     completionTokens=event.tokens;
+    }
+    continue;
+   }
    if(value.choices?.some(c=>['content','reasoning_content'].some(k=>typeof c.delta?.[k]==='string'&&c.delta[k].length>0))){
     deltas++;
     if(shouldCancel&&!receipt.client_cancellation){
@@ -193,8 +262,8 @@ try{
   const selected=before.data.find(m=>m.id===ID);assert(selected,'Exact selected model not advertised');
   receipt.selected_model_loaded=typeof selected.loaded==='boolean'?selected.loaded:null;
   receipt.selected_model_input_modalities=['text','image','video','audio'].filter(mode=>nativeReviewModelSupports(before,ID,mode));
-  if(!nativeReviewModelSupports(before,ID,image?'image':'text')){
-   failed=image?'selected_model_vision_unavailable':'selected_model_text_unavailable';
+  if(!nativeReviewModelSupports(before,ID,image?'image':audio?'audio':'text')){
+   failed=image?'selected_model_vision_unavailable':audio?'selected_model_audio_unavailable':'selected_model_text_unavailable';
    receipt.native_inference=false;receipt.inference_attempted=false;save();throw Error('Selected model modality unavailable');
   }
   receipt.native_uncertainty=true;receipt.native_inference=null;receipt.inference_attempted=true;save();
@@ -234,7 +303,7 @@ try{
    assert(receipt.correlated_lineage_observations?.retained_overlap_samples>0,'No bracketed retained lineage overlap observed');
    receipt.result='overlapping_same_model_responses_complete';
   }else{
-   receipt.completion_tokens=results[0].completion_tokens;receipt.delta_events=results[0].delta_events;receipt.result=image?'single_source_image_response_complete':'single_source_model_response_complete';
+   receipt.completion_tokens=results[0].completion_tokens;receipt.delta_events=results[0].delta_events;receipt.result=image?'single_source_image_response_complete':audio?'single_source_audio_response_complete':'single_source_model_response_complete';
   }
   receipt.generated_text_logged=false;
  }

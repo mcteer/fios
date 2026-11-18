@@ -520,6 +520,18 @@ node scripts/check-platform-native-fixture.mjs --source /ABS/PRIVATE_NATIVE --zi
 
 Only SDK27.0/Metal32023.921 and SDK27.2/Metal32023.922 are accepted. Retained review builds include the genuine Safetensors loader and verify a CPU scalar roundtrip; GGUF remains disabled in this narrowly scoped development library. The strict reader accepts only canonical, bounded, zero-authority metadata and the exact reviewed seven-path source patch/dependency identities. It rejects missing/extra/changed files, changed header/source, forged authority and unsupported compiler pairing. The native fixture retains the original installed/staged inputs, selects source libraries only in its private generated build and review capsule, and binds their identities separately from the installed-bundle bracket. A private C++ initializer calls the genuine source metadata-enablement API before main; late adoption exits78. It never loads a model or grants all-client/terminal/native lifecycle authority. Real-model checks use a fresh finite one-use plan under the standing inference authorization above; generated text stays out of logs. No distributed/RDMA operation or native installation is part of this flow.
 
+For the ordinary HTTP stream cases, use exactly one of
+`--scenario text-completion-stream`, `--scenario messages-stream` or
+`--scenario responses-stream` on all three plan, check and run commands.
+Each case uses the same exact Core model and existing single-request bounds.
+The runner checks the selected API's terminal event and token usage.
+The observation is aggregate because these routes have no per-request
+correlation header in the current native source.
+
+Use `--scenario single-audio` on the same three commands for the bounded
+audio case. It sends a fixed quarter-second 16 kHz mono PCM wave to chat
+completions only after the exact model advertises audio input.
+
 The same source-model runner optionally accepts the fixed suffix `--scenario same-model-pair` on **all three** plan/check/run commands. Its printed commands include that suffix. This case makes exactly two same-ID attempts with independent opaque request correlations and a server concurrency of2; all other time/memory/context/output bounds remain unchanged. Readonly A/B/A lineage samples use absolute500ms query deadlines and prove retained source ownership only. They do not grant GPU terminality, all-client coverage or a model/job/lifecycle lease. Failed or missing metadata remains unknown; successful new responses never clear earlier independent uncertainty.
 
 Ordinary client cancellation uses `--scenario cancel-request` or `--scenario cancel-response`, again on all three plan/check/run commands and with a fresh one-use plan for each run. Both permit one fixed core Gemma request and concurrency1, retaining the512-token context,8-token output,90s request/120s work/7s cleanup limits and12GiB sampled process abort threshold. The threshold is not a hard GPU quota. `cancel-request` aborts after observing its correlated retained source lineage. `cancel-response` uses a fixed short counting prompt and aborts after the first nonempty response delta. Successful checks require an actual fetch/body `AbortError`; they do not manufacture an abort result by throwing one locally.

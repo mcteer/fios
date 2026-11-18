@@ -1345,3 +1345,11 @@ case. It observes the same original root in responding while the final write
 is pending and receives the complete tail after resuming. Live model
 streaming, other API runtime tails and all-client acceptance remain open.
 Whole tasks remain 39/55 complete.
+
+The private stock MLX Core build now passes bounded real text streams on
+chat completions, text completions, Anthropic messages and HTTP Responses.
+The exact Core model also passes the image request and a same-model pair
+retains distinct roots throughout 38 live overlap samples. A false regular
+Gemma audio advertisement was corrected and verified on the live catalog
+before dispatch. Audio generation, other enabled modalities and all-client
+coverage remain open in T018–T022. No whole task was marked complete.

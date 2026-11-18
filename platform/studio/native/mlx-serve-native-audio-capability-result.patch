@@ -1,0 +1,61 @@
+--- a/src/engines/mlx/scheduler.zig
++++ b/src/engines/mlx/scheduler.zig
+@@ -1272,7 +1272,11 @@
+     while (!req.done) {
+         req.done_cond.waitUncancelable(self.io, &req.done_mu);
+     }
+-    if (req.error_name) |_| return error.VisionEncodeFailed;
++    if (req.error_name) |name| {
++        // Keep the worker's known capability refusal distinct from backend failures.
++        if (std.mem.eql(u8, name, "AudioNotSupported")) return error.AudioNotSupported;
++        return error.VisionEncodeFailed;
++    }
+     return req.result orelse error.VisionEncodeFailed;
+ }
+ 
+--- a/src/host/media/encode.zig
++++ b/src/host/media/encode.zig
+@@ -261,6 +261,7 @@
+ 
+ /// The error response for a failed `prepareMultimodalPrompt`.
+ pub fn multimodalFailure(err: anyerror) struct { status: []const u8, code: u16, kind: []const u8, message: []const u8 } {
++    if (err == error.AudioNotSupported) return .{ .status = "400 Bad Request", .code = 400, .kind = "invalid_request_error", .message = "This model is serving without its audio embedder; input_audio content is not supported" };
+     if (err == error.VideoUnsupported) return .{ .status = "400 Bad Request", .code = 400, .kind = "invalid_request_error", .message = "video input is not supported by this model's loaded vision tower" };
+     if (err == error.MediaPlaceholderMismatch) return .{ .status = "400 Bad Request", .code = 400, .kind = "invalid_request_error", .message = MEDIA_PLACEHOLDER_REJECT };
+     return .{ .status = "500 Internal Server Error", .code = 500, .kind = "server_error", .message = "media encoding failed" };
+--- a/src/plugins/gemma4/config.zig
++++ b/src/plugins/gemma4/config.zig
+@@ -79,6 +79,9 @@
+         freeParsed(out);
+         return unsupported("a placeholder id");
+     };
++    // The existing Gemma audio forward path is the unified PCM embedder.
++    const unified = std.mem.eql(u8, d.model_type, "gemma4_unified") or std.mem.eql(u8, d.model_type, "gemma4_unified_text");
++    out.caps.audio = out.caps.audio and unified;
+     return .ok;
+ }
+ 
+@@ -128,3 +131,23 @@
+         try testing.expect(parseJson(json, &p).code == .unsupported and p.private == null);
+     }
+ }
++
++
++test "gemma4 config reports audio only for the served unified embedder" {
++    const allocator = testing.allocator;
++    const regular = try std.mem.replaceOwned(u8, allocator, e2b_like,
++        "{\"model_type\":\"gemma4\",",
++        "{\"model_type\":\"gemma4\",\"vision_config\":{},\"audio_config\":{},");
++    defer allocator.free(regular);
++    const unified = try std.mem.replaceOwned(u8, allocator, regular,
++        "{\"model_type\":\"gemma4\",", "{\"model_type\":\"gemma4_unified\",");
++    defer allocator.free(unified);
++    var a: abi.Parsed = .{};
++    try testing.expect(parseJson(regular, &a).isOk());
++    defer freeParsed(&a);
++    var b: abi.Parsed = .{};
++    try testing.expect(parseJson(unified, &b).isOk());
++    defer freeParsed(&b);
++    try testing.expect(a.caps.images and !a.caps.audio);
++    try testing.expect(b.caps.images and b.caps.audio);
++}

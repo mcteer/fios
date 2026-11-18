@@ -9523,3 +9523,106 @@ SHA256 `b6d745f56c7fde80c795b96add43db899b4cbc48426f7ed45ed3f42c85a266d2`.
 Use one exact filter per process for these cases. The patch only adds a test.
 It covers the actual local SSE writer under kernel flow control. Live model
 generation, other API tails and Studio acceptance remain open.
+
+### Real Core HTTP streaming with the stock MLX runtime
+
+The native build using Apple C++ passed semantic 35/35, link 32/32, unit
+compilation 20/20 and default build 32/32 in
+`/private/tmp/fios-009-http-tail-apple-cxx-b2fwdkxo`. The linked server
+declares Apple libc++.1. This build has no new instrumented SDK
+runtime qualification.
+
+A separate build used the stock MLX and MLXC libraries from local
+MLX-Serve 26.11.2 with the optional source SDK, ANE and DS4 hooks off.
+An initial configuration had an incompatible source DS4 path flag.
+After removing it, the link exposed a private SDK symbol referenced by
+an instrumented header. The corrected build paired the stock libraries
+with 248 matching headers from upstream MLX
+`c69303b00f5f61860436e832f23fa8c34b96f93a` and passed 30/30.
+The private artifact is in `/private/tmp/fios-009-http-tail-stock-mlx-c4caij8x`,
+review SHA256 `8e9d32a54467c62e4bdebccf04817270c7f44d6f59e0e20f0c335d7128dc128c`.
+The installed app and frameworks were read only.
+
+The existing one-use runner passed the empty model and identity check
+before each case, with zero model POSTs. The fixed model was
+`mlx-community/gemma-4-e4b-it-4bit` on the 24 GiB M4 Pro Core.
+Each consumed plan made exactly one real POST. All four HTTP streams
+finished with their expected terminal event and positive bounded token usage,
+and all private server processes were reaped.
+
+| Route | Tokens | Result directory |
+|---|---:|---|
+| Chat completions | 2 | `/private/tmp/f9-model-run-NmfYjZ` |
+| Text completions | 8 | `/private/tmp/f9-model-run-dI8InO` |
+| Anthropic messages | 2 | `/private/tmp/f9-model-run-bpBgf7` |
+| HTTP Responses | 2 | `/private/tmp/f9-model-run-AFPcme` |
+
+Two orchestration drivers were accidentally left waiting. The one-use plan
+files rejected duplicate creation and all four plans show exactly one
+consumption. The text and messages fixture processes overlapped for less
+than two seconds. Each process stayed within its individual bound, but
+these results do not establish serialized resource usage. Subsequent cases
+use a single driver and begin after the last process is reaped.
+
+The 100 ms polls observed preparing and active on each route. They did not
+capture the short responding interval on these live runs. The paused-reader
+socket-pair test provides the direct responding observation for the local chat
+writer. The other runtime results establish ordinary stream compatibility,
+not independently measured responding phase or all-client coverage.
+The exact pause, retained ownership and completion evidence remain separate.
+
+The stock build also passed one fixed 64×64 PNG chat request with one
+completion token, peak footprint 7,355,142,488 bytes and an owned process
+exit. The receipt is `/private/tmp/f9-model-run-M97qyF/result.json`.
+The first audio attempt correctly exposed a runner startup mistake. It
+used the text-only launch flag, and the server returned the named
+audio-embedder refusal. After enabling the media path, bounded PCM
+audio produced HTTP 500 before generation. The fixed enum diagnostic
+identified `VisionEncodeFailed`; raw logs, uploaded bytes and generated
+text were not saved. Those three consumed audio attempts recorded one
+POST and clean process exit each. Audio generation remains unverified.
+
+The independent same-model pair ran in one stock server process after
+the audio diagnostic process was reaped. Both responses completed and
+all 38 overlap samples retained distinct original roots 4 and 5.
+Receipt `/private/tmp/f9-model-run-dnvCDO/result.json`. Peak footprint
+was 5,485,826,656 bytes. Native device completion and all-client
+authority remain unproven.
+
+The Gemma stub advertised audio whenever its config contained audio
+metadata, even when it did not use the supported unified embedder.
+The focused real config parser test reproduces the regular Gemma false
+advertisement on the parent and passes with the refined capability.
+Regular Gemma retains image support, while unified Gemma retains its
+audio capability. The scheduler also preserves the existing exact
+AudioNotSupported result so the HTTP layer can return the named
+capability refusal. Other worker errors keep the existing generic
+response. Native rebuild and live catalog regression are pending.
+
+The patched catalog and error mapping passed the focused original/candidate
+parser checks, the media error mapping check and the private stock build
+30/30. The three-file patch reversed and reapplied byte-for-byte. Its
+projection receipt is
+`/private/tmp/fios-009-audio-status-projection-8ahx5rer/receipt.json`,
+SHA256 `c7ffe6ed667b0e289b36fe5842df020593fffbf73abf2960796884c94ce8d504`.
+The new capsule review is
+`a2669cf78d971af064e1340eef9a2c89f7d680e8b0d855aee33826dc9fd158db`
+under `/private/tmp/fios-009-stock-audio-status-iu_mt5hm`.
+
+The actual cold catalog for the same exact Core model now lists text and
+image. The bounded audio scenario detects unavailability before any POST
+(`/private/tmp/f9-model-run-MF3K0w/result.json`). A subsequent real image
+request streams its completion with one POST and one output token, and
+the owned private process is reaped
+(`/private/tmp/f9-model-run-zQ1sy5/result.json`). The image check began
+after the audio fixture exited. This is a catalog and refusal correction.
+It does not qualify audio generation or the installed Studio runtime.
+
+On the patched stock build, the existing cancel-then-success case passed
+with two bounded same-model POSTs in one private process. The first client
+cancelled after a delta and a correlated live root were observed. The
+second response completed. The receipt retains uncertainty for the cancelled
+request and records clean process exit. See
+`/private/tmp/f9-model-run-zM7obm/result.json`. This is ordinary client
+cancellation and follow-up behavior. It does not reconcile a durable native
+terminal claim.

@@ -204,6 +204,7 @@ export function nativeReviewLineage(bytes,instance,correlation,previous=0){
 export function nativeReviewHTTPFailure(status, body) {
  const result={http_status:status};
  if(body?.error?.message==='This model is serving without its vision tower (--no-vision, no vision weights, or on the Neural Engine); image/video content is not supported')result.modality_error='vision_unavailable';
+ if(body?.error?.message==='This model is serving without its audio embedder; input_audio content is not supported')result.modality_error='audio_unavailable';
  if(typeof body?.error?.message==='string')result.error_message_sha256=createHash('sha256').update(body.error.message).digest('hex');
  const types=['model_load_failed','model_not_found','invalid_request_error','forbidden','model_busy','native_tracking_unavailable','native_instance_changed','native_target_not_local','native_target_not_found','internal_error','shutting_down','gpu_context_lost'];
  if(types.includes(body?.error?.type))result.error_type=body.error.type;
@@ -212,10 +213,55 @@ export function nativeReviewHTTPFailure(status, body) {
  if(match&&names.includes(match[1]))result.load_error=match[1];
  return result;
 }
+const httpStreamRoutes = {
+ 'text-completion-stream':'/v1/completions',
+ 'messages-stream':'/v1/messages',
+ 'responses-stream':'/v1/responses',
+};
+
+export function nativeReviewAudioInput() {
+ const sampleRate=16000,samples=4000,sampleBytes=2;
+ const pcmBytes=samples*sampleBytes;
+ const wav=Buffer.alloc(44+pcmBytes);
+ wav.write('RIFF',0);wav.writeUInt32LE(wav.length-8,4);
+ wav.write('WAVEfmt ',8);wav.writeUInt32LE(16,16);
+ wav.writeUInt16LE(1,20);wav.writeUInt16LE(1,22);
+ wav.writeUInt32LE(sampleRate,24);wav.writeUInt32LE(sampleRate*sampleBytes,28);
+ wav.writeUInt16LE(sampleBytes,32);wav.writeUInt16LE(16,34);
+ wav.write('data',36);wav.writeUInt32LE(pcmBytes,40);
+ for(let i=0;i<samples;i++)wav.writeInt16LE(i%40<20 ? 1024 : -1024,44+i*sampleBytes);
+ return {wav,sampleRate,samples};
+}
+
+export function nativeReviewHTTPStream(scenario,model,limit) {
+ const route=Object.hasOwn(httpStreamRoutes,scenario) ? httpStreamRoutes[scenario] : null;
+ if(!route)return null;
+ const prompt='Reply with one word: ready.';
+ const common={model,stream:true,temperature:0};
+ if(scenario==='text-completion-stream')return {route,body:{...common,prompt,max_tokens:limit,stream_options:{include_usage:true}}};
+ if(scenario==='messages-stream')return {route,body:{...common,messages:[{role:'user',content:prompt}],max_tokens:limit}};
+ return {route,body:{...common,input:prompt,max_output_tokens:limit,store:false}};
+}
+
+export function nativeReviewHTTPStreamEvent(scenario,value) {
+ if(scenario==='text-completion-stream'){
+  return {delta:value.choices?.some(choice=>typeof choice.text==='string'&&choice.text.length>0)===true,
+   tokens:value.usage?.completion_tokens,terminal:false};
+ }
+ if(scenario==='messages-stream'){
+  return {delta:value.type==='content_block_delta'&&typeof value.delta?.text==='string'&&value.delta.text.length>0,
+   tokens:value.type==='message_delta' ? value.usage?.output_tokens : undefined,terminal:value.type==='message_stop'};
+ }
+ assert.equal(scenario,'responses-stream');
+ const terminal=value.type==='response.completed';
+ return {delta:value.type==='response.output_text.delta'&&typeof value.delta==='string'&&value.delta.length>0,
+  tokens:terminal ? value.response?.usage?.output_tokens : undefined,terminal:false};
+}
+
 export function nativeReviewIntent(input) {
  const args=[...input];let scenario;
  const at=args.indexOf('--scenario');
- if(at!==-1){assert(at===args.length-2&&['same-model-pair','single-image','cancel-request','cancel-response','cancel-then-success','journal-correlation'].includes(args[at+1]));scenario=args[at+1];args.splice(at,2);}
+ if(at!==-1){assert(at===args.length-2&&['same-model-pair','single-image','single-audio','cancel-request','cancel-response','cancel-then-success','journal-correlation',...Object.keys(httpStreamRoutes)].includes(args[at+1]));scenario=args[at+1];args.splice(at,2);}
  const result=value=>scenario?{...value,scenario}:value;
  const mode=args[0];assert(['--plan','--check','--run'].includes(mode));
  if(mode==='--plan'){

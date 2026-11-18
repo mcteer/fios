@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import {readFileSync} from 'node:fs';
-import {nativeReviewIntent,nativeReviewHTTPFailure,nativeReviewJSON,nativeReviewActivity,nativeReviewModelInputs,nativeReviewLineage,nativeReviewComponents} from '../scripts/lib/platform-native-review-intent.mjs';
+import {nativeReviewIntent,nativeReviewHTTPFailure,nativeReviewJSON,nativeReviewActivity,nativeReviewModelInputs,nativeReviewLineage,nativeReviewComponents,nativeReviewHTTPStream,nativeReviewHTTPStreamEvent,nativeReviewAudioInput} from '../scripts/lib/platform-native-review-intent.mjs';
 
 test('model-free SDK compositions cannot enter model prerequisites through legacy metadata',()=>{
  assert.throws(()=>nativeReviewModelInputs({model_effects:'forbidden'}),/model-free/);
@@ -270,4 +270,41 @@ test('event SDK compatibility requires matching C ABI controls and runtime pair 
   v=>v.system_cxx.config_sha256='b'.repeat(64),v=>delete v.system_cxx.capture_refusal_patch_sha256]){
   const value=eventCompatibilityMetadata();change(value);assert.throws(()=>nativeReviewModelInputs(value));
  }
+});
+
+test('native HTTP stream fixtures use fixed routes and read ordinary terminal events',()=>{
+ const model='fixture/Exact-Model';
+ const base=['--plan','--capsule','/private/capsule','--sha256','a'.repeat(64),'--output','/private/plan.json'];
+ const fixtures=[
+  ['text-completion-stream','/v1/completions','max_tokens',{choices:[{text:'ready'}]},{choices:[],usage:{completion_tokens:2}},false],
+  ['messages-stream','/v1/messages','max_tokens',{type:'content_block_delta',delta:{type:'text_delta',text:'ready'}},{type:'message_delta',usage:{output_tokens:2}},true],
+  ['responses-stream','/v1/responses','max_output_tokens',{type:'response.output_text.delta',delta:'ready'},{type:'response.completed',response:{usage:{output_tokens:2}}},false],
+ ];
+ for(const [scenario,route,budget,delta,usage,selfTerminating] of fixtures){
+  assert.equal(nativeReviewIntent([...base,'--scenario',scenario]).scenario,scenario);
+  const request=nativeReviewHTTPStream(scenario,model,8);
+  assert.equal(request.route,route);
+  assert.equal(request.body.model,model);
+  assert.equal(request.body.stream,true);
+  assert.equal(request.body[budget],8);
+  assert.deepEqual(nativeReviewHTTPStreamEvent(scenario,delta),{delta:true,tokens:undefined,terminal:false});
+  assert.equal(nativeReviewHTTPStreamEvent(scenario,usage).tokens,2);
+  assert.equal(nativeReviewHTTPStreamEvent(scenario,{type:'message_stop'}).terminal,selfTerminating);
+ }
+ assert.equal(nativeReviewHTTPStream('single-model',model,8),null);
+});
+
+test('native audio fixture is a fixed quarter-second mono PCM wave',()=>{
+ const {wav,sampleRate,samples}=nativeReviewAudioInput();
+ assert.equal(wav.toString('ascii',0,4),'RIFF');
+ assert.equal(wav.toString('ascii',8,16),'WAVEfmt ');
+ assert.equal(wav.readUInt16LE(20),1);
+ assert.equal(wav.readUInt16LE(22),1);
+ assert.equal(wav.readUInt32LE(24),16000);
+ assert.equal(wav.readUInt16LE(34),16);
+ assert.equal(samples/sampleRate,0.25);
+ assert.equal(wav.readUInt32LE(40),samples*2);
+ assert.equal(wav.length,44+samples*2);
+ assert.equal(wav.readInt16LE(44),1024);
+ assert.equal(wav.readInt16LE(84),-1024);
 });
