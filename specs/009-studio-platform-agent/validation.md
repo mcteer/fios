@@ -9781,3 +9781,19 @@ Receipt `/private/tmp/f9-model-run-ctgxkk/result.json`, SHA256
 All 26 source-model intent tests passed. This is actual source transport
 and durable correlation under T019/T021. Production admission and
 terminal reconciliation remain open. Whole tasks remain 39 of 55.
+
+### Chained Responses WebSocket turns on Core
+
+The `responses-websocket` fixture upgraded one private connection for
+the exact local Gemma model, completed two turns with the second using
+the first response ID, and observed active native ownership between
+turns. The profile allowed two tokens per turn, and the runner counted
+two WebSocket turns and zero HTTP model POSTs. The empty preflight
+made no model request. The source process was reaped at the end.
+
+Receipt `/private/tmp/f9-model-run-lllDDU/result.json`, SHA256
+`1c6f89a96296a3bf673b31b130d53dc1949fd08005b439d3d32148d62888c6ce`.
+Sampled peak footprint was 5,153,083,712 bytes. All 27 source-model
+intent tests passed. This is single-model transport and observation
+evidence under T018. Device terminality, all-client coverage and
+Studio acceptance remain open. Whole tasks remain 39 of 55 complete.

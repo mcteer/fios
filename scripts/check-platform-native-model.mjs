@@ -18,6 +18,7 @@ import {nativeReviewIntent,nativeReviewHTTPFailure,nativeReviewJSON,nativeReview
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..'),args=process.argv.slice(2);
 const intent=nativeReviewIntent(args),journalPair=intent.scenario==='journal-same-model-pair';
 const journalFollowup=intent.scenario==='journal-cancel-then-success';
+const responsesWebSocket=intent.scenario==='responses-websocket';
 const pair=intent.scenario==='same-model-pair'||journalPair,image=intent.scenario==='single-image',audio=intent.scenario==='single-audio';
 const journalCorrelation=intent.scenario==='journal-correlation'||journalPair||journalFollowup;
 const cancelRequest=intent.scenario==='cancel-request';
@@ -26,7 +27,8 @@ const cancelResponse=intent.scenario==='cancel-response'||followup,cancellation=
 const scenario=intent.scenario??'single-model',scenarioArgs=intent.scenario?['--scenario',scenario]:[];
 if(intent.scenario)args.splice(-2,2);
 const ID='mlx-community/gemma-4-e4b-it-4bit',MODEL=path.join(homedir(),'.mlx-serve/models',ID);
-const LIMITS={context_tokens:512,output_tokens:journalCorrelation&&!journalFollowup?2:8,max_concurrent:pair||followup?2:1,model_posts:pair||followup?2:1,request_ms:journalCorrelation?10000:90000,work_ms:journalCorrelation?15000:120000,cleanup_ms:7000,memory_abort_bytes:12*2**30,...(journalCorrelation?{journal_observer_memory_abort_bytes:128*2**20}:{})};
+const shortRun=journalCorrelation||responsesWebSocket;
+const LIMITS={context_tokens:512,output_tokens:shortRun&&!journalFollowup?2:8,max_concurrent:pair||followup?2:1,model_posts:responsesWebSocket?0:pair||followup?2:1,request_ms:shortRun?10000:90000,work_ms:shortRun?15000:120000,cleanup_ms:7000,memory_abort_bytes:12*2**30,...(journalCorrelation?{journal_observer_memory_abort_bytes:128*2**20}:{}),...(responsesWebSocket?{websocket_turns:2}:{})};
 const audioInput=audio ? nativeReviewAudioInput() : null;
 const alternateHTTPStream=nativeReviewHTTPStream(scenario,ID,LIMITS.output_tokens);
 assert(process.platform==='darwin'&&process.arch==='arm64'&&process.getuid()>0);
@@ -246,6 +248,78 @@ async function requestModel(index){
  Object.assign(request,{completion_tokens:completionTokens,delta_events:deltas,response_complete:true,completed_ms:Math.round(performance.now()-began)});save();return request;
 }
 
+async function requestResponsesSocket(){
+ const url=new URL('ws://127.0.0.1:'+port+'/v1/responses');
+ url.searchParams.set('model',ID);
+ const socket=new WebSocket(url,{headers:{Authorization:'Bearer '+key}});
+ const state=receipt.websocket={attempted_turns:0,completed_turns:0,observed_between_turns:false};
+ let pending,problem,bytes=0;
+ function fail(error){
+  problem??=error;
+  pending?.reject(problem);
+  pending=null;
+ }
+ socket.addEventListener('error',()=>fail(Error('Responses WebSocket failed')));
+ socket.addEventListener('close',()=>{if(pending)fail(Error('Responses WebSocket closed mid-turn'));});
+ socket.addEventListener('message',message=>{
+  try {
+   assert(pending&&typeof message.data==='string');
+   bytes+=Buffer.byteLength(message.data);assert(bytes<=65536);
+   const value=JSON.parse(message.data);
+   assert(!['error','response.failed','response.incomplete'].includes(value.type));
+   const event=nativeReviewHTTPStreamEvent('responses-stream',value);
+   if(event.delta)pending.deltas++;
+   if(value.type==='response.completed'){
+    assert(pending.deltas>0&&Number.isSafeInteger(event.tokens)&&event.tokens>0&&event.tokens<=LIMITS.output_tokens);
+    const id=value.response?.id;
+    assert(typeof id==='string'&&/^[A-Za-z0-9_-]{1,128}$/.test(id));
+    const completed=pending;
+    pending=null;
+    completed.resolve(id);
+   }
+  }catch(error){fail(error);}
+ });
+ async function bounded(wait){
+  const signal=AbortSignal.any([AbortSignal.timeout(LIMITS.request_ms),modelAbort.signal]);
+  let onAbort;
+  try {
+   return await Promise.race([wait,new Promise((_,reject)=>{
+    onAbort=()=>reject(signal.reason);
+    if(signal.aborted)onAbort();else signal.addEventListener('abort',onAbort,{once:true});
+   })]);
+  }finally{signal.removeEventListener('abort',onAbort);}
+ }
+ try{
+  await bounded(new Promise((resolve,reject)=>{
+   socket.addEventListener('open',resolve,{once:true});
+   socket.addEventListener('error',()=>reject(Error('Responses WebSocket open failed')),{once:true});
+   socket.addEventListener('close',()=>reject(Error('Responses WebSocket closed before open')),{once:true});
+  }));
+  let previous;
+  for(const input of ['Reply with one word: ready.','Reply with one word: done.']){
+   assert(!problem&&state.attempted_turns<LIMITS.websocket_turns);
+   state.attempted_turns++;save();
+   const next=await bounded(new Promise((resolve,reject)=>{
+    pending={resolve,reject,deltas:0};
+    socket.send(JSON.stringify({type:'response.create',model:ID,input,max_output_tokens:LIMITS.output_tokens,
+     temperature:0,...(previous?{previous_response_id:previous}:{})}));
+   }));
+   assert(next!==previous&&!problem);
+   previous=next;
+   state.completed_turns++;
+   clearInterval(activityTimer);
+   if(activityPending)await activityPending;
+   acceptActivity(await get('/v1/fios/activity'));
+   if(state.completed_turns===1){
+    assert(activityState.active>0,'Native owner missing between WebSocket turns');
+    state.observed_between_turns=true;
+    activityTimer=setInterval(sampleActivity,100);
+   }
+  }
+  assert(state.completed_turns===LIMITS.websocket_turns&&!problem);
+ }finally{pending=null;socket.close();}
+}
+
 try{
  const identityDeadline=performance.now()+2000;while(!original&&performance.now()<identityDeadline&&!ended()){try{original=observe();}catch{await delay(20);}}assert(original,'Owned process identity unavailable');receipt.original_process={pid:original.pid,uid:original.uid,start:original.start};receipt.peak_resident=original.resident;receipt.peak_footprint=original.footprint;if(Math.max(original.resident,original.footprint)>LIMITS.memory_abort_bytes){failed='memory_abort_threshold';modelAbort.abort();signalOwned('SIGKILL');throw Error('Resource threshold');}save();stage='resource_monitor';
  timer=setInterval(()=>{if(ended())return;try{const p=observe();assert(p.start===original.start);try{journalObserver?.monitor();}catch{failed='journal_observer_identity_unknown';throw Error('Journal observer monitoring failed');}receipt.peak_resident=Math.max(receipt.peak_resident,p.resident);receipt.peak_footprint=Math.max(receipt.peak_footprint,p.footprint);if(Math.max(p.resident,p.footprint)>LIMITS.memory_abort_bytes){failed='memory_abort_threshold';modelAbort.abort();signalOwned('SIGKILL');}}catch{failed??='resource_identity_unknown';modelAbort.abort();signalOwned('SIGTERM');}if(performance.now()-began>LIMITS.work_ms){failed='overall_deadline';modelAbort.abort();signalOwned('SIGKILL');}},500);
@@ -271,7 +345,9 @@ try{
   receipt.native_uncertainty=true;receipt.native_inference=null;receipt.inference_attempted=true;save();
   activityTimer=setInterval(sampleActivity,100);stage='model_requests';
   const pending=Array.from({length:followup?1:LIMITS.model_posts},(_,index)=>requestModel(index));let results;
-  if(cancellation){
+  if(responsesWebSocket){
+   await requestResponsesSocket();postsDone=true;receipt.native_inference=true;
+  }else if(cancellation){
    const outcomes=await Promise.allSettled(pending),outcome=outcomes[0];
    assert(!failed&&receipt.client_cancellation?.source_lineage_observed&&receipt.model_post_attempts===1);
    assert(outcome.status==='rejected'&&outcome.reason?.name==='AbortError','A real client abort must be observed');
@@ -303,7 +379,9 @@ try{
    receipt.client_cancellation.retention_bracket_observed=after.found&&!after.uncertain;
   }
   assert(receipt.request_phase_observations.preparing_max>0||receipt.request_phase_observations.active_max>0||receipt.request_phase_observations.responding_max>0,'No live model request phase observed');
-  if(cancellation){
+  if(responsesWebSocket){
+   receipt.result='chained_responses_on_one_native_websocket';
+  }else if(cancellation){
    receipt.result=followup?'older_client_cancelled_newer_same_model_response_complete':'client_cancelled_after_retained_source_lineage_observed';
   }else if(pair){
    assert(Math.max(...results.map(r=>r.dispatched_ms))<Math.min(...results.map(r=>r.completed_ms)),'Client requests did not overlap');

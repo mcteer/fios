@@ -147,6 +147,14 @@ test('source journal correlation keeps planning/check model-free and run explici
  }
 });
 
+test('Responses WebSocket fixture stays an explicit source scenario',()=>{
+ const digest='a'.repeat(64),scenario='responses-websocket';
+ const base=['--plan','/private/plan','--sha256',digest];
+ assert.deepEqual(nativeReviewIntent(['--check',...base,'--scenario',scenario]),{mode:'check',inferenceRequested:false,scenario});
+ assert.deepEqual(nativeReviewIntent(['--run',...base,'--allow-native-inference','--scenario',scenario]),{mode:'run',inferenceRequested:true,scenario});
+ assert.throws(()=>nativeReviewIntent(['--run',...base,'--scenario',scenario]));
+});
+
 // Metadata fixtures only: neither these declarations nor this parser grant
 // native admission, mapped-runtime provenance or inference authorization.
 test('source SDK model preparation requires the matched C++ compatibility record',()=>{
