@@ -30,11 +30,19 @@ final class NativeLineagePoller:@unchecked Sendable {
     private var busy=false
     private var reply:Reply?
     private var lastPolled:Key?
+    private var observedInstance:String?
     // Current diagnostics only; deliberately absent from journal checkpoints.
     private var eventSamples:[Key:EventRecord]=[:]
     private var eventWatermarks:[Key:(sequence:UInt64,capturedAt:Int64)]=[:]
     init(journal:Journal,source:any NativeLineageReading) {
         self.journal=journal;self.source=source;peer=source.peer
+    }
+    // A peer-authenticated ingress observation is sufficient to invalidate
+    // an old status view, not to prove that its request completed.
+    func observeNativeInstance(_ instance:String) {
+        guard (try? NativeControlWire.instanceBytes(instance)) != nil,instance != observedInstance else {return}
+        observedInstance=instance
+        eventSamples=eventSamples.filter {$0.value.request.scope.nativeEpoch==instance}
     }
     @discardableResult func beginNext()throws->Bool {
         lock.lock();let available = !busy && reply==nil;lock.unlock()
@@ -51,7 +59,7 @@ final class NativeLineagePoller:@unchecked Sendable {
         } ?? first
         let correlation=try request.scope.nativeRequestCorrelationID(job:request.job,attempt:request.attempt)
         let eventSource=source as? any NativeRequestEventsReading
-        let collectEvents=eventSource?.observesRequestEvents == true
+        let collectEvents=eventSource?.observesRequestEvents == true && (observedInstance==nil || observedInstance==request.scope.nativeEpoch)
         let originalRoot=collectEvents ? try journal.originalNativeRoot(job:request.job,attempt:request.attempt,scope:request.scope,peer:peer):nil
         lock.lock()
         guard !busy,reply==nil else {lock.unlock();return false}
@@ -101,7 +109,8 @@ final class NativeLineagePoller:@unchecked Sendable {
     func requestEvents(job:String,attempt:Int,now:Int64)throws->NativeRequestEventsSample? {
         guard let record=eventSamples[Key(job:job,attempt:attempt)] else {return nil}
         let request=record.request,sample=record.sample,value=sample.events
-        guard let current=try journal.inferenceScope(job:job,attempt:attempt),
+        guard observedInstance==nil || observedInstance==request.scope.nativeEpoch,
+              let current=try journal.inferenceScope(job:job,attempt:attempt),
               [.dispatched,.uncertain].contains(current.state),try current.scope.encoded()==request.scope.encoded(),
               let root=try journal.originalNativeRoot(job:job,attempt:attempt,scope:request.scope,peer:peer),
               root==value.rootSequence,value.instance==request.scope.nativeEpoch,

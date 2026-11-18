@@ -91,6 +91,14 @@ func runNativeRequestEventPollingTests()throws {
           (history[0]["request"] as? [String:Any])?["state"] as? String=="unknown",
           (history[0]["metal"] as? [String:Any])?["retired"] as? UInt64==2,
           try journal.unresolvedCount()==1 else {throw JournalError.invalid}
+    poller.observeNativeInstance(String(repeating:"2",count:32))
+    guard try status()["native_request_events"]==nil,try journal.unresolvedCount()==1 else {
+        fatalError("Changed native instance left old callback observations visible or released ownership")
+    }
+    try poll(poller)
+    guard try status()["native_request_events"]==nil,try journal.unresolvedCount()==1 else {
+        fatalError("Old-instance callback lookup restored invalidated diagnostics")
+    }
     let disabled=NormalRequestEventSource(peer:peer,enabled:false),plain=NativeLineagePoller(journal:journal,source:disabled)
     try poll(plain)
     guard disabled.eventReads==0,try plain.requestEvents(job:job,attempt:0,now:10001)==nil else {throw JournalError.invalid}
