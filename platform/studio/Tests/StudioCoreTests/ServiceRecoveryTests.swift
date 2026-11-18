@@ -1,6 +1,18 @@
 import Foundation
 
 func runServiceRecoveryTests() throws {
+    var transport=ServiceRecoveryTransportStatus()
+    guard transport.summary(configured:false)=="disabled",transport.summary(configured:true)=="configured" else {
+        fatalError("Recovery transport initial state is incorrect")
+    }
+    transport.stopUnavailable=true
+    transport.launchUnavailable=false
+    guard transport.summary(configured:true)=="degraded" else {fatalError("Launch success hid stop transport failure")}
+    transport.launchUnavailable=true
+    transport.stopUnavailable=false
+    guard transport.summary(configured:true)=="degraded" else {fatalError("Stop success hid launch transport failure")}
+    transport.launchUnavailable=false
+    guard transport.summary(configured:true)=="configured" else {fatalError("Recovery transport remained degraded after both paths recovered")}
     let directory=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer {try? FileManager.default.removeItem(at:directory)}
     let hash=String(repeating:"a",count:64),pins:[ManagedService:String]=[.mlx:hash,.orbstack:hash]

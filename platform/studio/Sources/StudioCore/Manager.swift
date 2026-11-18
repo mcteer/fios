@@ -67,7 +67,8 @@ public enum ManagerRuntime {
             return sample
         }
         let servingStopQueue=activeServingLifecycle.map {AsyncServingStop(runtime:$0.runtime)}
-        var serviceCursor=0,serviceTransportUnavailable=false
+        var serviceCursor=0
+        var serviceTransportStatus=ServiceRecoveryTransportStatus()
         var nativeMaintenance=NativeMaintenanceCoordinator(journal:journal)
         var nativeQueue=activeNativeControl.map {AsyncNativeControl(client:$0)} ?? activeNativeObserver.map {AsyncNativeControl(observer:$0)} ?? activeNativeObserverSource.map {AsyncNativeControl(observerSource:$0)}
         let nativeLineage=activeNativeControl.map {NativeLineagePoller(journal:journal,source:$0)}
@@ -178,16 +179,16 @@ public enum ManagerRuntime {
                 switch result.value {
                 case .success(let value):
                     try serviceRecovery.receive(result.request,result:value)
-                    serviceTransportUnavailable=false
-                case .failure:serviceTransportUnavailable=true // Preserve pending intent.
+                    serviceTransportStatus.launchUnavailable=false
+                case .failure:serviceTransportStatus.launchUnavailable=true // Preserve pending intent.
                 }
             }
             if let result=servingStopQueue?.poll(),let serviceRecovery {
                 switch result.value {
                 case .success(let value):
                     try serviceRecovery.receiveStop(result.request,result:value)
-                    serviceTransportUnavailable=false
-                case .failure:serviceTransportUnavailable=true // Preserve the original pending stop.
+                    serviceTransportStatus.stopUnavailable=false
+                case .failure:serviceTransportStatus.stopUnavailable=true // Preserve the original pending stop.
                 }
             }
             if let result=nativeQueue?.poll() {
@@ -312,7 +313,7 @@ public enum ManagerRuntime {
                         response["worker_reservations"]=try journal.activeLaunchCount()
                         response["worker_recovery"]=workerRecovery.degraded ? "degraded" : (workerRecovery.pending>0 ? "recovering" : "ready")
                         response["capabilities"]=["local_status","resources","desired_state","owner_task_status","owner_artifact_streams"]
-                        response["service_recovery"]=serviceQueue == nil ? "disabled":(serviceTransportUnavailable ? "degraded":"configured")
+                        response["service_recovery"]=serviceTransportStatus.summary(configured:serviceQueue != nil || servingStopQueue != nil)
                         var serviceStates:[String:Any]=[:]
                         let serviceStatusTick=Int64(ProcessInfo.processInfo.systemUptime*1000)
                         for service in ManagedService.allCases {

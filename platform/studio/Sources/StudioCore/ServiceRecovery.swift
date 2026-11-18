@@ -1,4 +1,13 @@
 import Foundation
+
+struct ServiceRecoveryTransportStatus {
+    var launchUnavailable=false
+    var stopUnavailable=false
+    func summary(configured:Bool)->String {
+        guard configured else {return "disabled"}
+        return launchUnavailable || stopUnavailable ? "degraded":"configured"
+    }
+}
 import CoreFoundation
 import Darwin
 import CryptoKit
