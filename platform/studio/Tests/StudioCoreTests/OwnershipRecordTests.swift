@@ -9,13 +9,15 @@ func runOwnershipRecordTests() throws {
     defer {try? FileManager.default.removeItem(at:root)}
     let hash=String(repeating:"a",count:64)
     var failures:[String]=[]
-    for name in ["job-field","lease-field","job-duplicate","job-nul-suffix","job-key","sandbox-field","configuration-field","sandbox-key","worker-field"] {
+    for name in ["job-field","lease-field","job-duplicate","job-nul-suffix","job-key","sandbox-field","configuration-field","sandbox-key","sandbox-orphan","worker-field"] {
         let directory=root.appendingPathComponent(name),id=UUID().uuidString.lowercased()
         let job=try DurableJob(id:id,idempotency:UUID().uuidString.lowercased(),ownerHash:hash,requestHash:hash,created:1000)
         do {
             let journal=try Journal(directory:directory)
-            _=try journal.reserveJob(job)
-            try journal.claim(job:id,attempt:0,model:"fixture/exact")
+            if name != "sandbox-orphan" {
+                _=try journal.reserveJob(job)
+                try journal.claim(job:id,attempt:0,model:"fixture/exact")
+            }
         }
         var table="jobs",payload=try JSONEncoder().encode(job)
         if name.hasPrefix("sandbox") || name=="configuration-field" {
@@ -36,7 +38,7 @@ func runOwnershipRecordTests() throws {
         case "job-key":object["idempotency"]=UUID().uuidString.lowercased()
         case "sandbox-key":
             var nested=object["configuration"] as! [String:Any];nested["job"]=UUID().uuidString.lowercased();object["configuration"]=nested
-        case "job-duplicate","job-nul-suffix":break
+        case "job-duplicate","job-nul-suffix","sandbox-orphan":break
         default:object["native_pending"]=true
         }
         var text=String(decoding:try JSONSerialization.data(withJSONObject:object),as:UTF8.self)
