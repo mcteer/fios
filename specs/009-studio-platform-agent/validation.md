@@ -9661,3 +9661,15 @@ The fixture has synthetic readiness/reservation inputs and makes zero
 model requests. It exercises a private process, with no installed
 service or runtime actions. The full US3 integration still depends
 on US2 and the separate Studio acceptance requirements.
+
+### Host resource sampling with an expired CPU reading
+
+The host sampler now drops CPU observations older than 5 seconds before
+choosing the host sample timestamp. A fresh CPU reading still carries its
+original capture time. The regression supplies a six-second-old CPU
+measurement and verifies that CPU stays unknown while the host timestamp
+and disk measurement remain usable. The Debug and optimized isolated
+policy suites each passed all 145 checks using
+`node scripts/check-platform.mjs --mock` and its `--release` variant.
+T008 remains open for installed VM/resource acceptance. Whole tasks remain
+39 of 55 complete.

@@ -28,12 +28,13 @@ public enum HostResources {
         let collectedAt = nowMilliseconds()
         // Load average is not utilization. Missing tick measurements or their
         // original collection time remain unknown, rather than gaining this clock.
-        let cpu = measuredCPU.flatMap { value -> Double? in
-            guard value.isFinite,(0...100).contains(value),let time=measuredCPUAt,
-                  (0...ActivityPolicy.maximumTimestamp).contains(time),time<=collectedAt else {return nil}
-            return value
+        let cpuObservation = measuredCPU.flatMap { value -> (value: Double, at: Int64)? in
+            guard value.isFinite, (0...100).contains(value), let time = measuredCPUAt,
+                  (0...ActivityPolicy.maximumTimestamp).contains(time),
+                  (0...5000).contains(collectedAt - time) else { return nil }
+            return (value, time)
         }
-        let sampledAt = cpu == nil ? collectedAt:min(collectedAt,measuredCPUAt!)
+        let sampledAt = cpuObservation?.at ?? collectedAt
         let physical = ProcessInfo.processInfo.physicalMemory
         var statistics = vm_statistics64_data_t()
         var count = mach_msg_type_number_t(MemoryLayout<vm_statistics64_data_t>.size / MemoryLayout<integer_t>.size)
@@ -65,7 +66,7 @@ public enum HostResources {
         // normal from available bytes.
         return ResourceSample(sampledAt: sampledAt, physical: physical,
                               available: available, vmAvailable: verifiedVMAvailable,
-                              diskFree: disk, cpu: cpu, pressure: pressure, thermal: thermal,
+                              diskFree: disk, cpu: cpuObservation?.value, pressure: pressure, thermal: thermal,
                               vmSampledAt:verifiedVMAvailable==nil ? nil : verifiedVMAt,
                               lowPowerMode:ProcessInfo.processInfo.isLowPowerModeEnabled)
     }

@@ -11,6 +11,11 @@ func runCPUTests() throws {
     _=sampler.observe(ticks:[100,100,100,0],now:7000)
     guard sampler.observe(ticks:[1,1,1,0],now:8000)==nil else { fatalError("Reset CPU counters accepted as utilization") }
     guard CPUSampler.readTicks()?.count==4 else { fatalError("Native CPU counters unavailable") }
+    let now = HostResources.nowMilliseconds()
+    let stale = HostResources.sample(statePath: NSTemporaryDirectory(), measuredCPU: 25, measuredCPUAt: now - 6000)
+    guard stale.cpu == nil, stale.sampledAt >= now, stale.diskFree != nil else {
+        fatalError("Expired CPU data made fresh host observations stale")
+    }
     func usage()throws->(UInt64,Double) {
         var native=rusage_info_v2(),posix=rusage()
         let status=withUnsafeMutablePointer(to:&native) {$0.withMemoryRebound(to:rusage_info_t?.self,capacity:1) {proc_pid_rusage(getpid(),RUSAGE_INFO_V2,$0)}}
