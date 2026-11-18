@@ -101,6 +101,7 @@ final class NativeLineagePoller:@unchecked Sendable {
               sample.peer.executable.path.utf8.elementsEqual(peer.executable.path.utf8),sample.peer.executable.sha256==peer.executable.sha256,
               [now,sample.requestedAt,sample.receivedAt,value.sampledAt].allSatisfy({(0...ActivityPolicy.maximumTimestamp).contains($0)}),
               sample.requestedAt<=sample.receivedAt,sample.receivedAt-sample.requestedAt<=5000,
+              sample.requestedAt-value.sampledAt<=1000,value.sampledAt-sample.receivedAt<=1000,
               (-1000...5000).contains(now-sample.receivedAt),(-1000...5000).contains(now-value.sampledAt),
               (try? value.validate()) != nil else {return nil}
         return sample

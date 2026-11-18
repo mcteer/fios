@@ -8,9 +8,10 @@ private final class NormalRequestEventSource:NativeRequestEventsReading,@uncheck
     private var sequence:UInt64=0
     private var reads=0
     private let replacementRoot:UInt64?
+    private let eventCapture:Int64
     private var lastRoot:UInt64?
-    init(peer:NativeControlPeer,enabled:Bool,replacementRoot:UInt64?=nil) {
-        self.peer=peer;observesRequestEvents=enabled;self.replacementRoot=replacementRoot
+    init(peer:NativeControlPeer,enabled:Bool,replacementRoot:UInt64?=nil,eventCapture:Int64=10000) {
+        self.peer=peer;observesRequestEvents=enabled;self.replacementRoot=replacementRoot;self.eventCapture=eventCapture
     }
     var eventReads:Int {lock.lock();defer {lock.unlock()};return reads}
     var lastEventRoot:UInt64? {lock.lock();defer {lock.unlock()};return lastRoot}
@@ -24,7 +25,7 @@ private final class NormalRequestEventSource:NativeRequestEventsReading,@uncheck
         if next==3 {throw NativeControlError.unavailable}
         let counts=NativeRequestEventCounts(sequence:UInt64(next),originated:2,retired:next==1 ? 1:2,pending:next==1 ? 1:0,historyRetained:true,uncertain:false)
         return NativeRequestEventsSample(peer:peer,requestedAt:10000,receivedAt:10001,
-            events:NativeRequestEvents(instance:instance,correlationID:correlationID,rootSequence:rootSequence,sampleSequence:UInt64(next+1),sampledAt:10000,
+            events:NativeRequestEvents(instance:instance,correlationID:correlationID,rootSequence:rootSequence,sampleSequence:UInt64(next+1),sampledAt:eventCapture,
                 identityKnown:true,sdkInitialized:true,sourceUncertain:false,host:nil,metal:counts))
     }
 }
@@ -92,6 +93,13 @@ func runNativeRequestEventPollingTests()throws {
     guard disabled.eventReads==0,try plain.requestEvents(job:job,attempt:0,now:10001)==nil else {throw JournalError.invalid}
     let replacement=NativeLineagePoller(journal:journal,source:source)
     guard try replacement.requestEvents(job:job,attempt:0,now:10001)==nil else {throw JournalError.invalid}
+    for (capture,expected) in [(9000,true),(8999,false)] {
+        let source=NormalRequestEventSource(peer:peer,enabled:true,eventCapture:Int64(capture))
+        let observer=NativeLineagePoller(journal:journal,source:source)
+        try poll(observer)
+        let present=try observer.requestEvents(job:job,attempt:0,now:10001) != nil
+        guard source.eventReads==1,present==expected else {fatalError("Event capture outside its request window exported as current")}
+    }
     let changedRoot=NormalRequestEventSource(peer:peer,enabled:true,replacementRoot:7)
     try poll(NativeLineagePoller(journal:journal,source:changedRoot))
     guard changedRoot.lastEventRoot==UInt64.max,try journal.unresolvedCount()==1 else {
