@@ -19,6 +19,13 @@ func runRegistryActivityWireTests(nativeFrame:String?=nil)throws {
     } catch NativeControlError.invalid {}
     guard available.primary.phaseVersion==4,available.models[0].claimable==true,
           available.conservativeActivity().coverage == .unknown,available.conservativeActivity().state == .unknown else {fatalError("Claimability became native authority")}
+    guard available.captureIsFresh(requestedAt:2000,receivedAt:3000),
+          available.captureIsFresh(requestedAt:0,receivedAt:0),
+          !available.captureIsFresh(requestedAt:2001,receivedAt:3000),
+          !available.captureIsFresh(requestedAt:1000,receivedAt:999),
+          !available.captureIsFresh(requestedAt:Int64.min,receivedAt:Int64.max) else {
+        fatalError("Registry capture escaped its original request window")
+    }
     var unloaded=frame4;unloaded[98]=0
     guard try NativeRegistryActivityWire.reply(unloaded,instance:instance).models[0].claimable==true else {fatalError("Advertised unloaded target became unavailable")}
     func invalid(_ data:Data)throws {do {_=try NativeRegistryActivityWire.reply(data,instance:instance);fatalError("Invalid coupled frame accepted")}catch NativeControlError.invalid {}}

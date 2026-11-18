@@ -39,6 +39,14 @@ struct NativeRegistryActivity:Sendable {
             guard a.model.utf8.elementsEqual(b.model.utf8),a.preparing==b.preparing,a.queued==b.queued,a.active==b.active,a.responding==b.responding else {throw NativeControlError.invalid}
         }
     }
+    func captureIsFresh(requestedAt:Int64,receivedAt:Int64)->Bool {
+        let allowed=0...ActivityPolicy.maximumTimestamp
+        guard allowed.contains(requestedAt),allowed.contains(receivedAt),let stamp=primary.sampledAt,allowed.contains(stamp),
+              (0...5000).contains(receivedAt-requestedAt) else {return false}
+        // The server stamps this on demand, just before reading the registry.
+        // Keep the wall-clock skew allowance at both ends of this exchange.
+        return requestedAt-stamp<=1000 && (-1000...5000).contains(receivedAt-stamp)
+    }
     // The independent native audit/installed ceiling is not supplied by this
     // frame. Neither declared-ready rows nor zero owners can upgrade it.
     func conservativeActivity()->CoherentNativeActivity {
