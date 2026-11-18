@@ -17,6 +17,8 @@ lease. Later persistence or a fresh caller timestamp cannot renew it. A verified
 identity can still be stored after the original timing window has expired.
 It does not provide current native activity, compatibility, capacity or proof.
 
+`ModelBroker` commits its local inference claim and worker launch plan, then marks the attempt dispatched before starting the off-loop preparation exchange. That durable mark says the native mutation may have happened; it is deliberately earlier than native effect publication and cannot act as a source lock. The separate native `Tracker.reservePreparation` uses the tracker mutex for exact parent/model association and transition refusal, not a compare-and-hold covering all producers. A positive admission guard would have to validate the original scoped observation and insert a non-preemptive hold in the same source critical section used by conflicting external publication, then keep the hold through dispatch and exact native terminal evidence. Local claim serialization, a preparation root, and a still-current lease cannot individually close that race.
+
 The journal checkpoints that original preparation identity against its existing
 exact scope/root continuity. Original model bytes must match. Shared identity
 validation preserves the existing handoff clock/peer/sequence behavior, retains

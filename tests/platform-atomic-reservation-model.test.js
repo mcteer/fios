@@ -5,6 +5,7 @@ import { test } from 'node:test';
 class Gate {
   #revision = 0;
   #epoch = Symbol();
+  #clock = 0;
   #owners = new Map();
   #covered;
   #fenced = false;
@@ -12,6 +13,7 @@ class Gate {
   constructor({ covered = false } = {}) { this.#covered = covered; }
   observe(target) { return Object.freeze({ epoch: this.#epoch, revision: this.#revision, target }); }
   fence() { this.#fenced = true; this.#revision++; }
+  advance(tick) { assert(tick >= this.#clock); this.#clock = tick; }
 
   reserve(observation, target) {
     if (observation?.epoch !== this.#epoch || observation.revision !== this.#revision ||
@@ -24,14 +26,14 @@ class Gate {
   #enter(target, state = 'reserved') {
     if (this.#fenced || [...this.#owners.values()].some(owner => owner.target !== target)) return null;
     const hold = Symbol();
-    this.#owners.set(hold, { target, state, receipt: null });
+    this.#owners.set(hold, { target, state, receipt: null, expires: this.#clock + 5 });
     this.#revision++;
     return hold;
   }
 
   publish(hold) {
     const owner = this.#owners.get(hold);
-    if (this.#fenced || owner?.state !== 'reserved') return false;
+    if (this.#fenced || owner?.state !== 'reserved' || this.#clock >= owner.expires) return false;
     owner.state = 'published';
     this.#revision++;
     return true;
@@ -115,6 +117,20 @@ test('published work retains custody until a matching terminal receipt', () => {
   assert.equal(gate.releaseTerminal(hold, terminal), false);
   assert.equal(gate.external('model/b'), null);
   assert(gate.releaseTerminal(sibling, foreign));
+  assert(gate.external('model/b'));
+});
+
+test('lease expiry prevents late publication but never releases already published work', () => {
+  const gate = new Gate({ covered: true });
+  const unused = gate.reserve(gate.observe('model/a'), 'model/a');
+  const published = gate.reserve(gate.observe('model/a'), 'model/a');
+  assert(gate.publish(published));
+  gate.advance(5);
+  assert.equal(gate.publish(unused), false);
+  assert(gate.cancelBeforePublication(unused));
+  assert.equal(gate.cancelBeforePublication(published), false);
+  assert.equal(gate.external('model/b'), null);
+  assert(gate.releaseTerminal(published, gate.backendTerminal(published)));
   assert(gate.external('model/b'));
 });
 
