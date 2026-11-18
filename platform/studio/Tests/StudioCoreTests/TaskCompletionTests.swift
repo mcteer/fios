@@ -2,8 +2,8 @@ import Foundation
 
 // A normal cancelled worker-start result is terminal output, even when the
 // surrounding owner job has not separately received a cancellation command.
-private func exerciseCompletion(in directory:URL)throws -> (String,String) {
-    let journal=try Journal(directory:directory),owner=String(repeating:"a",count:64)
+private func exerciseCompletion(in directory:URL,token:String)throws -> (String,String) {
+    let journal=try Journal(directory:directory),owner=try TaskOwner(token:token,peerUID:geteuid()).hash
     func runningJob()throws->String {
         let id=UUID().uuidString.lowercased()
         _=try journal.reserveJob(DurableJob(id:id,idempotency:UUID().uuidString.lowercased(),ownerHash:owner,requestHash:String(repeating:"b",count:64),created:5000))
@@ -41,12 +41,25 @@ private func exerciseCompletion(in directory:URL)throws -> (String,String) {
 func runTaskCompletionTests()throws {
     let directory=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer {try? FileManager.default.removeItem(at:directory)}
-    let (id,stillRunning)=try exerciseCompletion(in:directory)
+    let token=TaskOwner.newToken()
+    let (id,stillRunning)=try exerciseCompletion(in:directory,token:token)
     let reopened=try Journal(directory:directory)
     let jobs=try reopened.jobs()
     guard let completed=jobs.first(where:{$0.id==id}),completed.state == .removed,completed.lease.revoked,
           let recovered=jobs.first(where:{$0.id==stillRunning}),recovered.state == .reconciling,recovered.lease.revoked,
           try reopened.unresolvedCount()==1,try reopened.requestCount(job:id)==1 else {throw JournalError.invalid}
     print("PASS: normal interrupted worker completion closes its local job and lease; nonterminal job remains running")
-    print("PASS: restart preserves local completion and native uncertainty while reconciling the unrelated live job")
+    let tasks=TaskController(journal:reopened,broker:ModelBroker(journal:reopened))
+    let artifacts=AsyncArtifacts(store:try ArtifactStore(directory:directory.appendingPathComponent("artifacts")))
+    let sandbox=SandboxTaskController(journal:reopened,jobs:JobController(journal:reopened,executor:UnavailableSandboxRuntime()),tasks:tasks,artifacts:artifacts,socket:"/fixture/unused.sock",peerUID:geteuid())
+    let commands=TaskCommands(journal:reopened,tasks:tasks,sandbox:sandbox,artifacts:artifacts,approvedImages:[],peerUID:geteuid())
+    let status=try ControlRequest.decode(JSONSerialization.data(withJSONObject:["version":1,"id":UUID().uuidString.lowercased(),"operation":"job.status","payload":["owner":token,"job":id]]))
+    let sample=ResourceSample(sampledAt:5500,physical:0,available:nil,vmAvailable:nil,diskFree:nil,cpu:nil,pressure:.unknown,thermal:.unknown)
+    var admission=AdmissionPolicy()
+    for _ in 0..<2 {
+        let state=try commands.handle(status,role:.task,sample:sample,admission:&admission,binding:{_ in nil},nativeCapacityProven:false,now:5500,uptime:5500)
+        guard state["state"] as? String == "removed",state["unresolved_managed_requests"] as? Int==1,
+              state["event"]==nil,state["code_complete"]==nil,state["exit_verified"]==nil else {throw JournalError.invalid}
+    }
+    print("PASS: restart preserves local completion and native uncertainty without replaying output or runner proof")
 }
