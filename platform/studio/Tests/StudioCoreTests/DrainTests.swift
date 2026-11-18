@@ -78,6 +78,13 @@ func runDrainTests()throws {
     let newJobs=ServiceDrainSnapshot(scope:try scope(jobs:[secondJob],stamp:1001),nativeIdle:false,externalNativeWork:false,unmanagedRuntimeWork:false)
     let refused=try drain.poll(snapshot:newJobs,now:1001)
     guard refused.state == .refused(.scopeChanged),refused.revokeOwned.isEmpty else {fatalError("Old drain revoked newly scoped jobs")}
+    _=try drain.begin(snapshot:busy,role:.operator,now:1000)
+    let replacedRequest=ServiceDrainSnapshot(scope:try scope(jobs:[job],requests:[secondJob],stamp:1001),nativeIdle:false,externalNativeWork:false,unmanagedRuntimeWork:false)
+    let requestRefusal=try drain.poll(snapshot:replacedRequest,now:1001)
+    guard requestRefusal.state == .refused(.scopeChanged),requestRefusal.revokeOwned.isEmpty,
+          try drain.poll(snapshot:ready,now:2000).state == .refused(.scopeChanged) else {
+        fatalError("Drain accepted a substituted unresolved native request")
+    }
     _=try drain.begin(snapshot:ready,role:.operator,now:2000)
     let external=ServiceDrainSnapshot(scope:try scope(stamp:2001),nativeIdle:false,externalNativeWork:true,unmanagedRuntimeWork:false)
     guard try drain.poll(snapshot:external,now:2001).state == .refused(.activeWork) else {fatalError("Cached ready decision ignored new external work")}

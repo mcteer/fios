@@ -57,6 +57,7 @@ struct ServiceDrainPolicy {
         let expires:Int64
         let beganUptime:TimeInterval
         let ownedJobs:Set<String>
+        let unresolvedRequests:Set<String>
         var previous:Int64
         var previousUptime:TimeInterval
         var state:ServiceDrainState
@@ -80,7 +81,8 @@ struct ServiceDrainPolicy {
         guard role == .operator,snapshot.scope.fresh(now:now),now<=ActivityPolicy.maximumTimestamp-60000,tick.isFinite,tick>=0 else {throw ServiceError.invalid}
         let state=evaluate(snapshot),scope=snapshot.scope
         pending[scope.service]=Pending(identity:scope.identity,managerEpoch:scope.managerEpoch,nativeEpoch:scope.nativeEpoch,expires:now+60000,
-            beganUptime:tick,ownedJobs:Set(scope.ownedJobs),previous:now,previousUptime:tick,state:state)
+            beganUptime:tick,ownedJobs:Set(scope.ownedJobs),unresolvedRequests:Set(scope.unresolvedManagedRequests),
+            previous:now,previousUptime:tick,state:state)
         return ServiceDrainProgress(state:state,revokeOwned:scope.ownedJobs)
     }
     // Source/ledger loss is sticky for this attempt. Only a new explicit
@@ -97,9 +99,10 @@ struct ServiceDrainPolicy {
         if case .refused=record.state {return ServiceDrainProgress(state:record.state,revokeOwned:[])}
         let tick=uptime()
         if now<record.previous || now>=record.expires || !tick.isFinite || tick<record.previousUptime || tick-record.beganUptime>=60 {record.state = .refused(.deadline)}
-        else if !scope.fresh(now:now) || record.identity != scope.identity || record.managerEpoch != scope.managerEpoch || record.nativeEpoch.map({Data($0.utf8)}) != scope.nativeEpoch.map({Data($0.utf8)}) || !Set(scope.ownedJobs).isSubset(of:record.ownedJobs) {record.state = .refused(.scopeChanged)}
+        else if !scope.fresh(now:now) || record.identity != scope.identity || record.managerEpoch != scope.managerEpoch || record.nativeEpoch.map({Data($0.utf8)}) != scope.nativeEpoch.map({Data($0.utf8)}) || !Set(scope.ownedJobs).isSubset(of:record.ownedJobs) || !Set(scope.unresolvedManagedRequests).isSubset(of:record.unresolvedRequests) {record.state = .refused(.scopeChanged)}
         else {record.state=evaluate(snapshot)}
         record.previous=max(record.previous,now);if tick.isFinite {record.previousUptime=max(record.previousUptime,tick)};pending[scope.service]=record
+        if case .refused(.scopeChanged)=record.state {return ServiceDrainProgress(state:record.state,revokeOwned:[])}
         return ServiceDrainProgress(state:record.state,revokeOwned:scope.ownedJobs.filter {record.ownedJobs.contains($0)})
     }
 }
