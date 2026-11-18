@@ -89,7 +89,7 @@ final class TaskController {
                            sample:ResourceSample,admission:inout AdmissionPolicy,now:Int64,uptime:Int64) throws {
         guard var scope=sandboxScopes[id] else { throw ControlError.unauthorized }
         do {
-            guard TaskCommands.retainsUploadBinding(binding,original:scope.binding) else {throw ControlError.unauthorized}
+            guard NativeAdmission.retainsCheckpoint(binding,original:scope.binding) else {throw ControlError.unauthorized}
             switch try scope.channel.accept(data,runtimeID:runtimeID) {
             case .request(let request,let prompt):
                 try broker.submit(job:id,owner:scope.owner,requestID:request,context:[ModelText(role:"user",content:prompt)],

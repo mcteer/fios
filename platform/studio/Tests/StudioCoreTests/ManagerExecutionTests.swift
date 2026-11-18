@@ -35,8 +35,8 @@ func runManagerExecutionTests()throws {
     guard fresh.binding("fixture/model",managerEpoch:current)?.managerEpoch==current else {fatalError("Current manager generation binding rejected")}
     let composed="fixture/caf\u{00e9}",decomposed="fixture/cafe\u{0301}"
     guard composed==decomposed else {fatalError("Fixture must reproduce Swift canonical equivalence")}
-    guard ModelBroker.scopeIdentity(bound(current,canonical:composed)) != ModelBroker.scopeIdentity(bound(current,canonical:decomposed)),
-          ModelBroker.scopeIdentity(bound(current,native:composed)) != ModelBroker.scopeIdentity(bound(current,native:decomposed)) else {fatalError("Canonical Unicode equivalence bypassed broker scope identity")}
+    guard NativeAdmission.scopeIdentity(bound(current,canonical:composed)) != NativeAdmission.scopeIdentity(bound(current,canonical:decomposed)),
+          NativeAdmission.scopeIdentity(bound(current,native:composed)) != NativeAdmission.scopeIdentity(bound(current,native:decomposed)) else {fatalError("Canonical Unicode equivalence bypassed broker scope identity")}
     let executor=try ports.makeExecutor()
     guard executor.active==0 else {fatalError("Manager construction dispatched runtime work")}
     print("PASS: bounded code-only manager composition, immutable image declarations, unavailable cached sources stay unknown and all execution/admission defaults closed; no daemon call")

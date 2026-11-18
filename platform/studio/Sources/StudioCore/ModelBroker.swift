@@ -98,12 +98,6 @@ final class ModelBroker {
         }
         return found
     }
-    // Swift String equality normalizes Unicode; enrolled identities are raw
-    // UTF-8 bytes, including both canonical and native model identifiers.
-    static func scopeIdentity(_ binding:WorkerDispatchBinding)->[Data] {
-        [binding.host,binding.profileHash,binding.managerEpoch,binding.nativeSnapshot.nativeEpoch,
-         binding.nativeSnapshot.endpointHash,binding.canonicalModel,binding.nativeModel].map {Data($0.utf8)}
-    }
     // Advisory continuity for this original job scope, not a source/guard
     // issuer. Preserve the highest capture across preparation/start/run and
     // later attempts; a source cannot regress merely because it is still newer
@@ -151,7 +145,7 @@ final class ModelBroker {
         guard nativeCapacityProven,entries[id]==nil,starting[id]==nil,preparing[id]==nil,leasePreparing[id]==nil,launchHolds.isEmpty,
               try NativeAdmission.permitsDispatch(binding,now:now)
         else { throw AdmissionError.capacity }
-        let scope=Self.scopeIdentity(binding)
+        let scope=NativeAdmission.scopeIdentity(binding)
         guard scopes[id]==nil || scopes[id]==scope else { throw JournalError.conflict }
         guard retainSourceContinuity(job:id,current:binding,original:binding) else {throw AdmissionError.capacity}
         let ownedGrants=Set(entries.map { "\($0.key):\($0.value.attempt)" })
@@ -205,8 +199,8 @@ final class ModelBroker {
     // relabeling of generic unknown activity during original preparation.
     private static func retainsPreparationSource(_ current:WorkerDispatchBinding,original:WorkerDispatchBinding,now:Int64)->Bool {
         let snapshot=current.nativeSnapshot
-        return NativeAdmission.bindingIsCoherent(current) && scopeIdentity(current)==scopeIdentity(original)
-            && snapshot.sequence>=original.nativeSnapshot.sequence && snapshot.sequence<=UInt64(ActivityPolicy.maximumTimestamp)
+        return NativeAdmission.bindingIsCoherent(current) && NativeAdmission.retainsCheckpoint(current,original:original)
+            && snapshot.sequence<=UInt64(ActivityPolicy.maximumTimestamp)
             && (0...ActivityPolicy.maximumTimestamp).contains(now) && (0...ActivityPolicy.maximumTimestamp).contains(snapshot.sampledAt)
             && (-1000...5000).contains(now-snapshot.sampledAt)
     }
@@ -334,8 +328,7 @@ final class ModelBroker {
             let lease=(try? job(id,now:now)) != nil
             let current=try? source(id)
             let coherent=current.map {binding in
-                Self.scopeIdentity(binding)==Self.scopeIdentity(pending.binding)
-                    && binding.nativeSnapshot.sequence>=pending.binding.nativeSnapshot.sequence
+                NativeAdmission.retainsCheckpoint(binding,original:pending.binding)
                     && ((try? NativeAdmission.retainsSource(binding,now:now)) ?? false)
                     && retainSourceContinuity(job:id,current:binding,original:pending.binding)
             } ?? false
@@ -419,8 +412,7 @@ final class ModelBroker {
             let lease=(try? job(id,now:now)) != nil
             let current=try? source(id)
             let eligible=current.map { binding in
-                Self.scopeIdentity(binding)==Self.scopeIdentity(pending.binding)
-                    && binding.nativeSnapshot.sequence>=pending.binding.nativeSnapshot.sequence
+                NativeAdmission.retainsCheckpoint(binding,original:pending.binding)
                     && (pending.preparation != nil ? (preparationCoverage() == .all_clients && Self.retainsPreparationSource(binding,original:pending.binding,now:now)):
                         ((try? pending.hasNativeHandoff ? NativeAdmission.retainsSource(binding,now:now):NativeAdmission.permitsDispatch(binding,now:now)) ?? false))
                     && retainSourceContinuity(job:id,current:binding,original:pending.binding)
@@ -512,8 +504,7 @@ final class ModelBroker {
             let lease=(try? job(id,now:now)) != nil
             let current=try? source(id)
             let coherent=current.map { binding in
-                return Self.scopeIdentity(binding)==Self.scopeIdentity(entry.binding)
-                    && binding.nativeSnapshot.sequence>=entry.binding.nativeSnapshot.sequence
+                return NativeAdmission.retainsCheckpoint(binding,original:entry.binding)
                     && (entry.preparation != nil ? (preparationCoverage() == .all_clients && Self.retainsPreparationSource(binding,original:entry.binding,now:now)):
                         ((try? NativeAdmission.retainsSource(binding,now:now)) ?? false))
                     && retainSourceContinuity(job:id,current:binding,original:entry.binding)

@@ -45,7 +45,7 @@ final class SandboxTaskController {
     }
     func pendingModel(forJob id:String)->String? {sessions[id]?.binding?.canonicalModel}
     static func retainsPreStartSource(_ current:WorkerDispatchBinding?,original:WorkerDispatchBinding,now:Int64)->Bool {
-        guard let current,TaskCommands.retainsUploadBinding(current,original:original) else {return false}
+        guard let current,NativeAdmission.retainsCheckpoint(current,original:original) else {return false}
         return (try? NativeAdmission.retainsSource(current,now:now)) == true
     }
     private func revoke(id:String,now:Int64,uptime:Int64) throws {

@@ -5,6 +5,17 @@ import Foundation
 // Production must still provide the audited all-client native guard. The
 // observation alone cannot close the source-to-dispatch race.
 enum NativeAdmission {
+    // Exact UTF-8 identity plus a monotonic observation checkpoint. Neither
+    // predicate establishes freshness, eligibility or dispatch authority.
+    static func scopeIdentity(_ binding:WorkerDispatchBinding)->[Data] {
+        [binding.host,binding.profileHash,binding.managerEpoch,binding.nativeSnapshot.nativeEpoch,
+         binding.nativeSnapshot.endpointHash,binding.canonicalModel,binding.nativeModel].map {Data($0.utf8)}
+    }
+    static func retainsCheckpoint(_ current:WorkerDispatchBinding,original:WorkerDispatchBinding)->Bool {
+        scopeIdentity(current)==scopeIdentity(original) &&
+        current.nativeSnapshot.sequence>=original.nativeSnapshot.sequence &&
+        current.nativeSnapshot.sampledAt>=original.nativeSnapshot.sampledAt
+    }
     static func bindingIsCoherent(_ binding:WorkerDispatchBinding)->Bool {
         binding.nativeCompatibilityAccepted && binding.modelPlacementAccepted &&
         WireScalar.host(binding.host) && WireScalar.model(binding.canonicalModel) && WireScalar.model(binding.nativeModel) &&

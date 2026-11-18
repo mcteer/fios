@@ -148,11 +148,11 @@ func runPythonFactoryTests() throws {
         return WorkerDispatchBinding(baseURL:base,guardPath:directory.appendingPathComponent("observe.sock").path,host:"fixture-host",profileHash:String(repeating:"f",count:64),managerEpoch:epoch,canonicalModel:"fixture/model",nativeModel:"fixture/model",nativeSnapshot:state,nativeCompatibilityAccepted:true,apiKey:nil)
     }
     let uploadOriginal=freshBinding(sequence:2,stamp:1000)
-    guard TaskCommands.retainsUploadBinding(freshBinding(sequence:2,stamp:1000),original:uploadOriginal),
-          TaskCommands.retainsUploadBinding(freshBinding(sequence:3,stamp:1100),original:uploadOriginal),
-          !TaskCommands.retainsUploadBinding(freshBinding(nativeEpoch:"different",sequence:3,stamp:1100),original:uploadOriginal),
-          !TaskCommands.retainsUploadBinding(freshBinding(sequence:1,stamp:1100),original:uploadOriginal),
-          !TaskCommands.retainsUploadBinding(freshBinding(sequence:3,stamp:999),original:uploadOriginal) else {
+    guard NativeAdmission.retainsCheckpoint(freshBinding(sequence:2,stamp:1000),original:uploadOriginal),
+          NativeAdmission.retainsCheckpoint(freshBinding(sequence:3,stamp:1100),original:uploadOriginal),
+          !NativeAdmission.retainsCheckpoint(freshBinding(nativeEpoch:"different",sequence:3,stamp:1100),original:uploadOriginal),
+          !NativeAdmission.retainsCheckpoint(freshBinding(sequence:1,stamp:1100),original:uploadOriginal),
+          !NativeAdmission.retainsCheckpoint(freshBinding(sequence:3,stamp:999),original:uploadOriginal) else {
         fatalError("Upload finalization crossed native epoch or went backwards")
     }
     guard SandboxTaskController.retainsPreStartSource(freshBinding(sequence:3,stamp:1100),original:uploadOriginal,now:1200),

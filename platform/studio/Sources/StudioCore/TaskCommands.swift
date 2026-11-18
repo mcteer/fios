@@ -9,11 +9,6 @@ enum TaskCommandError:String,Error {case native_unsupported,invalid_request,unau
 // existing grant/job, never a management role. Trusted policy supplies images,
 // bindings, native proof and activation; none is read from task data.
 final class TaskCommands {
-    static func retainsUploadBinding(_ current:WorkerDispatchBinding,original:WorkerDispatchBinding)->Bool {
-        ModelBroker.scopeIdentity(current)==ModelBroker.scopeIdentity(original) &&
-        current.nativeSnapshot.sequence>=original.nativeSnapshot.sequence &&
-        current.nativeSnapshot.sampledAt>=original.nativeSnapshot.sampledAt
-    }
     private struct Upload {
         let owner:String,hash:String,kind:String
         let binding:WorkerDispatchBinding?
@@ -171,7 +166,7 @@ final class TaskCommands {
                     guard try ServiceAdmissionPolicy.permits(journal:journal,model:upload.binding != nil,sandbox:upload.kind=="sandbox") else {throw TaskCommandError.native_unsupported}
                     let currentBinding:WorkerDispatchBinding?
                     if let original=upload.binding {
-                        guard let current=binding(original.canonicalModel),Self.retainsUploadBinding(current,original:original),
+                        guard let current=binding(original.canonicalModel),NativeAdmission.retainsCheckpoint(current,original:original),
                               NativeAdmission.bindingIsCoherent(current) else {throw TaskCommandError.invalid_request}
                         currentBinding=current
                     } else {currentBinding=nil}
