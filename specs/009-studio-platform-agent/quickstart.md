@@ -113,6 +113,8 @@ This scenario requires source-declared primary-ownership observation version1 or
 
 Use `journal-same-model-pair` in the same three commands for two overlapping requests to the same exact Core model. The observer records both dispatch intents in one journal and polls one root at a time at a 500ms cadence. The run requires both responses to complete and the stopped journal to retain the same distinct roots seen during live overlap. Both claims remain uncertain. The request, work, cleanup and memory bounds above still apply.
 
+Use `journal-cancel-then-success` to cancel the first of two requests after a response delta. The journal must acknowledge uncertainty for the original root before the second request starts. The second response must complete, and stopped inspection must still find the original root and both uncertain claims. The cancellation scenario allows up to eight output tokens per request within the same time and memory limits.
+
 Ordinary idle native helper lifecycle can be checked against a fresh reviewed DS4 build:
 
 ```sh

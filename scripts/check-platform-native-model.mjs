@@ -17,15 +17,16 @@ import {nativeJournalInputs,buildNativeJournalObserver,verifyNativeJournalObserv
 import {nativeReviewIntent,nativeReviewHTTPFailure,nativeReviewJSON,nativeReviewActivity,nativeReviewModelInputs,nativeReviewLineage,nativeReviewComponents,nativeReviewModelSupports,nativeReviewHTTPStream,nativeReviewHTTPStreamEvent,nativeReviewAudioInput} from './lib/platform-native-review-intent.mjs';
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..'),args=process.argv.slice(2);
 const intent=nativeReviewIntent(args),journalPair=intent.scenario==='journal-same-model-pair';
+const journalFollowup=intent.scenario==='journal-cancel-then-success';
 const pair=intent.scenario==='same-model-pair'||journalPair,image=intent.scenario==='single-image',audio=intent.scenario==='single-audio';
-const journalCorrelation=intent.scenario==='journal-correlation'||journalPair;
+const journalCorrelation=intent.scenario==='journal-correlation'||journalPair||journalFollowup;
 const cancelRequest=intent.scenario==='cancel-request';
-const followup=intent.scenario==='cancel-then-success';
+const followup=intent.scenario==='cancel-then-success'||journalFollowup;
 const cancelResponse=intent.scenario==='cancel-response'||followup,cancellation=cancelRequest||cancelResponse;
 const scenario=intent.scenario??'single-model',scenarioArgs=intent.scenario?['--scenario',scenario]:[];
 if(intent.scenario)args.splice(-2,2);
 const ID='mlx-community/gemma-4-e4b-it-4bit',MODEL=path.join(homedir(),'.mlx-serve/models',ID);
-const LIMITS={context_tokens:512,output_tokens:journalCorrelation?2:8,max_concurrent:pair||followup?2:1,model_posts:pair||followup?2:1,request_ms:journalCorrelation?10000:90000,work_ms:journalCorrelation?15000:120000,cleanup_ms:7000,memory_abort_bytes:12*2**30,...(journalCorrelation?{journal_observer_memory_abort_bytes:128*2**20}:{})};
+const LIMITS={context_tokens:512,output_tokens:journalCorrelation&&!journalFollowup?2:8,max_concurrent:pair||followup?2:1,model_posts:pair||followup?2:1,request_ms:journalCorrelation?10000:90000,work_ms:journalCorrelation?15000:120000,cleanup_ms:7000,memory_abort_bytes:12*2**30,...(journalCorrelation?{journal_observer_memory_abort_bytes:128*2**20}:{})};
 const audioInput=audio ? nativeReviewAudioInput() : null;
 const alternateHTTPStream=nativeReviewHTTPStream(scenario,ID,LIMITS.output_tokens);
 assert(process.platform==='darwin'&&process.arch==='arm64'&&process.getuid()>0);
@@ -279,6 +280,11 @@ try{
    receipt.native_inference=null; // Accepted lineage is not completed inference.
    if(followup){
     receipt.client_cancellation.abort_observed_ms=Math.round(performance.now()-began);save();
+    if(journalFollowup){
+     await journalObserver.recordFirstCancellation(receipt.client_cancellation.source_root);
+     receipt.client_cancellation.journal_uncertain_before_followup=true;
+     save();
+    }
     const newer=await requestModel(1);
     assert(newer.response_complete&&newer.dispatched_ms>=receipt.client_cancellation.abort_observed_ms);
     assert(receipt.model_post_attempts===2&&receipt.actual_model_posts===2);
@@ -310,16 +316,22 @@ try{
  }
  if(journalObserver){
   stage='stopped_journal_correlation';
-  receipt.journal_correlation=await journalObserver.stop({expectLive:!check,deadline:performance.now()+3000});
+  receipt.journal_correlation=await journalObserver.stop({requiredRoots:check?[]:journalPair?[0,1]:[0],deadline:performance.now()+3000});
   if(journalPair&&!check)assert.deepEqual(receipt.journal_correlation.requests.map(row=>row.persisted_native_root),
    receipt.correlated_lineage_observations.roots,'Stopped journal roots differ from the observed live pair');
-  if(!check)receipt.result=journalPair?'actual_source_pair_correlated_with_distinct_uncertain_journal_claims':'actual_source_request_correlated_with_uncertain_journal_claim';
+  if(journalFollowup&&!check)assert.equal(receipt.journal_correlation.requests[0].persisted_native_root,
+   receipt.client_cancellation.source_root,'Stopped journal root differs from the cancelled request');
+  if(!check){
+   if(journalPair)receipt.result='actual_source_pair_correlated_with_distinct_uncertain_journal_claims';
+   else if(journalFollowup)receipt.result='cancelled_journal_claim_retained_after_newer_same_model_success';
+   else receipt.result='actual_source_request_correlated_with_uncertain_journal_claim';
+  }
  }
  assert(!failed);receipt.elapsed_ms=Math.round(performance.now()-began);
 }catch{receipt.result='failed';receipt.reason=failed||'review_'+stage+'_failure';process.exitCode=1;}
 finally{
  clearInterval(timer);clearInterval(activityTimer);modelAbort.abort();activityStopped=true;const cleanupStarted=performance.now();
- if(journalObserver){try{receipt.journal_correlation??=await journalObserver.stop({expectLive:false,deadline:cleanupStarted+2500});}catch{receipt.result='failed';receipt.reason??='journal_observer_cleanup_or_inspection_failed';process.exitCode=1;}}
+ if(journalObserver){try{receipt.journal_correlation??=await journalObserver.stop({requiredRoots:[],deadline:cleanupStarted+2500});}catch{receipt.result='failed';receipt.reason??='journal_observer_cleanup_or_inspection_failed';process.exitCode=1;}}
  signalOwned('SIGTERM');if(activityPending)await activityPending;let end=cleanupStarted+5000;while(!ended()&&performance.now()<end)await delay(25);if(!ended()){signalOwned('SIGKILL');end=cleanupStarted+7000;while(!ended()&&performance.now()<end)await delay(25);}
  receipt.process_reaped=ended();if(!receipt.process_reaped){receipt.result='failed';receipt.reason='owned_process_not_reaped';process.exitCode=1;child.unref();child.stdout.destroy();child.stderr.destroy();}
  receipt.response_complete=postsDone;save();console.log(JSON.stringify({...receipt,directory}));

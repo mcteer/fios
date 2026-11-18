@@ -52,7 +52,7 @@ export async function startNativeJournalObserver({root,plan,parent,home,native,e
    bytes+=part.length;assert(bytes<=32768);buffer+=part.toString('utf8');assert(buffer.length<=8192);
    let end;while((end=buffer.indexOf('\n'))>=0){
     const value=JSON.parse(buffer.slice(0,end));buffer=buffer.slice(end+1);
-    assert(['ready','dispatched','stopped'].includes(value.event)&&value.native_authority===false);
+    assert(['ready','dispatched','uncertain','stopped'].includes(value.event)&&value.native_authority===false);
     const id=value.event==='stopped'?'stopped':value.event+':'+value.index;
     if(value.event!=='stopped')assert(Number.isInteger(value.index)&&value.index>=0&&value.index<jobs.length);
     assert(!events.has(id));events.set(id,value);
@@ -74,7 +74,7 @@ export async function startNativeJournalObserver({root,plan,parent,home,native,e
   throw Error('Journal observer deadline');
  }
  let ready;
- async function stop({expectLive,deadline}){
+ async function stop({requiredRoots,deadline}){
   if(stopped)return stopped;
   stopped=(async()=>{
    if(!ended())child.stdin.end('stop\n');
@@ -85,7 +85,8 @@ export async function startNativeJournalObserver({root,plan,parent,home,native,e
    if(!ended()){child.unref();child.stdin.destroy();child.stdout.destroy();child.stderr.destroy();throw Error('Journal observer not reaped; retain state');}
    assert(!error&&child.exitCode===0&&events.get('stopped')?.uncertainty_retained===true,'Journal observer did not stop normally');
    verifyNativeJournalObserver(plan.journal_observer,parent);
-   const receipts=ready.map(entry=>{
+   const receipts=ready.map((entry,index)=>{
+    const expectLive=requiredRoots.includes(index);
     const result=spawnSync('/usr/bin/sandbox-exec',[...prefix,'--inspect',state,entry.job,entry.correlation_id,entry.native_instance,entry.scope_sha256,expectLive?'1':'0'],
      {env,cwd:home,encoding:'utf8',timeout:2000,maxBuffer:16384});
     assert.equal(result.status,0,'Stopped journal correlation inspection failed; retain private state');
@@ -97,7 +98,8 @@ export async function startNativeJournalObserver({root,plan,parent,home,native,e
     if(expectLive)assert(receipt.primary_observations.positive_samples>0);
     return receipt;
    });
-   if(expectLive)assert(new Set(receipts.map(row=>row.persisted_native_root)).size===jobs.length);
+   const roots=receipts.filter(row=>row.actual_request_root_observed).map(row=>row.persisted_native_root);
+   assert.equal(new Set(roots).size,roots.length);
    const correlation=receipts.length===1?receipts[0]:{requests:receipts};
    return {...correlation,observer_reaped:true,peak_resident:peakResident,peak_footprint:peakFootprint,production_admission_tested:false,platform_dispatch_tested:false,pydantic_worker_tested:false,proof_scope:'administrative_source_request_only'};
   })();return stopped;
@@ -110,6 +112,12 @@ export async function startNativeJournalObserver({root,plan,parent,home,native,e
   ready=await Promise.all(jobs.map((_,index)=>wait('ready:'+index,readyDeadline)));
   assert(ready.every((entry,index)=>entry.job===jobs[index]&&/^[a-f0-9]{64}$/.test(entry.correlation_id)&&/^[a-f0-9]{32}$/.test(entry.native_instance)&&/^[a-f0-9]{64}$/.test(entry.scope_sha256)));
   return {ready,async dispatch(index){assert(jobs[index]&&!events.has('dispatched:'+index));child.stdin.write('attempt '+index+'\n');await wait('dispatched:'+index,performance.now()+3000);},
+   async recordFirstCancellation(root){
+    assert(jobs.length===2&&events.has('dispatched:0')&&!events.has('dispatched:1')&&!events.has('uncertain:0'));
+    child.stdin.write('cancelled 0\n');
+    const result=await wait('uncertain:0',performance.now()+3000);
+    assert.equal(result.root,root,'Journal acknowledged uncertainty for a different root');
+   },
    monitor(){
     if(error)throw error;
     // stop() owns bounded exit/reaping and stopped-journal inspection from

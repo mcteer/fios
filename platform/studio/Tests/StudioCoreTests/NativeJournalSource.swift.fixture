@@ -65,7 +65,7 @@ struct NativeJournalSource {
                 "native_instance":native.instance,"scope_sha256":digest(try scope.encoded()),"native_authority":false])
         }
         let deadline=ProcessInfo.processInfo.systemUptime+25
-        var input=Data(),attempted=Set<Int>(),stopping=false,pending=false,nextPoll=Double.infinity
+        var input=Data(),attempted=Set<Int>(),cancelled=false,stopping=false,pending=false,nextPoll=Double.infinity
         while !stopping && ProcessInfo.processInfo.systemUptime<deadline {
             var bytes=[UInt8](repeating:0,count:32)
             let count=Darwin.read(STDIN_FILENO,&bytes,bytes.count)
@@ -81,6 +81,11 @@ struct NativeJournalSource {
                         try journal.markDispatched(job:jobs[index],attempt:0);attempted.insert(index)
                         nextPoll=min(nextPoll,ProcessInfo.processInfo.systemUptime+0.2)
                         try emit(["event":"dispatched","index":index,"native_authority":false])
+                    } else if command=="cancelled 0",jobs.count==2,attempted==[0],!cancelled,!stopping {
+                        guard let root=try journal.originalNativeRoot(job:jobs[0],attempt:0,scope:scope,peer:peer) else {throw JournalError.invalid}
+                        try journal.markUncertain(job:jobs[0],attempt:0)
+                        cancelled=true
+                        try emit(["event":"uncertain","index":0,"root":String(root),"native_authority":false])
                     } else if command=="stop",!stopping {stopping=true}
                     else {throw ControlError.invalid_request}
                 }

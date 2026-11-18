@@ -9765,3 +9765,19 @@ Single receipt `/private/tmp/f9-model-run-41NDFV/result.json`, SHA256
 All 26 source-model intent tests passed. These are administrative
 source-correlation results. T019 and T021 remain open for native
 admission and terminal reconciliation. Whole tasks remain 39 of 55.
+
+### Older journal uncertainty survives a newer live response
+
+The `journal-cancel-then-success` fixture cancels the original Core
+request after its first response delta. The same private journal
+acknowledged that root 4 was uncertain before the second request started.
+The second response completed. Stopped inspection retained roots 4 and
+43 with both claims uncertain. The empty preflight sent zero model POSTs.
+The run made two, and both private processes were reaped. The sampled
+native peak footprint was 4,711,190,680 bytes.
+
+Receipt `/private/tmp/f9-model-run-ctgxkk/result.json`, SHA256
+`3ce03b2c7064b47ea8699b9afa8219d9aa2fb2cdf76981d0f08dcaacb33457d2`.
+All 26 source-model intent tests passed. This is actual source transport
+and durable correlation under T019/T021. Production admission and
+terminal reconciliation remain open. Whole tasks remain 39 of 55.
