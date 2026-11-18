@@ -173,7 +173,9 @@ struct SessionControlClient:Sendable {
             if read<0,[EINTR,EAGAIN,EWOULDBLOCK].contains(errno) {continue}
             guard read==0 else {throw ControlError.invalid_request};break
         }
-        guard try WorkerResources.startIdentifier(pid:peer.pid)==peer.start else {throw ControlError.unauthorized}
+        // A process can exec without changing its PID or start identifier.
+        // Reverify the enrolled image before accepting a durable outcome.
+        _=try ServiceIdentity.verified(peer:peer,expectedUID:uid,deadline:deadline)
         return try SessionReply.decode(reply,id:id,service:service,instance:instance,profile:profile,expectedHash:pins[service]!)
     }
 }

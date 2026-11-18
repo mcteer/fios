@@ -164,6 +164,12 @@ func runServiceRecoveryTests() throws {
     recovery=try ServiceRecoveryController(journal:journal,approvedHashes:pins)
     guard recovery.isPending(.mlx),recovery.recordedLaunch(.mlx)==nil else {fatalError("Legacy state invented a launch receipt or lost pending intent")}
     guard try recovery.plan(service:.mlx,desired:.running,observation:absent(700000),now:700000,tick:700000)==nil else {fatalError("Restart/age cleared uncertain launch")}
+    for result:SessionLaunchResult in [.wrongInstance,.busy,.uncertain] {
+        guard let request=try recovery.next(service:.mlx,desired:.running,observation:nil,now:700000,tick:700000),
+              request.operation == .lookup,request.command.id==first.id else {fatalError("Transient response lost correlated recovery lookup")}
+        try recovery.receive(request,result:result)
+        guard recovery.isPending(.mlx),recovery.recordedLaunch(.mlx)==nil else {fatalError("Transient response resolved durable launch intent")}
+    }
     do {try recovery.notSent(service:.mlx,id:UUID().uuidString.lowercased());fatalError("Foreign acknowledgement cleared intent")}catch ServiceError.invalid {}
     // Fail the real atomic rename against a private directory while retaining
     // the exact old state file. A failed durable acknowledgement cannot make
