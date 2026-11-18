@@ -34,6 +34,18 @@ func runSandboxRemovalTests()throws {
     do {try runtime.removeOwned(configuration,savedID:id)}catch RuntimeError.launch {refused=true}
     guard refused,try JSONSerialization.jsonObject(with:Data(contentsOf:marker)) as? [String]==["rm",id] else {fatalError("Daemon running-race refusal became successful cleanup")}
     let executor=try SandboxExecutor(runtime:runtime,allowedImages:[configuration.image])
+    do {
+        try executor.submitCreate(configuration:configuration,beforePublish:{
+            guard executor.active==1,executor.drain().isEmpty else {fatalError("Reserved slot published before commit")}
+            do {
+                try executor.submit(job:configuration.job,command:.inspect(configuration,id))
+                fatalError("Reserved create did not hold exclusive job capacity")
+            } catch AdmissionError.capacity {}
+            throw JournalError.storage
+        })
+        fatalError("Failed create commit was accepted")
+    } catch JournalError.storage {}
+    guard executor.active==0,executor.drain().isEmpty else {fatalError("Failed create commit did not refund the unpublished slot")}
     let formatter=ISO8601DateFormatter()
     let cases:[(String,[String:Any],Int?)]=[
         ("never-started",[:],nil),

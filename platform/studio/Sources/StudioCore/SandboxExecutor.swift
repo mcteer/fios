@@ -75,9 +75,28 @@ final class SandboxExecutor:SandboxExecuting,@unchecked Sendable {
             guard identity?.id==id else { throw SandboxExecutionFailure.identity }
             if case .start=command { guard allowedImages.contains(identity?.image ?? "") else { throw SandboxExecutionFailure.unapprovedImage } }
         }
-        lock.lock()
-        guard pending.count+completed.count+completedResources.count<2,!pending.contains(job),!completed.contains(where:{$0.job==job}),!completedResources.contains(where:{$0.job==job}) else { lock.unlock();throw AdmissionError.capacity }
-        pending.insert(job);lock.unlock()
+        try reserveSlot(job:job)
+        publishReserved(job:job,command:command)
+    }
+    // A synchronous, serialized caller may write its durable intent while
+    // holding capacity, without holding the executor lock or publishing work.
+    // A thrown commit only returns the unpublished slot, never job custody.
+    func submitCreate(configuration:SandboxConfiguration,beforePublish:()throws->Void)throws {
+        guard allowedImages.contains(configuration.image) else {throw SandboxExecutionFailure.unapprovedImage}
+        let job=configuration.job
+        try reserveSlot(job:job)
+        do {try beforePublish()} catch {
+            lock.lock();pending.remove(job);lock.unlock()
+            throw error
+        }
+        publishReserved(job:job,command:.create(configuration))
+    }
+    private func reserveSlot(job:String)throws {
+        lock.lock();defer {lock.unlock()}
+        guard pending.count+completed.count+completedResources.count<2,!pending.contains(job),!completed.contains(where:{$0.job==job}),!completedResources.contains(where:{$0.job==job}) else {throw AdmissionError.capacity}
+        pending.insert(job)
+    }
+    private func publishReserved(job:String,command:SandboxCommand) {
         queue.async { [self] in
             let result:Result<SandboxExecutionValue,SandboxExecutionFailure>
             do { result = .success(try execute(command,job:job)) }
@@ -93,9 +112,7 @@ final class SandboxExecutor:SandboxExecuting,@unchecked Sendable {
         guard allowedImages.contains(configuration.image) else {throw SandboxExecutionFailure.unapprovedImage}
         try fullID(id)
         let job=configuration.job
-        lock.lock()
-        guard pending.count+completed.count+completedResources.count<2,!pending.contains(job),!completed.contains(where:{$0.job==job}),!completedResources.contains(where:{$0.job==job}) else {lock.unlock();throw AdmissionError.capacity}
-        pending.insert(job);lock.unlock()
+        try reserveSlot(job:job)
         queue.async { [self] in
             let result:Result<VMKernelSample,VMReadFailure>
             do {result = .success(try resourceReader.read(configuration:configuration,id:id,leaseUntil:leaseUntil))}
