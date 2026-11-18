@@ -8,6 +8,7 @@ private final class FakeSandboxExecutor:SandboxExecuting {
     var reportExitCodes=false
     var holdResponses=false
     var denyStartCapacity=false
+    var loseCreateReply=false
     var resourceNow:Int64=0
     var resourceFailure=false
     var resourceRequests:[Int64]=[]
@@ -25,6 +26,10 @@ private final class FakeSandboxExecutor:SandboxExecuting {
         let result:SandboxExecutionValue
         switch command {
         case .create(let config):
+            if loseCreateReply {
+                values.append(SandboxExecution(job:job,result:.failure(.unavailable)))
+                return
+            }
             let id=String(repeating:job.first=="a" ? "a" : "b",count:64)
             present[job]=(config,id,false);result = .created(id)
         case .inspect:
@@ -275,5 +280,30 @@ func runCleanupStatusRecoveryTests() throws {
     precondition(completed["pending_sandboxes"] as? Int == 0 && completed["waiting_over_60s"] as? Bool == false)
     let unresolved=try journal.unresolvedCount(),uncertain=try journal.uncertainCount()
     precondition(unresolved==1 && uncertain==1)
-    print("PASS: ordinary delayed runtime completion reports waiting, then clears current cleanup status after removal")
+    let lateID=UUID().uuidString.lowercased()
+    let late=try DurableJob(id:lateID,idempotency:UUID().uuidString.lowercased(),ownerHash:job.ownerHash,requestHash:job.requestHash,created:93000)
+    let lateConfig=try SandboxConfiguration(job:lateID,nonce:String(repeating:"c",count:64),image:configuration.image,memory:configuration.memory,cpus:1)
+    _=try journal.reserveSandbox(job:late,configuration:lateConfig)
+    runtime.commands.removeAll()
+    runtime.loseCreateReply=true
+    func tick(_ now:Int64)throws {
+        try controller.tick(now:now,sample:sample(now),admission:&admission,transportReady:{_ in true},cancelModel:{_ in})
+    }
+    try tick(93000)
+    try tick(93500)
+    try journal.transitionJob(id:lateID,to:.revoking,now:94000)
+    for now:Int64 in [94000,95500,96000] {try tick(now)}
+    let pending=try journal.sandboxRecords().first{$0.configuration.job==lateID}
+    guard pending?.createIssued==true,pending?.runtimeID==nil,pending?.removalProven==false,
+          controller.cleanupStatus(now:96000)["pending_sandboxes"] as? Int==1 else {fatalError("Lost create reply followed by absence released custody")}
+    let lateRuntimeID=String(repeating:"d",count:64)
+    runtime.present[lateID]=(lateConfig,lateRuntimeID,false)
+    for now:Int64 in [97500,98000,98500,99500,100000] {try tick(now)}
+    let final=try journal.sandboxRecords().first{$0.configuration.job==lateID}
+    let commands=runtime.commands
+    guard final?.runtimeID==lateRuntimeID,final?.removalProven==true,
+          commands.filter({if case .create=$0 {return true};return false}).count==1,
+          !commands.contains(where:{if case .start=$0 {return true};return false}),
+          try journal.unresolvedCount()==1,try journal.uncertainCount()==1 else {fatalError("Late sandbox was replayed, started, or released independent model uncertainty")}
+    print("PASS: delayed runtime completion and lost create reply retain cleanup custody until exact late-owned removal")
 }

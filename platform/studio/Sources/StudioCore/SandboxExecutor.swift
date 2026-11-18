@@ -121,13 +121,14 @@ final class SandboxExecutor:SandboxExecuting,@unchecked Sendable {
             let filter=saved.map {"id="+$0} ?? "name=^/"+configuration.name+"$"
             let listing=try runtime.command(["container","ls","--all","--no-trunc","--filter",filter,"--format","{{.ID}}"],timeout:2)
             guard listing.status==0 else { throw SandboxExecutionFailure.unavailable }
-            let text=String(decoding:listing.output,as:UTF8.self).trimmingCharacters(in:.whitespacesAndNewlines)
-            if text.isEmpty {
+            // The CLI combines stdout and stderr. Only a zero-byte listing
+            // can be absence; whitespace-only output is an invalid reply.
+            if listing.output.isEmpty {
                 if let saved {resourceReader.releaseAfterVerifiedAbsence(id:saved)}
                 lock.lock();identities.removeValue(forKey:job);lock.unlock()
                 return .observed(.absent)
             }
-            let ids=text.split(whereSeparator:{$0.isWhitespace}).map(String.init)
+            let ids=String(decoding:listing.output,as:UTF8.self).split(whereSeparator:{$0.isWhitespace}).map(String.init)
             guard ids.count==1,let id=ids.first else { throw SandboxExecutionFailure.identity }
             try fullID(id)
             guard saved==nil || saved==id else { throw SandboxExecutionFailure.identity }

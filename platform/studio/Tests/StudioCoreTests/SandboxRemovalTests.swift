@@ -57,5 +57,19 @@ func runSandboxRemovalTests()throws {
         while values.isEmpty && ProcessInfo.processInfo.systemUptime<until {values=executor.drain();Thread.sleep(forTimeInterval:0.001)}
         guard values.count==1,case .success(.observed(_,let code,_))=values[0].result,code==expected else {fatalError("FIO_SANDBOX_UNVERIFIED_EXIT_STATUS_"+label)}
     }
+    for marker in ["blank-listing","empty-listing"] {
+        let flag=URL(fileURLWithPath:home+"/"+marker)
+        try Data().write(to:flag)
+        try executor.submit(job:configuration.job,command:.inspect(configuration,id))
+        var values:[SandboxExecution]=[]
+        let until=ProcessInfo.processInfo.systemUptime+2
+        while values.isEmpty && ProcessInfo.processInfo.systemUptime<until {values=executor.drain();Thread.sleep(forTimeInterval:0.001)}
+        try FileManager.default.removeItem(at:flag)
+        guard values.count==1 else {fatalError("Missing exact-ID listing fixture response")}
+        switch (marker,values[0].result) {
+        case ("blank-listing",.failure(.identity)),("empty-listing",.success(.observed(.absent,_,_))):break
+        default:fatalError("Exact-ID listing whitespace was treated as absence")
+        }
+    }
     print("PASS: finite fake CLI proves running/malformed refusal, plain full-ID argv/race failure and completed-exit timestamp attenuation; no daemon/native terminal proof")
 }
