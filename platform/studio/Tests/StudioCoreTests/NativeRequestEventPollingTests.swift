@@ -42,8 +42,9 @@ func runNativeRequestEventPollingTests()throws {
     _=try journal.reserveJob(DurableJob(id:job,idempotency:UUID().uuidString.lowercased(),ownerHash:owner,requestHash:String(repeating:"d",count:64),created:1000))
     try journal.transitionJob(id:job,to:.running)
     try journal.claim(job:job,attempt:0,model:scope.canonicalModel,scope:scope);try journal.markDispatched(job:job,attempt:0)
-    func poll(_ poller:NativeLineagePoller)throws {
+    func poll(_ poller:NativeLineagePoller,between:()->Void={})throws {
         guard try poller.beginNext() else {throw JournalError.invalid}
+        between()
         let end=ProcessInfo.processInfo.systemUptime+2
         while ProcessInfo.processInfo.systemUptime<end {
             if try poller.drain(now:10001) {return}
@@ -91,6 +92,19 @@ func runNativeRequestEventPollingTests()throws {
           (history[0]["request"] as? [String:Any])?["state"] as? String=="unknown",
           (history[0]["metal"] as? [String:Any])?["retired"] as? UInt64==2,
           try journal.unresolvedCount()==1 else {throw JournalError.invalid}
+    poller.nativeSourceUnavailable()
+    try poll(poller)
+    guard try status()["native_request_events"]==nil,try journal.unresolvedCount()==1 else {
+        fatalError("Unavailable ingress source left callback diagnostics current")
+    }
+    poller.observeNativeInstance(scope.nativeEpoch)
+    try poll(poller,between:{
+        poller.nativeSourceUnavailable()
+        poller.observeNativeInstance(scope.nativeEpoch)
+    })
+    guard try status()["native_request_events"]==nil else {fatalError("Ingress revalidation republished an in-flight callback reply")}
+    try poll(poller)
+    guard try status()["native_request_events"] != nil else {fatalError("New correlated callback sample did not restore diagnostics")}
     poller.observeNativeInstance(String(repeating:"2",count:32))
     guard try status()["native_request_events"]==nil,try journal.unresolvedCount()==1 else {
         fatalError("Changed native instance left old callback observations visible or released ownership")

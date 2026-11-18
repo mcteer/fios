@@ -193,13 +193,13 @@ public enum ManagerRuntime {
             if let result=nativeQueue?.poll() {
                 switch result.value {
                 case .success(let value):
-                    nativeLineage?.observeNativeInstance(value.instance)
                     do {
                         guard nativeDiagnostics.completed(value,receivedAt:result.receivedAt,backendFences:result.backendFences,primaryActivity:result.primaryActivity,now:timestamp()) else {throw NativeControlError.invalid}
                         let command=try nativeMaintenance.receive(id:result.id,value:value)
+                        nativeLineage?.observeNativeInstance(value.instance)
                         if let command {enqueueNative(command)}
-                    } catch {nativeMaintenance.failed(id:result.id);nativeDiagnostics.failed()}
-                case .failure: nativeMaintenance.failed(id:result.id);nativeDiagnostics.failed()
+                    } catch {nativeMaintenance.failed(id:result.id);nativeDiagnostics.failed();nativeLineage?.nativeSourceUnavailable()}
+                case .failure: nativeMaintenance.failed(id:result.id);nativeDiagnostics.failed();nativeLineage?.nativeSourceUnavailable()
                 }
             }
             try nativeLineage?.drain(now:timestamp())

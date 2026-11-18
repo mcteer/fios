@@ -20,6 +20,7 @@ final class NativeLineagePoller:@unchecked Sendable {
         let request:NativeLineageRequest
         let sample:NativeRequestLineageSample?
         let events:NativeRequestEventsSample?
+        let eventSourceGeneration:UUID
     }
     private struct Key:Hashable {let job:String;let attempt:Int}
     private struct EventRecord {let request:NativeLineageRequest;let sample:NativeRequestEventsSample;let lineage:NativeRequestLineageSample?}
@@ -31,6 +32,8 @@ final class NativeLineagePoller:@unchecked Sendable {
     private var reply:Reply?
     private var lastPolled:Key?
     private var observedInstance:String?
+    private var sourceUnavailable=false
+    private var eventSourceGeneration=UUID()
     // Current diagnostics only; deliberately absent from journal checkpoints.
     private var eventSamples:[Key:EventRecord]=[:]
     private var eventWatermarks:[Key:(sequence:UInt64,capturedAt:Int64)]=[:]
@@ -40,9 +43,17 @@ final class NativeLineagePoller:@unchecked Sendable {
     // A peer-authenticated ingress observation is sufficient to invalidate
     // an old status view, not to prove that its request completed.
     func observeNativeInstance(_ instance:String) {
-        guard (try? NativeControlWire.instanceBytes(instance)) != nil,instance != observedInstance else {return}
+        guard (try? NativeControlWire.instanceBytes(instance)) != nil else {nativeSourceUnavailable();return}
+        sourceUnavailable=false
+        guard instance != observedInstance else {return}
         observedInstance=instance
+        eventSourceGeneration=UUID()
         eventSamples=eventSamples.filter {$0.value.request.scope.nativeEpoch==instance}
+    }
+    func nativeSourceUnavailable() {
+        if !sourceUnavailable {eventSourceGeneration=UUID()}
+        sourceUnavailable=true
+        eventSamples.removeAll()
     }
     @discardableResult func beginNext()throws->Bool {
         lock.lock();let available = !busy && reply==nil;lock.unlock()
@@ -59,12 +70,13 @@ final class NativeLineagePoller:@unchecked Sendable {
         } ?? first
         let correlation=try request.scope.nativeRequestCorrelationID(job:request.job,attempt:request.attempt)
         let eventSource=source as? any NativeRequestEventsReading
-        let collectEvents=eventSource?.observesRequestEvents == true && (observedInstance==nil || observedInstance==request.scope.nativeEpoch)
+        let collectEvents = !sourceUnavailable && eventSource?.observesRequestEvents == true && (observedInstance==nil || observedInstance==request.scope.nativeEpoch)
         let originalRoot=collectEvents ? try journal.originalNativeRoot(job:request.job,attempt:request.attempt,scope:request.scope,peer:peer):nil
         lock.lock()
         guard !busy,reply==nil else {lock.unlock();return false}
         busy=true;lock.unlock()
         lastPolled=Key(job:request.job,attempt:request.attempt)
+        let generation=eventSourceGeneration
         Thread.detachNewThread { [self] in
             let sample=try? source.lineage(instance:request.scope.nativeEpoch,correlationID:correlation)
             let root=originalRoot ?? sample.flatMap {$0.lineage.found ? $0.lineage.rootSequence:nil}
@@ -72,7 +84,7 @@ final class NativeLineagePoller:@unchecked Sendable {
             if collectEvents,let root,let eventSource {
                 events=try? eventSource.requestEvents(instance:request.scope.nativeEpoch,correlationID:correlation,rootSequence:root)
             }else {events=nil}
-            lock.lock();reply=Reply(request:request,sample:sample,events:events);busy=false;lock.unlock()
+            lock.lock();reply=Reply(request:request,sample:sample,events:events,eventSourceGeneration:generation);busy=false;lock.unlock()
         }
         return true
     }
@@ -89,7 +101,7 @@ final class NativeLineagePoller:@unchecked Sendable {
               try current.scope.encoded()==request.scope.encoded() else {return true}
         let observation=try journal.observeLineage(job:request.job,attempt:request.attempt,scope:request.scope,
             peer:peer,sample:completed.sample,now:now)
-        if let sample=completed.events {
+        if completed.eventSourceGeneration==eventSourceGeneration,let sample=completed.events {
             if let accepted=eventWatermarks[key],
                sample.events.sampleSequence<=accepted.sequence || sample.events.sampledAt<accepted.capturedAt {return true}
             let lineage:NativeRequestLineageSample?
@@ -109,7 +121,7 @@ final class NativeLineagePoller:@unchecked Sendable {
     func requestEvents(job:String,attempt:Int,now:Int64)throws->NativeRequestEventsSample? {
         guard let record=eventSamples[Key(job:job,attempt:attempt)] else {return nil}
         let request=record.request,sample=record.sample,value=sample.events
-        guard observedInstance==nil || observedInstance==request.scope.nativeEpoch,
+        guard !sourceUnavailable,observedInstance==nil || observedInstance==request.scope.nativeEpoch,
               let current=try journal.inferenceScope(job:job,attempt:attempt),
               [.dispatched,.uncertain].contains(current.state),try current.scope.encoded()==request.scope.encoded(),
               let root=try journal.originalNativeRoot(job:job,attempt:attempt,scope:request.scope,peer:peer),
