@@ -9,9 +9,10 @@ private final class NormalRequestEventSource:NativeRequestEventsReading,@uncheck
     private var reads=0
     private let replacementRoot:UInt64?
     private let eventCapture:Int64
+    private let replayAfterOutage:Bool
     private var lastRoot:UInt64?
-    init(peer:NativeControlPeer,enabled:Bool,replacementRoot:UInt64?=nil,eventCapture:Int64=10000) {
-        self.peer=peer;observesRequestEvents=enabled;self.replacementRoot=replacementRoot;self.eventCapture=eventCapture
+    init(peer:NativeControlPeer,enabled:Bool,replacementRoot:UInt64?=nil,eventCapture:Int64=10000,replayAfterOutage:Bool=false) {
+        self.peer=peer;observesRequestEvents=enabled;self.replacementRoot=replacementRoot;self.eventCapture=eventCapture;self.replayAfterOutage=replayAfterOutage
     }
     var eventReads:Int {lock.lock();defer {lock.unlock()};return reads}
     var lastEventRoot:UInt64? {lock.lock();defer {lock.unlock()};return lastRoot}
@@ -25,7 +26,7 @@ private final class NormalRequestEventSource:NativeRequestEventsReading,@uncheck
         if next==3 {throw NativeControlError.unavailable}
         let counts=NativeRequestEventCounts(sequence:UInt64(next),originated:2,retired:next==1 ? 1:2,pending:next==1 ? 1:0,historyRetained:true,uncertain:false)
         return NativeRequestEventsSample(peer:peer,requestedAt:10000,receivedAt:10001,
-            events:NativeRequestEvents(instance:instance,correlationID:correlationID,rootSequence:rootSequence,sampleSequence:UInt64(next+1),sampledAt:eventCapture,
+            events:NativeRequestEvents(instance:instance,correlationID:correlationID,rootSequence:rootSequence,sampleSequence:replayAfterOutage && next==4 ? 3 : UInt64(next+1),sampledAt:eventCapture,
                 identityKnown:true,sdkInitialized:true,sourceUncertain:false,host:nil,metal:counts))
     }
 }
@@ -50,7 +51,7 @@ func runNativeRequestEventPollingTests()throws {
         }
         throw NativeControlError.deadline
     }
-    let source=NormalRequestEventSource(peer:peer,enabled:true),poller=NativeLineagePoller(journal:journal,source:source)
+    let source=NormalRequestEventSource(peer:peer,enabled:true,replayAfterOutage:true),poller=NativeLineagePoller(journal:journal,source:source)
     let tasks=TaskController(journal:journal,broker:ModelBroker(journal:journal))
     let jobs=JobController(journal:journal,executor:UnavailableSandboxRuntime())
     let artifacts=AsyncArtifacts(store:try ArtifactStore(directory:directory.appendingPathComponent("exports"),availableBytes:{50<<30}))
@@ -82,6 +83,8 @@ func runNativeRequestEventPollingTests()throws {
     guard try poller.requestEvents(job:job,attempt:0,now:10001)==nil,try status()["native_request_events"]==nil,try journal.unresolvedCount()==1 else {throw JournalError.invalid}
     // After native lineage disappears, retained callback history stays separate
     // from an unknown current native request phase.
+    try poll(poller)
+    guard try status()["native_request_events"]==nil else {fatalError("Native callback observation replay survived a source outage")}
     try poll(poller)
     let closed=try status()
     guard let history=closed["native_request_events"] as? [[String:Any]],history.count==1,
