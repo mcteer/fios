@@ -305,5 +305,18 @@ func runCleanupStatusRecoveryTests() throws {
           commands.filter({if case .create=$0 {return true};return false}).count==1,
           !commands.contains(where:{if case .start=$0 {return true};return false}),
           try journal.unresolvedCount()==1,try journal.uncertainCount()==1 else {fatalError("Late sandbox was replayed, started, or released independent model uncertainty")}
-    print("PASS: delayed runtime completion and lost create reply retain cleanup custody until exact late-owned removal")
+    let unissuedID=UUID().uuidString.lowercased()
+    let unissued=try DurableJob(id:unissuedID,idempotency:UUID().uuidString.lowercased(),ownerHash:job.ownerHash,requestHash:job.requestHash,created:101000)
+    let unissuedConfig=try SandboxConfiguration(job:unissuedID,nonce:lateConfig.nonce,image:configuration.image,memory:configuration.memory,cpus:1)
+    _=try journal.reserveSandbox(job:unissued,configuration:unissuedConfig)
+    try admission.reserve(job:unissuedID,memory:unissuedConfig.memory,cpus:1,sample:sample(101000),now:101000)
+    try journal.transitionJob(id:unissuedID,to:.revoking,now:101000)
+    let beforeLocal=runtime.commands.count
+    try tick(101000)
+    try tick(101500)
+    guard runtime.commands.count==beforeLocal else {fatalError("Unissued reservation dispatched a cleanup command")}
+    // The ordinary manager tick released the local reservation, so a new
+    // in-memory reservation for the same key no longer conflicts.
+    try admission.reserve(job:unissuedID,memory:unissuedConfig.memory,cpus:1,sample:sample(101500),now:101500)
+    print("PASS: delayed and never-issued runtime cleanup preserve exact custody and reservation release")
 }

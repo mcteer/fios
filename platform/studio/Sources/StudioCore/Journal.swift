@@ -848,6 +848,11 @@ public final class Journal {
             try writeSandbox(proposed)
         }
     }
+    func confirmSandboxNeverIssued(job:String) throws {
+        guard var record=try sandboxRecords().first(where:{$0.configuration.job==job}),
+              !record.createIssued,!record.startIssued,record.runtimeID==nil else {throw JournalError.conflict}
+        record.removalProven=true;try saveSandbox(record)
+    }
     // Called only by a trusted runtime adapter after a successful absence
     // observation. An unknown create with no returned ID can still materialize;
     // a snapshot of absence alone is NOT proof its daemon action was cancelled.

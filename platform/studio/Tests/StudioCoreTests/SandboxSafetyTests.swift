@@ -46,11 +46,32 @@ func runSandboxSafetyTests() throws {
     lifecycle=nil;journal=nil
     journal=try Journal(directory:directory);lifecycle=SandboxLifecycle(journal:journal!)
     guard case .inspect?=try lifecycle!.next(job:lost.id,now:1010,resourcesSafe:true) else {fatalError("Recovery replayed uncertain create")}
+    do {
+        try journal!.confirmSandboxNeverIssued(job:lost.id)
+        fatalError("Precommitted create qualified for local rollback")
+    } catch JournalError.conflict {}
     _=try lifecycle!.observed(job:lost.id,presence:.absent,now:1011,resourcesSafe:true)
     guard try journal!.jobs().first(where:{$0.id==lost.id})?.state != .removed else {fatalError("Sampled absence cleared uncertain create")}
     let lateID=String(repeating:"1",count:64)
     let latePresence=SandboxPresence.present(id:lateID,name:"/"+late.name,image:late.image,nonce:late.nonce,running:false)
     guard case .remove(_,let recovered)?=try lifecycle!.observed(job:lost.id,presence:latePresence,now:1012,resourcesSafe:true),recovered==lateID else {fatalError("Recovered late create started or escaped cleanup")}
     _=try lifecycle!.observed(job:lost.id,presence:.absent,now:1013,resourcesSafe:true)
+    let (unissued,_)=try reserve()
+    try lifecycle!.cancelled(job:unissued.id,now:1014)
+    guard try lifecycle!.next(job:unissued.id,now:1015,resourcesSafe:true)==nil,
+          try journal!.jobs().first(where:{$0.id==unissued.id})?.state == .removed,
+          let record=try journal!.sandboxRecords().first(where:{$0.configuration.job==unissued.id}),
+          !record.createIssued,record.runtimeID==nil,record.removalProven else {
+        fatalError("Unissued sandbox cancellation required a daemon query")
+    }
+    let (interrupted,_)=try reserve()
+    try lifecycle!.cancelled(job:interrupted.id,now:1016)
+    try journal!.confirmSandboxNeverIssued(job:interrupted.id)
+    lifecycle=nil;journal=nil
+    journal=try Journal(directory:directory);lifecycle=SandboxLifecycle(journal:journal!)
+    guard try lifecycle!.next(job:interrupted.id,now:1017,resourcesSafe:false)==nil,
+          try journal!.jobs().first(where:{$0.id==interrupted.id})?.state == .removed else {
+        fatalError("Restart after local proof required a daemon query")
+    }
     print("PASS: synthetic sentinel/forged identity refusal, lost-stop graceful retry and durable lost-create restart without replay or sampled-absence release")
 }

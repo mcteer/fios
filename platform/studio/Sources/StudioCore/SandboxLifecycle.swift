@@ -39,6 +39,14 @@ final class SandboxLifecycle {
             record.createIssued=true;try journal.saveSandbox(record)
             return .create(record.configuration)
         }
+        if job.state == .revoking,!record.createIssued {
+            // All create dispatches require a durable intent first, including
+            // capacity-deferred creates. No daemon proof is needed only when
+            // that intent was never written.
+            try journal.confirmSandboxNeverIssued(job:id)
+            try journal.transitionJob(id:id,to:.removed,now:now)
+            return nil
+        }
         return .inspect(record.configuration,record.runtimeID)
     }
     func created(job id:String,runtimeID:String) throws {
