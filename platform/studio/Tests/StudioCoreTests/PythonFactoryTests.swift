@@ -626,6 +626,15 @@ private func runHandoffPreparationFailureTests(factory:PythonWorkerFactory)throw
             guard sqlite3_open_v2(directory.appendingPathComponent("state.sqlite").path,&blocker,SQLITE_OPEN_READWRITE|SQLITE_OPEN_FULLMUTEX,nil)==SQLITE_OK,
                   sqlite3_exec(blocker,"BEGIN IMMEDIATE",nil,nil,nil)==SQLITE_OK else {throw JournalError.storage}
         }
+        if scenario.storageFailure && !scenario.lineageUnavailable {
+            // Lose the source while the real journal writer is blocked. A
+            // later valid source must not resurrect the pending worker start.
+            _=try broker.poll(now:HostResources.nowMilliseconds(),uptime:Int64(ProcessInfo.processInfo.systemUptime*1000),admission:&admission,source:{_ in nil})
+            guard try journal.jobs().first(where:{$0.id==id})?.state == .running,
+                  broker.active(job:id),try journal.workerGrants().isEmpty else {
+                fatalError("Fixture did not retain pending state across failed source-loss revoke")
+            }
+        }
         source.release.signal()
         if scenario.storageFailure {
             guard source.lineageReady.wait(timeout:.now()+1) == .success else {throw RuntimeError.deadline}
