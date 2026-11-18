@@ -21,6 +21,13 @@ enum SandboxExitStatus {
     }
 }
 
+// The reviewed endpoint authenticates a daemon, not continuity of its
+// container storage. Keep installed absence fail-closed until a durable
+// storage namespace can be bound to the original create intent.
+enum SandboxAbsencePolicy {
+    static func permits(endpoint:RuntimeEndpointPolicy?)->Bool {endpoint==nil}
+}
+
 enum SandboxExecutionValue:Sendable { case created(String),observed(SandboxPresence,exitCode:Int? = nil,oom:Bool = false),acknowledged }
 enum SandboxExecutionFailure:Error,Sendable { case unavailable,identity,unapprovedImage }
 struct SandboxExecution:Sendable {
@@ -124,6 +131,7 @@ final class SandboxExecutor:SandboxExecuting,@unchecked Sendable {
             // The CLI combines stdout and stderr. Only a zero-byte listing
             // can be absence; whitespace-only output is an invalid reply.
             if listing.output.isEmpty {
+                guard SandboxAbsencePolicy.permits(endpoint:runtime.endpointPolicy) else {throw SandboxExecutionFailure.unavailable}
                 if let saved {resourceReader.releaseAfterVerifiedAbsence(id:saved)}
                 lock.lock();identities.removeValue(forKey:job);lock.unlock()
                 return .observed(.absent)

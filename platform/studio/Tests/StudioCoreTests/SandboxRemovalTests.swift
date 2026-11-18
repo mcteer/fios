@@ -57,6 +57,10 @@ func runSandboxRemovalTests()throws {
         while values.isEmpty && ProcessInfo.processInfo.systemUptime<until {values=executor.drain();Thread.sleep(forTimeInterval:0.001)}
         guard values.count==1,case .success(.observed(_,let code,_))=values[0].result,code==expected else {fatalError("FIO_SANDBOX_UNVERIFIED_EXIT_STATUS_"+label)}
     }
+    let enrolledShape=try RuntimeEndpointPolicy(home:home,uid:geteuid())
+    guard !SandboxAbsencePolicy.permits(endpoint:enrolledShape),SandboxAbsencePolicy.permits(endpoint:nil) else {
+        fatalError("Runtime endpoint metadata was treated as durable storage continuity")
+    }
     for marker in ["blank-listing","empty-listing"] {
         let flag=URL(fileURLWithPath:home+"/"+marker)
         try Data().write(to:flag)
