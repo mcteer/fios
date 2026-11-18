@@ -183,6 +183,10 @@ func runPythonFactoryTests() throws {
     try journal.transitionJob(id:scoped,to:.removed)
     progress("broker rounds reaped")
     let controller=TaskController(journal:journal,broker:broker),idempotency=UUID().uuidString.lowercased()
+    do {
+        try broker.validate(context:[ModelText(role:"assistant",content:""),ModelText(role:"user",content:"fixture only")])
+        fatalError("Broker accepted empty assistant history rejected by Python")
+    } catch ControlError.invalid_request {}
     let modelContext=[ModelText(role:"user",content:"fixture only")]
     let created=try controller.createModelJob(owner:owner,idempotency:idempotency,context:modelContext,binding:freshBinding(),nativeCapacityProven:true,sample:resources(time),admission:&admission,now:time)
     guard try controller.createModelJob(owner:owner,idempotency:idempotency,context:modelContext,binding:freshBinding(),nativeCapacityProven:true,sample:resources(time),admission:&admission,now:time).id==created.id else { fatalError("Active model job idempotency diverged") }

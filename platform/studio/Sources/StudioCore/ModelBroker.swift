@@ -130,7 +130,7 @@ final class ModelBroker {
     func validate(context:[ModelText]) throws {
         guard let factory else {throw PolicyError.invalidObservation}
         guard !context.isEmpty,context.count<=1024,context.last?.role=="user",
-              context.allSatisfy({["user","assistant"].contains($0.role)}),
+              context.allSatisfy({$0.role=="user" || ($0.role=="assistant" && !$0.content.isEmpty)}),
               context.reduce(factory.metadata.policy_input_units,{$0+$1.content.utf16.count})<=128000 else { throw ControlError.invalid_request }
     }
     // The caller has already durably reserved this exact plan. This only
