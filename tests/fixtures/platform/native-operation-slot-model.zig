@@ -25,6 +25,13 @@ fn Slots(comptime capacity: usize, comptime Generation: type) type {
             return slot.live and slot.generation == handle.generation;
         }
 
+        // In a tracker this check and allocation belong in one critical
+        // section. A failed reservation never consumes the live parent.
+        fn reserveChild(self: *Self, parent: Handle) ?Handle {
+            if (!self.validate(parent)) return null;
+            return self.allocate();
+        }
+
         fn release(self: *Self, handle: Handle) bool {
             if (!self.validate(handle)) return false;
             self.slots[handle.index].live = false;
@@ -51,6 +58,21 @@ test "generation saturation retires one slot without affecting another" {
     try std.testing.expect(table.release(held));
     const sibling = table.allocate().?;
     try std.testing.expect(sibling.index == held.index);
+}
+
+test "worker acknowledgement cannot invalidate a reserved callback" {
+    var table = Slots(2, u64){ .epoch = 1 };
+    const worker = table.allocate().?;
+    const callback = table.reserveChild(worker).?;
+    try std.testing.expect(table.reserveChild(worker) == null);
+    try std.testing.expect(table.release(worker));
+    try std.testing.expect(table.reserveChild(worker) == null);
+    const destructor = table.reserveChild(callback).?;
+    try std.testing.expect(destructor.index == worker.index);
+    try std.testing.expect(destructor.generation != worker.generation);
+    try std.testing.expect(table.release(callback));
+    try std.testing.expect(table.validate(destructor));
+    try std.testing.expect(table.release(destructor));
 }
 
 test "previous epoch cannot release coincident live slot" {
