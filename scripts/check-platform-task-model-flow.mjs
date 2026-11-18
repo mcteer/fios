@@ -6,6 +6,7 @@ import {mkdtempSync,mkdirSync,readdirSync,copyFileSync,chmodSync,readFileSync,wr
 import {join,resolve} from 'node:path';
 import {randomUUID,randomBytes,createHash} from 'node:crypto';
 import {setTimeout as delay} from 'node:timers/promises';
+import {DatabaseSync} from 'node:sqlite';
 assert.deepEqual(process.argv.slice(2),['--isolated']);assert.equal(process.platform,'darwin');
 const root=resolve(import.meta.dirname,'..'),directory=mkdtempSync('/private/tmp/f9-manager-cli-');
 const source=join(directory,'Main.swift'),binary=join(directory,'manager'),standin=join(directory,'runtime-unused');
@@ -25,9 +26,11 @@ async function modelCase(scenario){
 const caseDirectory=join(directory,scenario);mkdirSync(caseDirectory,{mode:0o700});
 const state=join(caseDirectory,'state'),nativeState=join(caseDirectory,'native'),children=[];
 const token=randomBytes(32).toString('base64');let mock,manager,posts=0,port,streamFailure;
-function task(operation,payload){
+function task(operation,payload,expectedError){
  const id=randomUUID(),result=spawnSync(cli,['--state',state,'task'],{cwd:root,encoding:'utf8',timeout:3000,input:JSON.stringify({version:1,id,operation,payload:{...payload,owner:token}})});
- assert.equal(result.status,0,'Normal CLI task request failed');const reply=JSON.parse(result.stdout);assert.equal(reply.ok,true);assert.equal(reply.id,id);assert(reply.result);return reply.result;
+ assert.equal(result.status,expectedError?1:0,'Unexpected CLI task exit');const reply=JSON.parse(result.stdout);assert.equal(reply.id,id);
+ if(expectedError){assert.equal(reply.ok,false);assert.equal(reply.error,expectedError);return;}
+ assert.equal(reply.ok,true);assert(reply.result);return reply.result;
 }
 async function replaceManager(previousEpoch){
  manager.kill('SIGTERM');await until(()=>exited(manager),5000);
@@ -53,7 +56,9 @@ try {
   content='x'.repeat(32768-prefix-2)+'👋漢字e\u0301\n';
   writeFileSync(join(nativeState,'expected-user-text.sha256'),sha(Buffer.from(content)),{mode:0o600});
  }
- const data=Buffer.from(JSON.stringify([{role:'user',content}]));
+ const messages=[{role:'user',content}];
+ if(scenario==='invalid_history')messages.unshift({role:'assistant',content:''});
+ const data=Buffer.from(JSON.stringify(messages));
  if(scenario==='unicode'){assert.equal(data[32766],0xf0);assert.equal(data[32768],0x91);}
  const manifest={phase:'begin',idempotency:randomUUID(),kind:'model',length:data.length,sha256:sha(data),lifetime:60000,model:'fixture/model',image:null,memory:0,cpus:0};
  const created=task('job.create',manifest);
@@ -70,6 +75,18 @@ try {
   const acknowledgement=task('job.create',{phase:'end',job});assert.equal(acknowledgement.state,'removed');assert.equal(acknowledgement.lease.deadline_at,deadline);
   await delay(50);assert.equal(posts,0);assert.equal(JSON.parse(command(cli,['--state',state,'status'],3000)).worker_reservations,0);
   return {scenario,restart_checked:true,input_bytes:data.length,input_chunks:chunks,partial_upload:true,replay_status_only:true,state:restored.state,mock_model_posts:posts,worker_slots_after_completion:0};
+ }
+ if(scenario==='invalid_history'){
+  task('job.create',{phase:'end',job},'invalid_request');
+  const final=await until(()=>{const s=task('job.status',{job});return s.state==='removed' ? s:null;});
+  assert.equal(final.unresolved_managed_requests,0);
+  assert.equal(JSON.parse(command(cli,['--state',state,'status'],3000)).worker_reservations,0);
+  assert.equal(posts,0);
+  manager.kill('SIGTERM');await until(()=>exited(manager));assert.equal(manager.exitCode,0);
+  const db=new DatabaseSync(join(state,'state.sqlite'),{readOnly:true});
+  try {assert.equal(db.prepare('SELECT count(*) AS count FROM inference WHERE job=?').get(job).count,0);}
+  finally {db.close();}
+  return {scenario,state:final.state,mock_model_posts:posts,worker_attempts:0,worker_slots_after_completion:0};
  }
  task('job.create',{phase:'end',job});
  let wasRunning=false;
@@ -104,7 +121,7 @@ try {
 }
 }
 const records=[];
-for(const scenario of ['complete','cancel','unavailable','upload_restart','unicode'])records.push(await modelCase(scenario));
+for(const scenario of ['complete','cancel','unavailable','upload_restart','unicode','invalid_history'])records.push(await modelCase(scenario));
 const receipt={scope:'normal_cli_model_job_completion_cancellation_and_service_failure',records,real_model_requests:0,runtime_actions:0,native_acceptance:false,cli_sha256:sha(readFileSync(cli)),manager_sha256:sha(readFileSync(binary))};
 writeFileSync(join(directory,'receipt.json'),JSON.stringify(receipt,null,2)+'\n');
 console.log(JSON.stringify({ok:true,directory,...receipt}));
