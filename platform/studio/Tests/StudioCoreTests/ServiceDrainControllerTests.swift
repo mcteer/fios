@@ -74,6 +74,15 @@ func runServiceDrainControllerTests()throws {
           try journal.uncertainCount()==2,try journal.desired(service:"mlx")=="maintenance" else {
         fatalError("Drain expanded to include a new durable native attempt")
     }
+    // The original controller routes returned IDs to real TaskController cancellation.
+    // A complete but externally busy source must close admission without touching the job.
+    cache.publish(try snapshot(jobs:[queued],requests:[other,newerRequest],stamp:1004,external:true),for:.mlx)
+    let external=try controller.begin(service:.mlx,role:.operator,now:1004,uptime:61003)
+    guard external.state == .refused(.activeWork),external.revokeOwned.isEmpty,
+          try journal.jobs().first(where:{$0.id==queued})?.state == .running,
+          try journal.uncertainCount()==2,try journal.desired(service:"mlx")=="maintenance" else {
+        fatalError("Controller revoked durable owned work after external refusal")
+    }
     let readyJournal=try Journal(directory:directory.appendingPathComponent("ready")),readyCache=ServiceDrainObservationCache()
     let ready=try ServiceDrainController(journal:readyJournal,tasks:TaskController(journal:readyJournal,broker:ModelBroker(journal:readyJournal)),managerEpoch:epoch,observations:readyCache)
     readyCache.publish(try snapshot(jobs:[],requests:[],idle:true),for:.mlx)
