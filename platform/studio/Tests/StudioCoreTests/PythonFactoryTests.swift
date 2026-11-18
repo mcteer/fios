@@ -143,9 +143,17 @@ func runPythonFactoryTests() throws {
     let broker=ModelBroker(journal:journal,factory:factory),owner=String(repeating:"a",count:64),scoped=UUID().uuidString.lowercased()
     _=try journal.reserveJob(DurableJob(id:scoped,idempotency:UUID().uuidString.lowercased(),ownerHash:owner,requestHash:String(repeating:"b",count:64),created:HostResources.nowMilliseconds()))
     try journal.transitionJob(id:scoped,to:.running)
-    func freshBinding()->WorkerDispatchBinding {
-        let state=NativeSnapshot(host:"fixture-host",endpointHash:hash,nativeEpoch:"native-fixture-one",sequence:1,sampledAt:HostResources.nowMilliseconds(),allClientLifecycleCoverage:true,residentModel:"fixture/idle-other",outstandingOwners:0,loading:false)
+    func freshBinding(nativeEpoch:String="native-fixture-one",sequence:UInt64=1,stamp:Int64=HostResources.nowMilliseconds())->WorkerDispatchBinding {
+        let state=NativeSnapshot(host:"fixture-host",endpointHash:hash,nativeEpoch:nativeEpoch,sequence:sequence,sampledAt:stamp,allClientLifecycleCoverage:true,residentModel:"fixture/idle-other",outstandingOwners:0,loading:false)
         return WorkerDispatchBinding(baseURL:base,guardPath:directory.appendingPathComponent("observe.sock").path,host:"fixture-host",profileHash:String(repeating:"f",count:64),managerEpoch:epoch,canonicalModel:"fixture/model",nativeModel:"fixture/model",nativeSnapshot:state,nativeCompatibilityAccepted:true,apiKey:nil)
+    }
+    let uploadOriginal=freshBinding(sequence:2,stamp:1000)
+    guard TaskCommands.retainsUploadBinding(freshBinding(sequence:2,stamp:1000),original:uploadOriginal),
+          TaskCommands.retainsUploadBinding(freshBinding(sequence:3,stamp:1100),original:uploadOriginal),
+          !TaskCommands.retainsUploadBinding(freshBinding(nativeEpoch:"different",sequence:3,stamp:1100),original:uploadOriginal),
+          !TaskCommands.retainsUploadBinding(freshBinding(sequence:1,stamp:1100),original:uploadOriginal),
+          !TaskCommands.retainsUploadBinding(freshBinding(sequence:3,stamp:999),original:uploadOriginal) else {
+        fatalError("Upload finalization crossed native epoch or went backwards")
     }
     func resources(_ now:Int64)->ResourceSample { ResourceSample(sampledAt:now,physical:128<<30,available:64<<30,vmAvailable:nil,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal) }
     var admission=AdmissionPolicy()

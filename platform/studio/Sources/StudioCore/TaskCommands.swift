@@ -9,6 +9,11 @@ enum TaskCommandError:String,Error {case native_unsupported,invalid_request,unau
 // existing grant/job, never a management role. Trusted policy supplies images,
 // bindings, native proof and activation; none is read from task data.
 final class TaskCommands {
+    static func retainsUploadBinding(_ current:WorkerDispatchBinding,original:WorkerDispatchBinding)->Bool {
+        ModelBroker.scopeIdentity(current)==ModelBroker.scopeIdentity(original) &&
+        current.nativeSnapshot.sequence>=original.nativeSnapshot.sequence &&
+        current.nativeSnapshot.sampledAt>=original.nativeSnapshot.sampledAt
+    }
     private struct Upload {
         let owner:String,hash:String,kind:String
         let binding:WorkerDispatchBinding?
@@ -171,9 +176,8 @@ final class TaskCommands {
                     } else {
                         try StrictJSON.validate(data,maximum:4<<20)
                         guard let context=try JSONSerialization.jsonObject(with:data) as? [[String:Any]],context.count<=1024,
-                              let canonical=upload.binding?.canonicalModel,let current=binding(canonical),
-                              current.profileHash==upload.binding?.profileHash,WireScalar.exactModel(current.nativeModel,upload.binding?.nativeModel),
-                              current.host==upload.binding?.host,current.nativeSnapshot.endpointHash==upload.binding?.nativeSnapshot.endpointHash else {throw TaskCommandError.invalid_request}
+                              let original=upload.binding,let current=binding(original.canonicalModel),
+                              Self.retainsUploadBinding(current,original:original) else {throw TaskCommandError.invalid_request}
                         let messages=try context.map {item -> ModelText in
                             guard Set(item.keys)==Set(["role","content"]),let role=item["role"] as? String,let content=item["content"] as? String else {throw TaskCommandError.invalid_request}
                             return ModelText(role:role,content:content)
