@@ -160,14 +160,16 @@ final class ModelBroker {
         let ordinal=try journal.requestCount(job:id)
         guard ordinal<4 else { throw JournalError.trackingLimit }
         let key="model:\(id):\(ordinal)"
+        // Encode the worker packet before reserving local capacity or claiming
+        // a durable attempt. No effect is possible if encoding fails here.
+        let packet=try JSONSerialization.data(withJSONObject:["v":1,"type":"run","job_id":id,"attempt":ordinal,
+            "model":binding.nativeModel,"epoch":binding.managerEpoch,"endpoint_hash":binding.nativeSnapshot.endpointHash,
+            "expires_at":min(now+5000,owned.lease.expires),"context":context.map {["role":$0.role,"content":$0.content]}])
         // Reservation precedes both durable permission and actual process spawn.
         try admission.reserveWorker(key:key,sample:sample,now:now)
         do { try journal.claim(job:id,attempt:ordinal,model:binding.canonicalModel,requestID:requestID,scope:binding.inferenceScope()) }
         catch { admission.releaseWorkerAfterReap(key:key);throw error } // No process was spawned.
         scopes[id]=scope
-        let packet=try JSONSerialization.data(withJSONObject:["v":1,"type":"run","job_id":id,"attempt":ordinal,
-            "model":binding.nativeModel,"epoch":binding.managerEpoch,"endpoint_hash":binding.nativeSnapshot.endpointHash,
-            "expires_at":min(now+5000,owned.lease.expires),"context":context.map {["role":$0.role,"content":$0.content]}])
         do {
             let plan=try journal.planWorkerStart(job:id,attempt:ordinal)
             let started=Int64(ProcessInfo.processInfo.systemUptime*1000)
