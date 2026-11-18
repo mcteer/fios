@@ -10,6 +10,8 @@ import {resolve,join} from 'node:path';
 import {createHash} from 'node:crypto';
 import {verifyNativeReview} from './lib/platform-native-review.mjs';
 const args=process.argv.slice(2);
+const ownedExit=args.at(-1)==='--owned-exit';
+if(ownedExit)args.pop();
 assert(process.platform==='darwin'&&process.getuid()>0&&args.length===5&&args[0]==='--isolated'&&args[1]==='--release'&&args[3]==='--sha256');
 const review=verifyNativeReview(args[2],args[4]),root=resolve(import.meta.dirname,'..'),directory=mkdtempSync('/private/tmp/fios-009-serving-runtime-native-');
 const hash=b=>createHash('sha256').update(b).digest('hex');
@@ -33,7 +35,7 @@ for(const mode of ['debug','release']){
  const custodyState=mkdtempSync('/private/tmp/f9-mlx-supervisor-'),managerDirectory=join(directory,mode+'-custody-manager');
  mkdirSync(join(custodyState,'models'),{mode:0o700});mkdirSync(managerDirectory,{mode:0o700});const managerImage=join(managerDirectory,'studio-manager');copyFileSync(binary,managerImage);
  const custodyLog=openSync(join(custodyState,'fixture-supervisor.log'),'wx',0o600);
- const custodian=spawn('/usr/bin/sandbox-exec',['-p',policy,binary,'custody-supervisor',review.binary,hash(readFileSync(review.binary)),custodyState,hash(readFileSync(binary)),managerImage,String(port)],{stdio:['ignore',custodyLog,custodyLog]});closeSync(custodyLog);
+ const custodian=spawn('/usr/bin/sandbox-exec',['-p',policy,binary,'custody-supervisor',review.binary,hash(readFileSync(review.binary)),custodyState,hash(readFileSync(binary)),managerImage,String(port),...(ownedExit?['owned-exit']:[])],{stdio:['ignore',custodyLog,custodyLog]});closeSync(custodyLog);
  const custodyExited=()=>custodian.exitCode!==null||custodian.signalCode!==null;
  function custodyStatus(){const r=spawnSync(binary,['observe',custodyState],{encoding:'utf8',timeout:2500});const s=r.status===0?JSON.parse(r.stdout):null;if(s)writeFileSync(join(custodyState,'last-status.json'),JSON.stringify(s)+'\n',{mode:0o600});return s;}
  function custodyJSON(name){try{return JSON.parse(readFileSync(join(custodyState,name),'utf8'));}catch{return null;}}
@@ -50,7 +52,26 @@ for(const mode of ['debug','release']){
   await delay(4200);assert.equal(custodyStatus().services.mlx.recovery.starts_in_window,1);
   assert.equal(custodyJSON('fixture-native-health.json').pid,original.pid);
   unlinkSync(join(custodyState,'fixture-loading'));await until(()=>custodyStatus()?.services?.mlx?.observed==='ready');
-  writeFileSync(join(custodyState,'fixture-unavailable'),'unavailable original private identity',{mode:0o600,flag:'wx'});
+  if(ownedExit){
+   const held=JSON.parse(run(binary,['control',custodyState,'maintenance'],2500));
+   assert.equal(held.applied,false);
+   await until(()=>custodyStatus()?.services?.mlx?.desired==='maintenance');
+   writeFileSync(join(custodyState,'fixture-native-exit'),'exit the original private child',{mode:0o600,flag:'wx'});
+   await until(()=>custodyJSON('fixture-native-exit-result.json')?.exited===true&&custodyJSON('fixture-native-health.json')?.state==='absent');
+   const exitResult=custodyJSON('fixture-native-exit-result.json');
+   assert.equal(exitResult.pid,original.pid);
+   assert.equal(exitResult.process_start,original.process_start);
+   await delay(1000);
+   const stillHeld=custodyStatus();
+   assert.equal(stillHeld?.services?.mlx?.desired,'maintenance');
+   assert.equal(stillHeld?.services?.mlx?.recovery?.starts_in_window,1);
+   assert.equal(stillHeld?.unresolved_requests,1);
+   assert.equal(custodyJSON('fixture-native-health.json')?.state,'absent');
+   const running=JSON.parse(run(binary,['control',custodyState,'running'],2500));
+   assert.equal(running.applied,false);
+  } else {
+   writeFileSync(join(custodyState,'fixture-unavailable'),'unavailable original private identity',{mode:0o600,flag:'wx'});
+  }
   const recovered=await until(()=>{assert(!custodyExited());const s=custodyStatus(),mlx=s?.services?.mlx;return mlx?.observed==='ready'&&!mlx.stop_pending&&!mlx.launch_pending&&mlx.recovery.starts_in_window===2?s:null;},18000);
   const replacement=custodyJSON('fixture-native-health.json');assert(replacement.pid!==original.pid||replacement.process_start!==original.process_start);assert.notEqual(replacement.launch_id,original.launch_id);assert.equal(recovered.unresolved_requests,1);
   const requested=JSON.parse(run(binary,['control',custodyState,'stopped'],2500));assert.equal(requested.applied,false);
@@ -58,8 +79,8 @@ for(const mode of ['debug','release']){
   assert.equal(stopped.unresolved_requests,1);assert.equal(stopped.services.mlx.desired,'stopped');
   custodian.kill('SIGTERM');await until(custodyExited,5000);assert.equal(custodian.exitCode,0);
   assert.deepEqual(readdirSync(join(custodyState,'models')),[]);
-  assert.deepEqual(custodyJSON('custody-supervisor-receipt.json'),{start_validations:2,stop_validations:2,uncertain:1,native_authority:false});
-  writeFileSync(join(directory,mode+'-custody-supervisor.json'),JSON.stringify({first,second,recovered,stopped,original,replacement,state:custodyState,identity:'actual_empty_model_native_server',health:'actual_kernel_listener_and_GET',readiness_and_reservations:'synthetic',native_authority:false})+'\n',{mode:0o600});
+  assert.deepEqual(custodyJSON('custody-supervisor-receipt.json'),{start_validations:2,stop_validations:ownedExit?1:2,uncertain:1,native_authority:false});
+  writeFileSync(join(directory,mode+'-custody-supervisor.json'),JSON.stringify({first,second,recovered,stopped,original,replacement,state:custodyState,identity:'actual_empty_model_native_server',health:'actual_kernel_listener_and_GET',readiness_and_reservations:'synthetic',owned_child_exit_under_maintenance:ownedExit,native_authority:false})+'\n',{mode:0o600});
  }catch(error){console.error('RETAINED actual supervisor custody fixture:',custodyState);throw error;}finally{
   if(!custodyExited()){custodian.kill('SIGTERM');try{await until(custodyExited,4000);}catch{custodian.kill('SIGKILL');await until(custodyExited,3000);}}
  }
@@ -67,5 +88,5 @@ for(const mode of ['debug','release']){
 verifyCore();
 assert(fixture.equals(readFileSync(join(root,'platform/studio/Tests/NativeFixtures/NativeSupervisedServer.swift.fixture'))));
 assert.deepEqual(verifyNativeReview(args[2],args[4]),review);
-const receipt={ok:true,directory,review_sha256:args[4],provenance_scope:'all_current_Core_Swift_files_and_fixture_not_whole_repository',core_inputs_sha256:Object.fromEntries(Object.entries(inputs).map(([name,bytes])=>[name,hash(bytes)])),fixture_sha256:hash(fixture),modes:['debug','release'],native_children:4,actual_supervisors:2,actual_managers:4,manager_replacements:2,real_listener_health:true,synthetic_readiness_and_reservations:true,model_posts:0,native_authority:false,installed:false};
+const receipt={ok:true,directory,owned_child_exit_under_maintenance:ownedExit,review_sha256:args[4],provenance_scope:'all_current_Core_Swift_files_and_fixture_not_whole_repository',core_inputs_sha256:Object.fromEntries(Object.entries(inputs).map(([name,bytes])=>[name,hash(bytes)])),fixture_sha256:hash(fixture),modes:['debug','release'],native_children:4,actual_supervisors:2,actual_managers:4,manager_replacements:2,real_listener_health:true,synthetic_readiness_and_reservations:true,model_posts:0,native_authority:false,installed:false};
 writeFileSync(join(directory,'receipt.json'),JSON.stringify(receipt)+'\n',{mode:0o600,flag:'wx'});console.log(JSON.stringify(receipt));

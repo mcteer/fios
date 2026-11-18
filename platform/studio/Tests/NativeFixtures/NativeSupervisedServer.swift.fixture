@@ -64,6 +64,7 @@ extension MLXServingProcessRuntime {
         try child.terminate(expected:value,deadline:ProcessInfo.processInfo.systemUptime+2)
         let end=ProcessInfo.processInfo.systemUptime+2
         while child.isRunning && ProcessInfo.processInfo.systemUptime<end {Thread.sleep(forTimeInterval:0.01)}
+        guard !child.isRunning else {throw RuntimeError.deadline}
     }
     fileprivate func fixtureObservation(now:Int64)->ServiceObservation? {
         lock.lock();let currentPhase=phase,child=process,value=identity;lock.unlock()
@@ -168,7 +169,8 @@ extension NativeSupervisedServerFixture {
     }
 
     static func custodySupervisor(_ args:[String])throws {
-        guard args.count==8,args[2].hasPrefix("/private/tmp/"),
+        let ownedExit=args.count==9 && args[8]=="owned-exit"
+        guard (args.count==8 || ownedExit),args[2].hasPrefix("/private/tmp/"),
               args[4].hasPrefix("/private/tmp/f9-mlx-supervisor-"),args[6].hasPrefix("/private/tmp/fios-009-serving-runtime-") else {throw RuntimeError.invalid}
         let directory=URL(fileURLWithPath:args[4]),helper=try VerifiedExecutable(path:args[2],sha256:args[3])
         let manager=try VerifiedExecutable(path:args[6],sha256:args[5])
@@ -195,7 +197,21 @@ extension NativeSupervisedServerFixture {
             producer.enter()
             Thread.detachNewThread {
                 defer {producer.leave()}
+                var exitAttempted=false
                 while !stop.requested {
+                    if ownedExit,!exitAttempted,
+                       FileManager.default.fileExists(atPath:directory.appendingPathComponent("fixture-native-exit").path) {
+                        exitAttempted=true
+                        if let original=runtime.fixtureObservation(now:HostResources.nowMilliseconds())?.identity {
+                            do {
+                                try runtime.endFixtureChild()
+                                let receipt:[String:Any]=["exited":true,"pid":original.pid,"process_start":String(original.start)]
+                                try AtomicState.write(JSONSerialization.data(withJSONObject:receipt,options:[.sortedKeys]),to:directory.appendingPathComponent("fixture-native-exit-result.json"))
+                            } catch {
+                                try? AtomicState.write(Data("{\"exited\":false}".utf8),to:directory.appendingPathComponent("fixture-native-exit-result.json"))
+                            }
+                        }
+                    }
                     let at=HostResources.nowMilliseconds(),observed=runtime.fixtureObservation(now:at)
                     var fields:[String:Any]=["instance":instance,"profile":profile,"sampled_at":at,"state":"unknown"]
                     if let observed {
@@ -214,7 +230,8 @@ extension NativeSupervisedServerFixture {
         })
         stop.stop();guard producer.wait(timeout:.now()+2) == .success else {throw RuntimeError.deadline}
         let journal=try Journal(directory:directory)
-        guard startGate.validations==2,stopGate.validations==2,!runtime.fixtureRetainsChild,try journal.uncertainCount()==1 else {throw RuntimeError.invalid}
-        try AtomicState.write(JSONSerialization.data(withJSONObject:["start_validations":2,"stop_validations":2,"uncertain":1,"native_authority":false]),to:directory.appendingPathComponent("custody-supervisor-receipt.json"))
+        let expectedStops=ownedExit ? 1:2
+        guard startGate.validations==2,stopGate.validations==expectedStops,!runtime.fixtureRetainsChild,try journal.uncertainCount()==1 else {throw RuntimeError.invalid}
+        try AtomicState.write(JSONSerialization.data(withJSONObject:["start_validations":2,"stop_validations":expectedStops,"uncertain":1,"native_authority":false]),to:directory.appendingPathComponent("custody-supervisor-receipt.json"))
     }
 }

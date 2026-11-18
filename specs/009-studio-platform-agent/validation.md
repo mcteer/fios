@@ -9641,3 +9641,23 @@ The empty check is `/private/tmp/f9-model-check-1QjPkJ/result.json`.
 The live receipt is `/private/tmp/f9-model-run-uu8qLk/result.json`.
 This uses the current native registry observation and remains administrative
 source correlation without platform dispatch or native terminal proof.
+
+### Isolated owned serving child exit under maintenance
+
+The existing supervisor and manager custody fixture passed against the
+rebuilt stock server in Debug and optimized modes. The added
+`--owned-exit` case then exercised an actual exit of its own empty-model
+child under maintenance. Each case validated the original launch identity,
+kept the server absent under maintenance, then started exactly one new
+identity after running intent was set. The existing manager replacement
+also retained the original serving child while it was healthy. A final
+operator stop reaped the replacement. The unresolved inference count
+remained one through each transition.
+
+Both new modes passed. Receipt
+`/private/tmp/fios-009-serving-runtime-native-vfBjoV/receipt.json`,
+SHA256 `4899b3b5a995ac699afbf39e1c58fc21b858ca03a361aad9cd5f72e3f878e1f6`.
+The fixture has synthetic readiness/reservation inputs and makes zero
+model requests. It exercises a private process, with no installed
+service or runtime actions. The full US3 integration still depends
+on US2 and the separate Studio acceptance requirements.

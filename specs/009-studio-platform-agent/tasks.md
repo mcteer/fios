@@ -1353,3 +1353,8 @@ retains distinct roots throughout 38 live overlap samples. A false regular
 Gemma audio advertisement was corrected and verified on the live catalog
 before dispatch. Audio generation, other enabled modalities and all-client
 coverage remain open in T018–T022. No whole task was marked complete.
+
+The isolated US3 custody fixture now covers actual owned child exit under
+maintenance, absence without restart, then a replacement after running
+intent. Debug and optimized modes pass with the unresolved claim unchanged.
+T027/T030 remain open pending the US2 dependency and full acceptance.
