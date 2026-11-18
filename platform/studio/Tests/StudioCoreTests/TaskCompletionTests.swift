@@ -48,6 +48,13 @@ func runTaskCompletionTests()throws {
     let token=TaskOwner.newToken()
     let (id,stillRunning)=try exerciseCompletion(in:directory,token:token)
     let reopened=try Journal(directory:directory)
+    let otherToken=TaskOwner.newToken(),otherID=UUID().uuidString.lowercased()
+    let otherOwner=try TaskOwner(token:otherToken,peerUID:geteuid()).hash
+    _=try reopened.reserveJob(DurableJob(id:otherID,idempotency:UUID().uuidString.lowercased(),ownerHash:otherOwner,requestHash:String(repeating:"c",count:64),created:5000))
+    try reopened.transitionJob(id:otherID,to:.revoking,now:5000)
+    try reopened.transitionJob(id:otherID,to:.removed,now:5000)
+    try reopened.expireTerminalJobs(now:86_404_999)
+    guard try reopened.jobs().contains(where:{$0.id==otherID}) else {throw JournalError.invalid}
     try reopened.expireTerminalJobs(now:86_405_000)
     let jobs=try reopened.jobs()
     guard let completed=jobs.first(where:{$0.id==id}),completed.state == .removed,completed.lease.revoked,
@@ -55,6 +62,11 @@ func runTaskCompletionTests()throws {
           try reopened.unresolvedCount()==1,try reopened.requestCount(job:id)==1 else {throw JournalError.invalid}
     print("PASS: normal interrupted worker completion closes its local job and lease; nonterminal job remains running")
     let commands=try completionRoutes(journal:reopened,directory:directory)
+    guard !jobs.contains(where:{$0.id==otherID}) else {throw JournalError.invalid}
+    do {
+        _=try completionStatus(commands,id:otherID,token:otherToken)
+        throw JournalError.invalid
+    } catch TaskCommandError.unauthorized {}
     for (job,expected,unresolved) in [(id,"removed",1),(stillRunning,"reconciling",0)] {
         let state=try completionStatus(commands,id:job,token:token)
         guard state["state"] as? String==expected,state["unresolved_managed_requests"] as? Int==unresolved,
