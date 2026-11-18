@@ -42,7 +42,7 @@ struct NativeJournalSource {
         let args=Array(CommandLine.arguments.dropFirst())
         guard geteuid() != 0,args.count>1,args[1].hasPrefix("/private/tmp/f9-model-") else {throw ControlError.invalid_request}
         if args[0]=="--inspect" {try inspect(args);return}
-        guard args.count==9,args[0]=="--observe",let pid=Int32(args[5]),pid>1,
+        guard (9...10).contains(args.count),args[0]=="--observe",let pid=Int32(args[5]),pid>1,
               WireScalar.sha256(args[6]),WireScalar.sha256(args[7]),WireScalar.uuid(args[8]),
               ProcessInfo.processInfo.physicalMemory==24*(1<<30),
               args[2]==URL(fileURLWithPath:args[1]).deletingLastPathComponent().appendingPathComponent(".fios-native-control/control.sock").path,
@@ -52,18 +52,20 @@ struct NativeJournalSource {
         let native=try client.request(operation:.observe)
         let scope=InferenceScope(host:"fios-core.lab",endpointHash:args[6],profileHash:args[7],managerEpoch:UUID().uuidString.lowercased(),
             nativeEpoch:native.instance,canonicalModel:model,nativeModel:model,sequence:1,sampledAt:HostResources.nowMilliseconds())
-        let job=args[8],journal=try Journal(directory:URL(fileURLWithPath:args[1]))
-        try journal.claim(job:job,attempt:0,model:model,scope:scope)
+        let jobs=Array(args.dropFirst(8)),journal=try Journal(directory:URL(fileURLWithPath:args[1]))
+        guard Set(jobs).count==jobs.count,jobs.allSatisfy(WireScalar.uuid) else {throw ControlError.invalid_request}
+        for job in jobs {try journal.claim(job:job,attempt:0,model:model,scope:scope)}
         let poller=NativeLineagePoller(journal:journal,source:client)
-        let correlation=try scope.nativeRequestCorrelationID(job:job,attempt:0)
         var primary=PrimaryRecord()
         try primary.capture(client:client,instance:native.instance,directory:journal.directory)
         let flags=fcntl(STDIN_FILENO,F_GETFL)
         guard flags>=0,fcntl(STDIN_FILENO,F_SETFL,flags|O_NONBLOCK)==0 else {throw ControlError.invalid_request}
-        try emit(["event":"ready","job":job,"correlation_id":correlation,"native_instance":native.instance,
-            "scope_sha256":digest(try scope.encoded()),"native_authority":false])
+        for (index,job) in jobs.enumerated() {
+            try emit(["event":"ready","index":index,"job":job,"correlation_id":scope.nativeRequestCorrelationID(job:job,attempt:0),
+                "native_instance":native.instance,"scope_sha256":digest(try scope.encoded()),"native_authority":false])
+        }
         let deadline=ProcessInfo.processInfo.systemUptime+25
-        var input=Data(),attempted=false,stopping=false,pending=false,nextPoll=Double.infinity
+        var input=Data(),attempted=Set<Int>(),stopping=false,pending=false,nextPoll=Double.infinity
         while !stopping && ProcessInfo.processInfo.systemUptime<deadline {
             var bytes=[UInt8](repeating:0,count:32)
             let count=Darwin.read(STDIN_FILENO,&bytes,bytes.count)
@@ -73,12 +75,12 @@ struct NativeJournalSource {
                 while let end=input.firstIndex(of:10) {
                     let command=String(decoding:input.prefix(upTo:end),as:UTF8.self)
                     input.removeSubrange(...end)
-                    if command=="attempt",!attempted,!stopping {
-                        // Durable MAY-dispatch edge precedes the parent's one
-                        // actual HTTP attempt; this is not admission authority.
-                        try journal.markDispatched(job:job,attempt:0);attempted=true
-                        nextPoll=ProcessInfo.processInfo.systemUptime+0.2
-                        try emit(["event":"dispatched","native_authority":false])
+                    if command.hasPrefix("attempt "),let index=Int(command.dropFirst(8)),jobs.indices.contains(index),
+                       !attempted.contains(index),!stopping {
+                        // Persist each intent before its corresponding HTTP attempt.
+                        try journal.markDispatched(job:jobs[index],attempt:0);attempted.insert(index)
+                        nextPoll=min(nextPoll,ProcessInfo.processInfo.systemUptime+0.2)
+                        try emit(["event":"dispatched","index":index,"native_authority":false])
                     } else if command=="stop",!stopping {stopping=true}
                     else {throw ControlError.invalid_request}
                 }
@@ -86,9 +88,9 @@ struct NativeJournalSource {
             else if errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR {throw ControlError.invalid_request}
             if try poller.drain(now:HostResources.nowMilliseconds()) {pending=false}
             let tick=ProcessInfo.processInfo.systemUptime
-            if !stopping,attempted,tick>=nextPoll,!pending {
-                pending=try poller.beginNext();nextPoll=tick+2
-                try primary.capture(client:client,instance:native.instance,directory:journal.directory)
+            if !stopping,!attempted.isEmpty,tick>=nextPoll,!pending {
+                pending=try poller.beginNext();nextPoll=tick+(jobs.count==1 ? 2:0.5)
+                if primary.samples<32 {try primary.capture(client:client,instance:native.instance,directory:journal.directory)}
             }
             if !stopping {Thread.sleep(forTimeInterval:0.025)}
         }
@@ -99,9 +101,12 @@ struct NativeJournalSource {
             if try poller.drain(now:HostResources.nowMilliseconds()) {pending=false;break}
             Thread.sleep(forTimeInterval:0.025)
         }
-        try journal.markUncertain(job:job,attempt:0)
-        guard try journal.inferenceScope(job:job,attempt:0)?.state == .uncertain,!pending else {throw JournalError.invalid}
-        try emit(["event":"stopped","attempt_intent_recorded":attempted,"uncertainty_retained":true,"native_authority":false])
+        for job in jobs {
+            try journal.markUncertain(job:job,attempt:0)
+            guard try journal.inferenceScope(job:job,attempt:0)?.state == .uncertain else {throw JournalError.invalid}
+        }
+        guard !pending else {throw JournalError.invalid}
+        try emit(["event":"stopped","attempt_intent_recorded":!attempted.isEmpty,"uncertainty_retained":true,"native_authority":false])
     }
     static func inspect(_ args:[String])throws {
         guard args.count==7,WireScalar.uuid(args[2]),WireScalar.sha256(args[3]),WireScalar.sha256(args[5]),["0","1"].contains(args[6]) else {throw ControlError.invalid_request}

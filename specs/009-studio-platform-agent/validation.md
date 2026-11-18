@@ -9746,3 +9746,22 @@ supplies a different later reply, and checks that the original inference
 remains unresolved. Both isolated policy modes passed all 145 checks.
 This is read-only correlation under T021. Native terminal reconciliation
 remains open, with 39 of 55 whole tasks complete.
+
+### Two overlapping Core requests in one durable journal
+
+The private `journal-same-model-pair` fixture records both dispatch
+intents in a single journal and sends two bounded same-model requests
+to the exact Gemma model on fios-core. Both returned HTTP 200. The
+40 retained overlap samples observed roots 4 and 5. Stopped inspection
+matched both roots and retained both inference claims as uncertain.
+The native child and journal observer were reaped. Plan and check sent
+zero model POSTs. The single-request journal scenario also passed on
+the same fixture code, with one POST and persisted root 4.
+
+Paired receipt `/private/tmp/f9-model-run-safamE/result.json`, SHA256
+`93f2121875952010321bea41c86781f727651d743fe20b4cc8eec6e2885cee4e`.
+Single receipt `/private/tmp/f9-model-run-41NDFV/result.json`, SHA256
+`64dca90dc2bf945360aed51681d4647bf58fa6e4722d9310e31d771257986a18`.
+All 26 source-model intent tests passed. These are administrative
+source-correlation results. T019 and T021 remain open for native
+admission and terminal reconciliation. Whole tasks remain 39 of 55.

@@ -16,8 +16,9 @@ import {verifyNativeReview} from './lib/platform-native-review.mjs';
 import {nativeJournalInputs,buildNativeJournalObserver,verifyNativeJournalObserver,startNativeJournalObserver} from './lib/platform-native-journal-source.mjs';
 import {nativeReviewIntent,nativeReviewHTTPFailure,nativeReviewJSON,nativeReviewActivity,nativeReviewModelInputs,nativeReviewLineage,nativeReviewComponents,nativeReviewModelSupports,nativeReviewHTTPStream,nativeReviewHTTPStreamEvent,nativeReviewAudioInput} from './lib/platform-native-review-intent.mjs';
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..'),args=process.argv.slice(2);
-const intent=nativeReviewIntent(args),pair=intent.scenario==='same-model-pair',image=intent.scenario==='single-image',audio=intent.scenario==='single-audio';
-const journalCorrelation=intent.scenario==='journal-correlation';
+const intent=nativeReviewIntent(args),journalPair=intent.scenario==='journal-same-model-pair';
+const pair=intent.scenario==='same-model-pair'||journalPair,image=intent.scenario==='single-image',audio=intent.scenario==='single-audio';
+const journalCorrelation=intent.scenario==='journal-correlation'||journalPair;
 const cancelRequest=intent.scenario==='cancel-request';
 const followup=intent.scenario==='cancel-then-success';
 const cancelResponse=intent.scenario==='cancel-response'||followup,cancellation=cancelRequest||cancelResponse;
@@ -174,9 +175,9 @@ async function requestModel(index){
  const requestAbort=new AbortController();
  const shouldCancel=cancelResponse&&index===0;
  requestAborts.set(index,requestAbort);
- if(journalCorrelation)await journalObserver.dispatch();
+ if(journalCorrelation)await journalObserver.dispatch(index);
  let correlation=null;
- if(!alternateHTTPStream)correlation=journalCorrelation?journalReady.correlation_id:randomBytes(32).toString('hex');
+ if(!alternateHTTPStream)correlation=journalCorrelation?journalReady[index].correlation_id:randomBytes(32).toString('hex');
  const request={index,correlation,dispatched_ms:Math.round(performance.now()-began),response_complete:false};
  if(alternateHTTPStream)receipt.http_stream_route=alternateHTTPStream.route;
  (receipt.requests??=[]).push(request);
@@ -187,7 +188,7 @@ async function requestModel(index){
  const route=alternateHTTPStream?.route??'/v1/chat/completions';
  const headers={Authorization:'Bearer '+key,'Content-Type':'application/json'};
  if(correlation)headers['X-Fios-Request-ID']=correlation;
- if(journalCorrelation)headers['X-Fios-Native-Instance']=journalReady.native_instance;
+ if(journalCorrelation)headers['X-Fios-Native-Instance']=journalReady[index].native_instance;
  const body=alternateHTTPStream?.body??{
   model:ID,messages:[{role:'user',content:chatFixtureContent(shouldCancel)}],
   max_tokens:LIMITS.output_tokens,temperature:0,stream:true,stream_options:{include_usage:true},
@@ -253,8 +254,8 @@ try{
  if(journalCorrelation){
   stage='journal_source_observer';
   journalObserver=await startNativeJournalObserver({root,plan,parent,home,native:{binary:capsule.binary,sha256:capsule.receipt.files['bin/mlx-serve'].sha256,pid:child.pid},
-   endpointHash:sha(Buffer.from('http://127.0.0.1:'+port+'/v1')),profileHash:plan.capsule_sha256,job:randomUUID(),observeProcess,memoryLimit:LIMITS.journal_observer_memory_abort_bytes});
-  journalReady=journalObserver.ready;assert.equal(journalReady.native_instance,activityState.instance);
+   endpointHash:sha(Buffer.from('http://127.0.0.1:'+port+'/v1')),profileHash:plan.capsule_sha256,jobs:Array.from({length:LIMITS.model_posts},()=>randomUUID()),observeProcess,memoryLimit:LIMITS.journal_observer_memory_abort_bytes});
+  journalReady=journalObserver.ready;assert(journalReady.every(entry=>entry.native_instance===activityState.instance));
  }
 
  if(check){assert(before.data.length===0);receipt.result='empty_model_profile_and_identity_passed';}
@@ -310,7 +311,9 @@ try{
  if(journalObserver){
   stage='stopped_journal_correlation';
   receipt.journal_correlation=await journalObserver.stop({expectLive:!check,deadline:performance.now()+3000});
-  if(!check)receipt.result='actual_source_request_correlated_with_uncertain_journal_claim';
+  if(journalPair&&!check)assert.deepEqual(receipt.journal_correlation.requests.map(row=>row.persisted_native_root),
+   receipt.correlated_lineage_observations.roots,'Stopped journal roots differ from the observed live pair');
+  if(!check)receipt.result=journalPair?'actual_source_pair_correlated_with_distinct_uncertain_journal_claims':'actual_source_request_correlated_with_uncertain_journal_claim';
  }
  assert(!failed);receipt.elapsed_ms=Math.round(performance.now()-began);
 }catch{receipt.result='failed';receipt.reason=failed||'review_'+stage+'_failure';process.exitCode=1;}

@@ -138,10 +138,13 @@ test('backend fence envelope4 observes host uncertainty separately from Metal an
 });
 
 test('source journal correlation keeps planning/check model-free and run explicit',()=>{
- const scenario='journal-correlation',digest='a'.repeat(64);
- assert.deepEqual(nativeReviewIntent(['--plan','--capsule','/private/capsule','--sha256',digest,'--output','/private/plan','--scenario',scenario]),{mode:'plan',inferenceRequested:false,scenario});
- assert.deepEqual(nativeReviewIntent(['--check','--plan','/private/plan','--sha256',digest,'--scenario',scenario]),{mode:'check',inferenceRequested:false,scenario});
- assert.deepEqual(nativeReviewIntent(['--run','--plan','/private/plan','--sha256',digest,'--allow-native-inference','--scenario',scenario]),{mode:'run',inferenceRequested:true,scenario});
+ const digest='a'.repeat(64);
+ for(const scenario of ['journal-correlation','journal-same-model-pair']){
+  assert.deepEqual(nativeReviewIntent(['--plan','--capsule','/private/capsule','--sha256',digest,'--output','/private/plan','--scenario',scenario]),{mode:'plan',inferenceRequested:false,scenario});
+  assert.deepEqual(nativeReviewIntent(['--check','--plan','/private/plan','--sha256',digest,'--scenario',scenario]),{mode:'check',inferenceRequested:false,scenario});
+  assert.throws(()=>nativeReviewIntent(['--run','--plan','/private/plan','--sha256',digest,'--scenario',scenario]));
+  assert.deepEqual(nativeReviewIntent(['--run','--plan','/private/plan','--sha256',digest,'--allow-native-inference','--scenario',scenario]),{mode:'run',inferenceRequested:true,scenario});
+ }
 });
 
 // Metadata fixtures only: neither these declarations nor this parser grant
