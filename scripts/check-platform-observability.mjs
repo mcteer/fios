@@ -59,7 +59,10 @@ try{
  const resources=JSON.parse(run(join(bin,'studioctl'),['--state',state,'resources'],3000));
  assert.equal(resources.resource_observation.signals.cpu.availability,'observed');
  const originalCPUTime=resources.resource_observation.signals.cpu.sampled_at;
- const measured=await until(()=>{const value=snapshot();return value?.metrics['fios.platform.resource.sample.time']?.points[0]?.value===originalCPUTime/1000 ? value:null;});
+ const originalHostTime=resources.resource_observation.sampled_at;
+ assert(originalCPUTime<=originalHostTime);
+ const measured=await until(()=>{const value=snapshot();return value?.metrics['fios.platform.host.cpu.sample.time']?.points[0]?.value===originalCPUTime/1000 ? value:null;});
+ assert.equal(scalar(measured,'fios.platform.resource.sample.time'),originalHostTime/1000);
  assert.ok(Math.abs(scalar(measured,'fios.platform.host.cpu.utilization')-resources.resources.cpu/100)<1e-9);
  const result=JSON.parse(run(join(bin,'studioctl'),['--state',state,'service','mlx','maintenance'],3000));assert.equal(result.applied,false);
  const changed=await until(()=>{const value=snapshot();return value?.logs.includes('fios.platform.desiredChanged') ? value:null;});
