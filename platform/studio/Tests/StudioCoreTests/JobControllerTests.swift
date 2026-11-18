@@ -1,6 +1,6 @@
 import Foundation
 
-private final class FakeSandboxExecutor:SandboxExecuting {
+private class FakeSandboxExecutor:SandboxExecuting {
     var values:[SandboxExecution]=[]
     var commands:[SandboxCommand]=[]
     var present:[String:(SandboxConfiguration,String,Bool)]=[:]
@@ -51,6 +51,16 @@ private final class FakeSandboxExecutor:SandboxExecuting {
         values.append(SandboxExecution(job:job,result:.success(result)))
     }
     func drain()->[SandboxExecution] { if holdResponses {return []};let result=values;values=[];return result }
+}
+
+private final class SlotFakeSandboxExecutor:FakeSandboxExecutor,SandboxCreateSlotExecuting {
+    var commits=0
+    func submitCreate(configuration:SandboxConfiguration,beforePublish:()throws->Void)throws {
+        guard !denyCreateCapacity else {throw AdmissionError.capacity}
+        try beforePublish()
+        commits += 1
+        try submit(job:configuration.job,command:.create(configuration))
+    }
 }
 
 func runJobControllerTests() throws {
@@ -115,7 +125,33 @@ func runJobControllerTests() throws {
     guard try journal.jobs().first(where:{$0.id==ids[1]})?.state == .removed else { fatalError("Owned sandbox cleanup did not finish") }
     try checkModelSandboxSourceTurnover()
     try checkDeferredCreateRestart()
+    try checkReservedCreateSlot()
     print("PASS: asynchronous sandbox coordinator, transport-before-start fencing, newest-owned pressure revocation and proof-gated cleanup")
+}
+
+private func checkReservedCreateSlot()throws {
+    let directory=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer {try? FileManager.default.removeItem(at:directory)}
+    let journal=try Journal(directory:directory),runtime=SlotFakeSandboxExecutor()
+    let controller=JobController(journal:journal,executor:runtime)
+    let id=UUID().uuidString.lowercased(),hash=String(repeating:"a",count:64)
+    let config=try SandboxConfiguration(job:id,nonce:hash,image:"sha256:"+hash,memory:512<<20,cpus:1)
+    _=try journal.reserveSandbox(job:DurableJob(id:id,idempotency:UUID().uuidString.lowercased(),ownerHash:hash,requestHash:hash,created:10000),configuration:config)
+    var admission=AdmissionPolicy()
+    func tick(_ now:Int64,ready:Bool)throws {
+        let sample=ResourceSample(sampledAt:now,physical:128<<30,available:64<<30,vmAvailable:8<<30,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal,vmSampledAt:now)
+        try controller.tick(now:now,sample:sample,admission:&admission,inputReady:{_ in ready},transportReady:{_ in false},cancelModel:{_ in})
+    }
+    runtime.denyCreateCapacity=true
+    try tick(10000,ready:true)
+    guard try journal.jobs()[0].state == .reserved,try !journal.sandboxRecords()[0].createIssued,
+          runtime.commands.isEmpty,runtime.commits==0 else {fatalError("Capacity refusal wrote a create intent")}
+    runtime.denyCreateCapacity=false
+    try tick(10500,ready:false)
+    guard runtime.commands.isEmpty,runtime.commits==0 else {fatalError("Slot-backed create bypassed input readiness")}
+    try tick(11000,ready:true)
+    guard try journal.jobs()[0].state == .creating,try journal.sandboxRecords()[0].createIssued,
+          runtime.commits==1,runtime.commands.count==1,case .create=runtime.commands[0] else {fatalError("Slot-backed create did not commit before dispatch")}
 }
 
 private func checkDeferredCreateRestart()throws {

@@ -27,7 +27,9 @@ final class SandboxLifecycle {
     }
     func next(job id:String,now:Int64,resourcesSafe:Bool) throws -> SandboxCommand? {
         let safe=try clockSafe(now) && resourcesSafe
-        var (job,record)=try current(id)
+        let stored=try current(id)
+        var job=stored.0
+        let record=stored.1
         guard job.state != .removed else { return nil }
         if [.reserved,.creating,.running].contains(job.state) && (!safe || !job.lease.valid(now:now)) {
             try journal.transitionJob(id:id,to:.revoking,now:now)
@@ -35,8 +37,7 @@ final class SandboxLifecycle {
         }
         if job.state == .reconciling { try journal.transitionJob(id:id,to:.revoking,now:now);job=try current(id).0 }
         if job.state == .reserved && !record.createIssued {
-            try journal.transitionJob(id:id,to:.creating,now:now)
-            record.createIssued=true;try journal.saveSandbox(record)
+            try journal.commitSandboxCreate(record.configuration,now:now)
             return .create(record.configuration)
         }
         if job.state == .revoking,!record.createIssued {

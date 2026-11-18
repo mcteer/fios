@@ -832,6 +832,18 @@ public final class Journal {
         }
         return result
     }
+    func commitSandboxCreate(_ configuration:SandboxConfiguration,now:Int64)throws {
+        guard (0...ActivityPolicy.maximumTimestamp).contains(now) else {throw JournalError.invalid}
+        try transaction {
+            let id=configuration.job
+            guard var job=try jobs().first(where:{$0.id==id}),job.state == .reserved,job.lease.valid(now:now),
+                  var record=try sandboxRecords().first(where:{$0.configuration.job==id}),
+                  record.configuration==configuration,!record.createIssued,!record.removalProven else {throw JournalError.conflict}
+            job.state = .creating
+            record.createIssued=true
+            try saveJob(job);try writeSandbox(record)
+        }
+    }
     func saveSandbox(_ proposed:SandboxRecord) throws {
         try transaction {
             guard let old=try sandboxRecords().first(where:{$0.configuration.job==proposed.configuration.job}),

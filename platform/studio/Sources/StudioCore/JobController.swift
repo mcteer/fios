@@ -188,7 +188,20 @@ final class JobController {
                 }
                 try dispatch(command,job:id);continue
             }
-            if job.state == .reserved && (!safeFor(id) || !inputReady(id)) { continue }
+            if job.state == .reserved {
+                guard safeFor(id),inputReady(id) else {continue}
+                if !record.createIssued,let slotExecutor=executor as? any SandboxCreateSlotExecuting {
+                    // Reserve capacity before writing intent, then publish
+                    // exactly once after the atomic journal transaction.
+                    do {
+                        try slotExecutor.submitCreate(configuration:record.configuration,beforePublish:{
+                            try journal.commitSandboxCreate(record.configuration,now:now)
+                        })
+                        inFlight[id] = .create(record.configuration)
+                    } catch AdmissionError.capacity { /* No intent was written. */ }
+                    continue
+                }
+            }
             if let command=try lifecycle.next(job:id,now:now,resourcesSafe:!rollback && (safeFor(id) || id != victim)) { try dispatch(command,job:id) }
         }
         revokingSince=revokingSince.filter{pendingCleanup.contains($0.key)}

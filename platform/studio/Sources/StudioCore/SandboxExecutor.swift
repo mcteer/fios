@@ -41,6 +41,9 @@ protocol SandboxExecuting:AnyObject {
     func drainResources()->[VMReadResult]
     var active:Int { get }
 }
+protocol SandboxCreateSlotExecuting:SandboxExecuting {
+    func submitCreate(configuration:SandboxConfiguration,beforePublish:()throws->Void)throws
+}
 extension SandboxExecuting {
     func submitResources(configuration:SandboxConfiguration,id:String,leaseUntil:Int64)throws {throw SandboxExecutionFailure.unavailable}
     func drainResources()->[VMReadResult] {[]}
@@ -49,7 +52,7 @@ extension SandboxExecuting {
 // The only asynchronous daemon adapter. Fixed typed commands,2 subprocess
 // slots,queue0, reviewed immutable images and explicit private Unix endpoint.
 // SQLite/lifecycle state is touched only by the serialized caller, never here.
-final class SandboxExecutor:SandboxExecuting,@unchecked Sendable {
+final class SandboxExecutor:SandboxCreateSlotExecuting,@unchecked Sendable {
     private let runtime:DockerRuntime
     private let allowedImages:Set<String>
     private let lock=NSLock()
