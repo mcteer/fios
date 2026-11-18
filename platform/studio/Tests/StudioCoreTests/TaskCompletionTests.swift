@@ -2,9 +2,7 @@ import Foundation
 
 // A normal cancelled worker-start result is terminal output, even when the
 // surrounding owner job has not separately received a cancellation command.
-func runTaskCompletionTests()throws {
-    let directory=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-    defer {try? FileManager.default.removeItem(at:directory)}
+private func exerciseCompletion(in directory:URL)throws -> (String,String) {
     let journal=try Journal(directory:directory),owner=String(repeating:"a",count:64)
     func runningJob()throws->String {
         let id=UUID().uuidString.lowercased()
@@ -37,5 +35,18 @@ func runTaskCompletionTests()throws {
     }
     guard try journal.jobs().first(where:{$0.id==stillRunning})?.state == .running,
           try journal.unresolvedCount()==1,try journal.requestCount(job:id)==1 else {throw JournalError.invalid}
+    return (id,stillRunning)
+}
+
+func runTaskCompletionTests()throws {
+    let directory=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer {try? FileManager.default.removeItem(at:directory)}
+    let (id,stillRunning)=try exerciseCompletion(in:directory)
+    let reopened=try Journal(directory:directory)
+    let jobs=try reopened.jobs()
+    guard let completed=jobs.first(where:{$0.id==id}),completed.state == .removed,completed.lease.revoked,
+          let recovered=jobs.first(where:{$0.id==stillRunning}),recovered.state == .reconciling,recovered.lease.revoked,
+          try reopened.unresolvedCount()==1,try reopened.requestCount(job:id)==1 else {throw JournalError.invalid}
     print("PASS: normal interrupted worker completion closes its local job and lease; nonterminal job remains running")
+    print("PASS: restart preserves local completion and native uncertainty while reconciling the unrelated live job")
 }
