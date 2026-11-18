@@ -55,6 +55,13 @@ enum DetailedObservationTests {
         let repeated=try ActivityObservationExport.encode(metadata:meta(2,1,1001,1001),coverage:.all_clients,sourceCoverage:.all_clients)
         do {_=try replay.accept(repeated,now:1001);fatalError("New manager sequence hid repeated native sample")}catch ObservationError.replay{}
         let stale=try ActivityObservationExport.encode(metadata:meta(2,2,7001,1000),coverage:.all_clients,sourceCoverage:.all_clients)
+        let expired=try ActivityObservationExport.decode(stale)
+        guard expired.view.state == .unknown,expired.view.coverage == .unknown,
+              expired.reason == .source_unavailable,expired.metadata.nativeSampledAt == 1000 else {
+            fatalError("Expired native sample exported as authoritative activity")
+        }
+        let edge=try ActivityObservationExport.encode(metadata:meta(2,2,6000,1000),coverage:.all_clients,sourceCoverage:.all_clients)
+        guard try ActivityObservationExport.decode(edge).view.state == .idle else {fatalError("Inclusive source age boundary rejected")}
         var oldNative=validator()
         do {_=try oldNative.accept(stale,now:7001);fatalError("Fresh manager hid stale native sample")}catch PolicyError.staleObservation{}
         let future=try ActivityObservationExport.encode(metadata:meta(1,1,1000,1500),coverage:.all_clients,sourceCoverage:.all_clients)
@@ -85,6 +92,7 @@ enum DetailedObservationTests {
         precondition(floating != normal)
         do {_=try ActivityObservationExport.decode(Data(floating.utf8));fatalError("Floating native sequence was coerced")}catch{}
         changed=base;changed["source_age_ms"]=1;try refuses(changed)
+        changed=base;changed["sampled_at"]=6001;changed["source_age_ms"]=5001;try refuses(changed)
         changed=base;changed["local_ownership"]=["unresolved_count":1,"uncertain":false,"blocked":false];try refuses(changed)
         changed=base;changed["resources"]=["sampled_at":NSNull(),"pressure":"normal","thermal":"nominal"];try refuses(changed)
         let duplicate=base["models"] as! [[String:Any]]

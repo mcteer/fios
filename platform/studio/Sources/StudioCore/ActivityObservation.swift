@@ -15,6 +15,10 @@ struct ActivityObservationMetadata:Sendable {
     let sampledAt:Int64
     let nativeSequence:Int64?
     let nativeSampledAt:Int64?
+    var hasFreshNativeSample:Bool {
+        guard nativeSequence != nil,let nativeSampledAt else {return false}
+        return (-1000...5000).contains(sampledAt-nativeSampledAt)
+    }
     func validate()throws {
         guard WireScalar.host(host),WireScalar.sha256(endpointHash),WireScalar.sha256(profileHash),WireScalar.uuid(managerEpoch),
               !nativeEpoch.isEmpty,nativeEpoch.utf8.count<=128,!nativeEpoch.contains("\0"),
@@ -79,7 +83,7 @@ enum ActivityObservationExport {
         let localValid=localModels.count<=32 && localModels.allSatisfy(WireScalar.model) && (!localUncertain || !localModels.isEmpty)
         let compatible=localModels.isEmpty || (view.state != .idle && view.model.map { target in localModels.allSatisfy {WireScalar.exactModel($0,target)} } == true)
         let localBlocked = !localValid || localUncertain || !compatible
-        if view.state != .unknown,metadata.nativeSequence==nil {
+        if view.state != .unknown,!metadata.hasFreshNativeSample {
             view=CoherentNativeActivity(coverage:.unknown,state:.unknown,model:nil,owners:nil);reason = .source_unavailable
         }
         if localBlocked,view.state != .unknown {
@@ -159,7 +163,7 @@ enum ActivityObservationExport {
                   ["resident_model","outstanding_owners","loading","transitioning","counts","unattributed_counts"].allSatisfy({value[$0] is NSNull}) else {throw ObservationError.invalid}
             return DecodedActivityObservation(metadata:metadata,view:unknown,reason:reason,resourceSampledAt:resourceTime,legacy:false)
         }
-        guard coverage == .all_clients,metadata.nativeSequence != nil,reason == .none,!blocked,
+        guard coverage == .all_clients,metadata.hasFreshNativeSample,reason == .none,!blocked,
               let loading=boolean(value["loading"]),let transition=boolean(value["transitioning"]),!transition else {throw ObservationError.invalid}
         let totals=try phases(value["counts"]),unattributed=try phases(value["unattributed_counts"])
         let entries=try models.map { object -> NativeModelActivity in

@@ -1,6 +1,25 @@
 # Spec009 completion status
 
-Updated2026-11-17. **39/55 whole tasks complete;16 open.**
+**39/55 whole tasks complete; 16 open.** Draft [PR #10](https://github.com/mcteer/fios/pull/10) remains the delivery branch. Baseline `0d97ade` run `44349364929`: seven functional jobs passed; dependency audits and aggregate gate failed. No audit investigation, bypass, merge or deployment.
+
+| Open task | Remaining behavior and dependency |
+| --- | --- |
+| T002 | Verify the native contract against exact enrolled builds on both Studios; depends on the source boundary and separately authorized acceptance. |
+| T008 | Verify the enrolled global VM profile and combined collector with no implicit VM start; resource-only source checks remain independent. |
+| T009 | Finish normal-entry runtime composition against the enrolled executable, daemon and VM identities; installed positive cases require enrollment. |
+| T018 | Exercise every enabled ingress/modality and ownership phase against the authoritative producer; depends on T020 and verified compatibility. |
+| T019 | Exercise actual same-model/conflicting admission and cancel/restart reconciliation; depends on T021–T022. |
+| T020 | Produce a coherent, authenticated source with independently verified all-client coverage. Current diagnostic counters cannot supply that ceiling. |
+| T021 | Issue positive terminal evidence for the exact original request or independently prove its original process epoch is gone; preserve unrelated uncertainty. Existing restricted non-dispatch evidence is not terminal proof. |
+| T022 | Implement an atomic native conflict check and reservation across all relevant preparation, load, and dispatch paths. Scoped preparation transport alone cannot exclude conflicting external work. |
+| T027 | Wire normal service recovery through trusted original-process identity and enrolled lifecycle paths; source and isolated recovery cases can run before installation. |
+| T028 | Complete bounded drain/one-use force with authoritative external and unknown-work exclusion; depends on T020–T021 and enrolled lifecycle. |
+| T030 | Validate the complete service recovery/drain flow after T027–T028, then separately run installed scenarios. |
+| T036 | Complete public sandbox orchestration/reconciliation on the approved immutable image through enrolled runtime and VM profiles (T008–T009); image approval is not enrollment. |
+| T045 | Compose the model-only and sandbox task paths with the real native admission/reconciliation boundary and actual execution adapters (T021–T022, T036). |
+| T049 | Complete reviewed protected installation, rollback and uninstall; actual privileged acceptance requires separate approval and a qualified artifact. Data staging is not installation. |
+| T051 | Run separately approved installed scenarios on both Studios after native and lifecycle qualification. Core-only small-model results do not count. |
+| T055 | Finish functional/evidence consistency, get exact-head CI and approved merge, verify merged-main CI and deployment; keep native acceptance separate. |
 
 
 ## Current continuation scope
