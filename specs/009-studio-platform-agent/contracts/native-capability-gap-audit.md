@@ -171,3 +171,11 @@ those paths again. The remaining integration is the audited positive coverage,
 completion/capacity issuer, atomic all-client guard and eligible production
 composition. Existing source fences remain independent and unchanged;39/55
 whole tasks are complete.
+
+### Candidate positive completion boundary (not implemented)
+
+A completion producer needs two distinct publication edges. The root must first stop accepting independent operations under the same lock used to begin them. Existing operations must still be able to hand off to legitimate descendant work; doing this by forbidding all retains in `responding` is incorrect. A descendant publication must be authorized by a live parent operation, and counted before releasing that parent, including deferred cancellation paths. Only after this graph closes may a backend completion issuer seal the tuple `(native epoch, correlation ID, root sequence)` against future publication. For each kind of backend submission, the original-root capability must survive command completion and any completion callback that can publish more work. An owner reference reaching zero or a single command buffer completing cannot substitute for closure of those edges.
+
+A mock design test should interleave independent publication, valid descendant handoff after root closure, deferred cancel, mixed-root backend batches, and a late callback. It must also reject a matching request ID with a different root or process epoch. Until every dispatch path has an audited producer, no positive receipt or journal release is enabled. Closed admission for the original root is not an all-client reservation for a different request.
+
+Current SDK mapping: `retainCurrent` expands thread-local root tokens into references; merge unions the contexts' root tokens before `retainTokens`. These carry root identity but not a distinct operation handle whose release can be checked. The design model uses such handles to reject stale-parent publication even when another operation on the same root remains live. Any native mapping must preserve and validate the parent capability at capture/merge/release, and cover callback-originated submissions before enabling a seal.
