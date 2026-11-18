@@ -324,9 +324,13 @@ final class ServiceRecoveryController {
         case .uncertain,.busy,.wrongInstance:break
         }
     }
+    func acceptsObservation(_ observation:ServiceObservation,for service:ManagedService)->Bool {
+        guard let identity=observation.identity else {return !observation.responding}
+        return identity.valid && identity.sha256==pins[service]
+    }
     func plan(service:ManagedService,desired:ServiceDesired,observation:ServiceObservation?,now:Int64,tick:Int64)throws->ServiceLaunchCommand? {
-        guard try observeClock(now:now,tick:tick),desired == .running,let observation else {return nil}
-        if let identity=observation.identity,identity.sha256 != pins[service] {return nil}
+        guard try observeClock(now:now,tick:tick),desired == .running,let observation,
+              acceptsObservation(observation,for:service) else {return nil}
         let action:ServiceAction
         do {
             action=try ServicePolicy().action(service:service,desired:desired,observation:observation,now:now)

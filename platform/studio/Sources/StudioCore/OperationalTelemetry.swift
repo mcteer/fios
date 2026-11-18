@@ -59,7 +59,9 @@ enum ServiceTelemetry {
             let tick=uptimeTick ?? Int64(ProcessInfo.processInfo.systemUptime*1000)
             return try ManagedService.allCases.map {service in
                 guard let desired=ServiceDesired(rawValue:try journal.desired(service:service.rawValue)) else {throw ServiceError.invalid}
-                let observation=observations?.snapshot(for:service)
+                let observation=observations?.snapshot(for:service).flatMap { sample in
+                    (recovery?.acceptsObservation(sample,for:service) ?? true) ? sample:nil
+                }
                 let observed=ServiceStatusPolicy.observed(desired:desired,observation:observation,
                     launchPending:recovery?.isPending(service) ?? false,now:now,
                     restartWaiting:recovery?.isWaitingForRestartWindow(service:service,tick:tick) ?? false)

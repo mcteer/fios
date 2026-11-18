@@ -27,6 +27,7 @@ try{
  await delay(2200); // Keep the invalid source through a complete recovery cycle.
  assert(!exited(manager),'Manager exited during invalid-source recovery cycle');
  assert.equal(status().recovery.starts_in_window,0);
+ assert.equal(status().observed,'unknown','Foreign service observation presented as trusted status');
  assert.equal(existsSync(join(state,'validation-entered')),false);
  writeFileSync(join(state,'release-source'),'release');
  await until(()=>{assert(!exited(helper)&&!exited(manager));return existsSync(join(state,'validation-entered'));});

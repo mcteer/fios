@@ -61,6 +61,11 @@ public enum ManagerRuntime {
         var orbstackHealthQueue=orbstackHealth.map {AsyncServiceHealth(collector:$0)}
         let serviceRecovery=try activeServiceControl.map {try ServiceRecoveryController(journal:journal,approvedHashes:$0.applicationHashes,recoveryProfileHash:$0.recoveryProfileHash)}
         let serviceQueue=activeServiceControl.map {AsyncSessionControl(client:$0)}
+        func approvedServiceObservation(_ service:ManagedService)->ServiceObservation? {
+            guard let sample=serviceObservations?.snapshot(for:service),
+                  serviceRecovery?.acceptsObservation(sample,for:service) ?? true else {return nil}
+            return sample
+        }
         let servingStopQueue=activeServingLifecycle.map {AsyncServingStop(runtime:$0.runtime)}
         var serviceCursor=0,serviceTransportUnavailable=false
         var nativeMaintenance=NativeMaintenanceCoordinator(journal:journal)
@@ -224,7 +229,7 @@ public enum ManagerRuntime {
                         try servingStopQueue.submit(request)
                     } else if let receipt=serviceRecovery.recordedLaunch(.mlx),
                               let desired=ServiceDesired(rawValue:try journal.desired(service:"mlx")) {
-                        let observation=serviceObservations?.snapshot(for:.mlx)
+                        let observation=approvedServiceObservation(.mlx)
                         let failed=observation.map {value in value.identity==receipt.identity && !value.responding &&
                             value.sessionReady && value.credentialsReady && value.health == .unavailable && value.sampledAt>=0 &&
                             (-1000...5000).contains(sampledAt-value.sampledAt)} ?? false
@@ -240,7 +245,7 @@ public enum ManagerRuntime {
                     for offset in 0..<services.count {
                         let index=(serviceCursor+offset)%services.count,service=services[index]
                         guard let desired=ServiceDesired(rawValue:try journal.desired(service:service.rawValue)) else {throw ServiceError.invalid}
-                        if let request=try serviceRecovery.next(service:service,desired:desired,observation:serviceObservations?.snapshot(for:service),now:sampledAt,tick:Int64(now*1000)) {
+                        if let request=try serviceRecovery.next(service:service,desired:desired,observation:approvedServiceObservation(service),now:sampledAt,tick:Int64(now*1000)) {
                             try serviceQueue.submit(request)
                             serviceCursor=(index+1)%services.count
                             break // One exchange, no hidden queue or replay.
@@ -311,7 +316,7 @@ public enum ManagerRuntime {
                             guard let typed=ServiceDesired(rawValue:desired) else {throw ControlError.invalid_request}
                             // Missing/failed observation remains unknown, not
                             // absence, credential readiness or native authority.
-                            var details=ServiceStatusPolicy.summary(desired:typed,observation:serviceObservations?.snapshot(for:service),launchPending:serviceRecovery?.isPending(service) ?? false,now:requestedAt,
+                            var details=ServiceStatusPolicy.summary(desired:typed,observation:approvedServiceObservation(service),launchPending:serviceRecovery?.isPending(service) ?? false,now:requestedAt,
                                 restartWaiting:serviceRecovery?.isWaitingForRestartWindow(service:service,tick:serviceStatusTick) ?? false)
                             details["stop_pending"]=service == .mlx && (serviceRecovery?.isStopPending() ?? false)
                             if let recovery=serviceRecovery {details["recovery"]=recovery.summary(service:service,tick:serviceStatusTick)}
@@ -358,7 +363,7 @@ public enum ManagerRuntime {
                         let serviceActivityTick=Int64(ProcessInfo.processInfo.systemUptime*1000)
                         for service in ManagedService.allCases {
                             guard let desired=ServiceDesired(rawValue:try journal.desired(service:service.rawValue)) else {throw ControlError.internal_error}
-                            let observed=ServiceStatusPolicy.observed(desired:desired,observation:serviceObservations?.snapshot(for:service),launchPending:serviceRecovery?.isPending(service) ?? false,now:requestedAt,
+                            let observed=ServiceStatusPolicy.observed(desired:desired,observation:approvedServiceObservation(service),launchPending:serviceRecovery?.isPending(service) ?? false,now:requestedAt,
                                 restartWaiting:serviceRecovery?.isWaitingForRestartWindow(service:service,tick:serviceActivityTick) ?? false)
                             if service == .mlx {context.mlx=observed}else {context.orbstack=observed}
                         }
