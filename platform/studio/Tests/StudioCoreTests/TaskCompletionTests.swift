@@ -33,6 +33,10 @@ private func exerciseCompletion(in directory:URL,token:String)throws -> (String,
     guard let completed=try journal.jobs().first(where:{$0.id==id}),completed.state == .removed,completed.lease.revoked else {
         throw NSError(domain:"TaskCompletion",code:2,userInfo:[NSLocalizedDescriptionKey:"Interrupted model job remains running after its worker finishes"])
     }
+    let routes=try completionRoutes(journal:journal,directory:directory)
+    try routes.tick(now:5000,uptime:5000,artifactResults:[],finished:[SandboxTaskFinished(job:stillRunning,codeComplete:true,exitVerified:true)])
+    let observed=try completionStatus(routes,id:stillRunning,token:token)
+    guard observed["code_complete"] as? Bool==true,observed["exit_verified"] as? Bool==true else {throw JournalError.invalid}
     guard try journal.jobs().first(where:{$0.id==stillRunning})?.state == .running,
           try journal.unresolvedCount()==1,try journal.requestCount(job:id)==1 else {throw JournalError.invalid}
     return (id,stillRunning)
@@ -49,17 +53,25 @@ func runTaskCompletionTests()throws {
           let recovered=jobs.first(where:{$0.id==stillRunning}),recovered.state == .reconciling,recovered.lease.revoked,
           try reopened.unresolvedCount()==1,try reopened.requestCount(job:id)==1 else {throw JournalError.invalid}
     print("PASS: normal interrupted worker completion closes its local job and lease; nonterminal job remains running")
-    let tasks=TaskController(journal:reopened,broker:ModelBroker(journal:reopened))
-    let artifacts=AsyncArtifacts(store:try ArtifactStore(directory:directory.appendingPathComponent("artifacts")))
-    let sandbox=SandboxTaskController(journal:reopened,jobs:JobController(journal:reopened,executor:UnavailableSandboxRuntime()),tasks:tasks,artifacts:artifacts,socket:"/fixture/unused.sock",peerUID:geteuid())
-    let commands=TaskCommands(journal:reopened,tasks:tasks,sandbox:sandbox,artifacts:artifacts,approvedImages:[],peerUID:geteuid())
-    let status=try ControlRequest.decode(JSONSerialization.data(withJSONObject:["version":1,"id":UUID().uuidString.lowercased(),"operation":"job.status","payload":["owner":token,"job":id]]))
-    let sample=ResourceSample(sampledAt:5500,physical:0,available:nil,vmAvailable:nil,diskFree:nil,cpu:nil,pressure:.unknown,thermal:.unknown)
-    var admission=AdmissionPolicy()
-    for _ in 0..<2 {
-        let state=try commands.handle(status,role:.task,sample:sample,admission:&admission,binding:{_ in nil},nativeCapacityProven:false,now:5500,uptime:5500)
-        guard state["state"] as? String == "removed",state["unresolved_managed_requests"] as? Int==1,
+    let commands=try completionRoutes(journal:reopened,directory:directory)
+    for (job,expected,unresolved) in [(id,"removed",1),(stillRunning,"reconciling",0)] {
+        let state=try completionStatus(commands,id:job,token:token)
+        guard state["state"] as? String==expected,state["unresolved_managed_requests"] as? Int==unresolved,
               state["event"]==nil,state["code_complete"]==nil,state["exit_verified"]==nil else {throw JournalError.invalid}
     }
     print("PASS: restart preserves local completion and native uncertainty without replaying output or runner proof")
+}
+
+private func completionRoutes(journal:Journal,directory:URL)throws->TaskCommands {
+    let tasks=TaskController(journal:journal,broker:ModelBroker(journal:journal))
+    let artifacts=AsyncArtifacts(store:try ArtifactStore(directory:directory.appendingPathComponent("artifacts")))
+    let sandbox=SandboxTaskController(journal:journal,jobs:JobController(journal:journal,executor:UnavailableSandboxRuntime()),tasks:tasks,artifacts:artifacts,socket:"/fixture/unused.sock",peerUID:geteuid())
+    return TaskCommands(journal:journal,tasks:tasks,sandbox:sandbox,artifacts:artifacts,approvedImages:[],peerUID:geteuid())
+}
+
+private func completionStatus(_ commands:TaskCommands,id:String,token:String)throws->[String:Any] {
+    let status=try ControlRequest.decode(JSONSerialization.data(withJSONObject:["version":1,"id":UUID().uuidString.lowercased(),"operation":"job.status","payload":["owner":token,"job":id]]))
+    let sample=ResourceSample(sampledAt:5500,physical:0,available:nil,vmAvailable:nil,diskFree:nil,cpu:nil,pressure:.unknown,thermal:.unknown)
+    var admission=AdmissionPolicy()
+    return try commands.handle(status,role:.task,sample:sample,admission:&admission,binding:{_ in nil},nativeCapacityProven:false,now:5500,uptime:5500)
 }
