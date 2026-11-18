@@ -5,7 +5,7 @@ import CSQLite
 // Real installed pipe worker, disposable HTTP mock, synthetic source only.
 // A delayed mock response distinguishes post-dispatch source loss from a
 // pre-send refusal. Separate journal/admission state, no native model call.
-func runBusySourceWorkerTests(directory:URL,factory:PythonWorkerFactory,original:WorkerDispatchBinding,postReports:Int32)throws->Data {
+func runBusySourceWorkerTests(directory:URL,factory:PythonWorkerFactory,original:WorkerDispatchBinding,postReports:Int32,explicitCancel:Bool=false)throws->Data {
     func readReports()->Data {
         var result=Data(),buffer=[UInt8](repeating:0,count:4096)
         while true {
@@ -18,9 +18,14 @@ func runBusySourceWorkerTests(directory:URL,factory:PythonWorkerFactory,original
     // Prove all earlier healthy requests and pre-send refusals retained their
     // original exact count before this one independent fixture starts.
     let previous=String(decoding:readReports(),as:UTF8.self).split(separator:"\n")
-    guard previous.count==9,let last=previous.last,
-          (try JSONSerialization.jsonObject(with:Data(last.utf8)) as? [String:Int])?["posts"]==9 else {throw RuntimeError.identity}
+    if explicitCancel {
+        guard previous.isEmpty else {throw RuntimeError.identity}
+    } else {
+        guard previous.count==9,let last=previous.last,
+              (try JSONSerialization.jsonObject(with:Data(last.utf8)) as? [String:Int])?["posts"]==9 else {throw RuntimeError.identity}
+    }
     let journal=try Journal(directory:directory),broker=ModelBroker(journal:journal,factory:factory)
+    let tasks=TaskController(journal:journal,broker:broker)
     let id=UUID().uuidString.lowercased(),request=UUID().uuidString.lowercased(),owner=String(repeating:"a",count:64)
     let stamp=HostResources.nowMilliseconds()
     _=try journal.reserveJob(DurableJob(id:id,idempotency:UUID().uuidString.lowercased(),ownerHash:owner,requestHash:String(repeating:"b",count:64),created:stamp))
@@ -46,7 +51,7 @@ func runBusySourceWorkerTests(directory:URL,factory:PythonWorkerFactory,original
         }
         reports.append(readReports());Thread.sleep(forTimeInterval:0.005)
     }
-    guard let report=try JSONSerialization.jsonObject(with:reports) as? [String:Int],report["posts"]==10,
+    guard let report=try JSONSerialization.jsonObject(with:reports) as? [String:Int],report["posts"]==(explicitCancel ? 11:10),
           broker.activeWorkers==1,!text,!complete else {throw RuntimeError.identity}
     guard let grant=try journal.workerGrants().first?.grant else {throw JournalError.conflict}
     do {
@@ -56,7 +61,9 @@ func runBusySourceWorkerTests(directory:URL,factory:PythonWorkerFactory,original
         defer {sqlite3_exec(blocker,"ROLLBACK",nil,nil,nil);sqlite3_close(blocker)}
         guard sqlite3_exec(blocker,"BEGIN IMMEDIATE",nil,nil,nil)==SQLITE_OK else {throw JournalError.storage}
         do {
-            _=try broker.poll(now:HostResources.nowMilliseconds(),uptime:Int64(ProcessInfo.processInfo.systemUptime*1000),admission:&admission,source:{_ in binding(conflict:true)})
+            let now=HostResources.nowMilliseconds(),uptime=Int64(ProcessInfo.processInfo.systemUptime*1000)
+            if explicitCancel {try tasks.cancel(id:id,owner:owner,now:now,uptime:uptime)}
+            else {_=try broker.poll(now:now,uptime:uptime,admission:&admission,source:{_ in binding(conflict:true)})}
             fatalError("Fixture did not block durable revocation")
         } catch JournalError.storage {}
         let deadline=ProcessInfo.processInfo.systemUptime+1
@@ -67,6 +74,7 @@ func runBusySourceWorkerTests(directory:URL,factory:PythonWorkerFactory,original
             fatalError("Worker interruption waited for durable revoke or dropped native custody")
         }
     }
+    if explicitCancel {try tasks.cancel(id:id,owner:owner,now:HostResources.nowMilliseconds(),uptime:Int64(ProcessInfo.processInfo.systemUptime*1000))}
     let cleanup=ProcessInfo.processInfo.systemUptime+2
     while broker.activeWorkers>0,ProcessInfo.processInfo.systemUptime<cleanup {
         let events=try broker.poll(now:HostResources.nowMilliseconds(),uptime:Int64(ProcessInfo.processInfo.systemUptime*1000),admission:&admission,source:{_ in binding(conflict:false)})

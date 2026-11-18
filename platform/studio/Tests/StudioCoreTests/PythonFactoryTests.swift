@@ -326,6 +326,8 @@ func runPythonFactoryTests() throws {
         original:freshBinding(),postReports:fd)
     // Mock fixture reports only aggregate POST counts, never headers/prompts.
     var counts=conflictReports
+    counts.append(try runBusySourceWorkerTests(directory:directory.appendingPathComponent("explicit-cancel"),factory:factory,
+        original:freshBinding(),postReports:fd,explicitCancel:true))
     while true {
         var bytes=[UInt8](repeating:0,count:4096)
         let n=Darwin.read(fd,&bytes,bytes.count)
@@ -333,8 +335,10 @@ func runPythonFactoryTests() throws {
         guard counts.count<4096 else { throw RuntimeError.outputLimit }
     }
     let reports=String(decoding:counts,as:UTF8.self).split(separator:"\n")
-    guard reports.count==1,let last=reports.last,
-          let summary=try JSONSerialization.jsonObject(with:Data(last.utf8)) as? [String:Int],summary["posts"]==10 else { fatalError("Source conflict dispatched or replayed an extra model POST") }
+    guard reports.count==2,
+          try reports.enumerated().allSatisfy({(try JSONSerialization.jsonObject(with:Data($0.element.utf8)) as? [String:Int])?["posts"]==10+$0.offset}) else {
+        fatalError("Source conflict or explicit cancellation dispatched an extra model POST")
+    }
     // Actual installed child carries the original native identity, while its
     // mock completion/reap must leave the native claim unresolved.
     let handoffEpoch=String(repeating:"1",count:32)

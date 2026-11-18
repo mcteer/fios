@@ -101,10 +101,10 @@ final class TaskController {
             sandboxScopes[id]=scope
         } catch {
             scope.channel.revoke();sandboxScopes[id]=scope
+            try broker.cancel(job:id,uptime:uptime)
             if let state=try journal.jobs().first(where:{$0.id==id})?.state,[.reserved,.creating,.running,.reconciling].contains(state) {
                 try journal.transitionJob(id:id,to:.revoking,now:now)
             }
-            try broker.cancel(job:id,uptime:uptime)
             throw error
         }
     }
@@ -126,8 +126,11 @@ final class TaskController {
     func cancel(id:String,owner:String,now:Int64,uptime:Int64) throws {
         guard let job=try journal.jobs().first(where:{$0.id==id}),job.ownerHash==owner else { throw ControlError.unauthorized }
         guard job.state != .removed else { return }
-        if ![.revoking,.stopping,.removing].contains(job.state) { try journal.transitionJob(id:id,to:.revoking,now:now) }
+        guard (0...ActivityPolicy.maximumTimestamp).contains(now) else {throw ControlError.invalid_request}
+        // Interrupt the bound worker first. A failed durable transition does
+        // not authorize continuing a cancelled effect or release its claim.
         try broker.cancel(job:id,uptime:uptime)
+        if ![.revoking,.stopping,.removing].contains(job.state) { try journal.transitionJob(id:id,to:.revoking,now:now) }
         if try !journal.sandboxRecords().contains(where:{$0.configuration.job==id}) {
             try finishIfLocallyGone(id:id,now:now)
         }
