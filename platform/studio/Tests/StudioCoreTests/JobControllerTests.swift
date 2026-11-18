@@ -1,4 +1,5 @@
 import Foundation
+import CSQLite
 
 private class FakeSandboxExecutor:SandboxExecuting {
     var values:[SandboxExecution]=[]
@@ -142,6 +143,12 @@ private func checkReservedCreateSlot()throws {
         let sample=ResourceSample(sampledAt:now,physical:128<<30,available:64<<30,vmAvailable:8<<30,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal,vmSampledAt:now)
         try controller.tick(now:now,sample:sample,admission:&admission,inputReady:{_ in ready},transportReady:{_ in false},cancelModel:{_ in})
     }
+    let disabled=UnavailableSandboxRuntime()
+    do {
+        try disabled.submitCreate(configuration:config,beforePublish:{fatalError("Disabled runtime ran create commit")})
+        fatalError("Disabled runtime reserved a create slot")
+    } catch AdmissionError.capacity {}
+    guard disabled.drain().isEmpty else {fatalError("Disabled runtime queued create work")}
     runtime.denyCreateCapacity=true
     try tick(10000,ready:true)
     guard try journal.jobs()[0].state == .reserved,try !journal.sandboxRecords()[0].createIssued,
@@ -149,6 +156,18 @@ private func checkReservedCreateSlot()throws {
     runtime.denyCreateCapacity=false
     try tick(10500,ready:false)
     guard runtime.commands.isEmpty,runtime.commits==0 else {fatalError("Slot-backed create bypassed input readiness")}
+    do {
+        var blocker:OpaquePointer?
+        guard sqlite3_open_v2(directory.appendingPathComponent("state.sqlite").path,&blocker,SQLITE_OPEN_READWRITE|SQLITE_OPEN_FULLMUTEX,nil)==SQLITE_OK else {throw JournalError.storage}
+        defer {sqlite3_exec(blocker,"ROLLBACK",nil,nil,nil);sqlite3_close(blocker)}
+        guard sqlite3_exec(blocker,"BEGIN IMMEDIATE",nil,nil,nil)==SQLITE_OK else {throw JournalError.storage}
+        do {
+            try tick(10750,ready:true)
+            fatalError("Create escaped while its journal intent was blocked")
+        } catch JournalError.storage {}
+        guard try journal.jobs()[0].state == .reserved,try !journal.sandboxRecords()[0].createIssued,
+              runtime.commands.isEmpty,runtime.commits==0 else {fatalError("Create commit failure changed intent or submitted work")}
+    }
     try tick(11000,ready:true)
     guard try journal.jobs()[0].state == .creating,try journal.sandboxRecords()[0].createIssued,
           runtime.commits==1,runtime.commands.count==1,case .create=runtime.commands[0] else {fatalError("Slot-backed create did not commit before dispatch")}
