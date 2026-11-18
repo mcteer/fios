@@ -203,6 +203,22 @@ private func checkDeferredCreateRestart()throws {
           controller.cleanupStatus(now:13500)["pending_sandboxes"] as? Int==1 else {
         fatalError("Restart replayed precommitted create or inferred absence after losing local refusal history")
     }
+    let unissuedDirectory=directory.appendingPathComponent("disabled-reopen"),unissued=UUID().uuidString.lowercased()
+    do {
+        let seed=try Journal(directory:unissuedDirectory)
+        let configuration=try SandboxConfiguration(job:unissued,nonce:hash,image:"sha256:"+hash,memory:512<<20,cpus:1)
+        _=try seed.reserveSandbox(job:DurableJob(id:unissued,idempotency:UUID().uuidString.lowercased(),ownerHash:hash,requestHash:hash,created:10000),configuration:configuration)
+    }
+    let recovered=try Journal(directory:unissuedDirectory),disabled=UnavailableSandboxRuntime()
+    let disabledController=JobController(journal:recovered,executor:disabled)
+    var disabledAdmission=AdmissionPolicy()
+    for now:Int64 in [11000,11500] {
+        try disabledController.tick(now:now,sample:sample(now),admission:&disabledAdmission,inputReady:{_ in false},transportReady:{_ in false},cancelModel:{_ in})
+    }
+    let neverIssued=try recovered.sandboxRecords()[0]
+    guard try recovered.jobs()[0].state == .removed,!neverIssued.createIssued,neverIssued.removalProven,
+          neverIssued.runtimeID==nil,disabled.drain().isEmpty else {fatalError("Disabled-runtime restart queried daemon for never-issued create")}
+    try disabledAdmission.reserve(job:unissued,memory:neverIssued.configuration.memory,cpus:1,sample:sample(11500),now:11500)
 }
 
 private func checkModelSandboxSourceTurnover() throws {
