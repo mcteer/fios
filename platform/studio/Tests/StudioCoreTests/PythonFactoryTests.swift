@@ -155,6 +155,12 @@ func runPythonFactoryTests() throws {
           !TaskCommands.retainsUploadBinding(freshBinding(sequence:3,stamp:999),original:uploadOriginal) else {
         fatalError("Upload finalization crossed native epoch or went backwards")
     }
+    guard SandboxTaskController.retainsPreStartSource(freshBinding(sequence:3,stamp:1100),original:uploadOriginal,now:1200),
+          !SandboxTaskController.retainsPreStartSource(nil,original:uploadOriginal,now:1200),
+          !SandboxTaskController.retainsPreStartSource(freshBinding(nativeEpoch:"different",sequence:3,stamp:1100),original:uploadOriginal,now:1200),
+          !SandboxTaskController.retainsPreStartSource(freshBinding(sequence:3,stamp:1100),original:uploadOriginal,now:6200) else {
+        fatalError("Sandbox pre-start source accepted a stale or replaced binding")
+    }
     func resources(_ now:Int64)->ResourceSample { ResourceSample(sampledAt:now,physical:128<<30,available:64<<30,vmAvailable:nil,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal) }
     var admission=AdmissionPolicy()
     progress("broker rounds begin")

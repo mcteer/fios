@@ -112,7 +112,7 @@ public enum ManagerRuntime {
         let drainer=try (migrationHeld ? nil:drainObservations).map {try ServiceDrainController(journal:journal,tasks:tasks,managerEpoch:epoch,observations:$0)}
         func binding(_ model:String)->WorkerDispatchBinding? {activeExecution?.binding(model,managerEpoch:epoch)}
         func bindingForJob(_ id:String)->WorkerDispatchBinding? {
-            guard let model=tasks.canonicalModel(forJob:id) else {return nil}
+            guard let model=sandboxes.pendingModel(forJob:id) ?? tasks.canonicalModel(forJob:id) else {return nil}
             return binding(model)
         }
         func digest(_ value:String)->String { SHA256.hash(data:Data(value.utf8)).map { String(format:"%02x",$0) }.joined() }

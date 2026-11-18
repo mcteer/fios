@@ -43,6 +43,11 @@ final class SandboxTaskController {
               SHA256.hash(data:source).map({String(format:"%02x",$0)}).joined()==inputSHA256 else {throw ControlError.unauthorized}
         sessions[id]=Session(owner:owner,binding:binding,stream:try SandboxTaskSession(source:source,deadline:job.lease.deadline,now:now),renewed:now)
     }
+    func pendingModel(forJob id:String)->String? {sessions[id]?.binding?.canonicalModel}
+    static func retainsPreStartSource(_ current:WorkerDispatchBinding?,original:WorkerDispatchBinding,now:Int64)->Bool {
+        guard let current,TaskCommands.retainsUploadBinding(current,original:original) else {return false}
+        return (try? NativeAdmission.retainsSource(current,now:now)) == true
+    }
     private func revoke(id:String,now:Int64,uptime:Int64) throws {
         if let session=sessions[id],let attach=session.attach {session.stream.revoke(attach:attach)}
         if let job=try journal.jobs().first(where:{$0.id==id}),![.revoking,.stopping,.removing,.removed].contains(job.state),let session=sessions[id] {
@@ -89,6 +94,13 @@ final class SandboxTaskController {
                 continue
             }
             do {
+                // Before create or start, a missing/replaced source is not
+                // permission to launch a model-bearing sandbox. Plain code
+                // tasks and VM probes do not use this inference gate.
+                if job.state != .running,let original=session.binding,
+                   !Self.retainsPreStartSource(source(id),original:original,now:now) {
+                    throw AdmissionError.capacity
+                }
                 if session.attach==nil,let runtimeID=record.runtimeID {
                     session.attach=try DockerAttach(socketPath:socket,configuration:record.configuration,savedID:runtimeID,peerUID:peerUID,now:uptime,endpointPolicy:endpointPolicy)
                 }
