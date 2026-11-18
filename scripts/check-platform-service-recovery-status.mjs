@@ -22,7 +22,13 @@ function start(mode,scenario){const p=spawn('/usr/bin/sandbox-exec',['-p',policy
 function status(){const r=spawnSync(cli,['--state',state,'service','mlx','status'],{encoding:'utf8',timeout:2000});return r.status===0 ? JSON.parse(r.stdout):null;}
 try{
  const helper=start('server','functional');await until(()=>existsSync(join(state,'session-control.json')));
- const manager=start('manager','known');
+ const manager=start('manager','invalid-then-known');
+ await until(()=>{assert(!exited(helper)&&!exited(manager),'Manager exited after invalid source');return status()?.recovery?.budget_state==='available';});
+ await delay(2200); // Keep the invalid source through a complete recovery cycle.
+ assert(!exited(manager),'Manager exited during invalid-source recovery cycle');
+ assert.equal(status().recovery.starts_in_window,0);
+ assert.equal(existsSync(join(state,'validation-entered')),false);
+ writeFileSync(join(state,'release-source'),'release');
  await until(()=>{assert(!exited(helper)&&!exited(manager));return existsSync(join(state,'validation-entered'));});
  const pending=status();assert.equal(pending.observed,'starting');assert.equal(pending.message,'Service startup is pending.');assert.equal(pending.recovery.budget_state,'pending');assert.equal(pending.recovery.budget_wait_ms,null);
  writeFileSync(join(state,'release-validation'),'release');
