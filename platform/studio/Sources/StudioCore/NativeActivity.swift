@@ -41,6 +41,7 @@ enum ActivityPolicy {
         let age = now - snapshot.sampledAt // Both operands bounded safely above.
         guard (-1000...5000).contains(age) else { throw PolicyError.staleObservation }
         guard snapshot.allClientLifecycleCoverage else { return .unknown }
+        guard snapshot.outstandingOwners == 0 || snapshot.residentModel != nil else { return .unknown }
         if snapshot.loading { return .preparing }
         if snapshot.outstandingOwners > 0 {
             guard let model = snapshot.residentModel else { return .unknown }

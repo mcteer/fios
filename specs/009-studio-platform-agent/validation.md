@@ -9716,3 +9716,23 @@ Receipt `/private/tmp/fios-009-serving-runtime-native-pynYxg/receipt.json`,
 SHA256 `6ea673d544ff546ee74f823f24d8c90b655d143b3043c2d005788c55edf64361`.
 The delay was simulated and the fixture made zero model POSTs.
 Installed service acceptance remains open. Whole tasks remain 39 of 55.
+
+### Current development package and loading classification
+
+Clean detached source `d43d0bb6f4b3f6391417c14df196f7a611fcf346`
+built a nine-artifact development release at
+`/private/tmp/fios-009-service-observation-package.WjirfTIV/release`.
+Manifest SHA256
+`30e996081db052b4e6faef48d722403684f9e4ba774ea91b1ff757dfbd4a3b4c`.
+Independent packaged startup passed with zero models and no inference.
+Its receipt SHA256 is
+`f32489bc9fb6445d9a3e473803f4b2506d770916eb60e9d13fd275e0d19af861`
+at `/private/tmp/fios-009-release-check-rCssgf`. Both Studio plans
+reported five blockers and zero privileged commands. The package is
+inactive and covers the declared packaging inputs.
+
+The next source change makes an outstanding request with no attributable
+model report unknown even when loading is true. A cold load with no
+outstanding owners still reports preparing. Both isolated policy modes
+passed all 145 checks. The normalized classifier test has synthetic
+inputs. T020 and the all-client producer requirement remain open.

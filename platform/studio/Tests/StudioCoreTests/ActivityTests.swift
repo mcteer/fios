@@ -30,6 +30,8 @@ final class ActivityTests {
     func testQueuedPreparingAndResponseOwnersAreBusy() throws {
         XCTAssertEqual(try ActivityPolicy.evaluate(observation(owners: 1), now: 10_000), .busy(model: "model-a"))
         XCTAssertEqual(try ActivityPolicy.evaluate(observation(loading: true), now: 10_000), .preparing)
+        XCTAssertEqual(try ActivityPolicy.evaluate(observation(model: nil, loading: true), now: 10_000), .preparing)
+        XCTAssertEqual(try ActivityPolicy.evaluate(observation(model: nil, owners: 1, loading: true), now: 10_000), .unknown)
     }
 
     func testStaleFutureAndMalformedSamplesReject() {
