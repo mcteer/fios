@@ -6,6 +6,9 @@ import { test } from 'node:test';
 class RootClosureModel {
   #roots = new Map();
   #operations = new Map();
+  #capacity;
+
+  constructor(capacity = 8) { this.#capacity = capacity; }
 
   register(epoch, correlation, sequence) {
     const key = JSON.stringify([epoch, correlation, sequence]);
@@ -28,6 +31,8 @@ class RootClosureModel {
   }
 
   #publish(keys) {
+    // Refusal is before publication and cannot consume a parent's hold.
+    if (this.#operations.size >= this.#capacity) return null;
     const handle = Symbol();
     this.#operations.set(handle, keys);
     for (const key of keys) this.#roots.get(key).live++;
@@ -69,6 +74,41 @@ test('closed roots reject independent publication but permit live-parent callbac
   assert.equal(model.closed(root), true);
   assert.equal(model.closed(model.register('epoch-b', 'request', 1)), false);
   assert.equal(model.closed(model.register('epoch-a', 'request', 2)), false);
+});
+
+test('device completion cannot seal a root before callback capture destruction', () => {
+  const model = new RootClosureModel();
+  const root = model.register('epoch', 'request', 1);
+  const buffer = model.begin(root);
+  const callback = model.inherit([buffer]);
+  model.close(root);
+  assert(model.release(buffer)); // The device completed; its callback is still live.
+  assert.equal(model.closed(root), false);
+  const destructorWork = model.inherit([callback]);
+  assert(destructorWork);
+  assert(model.release(callback));
+  assert.equal(model.inherit([callback]), null);
+  assert.equal(model.closed(root), false);
+  assert(model.release(destructorWork));
+  assert.equal(model.closed(root), true);
+});
+
+test('capacity refusal leaves parent custody intact and retired handles cannot be reused', () => {
+  const model = new RootClosureModel(2);
+  const root = model.register('epoch', 'request', 1);
+  const parent = model.begin(root);
+  const first = model.inherit([parent]);
+  model.close(root);
+  assert.equal(model.inherit([parent]), null);
+  assert(model.release(first));
+  const retry = model.inherit([parent]);
+  assert(retry);
+  assert.notEqual(retry, first);
+  assert.equal(model.inherit([first]), null);
+  assert(model.release(parent));
+  assert.equal(model.closed(root), false);
+  assert(model.release(retry));
+  assert.equal(model.closed(root), true);
 });
 
 test('mixed-root handoff validates every parent before counting either root', () => {
