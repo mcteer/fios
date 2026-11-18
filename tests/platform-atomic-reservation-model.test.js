@@ -36,13 +36,21 @@ class Gate {
     if (this.#fenced || owner?.state !== 'ingress' ||
         [...this.#owners.values()].some(other => other.target !== null && other.target !== target)) return false;
     owner.target = target;
+    owner.state = 'bound';
+    this.#revision++;
+    return true;
+  }
+
+  publishBoundIngress(hold) {
+    const owner = this.#owners.get(hold);
+    if (this.#fenced || owner?.state !== 'bound') return false;
     owner.state = 'published';
     this.#revision++;
     return true;
   }
 
   abandonIngress(hold) {
-    return this.#owners.get(hold)?.state === 'ingress' && this.#remove(hold);
+    return ['ingress', 'bound'].includes(this.#owners.get(hold)?.state) && this.#remove(hold);
   }
 
   #enter(target, state = 'reserved') {
@@ -101,8 +109,22 @@ test('unattributed ingress blocks reservation and cannot bypass an existing hold
   assert.equal(gate.publish(reserved), false);
   assert.equal(gate.bindIngress(arriving, 'model/b'), false);
   assert(gate.bindIngress(arriving, 'model/a'));
+  assert.equal(gate.backendTerminal(arriving), null);
+  assert(gate.publishBoundIngress(arriving));
   assert.equal(gate.abandonIngress(arriving), false);
   assert(gate.publish(reserved));
+});
+
+test('bound ingress occupies its model before load and is abandonable only before publication', () => {
+  const gate = new Gate({ covered: true });
+  const ingress = gate.acceptIngress();
+  assert(gate.bindIngress(ingress, 'model/a'));
+  assert.equal(gate.bindIngress(ingress, 'model/b'), false);
+  assert.equal(gate.reserve(gate.observe('model/b'), 'model/b'), null);
+  assert.equal(gate.backendTerminal(ingress), null);
+  assert(gate.abandonIngress(ingress));
+  assert.equal(gate.publishBoundIngress(ingress), false);
+  assert(gate.reserve(gate.observe('model/b'), 'model/b'));
 });
 
 test('external arrival between observation and reservation wins without preemption', () => {
