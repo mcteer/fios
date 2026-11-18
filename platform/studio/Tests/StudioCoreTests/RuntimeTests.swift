@@ -8,6 +8,16 @@ func runRuntimeTests() throws {
     let runtime = try VerifiedExecutable(path: trueURL.path, sha256: digest)
     let result = try runtime.run(arguments: [], timeout: 2, maximumOutput: 1024)
     precondition(result.status == 0 && result.output.isEmpty)
+    // A silent child must not keep the actor blocked in output collection.
+    let sleepURL=URL(fileURLWithPath:"/bin/sleep")
+    let sleepDigest=SHA256.hash(data:try Data(contentsOf:sleepURL)).map {String(format:"%02x",$0)}.joined()
+    let sleeper=try VerifiedExecutable(path:sleepURL.path,sha256:sleepDigest)
+    let sleepBegan=ProcessInfo.processInfo.systemUptime
+    do {
+        _=try sleeper.run(arguments:["8"],timeout:0.5,maximumOutput:64)
+        fatalError("Silent runtime command exceeded its deadline without refusal")
+    } catch RuntimeError.deadline {}
+    guard ProcessInfo.processInfo.systemUptime-sleepBegan<3 else {fatalError("Silent runtime command blocked bounded output collection")}
     do {
         let bad = try VerifiedExecutable(path: trueURL.path, sha256: String(repeating:"0",count:64))
         _ = try bad.run(arguments: [], timeout: 2, maximumOutput: 1024)

@@ -96,6 +96,11 @@ public struct VerifiedExecutable:Sendable {
         }
         guard ProcessInfo.processInfo.systemUptime<deadline else {throw RuntimeError.deadline}
         let process = Process(), pipe = Pipe()
+        let fd = pipe.fileHandleForReading.fileDescriptor
+        let flags = fcntl(fd,F_GETFL)
+        // Establish nonblocking reads before starting the child. Otherwise
+        // a silent command could block read() past all cleanup deadlines.
+        guard flags >= 0,fcntl(fd,F_SETFL,flags | O_NONBLOCK)==0 else {throw RuntimeError.launch}
         commandProcess=process
         process.executableURL = URL(fileURLWithPath:invocation ?? path); process.arguments = arguments
         process.environment = environment
@@ -111,8 +116,6 @@ public struct VerifiedExecutable:Sendable {
             kill(process.processIdentifier,signal)
         }
         pipe.fileHandleForWriting.closeFile()
-        let fd = pipe.fileHandleForReading.fileDescriptor
-        _ = fcntl(fd,F_SETFL,O_NONBLOCK)
         defer { pipe.fileHandleForReading.closeFile() }
         var output = Data(), failure: RuntimeError?
         var termAt: TimeInterval?
