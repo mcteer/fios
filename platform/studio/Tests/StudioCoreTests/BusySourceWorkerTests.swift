@@ -74,7 +74,13 @@ func runBusySourceWorkerTests(directory:URL,factory:PythonWorkerFactory,original
             fatalError("Worker interruption waited for durable revoke or dropped native custody")
         }
     }
-    if explicitCancel {try tasks.cancel(id:id,owner:owner,now:HostResources.nowMilliseconds(),uptime:Int64(ProcessInfo.processInfo.systemUptime*1000))}
+    // No second operator request: an ordinary task tick must persist the
+    // same cancellation once the private journal is writable again.
+    if explicitCancel {
+        _=try tasks.tick(now:HostResources.nowMilliseconds(),uptime:Int64(ProcessInfo.processInfo.systemUptime*1000),admission:&admission,source:{_ in binding(conflict:false)})
+        let recorded=try journal.jobs().first(where:{$0.id==id})?.state
+        guard recorded == .revoking || recorded == .removed else {fatalError("Contended owner cancellation needed another operator request")}
+    }
     let cleanup=ProcessInfo.processInfo.systemUptime+2
     while broker.activeWorkers>0,ProcessInfo.processInfo.systemUptime<cleanup {
         let events=try broker.poll(now:HostResources.nowMilliseconds(),uptime:Int64(ProcessInfo.processInfo.systemUptime*1000),admission:&admission,source:{_ in binding(conflict:false)})
@@ -83,8 +89,9 @@ func runBusySourceWorkerTests(directory:URL,factory:PythonWorkerFactory,original
         }
         Thread.sleep(forTimeInterval:0.005)
     }
+    let finalState=try journal.jobs().first(where:{$0.id==id})?.state
     guard broker.activeWorkers==0,!text,!complete,try journal.workerGrants().isEmpty,
-          try journal.jobs().first(where:{$0.id==id})?.state == .revoking,
+          finalState == .revoking || (explicitCancel && finalState == .removed),
           try journal.unresolvedRequestIDs()==[request],try journal.uncertainCount()==1 else {
         fatalError("FOREIGN_BUSY_SOURCE_DID_NOT_REVOKE_WITH_ORIGINAL_UNCERTAINTY")
     }

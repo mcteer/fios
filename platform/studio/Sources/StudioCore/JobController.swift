@@ -182,6 +182,7 @@ final class JobController {
                     }
                     // Capacity refusal means this start was never submitted.
                     // Its durable intent does not preserve transport readiness.
+                    if case .create=command,!inputReady(id) {continue}
                     if case .start=command,!transportReady(id) {continue}
                 default:break
                 }

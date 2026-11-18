@@ -8,9 +8,11 @@ final class TaskController {
     private let broker:ModelBroker
     private struct SandboxScope { let owner:String;var binding:WorkerDispatchBinding;var channel:SandboxModelChannel }
     private var sandboxScopes:[String:SandboxScope]=[:]
+    private var pendingCancellation:Set<String>=[]
     init(journal:Journal,broker:ModelBroker) { self.journal=journal;self.broker=broker }
 
     var failedLaunches:Set<WorkerLaunchKey> {broker.failedLaunches}
+    func cancellationPending(for id:String)->Bool {pendingCancellation.contains(id)}
 
     func preparationObservation(_ subject:NativePreparationSubject,now:Int64)->NativePreparationObservation? {
         broker.preparationObservation(subject,now:now)
@@ -89,7 +91,7 @@ final class TaskController {
                            sample:ResourceSample,admission:inout AdmissionPolicy,now:Int64,uptime:Int64) throws {
         guard var scope=sandboxScopes[id] else { throw ControlError.unauthorized }
         do {
-            guard NativeAdmission.retainsCheckpoint(binding,original:scope.binding) else {throw ControlError.unauthorized}
+            guard !pendingCancellation.contains(id),NativeAdmission.retainsCheckpoint(binding,original:scope.binding) else {throw ControlError.unauthorized}
             switch try scope.channel.accept(data,runtimeID:runtimeID) {
             case .request(let request,let prompt):
                 try broker.submit(job:id,owner:scope.owner,requestID:request,context:[ModelText(role:"user",content:prompt)],
@@ -101,10 +103,8 @@ final class TaskController {
             sandboxScopes[id]=scope
         } catch {
             scope.channel.revoke();sandboxScopes[id]=scope
-            try broker.cancel(job:id,uptime:uptime)
-            if let state=try journal.jobs().first(where:{$0.id==id})?.state,[.reserved,.creating,.running,.reconciling].contains(state) {
-                try journal.transitionJob(id:id,to:.revoking,now:now)
-            }
+            pendingCancellation.insert(id)
+            try finishCancellation(id:id,now:now,uptime:uptime)
             throw error
         }
     }
@@ -127,10 +127,19 @@ final class TaskController {
         guard let job=try journal.jobs().first(where:{$0.id==id}),job.ownerHash==owner else { throw ControlError.unauthorized }
         guard job.state != .removed else { return }
         guard (0...ActivityPolicy.maximumTimestamp).contains(now) else {throw ControlError.invalid_request}
-        // Interrupt the bound worker first. A failed durable transition does
-        // not authorize continuing a cancelled effect or release its claim.
+        pendingCancellation.insert(id)
+        try finishCancellation(id:id,now:now,uptime:uptime)
+    }
+    private func finishCancellation(id:String,now:Int64,uptime:Int64)throws {
+        sandboxScopes[id]?.channel.revoke()
+        // Interrupt the bound worker first. Retain this exact owned job's
+        // local intent if storage refuses the transition; never replay a POST.
         try broker.cancel(job:id,uptime:uptime)
-        if ![.revoking,.stopping,.removing].contains(job.state) { try journal.transitionJob(id:id,to:.revoking,now:now) }
+        if let state=try journal.jobs().first(where:{$0.id==id})?.state,
+           [.reserved,.creating,.running,.reconciling].contains(state) {
+            try journal.transitionJob(id:id,to:.revoking,now:now)
+        }
+        pendingCancellation.remove(id)
         if try !journal.sandboxRecords().contains(where:{$0.configuration.job==id}) {
             try finishIfLocallyGone(id:id,now:now)
         }
@@ -143,6 +152,10 @@ final class TaskController {
     }
     func tick(now:Int64,uptime:Int64,admission:inout AdmissionPolicy,
               source:(String)throws->WorkerDispatchBinding?) throws -> [String:[ModelWorkerEvent]] {
+        for id in pendingCancellation.sorted() {
+            do {try finishCancellation(id:id,now:now,uptime:uptime)}
+            catch JournalError.storage {continue}
+        }
         let data=try broker.poll(now:now,uptime:uptime,admission:&admission,source:source)
         let allJobs=try journal.jobs()
         let unsettled=allJobs.filter {$0.state == .running || $0.state == .revoking || $0.state == .reconciling}

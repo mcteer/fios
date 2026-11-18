@@ -141,7 +141,9 @@ final class SandboxTaskController {
                 }
             } catch {try revoke(id:id,now:now,uptime:clock)}
         }
-        try jobs.tick(now:now,sample:sample,admission:&admission,inputReady:{id in self.sessions[id] != nil},transportReady:{id in self.sessions[id]?.attach?.ready==true},cancelModel:{id in
+        try jobs.tick(now:now,sample:sample,admission:&admission,
+                      inputReady:{id in self.sessions[id] != nil && !self.tasks.cancellationPending(for:id)},
+                      transportReady:{id in self.sessions[id]?.attach?.ready==true && !self.tasks.cancellationPending(for:id)},cancelModel:{id in
             if let job=try self.journal.jobs().first(where:{$0.id==id}) {try self.tasks.cancel(id:id,owner:job.ownerHash,now:now,uptime:clock)}
         })
         return updates
