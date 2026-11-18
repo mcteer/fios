@@ -8,6 +8,7 @@ class RootClosureModel {
   #slots;
   #identity = Symbol('operation table');
   #maxGeneration;
+  #backgroundUntracked = false;
 
   constructor(capacity = 8, maxGeneration = Number.MAX_SAFE_INTEGER) {
     this.#slots = Array.from({ length: capacity }, () => ({ generation: 0, keys: null }));
@@ -30,6 +31,11 @@ class RootClosureModel {
   close(key) { this.#roots.get(key).open = false; }
 
   fence(key) { this.#roots.get(key).fenced = true; }
+
+  noteUnattributedBackground() { this.#backgroundUntracked = true; }
+
+  // A negative diagnostic only. False is not positive coverage.
+  hasBackgroundCoverageGap() { return this.#backgroundUntracked; }
 
   begin(key) {
     if (!this.#roots.get(key)?.open) return null;
@@ -125,6 +131,17 @@ test('capacity refusal leaves parent custody intact and retired handles cannot b
   assert.equal(model.closed(root), false);
   assert(model.release(retry));
   assert.equal(model.closed(root), true);
+});
+
+test('an unattributed background gap survives closure of an unrelated tracked root', () => {
+  const model = new RootClosureModel();
+  const root = model.register('epoch', 'request', 1);
+  const operation = model.begin(root);
+  model.noteUnattributedBackground();
+  model.close(root);
+  assert(model.release(operation));
+  assert.equal(model.closed(root), true); // Tracked model only, never a native receipt.
+  assert.equal(model.hasBackgroundCoverageGap(), true);
 });
 
 test('escaped publication remains fenced after all tracked references retire', () => {
