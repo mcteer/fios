@@ -120,7 +120,11 @@ final class JobController {
                     else if let exitCode {exitProof[completed.job]=exitCode==0 && !oom}
                 }
                 if let next {try dispatch(next,job:completed.job)}
-            case .success(.acknowledged):break
+            case .success(.acknowledged):
+                switch command {
+                case .start,.stop,.remove:break // Receipt only, not a daemon state observation.
+                case .create,.inspect:throw JournalError.conflict
+                }
             }
         }
         let records=try journal.sandboxRecords()

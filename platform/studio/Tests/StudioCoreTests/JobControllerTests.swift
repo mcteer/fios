@@ -9,6 +9,7 @@ private final class FakeSandboxExecutor:SandboxExecuting {
     var holdResponses=false
     var denyStartCapacity=false
     var loseCreateReply=false
+    var acknowledgeInspection=false
     var resourceNow:Int64=0
     var resourceFailure=false
     var resourceRequests:[Int64]=[]
@@ -33,6 +34,10 @@ private final class FakeSandboxExecutor:SandboxExecuting {
             let id=String(repeating:job.first=="a" ? "a" : "b",count:64)
             present[job]=(config,id,false);result = .created(id)
         case .inspect:
+            if acknowledgeInspection {
+                result = .acknowledged
+                break
+            }
             if let (config,id,running)=present[job] { result = .observed(.present(id:id,name:"/"+config.name,image:config.image,nonce:config.nonce,running:running),exitCode:reportExitCodes ? 0:nil) }
             else { result = .observed(.absent) }
         case .start:
@@ -293,12 +298,19 @@ func runCleanupStatusRecoveryTests() throws {
     try tick(93500)
     try journal.transitionJob(id:lateID,to:.revoking,now:94000)
     for now:Int64 in [94000,95500,96000] {try tick(now)}
+    runtime.acknowledgeInspection=true
+    try tick(97500)
+    do {
+        try tick(98000)
+        fatalError("Inspection accepted an untyped effect acknowledgement")
+    } catch JournalError.conflict {}
+    runtime.acknowledgeInspection=false
     let pending=try journal.sandboxRecords().first{$0.configuration.job==lateID}
     guard pending?.createIssued==true,pending?.runtimeID==nil,pending?.removalProven==false,
-          controller.cleanupStatus(now:96000)["pending_sandboxes"] as? Int==1 else {fatalError("Lost create reply followed by absence released custody")}
+          controller.cleanupStatus(now:98000)["pending_sandboxes"] as? Int==1 else {fatalError("Lost create reply followed by absence released custody")}
     let lateRuntimeID=String(repeating:"d",count:64)
     runtime.present[lateID]=(lateConfig,lateRuntimeID,false)
-    for now:Int64 in [97500,98000,98500,99500,100000] {try tick(now)}
+    for now:Int64 in [99500,100000,100500,101500,102000] {try tick(now)}
     let final=try journal.sandboxRecords().first{$0.configuration.job==lateID}
     let commands=runtime.commands
     guard final?.runtimeID==lateRuntimeID,final?.removalProven==true,
@@ -306,17 +318,17 @@ func runCleanupStatusRecoveryTests() throws {
           !commands.contains(where:{if case .start=$0 {return true};return false}),
           try journal.unresolvedCount()==1,try journal.uncertainCount()==1 else {fatalError("Late sandbox was replayed, started, or released independent model uncertainty")}
     let unissuedID=UUID().uuidString.lowercased()
-    let unissued=try DurableJob(id:unissuedID,idempotency:UUID().uuidString.lowercased(),ownerHash:job.ownerHash,requestHash:job.requestHash,created:101000)
+    let unissued=try DurableJob(id:unissuedID,idempotency:UUID().uuidString.lowercased(),ownerHash:job.ownerHash,requestHash:job.requestHash,created:103000)
     let unissuedConfig=try SandboxConfiguration(job:unissuedID,nonce:lateConfig.nonce,image:configuration.image,memory:configuration.memory,cpus:1)
     _=try journal.reserveSandbox(job:unissued,configuration:unissuedConfig)
-    try admission.reserve(job:unissuedID,memory:unissuedConfig.memory,cpus:1,sample:sample(101000),now:101000)
-    try journal.transitionJob(id:unissuedID,to:.revoking,now:101000)
+    try admission.reserve(job:unissuedID,memory:unissuedConfig.memory,cpus:1,sample:sample(103000),now:103000)
+    try journal.transitionJob(id:unissuedID,to:.revoking,now:103000)
     let beforeLocal=runtime.commands.count
-    try tick(101000)
-    try tick(101500)
+    try tick(103000)
+    try tick(103500)
     guard runtime.commands.count==beforeLocal else {fatalError("Unissued reservation dispatched a cleanup command")}
     // The ordinary manager tick released the local reservation, so a new
     // in-memory reservation for the same key no longer conflicts.
-    try admission.reserve(job:unissuedID,memory:unissuedConfig.memory,cpus:1,sample:sample(101500),now:101500)
+    try admission.reserve(job:unissuedID,memory:unissuedConfig.memory,cpus:1,sample:sample(103500),now:103500)
     print("PASS: delayed and never-issued runtime cleanup preserve exact custody and reservation release")
 }
