@@ -83,7 +83,7 @@ struct ServiceDrainPolicy {
         pending[scope.service]=Pending(identity:scope.identity,managerEpoch:scope.managerEpoch,nativeEpoch:scope.nativeEpoch,expires:now+60000,
             beganUptime:tick,ownedJobs:Set(scope.ownedJobs),unresolvedRequests:Set(scope.unresolvedManagedRequests),
             previous:now,previousUptime:tick,state:state)
-        return ServiceDrainProgress(state:state,revokeOwned:scope.ownedJobs)
+        return ServiceDrainProgress(state:state,revokeOwned:state == .draining ? scope.ownedJobs : [])
     }
     // Source/ledger loss is sticky for this attempt. Only a new explicit
     // operator begin can replace it; absence is never native quiescence.
@@ -102,7 +102,6 @@ struct ServiceDrainPolicy {
         else if !scope.fresh(now:now) || record.identity != scope.identity || record.managerEpoch != scope.managerEpoch || record.nativeEpoch.map({Data($0.utf8)}) != scope.nativeEpoch.map({Data($0.utf8)}) || !Set(scope.ownedJobs).isSubset(of:record.ownedJobs) || !Set(scope.unresolvedManagedRequests).isSubset(of:record.unresolvedRequests) {record.state = .refused(.scopeChanged)}
         else {record.state=evaluate(snapshot)}
         record.previous=max(record.previous,now);if tick.isFinite {record.previousUptime=max(record.previousUptime,tick)};pending[scope.service]=record
-        if case .refused(.scopeChanged)=record.state {return ServiceDrainProgress(state:record.state,revokeOwned:[])}
-        return ServiceDrainProgress(state:record.state,revokeOwned:scope.ownedJobs.filter {record.ownedJobs.contains($0)})
+        return ServiceDrainProgress(state:record.state,revokeOwned:record.state == .draining ? scope.ownedJobs : [])
     }
 }

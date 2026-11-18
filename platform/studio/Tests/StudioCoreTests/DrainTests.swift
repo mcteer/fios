@@ -67,8 +67,9 @@ func runDrainTests()throws {
     guard try drain.poll(snapshot:ready,now:62000).state == .refused(.deadline) else {fatalError("Expired drain revived")}
     for (native,external,unmanaged,expected):(Bool?,Bool?,Bool?,ServiceDrainRefusal) in [(nil,false,false,.activityUnknown),(true,true,false,.activeWork),(true,false,true,.activeWork)] {
         let service:ManagedService=unmanaged == true ? .orbstack:.mlx
-        let snapshot=ServiceDrainSnapshot(scope:try scope(service:service),nativeIdle:native,externalNativeWork:external,unmanagedRuntimeWork:unmanaged)
-        guard try drain.begin(snapshot:snapshot,role:.operator,now:1000).state == .refused(expected) else {fatalError("External/unknown/unmanaged drain was not refused")}
+        let snapshot=ServiceDrainSnapshot(scope:try scope(service:service,jobs:[job]),nativeIdle:native,externalNativeWork:external,unmanagedRuntimeWork:unmanaged)
+        let refusal=try drain.begin(snapshot:snapshot,role:.operator,now:1000)
+        guard refusal.state == .refused(expected),refusal.revokeOwned.isEmpty else {fatalError("Refused drain still requested owned work revocation")}
     }
     _=try drain.begin(snapshot:busy,role:.operator,now:1000)
     let replacement=ServiceDrainSnapshot(scope:try scope(stamp:2000,start:101),nativeIdle:true,externalNativeWork:false,unmanagedRuntimeWork:false)
@@ -93,7 +94,8 @@ func runDrainTests()throws {
     let drainClock=DrainTestClock();var timedDrain=ServiceDrainPolicy(uptime:{drainClock.time})
     _=try timedDrain.begin(snapshot:busy,role:.operator,now:1000)
     drainClock.time=61
-    guard try timedDrain.poll(snapshot:ready,now:2000).state == .refused(.deadline) else {fatalError("Slow wall clock extended60s drain")}
+    let expired=try timedDrain.poll(snapshot:busy,now:2000)
+    guard expired.state == .refused(.deadline),expired.revokeOwned.isEmpty else {fatalError("Expired drain requested another revocation")}
     for role:ControlRole in [.observer,.task,.sandbox] {
         do {_ = try drain.begin(snapshot:busy,role:role,now:1000);fatalError("Non-operator began service drain")}catch ServiceError.invalid {}
         do {_ = try force.prepareForce(scope:initial,role:role,now:1000);fatalError("Non-operator prepared force")}catch ServiceError.invalid {}
