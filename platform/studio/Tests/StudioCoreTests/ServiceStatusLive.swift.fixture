@@ -1,5 +1,6 @@
 import Foundation
 import Darwin
+import CryptoKit
 
 // Ordinary status integration only. Observations are synthetic metadata;
 // no session/native recovery adapter or lifecycle operation is configured.
@@ -7,6 +8,29 @@ import Darwin
     static func main() throws {
         let args=CommandLine.arguments
         guard args.count==3,geteuid()>0 else {throw ServiceError.invalid}
+        if args[2] == "storage_continuity" {
+            let state=URL(fileURLWithPath:args[1])
+            let home=URL(fileURLWithPath:"/private/tmp").appendingPathComponent(state.deletingLastPathComponent().lastPathComponent+"-home")
+            for folder in [home,home.appendingPathComponent(".orbstack"),home.appendingPathComponent(".orbstack/run")] {
+                try FileManager.default.createDirectory(at:folder,withIntermediateDirectories:false,attributes:[.posixPermissions:0o700])
+            }
+            let endpoint=try RuntimeEndpointPolicy(home:home.path,uid:geteuid())
+            let listener=try UnixControlSocket(path:endpoint.path) // Never serves Docker requests.
+            let executable=URL(fileURLWithPath:"/usr/bin/true")
+            let digest=SHA256.hash(data:try Data(contentsOf:executable)).map{String(format:"%02x",$0)}.joined()
+            let runtime=DockerRuntime(executable:try VerifiedExecutable(path:executable.path,sha256:digest),endpoint:endpoint)
+            let hash=String(repeating:"a",count:64),image="sha256:"+hash,id=UUID().uuidString.lowercased()
+            do {
+                let journal=try Journal(directory:state),now=HostResources.nowMilliseconds()
+                let config=try SandboxConfiguration(job:id,nonce:hash,image:image,memory:512<<20,cpus:1)
+                _=try journal.reserveSandbox(job:DurableJob(id:id,idempotency:UUID().uuidString.lowercased(),ownerHash:hash,requestHash:hash,created:now),configuration:config)
+                try journal.commitSandboxCreate(config,now:now)
+                try SandboxLifecycle(journal:journal).created(job:id,runtimeID:String(repeating:"b",count:64))
+            }
+            let execution=try ManagerExecutionPorts(runtime:runtime,approvedImages:[image],resources:{_,_ in nil})
+            try withExtendedLifetime(listener) {try ManagerRuntime.run(directory:state,nativeControl:nil,execution:execution)}
+            return
+        }
         if args[2] == "unconfigured" {
             try ManagerRuntime.run(directory:URL(fileURLWithPath:args[1]))
             return
