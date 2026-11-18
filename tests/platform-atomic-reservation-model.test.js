@@ -23,6 +23,28 @@ class Gate {
 
   external(target) { return this.#enter(target, 'published'); }
 
+  acceptIngress() {
+    if (this.#fenced) return null;
+    const hold = Symbol();
+    this.#owners.set(hold, { target: null, state: 'ingress', receipt: null });
+    this.#revision++;
+    return hold;
+  }
+
+  bindIngress(hold, target) {
+    const owner = this.#owners.get(hold);
+    if (this.#fenced || owner?.state !== 'ingress' ||
+        [...this.#owners.values()].some(other => other.target !== null && other.target !== target)) return false;
+    owner.target = target;
+    owner.state = 'published';
+    this.#revision++;
+    return true;
+  }
+
+  abandonIngress(hold) {
+    return this.#owners.get(hold)?.state === 'ingress' && this.#remove(hold);
+  }
+
   #enter(target, state = 'reserved') {
     if (this.#fenced || [...this.#owners.values()].some(owner => owner.target !== target)) return null;
     const hold = Symbol();
@@ -33,7 +55,8 @@ class Gate {
 
   publish(hold) {
     const owner = this.#owners.get(hold);
-    if (this.#fenced || owner?.state !== 'reserved' || this.#clock >= owner.expires) return false;
+    if (this.#fenced || owner?.state !== 'reserved' || this.#clock >= owner.expires ||
+        [...this.#owners.values()].some(other => other.target === null)) return false;
     owner.state = 'published';
     this.#revision++;
     return true;
@@ -65,6 +88,22 @@ class Gate {
     return true;
   }
 }
+
+test('unattributed ingress blocks reservation and cannot bypass an existing hold', () => {
+  const gate = new Gate({ covered: true });
+  const ingress = gate.acceptIngress();
+  assert(ingress);
+  assert.equal(gate.reserve(gate.observe('model/a'), 'model/a'), null);
+  assert(gate.abandonIngress(ingress));
+  const reserved = gate.reserve(gate.observe('model/a'), 'model/a');
+  assert(reserved);
+  const arriving = gate.acceptIngress();
+  assert.equal(gate.publish(reserved), false);
+  assert.equal(gate.bindIngress(arriving, 'model/b'), false);
+  assert(gate.bindIngress(arriving, 'model/a'));
+  assert.equal(gate.abandonIngress(arriving), false);
+  assert(gate.publish(reserved));
+});
 
 test('external arrival between observation and reservation wins without preemption', () => {
   const gate = new Gate({ covered: true });
