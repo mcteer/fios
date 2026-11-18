@@ -171,6 +171,9 @@ final class JobController {
                         try lifecycle.cancelled(job:id,now:now)
                         continue
                     }
+                    // Capacity refusal means this start was never submitted.
+                    // Its durable intent does not preserve transport readiness.
+                    if case .start=command,!transportReady(id) {continue}
                 default:break
                 }
                 try dispatch(command,job:id);continue

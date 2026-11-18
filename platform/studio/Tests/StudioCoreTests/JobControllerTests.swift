@@ -7,6 +7,7 @@ private final class FakeSandboxExecutor:SandboxExecuting {
     var active:Int { 0 }
     var reportExitCodes=false
     var holdResponses=false
+    var denyStartCapacity=false
     var resourceNow:Int64=0
     var resourceFailure=false
     var resourceRequests:[Int64]=[]
@@ -19,6 +20,7 @@ private final class FakeSandboxExecutor:SandboxExecuting {
     }
     func drainResources()->[VMReadResult] {let values=resourceValues;resourceValues=[];return values}
     func submit(job:String,command:SandboxCommand) throws {
+        if denyStartCapacity,case .start=command {throw AdmissionError.capacity}
         commands.append(command)
         let result:SandboxExecutionValue
         switch command {
@@ -58,8 +60,16 @@ func runJobControllerTests() throws {
         try controller.tick(now:11000+Int64(tick*100),sample:sample(11000+Int64(tick*100)),admission:&admission,transportReady:{_ in false},cancelModel:{_ in})
     }
     guard runtime.commands.allSatisfy({if case .start=$0 {return false};return true}) else { fatalError("Container started before trusted transport readiness") }
-    for tick in 0..<7 {
-        try controller.tick(now:13000+Int64(tick*500),sample:sample(13000+Int64(tick*500)),admission:&admission,transportReady:{_ in true},cancelModel:{_ in})
+    runtime.denyStartCapacity=true
+    for now:Int64 in [13000,13500,14000] {
+        try controller.tick(now:now,sample:sample(now),admission:&admission,transportReady:{_ in true},cancelModel:{_ in})
+    }
+    guard try journal.sandboxRecords().allSatisfy({$0.startIssued}) else {fatalError("Fixture did not defer both precommitted starts")}
+    runtime.denyStartCapacity=false
+    try controller.tick(now:14500,sample:sample(14500),admission:&admission,transportReady:{_ in false},cancelModel:{_ in})
+    guard runtime.commands.allSatisfy({if case .start=$0 {return false};return true}) else {fatalError("Deferred sandbox start bypassed transport readiness")}
+    for now:Int64 in [15000,15500,16000,16500,17000] {
+        try controller.tick(now:now,sample:sample(now),admission:&admission,transportReady:{_ in true},cancelModel:{_ in})
     }
     guard try journal.jobs().allSatisfy({$0.state == .running}) else { fatalError("Sandbox coordinator did not reach running") }
     var cancelled:[String]=[]
