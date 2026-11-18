@@ -30,6 +30,10 @@ namespace. Package hashes, a matching PID/path, a GUI exit or a scoped census
 absence cannot issue that profile or prove ownership handover complete. Missing
 or conflicting ownership leaves lifecycle unavailable and observation unknown.
 
+The current launch document binds host, account, server/application images, revision and launch inputs. Its policy digest is included in the recovery profile, but the document has no exclusive namespace field or retained reservation. The serving custody writer lock serializes supervisors sharing one state directory; the GUI does not acquire that lock. Its occupied-port check is a point-in-time refusal, not an exclusion mechanism before bind or before native startup effects. Do not reuse either as handover authority.
+
+The pre-effect integration point already exists in the native startup overlay: `Guard.start` runs after exact help/version handling and before environment setup and backend initialization. It can retain a root-protected `startup.lock` until process exit, but that installed branch is pinned to `26.10.3-fios-platform`; the 26.11.2 overlay carries it forward without enrolling a current installed build. Prefer qualifying that common executable boundary over adding unrelated coordinator locks. A handover candidate needs one reviewed acquisition point shared by every enrolled launcher for that serving instance, held from before backend effects through process exit; any separate pre-spawn reservation still belongs to the custody owner. Before an installed handover can enable it, the operator must establish that old GUI/autostart/manual paths cannot bypass that point. Validate with two private competing launches before either can bind a listener, a manager replacement that leaves the original custody intact, and refusal when the enrolled namespace or original state cannot be verified. Loss of local custody or a released startup reservation must not clear independently retained inference uncertainty.
+
 ## Observe and recover
 
 Observe the actual server's kernel PID/start/image identity and independently

@@ -156,7 +156,12 @@ try:
      assert response.status==200,"CURRENT_NATIVE_SECOND_STARTUP_UNEXPECTED_STATE"
     finally:connection.close()
     raise AssertionError("CURRENT_NATIVE_STARTUP_RESERVATION_MISSING")
-   assert result!=0 and b"StartupGuardUnavailable" in (home/"second-native.log").read_bytes(),"CURRENT_NATIVE_DUPLICATE_NOT_REFUSED_BY_RESERVATION"
+   duplicate_log=(home/"second-native.log").read_bytes()
+   assert result!=0 and b"StartupGuardUnavailable" in duplicate_log,"CURRENT_NATIVE_DUPLICATE_NOT_REFUSED_BY_RESERVATION"
+   original_log=(home/"native.log").read_bytes()
+   for marker in [b"Metal GPU:",b"Server listening on"]:
+    assert marker in original_log,"CURRENT_NATIVE_STARTUP_MARKER_CONTROL_MISSING"
+    assert marker not in duplicate_log,"CURRENT_NATIVE_DUPLICATE_REACHED_BACKEND_OR_LISTENER"
    assert proc.poll() is None and get("/health")[0]==200,"CURRENT_NATIVE_ORIGINAL_LOST_AFTER_DUPLICATE"
   finally:
    if second.poll() is None:second.terminate()
