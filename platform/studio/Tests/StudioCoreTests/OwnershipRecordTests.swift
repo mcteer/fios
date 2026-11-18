@@ -87,9 +87,10 @@ private func checkSandboxRetention(directory:URL,hash:String)throws {
         let sql="UPDATE sandboxes SET payload=json_set(payload,'$.removalProven',json('false')) WHERE job='\(unresolved)'"
         guard sqlite3_exec(db,sql,nil,nil,nil)==SQLITE_OK,sqlite3_changes(db)==1 else {throw JournalError.storage}
     }
-    let reopened=try Journal(directory:directory)
-    try reopened.expireTerminalJobs(now:86_401_000)
-    let records=try reopened.sandboxRecords(),jobs=try reopened.jobs()
-    guard records.count==1,records[0].configuration.job==unresolved,!records[0].removalProven,
-          jobs.count==1,jobs[0].id==unresolved,jobs[0].state == .removed else {throw JournalError.invalid}
+    let file=directory.appendingPathComponent("state.sqlite"),before=try Data(contentsOf:file)
+    do {
+        _=try Journal(directory:directory)
+        fatalError("Startup accepted a removed job still holding unproven sandbox custody")
+    } catch JournalError.invalid {}
+    guard try Data(contentsOf:file)==before else {throw JournalError.conflict}
 }

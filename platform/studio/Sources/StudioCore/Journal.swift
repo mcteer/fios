@@ -264,7 +264,8 @@ public final class Journal {
         return value
     }
     private func validateOwnershipRecords(legacy:Bool=false,lineage:Bool=true) throws {
-        _=try jobs();_=try sandboxRecords()
+        let terminal=Set(try jobs().filter{$0.state == .removed}.map(\.id))
+        guard try !sandboxRecords().contains(where:{terminal.contains($0.configuration.job) && !$0.removalProven}) else {throw JournalError.invalid}
         guard try scalar("SELECT count(*) FROM inference i WHERE NOT EXISTS(SELECT 1 FROM request_history h WHERE h.job=i.job AND h.attempt=i.attempt AND h.model=i.model)")==0 else {throw JournalError.invalid}
         // Every persisted identity participates in recovery, including history
         // and retired local workers. Validate before any restart writes, not
