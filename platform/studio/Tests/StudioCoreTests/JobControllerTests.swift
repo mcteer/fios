@@ -8,6 +8,7 @@ private final class FakeSandboxExecutor:SandboxExecuting {
     var reportExitCodes=false
     var holdResponses=false
     var denyStartCapacity=false
+    var denyCreateCapacity=false
     var loseCreateReply=false
     var acknowledgeInspection=false
     var resourceNow:Int64=0
@@ -23,6 +24,7 @@ private final class FakeSandboxExecutor:SandboxExecuting {
     func drainResources()->[VMReadResult] {let values=resourceValues;resourceValues=[];return values}
     func submit(job:String,command:SandboxCommand) throws {
         if denyStartCapacity,case .start=command {throw AdmissionError.capacity}
+        if denyCreateCapacity,case .create=command {throw AdmissionError.capacity}
         commands.append(command)
         let result:SandboxExecutionValue
         switch command {
@@ -70,6 +72,14 @@ func runJobControllerTests() throws {
     guard runtime.commands.isEmpty,try journal.sandboxRecords().allSatisfy({!$0.createIssued}) else {
         fatalError("Sandbox create issued before input registration")
     }
+    runtime.denyCreateCapacity=true
+    try controller.tick(now:10925,sample:sample(10925),admission:&admission,transportReady:{_ in false},cancelModel:{_ in})
+    guard runtime.commands.isEmpty,try journal.sandboxRecords().allSatisfy({$0.createIssued}) else {
+        fatalError("Fixture did not defer precommitted create on executor capacity")
+    }
+    runtime.denyCreateCapacity=false
+    try controller.tick(now:10950,sample:sample(10950),admission:&admission,inputReady:{_ in false},transportReady:{_ in false},cancelModel:{_ in})
+    guard runtime.commands.isEmpty else {fatalError("Deferred sandbox create bypassed input readiness")}
     try controller.tick(now:11000,sample:sample(11000),admission:&admission,transportReady:{_ in false},cancelModel:{_ in})
     guard runtime.values.count==2 else {fatalError("Expected two already-drained create results in fixture")}
     runtime.values.insert(SandboxExecution(job:UUID().uuidString.lowercased(),result:.success(.acknowledged)),at:0)
