@@ -902,8 +902,9 @@ public final class Journal {
     func expireTerminalJobs(now:Int64) throws {
         guard now>=0,now<=ActivityPolicy.maximumTimestamp else { throw JournalError.invalid }
         try transaction {
+            let pendingSandboxCleanup=Set(try sandboxRecords().filter{!$0.removalProven}.map{$0.configuration.job})
             for job in try jobs() where job.state == .removed {
-                guard let closed=job.closedAt,closed>=job.lease.created,now>=closed,
+                guard !pendingSandboxCleanup.contains(job.id),let closed=job.closedAt,closed>=job.lease.created,now>=closed,
                       now-closed>=86_400_000,
                       try scalar("SELECT count(*) FROM inference WHERE job=?",[job.id]) == 0,
                       try scalar("SELECT count(*) FROM worker_grants WHERE job=? AND reaped=0",[job.id]) == 0,

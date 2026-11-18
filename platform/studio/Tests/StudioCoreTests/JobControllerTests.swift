@@ -492,6 +492,14 @@ func runCleanupStatusRecoveryTests() throws {
           try journal.sandboxRecords().first(where:{$0.configuration.job==lateID})?.removalProven==false else {
         fatalError("Storage continuity refusal was hidden or released custody")
     }
+    do {
+        try journal.transitionJob(id:lateID,to:.removed,now:100000)
+        fatalError("Unproven sandbox cleanup allowed terminal transition")
+    } catch JournalError.conflict {}
+    try journal.expireTerminalJobs(now:86_500_000)
+    guard try journal.sandboxRecords().contains(where:{$0.configuration.job==lateID && !$0.removalProven}) else {
+        fatalError("Terminal metadata retention discarded unresolved sandbox custody")
+    }
     runtime.storageContinuityUnknown=false
     let lateRuntimeID=String(repeating:"d",count:64)
     runtime.present[lateID]=(lateConfig,lateRuntimeID,false)
