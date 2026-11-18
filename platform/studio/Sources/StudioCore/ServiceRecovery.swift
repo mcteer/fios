@@ -326,13 +326,13 @@ final class ServiceRecoveryController {
     }
     func plan(service:ManagedService,desired:ServiceDesired,observation:ServiceObservation?,now:Int64,tick:Int64)throws->ServiceLaunchCommand? {
         guard try observeClock(now:now,tick:tick),desired == .running,let observation else {return nil}
-        if let identity=observation.identity,identity.sha256 != pins[service] {throw ServiceError.invalid}
+        if let identity=observation.identity,identity.sha256 != pins[service] {return nil}
         let action:ServiceAction
         do {
             action=try ServicePolicy().action(service:service,desired:desired,observation:observation,now:now)
-        } catch ServiceError.stale {
-            // A delayed observation can expire between capture and planning.
-            // Skip this cycle and leave the manager available for fresh data.
+        } catch is ServiceError {
+            // Unusable source data cannot reserve a launch or kill the manager.
+            // Journal and clock failures are outside this catch and still propagate.
             return nil
         }
         guard action == .launch,

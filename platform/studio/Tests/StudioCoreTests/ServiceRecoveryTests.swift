@@ -130,6 +130,14 @@ func runServiceRecoveryTests() throws {
           try recovery.plan(service:.mlx,desired:.stopped,observation:absent(1000),now:1000,tick:1000)==nil,
           try recovery.plan(service:.mlx,desired:.running,observation:absent(1000,session:false),now:1000,tick:1000)==nil,
           try recovery.plan(service:.mlx,desired:.running,observation:absent(1000,credentials:false),now:1000,tick:1000)==nil else {fatalError("Recovery bypassed intent/source/session/credential gate")}
+    let foreign=ServiceObservation(identity:ServiceIdentity(pid:42,start:1,sha256:String(repeating:"f",count:64)),
+        responding:true,sessionReady:true,credentialsReady:true,nativeIdle:nil,runtimeUnmanaged:nil,sampledAt:1000)
+    let inconsistent=ServiceObservation(identity:nil,responding:true,sessionReady:true,credentialsReady:true,nativeIdle:nil,runtimeUnmanaged:nil,sampledAt:1000)
+    for input in [foreign,inconsistent] {
+        do {
+            guard try recovery.next(service:.mlx,desired:.running,observation:input,now:1000,tick:1000)==nil else {fatalError("Rejected service sample scheduled a launch")}
+        } catch {fatalError("Rejected service sample escaped the recovery loop")}
+    }
     guard let first=try recovery.plan(service:.mlx,desired:.running,observation:absent(1000),now:1000,tick:1000) else {fatalError("Proven absent service was not reserved")}
     guard try recovery.plan(service:.mlx,desired:.running,observation:absent(2000),now:2000,tick:2000)==nil else {fatalError("Pending launch replayed")}
     // Existing version1 state has no launch-identity receipt. Preserve its
