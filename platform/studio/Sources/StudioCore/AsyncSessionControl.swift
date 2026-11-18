@@ -6,10 +6,13 @@ import Foundation
 protocol ServiceRecoverySending:Sendable {
     var applicationHashes:[ManagedService:String] {get}
     var recoveryProfileHash:String {get}
+    func supportsRecovery(for service:ManagedService)->Bool
     func accepts(_ command:ServiceLaunchCommand)->Bool
     func request(_ request:ServiceRecoveryRequest)throws->SessionLaunchResult
 }
-extension SessionControlClient:ServiceRecoverySending {}
+extension SessionControlClient:ServiceRecoverySending {
+    func supportsRecovery(for service:ManagedService)->Bool {applicationHashes[service] != nil}
+}
 
 enum SessionTransportFailure:Error,Sendable {case unavailable}
 struct SessionRecoveryResult:Sendable {
@@ -31,7 +34,7 @@ final class AsyncSessionControl:@unchecked Sendable {
     func submit(_ request:ServiceRecoveryRequest)throws {
         lock.lock()
         guard !busy,result==nil else {lock.unlock();throw RuntimeError.capacity}
-        guard client.accepts(request.command),request.consumeTransport() else {lock.unlock();throw RuntimeError.invalid}
+        guard client.supportsRecovery(for:request.command.service),client.accepts(request.command),request.consumeTransport() else {lock.unlock();throw RuntimeError.invalid}
         busy=true;lock.unlock()
         Thread.detachNewThread { [self] in
             let value:Result<SessionLaunchResult,SessionTransportFailure>

@@ -181,8 +181,8 @@ extension MLXServingProcessRuntime {
             print(String(decoding:try JSONSerialization.data(withJSONObject:response,options:[.sortedKeys]),as:UTF8.self));return
         }
         if args.count>1,args[1]=="custody-client" {try custodyClient(args);return}
-        if args.count==4,args[1]=="control" {
-            guard let command=OperatorServiceCommand(arguments:["service","mlx",args[3]]) else {throw RuntimeError.invalid}
+        if args.count==4,["control","control-orbstack"].contains(args[1]) {
+            guard let command=OperatorServiceCommand(arguments:["service",args[1]=="control" ? "mlx":"orbstack",args[3]]) else {throw RuntimeError.invalid}
             let directory=URL(fileURLWithPath:args[2])
             let response=try ControlClient.request(path:directory.appendingPathComponent(command.socketName).path,operation:command.operation,payload:command.payload)
             let result=try command.renderResponse(response)
@@ -211,6 +211,8 @@ extension MLXServingProcessRuntime {
                         loading:FileManager.default.fileExists(atPath:root.appendingPathComponent("fixture-loading").path),
                         unavailable:FileManager.default.fileExists(atPath:root.appendingPathComponent("fixture-unavailable").path))
                     cache.publish(observation,for:.mlx)
+                    // A reviewed hash does not imply an OrbStack actuator is present.
+                    cache.publish(ServiceObservation(identity:nil,responding:false,sessionReady:true,credentialsReady:true,nativeIdle:nil,runtimeUnmanaged:nil,sampledAt:now),for:.orbstack)
                     if !released,FileManager.default.fileExists(atPath:root.appendingPathComponent("release-validation").path) {
                         released=true
                         try? Data(String(now).utf8).write(to:root.appendingPathComponent("release-observed"),options:.atomic)

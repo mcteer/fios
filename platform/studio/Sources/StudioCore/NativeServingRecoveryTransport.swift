@@ -22,6 +22,7 @@ struct NativeServingRecoveryTransport:ServiceRecoverySending {
         }
         self.runtime=runtime;self.session=session;applicationHashes=approvedHashes;self.profile=profile
     }
+    func supportsRecovery(for service:ManagedService)->Bool {service == .mlx || session != nil}
     func accepts(_ command:ServiceLaunchCommand)->Bool {
         WireScalar.uuid(command.id) && command.profileHash==profile && command.expectedSHA256==applicationHashes[command.service]
     }

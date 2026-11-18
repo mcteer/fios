@@ -61,6 +61,10 @@ for(const mode of ['debug','release']){
   writeFileSync(join(managerState,'release-validation'),'release',{mode:0o600});
   const ready=await until(()=>{assert(!exited());const s=status();return s?.observed==='ready'&&!s.launch_pending?s:null;});
   assert.equal(ready.recovery.starts_in_window,1);
+  await delay(2200); // Allow a full scheduling cycle after MLX launch completes.
+  const unsupported=JSON.parse(run(binary,['control-orbstack',managerState,'status'],3000));
+  assert.equal(unsupported.recovery.starts_in_window,0,'Missing OrbStack actuator spent a durable launch slot');
+  assert.equal(unsupported.launch_pending,false);
   const maintenance=JSON.parse(run(binary,['control',managerState,'maintenance'],3000));assert.equal(maintenance.applied,false);
   const maintained=await until(()=>{const s=status();return s?.desired==='maintenance'?s:null;});
   assert.equal(maintained.recovery.starts_in_window,1);

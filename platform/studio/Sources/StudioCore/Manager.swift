@@ -244,6 +244,9 @@ public enum ManagerRuntime {
                     let services=ManagedService.allCases
                     for offset in 0..<services.count {
                         let index=(serviceCursor+offset)%services.count,service=services[index]
+                        // Do not create a durable launch intent without an enrolled transport.
+                        // Existing pending intents remain unresolved if their transport is absent.
+                        guard activeServiceControl?.supportsRecovery(for:service) == true else {continue}
                         guard let desired=ServiceDesired(rawValue:try journal.desired(service:service.rawValue)) else {throw ServiceError.invalid}
                         if let request=try serviceRecovery.next(service:service,desired:desired,observation:approvedServiceObservation(service),now:sampledAt,tick:Int64(now*1000)) {
                             try serviceQueue.submit(request)
