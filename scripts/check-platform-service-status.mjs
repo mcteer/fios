@@ -80,7 +80,12 @@ try{
  assert.equal(held.runtime_cleanup.pending_sandboxes,1);
  assert.equal(held.runtime_cleanup.waiting_over_60s,false);
  child.kill('SIGTERM');await until(()=>exited(child));assert.equal(child.exitCode,0);child=null;
- console.log(JSON.stringify({ok:true,states:9,service_views:18,aged_service_views:2,storage_continuity_refusal:1,native_actions:0,review_directory:directory}));
+ child=spawn('/usr/bin/sandbox-exec',['-f',profile,binary,state,'storage_continuity_reopen'],{cwd:root,env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C',HOME:'/var/empty'},stdio:'inherit'});
+ const reopened=await until(()=>{assert(!exited(child),'Reopened cleanup-status manager exited early');const s=status(state);return s?.epoch!==held.epoch&&s?.runtime_cleanup?.storage_continuity_unknown===1 ? s:null;});
+ assert.equal(reopened.runtime_cleanup.pending_sandboxes,1);
+ assert.equal(reopened.runtime_cleanup.waiting_over_60s,false);
+ child.kill('SIGTERM');await until(()=>exited(child));assert.equal(child.exitCode,0);child=null;
+ console.log(JSON.stringify({ok:true,states:9,service_views:18,aged_service_views:2,storage_continuity_refusal:1,storage_custody_survived_restart:true,native_actions:0,review_directory:directory}));
 }finally{
  if(child&&!exited(child)){child.kill('SIGTERM');try{await until(()=>exited(child),3000);}catch{child.kill('SIGKILL');await until(()=>exited(child),3000);}}
  // Retain the private development states; no database cleanup or native work.
