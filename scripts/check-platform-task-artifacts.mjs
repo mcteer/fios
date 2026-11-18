@@ -26,9 +26,9 @@ try {
  const startup=performance.now()+8000;
  while(!existsSync(join(state,'task.sock'))){assert(!exited(),'Private artifact manager exited');assert(performance.now()<startup,'Private manager startup timeout');await delay(25);}
  const fixture=JSON.parse(readFileSync(join(state,'fixture.json'),'utf8'));
- function call(payload,operation='artifact.read',expectedExit=0){
+ function call(payload,operation='artifact.read',expectedExit=0,owner=fixture.owner){
   const id=randomUUID();
-  const result=spawnSync(cli,['--state',state,'task'],{cwd:root,encoding:'utf8',timeout:3000,input:JSON.stringify({version:1,id,operation,payload:{...payload,owner:fixture.owner}})});
+  const result=spawnSync(cli,['--state',state,'task'],{cwd:root,encoding:'utf8',timeout:3000,input:JSON.stringify({version:1,id,operation,payload:{...payload,owner}})});
   assert.equal(result.status,expectedExit,'Normal task CLI request returned an unexpected exit code');
   const response=JSON.parse(result.stdout);assert.equal(response.ok,expectedExit===0);assert.equal(response.id,id,'Normal task reply lost its original request ID');if(!response.ok)return response;assert(response.result);return {...response.result,id};
  }
@@ -38,6 +38,8 @@ try {
  for(const [index,artifact] of fixture.artifacts.entries()){
   const expected=Buffer.from(index===0?'Hello, Studio 👋\n'.repeat(4096):'');
   const started=call({phase:'begin',artifact});assert.equal(started.state,'pending');assert.equal(started.stream,started.id);
+  const denied=call({phase:'next',stream:started.stream},'artifact.read',1,'f'.repeat(64));
+  assert.equal(denied.error,'unauthorized');
   const deadline=performance.now()+5000,parts=[];let metadata,done=false;
   while(!done){
    assert(performance.now()<deadline,'Normal artifact transfer timeout');
