@@ -5,10 +5,20 @@ import { test } from 'node:test';
 // are used by the manager, native tracker, journal, or admission process.
 class RootClosureModel {
   #roots = new Map();
-  #operations = new Map();
-  #capacity;
+  #slots;
+  #identity = Symbol('operation table');
+  #maxGeneration;
 
-  constructor(capacity = 8) { this.#capacity = capacity; }
+  constructor(capacity = 8, maxGeneration = Number.MAX_SAFE_INTEGER) {
+    this.#slots = Array.from({ length: capacity }, () => ({ generation: 0, keys: null }));
+    this.#maxGeneration = maxGeneration;
+  }
+
+  #live(handle) {
+    if (handle?.table !== this.#identity) return null;
+    const slot = this.#slots[handle.slot];
+    return slot?.generation === handle.generation && slot.keys !== null ? slot : null;
+  }
 
   register(epoch, correlation, sequence) {
     const key = JSON.stringify([epoch, correlation, sequence]);
@@ -25,25 +35,28 @@ class RootClosureModel {
   }
 
   inherit(parents) {
-    if (!parents.length || parents.some(parent => !this.#operations.has(parent))) return null;
-    const keys = new Set(parents.flatMap(parent => [...this.#operations.get(parent)]));
+    const live = parents.map(parent => this.#live(parent));
+    if (!live.length || live.some(slot => slot === null)) return null;
+    const keys = new Set(live.flatMap(slot => [...slot.keys]));
     return this.#publish(keys);
   }
 
   #publish(keys) {
     // Refusal is before publication and cannot consume a parent's hold.
-    if (this.#operations.size >= this.#capacity) return null;
-    const handle = Symbol();
-    this.#operations.set(handle, keys);
+    const index = this.#slots.findIndex(slot => slot.keys === null && slot.generation < this.#maxGeneration);
+    if (index < 0) return null;
+    const slot = this.#slots[index];
+    slot.keys = keys;
+    const handle = Object.freeze({ table: this.#identity, slot: index, generation: ++slot.generation });
     for (const key of keys) this.#roots.get(key).live++;
     return handle;
   }
 
   release(handle) {
-    const keys = this.#operations.get(handle);
-    if (!keys) return false;
-    this.#operations.delete(handle);
-    for (const key of keys) this.#roots.get(key).live--;
+    const slot = this.#live(handle);
+    if (!slot) return false;
+    for (const key of slot.keys) this.#roots.get(key).live--;
+    slot.keys = null;
     return true;
   }
 
@@ -103,12 +116,35 @@ test('capacity refusal leaves parent custody intact and retired handles cannot b
   assert(model.release(first));
   const retry = model.inherit([parent]);
   assert(retry);
-  assert.notEqual(retry, first);
+  assert.equal(retry.slot, first.slot);
+  assert.equal(retry.generation, first.generation + 1);
   assert.equal(model.inherit([first]), null);
   assert(model.release(parent));
   assert.equal(model.closed(root), false);
   assert(model.release(retry));
   assert.equal(model.closed(root), true);
+});
+
+test('exhausted generation retires the slot without reviving a stale handle', () => {
+  const model = new RootClosureModel(1, 2);
+  const root = model.register('epoch', 'request', 1);
+  const first = model.begin(root);
+  assert(model.release(first));
+  const second = model.begin(root);
+  assert.equal(second.slot, first.slot);
+  assert.equal(second.generation, 2);
+  const replacement = new RootClosureModel(1, 2);
+  const replacementRoot = replacement.register('replacement', 'request', 1);
+  const replacementHandle = replacement.begin(replacementRoot);
+  assert.equal(replacementHandle.slot, first.slot);
+  assert.equal(replacementHandle.generation, first.generation);
+  assert.equal(replacement.release(first), false);
+  assert.equal(replacement.inherit([first]), null);
+  assert.equal(model.release(first), false);
+  assert(model.release(second));
+  assert.equal(model.begin(root), null);
+  model.close(root);
+  assert(model.closed(root)); // No work was published by the refused begin.
 });
 
 test('mixed-root handoff validates every parent before counting either root', () => {
