@@ -48,6 +48,7 @@ func runTaskCompletionTests()throws {
     let token=TaskOwner.newToken()
     let (id,stillRunning)=try exerciseCompletion(in:directory,token:token)
     let reopened=try Journal(directory:directory)
+    try reopened.expireTerminalJobs(now:86_405_000)
     let jobs=try reopened.jobs()
     guard let completed=jobs.first(where:{$0.id==id}),completed.state == .removed,completed.lease.revoked,
           let recovered=jobs.first(where:{$0.id==stillRunning}),recovered.state == .reconciling,recovered.lease.revoked,
