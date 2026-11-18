@@ -169,15 +169,20 @@ final class TaskCommands {
                     // the catch path revokes without proving native absence.
                     guard enrolled,admissionOpen() else {throw TaskCommandError.native_unsupported}
                     guard try ServiceAdmissionPolicy.permits(journal:journal,model:upload.binding != nil,sandbox:upload.kind=="sandbox") else {throw TaskCommandError.native_unsupported}
+                    let currentBinding:WorkerDispatchBinding?
+                    if let original=upload.binding {
+                        guard let current=binding(original.canonicalModel),Self.retainsUploadBinding(current,original:original),
+                              NativeAdmission.bindingIsCoherent(current) else {throw TaskCommandError.invalid_request}
+                        currentBinding=current
+                    } else {currentBinding=nil}
                     let data=try upload.transfer.finish(now:now);uploads.removeValue(forKey:id)
                     if upload.kind=="sandbox" {
                         let digest=SHA256.hash(data:data).map {String(format:"%02x",$0)}.joined()
-                        try sandbox.register(id:id,owner:owner,source:data,inputSHA256:digest,binding:upload.binding,now:now)
+                        try sandbox.register(id:id,owner:owner,source:data,inputSHA256:digest,binding:currentBinding,now:now)
                     } else {
                         try StrictJSON.validate(data,maximum:4<<20)
                         guard let context=try JSONSerialization.jsonObject(with:data) as? [[String:Any]],context.count<=1024,
-                              let original=upload.binding,let current=binding(original.canonicalModel),
-                              Self.retainsUploadBinding(current,original:original) else {throw TaskCommandError.invalid_request}
+                              let current=currentBinding else {throw TaskCommandError.invalid_request}
                         let messages=try context.map {item -> ModelText in
                             guard Set(item.keys)==Set(["role","content"]),let role=item["role"] as? String,let content=item["content"] as? String else {throw TaskCommandError.invalid_request}
                             return ModelText(role:role,content:content)

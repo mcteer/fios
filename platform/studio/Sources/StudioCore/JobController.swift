@@ -64,7 +64,7 @@ final class JobController {
         catch AdmissionError.capacity { deferred[job]=command }
     }
     func tick(now:Int64,sample:ResourceSample,admission:inout AdmissionPolicy,
-              transportReady:(String)->Bool,cancelModel:(String)throws->Void) throws {
+              inputReady:(String)->Bool={_ in true},transportReady:(String)->Bool,cancelModel:(String)throws->Void) throws {
         guard (0...ActivityPolicy.maximumTimestamp).contains(now) else { throw JournalError.invalid }
         let managedSandboxes=try journal.sandboxRecords()
         let sandboxIDs=Set(managedSandboxes.filter {!$0.removalProven}.map { $0.configuration.job })
@@ -187,7 +187,7 @@ final class JobController {
                 }
                 try dispatch(command,job:id);continue
             }
-            if !safeFor(id) && job.state == .reserved { continue }
+            if job.state == .reserved && (!safeFor(id) || !inputReady(id)) { continue }
             if let command=try lifecycle.next(job:id,now:now,resourcesSafe:!rollback && (safeFor(id) || id != victim)) { try dispatch(command,job:id) }
         }
         revokingSince=revokingSince.filter{pendingCleanup.contains($0.key)}
