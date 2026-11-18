@@ -6,7 +6,7 @@ import Foundation
 final class TaskController {
     private let journal:Journal
     private let broker:ModelBroker
-    private struct SandboxScope { let owner:String;let binding:WorkerDispatchBinding;var channel:SandboxModelChannel }
+    private struct SandboxScope { let owner:String;var binding:WorkerDispatchBinding;var channel:SandboxModelChannel }
     private var sandboxScopes:[String:SandboxScope]=[:]
     init(journal:Journal,broker:ModelBroker) { self.journal=journal;self.broker=broker }
 
@@ -85,18 +85,16 @@ final class TaskController {
               record.runtimeID==runtimeID,record.startIssued,!record.removalProven else { throw ControlError.unauthorized }
         sandboxScopes[id]=SandboxScope(owner:owner,binding:binding,channel:try SandboxModelChannel(job:id,runtimeID:runtimeID))
     }
-    private func sameScope(_ a:WorkerDispatchBinding,_ b:WorkerDispatchBinding)->Bool {
-        ModelBroker.scopeIdentity(a)==ModelBroker.scopeIdentity(b)
-    }
     func sandboxModelFrame(id:String,runtimeID:String,data:Data,binding:WorkerDispatchBinding,nativeCapacityProven:Bool,
                            sample:ResourceSample,admission:inout AdmissionPolicy,now:Int64,uptime:Int64) throws {
         guard var scope=sandboxScopes[id] else { throw ControlError.unauthorized }
         do {
-            guard sameScope(scope.binding,binding) else { throw ControlError.unauthorized }
+            guard TaskCommands.retainsUploadBinding(binding,original:scope.binding) else {throw ControlError.unauthorized}
             switch try scope.channel.accept(data,runtimeID:runtimeID) {
             case .request(let request,let prompt):
                 try broker.submit(job:id,owner:scope.owner,requestID:request,context:[ModelText(role:"user",content:prompt)],
                     binding:binding,nativeCapacityProven:nativeCapacityProven,sample:sample,admission:&admission,now:now)
+                scope.binding=binding
             case .cancel:
                 try broker.cancel(job:id,uptime:uptime)
             }
