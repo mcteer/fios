@@ -240,7 +240,8 @@ struct NativeControlClient:Sendable {
     }
     func primaryActivity(instance:String,after sequence:UInt64=0)throws->NativePrimaryActivitySample {
         let began=HostResources.nowMilliseconds()
-        let value=try NativeRegistryActivityWire.reply(exchange(NativeRegistryActivityWire.request(instance:instance,version:4),maximum:NativeRegistryActivityWire.responseSize),instance:instance,after:sequence)
+        let version:UInt8=4
+        let value=try NativeRegistryActivityWire.reply(exchange(NativeRegistryActivityWire.request(instance:instance,version:version),maximum:NativeRegistryActivityWire.responseSize),instance:instance,after:sequence,expectedVersion:version)
         let completed=HostResources.nowMilliseconds()
         guard (0...ActivityPolicy.maximumTimestamp).contains(began),completed>=began,
               completed<=ActivityPolicy.maximumTimestamp,completed-began<=5000,

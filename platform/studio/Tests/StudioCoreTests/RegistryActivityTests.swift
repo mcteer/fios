@@ -12,7 +12,11 @@ func runRegistryActivityWireTests(nativeFrame:String?=nil)throws {
     let request4=try NativeRegistryActivityWire.request(instance:instance,version:4)
     guard request4[4]==4,value.models[0].claimable==nil else {fatalError("Legacy metadata acquired claimability")}
     var frame4=frame;frame4[4]=4;frame4[99]=4
-    let available=try NativeRegistryActivityWire.reply(frame4,instance:instance)
+    let available=try NativeRegistryActivityWire.reply(frame4,instance:instance,expectedVersion:4)
+    do {
+        _=try NativeRegistryActivityWire.reply(frame,instance:instance,expectedVersion:4)
+        fatalError("Registry v4 request accepted a v3 response")
+    } catch NativeControlError.invalid {}
     guard available.primary.phaseVersion==4,available.models[0].claimable==true,
           available.conservativeActivity().coverage == .unknown,available.conservativeActivity().state == .unknown else {fatalError("Claimability became native authority")}
     var unloaded=frame4;unloaded[98]=0

@@ -54,10 +54,11 @@ enum NativeRegistryActivityWire {
         guard [3,4].contains(version) else {throw NativeControlError.invalid}
         var data=try NativePrimaryActivityWire.queuedRequest(instance:instance);data[4]=version;return data
     }
-    static func reply(_ data:Data,instance:String,after sequence:UInt64=0)throws->NativeRegistryActivity {
+    static func reply(_ data:Data,instance:String,after sequence:UInt64=0,expectedVersion:UInt8?=nil)throws->NativeRegistryActivity {
         guard data.count==responseSize,sequence<=UInt64(ActivityPolicy.maximumTimestamp) else {throw NativeControlError.invalid}
         _=try NativeControlWire.instanceBytes(instance);let bytes=Array(data)
         guard bytes[0..<4].elementsEqual("FIT9".utf8),[3,4].contains(bytes[4]),bytes[5]==0,bytes[6]==0,bytes[7]<=1,
+              expectedVersion.map({$0==bytes[4]}) ?? true,
               bytes[8..<24].map({String(format:"%02x",$0)}).joined()==instance,
               bytes[76]<=1,bytes[77..<96].allSatisfy({$0==0}) else {throw NativeControlError.invalid}
         func integer(_ offset:Int,_ length:Int)->UInt64 {bytes[offset..<(offset+length)].reduce(0) {($0<<8)|UInt64($1)}}
