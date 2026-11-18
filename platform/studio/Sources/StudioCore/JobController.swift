@@ -14,6 +14,7 @@ final class JobController {
     private var lastCycle:Int64 = -2000
     private(set) var exitProof:[String:Bool]=[:]
     private var revokingSince:[String:Int64]=[:]
+    private var storageContinuityUnknown=Set<String>()
     private let collectVM:Bool
     private var resourcePending:(job:String,id:String)?
     private var lastResource:Int64 = -2000
@@ -33,6 +34,7 @@ final class JobController {
     func cleanupStatus(now:Int64)->[String:Any] {
         let sample=cleanupObservation(now:now)
         return ["scope":"owned_runtime_cleanup","pending_sandboxes":sample.pending,
+            "storage_continuity_unknown":storageContinuityUnknown.intersection(revokingSince.keys).count,
             "observed_at":sample.observedAt.map{$0 as Any} ?? NSNull(),
             "observed_wait_ms":sample.wait.map{$0 as Any} ?? NSNull(),
             "waiting_over_60s":sample.wait.map{($0>=60000) as Any} ?? NSNull()]
@@ -102,6 +104,9 @@ final class JobController {
         func apply(_ completed:SandboxExecution)throws {
             guard let command=inFlight.removeValue(forKey:completed.job) else { throw JournalError.conflict }
             switch completed.result {
+            case .failure(.storageContinuityUnknown):
+                guard case .inspect=command else {throw JournalError.conflict}
+                storageContinuityUnknown.insert(completed.job)
             case .failure:
                 // Timeout/error is neither daemon absence nor permission to
                 // replay create/start. Next cycle reconciles by exact identity.
@@ -120,6 +125,7 @@ final class JobController {
                 }
                 // Validate ownership/causality before publishing exit status.
                 let next=try lifecycle.observed(job:completed.job,presence:presence,now:now,resourcesSafe:!rollback && (safeFor(completed.job) || completed.job != victim))
+                storageContinuityUnknown.remove(completed.job)
                 if case .present(_,_,_,_,let running)=presence {
                     if running || !startIssued || exitCode==nil {exitProof.removeValue(forKey:completed.job)}
                     else if let exitCode {exitProof[completed.job]=exitCode==0 && !oom}
@@ -136,6 +142,7 @@ final class JobController {
         let jobIndex=Dictionary(uniqueKeysWithValues:try journal.jobs().map {($0.id,$0)})
         let retained=Set(records.map(\.configuration.job))
         released.formIntersection(retained)
+        storageContinuityUnknown.formIntersection(retained)
         exitProof=exitProof.filter {retained.contains($0.key)}
         lastInspect=lastInspect.filter {retained.contains($0.key)}
         if collectVM,!rollback,resourcePending==nil,now>=lastResource+2000 {

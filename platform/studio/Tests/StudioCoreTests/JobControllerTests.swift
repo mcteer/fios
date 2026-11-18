@@ -12,6 +12,7 @@ private class FakeSandboxExecutor:SandboxExecuting {
     var denyCreateCapacity=false
     var loseCreateReply=false
     var acknowledgeInspection=false
+    var storageContinuityUnknown=false
     var resourceNow:Int64=0
     var resourceFailure=false
     var resourceRequests:[Int64]=[]
@@ -37,6 +38,10 @@ private class FakeSandboxExecutor:SandboxExecuting {
             let id=String(repeating:job.first=="a" ? "a" : "b",count:64)
             present[job]=(config,id,false);result = .created(id)
         case .inspect:
+            if storageContinuityUnknown {
+                values.append(SandboxExecution(job:job,result:.failure(.storageContinuityUnknown)))
+                return
+            }
             if acknowledgeInspection {
                 result = .acknowledged
                 break
@@ -480,27 +485,36 @@ func runCleanupStatusRecoveryTests() throws {
     let pending=try journal.sandboxRecords().first{$0.configuration.job==lateID}
     guard pending?.createIssued==true,pending?.runtimeID==nil,pending?.removalProven==false,
           controller.cleanupStatus(now:98000)["pending_sandboxes"] as? Int==1 else {fatalError("Lost create reply followed by absence released custody")}
+    runtime.storageContinuityUnknown=true
+    try tick(99500)
+    try tick(100000)
+    guard controller.cleanupStatus(now:100000)["storage_continuity_unknown"] as? Int==1,
+          try journal.sandboxRecords().first(where:{$0.configuration.job==lateID})?.removalProven==false else {
+        fatalError("Storage continuity refusal was hidden or released custody")
+    }
+    runtime.storageContinuityUnknown=false
     let lateRuntimeID=String(repeating:"d",count:64)
     runtime.present[lateID]=(lateConfig,lateRuntimeID,false)
-    for now:Int64 in [99500,100000,100500,101500,102000] {try tick(now)}
+    for now:Int64 in [101500,102000,102500,103500,104000] {try tick(now)}
     let final=try journal.sandboxRecords().first{$0.configuration.job==lateID}
     let commands=runtime.commands
     guard final?.runtimeID==lateRuntimeID,final?.removalProven==true,
+          controller.cleanupStatus(now:104000)["storage_continuity_unknown"] as? Int==0,
           commands.filter({if case .create=$0 {return true};return false}).count==1,
           !commands.contains(where:{if case .start=$0 {return true};return false}),
           try journal.unresolvedCount()==1,try journal.uncertainCount()==1 else {fatalError("Late sandbox was replayed, started, or released independent model uncertainty")}
     let unissuedID=UUID().uuidString.lowercased()
-    let unissued=try DurableJob(id:unissuedID,idempotency:UUID().uuidString.lowercased(),ownerHash:job.ownerHash,requestHash:job.requestHash,created:103000)
+    let unissued=try DurableJob(id:unissuedID,idempotency:UUID().uuidString.lowercased(),ownerHash:job.ownerHash,requestHash:job.requestHash,created:105000)
     let unissuedConfig=try SandboxConfiguration(job:unissuedID,nonce:lateConfig.nonce,image:configuration.image,memory:configuration.memory,cpus:1)
     _=try journal.reserveSandbox(job:unissued,configuration:unissuedConfig)
-    try admission.reserve(job:unissuedID,memory:unissuedConfig.memory,cpus:1,sample:sample(103000),now:103000)
-    try journal.transitionJob(id:unissuedID,to:.revoking,now:103000)
+    try admission.reserve(job:unissuedID,memory:unissuedConfig.memory,cpus:1,sample:sample(105000),now:105000)
+    try journal.transitionJob(id:unissuedID,to:.revoking,now:105000)
     let beforeLocal=runtime.commands.count
-    try tick(103000)
-    try tick(103500)
+    try tick(105000)
+    try tick(105500)
     guard runtime.commands.count==beforeLocal else {fatalError("Unissued reservation dispatched a cleanup command")}
     // The ordinary manager tick released the local reservation, so a new
     // in-memory reservation for the same key no longer conflicts.
-    try admission.reserve(job:unissuedID,memory:unissuedConfig.memory,cpus:1,sample:sample(103500),now:103500)
+    try admission.reserve(job:unissuedID,memory:unissuedConfig.memory,cpus:1,sample:sample(105500),now:105500)
     print("PASS: delayed and never-issued runtime cleanup preserve exact custody and reservation release")
 }

@@ -29,7 +29,7 @@ enum SandboxAbsencePolicy {
 }
 
 enum SandboxExecutionValue:Sendable { case created(String),observed(SandboxPresence,exitCode:Int? = nil,oom:Bool = false),acknowledged }
-enum SandboxExecutionFailure:Error,Sendable { case unavailable,identity,unapprovedImage }
+enum SandboxExecutionFailure:Error,Sendable { case unavailable,identity,unapprovedImage,storageContinuityUnknown }
 struct SandboxExecution:Sendable {
     let job:String
     let result:Result<SandboxExecutionValue,SandboxExecutionFailure>
@@ -151,7 +151,7 @@ final class SandboxExecutor:SandboxCreateSlotExecuting,@unchecked Sendable {
             // The CLI combines stdout and stderr. Only a zero-byte listing
             // can be absence; whitespace-only output is an invalid reply.
             if listing.output.isEmpty {
-                guard SandboxAbsencePolicy.permits(endpoint:runtime.endpointPolicy) else {throw SandboxExecutionFailure.unavailable}
+                guard SandboxAbsencePolicy.permits(endpoint:runtime.endpointPolicy) else {throw SandboxExecutionFailure.storageContinuityUnknown}
                 if let saved {resourceReader.releaseAfterVerifiedAbsence(id:saved)}
                 lock.lock();identities.removeValue(forKey:job);lock.unlock()
                 return .observed(.absent)
