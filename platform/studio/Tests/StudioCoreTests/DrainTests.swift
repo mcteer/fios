@@ -90,6 +90,12 @@ func runDrainTests()throws {
     let external=ServiceDrainSnapshot(scope:try scope(stamp:2001),nativeIdle:false,externalNativeWork:true,unmanagedRuntimeWork:false)
     guard try drain.poll(snapshot:external,now:2001).state == .refused(.activeWork) else {fatalError("Cached ready decision ignored new external work")}
     _=try drain.begin(snapshot:busy,role:.operator,now:1000)
+    let replay=ServiceDrainSnapshot(scope:try scope(stamp:999),nativeIdle:true,externalNativeWork:false,unmanagedRuntimeWork:false)
+    guard try drain.poll(snapshot:replay,now:1001).state == .refused(.scopeChanged),
+          try drain.poll(snapshot:ready,now:2000).state == .refused(.scopeChanged) else {
+        fatalError("Drain accepted a backward source capture")
+    }
+    _=try drain.begin(snapshot:busy,role:.operator,now:1000)
     guard try drain.poll(snapshot:busy,now:999).state == .refused(.deadline) else {fatalError("Rollback did not fence drain")}
     let drainClock=DrainTestClock();var timedDrain=ServiceDrainPolicy(uptime:{drainClock.time})
     _=try timedDrain.begin(snapshot:busy,role:.operator,now:1000)
