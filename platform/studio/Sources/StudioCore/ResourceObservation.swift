@@ -20,7 +20,7 @@ enum ResourceObservationExport {
         let physical=sample.physical>0 ? bytes(sample.physical):nil
         publish("physical_memory",key:"physical",value:physical,at:sample.sampledAt)
         publish("available_memory",key:"available",value:sample.available.flatMap {physical != nil && $0<=sample.physical ? bytes($0):nil},at:sample.sampledAt)
-        publish("cpu",key:"cpu",value:sample.cpu.flatMap {$0.isFinite && (0...100).contains($0) ? $0:nil},at:sample.sampledAt)
+        publish("cpu",key:"cpu",value:sample.cpu.flatMap {$0.isFinite && (0...100).contains($0) ? $0:nil},at:sample.cpuSampledAt ?? sample.sampledAt)
         publish("disk_free",key:"diskFree",value:bytes(sample.diskFree),at:sample.sampledAt)
         publish("pressure",key:"pressure",value:sample.pressure == .unknown ? nil:sample.pressure.rawValue,at:sample.sampledAt,unknown:"unknown")
         publish("thermal",key:"thermal",value:sample.thermal == .unknown ? nil:sample.thermal.rawValue,at:sample.sampledAt,unknown:"unknown")

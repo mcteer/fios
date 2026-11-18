@@ -16,6 +16,15 @@ func runCPUTests() throws {
     guard stale.cpu == nil, stale.sampledAt >= now, stale.diskFree != nil else {
         fatalError("Expired CPU data made fresh host observations stale")
     }
+    let recent = HostResources.sample(statePath: NSTemporaryDirectory(), measuredCPU: 25, measuredCPUAt: now - 4000)
+    let exported = try ResourceObservationExport.encode(sample:recent,gpu:nil,gpuSampledAt:nil,now:now+2000,epoch:UUID().uuidString.lowercased(),sequence:1,vmEpoch:nil)
+    guard recent.cpu == 25, recent.sampledAt >= now, exported.resources["cpu"] is NSNull,
+          exported.resources["diskFree"] is UInt64 else {fatalError("CPU expiry aged independent disk observations")}
+    var fixture=ResourceSample(sampledAt:now,physical:32<<30,available:24<<30,vmAvailable:nil,diskFree:20<<30,cpu:25,pressure:.normal,thermal:.nominal)
+    fixture.cpuSampledAt=now-4000
+    let admission=AdmissionPolicy()
+    guard admission.resourcesSafe(fixture,now:now+1000,needsVM:false),
+          !admission.resourcesSafe(fixture,now:now+1001,needsVM:false) else {fatalError("Fresh host sensors renewed CPU admission")}
     func usage()throws->(UInt64,Double) {
         var native=rusage_info_v2(),posix=rusage()
         let status=withUnsafeMutablePointer(to:&native) {$0.withMemoryRebound(to:rusage_info_t?.self,capacity:1) {proc_pid_rusage(getpid(),RUSAGE_INFO_V2,$0)}}

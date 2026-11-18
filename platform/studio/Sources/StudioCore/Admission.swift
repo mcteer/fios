@@ -11,6 +11,8 @@ struct AdmissionPolicy {
         guard now >= 0, sample.sampledAt >= 0,
               now <= ActivityPolicy.maximumTimestamp, sample.sampledAt <= ActivityPolicy.maximumTimestamp,
               (-1000...5000).contains(now - sample.sampledAt) else { throw AdmissionError.stale }
+        let cpuAt=sample.cpuSampledAt ?? sample.sampledAt
+        guard (0...ActivityPolicy.maximumTimestamp).contains(cpuAt),(-1000...5000).contains(now-cpuAt) else {throw AdmissionError.stale}
         guard sample.pressure == .normal, [.nominal,.fair].contains(sample.thermal),
               let cpu = sample.cpu, cpu.isFinite, (0...80).contains(cpu),
               let available = sample.available, available <= sample.physical,
