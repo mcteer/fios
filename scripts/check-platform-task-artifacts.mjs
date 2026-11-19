@@ -36,6 +36,9 @@ try {
  const finished=call({job:fixture.finished_job},'job.status');assert.equal(finished.state,'removed');
  const renewal=call({job:fixture.finished_job},'job.renew',1);assert.equal(renewal.error,'job_conflict');
  const otherOwner=randomBytes(32).toString('base64');
+ for(const operation of ['job.status','job.renew']){
+  assert.equal(call({job:fixture.finished_job},operation,1,otherOwner).error,'unauthorized');
+ }
  // An owner who guesses a real artifact ID must see the same terminal
  // response as if it did not exist. Neither stream may publish metadata.
  for(const artifact of [fixture.artifacts[0],randomUUID()]){
