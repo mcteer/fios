@@ -55,6 +55,12 @@ complete HTTP/all-client activity, resident state, device completion or admissio
 Manager status exports counts/model-identity count, keeping the full exact ID set
 in its private typed observation to preserve the existing status size bound.
 
+Append `--source-outage` to the manager status command to stop the fixture's own
+empty-model child while the private manager is still running. The fixture
+verifies that status and activity withdraw the native source clock and that
+any seeded lineage uncertainty survives. It does not touch an installed
+service, restart against another instance, or demonstrate terminality.
+
 The actual source server can also exercise direct owned-child lifecycle through the real Swift runtime, independently of installed service activation:
 
 ```sh

@@ -107,8 +107,15 @@ func runNativeRequestEventPollingTests()throws {
           (history[0]["request"] as? [String:Any])?["state"] as? String=="unknown",
           (history[0]["metal"] as? [String:Any])?["retired"] as? UInt64==2,
           try journal.unresolvedCount()==1 else {throw JournalError.invalid}
+    let beforeOutage=try journal.preparationBindingCheckpoint(plan:plan,peer:peer,root:UInt64.max)
     poller.nativeSourceUnavailable()
+    let afterOutage=try journal.preparationBindingCheckpoint(plan:plan,peer:peer,root:UInt64.max)
+    poller.nativeSourceUnavailable() // Repeated failures are the same outage.
     try poll(poller)
+    guard beforeOutage.lineage==afterOutage.lineage,beforeOutage.localRevision != afterOutage.localRevision,
+          try journal.preparationBindingCheckpoint(plan:plan,peer:peer,root:UInt64.max)==afterOutage else {
+        fatalError("Outage failed to fence preparation once without rewriting lineage")
+    }
     guard try status()["native_request_events"]==nil,try journal.unresolvedCount()==1 else {
         fatalError("Unavailable ingress source left callback diagnostics current")
     }
@@ -123,6 +130,10 @@ func runNativeRequestEventPollingTests()throws {
     guard (resumed?.first?["request"] as? [String:Any])?["state"] as? String=="active",
           try journal.unresolvedCount()==1 else {fatalError("New correlated source sample did not restore diagnostics without settling ownership")}
     let bindingCheckpoint=try journal.preparationBindingCheckpoint(plan:plan,peer:peer,root:UInt64.max)
+    poller.observeNativeInstance(scope.nativeEpoch)
+    guard try journal.preparationBindingCheckpoint(plan:plan,peer:peer,root:UInt64.max)==bindingCheckpoint else {
+        fatalError("Repeated native instance observation invalidated stable preparation")
+    }
     poller.observeNativeInstance(String(repeating:"2",count:32))
     let invalidated=try journal.preparationBindingCheckpoint(plan:plan,peer:peer,root:UInt64.max)
     guard bindingCheckpoint.lineage==invalidated.lineage,bindingCheckpoint.localRevision != invalidated.localRevision else {
