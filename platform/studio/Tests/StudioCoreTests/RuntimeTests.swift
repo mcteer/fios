@@ -27,6 +27,18 @@ func runRuntimeTests() throws {
     guard expiredChecks==1,try runtime.run(arguments:[],timeout:2).status==0 else {
         fatalError("Expired publication checkpoint did not return command capacity")
     }
+    let echoPath="/bin/echo"
+    let echoHash=SHA256.hash(data:try Data(contentsOf:URL(fileURLWithPath:echoPath))).map {String(format:"%02x",$0)}.joined()
+    let writer=try VerifiedExecutable(path:echoPath,sha256:echoHash)
+    let exact=try writer.run(arguments:["fixture"],timeout:2,maximumOutput:8)
+    guard exact.status==0,exact.output==Data("fixture\n".utf8) else {
+        fatalError("Command output was truncated at the exact byte boundary")
+    }
+    do {
+        _=try writer.run(arguments:["fixture"],timeout:2,maximumOutput:7)
+        fatalError("Command returned partial success past its output budget")
+    } catch RuntimeError.outputLimit {}
+    guard try runtime.run(arguments:[],timeout:2).status==0 else {fatalError("Output refusal leaked a command slot")}
     // A silent child must not keep the actor blocked in output collection.
     let sleepURL=URL(fileURLWithPath:"/bin/sleep")
     let sleepDigest=SHA256.hash(data:try Data(contentsOf:sleepURL)).map {String(format:"%02x",$0)}.joined()
