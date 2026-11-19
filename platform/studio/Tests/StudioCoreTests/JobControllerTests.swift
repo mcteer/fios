@@ -214,6 +214,12 @@ private func checkDeferredCreateRestart()throws {
           controller.cleanupStatus(now:13500)["pending_sandboxes"] as? Int==1 else {
         fatalError("Restart replayed precommitted create or inferred absence after losing local refusal history")
     }
+    var recoveredCapacity=admission
+    try recoveredCapacity.reserve(job:UUID().uuidString.lowercased(),memory:512<<20,cpus:1,sample:sample(13500),now:13500)
+    do {
+        try recoveredCapacity.reserve(job:UUID().uuidString.lowercased(),memory:512<<20,cpus:1,sample:sample(13500),now:13500)
+        fatalError("Reopen did not charge capacity for unresolved create custody")
+    } catch AdmissionError.capacity {}
     let unissuedDirectory=directory.appendingPathComponent("disabled-reopen"),unissued=UUID().uuidString.lowercased()
     do {
         let seed=try Journal(directory:unissuedDirectory)
