@@ -44,7 +44,9 @@ func runNativeRequestEventPollingTests()throws {
     let token=TaskOwner.newToken(),owner=try TaskOwner(token:token,peerUID:geteuid()).hash
     _=try journal.reserveJob(DurableJob(id:job,idempotency:UUID().uuidString.lowercased(),ownerHash:owner,requestHash:String(repeating:"d",count:64),created:1000))
     try journal.transitionJob(id:job,to:.running)
-    try journal.claim(job:job,attempt:0,model:scope.canonicalModel,scope:scope);try journal.markDispatched(job:job,attempt:0)
+    try journal.claim(job:job,attempt:0,model:scope.canonicalModel,scope:scope)
+    let plan=try journal.planWorkerStart(job:job,attempt:0)
+    try journal.markDispatched(job:job,attempt:0)
     func poll(_ poller:NativeLineagePoller,between:()->Void={})throws {
         guard try poller.beginNext() else {throw JournalError.invalid}
         between()
@@ -120,7 +122,12 @@ func runNativeRequestEventPollingTests()throws {
     let resumed=try status()["native_request_events"] as? [[String:Any]]
     guard (resumed?.first?["request"] as? [String:Any])?["state"] as? String=="active",
           try journal.unresolvedCount()==1 else {fatalError("New correlated source sample did not restore diagnostics without settling ownership")}
+    let bindingCheckpoint=try journal.preparationBindingCheckpoint(plan:plan,peer:peer,root:UInt64.max)
     poller.observeNativeInstance(String(repeating:"2",count:32))
+    let invalidated=try journal.preparationBindingCheckpoint(plan:plan,peer:peer,root:UInt64.max)
+    guard bindingCheckpoint.lineage==invalidated.lineage,bindingCheckpoint.localRevision != invalidated.localRevision else {
+        fatalError("Native instance transition failed to invalidate local preparation plans without changing custody")
+    }
     guard try status()["native_request_events"]==nil,try journal.unresolvedCount()==1 else {
         fatalError("Changed native instance left old callback observations visible or released ownership")
     }

@@ -49,10 +49,14 @@ final class NativeLineagePoller:@unchecked Sendable {
         guard instance != observedInstance else {return}
         observedInstance=instance
         sourceGeneration=UUID()
+        journal.invalidatePreparationBindings()
         eventSamples=eventSamples.filter {$0.value.request.scope.nativeEpoch==instance}
     }
     func nativeSourceUnavailable() {
-        if !sourceUnavailable {sourceGeneration=UUID()}
+        if !sourceUnavailable {
+            sourceGeneration=UUID()
+            journal.invalidatePreparationBindings()
+        }
         sourceUnavailable=true
         eventSamples.removeAll()
     }

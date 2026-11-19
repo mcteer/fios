@@ -521,11 +521,16 @@ public final class Journal {
         try persistNativeObservation(consumer,job:job,attempt:attempt,scope:scope)
         return observation
     }
+    // Manager-local revocation only. A source transition changes no durable
+    // root, process custody, inference scope, or proof state.
+    func invalidatePreparationBindings() {
+        if preparationLocalRevision<UInt64.max {preparationLocalRevision+=1}
+    }
     private func persistNativeObservation(_ consumer:NativeRequestLineageConsumer,job:String,attempt:Int,scope:InferenceScope)throws {
         guard preparationLocalRevision<UInt64.max else {throw JournalError.trackingLimit}
         // Revoke previously captured local bindings even if this write is
         // refused. The durable root and unresolved claims are independent.
-        preparationLocalRevision+=1
+        invalidatePreparationBindings()
         let payload=String(decoding:try consumer.checkpoint(scope:scope),as:UTF8.self)
         try execute("INSERT INTO native_lineages(job,attempt,payload) VALUES(?,?,?) ON CONFLICT(job,attempt) DO UPDATE SET payload=excluded.payload",[job,String(attempt),payload])
     }
@@ -566,8 +571,9 @@ public final class Journal {
         return consumer.fenced ? nil:consumer.rootSequence
     }
     // A local revocation stamp, never source liveness or dispatch authority.
-    // New claims and attempted lineage/retirement writes, including unknown
-    // at the same timestamp, conservatively revoke captured bindings. Reopen cannot restore them.
+    // Source transitions, new claims and attempted lineage/retirement writes,
+    // including unknown at the same timestamp, conservatively revoke captured
+    // bindings. Reopen cannot restore them.
     // Changed inference state or launch withdrawal also refuses.
     func preparationBindingCheckpoint(plan:PlannedWorkerStart,peer:NativeControlPeer,root:UInt64)throws->PreparationBindingCheckpoint {
         guard preparationLocalRevision<UInt64.max,let record=try inferenceScope(job:plan.job,attempt:plan.attempt),record.state == .dispatched,
