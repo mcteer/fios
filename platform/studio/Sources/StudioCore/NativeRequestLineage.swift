@@ -97,6 +97,7 @@ struct NativeRequestLineageConsumer:Sendable {
     let correlationID:String
     private var previousNow:Int64 = -1
     private var sampledAt:Int64 = -1
+    private var sourceCapturedAt:Int64?
     private var sequence:UInt64=0
     private(set) var rootSequence:UInt64?
     private(set) var fenced=false
@@ -294,7 +295,10 @@ struct NativeRequestLineageConsumer:Sendable {
               (0...ActivityPolicy.maximumTimestamp).contains(sample.sampledAt),
               (-1000...5000).contains(now-sample.sampledAt),sample.sampledAt>=sampledAt,
               value.sampleSequence>sequence else {return .unknown}
-        if let captured=value.sourceCapturedAt,!(-1000...5000).contains(now-captured) {return .unknown}
+        if let captured=value.sourceCapturedAt {
+            guard (-1000...5000).contains(now-captured),captured >= (sourceCapturedAt ?? 0) else {return .unknown}
+            sourceCapturedAt=captured
+        } else if sourceCapturedAt != nil {return .unknown}
         sequence=value.sampleSequence;sampledAt=sample.sampledAt
         if value.found {
             if let original=rootSequence,original != value.rootSequence {fenced=true;return .unknown}

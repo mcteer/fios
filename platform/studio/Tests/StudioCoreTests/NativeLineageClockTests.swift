@@ -23,7 +23,13 @@ func runNativeLineageClockTests()throws {
     var consumer=try NativeRequestLineageConsumer(scope:scope,job:job,attempt:0,peer:peer)
     var observed=NativeRequestLineage(instance:instance,correlationID:id,sampleSequence:1,rootSequence:UInt64.max,found:true,uncertain:false,references:1,owners:1,ingress:0,preparing:0,active:1,responding:0,sourceCapturedAt:10000)
     guard case .live=consumer.accept(NativeRequestLineageSample(peer:peer,sampledAt:10001,lineage:observed),now:10002) else {throw NativeControlError.invalid}
-    observed=NativeRequestLineage(instance:instance,correlationID:id,sampleSequence:2,rootSequence:UInt64.max,found:true,uncertain:false,references:1,owners:1,ingress:0,preparing:0,active:1,responding:0,sourceCapturedAt:10000)
+    var rewind=NativeRequestLineage(instance:instance,correlationID:id,sampleSequence:2,rootSequence:UInt64.max,found:true,uncertain:false,references:1,owners:1,ingress:0,preparing:0,active:1,responding:0,sourceCapturedAt:9999)
+    guard case .unknown=consumer.accept(NativeRequestLineageSample(peer:peer,sampledAt:10003,lineage:rewind),now:10003) else {fatalError("Increasing sequence refreshed rewound source clock")}
+    rewind.sourceCapturedAt=nil
+    guard case .unknown=consumer.accept(NativeRequestLineageSample(peer:peer,sampledAt:10004,lineage:rewind),now:10004) else {fatalError("Dated source downgraded to missing source clock")}
+    rewind.sourceCapturedAt=10000
+    guard case .live=consumer.accept(NativeRequestLineageSample(peer:peer,sampledAt:10005,lineage:rewind),now:10005) else {fatalError("Same-millisecond source capture should remain observable with a fresh sequence")}
+    observed=NativeRequestLineage(instance:instance,correlationID:id,sampleSequence:3,rootSequence:UInt64.max,found:true,uncertain:false,references:1,owners:1,ingress:0,preparing:0,active:1,responding:0,sourceCapturedAt:10000)
     // A later client query cannot refresh an old native capture.
     guard case .unknown=consumer.accept(NativeRequestLineageSample(peer:peer,sampledAt:16000,lineage:observed),now:16001),consumer.rootSequence==UInt64.max else {throw NativeControlError.invalid}
     // The opt-in queue frame keeps operation counts separate from handler owners.
