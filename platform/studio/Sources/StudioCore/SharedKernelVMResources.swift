@@ -91,8 +91,10 @@ final class SharedKernelVMReader:VMResourceReading,@unchecked Sendable {
             guard readUptime-began<=5,(stamp...readCompleted).contains(sample.sampledAt) else {throw RuntimeError.identity}
             guard readCompleted<leaseUntil else {throw RuntimeError.deadline}
             let limit:NativeVMCap
-            if let cached,readUptime-cached.uptime<3 {limit=cached.value}
+            let reusedAt:TimeInterval?
+            if let cached,readUptime-cached.uptime<3 {limit=cached.value;reusedAt=cached.uptime}
             else {
+                reusedAt=nil
                 let proof=try NativeVMLivenessProof(sample:sample,expectedBootHash:permission.bootHash,now:readCompleted)
                 limit=try cap.capture(liveness:proof);cached=(limit,began)
             }
@@ -101,6 +103,7 @@ final class SharedKernelVMReader:VMResourceReading,@unchecked Sendable {
                   completedUptime.isFinite,completedUptime>=readUptime else {fenced=true;throw RuntimeError.identity}
             previousNow=completed;previousUptime=completedUptime
             guard completed<leaseUntil,completedUptime-began<=5,
+                  reusedAt.map({completedUptime-$0<3}) ?? true,
                   physical>0,physical<=UInt64(ActivityPolicy.maximumTimestamp),limit.bytes>0,limit.bytes<=physical,
                   sample.total>0,sample.total<=physical,sample.free<=sample.total,
                   sample.sampledAt>=0,limit.sampledAt>=0,

@@ -12,6 +12,12 @@ private final class SharedKernelFixture:NativeVMCapReading,VMResourceReading,@un
     var advanceOnRead:Int64=0
     var kernelTimestampDelta:Int64=0
     var steadyDeltaOnRead:TimeInterval=0
+    var uptimeReads=0
+    func completionEdgeUptime()->TimeInterval {
+        uptimeReads+=1
+        if uptimeReads==6 {return 4}
+        return steady
+    }
     func capture(liveness:NativeVMLivenessProof)throws->NativeVMCap {
         captures+=1;if fail {throw RuntimeError.launch}
         return NativeVMCap(bytes:capValue,sampledAt:stale ? time-6000:time)
@@ -82,6 +88,19 @@ func runSharedKernelVMTests()throws {
     aging.steady=3.5;aging.steadyDeltaOnRead=0.5;aging.time=13000
     _=try agingReader.read(configuration:configuration,id:id,leaseUntil:60000)
     guard aging.captures==2 else {fatalError("Slow kernel read extended cached VM cap beyond its reuse window")}
+    let reuseEdge=SharedKernelFixture()
+    let edgeReader=SharedKernelVMReader(kernel:reuseEdge,cap:reuseEdge,permission:permission,physical:128<<30,
+        now:{reuseEdge.time},uptime:reuseEdge.completionEdgeUptime)
+    _=try edgeReader.read(configuration:configuration,id:id,leaseUntil:60000)
+    reuseEdge.time=12999;reuseEdge.steady=3.999
+    do {_=try edgeReader.read(configuration:configuration,id:id,leaseUntil:60000);fatalError("VM cap reuse remained valid after its completion window")}
+    catch RuntimeError.identity {}
+    guard reuseEdge.captures==1 else {fatalError("Expired cached cap triggered new I/O inside completion")}
+    reuseEdge.time=13001;reuseEdge.steady=4.001
+    let refreshed=try edgeReader.read(configuration:configuration,id:id,leaseUntil:60000)
+    guard reuseEdge.captures==2,refreshed.envelope?.sampledAt==13001 else {
+        fatalError("Independent read did not restore capacity from a freshly captured cap")
+    }
     let rewind=SharedKernelFixture()
     let rewindReader=SharedKernelVMReader(kernel:rewind,cap:rewind,permission:permission,physical:128<<30,now:{rewind.time},uptime:{rewind.steady})
     _=try rewindReader.read(configuration:configuration,id:id,leaseUntil:60000)
