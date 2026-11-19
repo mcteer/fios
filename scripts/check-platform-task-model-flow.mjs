@@ -97,8 +97,12 @@ try {
   assert.equal(restored.lease.revoked,true);assert.equal(restored.unresolved_managed_requests,0);assert.equal(restored.event,undefined);
   const replay=task('job.create',manifest);assert.equal(replay.job,job);assert.equal(replay.state,'removed');assert.equal(replay.lease.revoked,true);
   const acknowledgement=task('job.create',{phase:'end',job});assert.equal(acknowledgement.state,'removed');assert.equal(acknowledgement.lease.deadline_at,deadline);
-  await delay(50);assert.equal(posts,0);assert.equal(JSON.parse(command(cli,['--state',state,'status'],3000)).worker_reservations,0);
-  return {scenario,restart_checked:true,input_bytes:data.length,input_chunks:chunks,partial_upload:true,replay_status_only:true,state:restored.state,mock_model_posts:posts,worker_slots_after_completion:0};
+  // Replacement is deliberately not enrolled. Free local capacity and a
+  // successful status-only replay cannot restore its admission authority.
+  task('job.create',{...manifest,idempotency:randomUUID()},'native_unsupported');
+  assert.equal(posts,0);const clean=JSON.parse(command(cli,['--state',state,'status'],3000));
+  assert.equal(clean.worker_reservations,0);assert.equal(clean.unresolved_requests,0);
+  return {scenario,restart_checked:true,input_bytes:data.length,input_chunks:chunks,partial_upload:true,replay_status_only:true,fresh_reservation_refused_without_enrollment:true,state:restored.state,mock_model_posts:posts,worker_slots_after_completion:0};
  }
  if(['invalid_history','replaced_source','duplicate_chunk','digest_mismatch'].includes(scenario)){
   if(scenario==='replaced_source')writeFileSync(join(nativeState,'replace-source-epoch'),'mock',{flag:'wx',mode:0o600});
