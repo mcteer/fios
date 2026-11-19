@@ -61,7 +61,14 @@ import CryptoKit
         let peer=NativeControlPeer(pid:metadata.pid,start:metadata.start,executable:image)
         guard let client=try SessionControlClient.discover(directory:directory,helper:image,approvedHashes:pins) else {throw ControlError.unauthorized}
         if args[1]=="manager" {
-            guard args.count==4,["known","unknown","invalid-then-known"].contains(args[3]) else {throw ControlError.invalid_request}
+            guard args.count==4,["known","unknown","invalid-then-known","clock-fenced"].contains(args[3]) else {throw ControlError.invalid_request}
+            if args[3]=="clock-fenced" {
+                let journal=try Journal(directory:directory)
+                let recovery=try ServiceRecoveryController(journal:journal,approvedHashes:pins,recoveryProfileHash:client.recoveryProfileHash)
+                let now=HostResources.nowMilliseconds(),tick=Int64(ProcessInfo.processInfo.systemUptime*1000)
+                _=try recovery.plan(service:.mlx,desired:.maintenance,observation:nil,now:now,tick:tick)
+                _=try recovery.plan(service:.mlx,desired:.maintenance,observation:nil,now:now-1,tick:tick)
+            }
             // Trusted synthetic observations only. The real manager loop and
             // journal execute, but no native observation source is enrolled.
             let cache=ServiceObservationCache(),known=args[3] != "unknown",startsInvalid=args[3]=="invalid-then-known"

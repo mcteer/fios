@@ -101,7 +101,17 @@ try{
  assert.equal(status().launch_pending,true);assert.equal(status().recovery.starts_in_window,1);
  assert.equal(launchState().pending,originalLaunch.pending);assert.deepEqual(launchState().starts,originalLaunch.starts);
  assert.equal(Number(readFileSync(join(state,'calls'),'utf8')),0);
- console.log(JSON.stringify({ok:true,actual_manager:true,actual_session:true,application_port:'counter_only',application_calls:2,revoked_validation_calls:0,actual_validator_slot_retained:true,maintenance_survives_manager_restart:true,helper_turnover_retains_pending:true,native_actions:0,review_directory:directory}));
+ turnoverManager.kill('SIGTERM');await until(()=>exited(turnoverManager));assert.equal(turnoverManager.exitCode,0);
+ secondHelper.kill('SIGTERM');await until(()=>exited(secondHelper));assert.equal(secondHelper.exitCode,0);
+ state=join(directory,'clock-fenced');mkdirSync(state,{mode:0o700});
+ start('server','functional');await until(()=>existsSync(join(state,'session-control.json')));
+ const clockManager=start('manager','clock-fenced');
+ const fenced=await until(()=>{assert(!exited(clockManager),'Clock-fenced manager exited');const s=status();return s?.recovery?.budget_state==='clock_fenced'&&s.observed==='stopped'?s:null;});
+ assert.equal(fenced.desired,'running');assert.equal(fenced.launch_pending,false);assert.equal(fenced.recovery.budget_wait_ms,null);
+ assert.equal(status(['status']).service_recovery,'configured');
+ assert.equal(status(['service','orbstack','status']).observed,'ready');
+ assert.equal(Number(readFileSync(join(state,'calls'),'utf8')),0);
+ console.log(JSON.stringify({ok:true,actual_manager:true,actual_session:true,application_port:'counter_only',application_calls:2,revoked_validation_calls:0,actual_validator_slot_retained:true,maintenance_survives_manager_restart:true,helper_turnover_retains_pending:true,clock_fence_distinct_from_transport:true,native_actions:0,review_directory:directory}));
 }catch(error){console.error('RETAINED ordinary service recovery fixture:',directory);throw error;}finally{
  for(const child of children.reverse())if(!exited(child)){child.kill('SIGTERM');try{await until(()=>exited(child),3000);}catch{child.kill('SIGKILL');await until(()=>exited(child),3000);}}
 }
