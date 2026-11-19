@@ -120,6 +120,12 @@ func runBackupTests() throws {
     do {_=try StoppedStateBackup.create(directory:state,destination:alias.appendingPathComponent("artifacts/nested"));fatalError("Snapshot entered source exports through an alias")} catch JournalError.invalid {}
     let checked=try StoppedStateBackup.verify(directory:bundle,expectedSHA256:bundleReceipt.sha256)
     guard checked.bytes==bundleReceipt.bytes,checked.artifacts==1 else {fatalError("Snapshot verification differs")}
+    let sealedEntries=try FileManager.default.contentsOfDirectory(atPath:bundle.path).sorted()
+    let compatible=try StoppedStateBackup.verifyCompatibility(directory:bundle,expectedSHA256:bundleReceipt.sha256)
+    guard compatible.bytes==checked.bytes,compatible.artifacts==checked.artifacts,
+          try FileManager.default.contentsOfDirectory(atPath:bundle.path).sorted()==sealedEntries else {
+        fatalError("Compatibility preflight changed the sealed backup namespace")
+    }
     do {_=try StoppedStateBackup.verify(directory:bundle,expectedSHA256:String(repeating:"0",count:64));fatalError("Unreviewed snapshot accepted")} catch JournalError.invalid {}
     let corrupt=root.appendingPathComponent("corrupt-bundle")
     try FileManager.default.copyItem(at:bundle,to:corrupt)
