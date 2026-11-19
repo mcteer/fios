@@ -10,6 +10,14 @@ private final class LeaseDisplayRuntime:SandboxExecuting {
 func runJobLeaseStatusTests()throws {
     let directory=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer {try? FileManager.default.removeItem(at:directory)}
+    let lateID=try exerciseJobLeaseStatus(directory:directory)
+    let reopened=try Journal(directory:directory.appendingPathComponent("state"))
+    guard let late=try reopened.jobs().first(where:{$0.id==lateID}),late.lease.revoked,
+          try reopened.unresolvedCount(job:lateID)==1,try reopened.requestCount(job:lateID)==1 else {
+        fatalError("Mailbox expiry cleared independent durable custody across reopen")
+    }
+}
+private func exerciseJobLeaseStatus(directory:URL)throws->String {
     let journal=try Journal(directory:directory.appendingPathComponent("state"))
     let token=TaskOwner.newToken(),owner=try TaskOwner(token:token,peerUID:geteuid()).hash
     let job=try DurableJob(id:UUID().uuidString.lowercased(),idempotency:UUID().uuidString.lowercased(),
@@ -50,13 +58,20 @@ func runJobLeaseStatusTests()throws {
     let late=try DurableJob(id:UUID().uuidString.lowercased(),idempotency:UUID().uuidString.lowercased(),
         ownerHash:owner,requestHash:String(repeating:"c",count:64),created:23000)
     _=try journal.reserveJob(late);try journal.transitionJob(id:late.id,to:.running)
+    let scope=InferenceScope(host:"fixture-host",endpointHash:String(repeating:"a",count:64),profileHash:String(repeating:"b",count:64),
+        managerEpoch:UUID().uuidString.lowercased(),nativeEpoch:"fixture-native",canonicalModel:"fixture/model",nativeModel:"fixture/model",sequence:1,sampledAt:24000)
+    try journal.claim(job:late.id,attempt:0,model:scope.canonicalModel,scope:scope)
+    try journal.markDispatched(job:late.id,attempt:0) // Synthetic durable claim only; no model request.
     try commands.tick(now:24000,uptime:24000,artifactResults:[],model:[late.id:[.text(kind:"text",content:"Hello")]])
     let delayed=try call("job.status",27001,id:late.id)
     guard let current=try journal.jobs().first(where:{$0.id==late.id}),
           delayed["state"] as? String == current.state.rawValue else {
         throw NSError(domain:"JobLeaseStatus",code:2,userInfo:[NSLocalizedDescriptionKey:"Output timeout response reports an earlier job state"])
     }
-    guard delayed["output_lost"] as? Bool == true,
+    let second=try call("job.status",27002,id:late.id)
+    guard delayed["output_lost"] as? Bool == true,delayed["event"]==nil,second["event"]==nil,
+          delayed["unresolved_managed_requests"] as? Int==1,second["unresolved_managed_requests"] as? Int==1,
+          try journal.unresolvedCount(job:late.id)==1,try journal.requestCount(job:late.id)==1,
           try lease(delayed)["revoked"] as? Bool == current.lease.revoked,
           runtime.calls==0 else {throw JournalError.invalid}
     let failed=try DurableJob(id:UUID().uuidString.lowercased(),idempotency:UUID().uuidString.lowercased(),
@@ -74,4 +89,5 @@ func runJobLeaseStatusTests()throws {
     }
     guard runtime.calls==0 else {throw JournalError.invalid}
     print("PASS: normal job status reports lease timing and the worker failure reason")
+    return late.id
 }
