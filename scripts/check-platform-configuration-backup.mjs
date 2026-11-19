@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {spawnSync} from 'node:child_process';
-import {mkdtempSync,chmodSync,mkdirSync,readFileSync,writeFileSync,readdirSync,existsSync,lstatSync} from 'node:fs';
+import {mkdtempSync,chmodSync,mkdirSync,cpSync,readFileSync,writeFileSync,readdirSync,existsSync,lstatSync} from 'node:fs';
 import {join,resolve} from 'node:path';
 import {createHash} from 'node:crypto';
 import {validatePlatformRelease} from './lib/platform-release.mjs';
@@ -73,7 +73,18 @@ try {
   writeFileSync(sourceBlob,payload);
   assert.deepEqual(JSON.parse(run(helper,['check',state])),{uncertain:1,exports:1});
   assert.equal(JSON.parse(cli(bundle,['verify-backup','--sha256',receipt.sha256])).ok,true);
-  const final={scope:'isolated_packaged_cli_configuration_backup',manifest_sha256:args[4],source_revision:review.manifest.source_revision,configuration_plan_executed:true,uninstall_proposal_matches:true,backup_sha256:receipt.sha256,network:'denied',failed_journal_retained:true,failed_export_retained:true,model_posts:0,installed:false,activation:false,uncertainty:1,exports:1,scratch};
+  // Exercise an independently copied sealed backup; never corrupt the
+  // original or let refused restore touch its designated destination.
+  const changed=join(scratch,'changed-bundle'),refused=join(scratch,'refused-restore');
+  cpSync(bundle,changed,{recursive:true,errorOnExist:true,force:false});
+  const changedBlob=join(changed,'artifacts',blob),damaged=Buffer.from(readFileSync(changedBlob));
+  assert(damaged.length>0);damaged[0]^=1;writeFileSync(changedBlob,damaged);
+  cli(changed,['verify-backup','--sha256',receipt.sha256],{expected:1});
+  cli(changed,['restore-state','--sha256',receipt.sha256,'--to',refused],{expected:1});
+  assert(!existsSync(refused),'Restore published a destination for a changed sealed backup');
+  assert.deepEqual(readFileSync(changedBlob),damaged);
+  assert.equal(hash(readFileSync(join(bundle,'backup.json'))),receipt.sha256);
+  const final={scope:'isolated_packaged_cli_configuration_backup',manifest_sha256:args[4],source_revision:review.manifest.source_revision,configuration_plan_executed:true,uninstall_proposal_matches:true,backup_sha256:receipt.sha256,network:'denied',failed_journal_retained:true,failed_export_retained:true,tampered_backup_refused_without_publication:true,model_posts:0,installed:false,activation:false,uncertainty:1,exports:1,scratch};
   writeFileSync(join(scratch,'receipt.json'),JSON.stringify(final,null,2)+'\n',{mode:0o600});
   console.log(JSON.stringify(final));
 } catch(error) {
