@@ -24,7 +24,7 @@ enum NativeOwnedPreparationCoherence {
               root.sampleSequence>ack.sampleSequence,primary.instance==ack.instance,primary.sampleSequence>root.sampleSequence,
               !primary.uncertain,!registry.transitioning,primary.owners==1,primary.ingress==0,primary.preparing==1,
               primary.queued==0,primary.active==0,primary.responding==0,
-              lineage.sampledAt>=registration.sample.requestedAt,lineage.sampledAt<=activity.receivedAt,
+              lineage.sampledAt>=registration.verifiedAt,lineage.sampledAt<=activity.receivedAt,
               activity.receivedAt>=registration.verifiedAt,activity.receivedAt<=now,
               now-lineage.sampledAt<=5000,now-activity.receivedAt<=5000,
               let captured=primary.sampledAt,captured>=max(lineage.sampledAt,root.sourceCapturedAt ?? lineage.sampledAt),

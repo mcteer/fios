@@ -72,7 +72,7 @@ final class PendingNativePreparation:@unchecked Sendable {
                     guard samePeer(value.peer),value.lineage.instance==instance,value.lineage.correlationID==correlationID,
                           value.lineage.rootSequence==ack.rootSequence,value.lineage.found,!value.lineage.uncertain,
                           value.lineage.sampleSequence>ack.sampleSequence,
-                          (0...ActivityPolicy.maximumTimestamp).contains(value.sampledAt),
+                          (received...ActivityPolicy.maximumTimestamp).contains(value.sampledAt),
                           (0...ActivityPolicy.maximumTimestamp).contains(now),now>=received,
                           (0...5000).contains(now-value.sampledAt) else {throw NativeControlError.invalid}
                     try value.lineage.validate();lineage=value

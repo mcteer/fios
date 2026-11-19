@@ -2,7 +2,7 @@ import Foundation
 import CSQLite
 
 private final class PreparationReservationSource:NativePreparationReserving,@unchecked Sendable {
-    enum Mode:CaseIterable {case healthy,lineageFailure,lineageMismatch,unknownClock,oldClock,futureClock,expired,foreignPeer,foreignModel,equivalentUnicode,futureLocalTime,invalidStamp}
+    enum Mode:CaseIterable {case healthy,lineageFailure,lineageMismatch,lineagePredatesReceipt,unknownClock,oldClock,futureClock,expired,foreignPeer,foreignModel,equivalentUnicode,futureLocalTime,invalidStamp}
     let peer:NativeControlPeer
     let mode:Mode
     let entered=DispatchSemaphore(value:0),release=DispatchSemaphore(value:0)
@@ -24,7 +24,8 @@ private final class PreparationReservationSource:NativePreparationReserving,@unc
     func lineage(instance:String,correlationID:String)throws->NativeRequestLineageSample {
         lock.lock();reads+=1;lock.unlock()
         if mode == .lineageFailure {throw NativeControlError.unavailable}
-        return NativeRequestLineageSample(peer:peer,sampledAt:HostResources.nowMilliseconds(),lineage:NativeRequestLineage(instance:instance,
+        let stamp=HostResources.nowMilliseconds()-(mode == .lineagePredatesReceipt ? 1000:0)
+        return NativeRequestLineageSample(peer:peer,sampledAt:stamp,lineage:NativeRequestLineage(instance:instance,
             correlationID:correlationID,sampleSequence:12,rootSequence:mode == .lineageMismatch ? 7:UInt64.max,
             found:true,uncertain:false,references:1,owners:1,ingress:0,preparing:1,active:0,responding:0))
     }
@@ -47,9 +48,9 @@ func runNativePreparationReservationTests()throws {
         default:
             let value=try reply.get(),registration=value.registration
             guard registration.acknowledgement.rootSequence==UInt64.max,source.counts.1==1 else {fatalError("Verified reservation identity lost or lineage retried")}
-            let missing=mode == .lineageFailure || mode == .lineageMismatch
+            let missing=mode == .lineageFailure || mode == .lineageMismatch || mode == .lineagePredatesReceipt
             guard (value.lineage==nil)==missing else {fatalError("Failed/mismatched lineage became coherent")}
-            let current=mode == .healthy || mode == .lineageFailure || mode == .lineageMismatch
+            let current=mode == .healthy || missing
             guard registration.leaseWindowIsCurrent(now:registration.verifiedAt)==current,
                   !registration.leaseWindowIsCurrent(now:registration.verifiedAt-1),
                   !registration.leaseWindowIsCurrent(now:registration.sample.requestedAt+Int64(registration.acknowledgement.lifetimeMilliseconds)) else {fatalError("Receipt timing reset/extended an original native lease")}
@@ -248,6 +249,13 @@ private func runOwnedPreparationCoherenceTests(peer:NativeControlPeer)throws {
         lineage:NativeRequestLineageSample(peer:peer,sampledAt:lineage.sampledAt,lineage:sourceClock),
         activity:activity(stamp:now+2,receivedAt:now+4),sourceCoverage:.all_clients,now:now+4)==nil else {
         fatalError("Registry preceded original lineage source capture")
+    }
+    sourceClock.sourceCapturedAt=now+2
+    sourceClock.operations=NativeRequestQueueCounts(queued:0,active:0)
+    guard NativeOwnedPreparationCoherence.evaluate(registration:registration,
+        lineage:NativeRequestLineageSample(peer:peer,sampledAt:lineage.sampledAt,lineage:sourceClock),
+        activity:activity(stamp:now+2,receivedAt:now+4),sourceCoverage:.all_clients,now:now+4) != nil else {
+        fatalError("Matching timestamp and empty reported operation counts refused coherent observation")
     }
     for operations in [NativeRequestQueueCounts(queued:1,active:0),NativeRequestQueueCounts(queued:0,active:1)] {
         var busyLineage=lineage.lineage;busyLineage.operations=operations
