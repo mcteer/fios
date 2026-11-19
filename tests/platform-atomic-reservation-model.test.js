@@ -2,6 +2,23 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 // Serial model of an atomic native boundary, not an installed admission issuer.
+
+test('a terminal receipt cannot retire a sibling hold for the same model', () => {
+  const gate = new Gate({ covered: true });
+  const target = 'fixture/exact';
+  const first = gate.external(target);
+  const sibling = gate.external(target);
+  assert(first && sibling);
+  const firstReceipt = gate.backendTerminal(first);
+  const siblingReceipt = gate.backendTerminal(sibling);
+  assert(firstReceipt && siblingReceipt);
+  assert.equal(gate.releaseTerminal(sibling, firstReceipt), false);
+  assert.equal(gate.releaseTerminal(first, firstReceipt), true);
+  assert.equal(gate.releaseTerminal(first, firstReceipt), false);
+  assert.equal(gate.reserve(gate.observe('fixture/other'), 'fixture/other'), null);
+  assert.equal(gate.releaseTerminal(sibling, siblingReceipt), true);
+  assert(gate.reserve(gate.observe('fixture/other'), 'fixture/other'));
+});
 class Gate {
   #revision = 0;
   #epoch = Symbol();
