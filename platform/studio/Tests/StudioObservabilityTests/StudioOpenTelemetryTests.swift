@@ -175,6 +175,10 @@ final class StudioOpenTelemetryTests:XCTestCase {
         let metrics=telemetry.collectMetrics()
         XCTAssertFalse(metrics.contains{$0.name.hasPrefix("fios.platform.vm.") && !$0.data.points.isEmpty})
         XCTAssertTrue(metrics.contains{$0.name=="fios.platform.host.memory.available" && !$0.data.points.isEmpty})
+        telemetry.resources(ResourceSample(sampledAt:now,physical:1024,available:512,
+            vmAvailable:0,diskFree:4096,cpu:nil,pressure:.normal,thermal:.nominal,vmSampledAt:now))
+        let zero=try XCTUnwrap(telemetry.collectMetrics().first{$0.name=="fios.platform.vm.memory.available"})
+        XCTAssertEqual((zero.data.points as? [DoublePointData])?.first?.value,0)
     }
 
     func testGPUAndHostConditionMetrics() throws {
