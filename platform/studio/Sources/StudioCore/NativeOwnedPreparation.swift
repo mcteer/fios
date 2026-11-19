@@ -20,13 +20,15 @@ enum NativeOwnedPreparationCoherence {
         let ack=registration.acknowledgement,root=lineage.lineage,primary=registry.primary
         guard root.instance==ack.instance,root.correlationID==ack.correlationID,root.rootSequence==ack.rootSequence,
               root.found,!root.uncertain,root.owners==1,root.references==1,root.ingress==0,root.preparing==1,root.active==0,root.responding==0,
+              root.operations.map({$0.queued==0 && $0.active==0}) ?? true,
               root.sampleSequence>ack.sampleSequence,primary.instance==ack.instance,primary.sampleSequence>root.sampleSequence,
               !primary.uncertain,!registry.transitioning,primary.owners==1,primary.ingress==0,primary.preparing==1,
               primary.queued==0,primary.active==0,primary.responding==0,
               lineage.sampledAt>=registration.sample.requestedAt,lineage.sampledAt<=activity.receivedAt,
               activity.receivedAt>=registration.verifiedAt,activity.receivedAt<=now,
               now-lineage.sampledAt<=5000,now-activity.receivedAt<=5000,
-              let captured=primary.sampledAt,captured>=registration.sample.requestedAt,captured<=activity.receivedAt,now-captured<=5000,
+              let captured=primary.sampledAt,captured>=max(lineage.sampledAt,root.sourceCapturedAt ?? lineage.sampledAt),
+              captured<=activity.receivedAt,now-captured<=5000,
               let target=registry.models.first(where:{$0.model.utf8.elementsEqual(ack.model.utf8)}),target.claimable==true,
               target.counts==NativePhaseCounts(ingress:0,preparing:1,queued:0,active:0,responding:0),
               registry.models.allSatisfy({!$0.transitioning && !$0.uncertain && ($0.model.utf8.elementsEqual(ack.model.utf8) || $0.counts == .zero)}) else {return nil}

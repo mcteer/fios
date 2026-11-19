@@ -207,11 +207,11 @@ private func runOwnedPreparationCoherenceTests(peer:NativeControlPeer)throws {
         counts:NativePhaseCounts(ingress:0,preparing:1,queued:0,active:0,responding:0))
     let idle=NativeRegistryModelFact(model:"fixture/b",readyDeclared:true,transitioning:false,uncertain:false,claimable:true,counts:.zero)
     func activity(rows:[NativeRegistryModelFact]=[target,idle],ingress:Int=0,queued:Int=0,active:Int=0,responding:Int=0,
-                  uncertain:Bool=false,transitioning:Bool=false,version:Int=4,samplePeer:NativeControlPeer?=nil,stamp:Int64?=nil)->NativePrimaryActivitySample {
+                  uncertain:Bool=false,transitioning:Bool=false,version:Int=4,samplePeer:NativeControlPeer?=nil,stamp:Int64?=nil,receivedAt:Int64?=nil)->NativePrimaryActivitySample {
         let busy=rows.filter{$0.counts != .zero}.map{NativePrimaryModelActivity(model:$0.model,preparing:$0.counts.preparing,queued:$0.counts.queued,active:$0.counts.active,responding:$0.counts.responding)}
         let primary=NativePrimaryActivity(phaseVersion:version,instance:instance,sampleSequence:13,sampledAt:stamp ?? now,uncertain:uncertain,
             owners:1+ingress+queued+active+responding,ingress:ingress,preparing:1,queued:queued,active:active,responding:responding,models:busy)
-        return NativePrimaryActivitySample(peer:samplePeer ?? peer,receivedAt:now,registry:NativeRegistryActivity(primary:primary,registryGeneration:7,transitioning:transitioning,models:rows))
+        return NativePrimaryActivitySample(peer:samplePeer ?? peer,receivedAt:receivedAt ?? now,registry:NativeRegistryActivity(primary:primary,registryGeneration:7,transitioning:transitioning,models:rows))
     }
     func evaluate(_ sample:NativePrimaryActivitySample,coverage:NativeCoverage = .all_clients,at:Int64?=nil)->NativeOwnedPreparation? {
         NativeOwnedPreparationCoherence.evaluate(registration:registration,lineage:lineage,activity:sample,sourceCoverage:coverage,now:at ?? now)
@@ -237,6 +237,24 @@ private func runOwnedPreparationCoherenceTests(peer:NativeControlPeer)throws {
     let wrongRoot=NativeRequestLineageSample(peer:peer,sampledAt:lineage.sampledAt,lineage:NativeRequestLineage(instance:instance,correlationID:id,
         sampleSequence:12,rootSequence:7,found:true,uncertain:false,references:1,owners:1,ingress:0,preparing:1,active:0,responding:0))
     guard NativeOwnedPreparationCoherence.evaluate(registration:registration,lineage:wrongRoot,activity:current,sourceCoverage:.all_clients,now:now)==nil else {fatalError("Foreign original root accepted")}
+    let reorderedLineage=NativeRequestLineageSample(peer:peer,sampledAt:now+3,lineage:lineage.lineage)
+    guard NativeOwnedPreparationCoherence.evaluate(registration:registration,lineage:reorderedLineage,
+        activity:activity(stamp:now+2,receivedAt:now+4),sourceCoverage:.all_clients,now:now+4)==nil else {
+        fatalError("Higher sequence with pre-lineage registry clock accepted")
+    }
+    var sourceClock=lineage.lineage
+    sourceClock.sourceCapturedAt=now+3
+    guard NativeOwnedPreparationCoherence.evaluate(registration:registration,
+        lineage:NativeRequestLineageSample(peer:peer,sampledAt:lineage.sampledAt,lineage:sourceClock),
+        activity:activity(stamp:now+2,receivedAt:now+4),sourceCoverage:.all_clients,now:now+4)==nil else {
+        fatalError("Registry preceded original lineage source capture")
+    }
+    for operations in [NativeRequestQueueCounts(queued:1,active:0),NativeRequestQueueCounts(queued:0,active:1)] {
+        var busyLineage=lineage.lineage;busyLineage.operations=operations
+        guard NativeOwnedPreparationCoherence.evaluate(registration:registration,
+            lineage:NativeRequestLineageSample(peer:peer,sampledAt:lineage.sampledAt,lineage:busyLineage),
+            activity:current,sourceCoverage:.all_clients,now:now)==nil else {fatalError("Lineage reported pending work but preparation looked pristine")}
+    }
     let another=NativeRegistryModelFact(model:"fixture/c",readyDeclared:true,transitioning:false,uncertain:false,claimable:true,counts:.zero)
     guard evaluate(activity(rows:[target,idle,another]))==nil,
           evaluate(current,at:registration.sample.requestedAt+5000)==nil else {fatalError("Multiple ready models/expired lease accepted")}
