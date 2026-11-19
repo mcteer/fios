@@ -89,8 +89,9 @@ final class SharedKernelVMReader:VMResourceReading,@unchecked Sendable {
                   readUptime.isFinite,readUptime>=began else {fenced=true;throw RuntimeError.identity}
             previousNow=readCompleted;previousUptime=readUptime
             guard readUptime-began<=5,(stamp...readCompleted).contains(sample.sampledAt) else {throw RuntimeError.identity}
+            guard readCompleted<leaseUntil else {throw RuntimeError.deadline}
             let limit:NativeVMCap
-            if let cached,began>=cached.uptime,began-cached.uptime<3 {limit=cached.value}
+            if let cached,readUptime-cached.uptime<3 {limit=cached.value}
             else {
                 let proof=try NativeVMLivenessProof(sample:sample,expectedBootHash:permission.bootHash,now:readCompleted)
                 limit=try cap.capture(liveness:proof);cached=(limit,began)

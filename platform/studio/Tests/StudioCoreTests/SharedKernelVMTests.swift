@@ -72,6 +72,16 @@ func runSharedKernelVMTests()throws {
         do {_=try guarded.read(configuration:configuration,id:id,leaseUntil:60000);fatalError("Invalid elapsed kernel read reached cap probe")}catch RuntimeError.identity {}
         guard bad.captures==0 else {fatalError("Invalid elapsed kernel read queried cap")}
     }
+    let expired=SharedKernelFixture();expired.advanceOnRead=5000
+    let expiring=SharedKernelVMReader(kernel:expired,cap:expired,permission:permission,physical:128<<30,now:{expired.time},uptime:{expired.steady})
+    do {_=try expiring.read(configuration:configuration,id:id,leaseUntil:15000);fatalError("Expired lease reached cap probe")}catch RuntimeError.deadline {}
+    guard expired.captures==0 else {fatalError("Cap queried after lease expired during kernel read")}
+    let aging=SharedKernelFixture()
+    let agingReader=SharedKernelVMReader(kernel:aging,cap:aging,permission:permission,physical:128<<30,now:{aging.time},uptime:{aging.steady})
+    _=try agingReader.read(configuration:configuration,id:id,leaseUntil:60000)
+    aging.steady=3.5;aging.steadyDeltaOnRead=0.5;aging.time=13000
+    _=try agingReader.read(configuration:configuration,id:id,leaseUntil:60000)
+    guard aging.captures==2 else {fatalError("Slow kernel read extended cached VM cap beyond its reuse window")}
     let rewind=SharedKernelFixture()
     let rewindReader=SharedKernelVMReader(kernel:rewind,cap:rewind,permission:permission,physical:128<<30,now:{rewind.time},uptime:{rewind.steady})
     _=try rewindReader.read(configuration:configuration,id:id,leaseUntil:60000)
