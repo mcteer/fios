@@ -21,7 +21,19 @@ test "projected ready bridge preserves a negative diagnostic after uncertainty" 
     try sdk.initialize(io);
     try std.testing.expect(!sdk.hostEventDiagnostic().uncertain);
     try std.testing.expect(!sdk.metalEventDiagnostic().uncertain);
+    const root = try owners.shared().enter(io);
+    try owners.shared().bind(io, root, "fixture/readiness");
+    try owners.shared().active(io, root);
+    owners.current().* = root;
+    const context = sdk.fios_native_request_owners_capture() orelse return error.MissingContext;
+    owners.current().* = null;
+    const frame = sdk.fios_native_request_owners_enter(context);
+    try std.testing.expect(frame != 0);
     sdk.fios_native_request_owners_uncertain();
+    try std.testing.expectEqual(@as(c_int, 0), sdk.fios_native_request_owners_leave(frame));
+    try std.testing.expect(owners.current().* == null);
+    sdk.fios_native_request_owners_release(context);
+    try std.testing.expectEqual(@as(u32, 1), sdk.diagnostic().active_contexts);
     try std.testing.expect(owners.shared().knownUncertain(io));
     try std.testing.expect(sdk.fios_native_request_owners_capture() == null);
     for ([_]sdk.HostEventDiagnostic{ sdk.hostEventDiagnostic(), sdk.metalEventDiagnostic() }) |diag| {
