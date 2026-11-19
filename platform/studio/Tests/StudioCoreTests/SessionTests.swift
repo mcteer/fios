@@ -21,6 +21,14 @@ func runSessionTests() throws {
     for now:Int64 in [-1,6001,.min,.max] {
         guard SessionState.read(directory:directory,boot:"boot-one",now:now)==nil else {fatalError("Invalid or stale GUI status accepted")}
     }
+    guard SessionState.read(directory:directory,boot:"boot-one",now:5999,completionNow:{6000})?.console==true else {
+        fatalError("Collector refused exact final session age")
+    }
+    for completion:Int64 in [5998,6001,.max] {
+        guard SessionState.read(directory:directory,boot:"boot-one",now:5999,completionNow:{completion})==nil else {
+            fatalError("Session published outside the original clock window")
+        }
+    }
     fields["sampled_uptime_ms"]=1001
     try AtomicState.write(JSONSerialization.data(withJSONObject:fields),to:path)
     guard SessionState.read(directory:directory,boot:"boot-one",now:0)==nil else {fatalError("Future GUI status exceeded clock tolerance")}

@@ -307,7 +307,8 @@ public enum ManagerRuntime {
                     switch request.operation {
                     case .status:
                         guard request.payload.isEmpty else { throw ControlError.invalid_request }
-                        let session=SessionState.read(directory:directory,boot:boot,now:Int64(now*1000))
+                        let session=SessionState.read(directory:directory,boot:boot,now:Int64(now*1000),
+                            completionNow:{Int64(ProcessInfo.processInfo.systemUptime*1000)})
                         response["session"]=["state":session?.console == true ? "available" : "waiting_session",
                                              "lifecycle_enabled":false]
                         response["state"]="ready"

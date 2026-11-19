@@ -24,7 +24,7 @@ struct SessionState {
     let mlxPresent:Bool
     let orbstackPresent:Bool
     let lifecycleEnabled:Bool
-    static func read(directory:URL,boot:String,now:Int64)->SessionState? {
+    static func read(directory:URL,boot:String,now:Int64,completionNow:(()->Int64)?=nil)->SessionState? {
         let path=directory.appendingPathComponent("session.json").path
         let fd=open(path,O_RDONLY|O_NOFOLLOW|O_CLOEXEC|O_NONBLOCK)
         guard fd>=0 else { return nil };defer { close(fd) }
@@ -62,6 +62,9 @@ struct SessionState {
               let time=integer("sampled_uptime_ms"),time>=0,time<=ActivityPolicy.maximumTimestamp,
               (-1000...5000).contains(now-time),let console=boolean("console_session"),
               let mlx=boolean("mlx_present"),let orb=boolean("orbstack_present"),let enabled=boolean("lifecycle_enabled"),!enabled else { return nil }
+        let completed=completionNow?() ?? now
+        guard (now...ActivityPolicy.maximumTimestamp).contains(completed),
+              (-1000...5000).contains(completed-time),ProcessInfo.processInfo.systemUptime<deadline else {return nil}
         return SessionState(console:console,mlxPresent:mlx,orbstackPresent:orb,lifecycleEnabled:enabled)
     }
 }
