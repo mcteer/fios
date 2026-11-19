@@ -14,3 +14,19 @@ test "projected current bridge forwards pre-init failure" {
     try std.testing.expect(sdk.hostEventDiagnostic().uncertain);
     try std.testing.expect(sdk.metalEventDiagnostic().uncertain);
 }
+
+test "projected ready bridge preserves a negative diagnostic after uncertainty" {
+    const io = std.testing.io;
+    try owners.shared().initialize(io, @splat(8));
+    try sdk.initialize(io);
+    try std.testing.expect(!sdk.hostEventDiagnostic().uncertain);
+    try std.testing.expect(!sdk.metalEventDiagnostic().uncertain);
+    sdk.fios_native_request_owners_uncertain();
+    try std.testing.expect(owners.shared().knownUncertain(io));
+    try std.testing.expect(sdk.fios_native_request_owners_capture() == null);
+    for ([_]sdk.HostEventDiagnostic{ sdk.hostEventDiagnostic(), sdk.metalEventDiagnostic() }) |diag| {
+        try std.testing.expect(diag.uncertain);
+        try std.testing.expectEqual(@as(usize, 0), diag.active);
+        try std.testing.expectEqual(@as(u64, 0), diag.retired);
+    }
+}

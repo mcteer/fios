@@ -48,16 +48,17 @@ assert.equal(candidate,'9c31abd758777a619ad974fa605fcc581f907f7ad826029286a9bb59
 const fixture=bytes(join(native,'current_sdk_readiness_test.zig.fixture'));
 const main=join(projection,'readiness.zig'),options=join(directory,'options.zig');
 writeFileSync(main,fixture,{mode:0o600});writeFileSync(options,'pub const fios_source_ane = false;\n',{mode:0o600});
-for(const mode of ['Debug','ReleaseSafe']){
+const modes=['Debug','ReleaseSafe'],filters=['projected current bridge','projected ready bridge','readiness does not overwrite'];
+for(const mode of modes){
   try{
     // Imported upstream tests independently initialize process-lifetime state.
     // Keep this focused scenario and the atomic ordering unit in separate runs.
-    for(const filter of ['projected current bridge','readiness does not overwrite']){
+    for(const filter of filters){
       run('/usr/bin/sandbox-exec',['-p','(version 1)(allow default)(deny network*)',zig,'test','--test-filter',filter,'-O',mode,'-lc','--dep','build_options','-Mroot='+main,'-Mbuild_options='+options]);
     }
   }catch(error){console.error(`Retained failed ${mode} source projection: ${directory}`);throw error;}
 }
 for(const [name,digest] of Object.entries(inputs))assert.equal(hash(bytes(join(root,name))),digest);
-const receipt={scope:'declared_cpu_readiness_projection_only',directory,inputs,patch_sha256:hash(patch),fixture_sha256:hash(fixture),candidate,modes:['Debug','ReleaseSafe'],activation:false,native_authority:false};
+const receipt={scope:'declared_cpu_readiness_projection_only',directory,inputs,patch_sha256:hash(patch),fixture_sha256:hash(fixture),candidate,modes,filters,activation:false,native_authority:false};
 writeFileSync(join(directory,'receipt.json'),JSON.stringify(receipt,null,2)+'\n',{mode:0o600});
 console.log(JSON.stringify({ok:true,directory,candidate,declared_inputs:Object.keys(inputs).length,activation:false,native_authority:false}));
