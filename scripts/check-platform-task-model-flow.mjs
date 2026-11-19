@@ -109,7 +109,12 @@ try {
   assert.equal(task('job.create',{phase:'end',job}).state,'removed');
   const summary=JSON.parse(command(cli,['--state',state,'status'],3000));
   assert.equal(summary.worker_reservations,0);assert.equal(summary.unresolved_requests,0);assert.equal(posts,0);
-  return {scenario,expired_without_end:true,late_end_status_only:true,restart_checked:true,state:restored.state,mock_model_posts:0,worker_slots_after_completion:0};
+  manager.kill('SIGTERM');await until(()=>exited(manager),5000);assert.equal(manager.exitCode,0);
+  const db=new DatabaseSync(join(state,'state.sqlite'),{readOnly:true});
+  try {
+   for(const table of ['inference','request_history','worker_launches'])assert.equal(db.prepare(`SELECT count(*) AS count FROM ${table} WHERE job=?`).get(job).count,0);
+  } finally {db.close();}
+  return {scenario,expired_without_end:true,late_end_status_only:true,restart_checked:true,durable_dispatch_rows:0,state:restored.state,mock_model_posts:0,worker_slots_after_completion:0};
  }
  if(scenario==='upload_restart'){
   assert.equal(posts,0);await replaceManager(status.epoch);
