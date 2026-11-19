@@ -166,12 +166,20 @@ try {
   const thread = patched.slice(patched.indexOf('fn handleConnectionThread('), patched.indexOf('const MAX_JSON_DEPTH'));
   assert(thread.indexOf('defer fios_requests.leave(ownership_io, ownership)') >= 0);
   assert(thread.indexOf('defer fios_requests.leave(ownership_io, ownership)') < thread.indexOf('defer conn.close()'));
-  for (const requested of ['requested_model_id','requested_id']) {
-    const declaration=patched.indexOf(`const load_target_id = if (ownership_entry) |entry| entry.id else ${requested};`);
-    const bound=patched.lastIndexOf('if (ownership_entry) |entry| fios_requests.bind(stream.io, ownership, entry.id) catch',declaration);
-    const load=patched.indexOf('const lm = scheduler.ensureLoaded(load_target_id)',bound);
-    assert(bound>=0&&bound<declaration&&declaration<load, 'exact resolved ownership must precede native load');
+  function hasResolvedLoadOrder(server,requested){
+    const declaration=server.indexOf(`const load_target_id = if (ownership_entry) |entry| entry.id else ${requested};`);
+    if(declaration<0)return false;
+    const start=server.lastIndexOf('\nfn ',declaration);
+    const end=server.indexOf('\nfn ',declaration);
+    const bind='if (ownership_entry) |entry| fios_requests.bind(stream.io, ownership, entry.id) catch';
+    const bound=server.lastIndexOf(bind,declaration);
+    const load=server.indexOf('const lm = scheduler.ensureLoaded(load_target_id)',declaration);
+    return start>=0&&start<bound&&bound<declaration&&declaration<load&&(end<0||load<end);
   }
+  for(const requested of ['requested_model_id','requested_id'])assert(hasResolvedLoadOrder(patched,requested),'exact resolved ownership must precede native load in each handler');
+  const missingStrictBind=patched.replace(/(fn handleLoadModelStrict\([\s\S]*?)fios_requests\.bind\(stream\.io, ownership, entry\.id\)/,'$1removed_binding');
+  assert.notEqual(missingStrictBind,patched);
+  assert(!hasResolvedLoadOrder(missingStrictBind,'requested_id'),'a preceding handler must not mask a missing strict handler bind');
   assert(patched.includes('fios_ownership.renderSnapshot(snapshot, &activity_buffer)'));
   assert(patched.includes('if (!peerIsLoopback(stream) or isTunneledRequest(request[0..header_end_pos]))'));
   console.log('Pinned source patch applies; syntax and Debug/ReleaseSafe ownership tests pass.');
