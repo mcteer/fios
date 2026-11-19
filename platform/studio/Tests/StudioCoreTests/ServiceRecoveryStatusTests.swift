@@ -63,5 +63,29 @@ func runServiceRecoveryStatusTests() throws {
           status(601000)["budget_state"] as? String=="clock_fenced" else {throw ServiceError.invalid}
     let persisted=try JSONSerialization.jsonObject(with:Data(contentsOf:directory.appendingPathComponent("service-recovery.json"))) as? [String:Any]
     guard persisted?["fenced"] as? Bool==true else {throw ServiceError.invalid}
+    try checkRecoveryClockFenceReopen(directory:directory.appendingPathComponent("reopen"),hash:hash)
     print("PASS: ordinary service recovery status reports pending, per-service budget wait and expiry independently of the persisted clock fence")
+}
+
+private func checkRecoveryClockFenceReopen(directory:URL,hash:String)throws {
+    let pins:[ManagedService:String]=[.mlx:hash,.orbstack:hash]
+    let absent=ServiceObservation(identity:nil,responding:false,sessionReady:true,credentialsReady:true,
+        nativeIdle:nil,runtimeUnmanaged:nil,sampledAt:2000)
+    let original:ServiceLaunchCommand
+    do {
+        let journal=try Journal(directory:directory)
+        let recovery=try ServiceRecoveryController(journal:journal,approvedHashes:pins)
+        guard let planned=try recovery.plan(service:.mlx,desired:.running,observation:absent,now:2000,tick:2000) else {throw ServiceError.invalid}
+        original=planned
+        guard try recovery.plan(service:.orbstack,desired:.running,observation:absent,now:1999,tick:1999)==nil else {throw ServiceError.invalid}
+    }
+    let journal=try Journal(directory:directory)
+    let recovery=try ServiceRecoveryController(journal:journal,approvedHashes:pins)
+    guard let lookup=try recovery.next(service:.mlx,desired:.running,observation:absent,now:2000,tick:2000),
+          lookup.operation == .lookup,lookup.command.id==original.id else {throw ServiceError.invalid}
+    try recovery.receive(lookup,result:.uncertain)
+    guard let cancel=try recovery.next(service:.mlx,desired:.maintenance,observation:absent,now:2000,tick:2000),
+          cancel.operation == .cancel,cancel.command.id==original.id,
+          try recovery.next(service:.orbstack,desired:.running,observation:absent,now:2000,tick:2000)==nil,
+          recovery.summary(service:.mlx,tick:2000)["budget_state"] as? String=="clock_fenced" else {throw ServiceError.invalid}
 }
