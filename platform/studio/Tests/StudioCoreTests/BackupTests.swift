@@ -191,6 +191,15 @@ func runBackupTests() throws {
     guard mkfifo(nonregularBlob.path,0o600)==0 else {throw JournalError.storage}
     do {try StoppedStateBackup.syncRestoredFile(nonregularBlob);fatalError("Restore sync accepted nonregular metadata")}
     catch JournalError.invalid {}
+    let privateSyncFile=root.appendingPathComponent("restore-sync-regular")
+    try Data("private fixture bytes".utf8).write(to:privateSyncFile)
+    guard chmod(privateSyncFile.path,0o600)==0 else {throw JournalError.storage}
+    let additionalLink=root.appendingPathComponent("restore-sync-link")
+    try FileManager.default.linkItem(at:privateSyncFile,to:additionalLink)
+    do {try StoppedStateBackup.syncRestoredFile(privateSyncFile);fatalError("Restore sync accepted multiple links")}
+    catch JournalError.invalid {}
+    try FileManager.default.removeItem(at:additionalLink)
+    try StoppedStateBackup.syncRestoredFile(privateSyncFile)
     let unpublished=root.appendingPathComponent("fifo-restore")
     do {_=try StoppedStateBackup.restore(directory:nonregularBundle,expectedSHA256:bundleReceipt.sha256,destination:unpublished)
         fatalError("Nonregular backup artifact restored")
