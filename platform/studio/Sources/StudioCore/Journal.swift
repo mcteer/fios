@@ -506,12 +506,15 @@ public final class Journal {
               try record.scope.encoded()==scope.encoded() else {throw JournalError.conflict}
         let saved=try lineageCheckpoint(job:job,attempt:attempt)
         var consumer=try NativeRequestLineageConsumer(scope:scope,job:job,attempt:attempt,peer:peer,checkpoint:saved)
-        guard lineageObservationRevision<UInt64.max else {throw JournalError.trackingLimit}
         let observation=consumer.accept(sample,now:now,minimumSourceCapture:minimumSourceCapture)
+        try persistNativeObservation(consumer,job:job,attempt:attempt,scope:scope)
+        return observation
+    }
+    private func persistNativeObservation(_ consumer:NativeRequestLineageConsumer,job:String,attempt:Int,scope:InferenceScope)throws {
+        guard lineageObservationRevision<UInt64.max else {throw JournalError.trackingLimit}
         let payload=String(decoding:try consumer.checkpoint(scope:scope),as:UTF8.self)
         try execute("INSERT INTO native_lineages(job,attempt,payload) VALUES(?,?,?) ON CONFLICT(job,attempt) DO UPDATE SET payload=excluded.payload",[job,String(attempt),payload])
         lineageObservationRevision+=1
-        return observation
     }
     // Preserve an authenticated registration even if its subsequent lineage
     // lookup fails. This cannot resolve ownership or issue worker permission.
@@ -550,7 +553,7 @@ public final class Journal {
         return consumer.fenced ? nil:consumer.rootSequence
     }
     // A local revocation stamp, never source liveness or dispatch authority.
-    // Any committed lineage poll, even unknown at the same timestamp,
+    // Any committed lineage or retirement poll, even unknown at the same timestamp,
     // conservatively revokes captured bindings. Reopen cannot restore them.
     // Changed inference state or launch withdrawal also refuses.
     func preparationBindingCheckpoint(plan:PlannedWorkerStart,peer:NativeControlPeer,root:UInt64)throws->PreparationBindingCheckpoint {
@@ -570,8 +573,7 @@ public final class Journal {
         let saved=try lineageCheckpoint(job:job,attempt:attempt)
         var consumer=try NativeRequestLineageConsumer(scope:scope,job:job,attempt:attempt,peer:peer,checkpoint:saved)
         let observation=consumer.acceptRetirement(sample,now:now)
-        let payload=String(decoding:try consumer.checkpoint(scope:scope),as:UTF8.self)
-        try execute("INSERT INTO native_lineages(job,attempt,payload) VALUES(?,?,?) ON CONFLICT(job,attempt) DO UPDATE SET payload=excluded.payload",[job,String(attempt),payload])
+        try persistNativeObservation(consumer,job:job,attempt:attempt,scope:scope)
         return observation
     }
     // Resolve only this original request as not_sent. A local acknowledgement

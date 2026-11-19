@@ -187,6 +187,10 @@ private func runPreparationPlanBindingTests(peer:NativeControlPeer)throws {
     do{try binding.validate(plan:otherPlan,scope:scope,journal:journal,now:now);fatalError("Preparation crossed original plan")}catch RuntimeError.identity {}
     let expiry=prepared.registration.sample.requestedAt+Int64(prepared.registration.acknowledgement.lifetimeMilliseconds)
     do{try binding.validate(plan:plan,scope:scope,journal:journal,now:expiry);fatalError("Expired preparation binding renewed")}catch RuntimeError.identity {}
+    let beforeRetirement=try journal.preparationBindingCheckpoint(plan:plan,peer:peer,root:UInt64.max)
+    guard try journal.observeRetirement(job:job,attempt:0,scope:scope,peer:peer,sample:nil,now:now)==nil,
+          try journal.preparationBindingCheckpoint(plan:plan,peer:peer,root:UInt64.max) != beforeRetirement,
+          try journal.unresolvedCount()==2 else {fatalError("Unknown retirement did not invalidate captured binding or changed inference custody")}
     _=try journal.observeLineage(job:job,attempt:0,scope:scope,peer:peer,sample:nil,now:now)
     do{try binding.validate(plan:plan,scope:scope,journal:journal,now:now);fatalError("Unknown lineage poll retained launch binding")}catch RuntimeError.identity {}
     try journal.markUncertain(job:job,attempt:0)
