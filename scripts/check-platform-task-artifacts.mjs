@@ -19,12 +19,21 @@ const core=join(root,'platform/studio/Sources/StudioCore');
 command('swiftc',['-swift-version','6','-warnings-as-errors','-I',join(root,'platform/studio/Sources/CSQLite'),...readdirSync(core).filter(n=>n.endsWith('.swift')).sort().map(n=>join(core,n)),source,'-o',binary]);
 command('swift',['build','--package-path','platform/studio','--disable-automatic-resolution','--product','studioctl','-j','2']);
 const cli=join(command('swift',['build','--package-path','platform/studio','--show-bin-path']).trim(),'studioctl');
-const child=spawn('/usr/bin/sandbox-exec',['-f',profile,binary,state],{cwd:root,env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C',HOME:'/var/empty'},stdio:'ignore'});
+const launch=(...args)=>spawn('/usr/bin/sandbox-exec',['-f',profile,binary,state,...args],{cwd:root,env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C',HOME:'/var/empty'},stdio:'ignore'});
+let child=launch();
 const exited=()=>child.exitCode!==null||child.signalCode!==null;
-const sha=data=>createHash('sha256').update(data).digest('hex');
-try {
+async function stop(){
+ if(!exited())child.kill('SIGTERM');
+ const deadline=performance.now()+3000;while(!exited()&&performance.now()<deadline)await delay(10);
+ assert(exited(),'Private fixture manager did not exit');
+}
+async function ready(){
  const startup=performance.now()+8000;
  while(!existsSync(join(state,'task.sock'))){assert(!exited(),'Private artifact manager exited');assert(performance.now()<startup,'Private manager startup timeout');await delay(25);}
+}
+const sha=data=>createHash('sha256').update(data).digest('hex');
+try {
+ await ready();
  const fixture=JSON.parse(readFileSync(join(state,'fixture.json'),'utf8'));
  function call(payload,operation='artifact.read',expectedExit=0,owner=fixture.owner){
   const id=randomUUID();
@@ -54,6 +63,21 @@ try {
   }
   assert.equal(call({phase:'next',stream:started.stream},'artifact.read',1,otherOwner).error,'unauthorized');
  }
+ const interrupted=call({phase:'begin',artifact:fixture.artifacts[0]});
+ assert.equal(interrupted.state,'pending');
+ const beforeRestart=performance.now()+5000;
+ for(;;){
+  assert(performance.now()<beforeRestart,'Original export stream did not reach begin');
+  const event=call({phase:'next',stream:interrupted.stream});
+  if(event.type==='begin'){assert.equal(event.artifact,fixture.artifacts[0]);break;}
+  assert.equal(event.state,'pending');await delay(10);
+ }
+ await stop();
+ assert(!existsSync(join(state,'task.sock')),'Stopped fixture left a task socket');
+ child=launch('--resume');
+ await ready();
+ assert.equal(call({phase:'next',stream:interrupted.stream},'artifact.read',1).error,'unauthorized');
+ assert.equal(call({job:fixture.finished_job},'job.status').state,'removed');
  const records=[];
  for(const [index,artifact] of fixture.artifacts.entries()){
   const expected=Buffer.from(index===0?'Hello, Studio 👋\n'.repeat(4096):'');
@@ -73,11 +97,9 @@ try {
   assert.equal(call({phase:'next',stream:started.stream},'artifact.read',1).error,'unauthorized');
   records.push({bytes:expected.length,chunks:parts.length,sha256:sha(expected),complete:true});
  }
- const receipt={scope:'normal_real_manager_cli_artifact_downloads',finished_job_status:true,finished_job_renewal_error_correlated:true,unowned_and_missing_same_terminal_error:true,completed_stream_replay_refused:true,records,manager_sha256:sha(readFileSync(binary)),cli_sha256:sha(readFileSync(cli)),model_requests:0,runtime_actions:0,installed_service_actions:0};
+ const receipt={scope:'normal_real_manager_cli_artifact_downloads',finished_job_status:true,finished_job_renewal_error_correlated:true,unowned_and_missing_same_terminal_error:true,completed_stream_replay_refused:true,restarted_stream_refused_and_export_retained:true,records,manager_sha256:sha(readFileSync(binary)),cli_sha256:sha(readFileSync(cli)),model_requests:0,runtime_actions:0,installed_service_actions:0};
  writeFileSync(join(directory,'receipt.json'),JSON.stringify(receipt,null,2)+'\n');
  console.log(JSON.stringify({ok:true,directory,downloads:records.length,chunks:records.map(r=>r.chunks),model_requests:0,runtime_actions:0}));
 } finally {
- if(!exited())child.kill('SIGTERM');
- const deadline=performance.now()+3000;while(!exited()&&performance.now()<deadline)await delay(10);
- assert(exited(),'Private fixture manager did not exit');
+ await stop();
 }

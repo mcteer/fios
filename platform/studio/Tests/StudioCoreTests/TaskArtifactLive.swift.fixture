@@ -4,8 +4,13 @@ import Darwin
 // Normal pre-existing local exports, then the real observation-only manager.
 @main struct TaskArtifactLive {
     static func main()throws {
-        guard CommandLine.arguments.count==2 else {throw ControlError.invalid_request}
-        let directory=URL(fileURLWithPath:CommandLine.arguments[1])
+        let args=CommandLine.arguments
+        guard args.count==2 || (args.count==3 && args[2]=="--resume") else {throw ControlError.invalid_request}
+        let directory=URL(fileURLWithPath:args[1])
+        if args.count==3 {
+            try ManagerRuntime.run(directory:directory)
+            return
+        }
         let token=TaskOwner.newToken(),owner=try TaskOwner(token:token,peerUID:geteuid()).hash
         let content=Data(String(repeating:"Hello, Studio 👋\n",count:4096).utf8)
         let job=UUID().uuidString.lowercased(),now=HostResources.nowMilliseconds()
