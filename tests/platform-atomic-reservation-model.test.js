@@ -19,6 +19,15 @@ test('a terminal receipt cannot retire a sibling hold for the same model', () =>
   assert.equal(gate.releaseTerminal(sibling, siblingReceipt), true);
   assert(gate.reserve(gate.observe('fixture/other'), 'fixture/other'));
 });
+test('a cached negative gap sample cannot authorize after a source fence', () => {
+  const gate = new Gate({ covered: true });
+  const target = 'fixture/exact';
+  const sampledBeforeGap = gate.observe(target);
+  gate.fence(); // In the model the source publishes synchronously, not via polling.
+  assert.equal(gate.reserve(sampledBeforeGap, target), null);
+  assert.equal(gate.reserve(gate.observe(target), target), null);
+});
+
 test('duplicate reads preserve mutation revision but a transient owner invalidates it', () => {
   const gate = new Gate({ covered: true });
   const target = 'fixture/exact';
