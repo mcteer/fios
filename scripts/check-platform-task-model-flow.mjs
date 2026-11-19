@@ -101,9 +101,15 @@ try {
   assert.equal(timedOut.lease.revoked,true);assert.equal(timedOut.lease.expires_at,renewed.lease.expires_at);
   task('job.create',{phase:'chunk',job,index:0,data:data.subarray(0,32768).toString('base64')},'invalid_request');
   const late=task('job.create',{phase:'end',job});assert.equal(late.state,'removed');assert.equal(late.job,job);
+  await replaceManager(status.epoch);
+  const restored=task('job.status',{job});
+  assert.equal(restored.state,'removed');assert.equal(restored.lease.revoked,true);assert.equal(restored.event,undefined);
+  const replay=task('job.create',manifest);
+  assert.equal(replay.job,job);assert.equal(replay.state,'removed');assert.equal(replay.lease.deadline_at,deadline);
+  assert.equal(task('job.create',{phase:'end',job}).state,'removed');
   const summary=JSON.parse(command(cli,['--state',state,'status'],3000));
   assert.equal(summary.worker_reservations,0);assert.equal(summary.unresolved_requests,0);assert.equal(posts,0);
-  return {scenario,expired_without_end:true,late_end_status_only:true,state:late.state,mock_model_posts:0,worker_slots_after_completion:0};
+  return {scenario,expired_without_end:true,late_end_status_only:true,restart_checked:true,state:restored.state,mock_model_posts:0,worker_slots_after_completion:0};
  }
  if(scenario==='upload_restart'){
   assert.equal(posts,0);await replaceManager(status.epoch);
