@@ -119,6 +119,14 @@ func runTaskCommandTests() throws {
     catch ArtifactError.unavailable {}
     do {_=try call("artifact.read",["phase":"next","stream":pendingStream],now:1012);fatalError("Rewound stream resumed after clock catch-up")}
     catch TaskCommandError.unauthorized {}
+    let ticking=try call("artifact.read",["phase":"begin","artifact":artifact],now:1012)
+    guard let tickStream=ticking["stream"] as? String,
+          try call("artifact.read",["phase":"next","stream":tickStream],now:1013)["state"] as? String=="pending" else {
+        fatalError("Missing pending artifact before tick rollback")
+    }
+    try commands.tick(now:1012,uptime:1014,artifactResults:wait())
+    do {_=try call("artifact.read",["phase":"next","stream":tickStream],now:1014);fatalError("Manager tick rollback left an artifact stream live")}
+    catch TaskCommandError.unauthorized {}
     var interrupted=begin;interrupted["idempotency"]=UUID().uuidString.lowercased()
     let pending=try call("job.create",interrupted,now:1012)
     guard let pendingID=pending["job"] as? String else {fatalError("Missing interrupted upload")}
