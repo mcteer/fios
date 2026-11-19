@@ -37,6 +37,7 @@ final class NativeLineagePoller:@unchecked Sendable {
     // Current diagnostics only; deliberately absent from journal checkpoints.
     private var eventSamples:[Key:EventRecord]=[:]
     private var eventWatermarks:[Key:(sequence:UInt64,capturedAt:Int64)]=[:]
+    private var lineageClockWatermarks:[Key:Int64]=[:]
     init(journal:Journal,source:any NativeLineageReading) {
         self.journal=journal;self.source=source;peer=source.peer
     }
@@ -62,6 +63,7 @@ final class NativeLineagePoller:@unchecked Sendable {
         let current=Set(requests.map {Key(job:$0.job,attempt:$0.attempt)})
         eventSamples=eventSamples.filter {current.contains($0.key)}
         eventWatermarks=eventWatermarks.filter {current.contains($0.key)}
+        lineageClockWatermarks=lineageClockWatermarks.filter {current.contains($0.key)}
         guard let first=requests.first else {lastPolled=nil;return false}
         // Journal rows are ordered by job and attempt. Preserve that order
         // across requests completing while a read is in flight.
@@ -100,7 +102,8 @@ final class NativeLineagePoller:@unchecked Sendable {
               [.dispatched,.uncertain].contains(current.state),
               try current.scope.encoded()==request.scope.encoded() else {return true}
         let observation=try journal.observeLineage(job:request.job,attempt:request.attempt,scope:request.scope,
-            peer:peer,sample:completed.sample,now:now)
+            peer:peer,sample:completed.sample,now:now,minimumSourceCapture:lineageClockWatermarks[key])
+        if case .live(let value)=observation,let captured=value.sourceCapturedAt {lineageClockWatermarks[key]=captured}
         if completed.eventSourceGeneration==eventSourceGeneration,let sample=completed.events {
             if let accepted=eventWatermarks[key],
                sample.events.sampleSequence<=accepted.sequence || sample.events.sampledAt<accepted.capturedAt {return true}

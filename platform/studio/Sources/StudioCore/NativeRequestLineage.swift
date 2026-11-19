@@ -281,7 +281,7 @@ struct NativeRequestLineageConsumer:Sendable {
         guard value.state == .cancelled,!value.uncertain else {return nil}
         return value
     }
-    mutating func accept(_ sample:NativeRequestLineageSample?,now:Int64)->NativeRequestLineageObservation {
+    mutating func accept(_ sample:NativeRequestLineageSample?,now:Int64,minimumSourceCapture:Int64?=nil)->NativeRequestLineageObservation {
         guard !fenced else {return .unknown}
         guard (0...ActivityPolicy.maximumTimestamp).contains(now),now>=previousNow else {fenced=true;return .unknown}
         previousNow=now
@@ -295,10 +295,11 @@ struct NativeRequestLineageConsumer:Sendable {
               (0...ActivityPolicy.maximumTimestamp).contains(sample.sampledAt),
               (-1000...5000).contains(now-sample.sampledAt),sample.sampledAt>=sampledAt,
               value.sampleSequence>sequence else {return .unknown}
+        let sourceWatermark=max(sourceCapturedAt ?? 0,minimumSourceCapture ?? 0)
         if let captured=value.sourceCapturedAt {
-            guard (-1000...5000).contains(now-captured),captured >= (sourceCapturedAt ?? 0) else {return .unknown}
+            guard (-1000...5000).contains(now-captured),captured>=sourceWatermark else {return .unknown}
             sourceCapturedAt=captured
-        } else if sourceCapturedAt != nil {return .unknown}
+        } else if sourceWatermark>0 {return .unknown}
         sequence=value.sampleSequence;sampledAt=sample.sampledAt
         if value.found {
             if let original=rootSequence,original != value.rootSequence {fenced=true;return .unknown}

@@ -500,14 +500,14 @@ public final class Journal {
     // Readonly native lineage updates persist before becoming visible to the
     // caller. This records correlation only; it never resolves an inference.
     func observeLineage(job:String,attempt:Int,scope:InferenceScope,peer:NativeControlPeer,
-                        sample:NativeRequestLineageSample?,now:Int64)throws->NativeRequestLineageObservation {
+                        sample:NativeRequestLineageSample?,now:Int64,minimumSourceCapture:Int64?=nil)throws->NativeRequestLineageObservation {
         guard let record=try inferenceScope(job:job,attempt:attempt),
               [.dispatched,.uncertain].contains(record.state),
               try record.scope.encoded()==scope.encoded() else {throw JournalError.conflict}
         let saved=try lineageCheckpoint(job:job,attempt:attempt)
         var consumer=try NativeRequestLineageConsumer(scope:scope,job:job,attempt:attempt,peer:peer,checkpoint:saved)
         guard lineageObservationRevision<UInt64.max else {throw JournalError.trackingLimit}
-        let observation=consumer.accept(sample,now:now)
+        let observation=consumer.accept(sample,now:now,minimumSourceCapture:minimumSourceCapture)
         let payload=String(decoding:try consumer.checkpoint(scope:scope),as:UTF8.self)
         try execute("INSERT INTO native_lineages(job,attempt,payload) VALUES(?,?,?) ON CONFLICT(job,attempt) DO UPDATE SET payload=excluded.payload",[job,String(attempt),payload])
         lineageObservationRevision+=1

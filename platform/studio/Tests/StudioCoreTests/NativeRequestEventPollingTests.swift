@@ -10,16 +10,18 @@ private final class NormalRequestEventSource:NativeRequestEventsReading,@uncheck
     private let replacementRoot:UInt64?
     private let eventCapture:Int64
     private let replayAfterOutage:Bool
+    private let rewindLineage:Bool
     private var lastRoot:UInt64?
-    init(peer:NativeControlPeer,enabled:Bool,replacementRoot:UInt64?=nil,eventCapture:Int64=10000,replayAfterOutage:Bool=false) {
-        self.peer=peer;observesRequestEvents=enabled;self.replacementRoot=replacementRoot;self.eventCapture=eventCapture;self.replayAfterOutage=replayAfterOutage
+    init(peer:NativeControlPeer,enabled:Bool,replacementRoot:UInt64?=nil,eventCapture:Int64=10000,replayAfterOutage:Bool=false,rewindLineage:Bool=false) {
+        self.peer=peer;observesRequestEvents=enabled;self.replacementRoot=replacementRoot;self.eventCapture=eventCapture;self.replayAfterOutage=replayAfterOutage;self.rewindLineage=rewindLineage
     }
     var eventReads:Int {lock.lock();defer {lock.unlock()};return reads}
     var lastEventRoot:UInt64? {lock.lock();defer {lock.unlock()};return lastRoot}
     func lineage(instance:String,correlationID:String)throws->NativeRequestLineageSample {
         lock.lock();sequence+=1;let next=sequence;lock.unlock()
         return NativeRequestLineageSample(peer:peer,sampledAt:10000,lineage:NativeRequestLineage(instance:instance,correlationID:correlationID,
-            sampleSequence:next,rootSequence:next<4 ? (replacementRoot ?? UInt64.max):0,found:next<4,uncertain:next>=4,references:next<4 ? 1:0,owners:next<4 ? 1:0,ingress:0,preparing:0,active:next<4 ? 1:0,responding:0))
+            sampleSequence:next,rootSequence:next<4 ? (replacementRoot ?? UInt64.max):0,found:next<4,uncertain:next>=4,references:next<4 ? 1:0,owners:next<4 ? 1:0,ingress:0,preparing:0,active:next<4 ? 1:0,responding:0,
+            sourceCapturedAt:rewindLineage ? (next==2 ? 9999:10000):nil))
     }
     func requestEvents(instance:String,correlationID:String,rootSequence:UInt64)throws->NativeRequestEventsSample {
         lock.lock();reads+=1;lastRoot=rootSequence;let next=reads;lock.unlock()
@@ -52,7 +54,7 @@ func runNativeRequestEventPollingTests()throws {
         }
         throw NativeControlError.deadline
     }
-    let source=NormalRequestEventSource(peer:peer,enabled:true,replayAfterOutage:true),poller=NativeLineagePoller(journal:journal,source:source)
+    let source=NormalRequestEventSource(peer:peer,enabled:true,replayAfterOutage:true,rewindLineage:true),poller=NativeLineagePoller(journal:journal,source:source)
     let tasks=TaskController(journal:journal,broker:ModelBroker(journal:journal))
     let jobs=JobController(journal:journal,executor:UnavailableSandboxRuntime())
     let artifacts=AsyncArtifacts(store:try ArtifactStore(directory:directory.appendingPathComponent("exports"),availableBytes:{50<<30}))
@@ -68,6 +70,8 @@ func runNativeRequestEventPollingTests()throws {
     try poll(poller)
     guard let pending=try poller.requestEvents(job:job,attempt:0,now:10001),pending.events.rootSequence==UInt64.max,
           pending.events.metal?.pending==1,source.eventReads==1 else {throw JournalError.invalid}
+    let firstRows=try status()["native_request_events"] as? [[String:Any]]
+    guard (firstRows?.first?["request"] as? [String:Any])?["state"] as? String=="active" else {throw JournalError.invalid}
     try poll(poller)
     guard let retired=try poller.requestEvents(job:job,attempt:0,now:10001),retired.events.metal?.retired==2,
           retired.events.metal?.pending==0,try journal.inferenceScope(job:job,attempt:0)?.state == .dispatched,
@@ -75,7 +79,7 @@ func runNativeRequestEventPollingTests()throws {
     let response=try status()
     guard let rows=response["native_request_events"] as? [[String:Any]],rows.count==1,
           rows[0]["root_sequence"] as? String == String(UInt64.max),let metal=rows[0]["metal"] as? [String:Any],
-          metal["pending"] as? UInt64 == 0,(rows[0]["request"] as? [String:Any])?["state"] as? String=="active",response["unresolved_managed_requests"] as? Int==1,
+          metal["pending"] as? UInt64 == 0,(rows[0]["request"] as? [String:Any])?["state"] as? String=="unknown",response["unresolved_managed_requests"] as? Int==1,
           response["state"] as? String == "running" else {throw JournalError.invalid}
     _=try JSONSerialization.data(withJSONObject:response)
     guard try poller.requestEvents(job:job,attempt:0,now:16001)==nil else {throw JournalError.invalid}
