@@ -17,6 +17,15 @@ func runTaskMailboxTests() throws {
     try rewound.append(job:job,fields:fields,now:1100)
     do {try rewound.append(job:job,fields:fields,now:1099);fatalError("Mailbox appended after its queued clock rewound")}catch MailboxError.capacity {}
     do {_=try rewound.pop(job:job,now:1099);fatalError("Mailbox emitted output across a queued clock rollback")}catch MailboxError.capacity {}
+    var isolated=TaskMailbox()
+    let another=UUID().uuidString.lowercased()
+    try isolated.append(job:job,fields:fields,now:1000)
+    try isolated.append(job:another,fields:fields,now:2000)
+    guard isolated.expire(now:3000,retained:[job,another])==[job],
+          try isolated.pop(job:job,now:3000)==nil,
+          try isolated.pop(job:another,now:3000)?["event_index"] as? Int==0 else {
+        fatalError("Mailbox expiry changed another job's valid output")
+    }
     var other=TaskMailbox()
     for _ in 0..<4 {try other.append(job:UUID().uuidString.lowercased(),fields:fields,now:1000)}
     do {try other.append(job:UUID().uuidString.lowercased(),fields:fields,now:1001);fatalError("Output exceeded four jobs")} catch MailboxError.capacity {}
