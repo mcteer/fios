@@ -72,13 +72,13 @@ try {
     assert.equal(refused.status,2,'Forced observation export accepted alternate command/PTY');
   }
   assert.ok(status(),'Rejected forced-command data changed manager control state');
-  const resources=await until(()=>{const sample=status('resources')?.resources;return typeof sample?.cpu==='number' ? sample : null;},8000);
+  const resourceFrame=await until(()=>{const frame=status('resources');return typeof frame?.resources?.cpu==='number' ? frame : null;},8000);
+  const {resources,resource_observation:resourceObservation}=resourceFrame;
   assert.ok(resources.cpu>=0&&resources.cpu<=100);
   assert.equal(resources.vmAvailable,null); // Unverified VM remains explicitly unknown.
   assert.ok(resources.gpu===null||(typeof resources.gpu==='number'&&resources.gpu>=0&&resources.gpu<=100));
   for(const key of ['gpu_in_use_bytes','gpu_allocated_bytes'])assert.ok(resources[key]===null||(Number.isSafeInteger(resources[key])&&resources[key]>=0));
   assert.ok(Number.isSafeInteger(resources.sampledAt)&&Date.now()-resources.sampledAt<=5000&&resources.sampledAt<=Date.now()+1000);
-  const resourceObservation=status('resources').resource_observation;
   assert.ok(['unavailable','observed_registry'].includes(resourceObservation.gpu_coverage));assert.equal(resourceObservation.vm_coverage,'unknown');
   assert.equal(resourceObservation.vm_sampled_at,null);assert.equal(resourceObservation.vm_epoch,null);
   assert.equal(resourceObservation.version,2);
@@ -86,8 +86,11 @@ try {
   for(const key of ['physical_memory','cpu','disk_free','low_power_mode']) {
     const signal=resourceObservation.signals[key];assert.equal(signal.availability,'observed');
     assert.ok(Number.isSafeInteger(signal.sampled_at));assert.ok(Number.isSafeInteger(signal.age_ms)&&signal.age_ms>=-1000&&signal.age_ms<=5000);
+    assert.equal(signal.age_ms,resourceObservation.observed_at-signal.sampled_at);
   }
-  assert.equal(resourceObservation.signals.vm_available.availability,'unknown');
+  assert.deepEqual(resourceObservation.signals.vm_available,{availability:'unknown',sampled_at:null,age_ms:null});
+  assert.equal(resources.vmSampledAt,null);
+  assert.equal(resourceObservation.sampled_at,resources.sampledAt);
   assert.equal(typeof resources.lowPowerMode,'boolean');
   assert.match(resourceObservation.epoch,/^[a-f0-9-]{36}$/);assert.ok(Number.isSafeInteger(resourceObservation.sequence));
   const liveBackup=spawnSync(join(bin,'studioctl'),['--state',state,'backup','--to',join(state,'snapshot.sqlite')],{encoding:'utf8',timeout:3000});
