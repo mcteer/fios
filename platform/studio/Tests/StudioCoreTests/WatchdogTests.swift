@@ -40,6 +40,8 @@ func runWatchdogTests() throws {
     try FileManager.default.removeItem(at:progress)
     for (data,expected):(Data,Int64?) in [(Data(repeating:0,count:4097),nil),
         (Data("{\"pid\":43,\"progress\":0.5}".utf8),nil),(Data("{\"pid\":42,\"progress\":1.001}".utf8),nil),
+        (Data("{\"pid\":42,\"progress\":true}".utf8),nil),
+        (Data("{\"pid\":42,\"progress\":0,\"progress\":0.5}".utf8),nil),
         (Data("{\"pid\":42,\"progress\":0.5}".utf8),500)] {
         try data.write(to:progress)
         guard chmod(progress.path,0o600)==0 else {throw RuntimeError.launch}

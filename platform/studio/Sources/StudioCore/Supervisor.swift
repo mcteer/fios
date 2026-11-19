@@ -1,5 +1,6 @@
 import Foundation
 import Darwin
+import CoreFoundation
 
 public enum SupervisorRuntime {
     // Bound the progress read before parsing; a nonregular entry is not
@@ -13,10 +14,14 @@ public enum SupervisorRuntime {
               info.st_mode&0o077==0,info.st_nlink==1,(1...4096).contains(info.st_size) else {return nil}
         var bytes=[UInt8](repeating:0,count:4097)
         let count=pread(fd,&bytes,4097,0)
-        guard count==info.st_size,
-              let object=try? JSONSerialization.jsonObject(with:Data(bytes.prefix(count))) as? [String:Any],
-              WireScalar.integer(object["pid"])==Int64(pid),let value=object["progress"] as? Double,
-              value.isFinite,value>=0,(0...ActivityPolicy.maximumTimestamp).contains(now),value*1000<=Double(now) else {return nil}
+        guard count==info.st_size else {return nil}
+        let data=Data(bytes.prefix(count))
+        guard (try? StrictJSON.validate(data,maximum:4096)) != nil,
+              let object=try? JSONSerialization.jsonObject(with:data) as? [String:Any],
+              WireScalar.integer(object["pid"])==Int64(pid),let number=object["progress"] as? NSNumber,
+              CFGetTypeID(number) != CFBooleanGetTypeID() else {return nil}
+        let value=number.doubleValue
+        guard value.isFinite,value>=0,(0...ActivityPolicy.maximumTimestamp).contains(now),value*1000<=Double(now) else {return nil}
         return Int64(value*1000)
     }
     public static func run(directory:URL,manager:URL,telemetry:any PlatformTelemetry=NoopPlatformTelemetry()) throws {
