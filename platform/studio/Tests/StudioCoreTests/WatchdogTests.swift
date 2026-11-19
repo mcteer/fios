@@ -60,5 +60,21 @@ func runWatchdogTests() throws {
     expect(try turnover.tick(now:16000,managerAlive:true,lastProgress:9000) == .terminate)
     expect(try progressing.tick(now:16000,managerAlive:true,lastProgress:10001) == .observe)
     expect(try progressing.tick(now:16001,managerAlive:true,lastProgress:10001) == .terminate)
+    let oldBoot=UUID().uuidString.lowercased(),currentBoot=UUID().uuidString.lowercased()
+    let malformed=SupervisorRestartBudget(boot:oldBoot,starts:[1000,10999])
+    do {_=try malformed.policy(currentBoot:currentBoot);fatalError("Boot turnover erased an impossible persisted restart sequence")}
+    catch PolicyError.invalidObservation {}
+    let valid=SupervisorRestartBudget(boot:oldBoot,starts:[1000,11000])
+    expect(try valid.policy(currentBoot:oldBoot).startHistory==[1000,11000])
+    expect(try valid.policy(currentBoot:currentBoot).startHistory.isEmpty)
+    let budgetPath=directory.appendingPathComponent("restart-budget.json")
+    let malformedBytes=try JSONEncoder().encode(malformed)
+    try malformedBytes.write(to:budgetPath)
+    guard chmod(budgetPath.path,0o600)==0 else {throw RuntimeError.launch}
+    do {_=try SupervisorRestartBudget.read(directory:directory);fatalError("Impossible persisted spacing accepted from disk")}
+    catch PolicyError.invalidObservation {}
+    expect(try Data(contentsOf:budgetPath)==malformedBytes)
+    try JSONEncoder().encode(valid).write(to:budgetPath)
+    expect(try SupervisorRestartBudget.read(directory:directory)?.starts==valid.starts)
     print("PASS: watchdog restart, hang, reap fence, durable-budget and clock tests")
 }

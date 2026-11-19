@@ -17,7 +17,7 @@ struct WatchdogPolicy: Sendable {
     init(restoringStarts: [Int64]) throws {
         guard restoringStarts.count <= 3,
               restoringStarts.allSatisfy({ (0...ActivityPolicy.maximumTimestamp).contains($0) }),
-              zip(restoringStarts, restoringStarts.dropFirst()).allSatisfy({ $0 < $1 })
+              zip(restoringStarts, restoringStarts.dropFirst()).allSatisfy({ $1 - $0 >= 10_000 })
         else { throw PolicyError.invalidObservation }
         startHistory = restoringStarts
         previousTick = restoringStarts.last
