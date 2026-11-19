@@ -123,7 +123,7 @@ final class OwnedVMResourceReader:@unchecked Sendable {
         let output:Data
         if let metadata {output=try metadata.read(id:id,checkpoint:checkpoint)}
         else {
-            let result=try runtime.command(["exec","--user","65533:65533","--workdir","/",id,"/bin/cat","/proc/meminfo","/proc/self/mountinfo","/proc/self/status","/proc/sys/kernel/random/boot_id"],timeout:1)
+            let result=try runtime.command(["exec","--user","65533:65533","--workdir","/",id,"/bin/cat","/proc/meminfo","/proc/self/mountinfo","/proc/self/status","/proc/sys/kernel/random/boot_id"],timeout:1,checkpoint:checkpoint)
             guard result.status==0 else {throw RuntimeError.launch};output=result.output
         }
         let sample:VMKernelSample

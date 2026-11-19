@@ -8,6 +8,14 @@ func runRuntimeTests() throws {
     let runtime = try VerifiedExecutable(path: trueURL.path, sha256: digest)
     let result = try runtime.run(arguments: [], timeout: 2, maximumOutput: 1024)
     precondition(result.status == 0 && result.output.isEmpty)
+    var checks=0
+    do {
+        _=try runtime.runChecked(arguments:[],timeout:2,checkpoint:{checks+=1;throw RuntimeError.deadline})
+        fatalError("Runtime command ignored publication checkpoint")
+    } catch RuntimeError.deadline {}
+    guard checks==1,try runtime.run(arguments:[],timeout:2).status==0 else {
+        fatalError("Refused runtime publication did not return command capacity")
+    }
     // A silent child must not keep the actor blocked in output collection.
     let sleepURL=URL(fileURLWithPath:"/bin/sleep")
     let sleepDigest=SHA256.hash(data:try Data(contentsOf:sleepURL)).map {String(format:"%02x",$0)}.joined()

@@ -66,8 +66,12 @@ public struct VerifiedExecutable:Sendable {
     }
     public func run(arguments: [String], timeout: TimeInterval, maximumOutput: Int = 1 << 20,
                     environment: [String:String] = [:]) throws -> CommandResult {
+        try runChecked(arguments:arguments,timeout:timeout,maximumOutput:maximumOutput,environment:environment,checkpoint:{})
+    }
+    func runChecked(arguments:[String],timeout:TimeInterval,maximumOutput:Int=1<<20,
+                    environment:[String:String]=[:],checkpoint:()throws->Void)throws->CommandResult {
         try runBounded(arguments:arguments,timeout:timeout,maximumOutput:maximumOutput,
-            environment:CommandEnvironment.sanitized(environment))
+            environment:CommandEnvironment.sanitized(environment),checkpoint:checkpoint)
     }
     // Fixed metadata operation only. Preserve a verified venv invocation alias
     // while sharing CLI capacity, exact-child signalling and bounded reap.
@@ -77,7 +81,8 @@ public struct VerifiedExecutable:Sendable {
             invocation:invocation,workingDirectory:"/var/empty",discardStandardError:true)
     }
     private func runBounded(arguments:[String],timeout:TimeInterval,maximumOutput:Int,environment:[String:String],
-                            invocation:String?=nil,workingDirectory:String?=nil,discardStandardError:Bool=false)throws->CommandResult {
+                            invocation:String?=nil,workingDirectory:String?=nil,discardStandardError:Bool=false,
+                            checkpoint:()throws->Void={})throws->CommandResult {
         guard timeout > 0, timeout <= 10, maximumOutput >= 0, maximumOutput <= 1 << 20,
               arguments.count <= 128, arguments.allSatisfy({ !$0.contains("\0") && $0.utf8.count <= 4096 }) else { throw RuntimeError.invalid }
         try CommandSlots.shared.acquire()
@@ -101,13 +106,15 @@ public struct VerifiedExecutable:Sendable {
         // Establish nonblocking reads before starting the child. Otherwise
         // a silent command could block read() past all cleanup deadlines.
         guard flags >= 0,fcntl(fd,F_SETFL,flags | O_NONBLOCK)==0 else {throw RuntimeError.launch}
-        commandProcess=process
         process.executableURL = URL(fileURLWithPath:invocation ?? path); process.arguments = arguments
         process.environment = environment
         if let workingDirectory {process.currentDirectoryURL=URL(fileURLWithPath:workingDirectory)}
         process.standardInput = FileHandle.nullDevice
         process.standardOutput = pipe
         if discardStandardError {process.standardError=FileHandle.nullDevice}else {process.standardError=pipe}
+        try checkpoint()
+        guard ProcessInfo.processInfo.systemUptime<deadline else {throw RuntimeError.deadline}
+        commandProcess=process
         try process.run()
         processStart=try? WorkerResources.startIdentifier(pid:process.processIdentifier)
         func signalOwned(_ signal:Int32) {
