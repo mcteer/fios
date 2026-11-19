@@ -86,7 +86,16 @@ try{
    assert.equal(restarted.service_recovery,'disabled');
    assert.equal(restarted.services.mlx.desired,'maintenance');
    assert.equal(restarted.services.orbstack.desired,'stopped');
-   for(const service of ['mlx','orbstack'])assert.equal(restarted.services[service].launch_pending,false);
+   for(const service of ['mlx','orbstack']){
+    assert.equal(restarted.services[service].launch_pending,false);
+    for(const action of [['drain'],['force','prepare']]){
+     const denied=spawnSync(cli,['--state',state,'service',service,...action],{cwd:root,encoding:'utf8',timeout:3000});
+     assert.equal(denied.status,1);
+     const refusal=JSON.parse(denied.stdout);
+     assert.equal(refusal.error,'native_unsupported');assert.equal(refusal.applied,false);
+    }
+    assert.equal(status(state,['service',service,'status']).desired,restarted.services[service].desired);
+   }
    child.kill('SIGTERM');await until(()=>exited(child));assert.equal(child.exitCode,0);child=null;
   }
  }
