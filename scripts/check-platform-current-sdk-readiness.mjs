@@ -22,12 +22,13 @@ assert.equal(compiler,'1c5f706db0ed6d55451940f31dc05a6177d05696bc1fa5d853696d04c
 const runner=hash(bytes(import.meta.filename));
 const repository=resolve(import.meta.dirname,'..'),native=join(repository,'platform/studio/native');
 const directory=mkdtempSync('/private/tmp/fios-009-current-sdk-readiness-'),projection=join(directory,'src');
-const primary='fios/sdk_request_ownership.zig',tracker='fios/request_ownership.zig';
+const primary='fios/sdk_request_ownership.zig',tracker='fios/request_ownership.zig',protocol='fios/control_protocol.zig';
 const pins={
   [primary]:'fa2260c4b6fb8a01a7de74d74737fb844038f84ea841cad50a9aa2ed0e60111b',
   [tracker]:'81e4ce4f19493867d23b88a2114f59f0204815b78aa6ef8d2b607c5bff524562',
+  [protocol]:'3da637248d317cc0526e12ade97786051d549cd87864dd8213d2c1ef57010142',
 };
-const inputs={},pending=[primary,tracker],root=join(source,'src');
+const inputs={},pending=Object.keys(pins),root=join(source,'src');
 while(pending.length){
   const name=pending.pop();if(Object.hasOwn(inputs,name))continue;
   assert(Object.keys(inputs).length<512);

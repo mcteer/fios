@@ -1,6 +1,25 @@
 const std = @import("std");
 const owners = @import("fios/request_ownership.zig");
 const sdk = @import("fios/sdk_request_ownership.zig");
+const protocol = @import("fios/control_protocol.zig");
+
+// Fixture adapter only: the production C++ bridge samples additional sources.
+fn readSDK() protocol.CurrentBackendFenceReadings {
+    return .{ .sdk_uncertain = sdk.fios_native_request_owners_known_uncertain() != 0 };
+}
+fn assertSDKFrame(io: std.Io, uncertain: bool) !void {
+    var request: [protocol.backend_request_size]u8 = @splat(0);
+    @memcpy(request[0..4], "FIB9");
+    request[4] = 3;
+    @memset(request[8..24], 8);
+    const frame = protocol.dispatchCurrentBackendFences(owners.shared(), io, &request, readSDK);
+    try std.testing.expectEqualSlices(u8, "FIF9", frame[0..4]);
+    try std.testing.expectEqual(@as(u8, 3), frame[4]);
+    try std.testing.expectEqual(@as(u8, 0), frame[5]);
+    try std.testing.expectEqual(@as(u8, 1), frame[6]);
+    try std.testing.expectEqual(@as(u8, @intFromBool(uncertain)), frame[7]);
+    try std.testing.expectEqual(@as(u8, 0), frame[40]); // Background coverage stays unknown.
+}
 
 test "projected current bridge forwards pre-init failure" {
     const io = std.testing.io;
@@ -21,6 +40,7 @@ test "projected ready bridge preserves a negative diagnostic after uncertainty" 
     try sdk.initialize(io);
     try std.testing.expect(!sdk.hostEventDiagnostic().uncertain);
     try std.testing.expect(!sdk.metalEventDiagnostic().uncertain);
+    try assertSDKFrame(io, false);
     const root = try owners.shared().enter(io);
     try owners.shared().bind(io, root, "fixture/readiness");
     try owners.shared().active(io, root);
@@ -36,6 +56,7 @@ test "projected ready bridge preserves a negative diagnostic after uncertainty" 
     try std.testing.expectEqual(@as(u32, 1), sdk.diagnostic().active_contexts);
     try std.testing.expectEqual(@as(c_int, 1), sdk.fios_native_request_owners_known_uncertain());
     const snapshot = owners.shared().snapshot(io);
+    try assertSDKFrame(io, true);
     try std.testing.expect(snapshot.uncertain);
     try std.testing.expectEqual(@as(usize, 1), snapshot.owned);
     try std.testing.expect(owners.shared().knownUncertain(io));
