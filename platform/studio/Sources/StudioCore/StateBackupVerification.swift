@@ -7,8 +7,8 @@ extension StoppedStateBackup {
     // persisted decision formats inside an otherwise unchanged journal schema.
     // Inspect/recover only disposable private copies; never adopt the backup.
     public static func verifyCompatibility(directory:URL,expectedSHA256:String)throws->StateBackupReceipt {
-        let receipt=try verify(directory:directory,expectedSHA256:expectedSHA256)
-        let snapshot=try JournalSchemaSnapshot(source:directory)
+        let (receipt,journalSHA256)=try verifyContents(directory:directory,expectedSHA256:expectedSHA256,journalSchema:9)
+        let snapshot=try JournalSchemaSnapshot(source:directory,sealedJournalSHA256:journalSHA256)
         do {
             let inspected=try Journal(directory:snapshot.directory)
             withExtendedLifetime(inspected) {}
@@ -21,6 +21,9 @@ extension StoppedStateBackup {
         try verify(directory:directory,expectedSHA256:expectedSHA256,journalSchema:9)
     }
     static func verify(directory:URL,expectedSHA256:String,journalSchema:Int)throws->StateBackupReceipt {
+        try verifyContents(directory:directory,expectedSHA256:expectedSHA256,journalSchema:journalSchema).0
+    }
+    private static func verifyContents(directory:URL,expectedSHA256:String,journalSchema:Int)throws->(StateBackupReceipt,String) {
         guard [7,8,9].contains(journalSchema) else {throw JournalError.invalid}
         struct Manifest:Decodable {
             let version:Int;let scope:String;let host_hash:String;let owner_uid:UInt32;let journal_schema:Int;let journal_application_id:String
@@ -118,6 +121,6 @@ extension StoppedStateBackup {
         let (journal,length,header)=try hash(directory.appendingPathComponent("state.sqlite"),maximum:64<<20)
         guard journal==manifest.journal_sha256,length==manifest.journal_bytes,header.count==100,
               Array(header.prefix(16))==Array("SQLite format 3\0".utf8),Array(header[60..<64])==[0,0,0,UInt8(journalSchema)],Array(header[68..<72])==[0x46,0x49,0x53,0x39] else {throw JournalError.invalid}
-        return StateBackupReceipt(scope:scope,bytes:length+total+configurationBytes+recoveryBytes+holdBytes,artifacts:manifest.artifact_files.count,sha256:receiptHash)
+        return (StateBackupReceipt(scope:scope,bytes:length+total+configurationBytes+recoveryBytes+holdBytes,artifacts:manifest.artifact_files.count,sha256:receiptHash),journal)
     }
 }

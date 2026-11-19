@@ -1,19 +1,22 @@
 import Foundation
 import Darwin
+import CryptoKit
 
 // Existing state is inspected in a private bounded copy. A read-only SQLite
 // connection may still need WAL initialization/recovery and can fail on valid
 // restored WAL-mode main files. Never let that preflight repair the original.
 final class JournalSchemaSnapshot {
     let directory:URL
-    init(source:URL,stopped:StoppedPlatformState?=nil)throws {
+    init(source:URL,stopped:StoppedPlatformState?=nil,sealedJournalSHA256:String?=nil)throws {
         guard stopped==nil || stopped?.directory==source.standardizedFileURL else {throw JournalError.invalid}
         directory=FileManager.default.temporaryDirectory.appendingPathComponent("fios-schema-"+UUID().uuidString.lowercased())
         guard mkdir(directory.path,0o700)==0 else {throw JournalError.storage}
         var completed=false
         defer {if !completed {try? FileManager.default.removeItem(at:directory)}}
         let deadline=ProcessInfo.processInfo.systemUptime+10
-        for suffix in ["","-wal","-journal","-shm"] {
+        // A sealed backup has already authenticated its main-file digest.
+        // Never let a live sidecar alter the bytes inspected for compatibility.
+        for suffix in sealedJournalSHA256 == nil ? ["","-wal","-journal","-shm"] : [""] {
             let original=source.appendingPathComponent("state.sqlite"+suffix)
             let input=open(original.path,O_RDONLY|O_NOFOLLOW|O_CLOEXEC|O_NONBLOCK)
             if input<0,errno==ENOENT,suffix != "" {continue}
@@ -28,7 +31,7 @@ final class JournalSchemaSnapshot {
             let output=open(directory.appendingPathComponent("state.sqlite"+suffix).path,O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC,0o600)
             guard output>=0 else {throw JournalError.storage}
             defer {close(output)}
-            var bytes=[UInt8](repeating:0,count:32768),total:Int64=0
+            var bytes=[UInt8](repeating:0,count:32768),total:Int64=0,digest=SHA256()
             while true {
                 guard ProcessInfo.processInfo.systemUptime<deadline else {throw RuntimeError.deadline}
                 let count=Darwin.read(input,&bytes,bytes.count)
@@ -36,6 +39,7 @@ final class JournalSchemaSnapshot {
                 guard count>=0 else {throw JournalError.storage}
                 if count==0 {break}
                 total+=Int64(count);guard total<=before.st_size else {throw JournalError.invalid}
+                if sealedJournalSHA256 != nil {digest.update(data:Data(bytes.prefix(count)))}
                 var offset=0
                 while offset<count {
                     guard ProcessInfo.processInfo.systemUptime<deadline else {throw RuntimeError.deadline}
@@ -53,6 +57,9 @@ final class JournalSchemaSnapshot {
                   named.st_uid==after.st_uid,named.st_size==after.st_size,
                   named.st_mtimespec.tv_sec==after.st_mtimespec.tv_sec,named.st_mtimespec.tv_nsec==after.st_mtimespec.tv_nsec,
                   named.st_ctimespec.tv_sec==after.st_ctimespec.tv_sec,named.st_ctimespec.tv_nsec==after.st_ctimespec.tv_nsec else {throw JournalError.invalid}
+            if let expected=sealedJournalSHA256 {
+                guard digest.finalize().map({String(format:"%02x",$0)}).joined()==expected else {throw JournalError.invalid}
+            }
         }
         completed=true
     }

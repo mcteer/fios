@@ -196,6 +196,22 @@ func runBackupTests() throws {
     var refusedBlob=stat()
     guard lstat(nonregularBlob.path,&refusedBlob)==0,refusedBlob.st_mode&S_IFMT==S_IFIFO,
           !FileManager.default.fileExists(atPath:unpublished.path) else {fatalError("Refused backup was mutated or published")}
+    do {
+        let journalBytes=try Data(contentsOf:bundle.appendingPathComponent("state.sqlite"))
+        let expected=SHA256.hash(data:journalBytes).map {String(format:"%02x",$0)}.joined()
+        do {_=try JournalSchemaSnapshot(source:bundle,sealedJournalSHA256:String(repeating:"0",count:64))
+            fatalError("Compatibility snapshot accepted unauthenticated journal bytes")
+        } catch JournalError.invalid {}
+        let wal=bundle.appendingPathComponent("state.sqlite-wal")
+        let marker=Data("not sealed journal data".utf8)
+        try marker.write(to:wal)
+        defer {try? FileManager.default.removeItem(at:wal)}
+        try FileManager.default.setAttributes([.posixPermissions:0o600],ofItemAtPath:wal.path)
+        let sealed=try JournalSchemaSnapshot(source:bundle,sealedJournalSHA256:expected)
+        guard try Data(contentsOf:sealed.directory.appendingPathComponent("state.sqlite"))==journalBytes,
+              !FileManager.default.fileExists(atPath:sealed.directory.appendingPathComponent("state.sqlite-wal").path),
+              try Data(contentsOf:wal)==marker else {fatalError("Sealed compatibility snapshot imported an unreviewed sidecar")}
+    }
     let foreignBundle=root.appendingPathComponent("foreign-bundle")
     try FileManager.default.copyItem(at:bundle,to:foreignBundle)
     let manifestPath=foreignBundle.appendingPathComponent("backup.json")
