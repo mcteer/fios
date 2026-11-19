@@ -55,7 +55,8 @@ final class JobController {
         return VMResources.remaining(envelope,expectedRuntimeHash:envelope.runtimeHash,now:now)
     }
     func applyingVM(to host:ResourceSample,now:Int64)->ResourceSample {
-        guard let available=vmAvailable(now:now),let envelope=latestVM?.sample.envelope else {return host.replacingVM(nil)}
+        guard let available=vmAvailable(now:now),let envelope=latestVM?.sample.envelope,
+              envelope.total<=host.physical,envelope.configuredCap<=host.physical else {return host.replacingVM(nil)}
         return host.replacingVM(available,sampledAt:envelope.sampledAt)
     }
     func vmSampledAt(now:Int64)->Int64? {vmAvailable(now:now)==nil ? nil : latestVM?.sample.envelope?.sampledAt}

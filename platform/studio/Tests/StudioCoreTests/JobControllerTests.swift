@@ -384,6 +384,11 @@ func runVMControllerTests() throws {
           controller.vmAvailable(now:16499)==nil,controller.vmSampledAt(now:16499)==nil,controller.vmEpoch(now:16499)==nil,
           controller.applyingVM(to:sample(16499),now:16499).vmAvailable==nil,
           controller.vmAvailable(now:30000)==nil else {fatalError("VM controller failed fresh/stale/rewound capacity publication")}
+    let smaller=ResourceSample(sampledAt:16500,physical:8<<30,available:6<<30,vmAvailable:nil,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal,cpuSampledAt:16500)
+    let overlay=controller.applyingVM(to:smaller,now:16500)
+    let frame=try ResourceObservationExport.encode(sample:overlay,gpu:nil,gpuSampledAt:nil,now:16500,epoch:UUID().uuidString.lowercased(),sequence:1,vmEpoch:controller.vmEpoch(now:16500))
+    guard overlay.vmAvailable==nil,overlay.vmSampledAt==nil,frame.observation["vm_epoch"] is NSNull,
+          frame.observation["vm_coverage"] as? String == "unknown" else {fatalError("VM envelope incompatible with current host crossed the telemetry boundary")}
     for pair in zip(runtime.resourceRequests,runtime.resourceRequests.dropFirst()) {guard pair.1-pair.0>=2000 else {fatalError("Unbounded VM polling")}}
     runtime.resourceFailure=true
     for tick in 0..<8 {
