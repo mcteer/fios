@@ -9,6 +9,7 @@ private final class SharedKernelFixture:NativeVMCapReading,VMResourceReading,@un
     var captures=0,reads=0
     var fail=false
     var stale=false
+    var capTimestampDelta:Int64=0
     var advanceOnRead:Int64=0
     var kernelTimestampDelta:Int64=0
     var steadyDeltaOnRead:TimeInterval=0
@@ -22,7 +23,7 @@ private final class SharedKernelFixture:NativeVMCapReading,VMResourceReading,@un
     func capture(liveness:NativeVMLivenessProof,checkpoint:()throws->Void)throws->NativeVMCap {
         if let wallAtCapPublication {time=wallAtCapPublication;try checkpoint()}
         captures+=1;if fail {throw RuntimeError.launch}
-        return NativeVMCap(bytes:capValue,sampledAt:stale ? time-6000:time)
+        return NativeVMCap(bytes:capValue,sampledAt:stale ? time-6000:time+capTimestampDelta)
     }
     func read(configuration:SandboxConfiguration,id:String,leaseUntil:Int64)throws->VMKernelSample {
         reads+=1;time+=advanceOnRead;steady+=steadyDeltaOnRead;return VMKernelSample(sampledAt:time+kernelTimestampDelta,total:8<<30,free:4<<30,bootHash:boot)
@@ -104,6 +105,16 @@ func runSharedKernelVMTests()throws {
     do {_=try rollbackReader.read(configuration:configuration,id:id,leaseUntil:60000);fatalError("Cap lookup rollback fence revived")}
     catch RuntimeError.identity {}
     guard capRollback.captures==0,capRollback.reads==1 else {fatalError("Cap rollback performed additional source work")}
+    for offset:Int64 in [-1,1] {
+        let outOfPhase=SharedKernelFixture();outOfPhase.capTimestampDelta=offset
+        let reader=SharedKernelVMReader(kernel:outOfPhase,cap:outOfPhase,permission:permission,physical:128<<30,
+            now:{outOfPhase.time},uptime:{outOfPhase.steady})
+        do {_=try reader.read(configuration:configuration,id:id,leaseUntil:60000);fatalError("New VM cap published an out-of-phase capture time")}
+        catch RuntimeError.identity {}
+        outOfPhase.capTimestampDelta=0
+        _=try reader.read(configuration:configuration,id:id,leaseUntil:60000)
+        guard outOfPhase.captures==2 else {fatalError("Out-of-phase cap remained reusable")}
+    }
     let aging=SharedKernelFixture()
     let agingReader=SharedKernelVMReader(kernel:aging,cap:aging,permission:permission,physical:128<<30,now:{aging.time},uptime:{aging.steady})
     _=try agingReader.read(configuration:configuration,id:id,leaseUntil:60000)

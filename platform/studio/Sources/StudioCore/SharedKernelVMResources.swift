@@ -122,8 +122,8 @@ final class SharedKernelVMReader:VMResourceReading,@unchecked Sendable {
             guard completed>=previousNow,completed<=ActivityPolicy.maximumTimestamp,
                   completedUptime.isFinite,completedUptime>=previousUptime else {fenced=true;throw RuntimeError.identity}
             previousNow=completed;previousUptime=completedUptime
-            guard completed<leaseUntil,completedUptime-began<=5,
-                  reusedAt.map({completedUptime-$0<3}) ?? true,
+            let capOrdered = reusedAt.map {completedUptime-$0<3} ?? (readCompleted...completed).contains(limit.sampledAt)
+            guard completed<leaseUntil,completedUptime-began<=5,capOrdered,
                   physical>0,physical<=UInt64(ActivityPolicy.maximumTimestamp),limit.bytes>0,limit.bytes<=physical,
                   sample.total>0,sample.total<=physical,sample.free<=sample.total,
                   sample.sampledAt>=0,limit.sampledAt>=0,
