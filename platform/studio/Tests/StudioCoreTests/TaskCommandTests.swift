@@ -141,5 +141,15 @@ func runTaskCommandTests() throws {
     guard try journal.jobs().first(where:{$0.id==pendingID})?.state == .revoking,
           try journal.sandboxRecords().first(where:{$0.configuration.job==pendingID})?.createIssued == false,
           try journal.requestCount(job:pendingID)==0 else {fatalError("Interrupted upload replayed or discarded ownership")}
+    let bound=try call("artifact.read",["phase":"begin","artifact":artifact],now:1016)
+    guard let boundStream=bound["stream"] as? String,
+          try call("artifact.read",["phase":"next","stream":boundStream],now:31015)["state"] as? String=="pending" else {
+        fatalError("Pending artifact was unavailable before its original deadline")
+    }
+    do {_=try call("artifact.read",["phase":"next","stream":boundStream],now:31016);fatalError("Pending poll extended the artifact deadline")}
+    catch ArtifactError.unavailable {}
+    try commands.tick(now:31016,uptime:31016,artifactResults:wait())
+    do {_=try call("artifact.read",["phase":"next","stream":boundStream],now:31017);fatalError("Late async result resurrected an expired artifact stream")}
+    catch TaskCommandError.unauthorized {}
     print("PASS: task-role/opaque-owner API, closed/source-loss admission, reserve-before-input, once-only validation, proof-gated cancel and asynchronous owner-only finite artifact routing")
 }
