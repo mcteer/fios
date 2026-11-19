@@ -548,7 +548,13 @@ func runCleanupStatusRecoveryTests() throws {
     precondition(waiting["observed_wait_ms"] as? Int64 == 61000 && waiting["waiting_over_60s"] as? Bool == true)
     precondition(waiting["manager_observation_age_ms"] as? Int64 == 0)
     precondition(controller.cleanupStatus(now:81500)["manager_observation_age_ms"] as? Int64 == 500)
-    precondition(controller.cleanupStatus(now:80999)["manager_observation_age_ms"] is NSNull)
+    for invalidNow:Int64 in [80999,.min,.max] {
+        let invalid=controller.cleanupStatus(now:invalidNow)
+        guard invalid["manager_observation_age_ms"] is NSNull,invalid["observed_wait_ms"] is NSNull,
+              invalid["waiting_over_60s"] is NSNull,invalid["pending_sandboxes"] as? Int==1,
+              invalid["observed_at"] as? Int64==81000 else {fatalError("Invalid cleanup clock changed ownership or exposed unverified age")}
+    }
+    guard try journal.uncertainCount()==1 else {fatalError("Cleanup status altered native uncertainty")}
     runtime.holdResponses=false
     for index in 0..<20 {
         let now:Int64=82000+Int64(index)*500
