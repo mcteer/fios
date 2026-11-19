@@ -504,6 +504,7 @@ func runCleanupStatusRecoveryTests() throws {
     try controller.tick(now:20000,sample:sample(20000),admission:&admission,transportReady:{_ in true},cancelModel:{_ in})
     let first=controller.cleanupStatus(now:20000)
     precondition(first["pending_sandboxes"] as? Int == 1 && first["waiting_over_60s"] as? Bool == false)
+    precondition(first["observed_at"] as? Int64 == 20000 && first["manager_observation_age_ms"] as? Int64 == 0)
     try controller.tick(now:81000,sample:sample(81000),admission:&admission,transportReady:{_ in true},cancelModel:{_ in})
     let waiting=controller.cleanupStatus(now:81000)
     precondition(waiting["observed_wait_ms"] as? Int64 == 61000 && waiting["waiting_over_60s"] as? Bool == true)
@@ -542,7 +543,11 @@ func runCleanupStatusRecoveryTests() throws {
     runtime.acknowledgeInspection=false
     let pending=try journal.sandboxRecords().first{$0.configuration.job==lateID}
     guard pending?.createIssued==true,pending?.runtimeID==nil,pending?.removalProven==false,
-          controller.cleanupStatus(now:98000)["pending_sandboxes"] as? Int==1 else {fatalError("Lost create reply followed by absence released custody")}
+          controller.cleanupStatus(now:98000)["pending_sandboxes"] as? Int==1,
+          controller.cleanupStatus(now:98000)["observed_at"] as? Int64==97500,
+          controller.cleanupStatus(now:98000)["manager_observation_age_ms"] as? Int64==500 else {
+        fatalError("Failed cleanup tick redated observation or lost create custody")
+    }
     runtime.storageContinuityUnknown=true
     try tick(99500)
     try tick(100000)

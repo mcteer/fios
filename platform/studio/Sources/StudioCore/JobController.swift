@@ -23,13 +23,15 @@ final class JobController {
     init(journal:Journal,executor:any SandboxExecuting,collectVM:Bool=false) {
         self.journal=journal;self.executor=executor;self.collectVM=collectVM;lifecycle=SandboxLifecycle(journal:journal)
     }
+    private var cleanupSnapshot:(since:[String:Int64],storageUnknown:Int,at:Int64)?
     // Current owned-runtime cleanup only; this does not describe native
     // inference completion. Wait age starts when this manager observes it.
     func cleanupObservation(now:Int64)->(pending:Int,wait:Int64?,observedAt:Int64?) {
+        guard let snapshot=cleanupSnapshot else {return (0,nil,nil)}
         let clockKnown=(0...ActivityPolicy.maximumTimestamp).contains(now) && now>=previous &&
-            revokingSince.values.allSatisfy{$0>=0 && $0<=now}
-        let wait=clockKnown ? revokingSince.values.map{now-$0}.max() ?? 0:nil
-        return (revokingSince.count,wait,previous>0 ? previous:nil)
+            snapshot.since.values.allSatisfy{$0>=0 && $0<=now}
+        let wait=clockKnown ? snapshot.since.values.map{now-$0}.max() ?? 0:nil
+        return (snapshot.since.count,wait,snapshot.at)
     }
     func cleanupStatus(now:Int64)->[String:Any] {
         let sample=cleanupObservation(now:now)
@@ -37,7 +39,7 @@ final class JobController {
         let observationAge=sample.wait.flatMap { _ in sample.observedAt.map { now-$0 } }
         return ["scope":"owned_runtime_cleanup","pending_sandboxes":sample.pending,
             "manager_observation_age_ms":observationAge.map{$0 as Any} ?? NSNull(),
-            "storage_continuity_unknown":storageContinuityUnknown.intersection(revokingSince.keys).count,
+            "storage_continuity_unknown":cleanupSnapshot?.storageUnknown ?? 0,
             "observed_at":sample.observedAt.map{$0 as Any} ?? NSNull(),
             "observed_wait_ms":sample.wait.map{$0 as Any} ?? NSNull(),
             "waiting_over_60s":sample.wait.map{($0>=60000) as Any} ?? NSNull()]
@@ -231,6 +233,7 @@ final class JobController {
             }
         }
         revokingSince=revokingSince.filter{pendingCleanup.contains($0.key)}
+        if !rollback {cleanupSnapshot=(revokingSince,storageContinuityUnknown.intersection(revokingSince.keys).count,now)}
         if now>=lastCycle+2000 { lastCycle=now }
     }
 }
