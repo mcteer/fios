@@ -3,7 +3,7 @@ import Foundation
 func runResourceObservationTests() throws {
     let epoch=UUID().uuidString.lowercased(),vmEpoch=String(repeating:"a",count:64)
     var sample=ResourceSample(sampledAt:10000,physical:64<<30,available:32<<30,vmAvailable:4<<30,diskFree:100<<30,cpu:0,pressure:.normal,thermal:.nominal,vmSampledAt:10000)
-    sample.lowPowerMode=false
+    sample.lowPowerMode=false;sample.cpuSampledAt=10000
     let gpu=GPUResources.decode(["Device Utilization %":0,"In use system memory":0])!
     func frame(_ now:Int64,_ value:ResourceSample?=nil,_ gpuAt:Int64?=10000)throws->ResourceObservationExport.Frame {
         try ResourceObservationExport.encode(sample:value ?? sample,gpu:gpu,gpuSampledAt:gpuAt,now:now,epoch:epoch,sequence:1,vmEpoch:vmEpoch)
@@ -25,6 +25,10 @@ func runResourceObservationTests() throws {
     var oldHost=sample;oldHost=ResourceSample(sampledAt:0,physical:oldHost.physical,available:oldHost.available,vmAvailable:oldHost.vmAvailable,diskFree:oldHost.diskFree,cpu:oldHost.cpu,pressure:.normal,thermal:.nominal,vmSampledAt:10000)
     let separate=try frame(10000,oldHost)
     guard separate.resources["cpu"] is NSNull,quality(separate,"gpu")=="observed",quality(separate,"vm_available")=="observed" else {fatalError("Independent signal ages conflated")}
+    var undated=sample;undated.cpuSampledAt=nil
+    let noCPUClock=try frame(10000,undated)
+    guard noCPUClock.resources["cpu"] is NSNull,quality(noCPUClock,"cpu")=="unknown",
+          quality(noCPUClock,"available_memory")=="observed" else {fatalError("Undated CPU borrowed fresh host time")}
     let missingTime=try frame(10000,nil,nil)
     guard missingTime.resources["gpu"] is NSNull,quality(missingTime,"gpu")=="unknown" else {fatalError("Undated GPU counter accepted")}
     let noVM=try ResourceObservationExport.encode(sample:sample,gpu:nil,gpuSampledAt:nil,now:10000,epoch:epoch,sequence:1,vmEpoch:nil)
