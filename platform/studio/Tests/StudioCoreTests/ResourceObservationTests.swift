@@ -29,6 +29,17 @@ func runResourceObservationTests() throws {
     let noCPUClock=try frame(10000,undated)
     guard noCPUClock.resources["cpu"] is NSNull,quality(noCPUClock,"cpu")=="unknown",
           quality(noCPUClock,"available_memory")=="observed" else {fatalError("Undated CPU borrowed fresh host time")}
+    var invalidClocks=sample.replacingVM(4<<30,sampledAt:Int64.max)
+    invalidClocks.cpuSampledAt=Int64.min
+    let badClocks=try frame(10000,invalidClocks,Int64.min)
+    let clockSignals=badClocks.observation["signals"] as? [String:[String:Any]]
+    for name in ["cpu","vm_available","gpu","gpu_in_use_memory"] {
+        guard quality(badClocks,name)=="unknown",clockSignals?[name]?["sampled_at"] is NSNull,
+              clockSignals?[name]?["age_ms"] is NSNull else {fatalError("Invalid independent clock reached resource export")}
+    }
+    guard quality(badClocks,"available_memory")=="observed",badClocks.observation["vm_epoch"] is NSNull else {
+        fatalError("Invalid independent clock suppressed valid host sample or retained VM epoch")
+    }
     let missingTime=try frame(10000,nil,nil)
     guard missingTime.resources["gpu"] is NSNull,quality(missingTime,"gpu")=="unknown" else {fatalError("Undated GPU counter accepted")}
     let noVM=try ResourceObservationExport.encode(sample:sample,gpu:nil,gpuSampledAt:nil,now:10000,epoch:epoch,sequence:1,vmEpoch:nil)
