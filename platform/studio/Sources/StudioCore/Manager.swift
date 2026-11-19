@@ -87,7 +87,7 @@ public enum ManagerRuntime {
         guard !preparationEnabled || activeNativeControl != nil else {throw ServiceError.invalid}
         let tasks=TaskController(journal:journal,broker:ModelBroker(journal:journal,factory:activeExecution?.workerFactory,handoffSource:activeNativeControl,
             preparationSource:preparationEnabled ? activeNativeControl:nil,preparationCoverage:activeExecution?.nativePreparationCoverage ?? {.unknown}))
-        let executor:any SandboxExecuting = try activeExecution?.makeExecutor() ?? UnavailableSandboxRuntime()
+        let executor:any SandboxCreateSlotExecuting = try activeExecution?.makeExecutor() ?? UnavailableSandboxRuntime()
         let jobs=JobController(journal:journal,executor:executor,collectVM:activeExecution?.vmSource == .ownedContainer)
         let sandboxes=SandboxTaskController(journal:journal,jobs:jobs,tasks:tasks,artifacts:artifacts,
             socket:activeExecution?.runtime?.socket ?? "/var/empty/fios-runtime-unenrolled.sock",peerUID:geteuid(),endpointPolicy:activeExecution?.runtime?.endpointPolicy)

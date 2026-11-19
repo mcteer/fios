@@ -50,7 +50,7 @@ struct ManagerExecutionPorts {
         return vmSource == .cached ? value:value.replacingVM(nil)
         // Admission independently validates freshness and resource limits.
     }
-    func makeExecutor()throws->any SandboxExecuting {
+    func makeExecutor()throws->any SandboxCreateSlotExecuting {
         guard let runtime,!approvedImages.isEmpty else {return UnavailableSandboxRuntime()}
         return try SandboxExecutor(runtime:runtime,allowedImages:approvedImages,resourceReader:resourceReader)
     }
