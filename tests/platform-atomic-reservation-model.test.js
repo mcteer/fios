@@ -19,6 +19,24 @@ test('a terminal receipt cannot retire a sibling hold for the same model', () =>
   assert.equal(gate.releaseTerminal(sibling, siblingReceipt), true);
   assert(gate.reserve(gate.observe('fixture/other'), 'fixture/other'));
 });
+test('SDK readiness cannot overwrite a gap latched during configuration', () => {
+  // Abstract single-cell transitions; this is not an SDK atomic implementation.
+  for (const gapBeforeReady of [true, false]) {
+    let phase = 'configuring';
+    const gap = () => { phase = 'failed'; };
+    const publishReady = () => {
+      if (phase !== 'configuring') return false;
+      phase = 'ready';
+      return true;
+    };
+    if (gapBeforeReady) gap();
+    assert.equal(publishReady(), !gapBeforeReady);
+    if (!gapBeforeReady) gap();
+    assert.equal(phase, 'failed');
+    assert.equal(publishReady(), false);
+  }
+});
+
 test('a cached negative gap sample cannot authorize after a source fence', () => {
   const gate = new Gate({ covered: true });
   const target = 'fixture/exact';
