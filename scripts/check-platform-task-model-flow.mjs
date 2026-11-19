@@ -90,6 +90,21 @@ try {
  }
  await delay(25);const renewed=task('job.renew',{job});assert(renewed.lease.expires_at>created.lease.expires_at);assert.equal(renewed.lease.deadline_at,deadline);
  let chunks=0;for(let offset=0;offset<data.length;offset+=32768){task('job.create',{phase:'chunk',job,index:chunks++,data:data.subarray(offset,offset+32768).toString('base64')});if(scenario==='upload_restart')break;}
+ if(scenario==='upload_timeout'){
+  // Complete byte input, but never send end before the original 10s upload
+  // deadline. The run loop must revoke it independently of the job lease.
+  const timedOut=await until(()=>{
+   const current=task('job.status',{job});
+   assert.notEqual(current.state,'running');
+   return current.state==='removed'?current:false;
+  },16000);
+  assert.equal(timedOut.lease.revoked,true);assert.equal(timedOut.lease.expires_at,renewed.lease.expires_at);
+  task('job.create',{phase:'chunk',job,index:0,data:data.subarray(0,32768).toString('base64')},'invalid_request');
+  const late=task('job.create',{phase:'end',job});assert.equal(late.state,'removed');assert.equal(late.job,job);
+  const summary=JSON.parse(command(cli,['--state',state,'status'],3000));
+  assert.equal(summary.worker_reservations,0);assert.equal(summary.unresolved_requests,0);assert.equal(posts,0);
+  return {scenario,expired_without_end:true,late_end_status_only:true,state:late.state,mock_model_posts:0,worker_slots_after_completion:0};
+ }
  if(scenario==='upload_restart'){
   assert.equal(posts,0);await replaceManager(status.epoch);
   let restored;
@@ -173,7 +188,7 @@ try {
 }
 }
 const records=[];
-for(const scenario of ['complete','cancel','unavailable','upload_restart','unicode','invalid_history','replaced_source','duplicate_chunk','digest_mismatch','reserved_capacity'])records.push(await modelCase(scenario));
+for(const scenario of ['complete','cancel','unavailable','upload_restart','unicode','invalid_history','replaced_source','duplicate_chunk','digest_mismatch','reserved_capacity','upload_timeout'])records.push(await modelCase(scenario));
 const receipt={scope:'normal_cli_model_job_completion_cancellation_and_service_failure',records,real_model_requests:0,runtime_actions:0,native_acceptance:false,cli_sha256:sha(readFileSync(cli)),manager_sha256:sha(readFileSync(binary))};
 writeFileSync(join(directory,'receipt.json'),JSON.stringify(receipt,null,2)+'\n');
 console.log(JSON.stringify({ok:true,directory,...receipt}));
