@@ -42,6 +42,14 @@ func runTransferTests() throws {
         guard try boundary.finish(now:1000+duration-1)==data else {fatalError("Last valid transfer millisecond refused")}
         var timedOut=try ChunkTransfer(length:data.count,sha256:hash,created:1000,kind:kind)
         do {try timedOut.append(index:0,base64:data.base64EncodedString(),now:1000+duration);fatalError("Exact transfer deadline accepted")}catch TransferError.expired{}
+        var polled=try ChunkTransfer(length:data.count,sha256:hash,created:1000,kind:kind)
+        try polled.append(index:0,base64:data.base64EncodedString(),now:1001)
+        try polled.validate(now:1000+duration-1)
+        do {_=try polled.finish(now:1000+duration);fatalError("Run-loop validation extended the original transfer deadline")}catch TransferError.expired{}
+        do {_=try polled.finish(now:1000+duration-1);fatalError("Expired polled transfer revived")}catch TransferError.invalid{}
+        var rewound=try ChunkTransfer(length:data.count,sha256:hash,created:1000,kind:kind)
+        try rewound.validate(now:1003)
+        do {try rewound.append(index:0,base64:data.base64EncodedString(),now:1002);fatalError("Transfer ignored its last run-loop clock")}catch TransferError.expired{}
     }
     print("PASS: exact32KiB/canonical chunks, gap/duplicate/replay/hash/timeout/rollback refusal, irreversible failure and cumulative output limit")
 }
