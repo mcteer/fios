@@ -411,6 +411,21 @@ func runVMControllerTests() throws {
     runtime.holdResourceResults=false
     try controller.tick(now:revocationAt+1,sample:sample(revocationAt+1),admission:&admission,transportReady:{_ in true},cancelModel:{_ in})
     guard runtime.resourceValues.isEmpty,controller.vmAvailable(now:revocationAt+1)==nil else {fatalError("Late VM result revived revoked capacity")}
+    let replacement=UUID().uuidString.lowercased(),created=revocationAt+2
+    let replacementJob=try DurableJob(id:replacement,idempotency:UUID().uuidString.lowercased(),ownerHash:job.ownerHash,requestHash:job.requestHash,created:created)
+    let replacementConfig=try SandboxConfiguration(job:replacement,nonce:config.nonce,image:config.image,memory:config.memory,cpus:config.cpus)
+    let replacementID=String(repeating:"e",count:64)
+    _=try journal.reserveSandbox(job:replacementJob,configuration:replacementConfig)
+    try journal.commitSandboxCreate(replacementConfig,now:created)
+    try journal.saveSandbox(SandboxRecord(configuration:replacementConfig,runtimeID:replacementID,createIssued:true,startIssued:true))
+    try journal.transitionJob(id:replacement,to:.running,now:created)
+    runtime.present[replacement]=(replacementConfig,replacementID,true)
+    for now in [created+2000,created+2001] {
+        runtime.resourceNow=now
+        try controller.tick(now:now,sample:sample(now),admission:&admission,transportReady:{_ in true},cancelModel:{_ in})
+    }
+    guard runtime.resourceLeases.last==replacementJob.lease.expires,
+          controller.vmSampledAt(now:created+2001)==created+2000 else {fatalError("Replacement target did not supply its own fresh VM observation")}
     print("PASS: serialized VM coordinator polls owned running targets at2s, publishes only fresh envelopes and immediately invalidates failed/stale resource authority (fake runtime telemetry)")
 }
 
