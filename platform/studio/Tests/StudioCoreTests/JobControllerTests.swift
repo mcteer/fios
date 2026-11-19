@@ -16,6 +16,7 @@ private class FakeSandboxExecutor:SandboxExecuting {
     var resourceNow:Int64=0
     var resourceFailure=false
     var mismatchedResourceEnvelope=false
+    var resourceStampOffset:Int64=0
     var resourceRequests:[Int64]=[]
     var resourceValues:[VMReadResult]=[]
     var holdResourceResults=false
@@ -23,8 +24,9 @@ private class FakeSandboxExecutor:SandboxExecuting {
     func submitResources(configuration:SandboxConfiguration,id:String,leaseUntil:Int64)throws {
         resourceLeases.append(leaseUntil)
         resourceRequests.append(resourceNow)
-        let envelope=VMResourceObservation(runtimeHash:String(repeating:"a",count:64),sampledAt:resourceNow,configuredCap:12<<30,total:16<<30,free:8<<30,allVMConsumersCovered:true)
-        let sample=VMKernelSample(sampledAt:resourceNow,total:16<<30,free:(mismatchedResourceEnvelope ? 7 : 8)<<30,bootHash:String(repeating:"b",count:64),envelope:envelope)
+        let stamp=resourceNow+resourceStampOffset
+        let envelope=VMResourceObservation(runtimeHash:String(repeating:"a",count:64),sampledAt:stamp,configuredCap:12<<30,total:16<<30,free:8<<30,allVMConsumersCovered:true)
+        let sample=VMKernelSample(sampledAt:stamp,total:16<<30,free:(mismatchedResourceEnvelope ? 7 : 8)<<30,bootHash:String(repeating:"b",count:64),envelope:envelope)
         resourceValues.append(VMReadResult(job:configuration.job,runtimeID:id,result:resourceFailure ? .failure(.unavailable) : .success(sample)))
     }
     func drainResources()->[VMReadResult] {
@@ -374,9 +376,10 @@ func runModelOnlyVMIsolationTests() throws {
 func runVMControllerTests() throws {
     try exerciseVMController(inconsistentReply:false)
     try exerciseVMController(inconsistentReply:true)
+    try exerciseVMController(inconsistentReply:false,predatingReply:true)
 }
 
-private func exerciseVMController(inconsistentReply:Bool) throws {
+private func exerciseVMController(inconsistentReply:Bool,predatingReply:Bool=false) throws {
     let directory=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer {try? FileManager.default.removeItem(at:directory)}
     let journal=try Journal(directory:directory),runtime=FakeSandboxExecutor()
@@ -402,17 +405,20 @@ private func exerciseVMController(inconsistentReply:Bool) throws {
     guard overlay.vmAvailable==nil,overlay.vmSampledAt==nil,frame.observation["vm_epoch"] is NSNull,
           frame.observation["vm_coverage"] as? String == "unknown" else {fatalError("VM envelope incompatible with current host crossed the telemetry boundary")}
     for pair in zip(runtime.resourceRequests,runtime.resourceRequests.dropFirst()) {guard pair.1-pair.0>=2000 else {fatalError("Unbounded VM polling")}}
-    runtime.resourceFailure = !inconsistentReply
+    runtime.resourceFailure = !inconsistentReply && !predatingReply
     runtime.mismatchedResourceEnvelope=inconsistentReply
+    runtime.resourceStampOffset=predatingReply ? -1:0
     for tick in 0..<8 {
         let now:Int64=17000+Int64(tick)*500;runtime.resourceNow=now
         try controller.tick(now:now,sample:sample(now),admission:&admission,transportReady:{_ in true},cancelModel:{_ in})
     }
     guard controller.vmAvailable(now:20500)==nil,controller.vmEpoch(now:20500)==nil else {
+        if predatingReply {fatalError("Job VM controller accepted kernel sample predating submission")}
         fatalError(inconsistentReply ? "Mismatched VM kernel/envelope retained verified VM capacity":"Failed source retained verified VM capacity")
     }
     runtime.resourceFailure=false
     runtime.mismatchedResourceEnvelope=false
+    runtime.resourceStampOffset=0
     for now:Int64 in [21000,21500,22000,22500,23000] {
         runtime.resourceNow=now
         try controller.tick(now:now,sample:sample(now),admission:&admission,transportReady:{_ in true},cancelModel:{_ in})

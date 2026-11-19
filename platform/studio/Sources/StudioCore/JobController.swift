@@ -16,7 +16,7 @@ final class JobController {
     private var revokingSince:[String:Int64]=[:]
     private var storageContinuityUnknown=Set<String>()
     private let collectVM:Bool
-    private var resourcePending:(job:String,id:String,leaseUntil:Int64)?
+    private var resourcePending:(job:String,id:String,leaseUntil:Int64,submittedAt:Int64)?
     private var lastResource:Int64 = -2000
     private var latestVM:(sample:VMKernelSample,job:String,id:String,leaseUntil:Int64)?
     private var vmProbes=Set<String>()
@@ -85,7 +85,7 @@ final class JobController {
             guard let pending=resourcePending,pending.job==result.job,pending.id==result.runtimeID else {throw JournalError.conflict}
             resourcePending=nil
             if !rollback,now<pending.leaseUntil,case .success(let value)=result.result,
-               value.validatedEnvelope(physical:sample.physical,now:now) != nil {
+               value.sampledAt>=pending.submittedAt,value.validatedEnvelope(physical:sample.physical,now:now) != nil {
                 candidateVM=(value,pending.job,pending.id,pending.leaseUntil)
             }
             else {candidateVM=nil}
@@ -164,7 +164,7 @@ final class JobController {
             }),let id=target.runtimeID,let job=jobIndex[target.configuration.job] {
                 do {
                     try executor.submitResources(configuration:target.configuration,id:id,leaseUntil:job.lease.expires)
-                    resourcePending=(job.id,id,job.lease.expires)
+                    resourcePending=(job.id,id,job.lease.expires,now)
                 } catch AdmissionError.capacity {} // No operation was enqueued.
                 catch {candidateVM=nil}
             }
