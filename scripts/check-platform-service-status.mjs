@@ -64,13 +64,21 @@ try{
   if(mode==='ready'){
    // Ordinary passage of time must age the observation without changing intent.
    await delay(5200);
+   const combinedAged=status(state,['status']);
+   const agedProjectionClocks=[];
    for(const service of ['mlx','orbstack']){
     const aged=status(state,['service',service,'status']);
     assert.equal(aged.observed,'unknown');assert.equal(aged.desired,'running');
     assert.equal(aged.message,messages.unknown);
     assert.equal(aged.sampled_at,combined.services[service].sampled_at);
     assert(aged.age_ms>5000);assert.equal(aged.launch_pending,false);
+    const combinedView=combinedAged.services[service];
+    assert.equal(combinedView.observed,'unknown');assert.equal(combinedView.desired,'running');
+    assert.equal(combinedView.sampled_at,aged.sampled_at);assert(combinedView.age_ms>5000);
+    assert.equal(combinedView.health,undefined);
+    agedProjectionClocks.push(combinedView.sampled_at+combinedView.age_ms);
    }
+   assert.equal(agedProjectionClocks[0],agedProjectionClocks[1]);
   }
   const maintenance=status(state,['service','mlx','maintenance']);assert.equal(maintenance.applied,false);
   const held=status(state,['service','mlx','status']);assert.equal(held.desired,'maintenance');
@@ -116,7 +124,7 @@ try{
  assert.equal(reopened.runtime_cleanup.waiting_over_60s,false);
  assert(Number.isSafeInteger(reopened.runtime_cleanup.manager_observation_age_ms)&&reopened.runtime_cleanup.manager_observation_age_ms>=0);
  child.kill('SIGTERM');await until(()=>exited(child));assert.equal(child.exitCode,0);child=null;
- console.log(JSON.stringify({ok:true,states:modes.length,service_views:2*modes.length,aged_service_views:2,storage_continuity_refusal:1,storage_custody_survived_restart:true,native_actions:0,review_directory:directory}));
+ console.log(JSON.stringify({ok:true,states:modes.length,service_views:2*modes.length,aged_service_views:2,aged_combined_views:2,storage_continuity_refusal:1,storage_custody_survived_restart:true,native_actions:0,review_directory:directory}));
 }finally{
  if(child&&!exited(child)){child.kill('SIGTERM');try{await until(()=>exited(child),3000);}catch{child.kill('SIGKILL');await until(()=>exited(child),3000);}}
  // Retain the private development states; no database cleanup or native work.
