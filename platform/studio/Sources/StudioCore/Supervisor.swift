@@ -2,6 +2,23 @@ import Foundation
 import Darwin
 
 public enum SupervisorRuntime {
+    // Bound the progress read before parsing; a nonregular entry is not
+    // evidence about the live child and must not block the watchdog loop.
+    static func progress(directory:URL,pid:Int32,now:Int64)->Int64? {
+        let path=directory.appendingPathComponent("progress.json").path
+        let fd=open(path,O_RDONLY|O_NOFOLLOW|O_CLOEXEC|O_NONBLOCK)
+        guard fd>=0 else {return nil};defer {close(fd)}
+        var info=stat()
+        guard fstat(fd,&info)==0,info.st_mode&S_IFMT==S_IFREG,info.st_uid==geteuid(),
+              info.st_mode&0o077==0,info.st_nlink==1,(1...4096).contains(info.st_size) else {return nil}
+        var bytes=[UInt8](repeating:0,count:4097)
+        let count=pread(fd,&bytes,4097,0)
+        guard count==info.st_size,
+              let object=try? JSONSerialization.jsonObject(with:Data(bytes.prefix(count))) as? [String:Any],
+              WireScalar.integer(object["pid"])==Int64(pid),let value=object["progress"] as? Double,
+              value.isFinite,value>=0,(0...ActivityPolicy.maximumTimestamp).contains(now),value*1000<=Double(now) else {return nil}
+        return Int64(value*1000)
+    }
     public static func run(directory:URL,manager:URL,telemetry:any PlatformTelemetry=NoopPlatformTelemetry()) throws {
         try run(directory:directory,manager:manager,custodyFactory:nil,telemetry:telemetry)
     }
@@ -62,15 +79,8 @@ public enum SupervisorRuntime {
                 }
             }
             let now=Int64(ProcessInfo.processInfo.systemUptime * 1000)
-            var progress:Int64?
-            if let child, child.isRunning {
-                let url=directory.appendingPathComponent("progress.json")
-                if let data=try? Data(contentsOf:url), data.count <= 4096,
-                   let obj=try? JSONSerialization.jsonObject(with:data) as? [String:Any],
-                   let pid=obj["pid"] as? Int32, pid == child.processIdentifier,
-                   let value=obj["progress"] as? Double, value.isFinite, value >= 0, value * 1000 <= Double(now) {
-                    progress=Int64(value*1000)
-                }
+            let progress=child.flatMap { child in
+                child.isRunning ? Self.progress(directory:directory,pid:child.processIdentifier,now:now):nil
             }
             let alive=child?.isRunning ?? false
             if let child, !alive {child.waitUntilExit();try custody?.bindSupervisedManager(nil)}

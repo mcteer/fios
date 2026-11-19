@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 
 private func expect(_ value: Bool) { precondition(value) }
 
@@ -30,5 +31,19 @@ func runWatchdogTests() throws {
     expect(try stable.tick(now:600_999,managerAlive:true,lastProgress:nil) == .observe)
     expect(try stable.tick(now:601_000,managerAlive:true,lastProgress:nil) == .kill)
     expect(try stable.tick(now:601_001,managerAlive:true,lastProgress:nil) == .observe)
+    let directory=FileManager.default.temporaryDirectory.appendingPathComponent("fios-watchdog-progress-"+UUID().uuidString)
+    try FileManager.default.createDirectory(at:directory,withIntermediateDirectories:false,attributes:[.posixPermissions:0o700])
+    defer {try? FileManager.default.removeItem(at:directory)}
+    let progress=directory.appendingPathComponent("progress.json")
+    guard mkfifo(progress.path,0o600)==0 else {throw RuntimeError.launch}
+    expect(SupervisorRuntime.progress(directory:directory,pid:42,now:1000)==nil)
+    try FileManager.default.removeItem(at:progress)
+    for (data,expected):(Data,Int64?) in [(Data(repeating:0,count:4097),nil),
+        (Data("{\"pid\":43,\"progress\":0.5}".utf8),nil),(Data("{\"pid\":42,\"progress\":1.001}".utf8),nil),
+        (Data("{\"pid\":42,\"progress\":0.5}".utf8),500)] {
+        try data.write(to:progress)
+        guard chmod(progress.path,0o600)==0 else {throw RuntimeError.launch}
+        expect(SupervisorRuntime.progress(directory:directory,pid:42,now:1000)==expected)
+    }
     print("PASS: watchdog restart, hang, reap fence, durable-budget and clock tests")
 }
