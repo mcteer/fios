@@ -12,6 +12,8 @@ private final class ServiceCensusFixture:ServiceProcessCensusReading,@unchecked 
     var verificationCompletedAt:TimeInterval?
     var time:Int64=10000
     var tick:TimeInterval=1
+    var clockReads=0
+    var rollbackRead:Int?
     init() {entries[getpid()]=ServiceProcessEntry(pid:getpid(),uid:geteuid(),realUID:getuid(),savedUID:geteuid(),start:1,path:"/usr/bin/true")}
     func pids(uid:uid_t)throws->[Int32] {calls+=1;return calls%2==1 ? first:second ?? first}
     func entry(pid:Int32)throws->ServiceProcessEntry? {
@@ -67,6 +69,20 @@ func runServiceProcessCensusTests() throws {
         }
         source.time=11000;source.entryWallCompletedAt=nil
         guard observing.capture().presence == .unknown,source.calls==1 else {fatalError("Process census recovered from a latched wall fence")}
+    }
+    let finalClock=ServiceCensusFixture()
+    func makeFinalClockCensus() throws -> ServiceProcessCensus {
+        try ServiceProcessCensus(executable:executable,relatedRoots:[root.path],reviewDigest:review,uid:geteuid(),source:finalClock,
+            now:{finalClock.time},uptime:{
+                finalClock.clockReads+=1
+                if finalClock.clockReads==finalClock.rollbackRead {return 1.25}
+                return finalClock.clockReads==1 ? 1 : 1.5
+            })
+    }
+    guard try makeFinalClockCensus().capture().presence == .absent else {fatalError("Final clock control did not reach scoped absence")}
+    finalClock.rollbackRead=finalClock.clockReads;finalClock.clockReads=0
+    guard try makeFinalClockCensus().capture().presence == .unknown else {
+        fatalError("Final census clock rollback accepted despite earlier monotonic checkpoint")
     }
     let candidate=ServiceProcessEntry(pid:Int32.max,uid:geteuid(),realUID:getuid(),savedUID:geteuid(),start:2,path:binary.path)
     let multiple=ServiceCensusFixture();multiple.first=[getpid(),Int32.max,Int32.max-1]
