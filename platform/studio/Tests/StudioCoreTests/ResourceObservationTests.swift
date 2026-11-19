@@ -56,6 +56,18 @@ func runResourceObservationTests() throws {
               delayedVM.observation["vm_epoch"] is NSNull,delayedVM.observation["vm_coverage"] as? String=="unknown",
               quality(delayedVM,"available_memory")=="observed" else {fatalError("Stale VM lease observation borrowed current host freshness")}
     }
+    var mixed=sample.replacingVM(4<<30,sampledAt:4999)
+    mixed.cpuSampledAt=11000
+    let independent=try frame(10000,mixed,11001)
+    let independentSignals=independent.observation["signals"] as? [String:[String:Any]]
+    guard independent.resources["cpu"] as? Double==0,quality(independent,"cpu")=="observed",
+          independentSignals?["cpu"]?["age_ms"] as? Int64 == -1000,
+          independent.resources["gpu"] is NSNull,quality(independent,"gpu")=="stale",
+          independentSignals?["gpu"]?["age_ms"] as? Int64 == -1001,
+          independent.resources["vmAvailable"] is NSNull,independent.observation["vm_epoch"] is NSNull,
+          independentSignals?["vm_available"]?["age_ms"] as? Int64 == 5001 else {
+        fatalError("Mixed resource clocks leaked stale capacity or lost measured zero")
+    }
     let zeroVM=try frame(10000,sample.replacingVM(0,sampledAt:10000))
     guard zeroVM.resources["vmAvailable"] as? UInt64==0,quality(zeroVM,"vm_available")=="observed" else {fatalError("Observed zero VM capacity lost")}
     let invalid=ResourceSample(sampledAt:10000,physical:64<<30,available:65<<30,vmAvailable:nil,diskFree:UInt64.max,cpu:.nan,pressure:.unknown,thermal:.unknown)

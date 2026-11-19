@@ -12,13 +12,17 @@ const root=fileURLToPath(new URL('../',import.meta.url));
 const temporary=mkdtempSync('/tmp/fios009-boot-state-'),children=[];
 const exited=child=>child.exitCode!==null||child.signalCode!==null;
 async function until(check,limit=5000){const end=performance.now()+limit;while(performance.now()<end){const value=check();if(value)return value;await delay(25);}throw Error('Finite boot-state fixture deadline');}
-function run(program,args,timeout=5000){const result=spawnSync(program,args,{cwd:root,encoding:'utf8',timeout,maxBuffer:65536});assert.equal(result.status,0,'Boot fixture command failed');return result.stdout.trim();}
+function run(program,args,timeout=5000){
+ const result=spawnSync(program,args,{cwd:root,encoding:'utf8',timeout,maxBuffer:65536});
+ assert.equal(result.status,0,`Boot fixture ${program} failed (${result.error?.code??result.signal??result.status}; limit_ms=${timeout})`);
+ return result.stdout.trim();
+}
 try {
  const core=join(root,'platform/studio/Sources/StudioCore');
  const sources=readdirSync(core).filter(name=>name.endsWith('.swift')).sort().map(name=>join(core,name));
  const fixture=join(temporary,'BootState.swift'),binary=join(temporary,'boot-state');
  copyFileSync(join(root,'platform/studio/Tests/StudioCoreTests/BootState.swift.fixture'),fixture);
- run('swiftc',['-swift-version','6','-warnings-as-errors','-I',join(root,'platform/studio/Sources/CSQLite'),...sources,fixture,'-o',binary],120000);
+ run('swiftc',['-swift-version','6','-warnings-as-errors','-I',join(root,'platform/studio/Sources/CSQLite'),...sources,fixture,'-o',binary],300000);
  const bin=run('swift',['build','--package-path','platform/studio','--show-bin-path']);
  const cli=join(bin,'studioctl');
  for(const [scenario,expected] of [['session','waiting_session'],['credentials','waiting_credentials'],['absent','stopped'],['unknown','unknown']]) {
