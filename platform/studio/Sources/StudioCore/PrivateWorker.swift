@@ -73,7 +73,7 @@ final class PrivateWorker {
             guard try journal.originalNativeRoot(job:job,attempt:attempt,scope:inferenceScope,peer:nativePreparation.peer)==nativePreparation.rootSequence else {throw RuntimeError.identity}
         }
         let observed=readyAt ?? started
-        guard observed>=started else {throw RuntimeError.invalid}
+        guard started>=0,observed>=started else {throw RuntimeError.invalid}
         parser=ModelWorkerProtocol(job:job,attempt:attempt);memory=try WorkerMemoryGuard(started:observed)
         self.started=started;lastSample=observed;lastPoll=observed
         guard fcntl(input.fileDescriptor,F_SETFL,O_NONBLOCK)>=0,

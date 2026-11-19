@@ -18,6 +18,10 @@ func runPrivateWorkerTests() throws {
         process.environment=["PATH":"/usr/bin:/bin","LANG":"C","MLX_BASE_URL":"http://127.0.0.1:1/v1","FIOS_WEB_SEARCH":"off","PYDANTIC_AI_NO_BANNER":"1","FIOS_PLATFORM_FIXTURE_POST_DELAY":"1.25","FIOS_PLATFORM_FIXTURE_MODE":mode]
         process.standardInput=input;process.standardOutput=output;process.standardError=FileHandle.nullDevice
         try process.run()
+        do {
+            _=try PrivateWorker(process:process,input:input.fileHandleForWriting,output:output.fileHandleForReading,journal:journal,job:job,attempt:0,started:.min,readyAt:0)
+            fatalError("Worker bound transport with an invalid original startup clock")
+        } catch RuntimeError.invalid {}
         return try PrivateWorker(process:process,input:input.fileHandleForWriting,output:output.fileHandleForReading,journal:journal,job:job,attempt:0,started:Int64(ProcessInfo.processInfo.systemUptime*1000))
     }
     let job=UUID().uuidString.lowercased(),epoch=UUID().uuidString.lowercased()
