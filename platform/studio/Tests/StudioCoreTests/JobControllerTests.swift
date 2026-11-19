@@ -452,6 +452,9 @@ func runCleanupStatusRecoveryTests() throws {
     try controller.tick(now:81000,sample:sample(81000),admission:&admission,transportReady:{_ in true},cancelModel:{_ in})
     let waiting=controller.cleanupStatus(now:81000)
     precondition(waiting["observed_wait_ms"] as? Int64 == 61000 && waiting["waiting_over_60s"] as? Bool == true)
+    precondition(waiting["manager_observation_age_ms"] as? Int64 == 0)
+    precondition(controller.cleanupStatus(now:81500)["manager_observation_age_ms"] as? Int64 == 500)
+    precondition(controller.cleanupStatus(now:80999)["manager_observation_age_ms"] is NSNull)
     runtime.holdResponses=false
     for index in 0..<20 {
         let now:Int64=82000+Int64(index)*500

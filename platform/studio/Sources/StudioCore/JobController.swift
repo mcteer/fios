@@ -33,7 +33,10 @@ final class JobController {
     }
     func cleanupStatus(now:Int64)->[String:Any] {
         let sample=cleanupObservation(now:now)
+        // This timestamps the manager tick, not a runtime listing or proof.
+        let observationAge=sample.wait.flatMap { _ in sample.observedAt.map { now-$0 } }
         return ["scope":"owned_runtime_cleanup","pending_sandboxes":sample.pending,
+            "manager_observation_age_ms":observationAge.map{$0 as Any} ?? NSNull(),
             "storage_continuity_unknown":storageContinuityUnknown.intersection(revokingSince.keys).count,
             "observed_at":sample.observedAt.map{$0 as Any} ?? NSNull(),
             "observed_wait_ms":sample.wait.map{$0 as Any} ?? NSNull(),
