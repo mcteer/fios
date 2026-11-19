@@ -62,5 +62,13 @@ func runNativeVMInventoryTests() throws {
         do {_=try reader.read(configuration:configuration,id:id,leaseUntil:2000);fatalError("Expired lease accepted at inventory checkpoint")}catch RuntimeError.deadline {}
         guard inventory.captures==expectedCaptures else {fatalError("Inventory executed after observed lease expiry")}
     }
+    let rollback=InventoryClockFixture([1000,999]),rolledInventory=InventoryVMFixture(stamps:[1000])
+    let rolled=VMEnvelopeReader(kernel:KernelVMFixture(stamp:1000),inventory:rolledInventory,nativeProfileHash:String(repeating:"a",count:64),physical:32<<30,wallClock:{rollback.next()},uptime:{1})
+    do {_=try rolled.read(configuration:configuration,id:id,leaseUntil:2000);fatalError("Wall rollback retained VM observation")}catch RuntimeError.identity {}
+    guard rolledInventory.captures==1 else {fatalError("Wall rollback reached another inventory capture")}
+    let steady=InventoryClockFixture([1000,1000,1001,6001]),slowInventory=InventoryVMFixture(stamps:[1000,1002])
+    let slow=VMEnvelopeReader(kernel:KernelVMFixture(stamp:1001),inventory:slowInventory,nativeProfileHash:String(repeating:"a",count:64),physical:32<<30,wallClock:{1001},uptime:{Double(steady.next())/1000})
+    do {_=try slow.read(configuration:configuration,id:id,leaseUntil:2000);fatalError("Over-budget kernel read retained VM observation")}catch RuntimeError.deadline {}
+    guard slowInventory.captures==1 else {fatalError("Over-budget read reached post-inventory")}
     print("PASS: composed VM collector brackets kernel read with native inventory/config, exports conservative envelope and rejects changed cap/unverified machine coverage")
 }
