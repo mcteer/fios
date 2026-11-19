@@ -90,6 +90,16 @@ try {
   return {scenario,state:final.state,mock_model_posts:posts,worker_attempts:0,worker_slots_after_completion:0};
  }
  task('job.create',{phase:'end',job});
+ if(scenario==='complete'){
+  const duplicate=task('job.create',{phase:'end',job});
+  const replay=task('job.create',manifest);
+  // The fast mock may already have completed; both replies must describe
+  // the original job, not create another attempt or extend its lease.
+  for(const result of [duplicate,replay]){
+   assert.equal(result.job,job);assert.equal(result.lease.deadline_at,deadline);
+   assert.equal(result.lease.expires_at,renewed.lease.expires_at);
+  }
+ }
  let wasRunning=false;
  if(scenario==='cancel'){
   await until(()=>{if(streamFailure)throw streamFailure;return posts===1;});
