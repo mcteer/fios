@@ -18,7 +18,9 @@ private class FakeSandboxExecutor:SandboxExecuting {
     var resourceRequests:[Int64]=[]
     var resourceValues:[VMReadResult]=[]
     var holdResourceResults=false
+    var resourceLeases:[Int64]=[]
     func submitResources(configuration:SandboxConfiguration,id:String,leaseUntil:Int64)throws {
+        resourceLeases.append(leaseUntil)
         resourceRequests.append(resourceNow)
         let envelope=VMResourceObservation(runtimeHash:String(repeating:"a",count:64),sampledAt:resourceNow,configuredCap:12<<30,total:16<<30,free:8<<30,allVMConsumersCovered:true)
         let sample=VMKernelSample(sampledAt:resourceNow,total:16<<30,free:8<<30,bootHash:String(repeating:"b",count:64),envelope:envelope)
@@ -377,7 +379,8 @@ func runVMControllerTests() throws {
         let now:Int64=10000+Int64(tick)*500;runtime.resourceNow=now
         try controller.tick(now:now,sample:sample(now),admission:&admission,transportReady:{_ in true},cancelModel:{_ in})
     }
-    guard !runtime.resourceRequests.isEmpty,controller.vmAvailable(now:16500)==4<<30,controller.vmEpoch(now:16500)?.count==64,
+    guard !runtime.resourceLeases.isEmpty,runtime.resourceLeases.allSatisfy({$0==job.lease.expires}),
+          !runtime.resourceRequests.isEmpty,controller.vmAvailable(now:16500)==4<<30,controller.vmEpoch(now:16500)?.count==64,
           controller.vmAvailable(now:16499)==nil,controller.vmSampledAt(now:16499)==nil,controller.vmEpoch(now:16499)==nil,
           controller.applyingVM(to:sample(16499),now:16499).vmAvailable==nil,
           controller.vmAvailable(now:30000)==nil else {fatalError("VM controller failed fresh/stale/rewound capacity publication")}

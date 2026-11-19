@@ -156,11 +156,12 @@ final class JobController {
             lastResource=now
             if let target=records.first(where:{record in
                 guard let job=jobIndex[record.configuration.job] else {return false}
-                return job.state == .running && !record.removalProven && record.runtimeID != nil && job.lease.deadline-now>=10000 && inFlight[job.id]==nil && deferred[job.id]==nil
+                var lease=job.lease
+                return job.state == .running && record.createIssued && record.startIssued && !record.removalProven && record.runtimeID != nil && lease.valid(now:now) && lease.expires-now>=10000 && inFlight[job.id]==nil && deferred[job.id]==nil
             }),let id=target.runtimeID,let job=jobIndex[target.configuration.job] {
                 do {
-                    try executor.submitResources(configuration:target.configuration,id:id,leaseUntil:job.lease.deadline)
-                    resourcePending=(job.id,id,job.lease.deadline)
+                    try executor.submitResources(configuration:target.configuration,id:id,leaseUntil:job.lease.expires)
+                    resourcePending=(job.id,id,job.lease.expires)
                 } catch AdmissionError.capacity {} // No operation was enqueued.
                 catch {candidateVM=nil}
             }
@@ -220,7 +221,10 @@ final class JobController {
         }
         if let observed=candidateVM {
             if now<observed.leaseUntil,
-               try journal.jobs().contains(where:{$0.id==observed.job && $0.state == .running && $0.lease.deadline==observed.leaseUntil}),
+               try journal.jobs().contains(where:{job in
+                   var lease=job.lease
+                   return job.id==observed.job && job.state == .running && lease.expires>=observed.leaseUntil && lease.valid(now:now)
+               }),
                try journal.sandboxRecords().contains(where:{$0.configuration.job==observed.job && !$0.removalProven && $0.runtimeID==observed.id}) {
                 latestVM=observed
             }
