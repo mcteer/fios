@@ -100,6 +100,7 @@ try {
  }
  task('job.create',{phase:'end',job});
  if(scenario==='complete'){
+  task('job.create',{phase:'chunk',job,index:0,data:Buffer.from('not the original input').toString('base64')},'invalid_request');
   const duplicate=task('job.create',{phase:'end',job});
   const replay=task('job.create',manifest);
   // The fast mock may already have completed; both replies must describe
