@@ -19,9 +19,10 @@ private final class NormalRequestEventSource:NativeRequestEventsReading,@uncheck
     var lastEventRoot:UInt64? {lock.lock();defer {lock.unlock()};return lastRoot}
     func lineage(instance:String,correlationID:String)throws->NativeRequestLineageSample {
         lock.lock();sequence+=1;let next=sequence;lock.unlock()
+        let found=next<4 || (rewindLineage && next==8)
         return NativeRequestLineageSample(peer:peer,sampledAt:10000,lineage:NativeRequestLineage(instance:instance,correlationID:correlationID,
-            sampleSequence:next,rootSequence:next<4 ? (replacementRoot ?? UInt64.max):0,found:next<4,uncertain:next>=4,references:next<4 ? 1:0,owners:next<4 ? 1:0,ingress:0,preparing:0,active:next<4 ? 1:0,responding:0,
-            sourceCapturedAt:rewindLineage ? (next==2 ? 9999:10000):nil))
+            sampleSequence:next,rootSequence:found ? (replacementRoot ?? UInt64.max):0,found:found,uncertain:!found,references:found ? 1:0,owners:found ? 1:0,ingress:0,preparing:0,active:found ? 1:0,responding:0,
+            sourceCapturedAt:rewindLineage ? (next==2 ? 9999:next==8 ? 10001:10000):nil))
     }
     func requestEvents(instance:String,correlationID:String,rootSequence:UInt64)throws->NativeRequestEventsSample {
         lock.lock();reads+=1;lastRoot=rootSequence;let next=reads;lock.unlock()
@@ -108,7 +109,9 @@ func runNativeRequestEventPollingTests()throws {
     })
     guard try status()["native_request_events"]==nil else {fatalError("Ingress revalidation republished an in-flight callback reply")}
     try poll(poller)
-    guard try status()["native_request_events"] != nil else {fatalError("New correlated callback sample did not restore diagnostics")}
+    let resumed=try status()["native_request_events"] as? [[String:Any]]
+    guard (resumed?.first?["request"] as? [String:Any])?["state"] as? String=="active",
+          try journal.unresolvedCount()==1 else {fatalError("New correlated source sample did not restore diagnostics without settling ownership")}
     poller.observeNativeInstance(String(repeating:"2",count:32))
     guard try status()["native_request_events"]==nil,try journal.unresolvedCount()==1 else {
         fatalError("Changed native instance left old callback observations visible or released ownership")
