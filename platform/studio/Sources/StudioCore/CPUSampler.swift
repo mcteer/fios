@@ -3,8 +3,12 @@ import Darwin
 
 struct CPUSampler {
     private var previous:([UInt32],Int64)?
+    // A failed sample breaks the interval, not the accepted clock history.
+    private var clockWatermark:Int64=0
     mutating func observe(ticks:[UInt32]?,now:Int64)->Double? {
-        guard let ticks,ticks.count==4,now>=0,now<=ActivityPolicy.maximumTimestamp else { previous=nil;return nil }
+        guard (clockWatermark...ActivityPolicy.maximumTimestamp).contains(now) else {previous=nil;return nil}
+        clockWatermark=now
+        guard let ticks,ticks.count==4 else {previous=nil;return nil}
         defer { previous=(ticks,now) }
         guard let prior=previous,now>prior.1,now-prior.1<=5000 else { return nil }
         let deltas=zip(ticks,prior.0).map { UInt64($0 &- $1) }

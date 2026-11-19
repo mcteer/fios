@@ -7,7 +7,17 @@ func runCPUTests() throws {
     guard sampler.observe(ticks:[20,20,160,0],now:3000)==20 else { fatalError("CPU tick delta incorrect") }
     guard sampler.observe(ticks:[20,20,160,0],now:5000)==nil else { fatalError("Unchanged counter fabricated idle") }
     guard sampler.observe(ticks:[21,21,161,0],now:4000)==nil else { fatalError("Clock rollback accepted") }
+    guard sampler.observe(ticks:[22,22,162,0],now:4500)==nil,
+          sampler.observe(ticks:[23,23,163,0],now:5000)==nil,
+          sampler.observe(ticks:[24,24,164,0],now:5500) != nil else {
+        fatalError("CPU clock rollback reused a pre-catch-up interval")
+    }
     guard sampler.observe(ticks:nil,now:6000)==nil else { fatalError("Missing CPU measurement fabricated idle") }
+    guard sampler.observe(ticks:[25,25,165,0],now:5998)==nil,
+          sampler.observe(ticks:[26,26,166,0],now:5999)==nil,
+          sampler.observe(ticks:[27,27,167,0],now:6000)==nil else {
+        fatalError("Missing CPU sample reset accepted clock watermark")
+    }
     _=sampler.observe(ticks:[100,100,100,0],now:7000)
     guard sampler.observe(ticks:[1,1,1,0],now:8000)==nil else { fatalError("Reset CPU counters accepted as utilization") }
     guard CPUSampler.readTicks()?.count==4 else { fatalError("Native CPU counters unavailable") }
