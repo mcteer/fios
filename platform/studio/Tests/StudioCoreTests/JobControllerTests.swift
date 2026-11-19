@@ -17,13 +17,17 @@ private class FakeSandboxExecutor:SandboxExecuting {
     var resourceFailure=false
     var resourceRequests:[Int64]=[]
     var resourceValues:[VMReadResult]=[]
+    var holdResourceResults=false
     func submitResources(configuration:SandboxConfiguration,id:String,leaseUntil:Int64)throws {
         resourceRequests.append(resourceNow)
         let envelope=VMResourceObservation(runtimeHash:String(repeating:"a",count:64),sampledAt:resourceNow,configuredCap:12<<30,total:16<<30,free:8<<30,allVMConsumersCovered:true)
         let sample=VMKernelSample(sampledAt:resourceNow,total:16<<30,free:8<<30,bootHash:String(repeating:"b",count:64),envelope:envelope)
         resourceValues.append(VMReadResult(job:configuration.job,runtimeID:id,result:resourceFailure ? .failure(.unavailable) : .success(sample)))
     }
-    func drainResources()->[VMReadResult] {let values=resourceValues;resourceValues=[];return values}
+    func drainResources()->[VMReadResult] {
+        guard !holdResourceResults else {return []}
+        let values=resourceValues;resourceValues=[];return values
+    }
     func submit(job:String,command:SandboxCommand) throws {
         if denyStartCapacity,case .start=command {throw AdmissionError.capacity}
         if denyCreateCapacity,case .create=command {throw AdmissionError.capacity}
@@ -390,9 +394,20 @@ func runVMControllerTests() throws {
         try controller.tick(now:now,sample:sample(now),admission:&admission,transportReady:{_ in true},cancelModel:{_ in})
     }
     guard controller.vmAvailable(now:23000)==4<<30 else {fatalError("Expected fresh VM capacity before revocation")}
-    try journal.transitionJob(id:id,to:.revoking,now:23001)
-    try controller.tick(now:23001,sample:sample(23001),admission:&admission,transportReady:{_ in true},cancelModel:{_ in})
-    guard controller.vmAvailable(now:23001)==nil else {fatalError("VM cache survived original target revocation")}
+    runtime.holdResourceResults=true
+    var revocationAt:Int64=23001
+    for now:Int64 in [23500,24000,24500,25000] where runtime.resourceValues.isEmpty {
+        runtime.resourceNow=now
+        try controller.tick(now:now,sample:sample(now),admission:&admission,transportReady:{_ in true},cancelModel:{_ in})
+        revocationAt=now+1
+    }
+    guard runtime.resourceValues.count==1 else {fatalError("No in-flight VM fixture result before revocation")}
+    try journal.transitionJob(id:id,to:.revoking,now:revocationAt)
+    try controller.tick(now:revocationAt,sample:sample(revocationAt),admission:&admission,transportReady:{_ in true},cancelModel:{_ in})
+    guard controller.vmAvailable(now:revocationAt)==nil else {fatalError("VM cache survived original target revocation")}
+    runtime.holdResourceResults=false
+    try controller.tick(now:revocationAt+1,sample:sample(revocationAt+1),admission:&admission,transportReady:{_ in true},cancelModel:{_ in})
+    guard runtime.resourceValues.isEmpty,controller.vmAvailable(now:revocationAt+1)==nil else {fatalError("Late VM result revived revoked capacity")}
     print("PASS: serialized VM coordinator polls owned running targets at2s, publishes only fresh envelopes and immediately invalidates failed/stale resource authority (fake runtime telemetry)")
 }
 
