@@ -17,6 +17,7 @@ function option(flag){const index=args.indexOf(flag);assert.equal(args.filter(va
 const withLineage=option('--lineage'),withBackendFences=option('--backend-fences'),withPrimaryActivity=option('--primary-activity'),withSDKBackground=option('--sdk-background'),withSlowIngress=option('--slow-ingress'),readOnly=option('--read-only'),dynamicObserver=option('--dynamic-observer'),observationOnlyServer=option('--observation-only-server'),withSourceOutage=option('--source-outage');
 assert(!observationOnlyServer||readOnly);
 assert(!dynamicObserver||readOnly);
+assert(!(readOnly&&withLineage),'Read-only observation does not provide the active lineage transport');
 assert(!readOnly||(withBackendFences&&withPrimaryActivity&&withSDKBackground));
 assert(!withSDKBackground||withBackendFences);
 assert(!withSlowIngress||withPrimaryActivity);
