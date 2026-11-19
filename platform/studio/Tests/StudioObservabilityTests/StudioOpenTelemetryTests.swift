@@ -86,8 +86,9 @@ final class StudioOpenTelemetryTests:XCTestCase {
     func testOperationalCountersAndResourceGauges() throws {
         let telemetry=StudioOpenTelemetry()
         telemetry.event(.started);telemetry.event(.desiredChanged);telemetry.event(.desiredChanged)
-        telemetry.resources(ResourceSample(sampledAt:HostResources.nowMilliseconds(),physical:1024,available:512,
-                                           vmAvailable:nil,diskFree:4096,cpu:25,pressure:.normal,thermal:.nominal))
+        let now=HostResources.nowMilliseconds()
+        telemetry.resources(ResourceSample(sampledAt:now,physical:1024,available:512,
+                                           vmAvailable:nil,diskFree:4096,cpu:25,pressure:.normal,thermal:.nominal,cpuSampledAt:now))
         let metrics=telemetry.collectMetrics()
         let events=try XCTUnwrap(metrics.first{$0.name=="fios.platform.events"},"Collected metric names: \(metrics.map(\.name))")
         XCTAssertEqual(events.type,.LongSum)
@@ -104,6 +105,14 @@ final class StudioOpenTelemetryTests:XCTestCase {
                                            vmAvailable:nil,diskFree:4096,cpu:nil,pressure:.unknown,thermal:.nominal))
         let unavailable=telemetry.collectMetrics()
         XCTAssertFalse(unavailable.contains{$0.name=="fios.platform.host.cpu.utilization" && !$0.data.points.isEmpty})
+    }
+    func testUndatedCPUDoesNotBorrowFreshHostTime() {
+        let telemetry=StudioOpenTelemetry(),now=HostResources.nowMilliseconds()
+        telemetry.resources(ResourceSample(sampledAt:now,physical:1024,available:512,
+                                           vmAvailable:nil,diskFree:4096,cpu:25,pressure:.normal,thermal:.nominal))
+        let metrics=telemetry.collectMetrics()
+        XCTAssertFalse(metrics.contains{$0.name.hasPrefix("fios.platform.host.cpu.") && !$0.data.points.isEmpty})
+        XCTAssertTrue(metrics.contains{$0.name=="fios.platform.host.memory.available" && !$0.data.points.isEmpty})
     }
     func testExpiredCPUDoesNotSuppressFreshHostGauges() {
         let telemetry=StudioOpenTelemetry(),now=HostResources.nowMilliseconds()

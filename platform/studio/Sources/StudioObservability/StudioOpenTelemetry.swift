@@ -111,8 +111,7 @@ public final class StudioOpenTelemetry:PlatformTelemetry,@unchecked Sendable {
             if let sample=state.currentSupervisor() {observation.record(value:Double(sample.sampledAt)/1000)}
         }
         let freshCPUTime: @Sendable (ResourceSample)->Int64? = { sample in
-            let stamp=sample.cpuSampledAt ?? sample.sampledAt
-            guard let cpu=sample.cpu,cpu.isFinite,(0...100).contains(cpu),
+            guard let stamp=sample.cpuSampledAt,let cpu=sample.cpu,cpu.isFinite,(0...100).contains(cpu),
                   (0...WireScalar.maximumTimestamp).contains(stamp),
                   (-1000...5000).contains(HostResources.nowMilliseconds()-stamp) else {return nil}
             return stamp
