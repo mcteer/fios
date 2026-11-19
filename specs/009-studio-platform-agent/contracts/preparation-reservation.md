@@ -64,5 +64,11 @@ broker/factory wiring and the reserved atomic-consumer header. Caller-supplied
 reserved headers still refuse before counting or sending a model POST; task
 frames cannot select the preparation identity. Production execution composition
 and the positive all-client source/proof/capacity issuer remain unfinished.
+The narrow original-preparation coherence check requires registry capture to
+follow the lineage request and any declared lineage source capture. Advancing
+sequence numbers cannot repair reversed capture clocks. Explicit queued or
+active operation counts also veto this diagnostic, even if phase ownership
+appears pristine. A legacy omission is not proof of an empty queue and cannot
+supply the independent all-client ceiling.
 These source paths do not authorize enrollment, installation or native activation
 and do not close a whole task;39/55 remains.
