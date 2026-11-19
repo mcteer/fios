@@ -2,7 +2,9 @@ import Foundation
 
 // A normal cancelled worker-start result is terminal output, even when the
 // surrounding owner job has not separately received a cancellation command.
-private func exerciseCompletion(in directory:URL,token:String,expireDuringStart:Bool=false,expireStartWatchdog:Bool=false)throws -> (String,String) {
+private enum CompletionClock {case ordinary,leaseExpiry,watchdog,uptimeRollback}
+
+private func exerciseCompletion(in directory:URL,token:String,clock:CompletionClock = .ordinary)throws -> (String,String) {
     let journal=try Journal(directory:directory),owner=try TaskOwner(token:token,peerUID:geteuid()).hash
     func runningJob(lifetime:Int64=900_000)throws->String {
         let id=UUID().uuidString.lowercased()
@@ -10,14 +12,14 @@ private func exerciseCompletion(in directory:URL,token:String,expireDuringStart:
         try journal.transitionJob(id:id,to:.running,now:5000)
         return id
     }
-    let id=try runningJob(lifetime:expireDuringStart ? 1:900_000),stillRunning=try runningJob()
+    let id=try runningJob(lifetime:clock == .leaseExpiry ? 1:900_000),stillRunning=try runningJob()
     let snapshot=NativeSnapshot(host:"fixture-host",endpointHash:PythonWorkerFactory.digest("http://127.0.0.1:1/v1"),nativeEpoch:"fixture-native",sequence:1,sampledAt:5000,allClientLifecycleCoverage:true,residentModel:"fixture/model",outstandingOwners:0,loading:false)
     let binding=WorkerDispatchBinding(baseURL:"http://127.0.0.1:1/v1",guardPath:"/fixture/unused.sock",host:"fixture-host",profileHash:String(repeating:"f",count:64),managerEpoch:UUID().uuidString.lowercased(),canonicalModel:"fixture/model",nativeModel:"fixture/model",nativeSnapshot:snapshot,nativeCompatibilityAccepted:true,apiKey:nil)
     guard try NativeAdmission.permitsDispatch(binding,now:5000) else {throw JournalError.invalid}
     try journal.claim(job:id,attempt:0,model:binding.canonicalModel,scope:binding.inferenceScope())
     let plan=try journal.planWorkerStart(job:id,attempt:0)
     let broker=ModelBroker(journal:journal)
-    let held=expireDuringStart || expireStartWatchdog
+    let held=clock != .ordinary
     let release=DispatchSemaphore(value:0)
     defer {release.signal()}
     try broker.retainStart(operation:PendingPythonWorker {cancelled in
@@ -31,8 +33,8 @@ private func exerciseCompletion(in directory:URL,token:String,expireDuringStart:
     let sample=ResourceSample(sampledAt:5000,physical:128<<30,available:64<<30,vmAvailable:nil,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal,cpuSampledAt:5000)
     try admission.reserveWorker(key:"model:\(id):0",sample:sample,now:5000)
     let pollTime:Int64=held ? 5001:5000
-    let tick:Int64=expireStartWatchdog ? 15000:pollTime
-    if expireStartWatchdog {
+    let tick:Int64=clock == .watchdog ? 15000:clock == .uptimeRollback ? 4999:pollTime
+    if clock == .watchdog {
         _=try controller.tick(now:pollTime,uptime:tick-1,admission:&admission,source:{_ in binding})
         guard broker.active(job:id),try journal.uncertainCount()==0,
               try journal.jobs().first(where:{$0.id==id})?.state == .running else {fatalError("Worker start was cancelled before its watchdog")}
@@ -47,7 +49,7 @@ private func exerciseCompletion(in directory:URL,token:String,expireDuringStart:
     var interrupted=false
     let deadline=ProcessInfo.processInfo.systemUptime+2
     repeat {
-        let events=try controller.tick(now:pollTime,uptime:tick,admission:&admission,source:{_ in binding})
+        let events=try controller.tick(now:pollTime,uptime:max(pollTime,tick),admission:&admission,source:{_ in binding})
         interrupted = interrupted || (events[id] ?? []).contains {if case .interrupted=$0 {return true};return false}
         if !interrupted {Thread.sleep(forTimeInterval:0.005)}
     }while !interrupted && ProcessInfo.processInfo.systemUptime<deadline
@@ -71,8 +73,9 @@ func runTaskCompletionTests()throws {
     let directory=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer {try? FileManager.default.removeItem(at:directory)}
     let token=TaskOwner.newToken()
-    _=try exerciseCompletion(in:directory.appendingPathComponent("expiry"),token:token,expireDuringStart:true)
-    _=try exerciseCompletion(in:directory.appendingPathComponent("watchdog"),token:token,expireStartWatchdog:true)
+    _=try exerciseCompletion(in:directory.appendingPathComponent("expiry"),token:token,clock:.leaseExpiry)
+    _=try exerciseCompletion(in:directory.appendingPathComponent("watchdog"),token:token,clock:.watchdog)
+    _=try exerciseCompletion(in:directory.appendingPathComponent("rollback"),token:token,clock:.uptimeRollback)
     let (id,stillRunning)=try exerciseCompletion(in:directory,token:token)
     let reopened=try Journal(directory:directory)
     let otherToken=TaskOwner.newToken(),otherID=UUID().uuidString.lowercased()
