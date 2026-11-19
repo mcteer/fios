@@ -6,6 +6,11 @@ struct ModelText:Sendable { let role:String;let content:String }
 // endpoint. Integration must supply reviewed job scopes/native capacity proof
 // and restore all durable reservations before permitting new dispatch.
 final class ModelBroker {
+    static func startWatchdogExpired(uptime:Int64,started:Int64)->Bool {
+        // A nonnegative ordered pair can be subtracted without overflow.
+        guard started>=0,uptime>=started else {return true}
+        return uptime-started>=10000
+    }
     private struct Entry {
         let worker:PrivateWorker
         let attempt:Int
@@ -226,7 +231,7 @@ final class ModelBroker {
             let coherent=current.map{preparationCoverage() == .all_clients && Self.retainsPreparationSource($0,original:pending.binding,now:now)
                 && retainSourceContinuity(job:id,current:$0,original:pending.binding)} ?? false
             if !coherent {fenceSource(job:id,original:pending.binding)}
-            if !pending.revoked && (!lease || !coherent || uptime<pending.started || uptime-pending.started>=10000) {pending.revoked=true;pending.revokeJob=true}
+            if !pending.revoked && (!lease || !coherent || Self.startWatchdogExpired(uptime:uptime,started:pending.started)) {pending.revoked=true;pending.revokeJob=true}
             leasePreparing[id]=pending
             guard let completion=pending.completion else {continue}
             var registered:VerifiedNativePreparationRegistration?
@@ -333,7 +338,7 @@ final class ModelBroker {
                     && retainSourceContinuity(job:id,current:binding,original:pending.binding)
             } ?? false
             if !coherent {fenceSource(job:id,original:pending.binding)}
-            if !pending.revoked && (!lease || !coherent || uptime<pending.started || uptime-pending.started>=10000) {
+            if !pending.revoked && (!lease || !coherent || Self.startWatchdogExpired(uptime:uptime,started:pending.started)) {
                 pending.revoked=true;pending.revokeJob=true
             }
             preparing[id]=pending
@@ -418,7 +423,7 @@ final class ModelBroker {
                     && retainSourceContinuity(job:id,current:binding,original:pending.binding)
             } ?? false
             if !eligible {fenceSource(job:id,original:pending.binding)}
-            if !pending.revoked && (!lease || !eligible || uptime<pending.started || uptime-pending.started>=10000) {
+            if !pending.revoked && (!lease || !eligible || Self.startWatchdogExpired(uptime:uptime,started:pending.started)) {
                 // Retain cancellation before any fallible journal write. The
                 // async result may already contain the original started child.
                 pending.revoked=true;pending.revokeJob=true;pending.operation.cancel()

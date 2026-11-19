@@ -99,6 +99,12 @@ private func exerciseCompletion(in directory:URL,token:String,clock:CompletionCl
             try admission.reserveWorker(key:"third",sample:sample,now:pollTime)
             fatalError("Unknown worker result returned capacity")
         } catch AdmissionError.capacity {}
+        let routes=try completionRoutes(journal:journal,directory:directory)
+        let status=try completionStatus(routes,id:id,token:token)
+        guard status["state"] as? String=="revoking",status["unresolved_managed_requests"] as? Int==1,
+              status["event"]==nil,status["exit_verified"]==nil else {
+            fatalError("Unknown worker result status claimed closure or exposed old output")
+        }
         return (id,stillRunning)
     }
     var interrupted=0
@@ -153,12 +159,21 @@ func runTaskCompletionTests()throws {
             fatalError("Reopen dropped worker timeout custody or replayed output")
         }
     }
+    guard ModelBroker.startWatchdogExpired(uptime:.max,started:.min),
+          ModelBroker.startWatchdogExpired(uptime:.min,started:.max),
+          ModelBroker.startWatchdogExpired(uptime:0,started:-1),
+          !ModelBroker.startWatchdogExpired(uptime:.max,started:Int64.max-9999),
+          ModelBroker.startWatchdogExpired(uptime:.max,started:Int64.max-10000) else {
+        fatalError("Worker startup watchdog did not fail closed at clock boundaries")
+    }
     let unknownState=directory.appendingPathComponent("unknown-result")
     let (unknownID,_)=try exerciseCompletion(in:unknownState,token:token,clock:.unknownResult)
     do {
         let reopened=try Journal(directory:unknownState)
-        guard try reopened.jobs().first(where:{$0.id==unknownID})?.state == .reconciling,
-              try reopened.activeLaunchCount()==1,try reopened.unresolvedCount(job:unknownID)==1 else {
+        let routes=try completionRoutes(journal:reopened,directory:unknownState)
+        let status=try completionStatus(routes,id:unknownID,token:token)
+        guard status["state"] as? String=="reconciling",status["unresolved_managed_requests"] as? Int==1,
+              status["event"]==nil,try reopened.activeLaunchCount()==1,try reopened.unresolvedCount(job:unknownID)==1 else {
             fatalError("Reopen discarded unknown launch custody")
         }
     }
