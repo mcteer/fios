@@ -388,6 +388,15 @@ extension MLXServingProcessRuntime {
                 try workerReturned()
                 guard recordedProbe.capture(recorded).state == .current(identity) else {throw RuntimeError.invalid}
             }
+            let reusedIdentity=ServiceIdentity(pid:identity.pid,start:identity.start==UInt64.max ? identity.start-1:identity.start+1,sha256:identity.sha256)
+            let reusedReceipt=ServiceRecordedLaunch(service:.mlx,id:recorded.id,identity:reusedIdentity,boot:recorded.boot,profileHash:recorded.profileHash)
+            let mismatchedStop=UUID().uuidString.lowercased()
+            do {
+                try runtime.beginStop(id:mismatchedStop,matching:reusedReceipt,deadline:ProcessInfo.processInfo.systemUptime+5)
+                throw JournalError.conflict
+            } catch RuntimeError.capacity {}
+            guard runtime.lookupStop(id:mismatchedStop) == .uncertain,
+                  recordedProbe.capture(recorded).state == .current(identity),!runtime.validationPending else {throw RuntimeError.invalid}
             let stopped=try reserveStop(recorded,at:now==11000 ? 21000:620000)
             guard try completeStop(stopped,at:now==11000 ? 21000:620000) == .localExited else {throw RuntimeError.invalid}
             try workerReturned()
