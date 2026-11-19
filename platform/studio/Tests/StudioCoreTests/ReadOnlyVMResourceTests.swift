@@ -96,6 +96,15 @@ func runReadOnlyVMResourceTests() throws {
     revoked.tick(records:[record],jobs:[job],physical:host.physical,now:1001)
     revoked.tick(records:[],jobs:[job],physical:host.physical,now:1002)
     guard revoked.epoch(now:1002)==nil else {fatalError("VM observation retained a sample after observed target loss")}
+    let lostWork=VMObservationFixture(),lost=ReadOnlyVMResources(work:lostWork)
+    lost.tick(records:[record],jobs:[job],physical:host.physical,now:1000)
+    lost.tick(records:[],jobs:[job],physical:host.physical,now:1001)
+    lostWork.replies=[reply(sample(1002))]
+    lost.tick(records:[record],jobs:[job],physical:host.physical,now:1002)
+    lost.tick(records:[record],jobs:[job],physical:host.physical,now:3000)
+    guard lostWork.requests.count==1,lost.epoch(now:3000)==nil else {
+        fatalError("Restored target resurrected VM work after observed ownership loss")
+    }
     let expiryWork=VMObservationFixture(),expiring=ReadOnlyVMResources(work:expiryWork)
     let expiry=job.lease.expires,edge=expiry-5000
     expiring.tick(records:[record],jobs:[job],physical:host.physical,now:edge)

@@ -83,13 +83,18 @@ final class ReadOnlyVMResources {
         guard (0...WireScalar.maximumTimestamp).contains(now),now>=previous else {fenced=true;latest=nil;return}
         previous=now
         if let latestTarget,!stillOwned(latestTarget,records:records,jobs:jobs,now:now) {latest=nil;self.latestTarget=nil}
+        if let pending,!stillOwned(pending.target,records:records,jobs:jobs,now:now) {
+            // Keep the slot until its exact reply drains; observed ownership
+            // loss cannot be undone by a later matching snapshot.
+            failedTargets.insert(pending.target.id)
+        }
         for result in work.drain() {
             guard let request=pending,result.job==request.target.configuration.job,result.runtimeID==request.target.id else {
                 fenced=true;latest=nil;continue
             }
             pending=nil
             let target=request.target
-            guard !fenced,stillOwned(target,records:records,jobs:jobs,now:now),
+            guard !fenced,!failedTargets.contains(target.id),stillOwned(target,records:records,jobs:jobs,now:now),
                   case .success(let sample)=result.result,sample.sampledAt>=request.submittedAt,
                   sample.validatedEnvelope(physical:physical,now:now) != nil else {
                 failedTargets.insert(target.id);latest=nil;continue
