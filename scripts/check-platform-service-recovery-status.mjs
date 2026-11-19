@@ -86,10 +86,15 @@ try{
  await until(()=>status(['status'])?.service_recovery==='degraded');
  assert.equal(status().launch_pending,true);
  assert.equal(launchState().pending,originalLaunch.pending);assert.deepEqual(launchState().starts,originalLaunch.starts);
+ const turnoverIntent=JSON.parse(run(cli,['--state',state,'service','mlx','maintenance'],3000));
+ assert.equal(turnoverIntent.applied,false);
+ await until(()=>status()?.desired==='maintenance');
+ assert.equal(status().launch_pending,true,'Changing intent erased unresolved launch ownership');
  turnoverManager.kill('SIGTERM');await until(()=>exited(turnoverManager));assert.equal(turnoverManager.exitCode,0);
  turnoverManager=start('manager','known');
  await until(()=>status()?.launch_pending);await delay(2200);
  assert.equal(status(['status']).service_recovery,'configured');
+ assert.equal(status().desired,'maintenance');
  assert.equal(status().launch_pending,true);assert.equal(status().recovery.starts_in_window,1);
  assert.equal(launchState().pending,originalLaunch.pending);assert.deepEqual(launchState().starts,originalLaunch.starts);
  assert.equal(Number(readFileSync(join(state,'calls'),'utf8')),0);
