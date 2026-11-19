@@ -96,7 +96,14 @@ try {
   assert.deepEqual(readFileSync(changedConfig),alteredConfig);
   assert.deepEqual(readFileSync(join(bundle,'configuration/runtime-enrollment.json')),opaque);
   assert.equal(hash(readFileSync(join(bundle,'backup.json'))),receipt.sha256);
-  const final={scope:'isolated_packaged_cli_configuration_backup',manifest_sha256:args[4],source_revision:review.manifest.source_revision,configuration_plan_executed:true,uninstall_proposal_matches:true,backup_sha256:receipt.sha256,network:'denied',failed_journal_retained:true,failed_export_retained:true,tampered_backup_refused_without_publication:true,tampered_configuration_refused_without_publication:true,model_posts:0,installed:false,activation:false,uncertainty:1,exports:1,scratch};
+  assert.equal(JSON.parse(cli(bundle,['verify-backup','--sha256',receipt.sha256])).ok,true);
+  // The unchanged original must still be publishable to the exact path
+  // refused above; verify that failed requests neither reserved it nor
+  // dropped the independent custody and export records from the backup.
+  const recovery=JSON.parse(cli(bundle,['restore-state','--sha256',receipt.sha256,'--to',refused]));
+  assert.equal(recovery.started,false);assert.equal(recovery.installed,false);assert.equal(recovery.activation,false);
+  assert.deepEqual(JSON.parse(run(helper,['check',refused])),{uncertain:1,exports:1});
+  const final={scope:'isolated_packaged_cli_configuration_backup',manifest_sha256:args[4],source_revision:review.manifest.source_revision,configuration_plan_executed:true,uninstall_proposal_matches:true,backup_sha256:receipt.sha256,network:'denied',failed_journal_retained:true,failed_export_retained:true,tampered_backup_refused_without_publication:true,tampered_configuration_refused_without_publication:true,original_restores_after_refusals:true,model_posts:0,installed:false,activation:false,uncertainty:1,exports:1,scratch};
   writeFileSync(join(scratch,'receipt.json'),JSON.stringify(final,null,2)+'\n',{mode:0o600});
   console.log(JSON.stringify(final));
 } catch(error) {
