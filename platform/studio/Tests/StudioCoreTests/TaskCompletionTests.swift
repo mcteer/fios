@@ -80,9 +80,17 @@ func runTaskCompletionTests()throws {
     let directory=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer {try? FileManager.default.removeItem(at:directory)}
     let token=TaskOwner.newToken()
-    _=try exerciseCompletion(in:directory.appendingPathComponent("expiry"),token:token,clock:.leaseExpiry)
-    _=try exerciseCompletion(in:directory.appendingPathComponent("watchdog"),token:token,clock:.watchdog)
-    _=try exerciseCompletion(in:directory.appendingPathComponent("rollback"),token:token,clock:.uptimeRollback)
+    for (name,clock):(String,CompletionClock) in [("expiry",.leaseExpiry),("watchdog",.watchdog),("rollback",.uptimeRollback)] {
+        let privateState=directory.appendingPathComponent(name)
+        let (job,_)=try exerciseCompletion(in:privateState,token:token,clock:clock)
+        let reopened=try Journal(directory:privateState)
+        let routes=try completionRoutes(journal:reopened,directory:privateState)
+        let status=try completionStatus(routes,id:job,token:token)
+        guard status["state"] as? String=="removed",status["unresolved_managed_requests"] as? Int==1,
+              status["event"]==nil,try reopened.requestCount(job:job)==1 else {
+            fatalError("Reopen dropped worker timeout custody or replayed output")
+        }
+    }
     let (id,stillRunning)=try exerciseCompletion(in:directory,token:token)
     let reopened=try Journal(directory:directory)
     let otherToken=TaskOwner.newToken(),otherID=UUID().uuidString.lowercased()
