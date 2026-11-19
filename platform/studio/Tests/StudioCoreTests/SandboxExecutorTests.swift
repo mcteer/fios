@@ -90,5 +90,27 @@ func runSandboxExecutorTests() throws {
     var absence:[SandboxExecution]=[]
     while absence.isEmpty && ProcessInfo.processInfo.systemUptime<absenceDeadline {absence=absenceExecutor.drain();Thread.sleep(forTimeInterval:0.001)}
     guard absence.count==1,reader.absenceProofs==[id] else {fatalError("Exact-ID absence proof did not release resource fence")}
+    let directory=FileManager.default.temporaryDirectory.appendingPathComponent("fios-exit-proof-"+a)
+    try FileManager.default.createDirectory(at:directory,withIntermediateDirectories:false,attributes:[.posixPermissions:0o700])
+    defer {try? FileManager.default.removeItem(at:directory)}
+    for (stamp,expected):(String,Int?) in [("0001-01-01T00:00:00Z",nil),("2024-01-01T00:00:00.000000001Z",0)] {
+        let inspect:[[String:Any]]=[["Id":id,"Name":"/"+config.name,"Image":image,
+            "Config":["Labels":["fios.platform.job":a,"fios.platform.nonce":config.nonce]],
+            "State":["Running":false,"ExitCode":0,"OOMKilled":false,"FinishedAt":stamp]]]
+        let json=String(decoding:try JSONSerialization.data(withJSONObject:inspect),as:UTF8.self)
+        let cli=directory.appendingPathComponent("mock-runtime")
+        let script=Data("#!/bin/sh\ncase \"$3\" in container) printf '%s\\n' '\(id)';; inspect) printf '%s' '\(json)';; *) exit 1;; esac\n".utf8)
+        try script.write(to:cli)
+        try FileManager.default.setAttributes([.posixPermissions:0o700],ofItemAtPath:cli.path)
+        let digest=SHA256.hash(data:script).map{String(format:"%02x",$0)}.joined()
+        let mock=try DockerRuntime(executable:VerifiedExecutable(path:cli.path,sha256:digest),socket:"/fixture/not-a-runtime.sock")
+        let subject=try SandboxExecutor(runtime:mock,allowedImages:[image])
+        try subject.submit(job:a,command:.inspect(config,id))
+        let end=ProcessInfo.processInfo.systemUptime+3
+        var replies:[SandboxExecution]=[]
+        while replies.isEmpty && ProcessInfo.processInfo.systemUptime<end {replies=subject.drain();Thread.sleep(forTimeInterval:0.001)}
+        guard replies.count==1,case .success(.observed(.present(let exactID,_,_,_,false),let proof,false))=replies[0].result,
+              exactID==id,proof==expected else {fatalError("Mock runtime inspect confused stopped presence and exit proof")}
+    }
     print("PASS: fixed asynchronous runtime executor, combined two-slot lifecycle/VM budget, disjoint once-only result channels, immutable images and CLI failure is not absence (no Docker daemon)")
 }
