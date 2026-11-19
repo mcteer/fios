@@ -55,6 +55,14 @@ func runNativeRequestEventPollingTests()throws {
         }
         throw NativeControlError.deadline
     }
+    let staleSource=NormalRequestEventSource(peer:peer,enabled:true),stalePoller=NativeLineagePoller(journal:journal,source:staleSource)
+    stalePoller.observeNativeInstance(scope.nativeEpoch)
+    try poll(stalePoller,between:{
+        stalePoller.nativeSourceUnavailable()
+        stalePoller.observeNativeInstance(scope.nativeEpoch)
+    })
+    guard try journal.originalNativeRoot(job:job,attempt:0,scope:scope,peer:peer)==nil,
+          try journal.unresolvedCount()==1 else {fatalError("Stale in-flight lineage established a durable root after source outage")}
     let source=NormalRequestEventSource(peer:peer,enabled:true,replayAfterOutage:true,rewindLineage:true),poller=NativeLineagePoller(journal:journal,source:source)
     let tasks=TaskController(journal:journal,broker:ModelBroker(journal:journal))
     let jobs=JobController(journal:journal,executor:UnavailableSandboxRuntime())

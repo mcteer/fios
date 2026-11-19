@@ -20,7 +20,7 @@ final class NativeLineagePoller:@unchecked Sendable {
         let request:NativeLineageRequest
         let sample:NativeRequestLineageSample?
         let events:NativeRequestEventsSample?
-        let eventSourceGeneration:UUID
+        let sourceGeneration:UUID
     }
     private struct Key:Hashable {let job:String;let attempt:Int}
     private struct EventRecord {let request:NativeLineageRequest;let sample:NativeRequestEventsSample;let lineage:NativeRequestLineageSample?}
@@ -33,7 +33,7 @@ final class NativeLineagePoller:@unchecked Sendable {
     private var lastPolled:Key?
     private var observedInstance:String?
     private var sourceUnavailable=false
-    private var eventSourceGeneration=UUID()
+    private var sourceGeneration=UUID()
     // Current diagnostics only; deliberately absent from journal checkpoints.
     private var eventSamples:[Key:EventRecord]=[:]
     private var eventWatermarks:[Key:(sequence:UInt64,capturedAt:Int64)]=[:]
@@ -48,11 +48,11 @@ final class NativeLineagePoller:@unchecked Sendable {
         sourceUnavailable=false
         guard instance != observedInstance else {return}
         observedInstance=instance
-        eventSourceGeneration=UUID()
+        sourceGeneration=UUID()
         eventSamples=eventSamples.filter {$0.value.request.scope.nativeEpoch==instance}
     }
     func nativeSourceUnavailable() {
-        if !sourceUnavailable {eventSourceGeneration=UUID()}
+        if !sourceUnavailable {sourceGeneration=UUID()}
         sourceUnavailable=true
         eventSamples.removeAll()
     }
@@ -78,7 +78,7 @@ final class NativeLineagePoller:@unchecked Sendable {
         guard !busy,reply==nil else {lock.unlock();return false}
         busy=true;lock.unlock()
         lastPolled=Key(job:request.job,attempt:request.attempt)
-        let generation=eventSourceGeneration
+        let generation=sourceGeneration
         Thread.detachNewThread { [self] in
             let sample=try? source.lineage(instance:request.scope.nativeEpoch,correlationID:correlation)
             let root=originalRoot ?? sample.flatMap {$0.lineage.found ? $0.lineage.rootSequence:nil}
@@ -86,7 +86,7 @@ final class NativeLineagePoller:@unchecked Sendable {
             if collectEvents,let root,let eventSource {
                 events=try? eventSource.requestEvents(instance:request.scope.nativeEpoch,correlationID:correlation,rootSequence:root)
             }else {events=nil}
-            lock.lock();reply=Reply(request:request,sample:sample,events:events,eventSourceGeneration:generation);busy=false;lock.unlock()
+            lock.lock();reply=Reply(request:request,sample:sample,events:events,sourceGeneration:generation);busy=false;lock.unlock()
         }
         return true
     }
@@ -94,6 +94,10 @@ final class NativeLineagePoller:@unchecked Sendable {
         lock.lock();let completed=reply;reply=nil;lock.unlock()
         guard let completed else {return false}
         let request=completed.request
+        // A source outage or epoch transition fences the entire reply, not just
+        // its callback view. A late lineage sample must not bind a durable root.
+        guard completed.sourceGeneration==sourceGeneration,!sourceUnavailable,
+              observedInstance==nil || observedInstance==request.scope.nativeEpoch else {return true}
         let key=Key(job:request.job,attempt:request.attempt)
         eventSamples.removeValue(forKey:key)
         // Normal completion/pruning can happen while the readonly call runs.
@@ -104,7 +108,7 @@ final class NativeLineagePoller:@unchecked Sendable {
         let observation=try journal.observeLineage(job:request.job,attempt:request.attempt,scope:request.scope,
             peer:peer,sample:completed.sample,now:now,minimumSourceCapture:lineageClockWatermarks[key])
         if case .live(let value)=observation,let captured=value.sourceCapturedAt {lineageClockWatermarks[key]=captured}
-        if completed.eventSourceGeneration==eventSourceGeneration,let sample=completed.events {
+        if let sample=completed.events {
             if let accepted=eventWatermarks[key],
                sample.events.sampleSequence<=accepted.sequence || sample.events.sampledAt<accepted.capturedAt {return true}
             let lineage:NativeRequestLineageSample?
