@@ -4,6 +4,9 @@ import CoreFoundation
 
 public enum SupervisorStatus {
     public static func read(directory:URL,expectedExecutable:String) throws -> [String:Any] {
+        try read(directory:directory,expectedExecutable:expectedExecutable,now:{Int64(ProcessInfo.processInfo.systemUptime*1000)})
+    }
+    static func read(directory:URL,expectedExecutable:String,now:()->Int64) throws -> [String:Any] {
         let path=directory.appendingPathComponent("supervisor.json").path
         let fd=open(path,O_RDONLY|O_NOFOLLOW|O_CLOEXEC|O_NONBLOCK)
         guard fd>=0 else { throw ControlError.busy };defer { close(fd) }
@@ -26,11 +29,14 @@ public enum SupervisorStatus {
             guard let number=value[key] as? NSNumber,CFGetTypeID(number) != CFBooleanGetTypeID(),
                   !["d","f"].contains(String(cString:number.objCType)) else { return nil };return number.int64Value
         }
-        let now=Int64(ProcessInfo.processInfo.systemUptime*1000)
+        let started=now()
+        func fresh(_ stamp:Int64,at time:Int64)->Bool {
+            (0...ActivityPolicy.maximumTimestamp).contains(stamp) && (0...ActivityPolicy.maximumTimestamp).contains(time)
+                && (-1000...5000).contains(time-stamp)
+        }
         guard integer("version")==1,value["boot"] as? String == (try HostBoot.identity()),
               let pid=integer("pid"),pid>1,pid<=Int32.max,
-              let birth=integer("process_start"),birth>0,try WorkerResources.startIdentifier(pid:Int32(pid))==UInt64(birth),let time=integer("sampled_uptime_ms"),time>=0,
-              (-1000...5000).contains(now-time),let starts=integer("starts"),(0...3).contains(starts),
+              let birth=integer("process_start"),birth>0,try WorkerResources.startIdentifier(pid:Int32(pid))==UInt64(birth),let time=integer("sampled_uptime_ms"),fresh(time,at:started),let starts=integer("starts"),(0...3).contains(starts),
               let state=value["state"] as? String,["starting","running","recovering","degraded"].contains(state) else { throw ControlError.busy }
         var executable=[UInt8](repeating:0,count:4096)
         let size=executable.withUnsafeMutableBytes { proc_pidpath(Int32(pid),$0.baseAddress,UInt32($0.count)) }
@@ -41,6 +47,8 @@ public enum SupervisorStatus {
         guard let expectedPath=realpath(expectedExecutable,nil) else { throw ControlError.unauthorized }
         defer { free(expectedPath) }
         guard strcmp(actualPath,expectedPath)==0 else { throw ControlError.unauthorized }
+        let completed=now()
+        guard completed>=started,fresh(time,at:completed),ProcessInfo.processInfo.systemUptime<deadline else {throw ControlError.busy}
         return ["version":1,"ok":true,"supervisor":value]
     }
 }

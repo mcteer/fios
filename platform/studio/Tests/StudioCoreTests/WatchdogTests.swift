@@ -82,5 +82,20 @@ func runWatchdogTests() throws {
     guard mkfifo(status.path,0o600)==0 else {throw RuntimeError.launch}
     do {_=try SupervisorStatus.read(directory:directory,expectedExecutable:"/bin/false");fatalError("Nonregular supervisor status admitted")}
     catch ControlError.unauthorized {}
+    try FileManager.default.removeItem(at:status)
+    let record:[String:Any]=["version":1,"boot":try HostBoot.identity(),"pid":getpid(),
+        "process_start":try WorkerResources.startIdentifier(pid:getpid()),"state":"running","starts":1,"sampled_uptime_ms":10000]
+    try JSONSerialization.data(withJSONObject:record).write(to:status)
+    guard chmod(status.path,0o600)==0 else {throw RuntimeError.launch}
+    let expected=ProcessInfo.processInfo.arguments[0]
+    for accepted:Int64 in [9000,15000] {
+        expect(try SupervisorStatus.read(directory:directory,expectedExecutable:expected,now:{accepted})["ok"] as? Bool == true)
+    }
+    for samples:[Int64] in [[8999,9000],[15001,15001],[15000,15001],[11000,10999],[11000,.max]] {
+        var readings=samples
+        do {_=try SupervisorStatus.read(directory:directory,expectedExecutable:expected,now:{readings.removeFirst()})
+            fatalError("Supervisor status published outside its original clock window")
+        } catch ControlError.busy {}
+    }
     print("PASS: watchdog restart, hang, reap fence, durable-budget and clock tests")
 }
