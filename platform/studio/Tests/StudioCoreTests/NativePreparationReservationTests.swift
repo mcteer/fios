@@ -191,6 +191,20 @@ private func runPreparationPlanBindingTests(peer:NativeControlPeer)throws {
     guard try journal.observeRetirement(job:job,attempt:0,scope:scope,peer:peer,sample:nil,now:now)==nil,
           try journal.preparationBindingCheckpoint(plan:plan,peer:peer,root:UInt64.max) != beforeRetirement,
           try journal.unresolvedCount()==2 else {fatalError("Unknown retirement did not invalidate captured binding or changed inference custody")}
+    let beforeRefusal=try journal.preparationBindingCheckpoint(plan:plan,peer:peer,root:UInt64.max)
+    do {
+        var writer:OpaquePointer?
+        guard sqlite3_open_v2(directory.appendingPathComponent("state.sqlite").path,&writer,SQLITE_OPEN_READWRITE,nil)==SQLITE_OK,let writer else {throw JournalError.storage}
+        defer {sqlite3_exec(writer,"ROLLBACK",nil,nil,nil);sqlite3_close(writer)}
+        guard sqlite3_exec(writer,"BEGIN IMMEDIATE",nil,nil,nil)==SQLITE_OK else {throw JournalError.storage}
+        do {
+            _=try journal.observeRetirement(job:job,attempt:0,scope:scope,peer:peer,sample:nil,now:now)
+            fatalError("Contended retirement checkpoint unexpectedly persisted")
+        } catch JournalError.storage {}
+    }
+    let afterRefusal=try journal.preparationBindingCheckpoint(plan:plan,peer:peer,root:UInt64.max)
+    guard afterRefusal != beforeRefusal,afterRefusal.lineage==beforeRefusal.lineage,
+          try journal.unresolvedCount()==2 else {fatalError("Failed observation write retained old local lease binding or changed durable custody")}
     _=try journal.observeLineage(job:job,attempt:0,scope:scope,peer:peer,sample:nil,now:now)
     do{try binding.validate(plan:plan,scope:scope,journal:journal,now:now);fatalError("Unknown lineage poll retained launch binding")}catch RuntimeError.identity {}
     try journal.markUncertain(job:job,attempt:0)

@@ -512,9 +512,11 @@ public final class Journal {
     }
     private func persistNativeObservation(_ consumer:NativeRequestLineageConsumer,job:String,attempt:Int,scope:InferenceScope)throws {
         guard lineageObservationRevision<UInt64.max else {throw JournalError.trackingLimit}
+        // Revoke previously captured local bindings even if this write is
+        // refused. The durable root and unresolved claims are independent.
+        lineageObservationRevision+=1
         let payload=String(decoding:try consumer.checkpoint(scope:scope),as:UTF8.self)
         try execute("INSERT INTO native_lineages(job,attempt,payload) VALUES(?,?,?) ON CONFLICT(job,attempt) DO UPDATE SET payload=excluded.payload",[job,String(attempt),payload])
-        lineageObservationRevision+=1
     }
     // Preserve an authenticated registration even if its subsequent lineage
     // lookup fails. This cannot resolve ownership or issue worker permission.
@@ -553,11 +555,11 @@ public final class Journal {
         return consumer.fenced ? nil:consumer.rootSequence
     }
     // A local revocation stamp, never source liveness or dispatch authority.
-    // Any committed lineage or retirement poll, even unknown at the same timestamp,
+    // Any attempted lineage or retirement checkpoint write, even unknown at the same timestamp,
     // conservatively revokes captured bindings. Reopen cannot restore them.
     // Changed inference state or launch withdrawal also refuses.
     func preparationBindingCheckpoint(plan:PlannedWorkerStart,peer:NativeControlPeer,root:UInt64)throws->PreparationBindingCheckpoint {
-        guard let record=try inferenceScope(job:plan.job,attempt:plan.attempt),record.state == .dispatched,
+        guard lineageObservationRevision<UInt64.max,let record=try inferenceScope(job:plan.job,attempt:plan.attempt),record.state == .dispatched,
               try record.scope.encoded()==plan.scope.encoded(),
               try activeLaunches().contains(where:{$0.job==plan.job && $0.attempt==plan.attempt && $0.nonce==plan.nonce}),
               try originalNativeRoot(job:plan.job,attempt:plan.attempt,scope:plan.scope,peer:peer)==root,
