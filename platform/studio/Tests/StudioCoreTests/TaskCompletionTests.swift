@@ -3,7 +3,7 @@ import CSQLite
 
 // A normal cancelled worker-start result is terminal output, even when the
 // surrounding owner job has not separately received a cancellation command.
-private enum CompletionClock {case ordinary,leaseExpiry,watchdog,uptimeRollback,acknowledgementBlocked}
+private enum CompletionClock {case ordinary,leaseExpiry,watchdog,uptimeRollback,acknowledgementBlocked,unknownResult}
 
 private func exerciseCompletion(in directory:URL,token:String,clock:CompletionClock = .ordinary)throws -> (String,String) {
     let journal=try Journal(directory:directory),owner=try TaskOwner(token:token,peerUID:geteuid()).hash
@@ -20,10 +20,11 @@ private func exerciseCompletion(in directory:URL,token:String,clock:CompletionCl
     try journal.claim(job:id,attempt:0,model:binding.canonicalModel,scope:binding.inferenceScope())
     let plan=try journal.planWorkerStart(job:id,attempt:0)
     let broker=ModelBroker(journal:journal)
-    let held=clock != .ordinary
+    let held=clock != .ordinary && clock != .unknownResult
     let release=DispatchSemaphore(value:0)
     defer {release.signal()}
     try broker.retainStart(operation:PendingPythonWorker {cancelled in
+        if clock == .unknownResult {return .failure(.unavailable)}
         if held {
             guard release.wait(timeout:.now()+3) == .success,cancelled() else {return .failure(.unavailable)}
         }
@@ -78,6 +79,28 @@ private func exerciseCompletion(in directory:URL,token:String,clock:CompletionCl
             } catch AdmissionError.capacity {}
         } else {release.signal()}
     }
+    if clock == .unknownResult {
+        let deadline=ProcessInfo.processInfo.systemUptime+2
+        var failed=false
+        while !failed && ProcessInfo.processInfo.systemUptime<deadline {
+            let events=try controller.tick(now:pollTime,uptime:tick,admission:&admission,source:{_ in binding})
+            failed=(events[id] ?? []).contains {if case .failed(code:"internal_error")=$0 {return true};return false}
+            if !failed {Thread.sleep(forTimeInterval:0.005)}
+        }
+        let followUp=try controller.tick(now:pollTime+1,uptime:tick+1,admission:&admission,source:{_ in binding})
+        guard failed,followUp[id]?.isEmpty ?? true,!broker.active(job:id),broker.hasUnresolvedLaunch,
+              try journal.jobs().first(where:{$0.id==id})?.state == .revoking,
+              try journal.activeLaunchCount()==1,try journal.uncertainCount()==1,
+              try journal.requestCount(job:id)==1,try journal.workerGrants().isEmpty else {
+            fatalError("Unknown worker result became proof of absence or replayed output")
+        }
+        try admission.reserveWorker(key:"unrelated",sample:sample,now:pollTime)
+        do {
+            try admission.reserveWorker(key:"third",sample:sample,now:pollTime)
+            fatalError("Unknown worker result returned capacity")
+        } catch AdmissionError.capacity {}
+        return (id,stillRunning)
+    }
     var interrupted=0
     let deadline=ProcessInfo.processInfo.systemUptime+2
     repeat {
@@ -128,6 +151,15 @@ func runTaskCompletionTests()throws {
         guard status["state"] as? String=="removed",status["unresolved_managed_requests"] as? Int==1,
               status["event"]==nil,try reopened.requestCount(job:job)==1 else {
             fatalError("Reopen dropped worker timeout custody or replayed output")
+        }
+    }
+    let unknownState=directory.appendingPathComponent("unknown-result")
+    let (unknownID,_)=try exerciseCompletion(in:unknownState,token:token,clock:.unknownResult)
+    do {
+        let reopened=try Journal(directory:unknownState)
+        guard try reopened.jobs().first(where:{$0.id==unknownID})?.state == .reconciling,
+              try reopened.activeLaunchCount()==1,try reopened.unresolvedCount(job:unknownID)==1 else {
+            fatalError("Reopen discarded unknown launch custody")
         }
     }
     let (id,stillRunning)=try exerciseCompletion(in:directory,token:token)
