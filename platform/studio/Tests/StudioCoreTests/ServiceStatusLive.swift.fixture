@@ -4,6 +4,14 @@ import CryptoKit
 
 // Ordinary status integration only. Observations are synthetic metadata;
 // no session/native recovery adapter or lifecycle operation is configured.
+private struct ForbiddenHeldRecovery:ServiceRecoverySending {
+    var applicationHashes:[ManagedService:String] {Dictionary(uniqueKeysWithValues:ManagedService.allCases.map{($0,String(repeating:"a",count:64))})}
+    var recoveryProfileHash:String {String(repeating:"a",count:64)}
+    func supportsRecovery(for service:ManagedService)->Bool {true}
+    func accepts(_ command:ServiceLaunchCommand)->Bool {true}
+    func request(_ request:ServiceRecoveryRequest)throws->SessionLaunchResult {fatalError("Migration hold allowed a service request")}
+}
+
 @main struct ServiceStatusLive {
     static func main() throws {
         let args=CommandLine.arguments
@@ -38,6 +46,11 @@ import CryptoKit
             return
         }
         let cache=ServiceObservationCache(),now=HostResources.nowMilliseconds()
+        let state=URL(fileURLWithPath:args[1]),held=args[2]=="held"
+        if held {
+            try FileManager.default.createDirectory(at:state,withIntermediateDirectories:false,attributes:[.posixPermissions:0o700])
+            try AtomicState.write(Data("{}".utf8),to:state.appendingPathComponent("migration-hold.json"))
+        }
         var mlxHealth:ServiceHealthCollector?,orbstackHealth:ServiceHealthCollector?
         for service in ManagedService.allCases {
             let identity=ServiceIdentity(pid:42,start:1,sha256:String(repeating:"a",count:64))
@@ -46,7 +59,7 @@ import CryptoKit
             case "unknown":sample=nil
             case "waiting_session":sample=ServiceObservation(identity:nil,responding:false,sessionReady:false,credentialsReady:true,nativeIdle:nil,runtimeUnmanaged:nil,sampledAt:now)
             case "waiting_credentials":sample=ServiceObservation(identity:nil,responding:false,sessionReady:true,credentialsReady:false,nativeIdle:nil,runtimeUnmanaged:nil,sampledAt:now)
-            case "stopped":sample=ServiceObservation(identity:nil,responding:false,sessionReady:true,credentialsReady:true,nativeIdle:nil,runtimeUnmanaged:nil,sampledAt:now)
+            case "stopped","held":sample=ServiceObservation(identity:nil,responding:false,sessionReady:true,credentialsReady:true,nativeIdle:nil,runtimeUnmanaged:nil,sampledAt:now)
             case "ready":sample=ServiceObservation(identity:identity,responding:true,sessionReady:true,credentialsReady:true,nativeIdle:nil,runtimeUnmanaged:nil,sampledAt:now)
             case "mixed","loading":sample=nil
             case "degraded":sample=ServiceObservation(identity:identity,responding:false,sessionReady:true,credentialsReady:true,nativeIdle:nil,runtimeUnmanaged:nil,sampledAt:now)
@@ -62,6 +75,6 @@ import CryptoKit
             }
             cache.publish(sample,for:service)
         }
-        try ManagerRuntime.run(directory:URL(fileURLWithPath:args[1]),nativeControl:nil,serviceObservations:cache,serviceHealth:mlxHealth,serviceHealthReadiness:{(true,true)},orbstackHealth:orbstackHealth,orbstackHealthReadiness:{(true,true)})
+        try ManagerRuntime.run(directory:state,nativeControl:nil,serviceObservations:cache,serviceHealth:mlxHealth,serviceHealthReadiness:{(true,true)},orbstackHealth:orbstackHealth,orbstackHealthReadiness:{(true,true)},serviceControl:held ? ForbiddenHeldRecovery():nil)
     }
 }

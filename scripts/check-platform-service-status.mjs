@@ -27,14 +27,16 @@ const status=(state,args=['status'])=>{
  return result.status===0 ? JSON.parse(result.stdout):null;
 };
 const messages={unknown:'Service status is unavailable.',starting:'Service is loading.',waiting_session:'Waiting for a user session.',waiting_credentials:'Waiting for service credentials.',stopped:'Service is stopped; running is requested.',ready:'Service is running.',degraded:'Service is present but not responding.'};
-const expected=(mode,service)=>mode==='unconfigured'?'unknown':mode==='loading' ? (service==='mlx'?'starting':'ready'):mode==='mixed' ? (service==='mlx'?'ready':'degraded'):mode;
+const expected=(mode,service)=>mode==='held'?'stopped':mode==='unconfigured'?'unknown':mode==='loading' ? (service==='mlx'?'starting':'ready'):mode==='mixed' ? (service==='mlx'?'ready':'degraded'):mode;
 let child;
 try{
- for(const mode of ['unconfigured','unknown','waiting_session','waiting_credentials','stopped','ready','degraded','mixed','loading']){
+ for(const mode of ['unconfigured','unknown','waiting_session','waiting_credentials','stopped','ready','degraded','mixed','loading','held']){
   const state=join(directory,mode);
   child=spawn('/usr/bin/sandbox-exec',['-f',profile,binary,state,mode],{cwd:root,env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C',HOME:'/var/empty'},stdio:'ignore'});
   await until(()=>{assert(!exited(child),'Status manager exited early');const observed=status(state);return observed&&['mlx','orbstack'].every(service=>observed.services[service].observed===expected(mode,service))&&(mode!=='unconfigured'||['native_health_source','orbstack_health_source','vm_resource_source'].every(key=>observed[key]==='unconfigured'));});
   const combined=status(state);
+  assert.equal(combined.migration_maintenance,mode==='held');
+  if(mode==='held')assert.equal(combined.service_recovery,'disabled');
   if(mode==='unconfigured'){
    assert.equal(combined.native_health_source,'unconfigured');assert.equal(combined.orbstack_health_source,'unconfigured');
    assert.equal(combined.vm_resource_source,'unconfigured');
@@ -85,7 +87,7 @@ try{
  assert.equal(reopened.runtime_cleanup.pending_sandboxes,1);
  assert.equal(reopened.runtime_cleanup.waiting_over_60s,false);
  child.kill('SIGTERM');await until(()=>exited(child));assert.equal(child.exitCode,0);child=null;
- console.log(JSON.stringify({ok:true,states:9,service_views:18,aged_service_views:2,storage_continuity_refusal:1,storage_custody_survived_restart:true,native_actions:0,review_directory:directory}));
+ console.log(JSON.stringify({ok:true,states:10,service_views:20,aged_service_views:2,storage_continuity_refusal:1,storage_custody_survived_restart:true,native_actions:0,review_directory:directory}));
 }finally{
  if(child&&!exited(child)){child.kill('SIGTERM');try{await until(()=>exited(child),3000);}catch{child.kill('SIGKILL');await until(()=>exited(child),3000);}}
  // Retain the private development states; no database cleanup or native work.
