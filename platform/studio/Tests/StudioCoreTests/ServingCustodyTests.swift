@@ -96,6 +96,16 @@ func runServingCustodyTests()throws {
     let changed=ServiceRecordedLaunch(service:.mlx,id:UUID().uuidString.lowercased(),identity:receipt.identity,boot:receipt.boot,profileHash:profile)
     do {_=try gate.handle(packet(.lookupStop,id:stopped.id,instance:gate.instance,receipt:changed),peer:peer,uid:geteuid());fatalError("Stop scope changed under original ID")}
     catch ControlError.invalid_request {}
+    let reusedPID=ServiceIdentity(pid:receipt.identity.pid,start:receipt.identity.start-1,sha256:receipt.identity.sha256)
+    let substituted=ServiceRecordedLaunch(service:.mlx,id:receipt.id,identity:reusedPID,boot:receipt.boot,profileHash:profile)
+    for operation:ServingCustodyOperation in [.stop,.lookupStop] {
+        do {
+            _=try gate.handle(packet(operation,id:stopped.id,instance:gate.instance,receipt:substituted),peer:peer,uid:geteuid())
+            fatalError("Reused PID under the original launch receipt was accepted")
+        } catch ControlError.invalid_request {}
+    }
+    guard try gate.handle(packet(.lookupStop,id:stopped.id,instance:gate.instance,receipt:receipt),peer:peer,uid:geteuid()) == .stop(.localExited),
+          fake.stops==1 else {fatalError("Substitution mutated the original stop receipt")}
     let cold=try ServingCustodyGate(runtime:fake,manager:executable,imageSHA256:hash);try cold.bindManager(peer)
     guard try cold.handle(packet(.lookupStop,id:stopped.id,instance:cold.instance,receipt:receipt),peer:peer,uid:geteuid()) == .stop(.uncertain),fake.stops==1 else {fatalError("Cold custody cache fabricated history")}
     let directory=URL(fileURLWithPath:"/private/tmp/f9-custody-"+UUID().uuidString.lowercased())
