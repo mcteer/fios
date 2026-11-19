@@ -320,13 +320,16 @@ public enum ManagerRuntime {
                         response["capabilities"]=["local_status","resources","desired_state","owner_task_status","owner_artifact_streams"]
                         response["service_recovery"]=serviceTransportStatus.summary(configured:serviceQueue != nil || servingStopQueue != nil)
                         var serviceStates:[String:Any]=[:]
+                        // Session/process checks and journal reads can take
+                        // time. Do not project health using pre-check age.
+                        let statusAt=timestamp()
                         let serviceStatusTick=Int64(ProcessInfo.processInfo.systemUptime*1000)
                         for service in ManagedService.allCases {
                             let desired=try journal.desired(service:service.rawValue)
                             guard let typed=ServiceDesired(rawValue:desired) else {throw ControlError.invalid_request}
                             // Missing/failed observation remains unknown, not
                             // absence, credential readiness or native authority.
-                            var details=ServiceStatusPolicy.summary(desired:typed,observation:approvedServiceObservation(service),launchPending:serviceRecovery?.isPending(service) ?? false,now:requestedAt,
+                            var details=ServiceStatusPolicy.summary(desired:typed,observation:approvedServiceObservation(service),launchPending:serviceRecovery?.isPending(service) ?? false,now:statusAt,
                                 restartWaiting:serviceRecovery?.isWaitingForRestartWindow(service:service,tick:serviceStatusTick) ?? false)
                             details["stop_pending"]=service == .mlx && (serviceRecovery?.isStopPending() ?? false)
                             if let recovery=serviceRecovery {
@@ -347,13 +350,13 @@ public enum ManagerRuntime {
                         response["native_admissions"]="unsupported"
                         response["native_ingress_admissions"]=nativeQueue == nil ? "unconfigured":nativeMaintenance.phase.rawValue
                         if nativeObserverConfigured {response["native_control_mode"]="observation_only"}
-                        response["native_control"]=nativeDiagnostics.summary(now:requestedAt)
+                        response["native_control"]=nativeDiagnostics.summary(now:statusAt)
                         response["migration_maintenance"]=migrationHeld
                         response["native_activity"]=nativeCoverage.rawValue
                         response["sandbox_admission"]=activeExecution == nil ? "disabled":"configured"
                         response["artifact_bytes"]=artifacts.statistics.bytes
                         response["artifact_jobs"]=artifacts.statistics.jobs
-                        response["runtime_cleanup"]=jobs.cleanupStatus(now:requestedAt)
+                        response["runtime_cleanup"]=jobs.cleanupStatus(now:statusAt)
                     case .resources:
                         guard request.payload.isEmpty else { throw ControlError.invalid_request }
                         let telemetry=try ResourceObservationExport.encode(sample:requestResources,gpu:gpuSample,gpuSampledAt:gpuSampledAt,
