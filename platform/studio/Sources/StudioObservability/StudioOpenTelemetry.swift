@@ -128,17 +128,25 @@ public final class StudioOpenTelemetry:PlatformTelemetry,@unchecked Sendable {
                   (-1000...5000).contains(HostResources.nowMilliseconds()-stamp) else {return nil}
             return stamp
         }
+        let boundedBytes: @Sendable (UInt64)->Double? = { bytes in
+            bytes<=UInt64(WireScalar.maximumTimestamp) ? Double(bytes):nil
+        }
+        let boundedPhysical: @Sendable (ResourceSample)->Double? = { sample in
+            sample.physical>0 ? boundedBytes(sample.physical):nil
+        }
         let freshVMTime: @Sendable (ResourceSample)->Int64? = { sample in
             guard let time=sample.vmSampledAt,(0...WireScalar.maximumTimestamp).contains(time),
-                  let bytes=sample.vmAvailable,sample.physical>0,
-                  sample.physical<=UInt64(WireScalar.maximumTimestamp),bytes<=sample.physical,
+                  let bytes=sample.vmAvailable,boundedPhysical(sample) != nil,bytes<=sample.physical,
                   (-1000...5000).contains(HostResources.nowMilliseconds()-time) else {return nil}
             return time
         }
         let hostMetrics:[(String,String,(ResourceSample)->Double?)]=[
-            ("fios.platform.host.memory.physical","By",{Double($0.physical)}),
-            ("fios.platform.host.memory.available","By",{$0.available.map{Double($0)}}),
-            ("fios.platform.host.disk.free","By",{$0.diskFree.map{Double($0)}}),
+            ("fios.platform.host.memory.physical","By",boundedPhysical),
+            ("fios.platform.host.memory.available","By",{sample in
+                guard let bytes=sample.available,boundedPhysical(sample) != nil,bytes<=sample.physical else {return nil}
+                return boundedBytes(bytes)
+            }),
+            ("fios.platform.host.disk.free","By",{$0.diskFree.flatMap(boundedBytes)}),
             ("fios.platform.host.power.low","1",{$0.lowPowerMode.map{$0 ? 1.0:0.0}})
         ]
         let independentMetrics:[(String,String,(ResourceSample)->Double?)]=[

@@ -168,6 +168,19 @@ final class StudioOpenTelemetryTests:XCTestCase {
         XCTAssertFalse(telemetry.collectMetrics().contains{$0.name=="fios.platform.vm.sample.time" && !$0.data.points.isEmpty})
     }
 
+    func testInvalidHostByteCountsDoNotBecomeGauges() {
+        let telemetry=StudioOpenTelemetry(),now=HostResources.nowMilliseconds()
+        for physical:UInt64 in [0,1024,UInt64.max] {
+            telemetry.resources(ResourceSample(sampledAt:now,physical:physical,available:1025,
+                vmAvailable:nil,diskFree:UInt64.max,cpu:nil,pressure:.normal,thermal:.nominal))
+            let names=Set(telemetry.collectMetrics().filter{!$0.data.points.isEmpty}.map{$0.name})
+            XCTAssertEqual(names.contains("fios.platform.host.memory.physical"),physical==1024)
+            XCTAssertFalse(names.contains("fios.platform.host.memory.available"))
+            XCTAssertFalse(names.contains("fios.platform.host.disk.free"))
+            XCTAssertTrue(names.contains("fios.platform.host.memory.pressure"))
+        }
+    }
+
     func testStaleHostClockDoesNotSuppressIndependentlyFreshSignals() {
         let telemetry=StudioOpenTelemetry(),now=HostResources.nowMilliseconds()
         telemetry.resources(ResourceSample(sampledAt:now-6000,physical:1024,available:512,
