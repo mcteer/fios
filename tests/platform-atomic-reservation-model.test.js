@@ -19,6 +19,18 @@ test('a terminal receipt cannot retire a sibling hold for the same model', () =>
   assert.equal(gate.releaseTerminal(sibling, siblingReceipt), true);
   assert(gate.reserve(gate.observe('fixture/other'), 'fixture/other'));
 });
+test('duplicate reads preserve mutation revision but a transient owner invalidates it', () => {
+  const gate = new Gate({ covered: true });
+  const target = 'fixture/exact';
+  const original = gate.observe(target);
+  assert.deepEqual(gate.observe(target), original);
+  const transient = gate.reserve(original, target);
+  assert(transient);
+  assert(gate.cancelBeforePublication(transient));
+  assert.equal(gate.reserve(original, target), null);
+  assert(gate.reserve(gate.observe(target), target));
+});
+
 class Gate {
   #revision = 0;
   #epoch = Symbol();
