@@ -27,13 +27,13 @@ private final class ResourceMetrics:@unchecked Sendable {
     func updateGPU(_ value:GPUSample?,sampledAt:Int64?) {lock.lock();gpu=value;gpuAt=sampledAt;lock.unlock()}
     func currentGPU()->(sample:GPUSample,sampledAt:Int64)? {
         lock.lock();defer {lock.unlock()}
-        guard let gpu,let gpuAt,(-1000...5000).contains(HostResources.nowMilliseconds()-gpuAt) else {return nil}
+        guard let gpu,let gpuAt,(0...WireScalar.maximumTimestamp).contains(gpuAt),(-1000...5000).contains(HostResources.nowMilliseconds()-gpuAt) else {return nil}
         return (gpu,gpuAt)
     }
     func updateWorkload(_ value:PlatformWorkloadSample?) {lock.lock();workload=value;lock.unlock()}
     func currentWorkload()->PlatformWorkloadSample? {
         lock.lock();defer {lock.unlock()}
-        guard let workload,(-1000...5000).contains(HostResources.nowMilliseconds()-workload.sampledAt) else {return nil}
+        guard let workload,(0...WireScalar.maximumTimestamp).contains(workload.sampledAt),(-1000...5000).contains(HostResources.nowMilliseconds()-workload.sampledAt) else {return nil}
         return workload
     }
     func updateServices(_ values:[PlatformServiceSample]) {lock.lock();services=values;lock.unlock()}
@@ -57,7 +57,7 @@ private final class ResourceMetrics:@unchecked Sendable {
     }
     func current()->ResourceSample? {
         lock.lock();defer {lock.unlock()}
-        guard let sample,(-1000...5000).contains(HostResources.nowMilliseconds()-sample.sampledAt) else {return nil}
+        guard let sample,(0...WireScalar.maximumTimestamp).contains(sample.sampledAt),(-1000...5000).contains(HostResources.nowMilliseconds()-sample.sampledAt) else {return nil}
         return sample
     }
 }
@@ -124,11 +124,11 @@ public final class StudioOpenTelemetry:PlatformTelemetry,@unchecked Sendable {
             ("fios.platform.host.disk.free","By",{$0.diskFree.map{Double($0)}}),
             ("fios.platform.host.power.low","1",{$0.lowPowerMode.map{$0 ? 1.0:0.0}}),
             ("fios.platform.vm.memory.available","By",{sample in
-                guard let time=sample.vmSampledAt,(-1000...5000).contains(HostResources.nowMilliseconds()-time) else {return nil}
+                guard let time=sample.vmSampledAt,(0...WireScalar.maximumTimestamp).contains(time),(-1000...5000).contains(HostResources.nowMilliseconds()-time) else {return nil}
                 return sample.vmAvailable.map{Double($0)}
             }),
             ("fios.platform.vm.sample.time","s",{sample in
-                guard sample.vmAvailable != nil,let time=sample.vmSampledAt,
+                guard sample.vmAvailable != nil,let time=sample.vmSampledAt,(0...WireScalar.maximumTimestamp).contains(time),
                       (-1000...5000).contains(HostResources.nowMilliseconds()-time) else {return nil}
                 return Double(time)/1000
             })

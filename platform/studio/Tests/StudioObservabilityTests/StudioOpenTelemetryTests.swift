@@ -134,6 +134,23 @@ final class StudioOpenTelemetryTests:XCTestCase {
         XCTAssertFalse(metrics.contains{$0.name=="fios.platform.resource.sample.time" && !$0.data.points.isEmpty})
     }
 
+    func testInvalidResourceClocksAreOmittedWithoutOverflow() {
+        let telemetry=StudioOpenTelemetry(),now=HostResources.nowMilliseconds()
+        telemetry.gpu(GPUSample(utilization:25,inUseBytes:256,allocatedBytes:512),sampledAt:Int64.min)
+        telemetry.workload(PlatformWorkloadSample(sampledAt:Int64.min,jobs:[:],unresolvedRecords:1,uncertainRecords:1,
+            workerReservations:0,artifactBytes:0,artifactJobs:0,cleanupPending:1,cleanupWaitMilliseconds:0))
+        telemetry.resources(ResourceSample(sampledAt:now,physical:1024,available:512,
+            vmAvailable:256,diskFree:4096,cpu:25,pressure:.normal,thermal:.nominal,vmSampledAt:Int64.min,cpuSampledAt:Int64.min))
+        let independent=telemetry.collectMetrics()
+        XCTAssertTrue(independent.contains{$0.name=="fios.platform.host.memory.available" && !$0.data.points.isEmpty})
+        for prefix in ["fios.platform.gpu.","fios.platform.vm.","fios.platform.host.cpu.","fios.platform.inference."] {
+            XCTAssertFalse(independent.contains{$0.name.hasPrefix(prefix) && !$0.data.points.isEmpty})
+        }
+        telemetry.resources(ResourceSample(sampledAt:Int64.min,physical:1024,available:512,
+            vmAvailable:nil,diskFree:4096,cpu:nil,pressure:.normal,thermal:.nominal))
+        XCTAssertFalse(telemetry.collectMetrics().contains{$0.name.hasPrefix("fios.platform.host.") && !$0.data.points.isEmpty})
+    }
+
     func testVMGaugeUsesItsOwnCollectionTime() throws {
         let telemetry=StudioOpenTelemetry(),now=HostResources.nowMilliseconds()
         telemetry.resources(ResourceSample(sampledAt:now,physical:1024,available:512,
