@@ -23,5 +23,12 @@ func runWatchdogTests() throws {
         _ = try restored.tick(now: 1, managerAlive: false, lastProgress: nil)
         preconditionFailure("Clock rollback must reject")
     } catch PolicyError.invalidObservation {}
+    var stable=WatchdogPolicy()
+    expect(try stable.tick(now:0,managerAlive:false,lastProgress:nil) == .start)
+    expect(try stable.tick(now:599_999,managerAlive:true,lastProgress:599_999) == .observe)
+    expect(try stable.tick(now:600_000,managerAlive:true,lastProgress:nil) == .terminate)
+    expect(try stable.tick(now:600_999,managerAlive:true,lastProgress:nil) == .observe)
+    expect(try stable.tick(now:601_000,managerAlive:true,lastProgress:nil) == .kill)
+    expect(try stable.tick(now:601_001,managerAlive:true,lastProgress:nil) == .observe)
     print("PASS: watchdog restart, hang, reap fence, durable-budget and clock tests")
 }

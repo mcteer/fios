@@ -7,6 +7,8 @@ enum WatchdogAction: Equatable, Sendable {
 struct WatchdogPolicy: Sendable {
     private(set) var startHistory: [Int64] = []
     private var previousTick: Int64?
+    // Budget aging must not erase the current launch's watchdog baseline.
+    private var lastStart: Int64?
     private var terminateAt: Int64?
     private var killIssued = false
 
@@ -19,6 +21,7 @@ struct WatchdogPolicy: Sendable {
         else { throw PolicyError.invalidObservation }
         startHistory = restoringStarts
         previousTick = restoringStarts.last
+        lastStart = restoringStarts.last
     }
 
     mutating func tick(now: Int64, managerAlive: Bool, lastProgress: Int64?) throws -> WatchdogAction {
@@ -36,6 +39,7 @@ struct WatchdogPolicy: Sendable {
             guard startHistory.count < 3 else { return .degraded }
             guard startHistory.last.map({ now - $0 >= 10_000 }) ?? true else { return .observe }
             startHistory.append(now)
+            lastStart = now
             return .start
         }
         if let terminateAt {
@@ -45,7 +49,7 @@ struct WatchdogPolicy: Sendable {
             }
             return .observe // Await verified reap. Never spawn alongside old process.
         }
-        let progress = lastProgress ?? startHistory.last
+        let progress = lastProgress ?? lastStart
         guard let progress, now - progress >= 6_000 else { return .observe }
         terminateAt = now
         return .terminate
