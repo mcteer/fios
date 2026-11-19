@@ -472,6 +472,9 @@ extension MLXServingProcessRuntime {
         guard let timedLookup=try heldRecovery.nextStop(now:1000,tick:1000),timedLookup.id==timedStop.id,
               try stopExchange(timedLookup,through:heldStopQueue) == .uncertain else {throw RuntimeError.invalid}
         try heldRecovery.receiveStop(timedLookup,result:.uncertain)
+        guard let rolledBack=try heldRecovery.nextStop(now:999,tick:999),rolledBack.operation == .lookup,
+              rolledBack.id==timedStop.id,rolledBack.receipt==heldReceipt,
+              heldRecovery.summary(service:.mlx,tick:1000)["budget_state"] as? String=="clock_fenced" else {throw RuntimeError.invalid}
         try workerReturned(held)
         guard case .current=heldProbe.capture(heldReceipt).state else {throw RuntimeError.invalid}
         let heldBlocked=ServiceLaunchCommand(service:.mlx,id:UUID().uuidString.lowercased(),expectedSHA256:executable.sha256,profileHash:held.recoveryProfileHash)
@@ -494,6 +497,7 @@ extension MLXServingProcessRuntime {
         guard heldProbe.capture(heldReceipt).state == .exited,held.lookupStop(id:timedStop.id) == .uncertain,
               !held.retireKnownExited(),try heldJournal.uncertainCount()==1,
               unrelated.isRunning,heldStopGate.validations==1,heldRecovery.isStopPending(),
+              heldRecovery.summary(service:.mlx,tick:20000)["budget_state"] as? String=="clock_fenced",
               try heldRecovery.plan(service:.mlx,desired:.running,observation:absent(20000),now:20000,tick:20000)==nil,
               let afterExpiry=try heldRecovery.nextStop(now:20000,tick:20000),afterExpiry.operation == .cancel,afterExpiry.id==timedStop.id,
               try stopExchange(afterExpiry,through:heldStopQueue) == .uncertain else {throw RuntimeError.invalid}
