@@ -7,7 +7,7 @@ if(args.length!==2||args[0]!=='--isolated'||!/^\d+$/.test(args[1])||Number(args[
 const root=resolve(import.meta.dirname,'..'),directory=mkdtempSync('/tmp/fios-idle-build-');
 function run(command,args,timeout=120000){
   const result=spawnSync(command,args,{cwd:root,encoding:'utf8',timeout,maxBuffer:1<<20});
-  if(result.status!==0)throw Error(`Idle fixture failed (${result.status??result.signal}): ${result.stderr??''}\n${result.stdout??''}`);
+  if(result.status!==0)throw Error(`Idle fixture failed (${result.error?.code??result.status??result.signal}, limit_ms=${timeout}): ${result.stderr??''}\n${result.stdout??''}`);
   return result.stdout.trim();
 }
 try{
@@ -18,5 +18,8 @@ try{
   // Whole-module fixture compilation has its own finite allowance; the
   // measurement below keeps its independent duration and cleanup deadline.
   run('/usr/bin/env',['swiftc','-swift-version','6','-O','-whole-module-optimization','-num-threads','2','-warnings-as-errors','-I',join(root,'platform/studio/Sources/CSQLite'),...run('/usr/bin/find',[join(root,'platform/studio/Sources/StudioCore'),'-name','*.swift']).split('\n').sort(),source,'-o',binary],300000);
-  console.log(run(binary,[join(bin,'studio-supervisor'),args[1]],(Number(args[1])+30)*1000));
+  // The child also seeds 256 durable rows, warms up, then runs six IPC
+  // reads (10.5s of spacing plus up to 12s of request deadlines) and cleanup.
+  // Keep finite orchestration margin without changing any measurement bound.
+  console.log(run(binary,[join(bin,'studio-supervisor'),args[1]],(Number(args[1])+75)*1000));
 }finally{rmSync(directory,{recursive:true,force:true});}
