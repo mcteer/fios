@@ -123,6 +123,11 @@ test('reviewed release tree refuses changed bytes, extra files, symlinks and har
       ['plan-backup',...common,'--state',state,'--to',destination,'--execute'],
     ]){const refused=invoke(extra);assert.equal(refused.status,1);assert.equal(refused.stdout,'');}
     unlinkSync(sourceLink);
+    const occupied=join(outside,'occupied backup'),marker=join(occupied,'existing-data');
+    mkdirSync(occupied,{mode:0o700});writeFileSync(marker,'preserve');
+    assert.equal(invoke(['plan-backup',...common,'--state',state,'--to',occupied]).status,1);
+    assert.equal(invoke(['plan-restore',...common,'--backup',state,'--backup-sha256','d'.repeat(64),'--to',occupied]).status,1);
+    assert.equal(readFileSync(marker,'utf8'),'preserve');
     chmodSync(outside,0o755);
     assert.equal(invoke(['plan-backup',...common,'--state',state,'--to',destination]).status,1);
     chmodSync(outside,0o700);
