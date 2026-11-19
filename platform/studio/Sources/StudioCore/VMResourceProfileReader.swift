@@ -48,7 +48,9 @@ final class VMResourceProfileReader:VMResourceReading,@unchecked Sendable {
             bound=SharedKernelVMReader(kernel:kernel,cap:cap,permission:permission,physical:physical,now:now,uptime:uptime)
         }
         let result=try bound!.read(configuration:configuration,id:id,leaseUntil:leaseUntil,first:bootstrap)
-        let completed=now(),elapsed=uptime()-began
+        let completed=now(),tick=uptime()
+        try bound!.validatePublication(wall:completed,tick:tick)
+        let elapsed=tick-began
         guard completed>=previous else {fenced=true;throw RuntimeError.identity}
         previous=completed
         guard elapsed>=0,elapsed<=5,completed<leaseUntil else {throw RuntimeError.deadline}

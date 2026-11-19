@@ -79,6 +79,12 @@ final class SharedKernelVMReader:VMResourceReading,@unchecked Sendable {
     // The configuration cache is global/profile-bound, not parent-owned.
     // Do not wait for off-loop native I/O on the lifecycle/controller thread.
     func releaseAfterVerifiedAbsence(id:String) {kernel.releaseAfterVerifiedAbsence(id:id)}
+    func validatePublication(wall:Int64,tick:TimeInterval)throws {
+        lock.lock();defer {lock.unlock()}
+        guard !fenced,(previousNow...ActivityPolicy.maximumTimestamp).contains(wall),
+              tick.isFinite,tick>=previousUptime else {fenced=true;cached=nil;throw RuntimeError.identity}
+        previousNow=wall;previousUptime=tick
+    }
     func read(configuration:SandboxConfiguration,id:String,leaseUntil:Int64)throws->VMKernelSample {
         try read(configuration:configuration,id:id,leaseUntil:leaseUntil,first:nil)
     }

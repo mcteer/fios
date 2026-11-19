@@ -9,6 +9,11 @@ private final class VMProfileFixture:VMResourceReading,NativeVMCapReading,@unche
     var failCap=false
     var rollbackOnRead=false
     var advanceOnRead:Int64=0
+    var clockReads=0
+    func publicationClock()->Int64 {
+        clockReads+=1
+        return clockReads==10 ? 12049:time
+    }
     func read(configuration:SandboxConfiguration,id:String,leaseUntil:Int64)throws->VMKernelSample {
         reads+=1
         if rollbackOnRead {time-=500}
@@ -59,6 +64,17 @@ func runVMResourceProfileReaderTests() throws {
     guard delayed.reads==1,delayed.captures==1,original.sampledAt==10000,original.envelope?.sampledAt==10000 else {
         fatalError("Profile bootstrap did not retain the original kernel collection window")
     }
+    let publication=VMProfileFixture();publication.advanceOnRead=50
+    let publishing=VMResourceProfileReader(kernel:publication,cap:publication,
+        profileHash:String(repeating:"a",count:64),reviewDigest:String(repeating:"c",count:64),physical:128<<30,
+        now:publication.publicationClock,uptime:{publication.tick})
+    _=try publishing.read(configuration:config,id:id,leaseUntil:60000)
+    publication.time=12000;publication.tick=2
+    do {_=try publishing.read(configuration:config,id:id,leaseUntil:60000);fatalError("Outer VM profile published across final wall rollback")}
+    catch RuntimeError.identity {}
+    do {_=try publishing.read(configuration:config,id:id,leaseUntil:60000);fatalError("Final rollback fence revived")}
+    catch RuntimeError.identity {}
+    guard publication.reads==2,publication.captures==1 else {fatalError("Final rollback performed a new observation")}
     let expired=VMProfileFixture();expired.advanceOnRead=5000
     let expiring=expired.reader()
     do {_=try expiring.read(configuration:config,id:id,leaseUntil:15000);fatalError("Expired bootstrap reached VM capacity")}
