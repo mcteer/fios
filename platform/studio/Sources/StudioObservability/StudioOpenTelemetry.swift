@@ -7,6 +7,13 @@ public enum StudioTelemetryService:String,Sendable {
     case manager="fios-studio-manager",supervisor="fios-studio-supervisor"
 }
 
+private extension PlatformWorkloadSample {
+    var hasFreshCleanup:Bool {
+        guard let cleanupSampledAt,(0...WireScalar.maximumTimestamp).contains(cleanupSampledAt) else {return false}
+        return (-1000...5000).contains(HostResources.nowMilliseconds()-cleanupSampledAt)
+    }
+}
+
 private final class ResourceMetrics:@unchecked Sendable {
     let lock=NSLock()
     var sample:ResourceSample?
@@ -190,8 +197,8 @@ public final class StudioOpenTelemetry:PlatformTelemetry,@unchecked Sendable {
             ("fios.platform.sandbox.memory.reserved","By",{$0.sandboxReservations.map{Double($0.memoryBytes)}}),
             ("fios.platform.sandbox.cpu.reserved","{cpu}",{$0.sandboxReservations.map{Double($0.cpus)}}),
             ("fios.platform.sandbox.workspace.capacity","By",{$0.sandboxReservations.map{Double($0.workspaceBytes)}}),
-            ("fios.platform.sandbox.cleanup.pending","{sandbox}",{$0.cleanupPending.map{Double($0)}}),
-            ("fios.platform.sandbox.cleanup.wait","s",{$0.cleanupWaitMilliseconds.map{Double($0)/1000}})
+            ("fios.platform.sandbox.cleanup.pending","{sandbox}",{$0.hasFreshCleanup ? $0.cleanupPending.map{Double($0)}:nil}),
+            ("fios.platform.sandbox.cleanup.wait","s",{$0.hasFreshCleanup ? $0.cleanupWaitMilliseconds.map{Double($0)/1000}:nil})
         ]
         for (name,unit,value) in sandboxMetrics {
             _=meter.gaugeBuilder(name:name).setUnit(unit).buildWithCallback { observation in

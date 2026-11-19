@@ -320,25 +320,31 @@ final class StudioOpenTelemetryTests:XCTestCase {
 
     func testCleanupMetricsFollowCurrentWaitAndRecovery() throws {
         let telemetry=StudioOpenTelemetry(),now=HostResources.nowMilliseconds()
-        func sample(pending:Int,wait:Int64?)->PlatformWorkloadSample {
+        func sample(pending:Int,wait:Int64?,stamp:Int64?)->PlatformWorkloadSample {
             PlatformWorkloadSample(sampledAt:now,jobs:[:],unresolvedRecords:1,uncertainRecords:1,
                 workerReservations:0,artifactBytes:0,artifactJobs:0,
-                cleanupPending:pending,cleanupWaitMilliseconds:wait)
+                cleanupPending:pending,cleanupWaitMilliseconds:wait,cleanupSampledAt:stamp)
         }
         func value(_ name:String)->Double? {
             let metric=telemetry.collectMetrics().first{$0.name==name}
             return (metric?.data.points as? [DoublePointData])?.first?.value
         }
-        telemetry.workload(sample(pending:1,wait:61000))
+        telemetry.workload(sample(pending:1,wait:61000,stamp:now))
         XCTAssertEqual(value("fios.platform.sandbox.cleanup.pending"),1)
         XCTAssertEqual(value("fios.platform.sandbox.cleanup.wait"),61)
-        telemetry.workload(sample(pending:0,wait:0))
+        telemetry.workload(sample(pending:0,wait:0,stamp:now))
         XCTAssertEqual(value("fios.platform.sandbox.cleanup.pending"),0)
         XCTAssertEqual(value("fios.platform.sandbox.cleanup.wait"),0)
         XCTAssertEqual(value("fios.platform.inference.uncertain_records"),1)
-        telemetry.workload(sample(pending:1,wait:nil))
+        telemetry.workload(sample(pending:1,wait:nil,stamp:now))
         XCTAssertEqual(value("fios.platform.sandbox.cleanup.pending"),1)
         XCTAssertNil(value("fios.platform.sandbox.cleanup.wait"))
+        for invalid:Int64? in [nil,now-6000,now+2000,Int64.min] {
+            telemetry.workload(sample(pending:1,wait:61000,stamp:invalid))
+            XCTAssertNil(value("fios.platform.sandbox.cleanup.pending"))
+            XCTAssertNil(value("fios.platform.sandbox.cleanup.wait"))
+            XCTAssertEqual(value("fios.platform.inference.uncertain_records"),1)
+        }
     }
 
     func testServiceStateMetricsUseFixedStatesAndExpire() throws {

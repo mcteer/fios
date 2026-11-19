@@ -17,14 +17,15 @@ public struct PlatformWorkloadSample:Sendable {
     public let artifactJobs:Int
     public let cleanupPending:Int?
     public let cleanupWaitMilliseconds:Int64?
+    public let cleanupSampledAt:Int64?
     public let sandboxReservations:PlatformSandboxReservations?
     public init(sampledAt:Int64,jobs:[JobState:Int],unresolvedRecords:Int,uncertainRecords:Int,
                 workerReservations:Int,artifactBytes:Int64,artifactJobs:Int,cleanupPending:Int?=nil,cleanupWaitMilliseconds:Int64?=nil,
-                sandboxReservations:PlatformSandboxReservations?=nil) {
+                sandboxReservations:PlatformSandboxReservations?=nil,cleanupSampledAt:Int64?=nil) {
         self.sampledAt=sampledAt;self.jobs=jobs;self.unresolvedRecords=unresolvedRecords
         self.uncertainRecords=uncertainRecords;self.workerReservations=workerReservations
         self.artifactBytes=artifactBytes;self.artifactJobs=artifactJobs
-        self.cleanupPending=cleanupPending;self.cleanupWaitMilliseconds=cleanupWaitMilliseconds
+        self.cleanupPending=cleanupPending;self.cleanupWaitMilliseconds=cleanupWaitMilliseconds;self.cleanupSampledAt=cleanupSampledAt
         self.sandboxReservations=sandboxReservations
     }
 }
@@ -33,7 +34,7 @@ enum WorkloadTelemetry {
     // Called only on the existing serialized manager loop/journal owner.
     // Failure omits the whole sample; telemetry cannot change control flow or
     // substitute zero for a failed query. No additional SQLite instance opens.
-    static func sample(journal:Journal,artifactBytes:Int64,artifactJobs:Int,now:Int64,cleanupPending:Int?=nil,cleanupWaitMilliseconds:Int64?=nil)->PlatformWorkloadSample? {
+    static func sample(journal:Journal,artifactBytes:Int64,artifactJobs:Int,now:Int64,cleanupPending:Int?=nil,cleanupWaitMilliseconds:Int64?=nil,cleanupSampledAt:Int64?=nil)->PlatformWorkloadSample? {
         do {
             var counts=Dictionary(uniqueKeysWithValues:JobState.allCases.map{($0,0)})
             for job in try journal.jobs() {counts[job.state,default:0]+=1}
@@ -46,7 +47,7 @@ enum WorkloadTelemetry {
             return try PlatformWorkloadSample(sampledAt:now,jobs:counts,unresolvedRecords:journal.unresolvedCount(),
                 uncertainRecords:journal.uncertainCount(),workerReservations:journal.activeLaunchCount(),
                 artifactBytes:artifactBytes,artifactJobs:artifactJobs,
-                cleanupPending:cleanupPending,cleanupWaitMilliseconds:cleanupWaitMilliseconds,sandboxReservations:reservations)
+                cleanupPending:cleanupPending,cleanupWaitMilliseconds:cleanupWaitMilliseconds,sandboxReservations:reservations,cleanupSampledAt:cleanupSampledAt)
         }catch {return nil}
     }
 }
