@@ -1,8 +1,9 @@
 import Foundation
+import CSQLite
 
 // A normal cancelled worker-start result is terminal output, even when the
 // surrounding owner job has not separately received a cancellation command.
-private enum CompletionClock {case ordinary,leaseExpiry,watchdog,uptimeRollback}
+private enum CompletionClock {case ordinary,leaseExpiry,watchdog,uptimeRollback,acknowledgementBlocked}
 
 private func exerciseCompletion(in directory:URL,token:String,clock:CompletionClock = .ordinary)throws -> (String,String) {
     let journal=try Journal(directory:directory),owner=try TaskOwner(token:token,peerUID:geteuid()).hash
@@ -12,7 +13,7 @@ private func exerciseCompletion(in directory:URL,token:String,clock:CompletionCl
         try journal.transitionJob(id:id,to:.running,now:5000)
         return id
     }
-    let id=try runningJob(lifetime:clock == .leaseExpiry ? 1:900_000),stillRunning=try runningJob()
+    let id=try runningJob(lifetime:clock == .leaseExpiry || clock == .acknowledgementBlocked ? 1:900_000),stillRunning=try runningJob()
     let snapshot=NativeSnapshot(host:"fixture-host",endpointHash:PythonWorkerFactory.digest("http://127.0.0.1:1/v1"),nativeEpoch:"fixture-native",sequence:1,sampledAt:5000,allClientLifecycleCoverage:true,residentModel:"fixture/model",outstandingOwners:0,loading:false)
     let binding=WorkerDispatchBinding(baseURL:"http://127.0.0.1:1/v1",guardPath:"/fixture/unused.sock",host:"fixture-host",profileHash:String(repeating:"f",count:64),managerEpoch:UUID().uuidString.lowercased(),canonicalModel:"fixture/model",nativeModel:"fixture/model",nativeSnapshot:snapshot,nativeCompatibilityAccepted:true,apiKey:nil)
     guard try NativeAdmission.permitsDispatch(binding,now:5000) else {throw JournalError.invalid}
@@ -50,7 +51,32 @@ private func exerciseCompletion(in directory:URL,token:String,clock:CompletionCl
             try heldCapacity.reserveWorker(key:"third",sample:sample,now:pollTime)
             fatalError("Revoked pending worker returned capacity before the result drained")
         } catch AdmissionError.capacity {}
-        release.signal()
+        if clock == .acknowledgementBlocked {
+            // Private same-process writer contention only, after the
+            // revocation commit and before the no-process acknowledgement.
+            var blocker:OpaquePointer?
+            let opened=sqlite3_open_v2(directory.appendingPathComponent("state.sqlite").path,&blocker,SQLITE_OPEN_READWRITE|SQLITE_OPEN_FULLMUTEX,nil)
+            defer {if let blocker {sqlite3_exec(blocker,"ROLLBACK",nil,nil,nil);sqlite3_close(blocker)}}
+            guard opened==SQLITE_OK,sqlite3_exec(blocker,"BEGIN IMMEDIATE",nil,nil,nil)==SQLITE_OK else {throw JournalError.storage}
+            release.signal()
+            var attempted=false
+            let watchdog=ProcessInfo.processInfo.systemUptime+3
+            while !attempted && ProcessInfo.processInfo.systemUptime<watchdog {
+                let began=ProcessInfo.processInfo.systemUptime
+                let events=try controller.tick(now:pollTime,uptime:tick,admission:&admission,source:{_ in binding})
+                attempted=ProcessInfo.processInfo.systemUptime-began>=0.8
+                guard events[id]?.isEmpty ?? true else {fatalError("Worker result published before acknowledgement commit")}
+                if !attempted {Thread.sleep(forTimeInterval:0.005)}
+            }
+            guard attempted,broker.active(job:id),try journal.activeLaunchCount()==1,
+                  try journal.uncertainCount()==1 else {fatalError("Contended acknowledgement lost pending worker custody")}
+            var blockedCapacity=admission
+            try blockedCapacity.reserveWorker(key:"unrelated",sample:sample,now:pollTime)
+            do {
+                try blockedCapacity.reserveWorker(key:"third",sample:sample,now:pollTime)
+                fatalError("Contended acknowledgement returned capacity before commit")
+            } catch AdmissionError.capacity {}
+        } else {release.signal()}
     }
     var interrupted=false
     let deadline=ProcessInfo.processInfo.systemUptime+2
@@ -89,7 +115,7 @@ func runTaskCompletionTests()throws {
     let directory=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer {try? FileManager.default.removeItem(at:directory)}
     let token=TaskOwner.newToken()
-    for (name,clock):(String,CompletionClock) in [("expiry",.leaseExpiry),("watchdog",.watchdog),("rollback",.uptimeRollback)] {
+    for (name,clock):(String,CompletionClock) in [("expiry",.leaseExpiry),("watchdog",.watchdog),("rollback",.uptimeRollback),("blocked-ack",.acknowledgementBlocked)] {
         let privateState=directory.appendingPathComponent(name)
         let (job,_)=try exerciseCompletion(in:privateState,token:token,clock:clock)
         let reopened=try Journal(directory:privateState)
