@@ -61,6 +61,15 @@ func runServiceHealthTests() throws {
         return socket
     },now:{listenerStamp},uptime:{listenerTime})
     guard slowListener.capture(sessionReady:true,credentialsReady:true)==nil,slowCalls==2 else {fatalError("Final listener observation escaped total collection budget")}
+    var finalTick:TimeInterval=1,finalListeners=0
+    let rollbackListener=MLXServiceHealthCollector(presence:{sample},health:{finalTick=2;return .healthy},listener:{_ in
+        finalListeners+=1
+        if finalListeners==2 {finalTick=1.5}
+        return socket
+    },now:{1000},uptime:{finalTick})
+    guard rollbackListener.capture(sessionReady:true,credentialsReady:true)==nil,finalListeners==2 else {
+        fatalError("Health published after final listener clock rollback")
+    }
     var phaseUptime:TimeInterval=1,phaseCalls=0
     let slowPresence=MLXServiceHealthCollector(presence:{phaseUptime=5;return sample},health:{phaseCalls+=1;return .healthy},now:{1000},uptime:{phaseUptime})
     guard slowPresence.capture(sessionReady:true,credentialsReady:true)==nil,phaseCalls==0 else {
