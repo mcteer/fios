@@ -36,7 +36,11 @@ try{
   await until(()=>{assert(!exited(child),'Status manager exited early');const observed=status(state);return observed&&['mlx','orbstack'].every(service=>observed.services[service].observed===expected(mode,service))&&(mode!=='unconfigured'||['native_health_source','orbstack_health_source','vm_resource_source'].every(key=>observed[key]==='unconfigured'));});
   const combined=status(state);
   assert.equal(combined.migration_maintenance,mode==='held');
-  if(mode==='held')assert.equal(combined.service_recovery,'disabled');
+  if(mode==='held'){
+   assert.equal(combined.service_recovery,'disabled');
+   assert.equal(combined.sandbox_admission,'disabled');
+   assert.equal(combined.native_admissions,'unsupported');
+  }
   if(mode==='unconfigured'){
    assert.equal(combined.native_health_source,'unconfigured');assert.equal(combined.orbstack_health_source,'unconfigured');
    assert.equal(combined.vm_resource_source,'unconfigured');
