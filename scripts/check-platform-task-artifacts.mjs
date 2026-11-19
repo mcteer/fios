@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import {spawn,spawnSync} from 'node:child_process';
 import {mkdtempSync,readdirSync,readFileSync,writeFileSync,copyFileSync,existsSync} from 'node:fs';
 import {join,resolve} from 'node:path';
-import {createHash,randomUUID} from 'node:crypto';
+import {createHash,randomBytes,randomUUID} from 'node:crypto';
 import {setTimeout as delay} from 'node:timers/promises';
 assert.deepEqual(process.argv.slice(2),['--isolated']);assert.equal(process.platform,'darwin');
 const root=resolve(import.meta.dirname,'..'),directory=mkdtempSync('/private/tmp/fios009-artifacts-');
@@ -29,16 +29,33 @@ try {
  function call(payload,operation='artifact.read',expectedExit=0,owner=fixture.owner){
   const id=randomUUID();
   const result=spawnSync(cli,['--state',state,'task'],{cwd:root,encoding:'utf8',timeout:3000,input:JSON.stringify({version:1,id,operation,payload:{...payload,owner}})});
-  assert.equal(result.status,expectedExit,'Normal task CLI request returned an unexpected exit code');
-  const response=JSON.parse(result.stdout);assert.equal(response.ok,expectedExit===0);assert.equal(response.id,id,'Normal task reply lost its original request ID');if(!response.ok)return response;assert(response.result);return {...response.result,id};
+  if(expectedExit===null)assert([0,1].includes(result.status));
+  else assert.equal(result.status,expectedExit,'Normal task CLI request returned an unexpected exit code');
+  const response=JSON.parse(result.stdout);assert.equal(response.ok,result.status===0);assert.equal(response.id,id,'Normal task reply lost its original request ID');if(!response.ok)return response;assert(response.result);return {...response.result,id};
  }
  const finished=call({job:fixture.finished_job},'job.status');assert.equal(finished.state,'removed');
  const renewal=call({job:fixture.finished_job},'job.renew',1);assert.equal(renewal.error,'job_conflict');
+ const otherOwner=randomBytes(32).toString('base64');
+ // An owner who guesses a real artifact ID must see the same terminal
+ // response as if it did not exist. Neither stream may publish metadata.
+ for(const artifact of [fixture.artifacts[0],randomUUID()]){
+  const started=call({phase:'begin',artifact},'artifact.read',0,otherOwner);
+  assert.equal(started.state,'pending');assert.equal(started.stream,started.id);
+  const deadline=performance.now()+5000;
+  for(;;){
+   assert(performance.now()<deadline,'Unowned artifact stream did not terminate');
+   const event=call({phase:'next',stream:started.stream},'artifact.read',null,otherOwner);
+   if(event.ok===false){assert.equal(event.error,'invalid_request');assert.equal(event.result,undefined);break;}
+   assert.equal(event.state,'pending');assert.equal(event.type,undefined);
+   await delay(10);
+  }
+  assert.equal(call({phase:'next',stream:started.stream},'artifact.read',1,otherOwner).error,'unauthorized');
+ }
  const records=[];
  for(const [index,artifact] of fixture.artifacts.entries()){
   const expected=Buffer.from(index===0?'Hello, Studio 👋\n'.repeat(4096):'');
   const started=call({phase:'begin',artifact});assert.equal(started.state,'pending');assert.equal(started.stream,started.id);
-  const denied=call({phase:'next',stream:started.stream},'artifact.read',1,'f'.repeat(64));
+  const denied=call({phase:'next',stream:started.stream},'artifact.read',1,otherOwner);
   assert.equal(denied.error,'unauthorized');
   const deadline=performance.now()+5000,parts=[];let metadata,done=false;
   while(!done){
@@ -50,9 +67,10 @@ try {
    else {assert.equal(event.type,'end');done=true;}
   }
   assert(metadata);assert.deepEqual(Buffer.concat(parts),expected);
+  assert.equal(call({phase:'next',stream:started.stream},'artifact.read',1).error,'unauthorized');
   records.push({bytes:expected.length,chunks:parts.length,sha256:sha(expected),complete:true});
  }
- const receipt={scope:'normal_real_manager_cli_artifact_downloads',finished_job_status:true,finished_job_renewal_error_correlated:true,records,manager_sha256:sha(readFileSync(binary)),cli_sha256:sha(readFileSync(cli)),model_requests:0,runtime_actions:0,installed_service_actions:0};
+ const receipt={scope:'normal_real_manager_cli_artifact_downloads',finished_job_status:true,finished_job_renewal_error_correlated:true,unowned_and_missing_same_terminal_error:true,completed_stream_replay_refused:true,records,manager_sha256:sha(readFileSync(binary)),cli_sha256:sha(readFileSync(cli)),model_requests:0,runtime_actions:0,installed_service_actions:0};
  writeFileSync(join(directory,'receipt.json'),JSON.stringify(receipt,null,2)+'\n');
  console.log(JSON.stringify({ok:true,directory,downloads:records.length,chunks:records.map(r=>r.chunks),model_requests:0,runtime_actions:0}));
 } finally {
