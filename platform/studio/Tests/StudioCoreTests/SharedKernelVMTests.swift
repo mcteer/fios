@@ -11,12 +11,13 @@ private final class SharedKernelFixture:NativeVMCapReading,VMResourceReading,@un
     var stale=false
     var advanceOnRead:Int64=0
     var kernelTimestampDelta:Int64=0
+    var steadyDeltaOnRead:TimeInterval=0
     func capture(liveness:NativeVMLivenessProof)throws->NativeVMCap {
         captures+=1;if fail {throw RuntimeError.launch}
         return NativeVMCap(bytes:capValue,sampledAt:stale ? time-6000:time)
     }
     func read(configuration:SandboxConfiguration,id:String,leaseUntil:Int64)throws->VMKernelSample {
-        reads+=1;time+=advanceOnRead;return VMKernelSample(sampledAt:time+kernelTimestampDelta,total:8<<30,free:4<<30,bootHash:boot)
+        reads+=1;time+=advanceOnRead;steady+=steadyDeltaOnRead;return VMKernelSample(sampledAt:time+kernelTimestampDelta,total:8<<30,free:4<<30,bootHash:boot)
     }
     func releaseAfterVerifiedAbsence(id:String) {}
 }
@@ -65,6 +66,20 @@ func runSharedKernelVMTests()throws {
         do {_=try guarded.read(configuration:configuration,id:id,leaseUntil:60000);fatalError("Out-of-read kernel stamp authorized cap probe")}catch RuntimeError.identity {}
         guard unbound.captures==0 else {fatalError("Invalid kernel time reached native cap source")}
     }
+    for delta in [Double.nan,-0.5,5.001] {
+        let bad=SharedKernelFixture();bad.steadyDeltaOnRead=delta
+        let guarded=SharedKernelVMReader(kernel:bad,cap:bad,permission:permission,physical:128<<30,now:{bad.time},uptime:{bad.steady})
+        do {_=try guarded.read(configuration:configuration,id:id,leaseUntil:60000);fatalError("Invalid elapsed kernel read reached cap probe")}catch RuntimeError.identity {}
+        guard bad.captures==0 else {fatalError("Invalid elapsed kernel read queried cap")}
+    }
+    let rewind=SharedKernelFixture()
+    let rewindReader=SharedKernelVMReader(kernel:rewind,cap:rewind,permission:permission,physical:128<<30,now:{rewind.time},uptime:{rewind.steady})
+    _=try rewindReader.read(configuration:configuration,id:id,leaseUntil:60000)
+    rewind.steady=0.5
+    do {_=try rewindReader.read(configuration:configuration,id:id,leaseUntil:60000);fatalError("Rewound monotonic clock reached VM metadata")}catch RuntimeError.identity {}
+    rewind.steady=2
+    do {_=try rewindReader.read(configuration:configuration,id:id,leaseUntil:60000);fatalError("Monotonic clock fence revived")}catch RuntimeError.identity {}
+    guard rewind.reads==1,rewind.captures==1 else {fatalError("Fenced clock performed more VM reads")}
     let between=SharedKernelFixture();between.advanceOnRead=500
     let betweenReader=SharedKernelVMReader(kernel:between,cap:between,permission:permission,physical:128<<30,now:{between.time},uptime:{between.steady})
     _=try betweenReader.read(configuration:configuration,id:id,leaseUntil:60000)

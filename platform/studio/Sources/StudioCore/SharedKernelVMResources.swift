@@ -63,6 +63,7 @@ final class SharedKernelVMReader:VMResourceReading,@unchecked Sendable {
     private let lock=NSLock()
     private var cached:(value:NativeVMCap,uptime:TimeInterval)?
     private var previousNow:Int64 = -1
+    private var previousUptime:TimeInterval = 0
     private var fenced=false
     init(kernel:any VMResourceReading,cap:any NativeVMCapReading,permission:SharedVMKernelPermission,physical:UInt64,
          now:@escaping @Sendable()->Int64=HostResources.nowMilliseconds,
@@ -75,32 +76,34 @@ final class SharedKernelVMReader:VMResourceReading,@unchecked Sendable {
     func read(configuration:SandboxConfiguration,id:String,leaseUntil:Int64)throws->VMKernelSample {
         lock.lock();defer{lock.unlock()}
         let began=uptime(),stamp=now()
-        guard !fenced,stamp>=0,stamp<=ActivityPolicy.maximumTimestamp,stamp>=previousNow,began.isFinite,began>=0 else {fenced=true;cached=nil;throw RuntimeError.identity}
-        previousNow=stamp
+        guard !fenced,stamp>=0,stamp<=ActivityPolicy.maximumTimestamp,stamp>=previousNow,
+              began.isFinite,began>=previousUptime else {fenced=true;cached=nil;throw RuntimeError.identity}
+        previousNow=stamp;previousUptime=began
         guard physical>0,physical<=UInt64(ActivityPolicy.maximumTimestamp),leaseUntil<=ActivityPolicy.maximumTimestamp,
               leaseUntil>stamp,leaseUntil-stamp>=5000 else {cached=nil;throw RuntimeError.deadline}
         do {
             var sample=try kernel.read(configuration:configuration,id:id,leaseUntil:leaseUntil)
             guard sample.bootHash==permission.bootHash else {fenced=true;throw RuntimeError.identity}
-            let readCompleted=now()
-            if readCompleted<stamp {fenced=true}
+            let readCompleted=now(),readUptime=uptime()
             guard readCompleted>=stamp,readCompleted<=ActivityPolicy.maximumTimestamp,
-                  (stamp...readCompleted).contains(sample.sampledAt) else {throw RuntimeError.identity}
+                  readUptime.isFinite,readUptime>=began else {fenced=true;throw RuntimeError.identity}
+            previousNow=readCompleted;previousUptime=readUptime
+            guard readUptime-began<=5,(stamp...readCompleted).contains(sample.sampledAt) else {throw RuntimeError.identity}
             let limit:NativeVMCap
             if let cached,began>=cached.uptime,began-cached.uptime<3 {limit=cached.value}
             else {
                 let proof=try NativeVMLivenessProof(sample:sample,expectedBootHash:permission.bootHash,now:readCompleted)
                 limit=try cap.capture(liveness:proof);cached=(limit,began)
             }
-            let completed=now(),elapsed=uptime()-began
-            if completed<readCompleted {fenced=true}
-            previousNow=max(previousNow,completed)
-            guard completed>=readCompleted,completed<leaseUntil,elapsed>=0,elapsed<=5,
+            let completed=now(),completedUptime=uptime()
+            guard completed>=readCompleted,completed<=ActivityPolicy.maximumTimestamp,
+                  completedUptime.isFinite,completedUptime>=readUptime else {fenced=true;throw RuntimeError.identity}
+            previousNow=completed;previousUptime=completedUptime
+            guard completed<leaseUntil,completedUptime-began<=5,
                   physical>0,physical<=UInt64(ActivityPolicy.maximumTimestamp),limit.bytes>0,limit.bytes<=physical,
                   sample.total>0,sample.total<=physical,sample.free<=sample.total,
                   sample.sampledAt>=0,limit.sampledAt>=0,
                   sample.sampledAt<=ActivityPolicy.maximumTimestamp,limit.sampledAt<=ActivityPolicy.maximumTimestamp,
-                  completed<=ActivityPolicy.maximumTimestamp,
                   (-1000...5000).contains(completed-sample.sampledAt),(-1000...5000).contains(completed-limit.sampledAt) else {throw RuntimeError.identity}
             let identity=["fios-shared-vm-kernel-v1",permission.nativeProfileHash,permission.reviewDigest,permission.bootHash,String(limit.bytes),String(physical)]
             let hash=SHA256.hash(data:Data(identity.joined(separator:"\0").utf8)).map {String(format:"%02x",$0)}.joined()
