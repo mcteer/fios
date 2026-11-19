@@ -56,6 +56,15 @@ func runServiceStatusTests() throws {
             fatalError("Stale service health became current or altered durable intent projection")
         }
     }
+    for (stamp,query):(Int64,Int64) in [(Int64.min,6000),(Int64.max,6000),(1000,Int64.min),(1000,Int64.max)] {
+        var healthy=sample(identity,true,true,true,stamp)
+        healthy.health = .healthy
+        let invalid=ServiceStatusPolicy.summary(desired:.running,observation:healthy,launchPending:false,now:query)
+        guard invalid["observed"] as? String=="unknown",invalid["sampled_at"] is NSNull,
+              invalid["age_ms"] is NSNull,invalid["health"]==nil else {
+            fatalError("Invalid clock escaped service status projection")
+        }
+    }
     let cache=ServiceObservationCache()
     guard cache.snapshot(for:.mlx)==nil,cache.snapshot(for:.orbstack)==nil else {fatalError("New manager cache adopted prior observations")}
     cache.publish(sample(identity,true),for:.mlx)
