@@ -14,10 +14,17 @@ private final class InventoryVMFixture:NativeVMInventoryReading,@unchecked Senda
     let partial:Bool
     let stamps:[Int64]
     init(change:Bool=false,partial:Bool=false,stamps:[Int64]=[]) {self.change=change;self.partial=partial;self.stamps=stamps}
+    var captures:Int {lock.lock();defer {lock.unlock()};return count}
     func capture()throws->NativeVMInventory {
         lock.lock();defer {lock.unlock()};count+=1
         return NativeVMInventory(configuredCap:count>1 && change ? 10<<30 : 12<<30,sampledAt:stamps.indices.contains(count-1) ? stamps[count-1]:HostResources.nowMilliseconds(),machineIDs:partial ? [String(repeating:"c",count:64)] : [])
     }
+}
+private final class InventoryClockFixture:@unchecked Sendable {
+    private let lock=NSLock()
+    private var stamps:[Int64]
+    init(_ stamps:[Int64]) {self.stamps=stamps}
+    func next()->Int64 {lock.lock();defer {lock.unlock()};return stamps.isEmpty ? Int64.max:stamps.removeFirst()}
 }
 func runNativeVMInventoryTests() throws {
     guard let path=ProcessInfo.processInfo.environment["FIOS_PLATFORM_VM_INVENTORY_FIXTURE"] else {fatalError("Missing finite VM inventory CLI")}
@@ -48,6 +55,12 @@ func runNativeVMInventoryTests() throws {
     for stamps in [[stamp+1,stamp+2],[stamp-2,stamp-1],[stamp+1,stamp-1]] {
         let unsafe=VMEnvelopeReader(kernel:KernelVMFixture(stamp:stamp),inventory:InventoryVMFixture(stamps:stamps),nativeProfileHash:String(repeating:"a",count:64),physical:32<<30)
         do {_=try unsafe.read(configuration:configuration,id:id,leaseUntil:stamp+30000);fatalError("Unbracketed kernel sample crossed the collector boundary")}catch RuntimeError.identity {}
+    }
+    for (checkpoints,expectedCaptures) in [([2000],0),([1000,2000],1),([1000,1001,2000],1)] {
+        let clock=InventoryClockFixture(checkpoints.map(Int64.init)),inventory=InventoryVMFixture(stamps:[1000,1002])
+        let reader=VMEnvelopeReader(kernel:KernelVMFixture(stamp:1001),inventory:inventory,nativeProfileHash:String(repeating:"a",count:64),physical:32<<30,wallClock:{clock.next()},uptime:{1})
+        do {_=try reader.read(configuration:configuration,id:id,leaseUntil:2000);fatalError("Expired lease accepted at inventory checkpoint")}catch RuntimeError.deadline {}
+        guard inventory.captures==expectedCaptures else {fatalError("Inventory executed after observed lease expiry")}
     }
     print("PASS: composed VM collector brackets kernel read with native inventory/config, exports conservative envelope and rejects changed cap/unverified machine coverage")
 }

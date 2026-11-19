@@ -43,11 +43,26 @@ struct VMEnvelopeReader:VMResourceReading {
     let inventory:any NativeVMInventoryReading
     let nativeProfileHash:String
     let physical:UInt64
+    var wallClock:@Sendable ()->Int64 = {HostResources.nowMilliseconds()}
+    var uptime:@Sendable ()->TimeInterval = {ProcessInfo.processInfo.systemUptime}
     func read(configuration:SandboxConfiguration,id:String,leaseUntil:Int64)throws->VMKernelSample {
-        let began=ProcessInfo.processInfo.systemUptime,first=try inventory.capture()
+        let began=uptime()
+        var previousWall:Int64 = 0,previousUptime=began
+        func checkpoint()throws->Int64 {
+            let now=wallClock(),steady=uptime()
+            guard (0...WireScalar.maximumTimestamp).contains(now),now>=previousWall,
+                  began.isFinite,began>=0,steady.isFinite,steady>=previousUptime else {throw RuntimeError.identity}
+            guard leaseUntil<=WireScalar.maximumTimestamp,now<leaseUntil,steady-began<=5 else {throw RuntimeError.deadline}
+            previousWall=now;previousUptime=steady
+            return now
+        }
+        _=try checkpoint()
+        let first=try inventory.capture()
+        _=try checkpoint()
         var sample=try kernel.read(configuration:configuration,id:id,leaseUntil:leaseUntil)
-        let last=try inventory.capture(),now=HostResources.nowMilliseconds()
-        guard first.configuredCap==last.configuredCap,ProcessInfo.processInfo.systemUptime-began<=5,now<leaseUntil else {throw RuntimeError.identity}
+        _=try checkpoint()
+        let last=try inventory.capture(),now=try checkpoint()
+        guard first.configuredCap==last.configuredCap else {throw RuntimeError.identity}
         let context=VMEnvelopeContext(nativeProfileHash:nativeProfileHash,expectedBootHash:sample.bootHash,
             configuredCap:first.configuredCap,physical:physical,configurationSampledAt:min(first.sampledAt,last.sampledAt),
             topologyBeforeAt:first.sampledAt,topologyAfterAt:last.sampledAt,machineIDsBefore:first.machineIDs,machineIDsAfter:last.machineIDs,machineKernels:[])
