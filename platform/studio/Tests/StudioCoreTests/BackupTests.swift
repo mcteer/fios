@@ -58,6 +58,17 @@ func runBackupTests() throws {
     try Data(repeating:0,count:100).write(to:foreign.appendingPathComponent("state.sqlite"))
     try FileManager.default.setAttributes([.posixPermissions:0o600],ofItemAtPath:foreign.appendingPathComponent("state.sqlite").path)
     do {_=try StoppedJournalBackup.create(directory:foreign,destination:root.appendingPathComponent("bad.sqlite"));fatalError("Unmarked database accepted")} catch JournalError.invalid {}
+    let fifo=root.appendingPathComponent("fifo-state")
+    try FileManager.default.createDirectory(at:fifo,withIntermediateDirectories:false,attributes:[.posixPermissions:0o700])
+    guard mkfifo(fifo.appendingPathComponent("state.sqlite").path,0o600)==0 else {throw JournalError.storage}
+    do {_=try StoppedPlatformState(directory:fifo);fatalError("Nonregular state accepted as SQLite")} catch JournalError.invalid {}
+    for directory in [foreign,fifo] {
+        for name in ["supervisor.lock","serving-custody.lock","manager.lock"] {
+            guard !FileManager.default.fileExists(atPath:directory.appendingPathComponent(name).path) else {
+                fatalError("Stopped-state refusal left lock files in unrelated directory")
+            }
+        }
+    }
     let future=root.appendingPathComponent("future")
     try FileManager.default.createDirectory(at:future,withIntermediateDirectories:false,attributes:[.posixPermissions:0o700])
     let futureFile=future.appendingPathComponent("state.sqlite")
