@@ -55,6 +55,16 @@ func runReadOnlyVMResourceTests() throws {
     guard healthy.applying(to:host,now:3001).vmAvailable==4<<30,
           healthy.applying(to:host,now:3001).vmSampledAt==1000,healthy.epoch(now:3001)==hash,
           healthyWork.requests.count==2,healthy.epoch(now:6001)==nil else {fatalError("VM observation lost whole-envelope accounting/original freshness")}
+    let cachedWork=VMObservationFixture(),cached=ReadOnlyVMResources(work:cachedWork)
+    cached.tick(records:[record],jobs:[job],physical:host.physical,now:3000)
+    var cachedCap=sample(3001)
+    cachedCap.envelope=sample(1000).envelope
+    cachedWork.replies=[reply(cachedCap)]
+    cached.tick(records:[record],jobs:[job],physical:host.physical,now:3001)
+    guard cached.applying(to:host,now:6000).vmSampledAt==1000,cached.epoch(now:6000)==hash,
+          cached.applying(to:host,now:6001).vmAvailable==nil,cached.epoch(now:6001)==nil else {
+        fatalError("Read-only VM cap inherited the newer kernel's freshness")
+    }
     let replayWork=VMObservationFixture(),replay=ReadOnlyVMResources(work:replayWork)
     replay.tick(records:[record],jobs:[job],physical:host.physical,now:3000)
     replayWork.replies=[reply(sample(2999))]
@@ -122,6 +132,17 @@ func runReadOnlyVMResourceTests() throws {
     late.tick(records:[record],jobs:[extended],physical:host.physical,now:expiry)
     guard lateWork.requests.count==1,late.epoch(now:expiry)==nil else {
         fatalError("Renewal extended an expired original VM observation or replayed its failed target")
+    }
+    let retainedWork=VMObservationFixture(),retained=ReadOnlyVMResources(work:retainedWork)
+    retained.tick(records:[record],jobs:[job],physical:host.physical,now:edge)
+    retainedWork.replies=[reply(sample(expiry-2))]
+    retained.tick(records:[record],jobs:[extended],physical:host.physical,now:expiry-1)
+    guard retained.applying(to:host,now:expiry-1).vmSampledAt==expiry-2 else {
+        fatalError("Valid original lease lost a fresh completed VM read")
+    }
+    retained.tick(records:[record],jobs:[extended],physical:host.physical,now:expiry)
+    guard retained.epoch(now:expiry)==nil,retained.applying(to:host,now:expiry).vmAvailable==nil else {
+        fatalError("Renewal prolonged an older VM cache after original lease expiry")
     }
     let rollbackWork=VMObservationFixture(),rollback=ReadOnlyVMResources(work:rollbackWork)
     rollback.tick(records:[record],jobs:[job],physical:host.physical,now:1000)
