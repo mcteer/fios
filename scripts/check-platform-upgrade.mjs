@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {spawn,spawnSync} from 'node:child_process';
-import {mkdtempSync,readFileSync,rmSync,cpSync,chmodSync,writeFileSync,existsSync} from 'node:fs';
+import {mkdtempSync,readFileSync,readdirSync,rmSync,cpSync,chmodSync,writeFileSync,existsSync} from 'node:fs';
 import {join,resolve} from 'node:path';
 import {createHash} from 'node:crypto';
 import {setTimeout as delay} from 'node:timers/promises';
@@ -109,7 +109,14 @@ try {
     assert.equal(createHash('sha256').update(readFileSync(join(bundle,'backup.json'))).digest('hex'),backup.sha256);
   }else {
     await cycle(newRelease,state);await cycle(oldRelease,state);
-    cli(newRelease,bundle,['verify-backup','--sha256',backup.sha256]);
+    const sealedEntries=readdirSync(bundle).sort();
+    const sealedDatabase=()=>createHash('sha256').update(readFileSync(join(bundle,'state.sqlite'))).digest('hex');
+    const originalDatabase=sealedDatabase();
+    for(let run=0;run<2;run++){
+      assert.equal(cli(newRelease,bundle,['verify-backup','--sha256',backup.sha256]).sha256,backup.sha256);
+      assert.deepEqual(readdirSync(bundle).sort(),sealedEntries,'Verification changed sealed archive entries');
+      assert.equal(sealedDatabase(),originalDatabase,'Verification changed sealed journal');
+    }
     restored=join(scratch,'restored');
     cli(newRelease,bundle,['restore-state','--sha256',backup.sha256,'--to',restored]);
     await cycle(newRelease,restored);await cycle(oldRelease,restored);
