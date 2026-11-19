@@ -56,7 +56,7 @@ private final class MetadataFixtureClock:@unchecked Sendable {
     private let lock=NSLock()
     private var wall:Int64=10000
     func now()->Int64 {lock.lock();defer {lock.unlock()};return wall}
-    func expire() {lock.lock();wall=15000;lock.unlock()}
+    func set(_ value:Int64) {lock.lock();wall=value;lock.unlock()}
 }
 
 func runDockerVMMetadataFlowTests()throws {
@@ -131,11 +131,25 @@ func runDockerVMMetadataFlowTests()throws {
     }
     let startClock=MetadataFixtureClock(),startSocket=directory+"/start-expired.sock"
     let startSource=try MetadataDaemonFixture(path:startSocket,responses:[try json(parent),created,stream],optionalLastResponse:true,
-        responded:{index in if index==1 {startClock.expire()}})
+        responded:{index in if index==1 {startClock.set(15000)}})
     let startRuntime=try DockerRuntime(executable:VerifiedExecutable(path:"/bin/false",sha256:String(repeating:"0",count:64)),socket:startSocket)
     let startReader=try OwnedVMResourceReader(runtime:startRuntime,approvedImages:[configuration.image],directMetadata:true,now:startClock.now,uptime:{1})
     do {_=try startReader.read(configuration:configuration,id:id,leaseUntil:15000);fatalError("Expired metadata flow returned capacity")}
     catch RuntimeError.deadline {}
-    guard try startSource.finish().count==2 else {fatalError("Metadata exec start was published after original lease expired")}
+    startClock.set(15001)
+    do {_=try startReader.read(configuration:configuration,id:id,leaseUntil:45000);fatalError("New lease replayed uncertain metadata flow")}
+    catch RuntimeError.invalid {}
+    guard try startSource.finish().count==2 else {fatalError("Metadata exec start was published after original lease expired or replayed")}
+    let goodClock=MetadataFixtureClock(),goodSocket=directory+"/original-clock.sock"
+    let kernel=Data("MemTotal: 16384 kB\nMemFree: 8192 kB\n1 2 0:1 / /proc rw - proc proc rw\nUid: 65533 65533 65533 65533\nCapEff: 0\nNoNewPrivs: 1\n12345678-1234-1234-1234-123456789abc\n".utf8)
+    let kernelStream=Data("HTTP/1.1 101 UPGRADED\r\nConnection: Upgrade\r\nUpgrade: tcp\r\n\r\n".utf8)+Data([1,0,0,0,0,0,0,UInt8(kernel.count)])+kernel
+    let goodSource=try MetadataDaemonFixture(path:goodSocket,responses:[try json(parent),created,kernelStream,completed,try json(parent)],
+        responded:{index in goodClock.set(10001+Int64(index))})
+    let goodRuntime=try DockerRuntime(executable:VerifiedExecutable(path:"/bin/false",sha256:String(repeating:"0",count:64)),socket:goodSocket)
+    let goodReader=try OwnedVMResourceReader(runtime:goodRuntime,approvedImages:[configuration.image],directMetadata:true,now:goodClock.now,uptime:{1})
+    let observation=try goodReader.read(configuration:configuration,id:id,leaseUntil:15000)
+    guard observation.sampledAt==10000,observation.total==16<<20,observation.free==8<<20,try goodSource.finish().count==5 else {
+        fatalError("Successful owned VM read redated its original sample or lost an observation phase")
+    }
     print("PASS: actual private mock Unix metadata create/start/completion flow, exact fixed cat/UID/path/argv, full exec/container binding and foreign completion refusal with no replay (mock daemon only)")
 }
