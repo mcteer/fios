@@ -102,6 +102,8 @@ func runDrainTests()throws {
     guard try drain.poll(snapshot:busy,now:999).state == .refused(.deadline) else {fatalError("Rollback did not fence drain")}
     let drainClock=DrainTestClock();var timedDrain=ServiceDrainPolicy(uptime:{drainClock.time})
     _=try timedDrain.begin(snapshot:busy,role:.operator,now:1000)
+    drainClock.time=60.999 // 59.999 seconds from the original uptime of 1.
+    guard try timedDrain.poll(snapshot:ready,now:2000).state == .ready(identity) else {fatalError("Drain refused proof before monotonic deadline")}
     drainClock.time=61
     let expired=try timedDrain.poll(snapshot:busy,now:2000)
     guard expired.state == .refused(.deadline),expired.revokeOwned.isEmpty else {fatalError("Expired drain requested another revocation")}
