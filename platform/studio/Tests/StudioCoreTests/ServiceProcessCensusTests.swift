@@ -10,6 +10,7 @@ private final class ServiceCensusFixture:ServiceProcessCensusReading,@unchecked 
     var entryCompletedAt:TimeInterval?
     var entryWallCompletedAt:Int64?
     var verificationCompletedAt:TimeInterval?
+    var verifications=0
     var time:Int64=10000
     var tick:TimeInterval=1
     var clockReads=0
@@ -23,6 +24,7 @@ private final class ServiceCensusFixture:ServiceProcessCensusReading,@unchecked 
         return entries[pid]
     }
     func verify(_ entry:ServiceProcessEntry,executable:VerifiedExecutable,uid:uid_t,deadline:TimeInterval)throws->ServiceIdentity {
+        verifications+=1
         if let verificationCompletedAt {tick=verificationCompletedAt}
         return ServiceIdentity(pid:entry.pid,start:entry.start,sha256:executable.sha256)
     }
@@ -85,6 +87,30 @@ func runServiceProcessCensusTests() throws {
         fatalError("Final census clock rollback accepted despite earlier monotonic checkpoint")
     }
     let candidate=ServiceProcessEntry(pid:Int32.max,uid:geteuid(),realUID:getuid(),savedUID:geteuid(),start:2,path:binary.path)
+    let recorded=ServiceCensusFixture();recorded.entries[candidate.pid]=candidate
+    let receipt=ServiceRecordedLaunch(service:.mlx,id:UUID().uuidString.lowercased(),
+        identity:ServiceIdentity(pid:candidate.pid,start:candidate.start,sha256:hash),boot:try HostBoot.identity(),profileHash:review)
+    let probe=try RecordedServiceProcessProbe(service:.mlx,executable:executable,profileHash:review,
+        source:recorded,now:{recorded.time},uptime:{recorded.tick})
+    recorded.entryCompletedAt=2
+    guard probe.capture(receipt).state == .unknown,recorded.verifications==0 else {
+        fatalError("Exhausted recorded process observation started verification")
+    }
+    recorded.tick=1;recorded.entryCompletedAt=1.999
+    guard probe.capture(receipt).state == .current(receipt.identity),recorded.verifications==1 else {
+        fatalError("Recorded process observation lost valid remaining budget")
+    }
+    for invalidWall:Int64 in [9999,11001,.max] {
+        recorded.tick=1;recorded.time=10000;recorded.entryWallCompletedAt=invalidWall
+        guard probe.capture(receipt).state == .unknown,recorded.verifications==1 else {
+            fatalError("Invalid recorded process wall clock started verification")
+        }
+    }
+    recorded.tick=1;recorded.time=10000;recorded.entryWallCompletedAt=nil
+    recorded.entries[candidate.pid]=ServiceProcessEntry(pid:getpid(),uid:geteuid(),realUID:getuid(),savedUID:geteuid(),start:3,path:binary.path)
+    guard probe.capture(receipt).state == .unknown,recorded.verifications==1 else {
+        fatalError("Mismatched process record became historical exit evidence")
+    }
     let multiple=ServiceCensusFixture();multiple.first=[getpid(),Int32.max,Int32.max-1]
     multiple.entries[Int32.max]=candidate
     multiple.entries[Int32.max-1]=ServiceProcessEntry(pid:Int32.max-1,uid:geteuid(),realUID:getuid(),savedUID:geteuid(),start:3,path:binary.path)
