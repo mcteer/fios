@@ -190,16 +190,20 @@ func runServiceRecoveryTests() throws {
         }
     }
     try recovery.notSent(service:.mlx,id:first.id)
+    let recoveryState=directory.appendingPathComponent("service-recovery.json")
+    let beforeFreshnessRefusals=try Data(contentsOf:recoveryState)
     for sampledAt:Int64 in [694999,701001] {
         guard try recovery.next(service:.mlx,desired:.running,observation:absent(sampledAt),now:700000,tick:700000)==nil,
-              !recovery.isPending(.mlx) else {fatalError("Out-of-window service observation created a launch")}
+              !recovery.isPending(.mlx),try Data(contentsOf:recoveryState)==beforeFreshnessRefusals else {
+            fatalError("Out-of-window service observation created a launch or mutated durable state")
+        }
     }
-    guard let second=try recovery.plan(service:.mlx,desired:.running,observation:absent(700000),now:700000,tick:700000) else {fatalError("Correlated non-dispatch proof did not permit later launch")}
+    guard let second=try recovery.plan(service:.mlx,desired:.running,observation:absent(695000),now:700000,tick:700000) else {fatalError("Correlated non-dispatch proof did not permit later launch")}
     do {try recovery.notSent(service:.mlx,id:first.id);fatalError("Old proof retired a newer intent")}catch ServiceError.invalid {}
     try recovery.notSent(service:.mlx,id:second.id)
     guard try recovery.plan(service:.mlx,desired:.running,observation:absent(700001),now:700001,tick:700001)==nil else {fatalError("Minimum launch spacing bypassed")}
     for now:Int64 in [710000,720000] {
-        guard let command=try recovery.plan(service:.mlx,desired:.running,observation:absent(now),now:now,tick:now) else {fatalError("Finite restart budget refused an available start")}
+        guard let command=try recovery.plan(service:.mlx,desired:.running,observation:absent(now+1000),now:now,tick:now) else {fatalError("Finite restart budget refused an available start at the future freshness boundary")}
         try recovery.notSent(service:.mlx,id:command.id)
     }
     recovery=try ServiceRecoveryController(journal:journal,approvedHashes:pins)
