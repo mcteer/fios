@@ -28,7 +28,11 @@ private final class ResourceMetrics:@unchecked Sendable {
     func currentGPU()->(sample:GPUSample,sampledAt:Int64)? {
         lock.lock();defer {lock.unlock()}
         guard let gpu,let gpuAt,(0...WireScalar.maximumTimestamp).contains(gpuAt),(-1000...5000).contains(HostResources.nowMilliseconds()-gpuAt) else {return nil}
-        return (gpu,gpuAt)
+        let utilization=gpu.utilization.flatMap{$0.isFinite && (0...100).contains($0) ? $0:nil}
+        func bytes(_ value:UInt64?)->UInt64? {value.flatMap{$0<=UInt64(WireScalar.maximumTimestamp) ? $0:nil}}
+        let inUse=bytes(gpu.inUseBytes),allocated=bytes(gpu.allocatedBytes)
+        guard utilization != nil || inUse != nil || allocated != nil else {return nil}
+        return (GPUSample(utilization:utilization,inUseBytes:inUse,allocatedBytes:allocated),gpuAt)
     }
     func updateWorkload(_ value:PlatformWorkloadSample?) {lock.lock();workload=value;lock.unlock()}
     func currentWorkload()->PlatformWorkloadSample? {

@@ -221,10 +221,15 @@ final class StudioOpenTelemetryTests:XCTestCase {
         telemetry.gpu(GPUResources.decode(["Device Utilization %":25]),sampledAt:now)
         XCTAssertEqual(value("fios.platform.gpu.utilization"),0.25)
         XCTAssertNil(value("fios.platform.gpu.memory.in_use"))
-        telemetry.gpu(GPUResources.decode(["In use system memory":0]),sampledAt:now)
+        telemetry.gpu(GPUSample(utilization:.nan,inUseBytes:0,allocatedBytes:UInt64.max),sampledAt:now)
         XCTAssertNil(value("fios.platform.gpu.utilization"))
         XCTAssertEqual(value("fios.platform.gpu.memory.in_use"),0)
         XCTAssertNil(value("fios.platform.gpu.memory.allocated"))
+        XCTAssertEqual(value("fios.platform.gpu.sample.time"),Double(now)/1000)
+        telemetry.gpu(GPUSample(utilization:101,inUseBytes:UInt64.max,allocatedBytes:nil),sampledAt:now)
+        XCTAssertNil(value("fios.platform.gpu.utilization"))
+        XCTAssertNil(value("fios.platform.gpu.memory.in_use"))
+        XCTAssertNil(value("fios.platform.gpu.sample.time"))
     }
 
     func testWorkloadMetricsUseJournalAggregates() throws {
