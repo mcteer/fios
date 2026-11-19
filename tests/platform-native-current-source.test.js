@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync,mkdtempSync,mkdirSync,writeFileSync,rmSync} from 'node:fs';
 import {execFileSync} from 'node:child_process';
+import {createHash} from 'node:crypto';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
 
@@ -200,7 +201,7 @@ test('current shared ownership adapter stays within storage and its existing cal
   })),new Set(['src/fios/request_ownership.zig','src/fios/queued_request_ownership.zig','src/fios/control_transport.zig','src/host/http/request.zig','src/host/http/router.zig','src/host/http/server.zig','src/shared_all.zig']));
 });
 
-test('current optional SDK bridge preserves canonical native owner logic with shared accessors',()=>{
+test('current optional SDK bridge base retains the exact reviewed parent for later overlays',()=>{
   const patch=readFileSync('platform/studio/native/mlx-serve-26.11.2-sdk-ownership.patch','utf8');
   const sections=patch.split(/(?=^diff --git )/m).filter(Boolean);
   assert.equal(sections.length,5);
@@ -211,12 +212,10 @@ test('current optional SDK bridge preserves canonical native owner logic with sh
     if(header[1]==='src/fios/sdk_request_ownership.zig'){
       const hunk=section.slice(section.indexOf('\n@@ ')+1).split('\n').slice(1);
       const bytes=hunk.filter(line=>line.startsWith('+')).map(line=>line.slice(1)).join('\n')+'\n';
-      const original=readFileSync('platform/studio/native/sdk_request_ownership.zig','utf8')
-        .replace(/&owners\.shared\b/g,'owners.shared()')
-        .replace(/owners\.shared\b(?!\()/g,'owners.shared()')
-        .replace(/owners\.current_group\b(?!\()/g,'owners.current_group().*')
-        .replace(/owners\.current\b(?!\()/g,'owners.current().*');
-      assert.equal(bytes,original);
+      // This historical parent is deliberately not regenerated from the 26.10.3
+      // bridge: host-event and ANE overlays depend on its exact split-state bytes.
+      assert.equal(createHash('sha256').update(bytes).digest('hex'),
+        '8c6bee0f8234e61a0f750b697c9f0cb854950303b5e68aee2e8f3a17ed299c23');
     }
   }
   assert.equal(expected.size,0);
