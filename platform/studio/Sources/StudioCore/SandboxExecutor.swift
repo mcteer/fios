@@ -71,7 +71,10 @@ final class SandboxExecutor:SandboxCreateSlotExecuting,@unchecked Sendable {
     func submit(job:String,command:SandboxCommand) throws {
         guard UUID(uuidString:job)?.uuidString.lowercased()==job else { throw RuntimeError.invalid }
         switch command {
-        case .create(let config),.inspect(let config,_),.remove(let config,_):
+        case .create:
+            // Creation must use the dedicated prepublication commit path.
+            throw RuntimeError.invalid
+        case .inspect(let config,_),.remove(let config,_):
             guard config.job==job else { throw SandboxExecutionFailure.identity }
         case .start(let id),.stop(let id):
             lock.lock();let identity=identities[job];lock.unlock()

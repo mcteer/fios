@@ -22,8 +22,10 @@ func runSandboxExecutorTests() throws {
     let a=UUID().uuidString.lowercased(),b=UUID().uuidString.lowercased()
     let config=try SandboxConfiguration(job:a,nonce:String(repeating:"b",count:64),image:image,memory:512<<20,cpus:1)
     let unapproved=try SandboxConfiguration(job:b,nonce:String(repeating:"b",count:64),image:"sha256:"+String(repeating:"c",count:64),memory:512<<20,cpus:1)
+    do { try executor.submit(job:a,command:.create(config));fatalError("Create was published without the prepublication callback") } catch RuntimeError.invalid {}
+    do { try executor.submitCreate(configuration:unapproved,beforePublish:{fatalError("Unapproved image reached prepublication callback")});fatalError("Unapproved image reserved a create slot") } catch SandboxExecutionFailure.unapprovedImage {}
     try executor.submit(job:a,command:.inspect(config,nil))
-    try executor.submit(job:b,command:.create(unapproved))
+    try executor.submit(job:b,command:.inspect(unapproved,nil))
     let third=UUID().uuidString.lowercased()
     let thirdConfig=try SandboxConfiguration(job:third,nonce:String(repeating:"b",count:64),image:image,memory:512<<20,cpus:1)
     do { try executor.submit(job:third,command:.inspect(thirdConfig,nil));fatalError("Runtime executor exceeded two total slots") } catch AdmissionError.capacity {}
@@ -33,8 +35,22 @@ func runSandboxExecutorTests() throws {
     while results.count<2 && ProcessInfo.processInfo.systemUptime<deadline {
         results+=executor.drain();Thread.sleep(forTimeInterval:0.01)
     }
-    guard results.count==2,results.contains(where:{if case .failure(.unavailable)=$0.result {return true};return false}),
-          results.contains(where:{if case .failure(.unapprovedImage)=$0.result {return true};return false}) else { fatalError("CLI failure became absence or unapproved image reached daemon") }
+    guard results.count==2,Set(results.map(\.job))==Set([a,b]),
+          results.allSatisfy({if case .failure(.unavailable)=$0.result {return true};return false}) else {fatalError("CLI failure became absence or operation results crossed jobs")}
+    var commits=0
+    try executor.submitCreate(configuration:config,beforePublish:{
+        guard executor.active==1,executor.drain().isEmpty else {fatalError("Create published before prepublication callback")}
+        commits+=1
+    })
+    var createResults:[SandboxExecution]=[]
+    let createDeadline=ProcessInfo.processInfo.systemUptime+3
+    while createResults.isEmpty && ProcessInfo.processInfo.systemUptime<createDeadline {
+        createResults=executor.drain();Thread.sleep(forTimeInterval:0.001)
+    }
+    guard commits==1,createResults.count==1,createResults[0].job==a,
+          case .failure(.unavailable)=createResults[0].result,executor.drain().isEmpty else {
+        fatalError("Dedicated create path did not commit once and return its exact result")
+    }
     let reader=SlotVMReader(),shared=try SandboxExecutor(runtime:runtime,allowedImages:[image],resourceReader:reader)
     let id=String(repeating:"d",count:64)
     try shared.submitResources(configuration:config,id:id,leaseUntil:10000)
