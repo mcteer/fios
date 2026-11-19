@@ -14,7 +14,7 @@ import {verifyNativeReview} from './lib/platform-native-review.mjs';
 const args=process.argv.slice(2);
 let protocolVersion=2;
 function option(flag){const index=args.indexOf(flag);assert.equal(args.filter(value=>value===flag).length,index<0?0:1);if(index>=0)args.splice(index,1);return index>=0;}
-const withLineage=option('--lineage'),withBackendFences=option('--backend-fences'),withPrimaryActivity=option('--primary-activity'),withSDKBackground=option('--sdk-background'),withSlowIngress=option('--slow-ingress'),readOnly=option('--read-only'),dynamicObserver=option('--dynamic-observer'),observationOnlyServer=option('--observation-only-server');
+const withLineage=option('--lineage'),withBackendFences=option('--backend-fences'),withPrimaryActivity=option('--primary-activity'),withSDKBackground=option('--sdk-background'),withSlowIngress=option('--slow-ingress'),readOnly=option('--read-only'),dynamicObserver=option('--dynamic-observer'),observationOnlyServer=option('--observation-only-server'),withSourceOutage=option('--source-outage');
 assert(!observationOnlyServer||readOnly);
 assert(!dynamicObserver||readOnly);
 assert(!readOnly||(withBackendFences&&withPrimaryActivity&&withSDKBackground));
@@ -167,14 +167,29 @@ try{
  assert.equal(resumed.native_control.source_instance,diagnostic.source_instance);
  if(protocolVersion===3)assert(resumed.native_control.source_sequence>paused.native_control.source_sequence&&paused.native_control.source_sequence>diagnostic.source_sequence);
  assert.equal(resumed.native_control.authoritative,false);assert.deepEqual(readdirSync(models),[]);
- writeFileSync(join(directory,'status-receipts.json'),JSON.stringify({sourceHealth,initial,opened,paused,resumed},null,2)+'\n',{mode:0o600});
+ let sourceOutage;
+ if(withSourceOutage){
+  // Shut down only the same private empty-model child already owned by the
+  // fixture. Leave the manager alive to observe loss, not kernel terminality.
+  native.kill('SIGTERM');await until(()=>exited(native),7000);
+  const unavailable=await until(()=>{const value=command(['status']);return value?.native_control.state==='unavailable'?value:null;});
+  assert.equal(unavailable.native_admissions,'unsupported');assert.equal(unavailable.native_activity,'unknown');
+  assert.equal(unavailable.native_control.authoritative,false);
+  if(withPrimaryActivity)assert.notEqual(unavailable.native_control.primary_activity.state,'received');
+  if(withBackendFences)assert.notEqual(unavailable.native_control.backend_fences.state,'received');
+  const lostActivity=command(['activity']).observation;
+  assert.equal(lostActivity.coverage,'unknown');assert.equal(lostActivity.outstanding_owners,null);
+  if(withLineage){assert.equal(lostActivity.local_ownership.unresolved_count,1);assert.equal(lostActivity.local_ownership.blocked,true);}
+  sourceOutage={unavailable,lostActivity,models:0,native_authority:false};
+ }
+ writeFileSync(join(directory,'status-receipts.json'),JSON.stringify({sourceHealth,initial,opened,paused,resumed,sourceOutage},null,2)+'\n',{mode:0o600});
  manager.kill('SIGTERM');await until(()=>exited(manager),5000);assert.equal(manager.exitCode,0);assert.equal(managerErrors,'');
  if(readOnly)assert.deepEqual(JSON.parse(run(fixture,['--isolated-check-running',state],5000)),{durable_desired_verified:true,native_action:false});
  const lineageReceipt=withLineage?JSON.parse(run(fixture,['--isolated-check-lineage',state,diagnostic.source_instance],5000)):null;
  if(withLineage){assert.equal(lineageReceipt.persisted_source_sample,true);assert.equal(lineageReceipt.unresolved_uncertainty_retained,true);writeFileSync(join(directory,'lineage-receipt.json'),JSON.stringify(lineageReceipt)+'\n',{mode:0o600});}
- native.kill('SIGTERM');await until(()=>exited(native),7000);
+ if(!exited(native)){native.kill('SIGTERM');await until(()=>exited(native),7000);}
  if(withSlowIngress){assert.deepEqual(slowInputs(),slowSource);writeFileSync(join(directory,'slow-ingress-inputs.json'),JSON.stringify({scope:'runner_and_fixture_bytes_not_whole_native_provenance',files:slowSource,native_review_sha256:args[4],models:0,native_authority:false},null,2)+'\n',{mode:0o600});}
- console.log(JSON.stringify({ok:true,protocol_version:protocolVersion,source_health_probe:true,source_ingress_roundtrip:true,automatic_lineage_checkpoint:withLineage,automatic_backend_fences:withBackendFences,automatic_primary_activity:withPrimaryActivity,automatic_sdk_background:withSDKBackground,slow_ingress_owner_retained:withSlowIngress,observation_only:readOnly,dynamic_observer:dynamicObserver,native_observation_only:observationOnlyServer,model_requests:0,installed_service_actions:0,authoritative:false,review_directory:directory}));
+ console.log(JSON.stringify({ok:true,protocol_version:protocolVersion,source_health_probe:true,source_ingress_roundtrip:true,automatic_lineage_checkpoint:withLineage,source_outage_checked:withSourceOutage,automatic_backend_fences:withBackendFences,automatic_primary_activity:withPrimaryActivity,automatic_sdk_background:withSDKBackground,slow_ingress_owner_retained:withSlowIngress,observation_only:readOnly,dynamic_observer:dynamicObserver,native_observation_only:observationOnlyServer,model_requests:0,installed_service_actions:0,authoritative:false,review_directory:directory}));
 }finally{
  for(const child of [...children].reverse())if(!exited(child)){child.kill('SIGTERM');try{await until(()=>exited(child),7000);}catch{child.kill('SIGKILL');await until(()=>exited(child),3000);}}
  // Retain only private source-test data; process exit grants no native proof.
