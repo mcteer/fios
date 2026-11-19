@@ -46,6 +46,16 @@ func runServiceStatusTests() throws {
     for time:Int64 in [0,6000] {
         guard ServiceStatusPolicy.observed(desired:.running,observation:sample(identity,true,true,true,time),launchPending:false,now:5000) == .ready else {fatalError("Inclusive source age/future boundary rejected")}
     }
+    for (stamp,age):(Int64,Int64) in [(999,5001),(7001,-1001)] {
+        var healthy=sample(identity,true,true,true,stamp)
+        healthy.health = .healthy
+        let stale=ServiceStatusPolicy.summary(desired:.maintenance,observation:healthy,launchPending:false,now:6000)
+        guard stale["desired"] as? String=="maintenance",stale["observed"] as? String=="unknown",
+              stale["sampled_at"] as? Int64==stamp,stale["age_ms"] as? Int64==age,
+              stale["health"]==nil,stale["launch_pending"] as? Bool==false else {
+            fatalError("Stale service health became current or altered durable intent projection")
+        }
+    }
     let cache=ServiceObservationCache()
     guard cache.snapshot(for:.mlx)==nil,cache.snapshot(for:.orbstack)==nil else {fatalError("New manager cache adopted prior observations")}
     cache.publish(sample(identity,true),for:.mlx)
