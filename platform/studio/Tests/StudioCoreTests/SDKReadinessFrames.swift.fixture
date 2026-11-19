@@ -5,8 +5,19 @@ import Foundation
     static func main()throws {
         guard CommandLine.arguments.count==3 else {throw NativeControlError.invalid}
         let instance=String(repeating:"08",count:16)
-        let before=try NativeBackendFenceWire.backgroundReply(Data(contentsOf:URL(fileURLWithPath:CommandLine.arguments[1])),instance:instance)
-        let after=try NativeBackendFenceWire.backgroundReply(Data(contentsOf:URL(fileURLWithPath:CommandLine.arguments[2])),instance:instance,after:before.sampleSequence)
+        let original=try Data(contentsOf:URL(fileURLWithPath:CommandLine.arguments[1])),fenced=try Data(contentsOf:URL(fileURLWithPath:CommandLine.arguments[2]))
+        let before=try NativeBackendFenceWire.backgroundReply(original,instance:instance)
+        let after=try NativeBackendFenceWire.backgroundReply(fenced,instance:instance,after:before.sampleSequence)
+        for replay in [original,fenced] {
+            do {
+                _=try NativeBackendFenceWire.backgroundReply(replay,instance:instance,after:after.sampleSequence)
+                fatalError("Accepted an old or duplicate SDK frame")
+            } catch NativeControlError.invalid {}
+        }
+        do {
+            _=try NativeBackendFenceWire.backgroundReply(fenced,instance:String(repeating:"09",count:16))
+            fatalError("Accepted SDK frame from a different instance")
+        } catch NativeControlError.invalid {}
         guard before.current==NativeCurrentBackendFlags(available:1,uncertain:0),after.current==NativeCurrentBackendFlags(available:1,uncertain:1),
               before.backgroundCoverage==NativeBackgroundCoverage(sdkResidencyRefreshUntracked:nil),
               after.backgroundCoverage==before.backgroundCoverage,let now=after.sampledAt else {throw NativeControlError.invalid}
