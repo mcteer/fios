@@ -100,15 +100,23 @@ func runServiceProcessCensusTests() throws {
     guard probe.capture(receipt).state == .current(receipt.identity),recorded.verifications==1 else {
         fatalError("Recorded process observation lost valid remaining budget")
     }
+    for invalidTick:TimeInterval in [1.25,2,.infinity] {
+        recorded.tick=1;recorded.entryCompletedAt=1.5;recorded.verificationCompletedAt=invalidTick
+        guard probe.capture(receipt).state == .unknown else {
+            fatalError("Late or rolled-back verification published historical process identity")
+        }
+    }
+    guard recorded.verifications==4 else {fatalError("Terminal verification checks never reached verifier")}
+    recorded.verificationCompletedAt=nil
     for invalidWall:Int64 in [9999,11001,.max] {
         recorded.tick=1;recorded.time=10000;recorded.entryWallCompletedAt=invalidWall
-        guard probe.capture(receipt).state == .unknown,recorded.verifications==1 else {
+        guard probe.capture(receipt).state == .unknown,recorded.verifications==4 else {
             fatalError("Invalid recorded process wall clock started verification")
         }
     }
     recorded.tick=1;recorded.time=10000;recorded.entryWallCompletedAt=nil
     recorded.entries[candidate.pid]=ServiceProcessEntry(pid:getpid(),uid:geteuid(),realUID:getuid(),savedUID:geteuid(),start:3,path:binary.path)
-    guard probe.capture(receipt).state == .unknown,recorded.verifications==1 else {
+    guard probe.capture(receipt).state == .unknown,recorded.verifications==4 else {
         fatalError("Mismatched process record became historical exit evidence")
     }
     let multiple=ServiceCensusFixture();multiple.first=[getpid(),Int32.max,Int32.max-1]
