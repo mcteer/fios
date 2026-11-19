@@ -90,12 +90,7 @@ final class ReadOnlyVMResources {
             }
             pending=nil
             guard !fenced,stillOwned(target,records:records,jobs:jobs,now:now),
-                  case .success(let sample)=result.result,let envelope=sample.envelope,
-                  physical>0,sample.total>0,sample.total<=physical,sample.free<=sample.total,WireScalar.sha256(sample.bootHash),
-                  (0...WireScalar.maximumTimestamp).contains(sample.sampledAt),(-1000...5000).contains(now-sample.sampledAt),
-                  envelope.total==sample.total,envelope.free==sample.free,
-                  envelope.configuredCap<=physical,envelope.sampledAt<=sample.sampledAt,
-                  VMResources.remaining(envelope,expectedRuntimeHash:envelope.runtimeHash,now:now) != nil else {
+                  case .success(let sample)=result.result,sample.validatedEnvelope(physical:physical,now:now) != nil else {
                 failedTargets.insert(target.id);latest=nil;continue
             }
             latest=sample;latestTarget=target

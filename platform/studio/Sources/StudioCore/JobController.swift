@@ -84,8 +84,8 @@ final class JobController {
         for result in executor.drainResources() {
             guard let pending=resourcePending,pending.job==result.job,pending.id==result.runtimeID else {throw JournalError.conflict}
             resourcePending=nil
-            if !rollback,now<pending.leaseUntil,case .success(let value)=result.result,let envelope=value.envelope,
-               VMResources.remaining(envelope,expectedRuntimeHash:envelope.runtimeHash,now:now) != nil {
+            if !rollback,now<pending.leaseUntil,case .success(let value)=result.result,
+               value.validatedEnvelope(physical:sample.physical,now:now) != nil {
                 candidateVM=(value,pending.job,pending.id,pending.leaseUntil)
             }
             else {candidateVM=nil}

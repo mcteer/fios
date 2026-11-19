@@ -11,6 +11,16 @@ struct VMKernelSample:Sendable {
     let free:UInt64
     let bootHash:String
     var envelope:VMResourceObservation? = nil
+
+    func validatedEnvelope(physical:UInt64,now:Int64)->VMResourceObservation? {
+        guard let envelope,(0...WireScalar.maximumTimestamp).contains(now),
+              total>0,total<=physical,free<=total,WireScalar.sha256(bootHash),
+              (0...WireScalar.maximumTimestamp).contains(sampledAt),(-1000...5000).contains(now-sampledAt),
+              envelope.total==total,envelope.free==free,envelope.configuredCap<=physical,
+              envelope.sampledAt<=sampledAt,
+              VMResources.remaining(envelope,expectedRuntimeHash:envelope.runtimeHash,now:now) != nil else {return nil}
+        return envelope
+    }
 }
 
 // Trusted off-loop collector only; no IPC accepts an exec command/path/user.

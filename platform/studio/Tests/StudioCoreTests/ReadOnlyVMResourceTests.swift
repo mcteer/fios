@@ -57,6 +57,11 @@ func runReadOnlyVMResourceTests() throws {
           healthyWork.requests.count==2,healthy.epoch(now:6001)==nil else {fatalError("VM observation lost whole-envelope accounting/original freshness")}
     healthyWork.replies=[VMReadResult(job:job.id,runtimeID:id,result:.failure(.unavailable))]
     healthy.tick(records:[record],jobs:[job],physical:host.physical,now:4000)
+    // The original envelope is still within its freshness window. Failure,
+    // not elapsed age, must withdraw the cached value and source epoch.
+    guard healthy.epoch(now:4000)==nil,healthy.applying(to:host,now:4000).vmAvailable==nil else {
+        fatalError("Unsuccessful VM collection kept a previously fresh envelope")
+    }
     healthy.tick(records:[record],jobs:[job],physical:host.physical,now:6000)
     guard healthyWork.requests.count==2,healthy.epoch(now:6000)==nil else {fatalError("VM observation replayed uncertain resource work")}
 
