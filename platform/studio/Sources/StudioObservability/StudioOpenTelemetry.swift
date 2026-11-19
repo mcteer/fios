@@ -66,8 +66,9 @@ private final class ResourceMetrics:@unchecked Sendable {
         guard let nativeIngress,fresh(nativeIngress.receivedAt),nativeIngress.sourceSampledAt.map(fresh) ?? true else {return nil}
         return nativeIngress
     }
-    func current()->ResourceSample? {
+    func current(requireHostClock:Bool=true)->ResourceSample? {
         lock.lock();defer {lock.unlock()}
+        if !requireHostClock {return sample} // Caller must validate the independent clock.
         guard let sample,(0...WireScalar.maximumTimestamp).contains(sample.sampledAt),(-1000...5000).contains(HostResources.nowMilliseconds()-sample.sampledAt) else {return nil}
         return sample
     }
@@ -134,19 +135,23 @@ public final class StudioOpenTelemetry:PlatformTelemetry,@unchecked Sendable {
                   (-1000...5000).contains(HostResources.nowMilliseconds()-time) else {return nil}
             return time
         }
-        let metrics:[(String,String,(ResourceSample)->Double?)]=[
-            ("fios.platform.host.cpu.utilization","1",{ sample in freshCPUTime(sample).flatMap{_ in sample.cpu.map{$0/100}} }),
-            ("fios.platform.host.cpu.sample.time","s",{ freshCPUTime($0).map{Double($0)/1000} }),
+        let hostMetrics:[(String,String,(ResourceSample)->Double?)]=[
             ("fios.platform.host.memory.physical","By",{Double($0.physical)}),
             ("fios.platform.host.memory.available","By",{$0.available.map{Double($0)}}),
             ("fios.platform.host.disk.free","By",{$0.diskFree.map{Double($0)}}),
-            ("fios.platform.host.power.low","1",{$0.lowPowerMode.map{$0 ? 1.0:0.0}}),
+            ("fios.platform.host.power.low","1",{$0.lowPowerMode.map{$0 ? 1.0:0.0}})
+        ]
+        let independentMetrics:[(String,String,(ResourceSample)->Double?)]=[
+            ("fios.platform.host.cpu.utilization","1",{ sample in freshCPUTime(sample).flatMap{_ in sample.cpu.map{$0/100}} }),
+            ("fios.platform.host.cpu.sample.time","s",{ freshCPUTime($0).map{Double($0)/1000} }),
             ("fios.platform.vm.memory.available","By",{ sample in freshVMTime(sample).flatMap{_ in sample.vmAvailable.map{Double($0)}} }),
             ("fios.platform.vm.sample.time","s",{ freshVMTime($0).map{Double($0)/1000} })
         ]
-        for (name,unit,value) in metrics {
-            _=meter.gaugeBuilder(name:name).setUnit(unit).buildWithCallback { observation in
-                if let sample=state.current(),let number=value(sample) {observation.record(value:number)}
+        for (metrics,requireHostClock) in [(hostMetrics,true),(independentMetrics,false)] {
+            for (name,unit,value) in metrics {
+                _=meter.gaugeBuilder(name:name).setUnit(unit).buildWithCallback { observation in
+                    if let sample=state.current(requireHostClock:requireHostClock),let number=value(sample) {observation.record(value:number)}
+                }
             }
         }
         let conditions:[(String,(ResourceSample)->String?)]=[
