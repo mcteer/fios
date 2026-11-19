@@ -100,9 +100,20 @@ func runReadOnlyVMResourceTests() throws {
     let expiry=job.lease.expires,edge=expiry-5000
     expiring.tick(records:[record],jobs:[job],physical:host.physical,now:edge)
     expiryWork.replies=[reply(sample(edge))]
-    expiring.tick(records:[record],jobs:[job],physical:host.physical,now:edge)
-    guard expiring.epoch(now:expiry-1)==hash,expiring.epoch(now:expiry)==nil,
-          expiring.applying(to:host,now:expiry).vmAvailable==nil else {fatalError("VM observation survived its source lease at a fresh signal boundary")}
+    expiring.tick(records:[record],jobs:[job],physical:host.physical,now:edge+1)
+    guard expiryWork.requests.count==1,expiring.epoch(now:expiry-1)==hash,expiring.epoch(now:expiry)==nil,
+          expiring.applying(to:host,now:expiry).vmAvailable==nil else {fatalError("VM observation must finish within its original lease without authorizing another read")}
+    // Renewal may authorize later work, but cannot rescue a result from an
+    // earlier submission that arrives exactly at that submission's expiry.
+    let lateWork=VMObservationFixture(),late=ReadOnlyVMResources(work:lateWork)
+    late.tick(records:[record],jobs:[job],physical:host.physical,now:edge)
+    var extended=job
+    try extended.lease.renew(now:edge+1)
+    lateWork.replies=[reply(sample(expiry-1))]
+    late.tick(records:[record],jobs:[extended],physical:host.physical,now:expiry)
+    guard lateWork.requests.count==1,late.epoch(now:expiry)==nil else {
+        fatalError("Renewal extended an expired original VM observation or replayed its failed target")
+    }
     let rollbackWork=VMObservationFixture(),rollback=ReadOnlyVMResources(work:rollbackWork)
     rollback.tick(records:[record],jobs:[job],physical:host.physical,now:1000)
     rollback.tick(records:[record],jobs:[job],physical:host.physical,now:999)

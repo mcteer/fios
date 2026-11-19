@@ -70,8 +70,7 @@ final class ReadOnlyVMResources {
               let id=record.runtimeID,WireScalar.sha256(id),
               let job=jobs.first(where:{$0.id==record.configuration.job}),job.state == .running else {return nil}
         var lease=job.lease
-        guard lease.valid(now:now),now>=lease.created,lease.expires-now>=5000,
-              lease.deadline>=lease.expires else {return nil}
+        guard lease.valid(now:now),now>=lease.created,lease.deadline>=lease.expires else {return nil}
         return Target(configuration:record.configuration,id:id,leaseUntil:lease.expires)
     }
     private func stillOwned(_ target:Target,records:[SandboxRecord],jobs:[DurableJob],now:Int64)->Bool {
@@ -98,7 +97,10 @@ final class ReadOnlyVMResources {
             latest=sample;latestTarget=target
         }
         guard !fenced,pending==nil,now-lastBegin>=2000,failedTargets.count<64 else {return}
-        guard let target=records.compactMap({self.target($0,jobs:jobs,now:now)}).first(where:{!failedTargets.contains($0.id)}) else {return}
+        // Full read budget is required only when submitting. An in-flight
+        // result can remain valid until its original lease actually expires.
+        guard let target=records.compactMap({self.target($0,jobs:jobs,now:now)})
+            .first(where:{$0.leaseUntil-now>=5000 && !failedTargets.contains($0.id)}) else {return}
         do {
             try work.submit(configuration:target.configuration,id:target.id,leaseUntil:target.leaseUntil)
             pending=(target,now);lastBegin=now
