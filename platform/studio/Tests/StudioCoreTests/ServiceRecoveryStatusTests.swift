@@ -44,5 +44,9 @@ func runServiceRecoveryStatusTests() throws {
     guard ServiceStatusPolicy.observed(desired:.running,observation:absent,launchPending:false,now:601000,restartWaiting:false) == .unknown,
           try recovery.plan(service:.mlx,desired:.running,observation:absent,now:601000,tick:601000)==nil,
           status(601000)["budget_state"] as? String=="available" else {throw ServiceError.invalid}
+    guard let renewed=try recovery.plan(service:.mlx,desired:.running,observation:current,now:601000,tick:601000),
+          status(601000)["budget_state"] as? String=="pending",
+          try recovery.plan(service:.mlx,desired:.running,observation:current,now:601000,tick:601000)==nil else {throw ServiceError.invalid}
+    try recovery.notSent(service:.mlx,id:renewed.id)
     print("PASS: ordinary service recovery status reports pending, per-service budget wait and expiry")
 }
