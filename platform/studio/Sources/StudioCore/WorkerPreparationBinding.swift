@@ -24,6 +24,7 @@ struct WorkerPreparationBinding:Sendable {
               lineage.lineage.rootSequence==ack.rootSequence,lineage.lineage.found,!lineage.lineage.uncertain,
               lineage.lineage.sampleSequence>ack.sampleSequence,
               lineage.sampledAt>=registration.verifiedAt,(0...5000).contains(now-lineage.sampledAt),
+              try journal.unresolvedCount()==1,
               let record=try journal.inferenceScope(job:plan.job,attempt:plan.attempt),record.state == .dispatched,
               try record.scope.encoded()==plan.scope.encoded(),
               ack.instance==plan.scope.nativeEpoch,ack.model.utf8.elementsEqual(plan.scope.nativeModel.utf8),

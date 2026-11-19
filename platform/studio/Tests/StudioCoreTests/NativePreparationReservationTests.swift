@@ -180,6 +180,13 @@ private func runPreparationPlanBindingTests(peer:NativeControlPeer)throws {
     do{_=try observation.encoded(subject:wrong,managerEpoch:scope.managerEpoch,journal:journal,now:now);fatalError("Scoped observation crossed original root")}catch RuntimeError.identity {}
     let missing=PreparedNativeReservation(registration:prepared.registration,lineage:nil)
     do{_=try WorkerPreparationBinding.capture(plan:plan,journal:journal,prepared:missing,now:now);fatalError("Missing lineage became launch-plan binding")}catch RuntimeError.identity {}
+    // A low-level fixture claim with no native binding exercises a transient
+    // local admission change without resolving any native uncertainty.
+    let transient=UUID().uuidString.lowercased()
+    try journal.claim(job:transient,attempt:0,model:scope.canonicalModel)
+    try journal.complete(job:transient,attempt:0)
+    guard try journal.unresolvedCount()==1 else {throw JournalError.invalid}
+    do{_=try observation.encoded(subject:subject,managerEpoch:scope.managerEpoch,journal:journal,now:now);fatalError("Transient sibling claim revived older preparation observation")}catch RuntimeError.identity {}
     try journal.claim(job:other,attempt:0,model:scope.canonicalModel,scope:scope)
     do{_=try observation.encoded(subject:subject,managerEpoch:scope.managerEpoch,journal:journal,now:now);fatalError("Scoped observation ignored independent unresolved inference")}catch RuntimeError.identity {}
     guard try binding.observation(lineage:lineage,activity:activity,journal:journal,sourceCoverage:.all_clients,now:now)==nil else {fatalError("Fresh metadata laundered independent inference uncertainty")}

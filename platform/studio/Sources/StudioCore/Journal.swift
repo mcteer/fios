@@ -7,7 +7,7 @@ public enum JournalError: Error { case invalid, locked, storage, conflict, track
 
 struct PreparationBindingCheckpoint:Equatable,Sendable {
     let journalID:UUID
-    let observationRevision:UInt64
+    let localRevision:UInt64
     let lineage:Data
 }
 
@@ -44,7 +44,7 @@ public final class Journal {
     let directory:URL
     private var db: OpaquePointer?
     private let preparationJournalID=UUID()
-    private var lineageObservationRevision:UInt64=0
+    private var preparationLocalRevision:UInt64=0
     private var lockFD: Int32 = -1
     // Single serialized owner and exclusive writer lock. Cache decoded bounded
     // records between SQL mutations; every execute/transaction edge invalidates.
@@ -398,6 +398,9 @@ public final class Journal {
                 try execute("INSERT INTO request_history(job,attempt,model) VALUES(?,?,?)",[job,String(attempt),model])
             }
         }
+        // A transient sibling claim invalidates older local exclusivity even
+        // if it is subsequently removed. Saturation disables new bindings.
+        if preparationLocalRevision<UInt64.max {preparationLocalRevision+=1}
     }
     public func markUncertain(job: String, attempt: Int) throws {
         try validate(job: job, attempt: attempt)
@@ -517,10 +520,10 @@ public final class Journal {
         return observation
     }
     private func persistNativeObservation(_ consumer:NativeRequestLineageConsumer,job:String,attempt:Int,scope:InferenceScope)throws {
-        guard lineageObservationRevision<UInt64.max else {throw JournalError.trackingLimit}
+        guard preparationLocalRevision<UInt64.max else {throw JournalError.trackingLimit}
         // Revoke previously captured local bindings even if this write is
         // refused. The durable root and unresolved claims are independent.
-        lineageObservationRevision+=1
+        preparationLocalRevision+=1
         let payload=String(decoding:try consumer.checkpoint(scope:scope),as:UTF8.self)
         try execute("INSERT INTO native_lineages(job,attempt,payload) VALUES(?,?,?) ON CONFLICT(job,attempt) DO UPDATE SET payload=excluded.payload",[job,String(attempt),payload])
     }
@@ -561,16 +564,16 @@ public final class Journal {
         return consumer.fenced ? nil:consumer.rootSequence
     }
     // A local revocation stamp, never source liveness or dispatch authority.
-    // Any attempted lineage or retirement checkpoint write, even unknown at the same timestamp,
-    // conservatively revokes captured bindings. Reopen cannot restore them.
+    // New claims and attempted lineage/retirement writes, including unknown
+    // at the same timestamp, conservatively revoke captured bindings. Reopen cannot restore them.
     // Changed inference state or launch withdrawal also refuses.
     func preparationBindingCheckpoint(plan:PlannedWorkerStart,peer:NativeControlPeer,root:UInt64)throws->PreparationBindingCheckpoint {
-        guard lineageObservationRevision<UInt64.max,let record=try inferenceScope(job:plan.job,attempt:plan.attempt),record.state == .dispatched,
+        guard preparationLocalRevision<UInt64.max,let record=try inferenceScope(job:plan.job,attempt:plan.attempt),record.state == .dispatched,
               try record.scope.encoded()==plan.scope.encoded(),
               try activeLaunches().contains(where:{$0.job==plan.job && $0.attempt==plan.attempt && $0.nonce==plan.nonce}),
               try originalNativeRoot(job:plan.job,attempt:plan.attempt,scope:plan.scope,peer:peer)==root,
               let checkpoint=try lineageCheckpoint(job:plan.job,attempt:plan.attempt) else {throw RuntimeError.identity}
-        return PreparationBindingCheckpoint(journalID:preparationJournalID,observationRevision:lineageObservationRevision,lineage:checkpoint)
+        return PreparationBindingCheckpoint(journalID:preparationJournalID,localRevision:preparationLocalRevision,lineage:checkpoint)
     }
     // Persist original-root/replay binding before returning local retirement
     // metadata. No inference state transition or reservation release occurs.
