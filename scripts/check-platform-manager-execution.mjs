@@ -119,18 +119,18 @@ try {
  }),main,'-o',binary],180000,{...process.env});
  const source=Buffer.from("print('MANAGER_LOOP_FIXTURE')\n"),token=randomBytes(32).toString('base64');
  function begin(){return {owner:token,phase:'begin',idempotency:randomUUID(),kind:'sandbox',length:source.length,sha256:createHash('sha256').update(source).digest('hex'),lifetime:30000,model:null,image,memory:536870912,cpus:1};}
- for(const [mode,error]of [['disabled','native_unsupported'],['held','native_unsupported'],['closed','native_unsupported'],['missing','resource_limit']]) {
+ for(const [mode,error]of [['disabled','native_unsupported'],['held','native_unsupported'],['closed','native_unsupported'],['missing','resource_limit'],['undated','stale_observation']]) {
   const state=join(directory,mode),child=await start(state,mode);
   if(mode==='held'){const status=await rpc(state,'status',{},'observe');assert.equal(status.migration_maintenance,true);assert.equal(status.sandbox_admission,'disabled','Migration maintenance hold accepted execution ports');}
   const response=await rpc(state,'job.create',begin());assert.equal(response.ok,false);assert.equal(response.error,error);
   const status=await rpc(state,'status',{},'observe');assert.equal(status.native_activity,'unsupported');assert.equal(status.worker_reservations,0);assert.equal(status.unresolved_requests,0);
   await stop(child);
-  if(mode==='held')assert.equal(command('/usr/bin/sqlite3',['-readonly',join(state,'state.sqlite'),'SELECT (SELECT count(*) FROM jobs) || ":" || (SELECT count(*) FROM sandboxes) || ":" || (SELECT count(*) FROM request_history);']),'0:0:0','Held job refusal wrote durable execution state');
+  if(['held','undated'].includes(mode))assert.equal(command('/usr/bin/sqlite3',['-readonly',join(state,'state.sqlite'),'SELECT (SELECT count(*) FROM jobs) || ":" || (SELECT count(*) FROM sandboxes) || ":" || (SELECT count(*) FROM request_history);']),'0:0:0','Pre-admission refusal wrote durable execution state');
  }
  if(models){await modelCase(true);await modelCase(false);}
  if(mock) {
   passed=true;
-  console.log('PASS: real disposable manager IPC refuses default/held/closed/missing-source execution with zero workers/native requests; harmless stand-in only, no daemon calls.');
+  console.log('PASS: real disposable manager IPC refuses default/held/closed/missing-source/undated-CPU execution with zero workers/native requests; harmless stand-in only, no daemon calls.');
  } else {
  const state=join(directory,'configured');let child=await start(state,'configured');
  const created=await rpc(state,'job.create',begin());assert.equal(created.ok,true,created.error);const job=created.result.job;assert.match(job,/^[a-f0-9-]{36}$/);jobs.push(job);

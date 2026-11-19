@@ -161,7 +161,7 @@ func runPythonFactoryTests() throws {
           !SandboxTaskController.retainsPreStartSource(freshBinding(sequence:3,stamp:1100),original:uploadOriginal,now:6200) else {
         fatalError("Sandbox pre-start source accepted a stale or replaced binding")
     }
-    func resources(_ now:Int64)->ResourceSample { ResourceSample(sampledAt:now,physical:128<<30,available:64<<30,vmAvailable:nil,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal) }
+    func resources(_ now:Int64)->ResourceSample { ResourceSample(sampledAt:now,physical:128<<30,available:64<<30,vmAvailable:nil,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal,cpuSampledAt:now) }
     var admission=AdmissionPolicy()
     progress("broker rounds begin")
     for attempt in 0..<4 {
@@ -614,7 +614,7 @@ private func runHandoffPreparationFailureTests(factory:PythonWorkerFactory)throw
         _=try journal.reserveJob(DurableJob(id:id,idempotency:UUID().uuidString.lowercased(),ownerHash:owner,requestHash:String(repeating:"b",count:64),created:now))
         try journal.transitionJob(id:id,to:.running)
         var admission=AdmissionPolicy()
-        let sample=ResourceSample(sampledAt:now,physical:128<<30,available:64<<30,vmAvailable:nil,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal)
+        let sample=ResourceSample(sampledAt:now,physical:128<<30,available:64<<30,vmAvailable:nil,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal,cpuSampledAt:now)
         try broker.submit(job:id,owner:owner,requestID:UUID().uuidString.lowercased(),context:[ModelText(role:"user",content:"fixture")],binding:binding,nativeCapacityProven:true,sample:sample,admission:&admission,now:now)
         guard source.entered.wait(timeout:.now()+1) == .success else {throw RuntimeError.deadline}
         let uptime=Int64(ProcessInfo.processInfo.systemUptime*1000)
@@ -691,7 +691,7 @@ private func runUnusedPreparationCancellationTest(factory:PythonWorkerFactory)th
     _=try journal.reserveJob(DurableJob(id:id,idempotency:UUID().uuidString.lowercased(),ownerHash:owner,requestHash:String(repeating:"b",count:64),created:now))
     try journal.transitionJob(id:id,to:.running)
     var admission=AdmissionPolicy()
-    let sample=ResourceSample(sampledAt:now,physical:128<<30,available:64<<30,vmAvailable:nil,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal)
+    let sample=ResourceSample(sampledAt:now,physical:128<<30,available:64<<30,vmAvailable:nil,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal,cpuSampledAt:now)
     try broker.submit(job:id,owner:owner,requestID:UUID().uuidString.lowercased(),context:[ModelText(role:"user",content:"fixture")],binding:binding,nativeCapacityProven:true,sample:sample,admission:&admission,now:now)
     guard source.entered.wait(timeout:.now()+1) == .success else {throw RuntimeError.deadline}
     try broker.cancel(job:id,uptime:Int64(ProcessInfo.processInfo.systemUptime*1000))

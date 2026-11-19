@@ -58,7 +58,7 @@ func runJobJournalTests() throws {
     guard try journal!.activeLaunchCount()==1,try journal!.workerGrants().isEmpty,try journal!.unresolvedCount()==1 else { fatalError("Restart cleared unbound launch/memory/native uncertainty") }
     var restored=AdmissionPolicy()
     try ModelBroker.restoreReservations(journal:journal!,admission:&restored)
-    let sensors=ResourceSample(sampledAt:10_000,physical:128<<30,available:64<<30,vmAvailable:nil,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal)
+    let sensors=ResourceSample(sampledAt:10_000,physical:128<<30,available:64<<30,vmAvailable:nil,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal,cpuSampledAt:10_000)
     try restored.reserveWorker(key:"second",sample:sensors,now:10_000)
     do { try restored.reserveWorker(key:"third",sample:sensors,now:10_000);fatalError("Unbound launch lost its memory slot on restart") } catch AdmissionError.capacity {}
     print("PASS: durable job/request/launch idempotency, pre-spawn slot recovery and uncertainty-safe terminal retention")

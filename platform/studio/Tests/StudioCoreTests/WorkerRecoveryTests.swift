@@ -33,7 +33,7 @@ func runWorkerRecoveryTests() throws {
           try journal!.activeLaunchCount()==0,try journal!.unresolvedCount()==1,try journal!.uncertainCount()==1 else {
         fatalError("Bound-child recovery touched foreign work or cleared native uncertainty")
     }
-    let sample=ResourceSample(sampledAt:10_000,physical:128<<30,available:64<<30,vmAvailable:nil,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal)
+    let sample=ResourceSample(sampledAt:10_000,physical:128<<30,available:64<<30,vmAvailable:nil,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal,cpuSampledAt:10_000)
     try admission.reserveWorker(key:"one",sample:sample,now:10_000)
     try admission.reserveWorker(key:"two",sample:sample,now:10_000)
     let blocked=UUID().uuidString.lowercased(),process=Process(),input=Pipe(),output=Pipe()
@@ -93,7 +93,7 @@ func runLateWorkerRecoveryTests()throws {
           try journal.activeLaunchCount()==1,try journal.unresolvedCount()==2,try journal.uncertainCount()==1 else {
         fatalError("Late bound worker failure was not reaped without changing native ownership")
     }
-    let sample=ResourceSample(sampledAt:10000,physical:128<<30,available:64<<30,vmAvailable:nil,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal)
+    let sample=ResourceSample(sampledAt:10000,physical:128<<30,available:64<<30,vmAvailable:nil,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal,cpuSampledAt:10000)
     try admission.reserveWorker(key:"replacement",sample:sample,now:10000)
     do {try admission.reserveWorker(key:"excess",sample:sample,now:10000);fatalError("Healthy worker reservation was released")}catch AdmissionError.capacity {}
     let unboundDirectory=directory.appendingPathComponent("separate-unbound-fixture")

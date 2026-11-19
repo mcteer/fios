@@ -17,7 +17,7 @@ func runReadOnlyVMResourceTests() throws {
     var job=try DurableJob(id:configuration.job,idempotency:UUID().uuidString.lowercased(),ownerHash:hash,requestHash:hash,created:1000)
     job.state = .running
     let record=SandboxRecord(configuration:configuration,runtimeID:id,createIssued:true,startIssued:true)
-    let host=ResourceSample(sampledAt:1000,physical:32<<30,available:16<<30,vmAvailable:nil,diskFree:32<<30,cpu:0,pressure:.normal,thermal:.nominal)
+    let host=ResourceSample(sampledAt:1000,physical:32<<30,available:16<<30,vmAvailable:nil,diskFree:32<<30,cpu:0,pressure:.normal,thermal:.nominal,cpuSampledAt:1000)
     func sample(_ stamp:Int64=1000,_ covered:Bool=true)->VMKernelSample {
         VMKernelSample(sampledAt:stamp,total:16<<30,free:8<<30,bootHash:hash,
             envelope:VMResourceObservation(runtimeHash:hash,sampledAt:stamp,configuredCap:12<<30,total:16<<30,free:8<<30,allVMConsumersCovered:covered))

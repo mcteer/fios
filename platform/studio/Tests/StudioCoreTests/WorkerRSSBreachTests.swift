@@ -11,7 +11,7 @@ func runWorkerRSSBreachTests()throws {
     }
     let journal=try Journal(directory:directory),id=UUID().uuidString.lowercased()
     let key="model:\(id):0",now=HostResources.nowMilliseconds()
-    let sample=ResourceSample(sampledAt:now,physical:128<<30,available:64<<30,vmAvailable:nil,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal)
+    let sample=ResourceSample(sampledAt:now,physical:128<<30,available:64<<30,vmAvailable:nil,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal,cpuSampledAt:now)
     var admission=AdmissionPolicy()
     try admission.reserveWorker(key:key,sample:sample,now:now)
     try journal.claim(job:id,attempt:0,model:"fixture/model")

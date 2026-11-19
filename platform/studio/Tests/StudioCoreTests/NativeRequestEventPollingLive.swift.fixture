@@ -78,7 +78,7 @@ import CryptoKit
                 let sandbox=SandboxTaskController(journal:journal,jobs:jobs,tasks:tasks,artifacts:artifacts,socket:"/fixture/unused.sock",peerUID:geteuid())
                 let commands=TaskCommands(journal:journal,tasks:tasks,sandbox:sandbox,artifacts:artifacts,approvedImages:[],peerUID:geteuid(),nativeRequestEvents:{job,now in try poller.requestEventStatuses(job:job,now:now)})
                 let request=try ControlRequest.decode(JSONSerialization.data(withJSONObject:["version":1,"id":UUID().uuidString.lowercased(),"operation":"job.status","payload":["owner":token,"job":job]]))
-                let resources=ResourceSample(sampledAt:observedAt,physical:24<<30,available:16<<30,vmAvailable:nil,diskFree:50<<30,cpu:10,pressure:.normal,thermal:.nominal)
+                let resources=ResourceSample(sampledAt:observedAt,physical:24<<30,available:16<<30,vmAvailable:nil,diskFree:50<<30,cpu:10,pressure:.normal,thermal:.nominal,cpuSampledAt:observedAt)
                 var admission=AdmissionPolicy()
                 let status=try commands.handle(request,role:.task,sample:resources,admission:&admission,binding:{_ in nil},nativeCapacityProven:false,now:observedAt,uptime:1000)
                 guard let rows=status["native_request_events"] as? [[String:Any]],rows.count==1,

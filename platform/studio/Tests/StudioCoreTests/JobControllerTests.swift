@@ -75,7 +75,7 @@ func runJobControllerTests() throws {
     let journal=try Journal(directory:directory),runtime=FakeSandboxExecutor()
     let controller=JobController(journal:journal,executor:runtime)
     var admission=AdmissionPolicy()
-    func sample(_ now:Int64,cpu:Double=10)->ResourceSample { ResourceSample(sampledAt:now,physical:128<<30,available:64<<30,vmAvailable:8<<30,diskFree:100<<30,cpu:cpu,pressure:.normal,thermal:.nominal,vmSampledAt:now) }
+    func sample(_ now:Int64,cpu:Double=10)->ResourceSample { ResourceSample(sampledAt:now,physical:128<<30,available:64<<30,vmAvailable:8<<30,diskFree:100<<30,cpu:cpu,pressure:.normal,thermal:.nominal,vmSampledAt:now,cpuSampledAt:now) }
     let ids=[UUID().uuidString.lowercased(),UUID().uuidString.lowercased()]
     for (index,id) in ids.enumerated() {
         let stamp:Int64=10000+Int64(index)
@@ -145,7 +145,7 @@ private func checkReservedCreateSlot()throws {
     _=try journal.reserveSandbox(job:DurableJob(id:id,idempotency:UUID().uuidString.lowercased(),ownerHash:hash,requestHash:hash,created:10000),configuration:config)
     var admission=AdmissionPolicy()
     func tick(_ now:Int64,ready:Bool)throws {
-        let sample=ResourceSample(sampledAt:now,physical:128<<30,available:64<<30,vmAvailable:8<<30,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal,vmSampledAt:now)
+        let sample=ResourceSample(sampledAt:now,physical:128<<30,available:64<<30,vmAvailable:8<<30,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal,vmSampledAt:now,cpuSampledAt:now)
         try controller.tick(now:now,sample:sample,admission:&admission,inputReady:{_ in ready},transportReady:{_ in false},cancelModel:{_ in})
     }
     let disabled=UnavailableSandboxRuntime()
@@ -183,7 +183,7 @@ private func checkDeferredCreateRestart()throws {
     defer {try? FileManager.default.removeItem(at:directory)}
     let id=UUID().uuidString.lowercased(),hash=String(repeating:"a",count:64)
     func sample(_ now:Int64)->ResourceSample {
-        ResourceSample(sampledAt:now,physical:128<<30,available:64<<30,vmAvailable:8<<30,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal,vmSampledAt:now)
+        ResourceSample(sampledAt:now,physical:128<<30,available:64<<30,vmAvailable:8<<30,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal,vmSampledAt:now,cpuSampledAt:now)
     }
     do {
         let journal=try Journal(directory:directory),runtime=FakeSandboxExecutor()
@@ -247,7 +247,7 @@ private func checkModelSandboxSourceTurnover() throws {
         try sandbox.register(id:id,owner:owner,source:Data(),inputSHA256:"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",binding:binding("original",now:10000),now:10000)
         var admission=AdmissionPolicy()
         func tick(_ now:Int64,_ nativeEpoch:String,sequence:UInt64=1)throws {
-            let sample=ResourceSample(sampledAt:now,physical:128<<30,available:64<<30,vmAvailable:8<<30,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal,vmSampledAt:now)
+            let sample=ResourceSample(sampledAt:now,physical:128<<30,available:64<<30,vmAvailable:8<<30,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal,vmSampledAt:now,cpuSampledAt:now)
             _=try sandbox.tick(now:now,uptime:Double(now)/1000,sample:sample,admission:&admission,source:{_ in binding(nativeEpoch,now:now,sequence:sequence)},nativeCapacityProven:false)
         }
         if createBeforeTurnover {
@@ -279,7 +279,7 @@ func runVMProbePermissionTests() throws {
     let coordinator=VMProbeCoordinator(journal:journal,jobs:jobs,sandbox:sandbox)
     let permission=try VMProbePermission(reviewedImage:"sha256:"+String(repeating:"b",count:64),reviewDigest:String(repeating:"c",count:64),managerEpoch:UUID().uuidString.lowercased(),issued:10000)
     var admission=AdmissionPolicy()
-    func sample(_ now:Int64)->ResourceSample {ResourceSample(sampledAt:now,physical:128<<30,available:64<<30,vmAvailable:nil,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal)}
+    func sample(_ now:Int64)->ResourceSample {ResourceSample(sampledAt:now,physical:128<<30,available:64<<30,vmAvailable:nil,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal,cpuSampledAt:now)}
     func refuse(_ body:()throws->Void) {do {try body();fatalError("Unreviewed/reused probe authority accepted")}catch {}}
     refuse {try admission.reserve(job:UUID().uuidString.lowercased(),memory:512<<20,cpus:1,sample:sample(10000),now:10000)}
     let clockPermission=try VMProbePermission(reviewedImage:permission.image,reviewDigest:String(repeating:"c",count:64),managerEpoch:UUID().uuidString.lowercased(),issued:10000)
@@ -314,7 +314,7 @@ func runGlobalHostPressureTests() throws {
     let controller=JobController(journal:journal,executor:runtime)
     var admission=AdmissionPolicy(),cancelled:[String]=[]
     func sample(_ now:Int64,cpu:Double=10,vm:UInt64?=8<<30)->ResourceSample {
-        ResourceSample(sampledAt:now,physical:128<<30,available:64<<30,vmAvailable:vm,diskFree:100<<30,cpu:cpu,pressure:.normal,thermal:.nominal,vmSampledAt:now)
+        ResourceSample(sampledAt:now,physical:128<<30,available:64<<30,vmAvailable:vm,diskFree:100<<30,cpu:cpu,pressure:.normal,thermal:.nominal,vmSampledAt:now,cpuSampledAt:now)
     }
     let sandbox=UUID().uuidString.lowercased()
     let job=try DurableJob(id:sandbox,idempotency:UUID().uuidString.lowercased(),ownerHash:String(repeating:"a",count:64),requestHash:String(repeating:"b",count:64),created:10000)
@@ -352,7 +352,7 @@ func runModelOnlyVMIsolationTests() throws {
     let id=UUID().uuidString.lowercased(),job=try DurableJob(id:id,idempotency:UUID().uuidString.lowercased(),ownerHash:String(repeating:"a",count:64),requestHash:String(repeating:"b",count:64),created:10000)
     _=try journal.reserveJob(job)
     var admission=AdmissionPolicy(),cancelled:[String]=[]
-    let sample=ResourceSample(sampledAt:11000,physical:128<<30,available:64<<30,vmAvailable:nil,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal)
+    let sample=ResourceSample(sampledAt:11000,physical:128<<30,available:64<<30,vmAvailable:nil,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal,cpuSampledAt:11000)
     try controller.tick(now:11000,sample:sample,admission:&admission,transportReady:{_ in false},cancelModel:{cancelled.append($0)})
     guard cancelled.isEmpty,try journal.jobs().first(where:{$0.id==id})?.state == .reserved else {fatalError("Missing VM telemetry revoked unrelated native-only job")}
     print("PASS: sandbox VM uncertainty cannot revoke unrelated native model-only jobs; subsystem ownership remains separate")
@@ -364,7 +364,7 @@ func runVMControllerTests() throws {
     let journal=try Journal(directory:directory),runtime=FakeSandboxExecutor()
     let controller=JobController(journal:journal,executor:runtime,collectVM:true)
     var admission=AdmissionPolicy()
-    func sample(_ now:Int64)->ResourceSample {ResourceSample(sampledAt:now,physical:128<<30,available:64<<30,vmAvailable:8<<30,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal,vmSampledAt:now)}
+    func sample(_ now:Int64)->ResourceSample {ResourceSample(sampledAt:now,physical:128<<30,available:64<<30,vmAvailable:8<<30,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal,vmSampledAt:now,cpuSampledAt:now)}
     let id=UUID().uuidString.lowercased(),job=try DurableJob(id:id,idempotency:UUID().uuidString.lowercased(),ownerHash:String(repeating:"a",count:64),requestHash:String(repeating:"b",count:64),created:10000)
     let config=try SandboxConfiguration(job:id,nonce:String(repeating:"a",count:64),image:"sha256:"+String(repeating:"b",count:64),memory:512<<20,cpus:1)
     try admission.reserve(job:id,memory:config.memory,cpus:1,sample:sample(10000),now:10000)
@@ -392,7 +392,7 @@ func runSandboxExitProofTests()throws {
     runtime.reportExitCodes=true
     let controller=JobController(journal:journal,executor:runtime)
     var admission=AdmissionPolicy()
-    func sample(_ now:Int64)->ResourceSample {ResourceSample(sampledAt:now,physical:128<<30,available:64<<30,vmAvailable:8<<30,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal,vmSampledAt:now)}
+    func sample(_ now:Int64)->ResourceSample {ResourceSample(sampledAt:now,physical:128<<30,available:64<<30,vmAvailable:8<<30,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal,vmSampledAt:now,cpuSampledAt:now)}
     let id=UUID().uuidString.lowercased()
     let job=try DurableJob(id:id,idempotency:UUID().uuidString.lowercased(),ownerHash:String(repeating:"a",count:64),requestHash:String(repeating:"b",count:64),created:10000)
     let config=try SandboxConfiguration(job:id,nonce:String(repeating:"a",count:64),image:"sha256:"+String(repeating:"b",count:64),memory:512<<20,cpus:1)
@@ -425,7 +425,7 @@ func runCleanupStatusRecoveryTests() throws {
     var admission=AdmissionPolicy()
     func sample(_ now:Int64)->ResourceSample {
         ResourceSample(sampledAt:now,physical:128<<30,available:64<<30,vmAvailable:8<<30,
-            diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal,vmSampledAt:now)
+            diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal,vmSampledAt:now,cpuSampledAt:now)
     }
     let id=UUID().uuidString.lowercased()
     let job=try DurableJob(id:id,idempotency:UUID().uuidString.lowercased(),ownerHash:String(repeating:"a",count:64),requestHash:String(repeating:"b",count:64),created:10000)

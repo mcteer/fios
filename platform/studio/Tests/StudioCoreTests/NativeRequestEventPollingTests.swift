@@ -60,7 +60,7 @@ func runNativeRequestEventPollingTests()throws {
     let commands=TaskCommands(journal:journal,tasks:tasks,sandbox:sandbox,artifacts:artifacts,approvedImages:[],peerUID:geteuid(),
         nativeRequestEvents:{job,now in try poller.requestEventStatuses(job:job,now:now)})
     var admission=AdmissionPolicy()
-    let resources=ResourceSample(sampledAt:10001,physical:24<<30,available:16<<30,vmAvailable:nil,diskFree:50<<30,cpu:10,pressure:.normal,thermal:.nominal)
+    let resources=ResourceSample(sampledAt:10001,physical:24<<30,available:16<<30,vmAvailable:nil,diskFree:50<<30,cpu:10,pressure:.normal,thermal:.nominal,cpuSampledAt:10001)
     func status()throws->[String:Any] {
         let request=try ControlRequest.decode(JSONSerialization.data(withJSONObject:["version":1,"id":UUID().uuidString.lowercased(),"operation":"job.status","payload":["owner":token,"job":job]]))
         return try commands.handle(request,role:.task,sample:resources,admission:&admission,binding:{_ in nil},nativeCapacityProven:false,now:10001,uptime:10001)

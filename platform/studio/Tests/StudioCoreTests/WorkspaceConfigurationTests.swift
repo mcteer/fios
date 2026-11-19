@@ -25,7 +25,7 @@ func runWorkspaceConfigurationTests()throws {
         let image="sha256:"+String(repeating:"a",count:64),token=TaskOwner.newToken()
         let commands=TaskCommands(journal:journal,tasks:tasks,sandbox:sandbox,artifacts:artifacts,approvedImages:[image],enrolled:true,peerUID:geteuid(),admissionOpen:{true})
         var admission=AdmissionPolicy()
-        let sample=ResourceSample(sampledAt:1000,physical:128<<30,available:64<<30,vmAvailable:8<<30,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal,vmSampledAt:1000)
+        let sample=ResourceSample(sampledAt:1000,physical:128<<30,available:64<<30,vmAvailable:8<<30,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal,vmSampledAt:1000,cpuSampledAt:1000)
         let source=Data("print('ordinary workspace configuration')".utf8)
         for workspace:UInt64 in [128<<20,256<<20] {
             var fields:[String:Any]=["owner":token,"phase":"begin","idempotency":UUID().uuidString.lowercased(),"kind":"sandbox","length":source.count,"sha256":SHA256.hash(data:source).map{String(format:"%02x",$0)}.joined(),"lifetime":900000,"model":NSNull(),"image":image,"memory":512<<20,"cpus":1]

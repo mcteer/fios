@@ -14,7 +14,7 @@ func runNativeAdmissionBindingTests() throws {
         return WorkerDispatchBinding(baseURL:base,guardPath:"/fixture/observe.sock",host:host,profileHash:String(repeating:"b",count:64),
             managerEpoch:epoch,canonicalModel:"fixture/model",nativeModel:"fixture/model",nativeSnapshot:snapshot,nativeCompatibilityAccepted:true,apiKey:nil)
     }
-    let sample=ResourceSample(sampledAt:1000,physical:128<<30,available:64<<30,vmAvailable:nil,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal)
+    let sample=ResourceSample(sampledAt:1000,physical:128<<30,available:64<<30,vmAvailable:nil,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal,cpuSampledAt:1000)
     var admission=AdmissionPolicy()
     for candidate in [binding(host:"other-fixture-host",hash:hash),binding(host:host,hash:String(repeating:"c",count:64))] {
         do {

@@ -57,7 +57,7 @@ func runLineageMigrationTests()throws {
           try Data(contentsOf:backup.appendingPathComponent("state.sqlite"))==original else {throw JournalError.invalid}
     let jobs=JobController(journal:restoredJournal,executor:UnavailableSandboxRuntime())
     var admission=AdmissionPolicy()
-    let sample=ResourceSample(sampledAt:11000,physical:128<<30,available:64<<30,vmAvailable:8<<30,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal,vmSampledAt:11000)
+    let sample=ResourceSample(sampledAt:11000,physical:128<<30,available:64<<30,vmAvailable:8<<30,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal,vmSampledAt:11000,cpuSampledAt:11000)
     try jobs.tick(now:11000,sample:sample,admission:&admission,inputReady:{_ in false},transportReady:{_ in false},cancelModel:{_ in})
     try admission.reserve(job:UUID().uuidString.lowercased(),memory:512<<20,cpus:1,sample:sample,now:11000)
     do {

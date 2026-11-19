@@ -11,9 +11,9 @@ func runComposedPressureTests() throws {
     let directory=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer {try? FileManager.default.removeItem(at:directory)}
     let cases:[(String,ResourceSample)]=[
-        ("critical",ResourceSample(sampledAt:6000,physical:128<<30,available:64<<30,vmAvailable:nil,diskFree:100<<30,cpu:10,pressure:.critical,thermal:.nominal)),
-        ("stale",ResourceSample(sampledAt:0,physical:128<<30,available:64<<30,vmAvailable:nil,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal)),
-        ("thermal",ResourceSample(sampledAt:6000,physical:128<<30,available:64<<30,vmAvailable:nil,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.serious))
+        ("critical",ResourceSample(sampledAt:6000,physical:128<<30,available:64<<30,vmAvailable:nil,diskFree:100<<30,cpu:10,pressure:.critical,thermal:.nominal,cpuSampledAt:6000)),
+        ("stale",ResourceSample(sampledAt:0,physical:128<<30,available:64<<30,vmAvailable:nil,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal,cpuSampledAt:0)),
+        ("thermal",ResourceSample(sampledAt:6000,physical:128<<30,available:64<<30,vmAvailable:nil,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.serious,cpuSampledAt:6000))
     ]
     for (name,sample) in cases {
         let state=directory.appendingPathComponent(name)
@@ -53,7 +53,7 @@ func runTaskCommandTests() throws {
     var open=true
     let commands=TaskCommands(journal:journal,tasks:tasks,sandbox:sandbox,artifacts:artifacts,approvedImages:[image],enrolled:true,peerUID:geteuid(),admissionOpen:{open})
     var admission=AdmissionPolicy()
-    let sample=ResourceSample(sampledAt:1000,physical:128<<30,available:64<<30,vmAvailable:8<<30,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal,vmSampledAt:1000)
+    let sample=ResourceSample(sampledAt:1000,physical:128<<30,available:64<<30,vmAvailable:8<<30,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal,vmSampledAt:1000,cpuSampledAt:1000)
     func request(_ operation:String,_ fields:[String:Any],_ auth:String?=nil) throws -> ControlRequest {
         try ControlRequest.decode(JSONSerialization.data(withJSONObject:["version":1,"id":UUID().uuidString.lowercased(),"operation":operation,"payload":fields.merging(["owner":auth ?? token]) {_,new in new}]))
     }

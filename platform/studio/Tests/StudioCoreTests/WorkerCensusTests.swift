@@ -39,7 +39,7 @@ func runWorkerCensusTests() throws {
     let recovered=try WorkerReconciler(journal:journal!,admission:&released,census:policy)
     guard !recovered.degraded,recovered.pending==0,try journal!.activeLaunchCount()==0,
           try journal!.unresolvedCount()==1,try journal!.uncertainCount()==1 else {fatalError("Local absence cleared native uncertainty or failed to release local launch")}
-    let sample=ResourceSample(sampledAt:10000,physical:128<<30,available:64<<30,vmAvailable:nil,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal)
+    let sample=ResourceSample(sampledAt:10000,physical:128<<30,available:64<<30,vmAvailable:nil,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal,cpuSampledAt:10000)
     try released.reserveWorker(key:"one",sample:sample,now:10000);try released.reserveWorker(key:"two",sample:sample,now:10000)
     try FileManager.default.removeItem(at:executable)
     try FileManager.default.copyItem(at:URL(fileURLWithPath:"/usr/bin/true"),to:executable)

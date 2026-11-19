@@ -6,7 +6,7 @@ func runSandboxSourceIdentityTests()throws {
     let journal=try Journal(directory:directory),manager=UUID().uuidString.lowercased(),owner=String(repeating:"a",count:64)
     let controller=TaskController(journal:journal,broker:ModelBroker(journal:journal))
     var admission=AdmissionPolicy()
-    let sample=ResourceSample(sampledAt:1000,physical:128<<30,available:64<<30,vmAvailable:nil,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal)
+    let sample=ResourceSample(sampledAt:1000,physical:128<<30,available:64<<30,vmAvailable:nil,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal,cpuSampledAt:1000)
     func binding(_ epoch:String,sequence:UInt64=1)->WorkerDispatchBinding {
         let snapshot=NativeSnapshot(host:"fixture-host",endpointHash:PythonWorkerFactory.digest("http://127.0.0.1:1/v1"),nativeEpoch:epoch,sequence:sequence,sampledAt:1000,allClientLifecycleCoverage:true,residentModel:nil,outstandingOwners:0,loading:false)
         return WorkerDispatchBinding(baseURL:"http://127.0.0.1:1/v1",guardPath:"/fixture/observe.sock",host:"fixture-host",profileHash:String(repeating:"c",count:64),managerEpoch:manager,canonicalModel:"fixture/model",nativeModel:"fixture/model",nativeSnapshot:snapshot,nativeCompatibilityAccepted:true,apiKey:nil)

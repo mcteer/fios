@@ -20,7 +20,7 @@ private func exerciseCompletion(in directory:URL,token:String)throws -> (String,
     try broker.retainStart(operation:PendingPythonWorker {_ in .failure(.cancelled)},plan:plan,binding:binding,packet:Data(),started:5000)
     let controller=TaskController(journal:journal,broker:broker)
     var admission=AdmissionPolicy()
-    let sample=ResourceSample(sampledAt:5000,physical:128<<30,available:64<<30,vmAvailable:nil,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal)
+    let sample=ResourceSample(sampledAt:5000,physical:128<<30,available:64<<30,vmAvailable:nil,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal,cpuSampledAt:5000)
     try admission.reserveWorker(key:"model:\(id):0",sample:sample,now:5000)
     var interrupted=false
     let deadline=ProcessInfo.processInfo.systemUptime+2

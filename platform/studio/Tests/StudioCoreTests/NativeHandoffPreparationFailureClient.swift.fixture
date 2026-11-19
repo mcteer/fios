@@ -55,7 +55,7 @@ private final class MissingLineageSource:NativeHandoffPreparing,@unchecked Senda
             let client=NativeControlClient(path:a[4],peer:peer),source=MissingLineageSource(client:client,allowCancellation:closeUnused)
             let broker=ModelBroker(journal:journal,factory:factory,handoffSource:source)
             var admission=AdmissionPolicy()
-            let sample=ResourceSample(sampledAt:now,physical:128<<30,available:64<<30,vmAvailable:nil,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal)
+            let sample=ResourceSample(sampledAt:now,physical:128<<30,available:64<<30,vmAvailable:nil,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal,cpuSampledAt:now)
             try broker.submit(job:job,owner:owner,requestID:UUID().uuidString.lowercased(),context:[ModelText(role:"user",content:"fixture")],binding:binding,nativeCapacityProven:true,sample:sample,admission:&admission,now:now)
             if closeUnused {try broker.cancel(job:job,uptime:Int64(ProcessInfo.processInfo.systemUptime*1000))}
             var blocker:OpaquePointer?

@@ -39,7 +39,7 @@ func runBusySourceWorkerTests(directory:URL,factory:PythonWorkerFactory,original
             nativeCompatibilityAccepted:true,apiKey:nil)
     }
     var admission=AdmissionPolicy()
-    let sample=ResourceSample(sampledAt:stamp,physical:128<<30,available:64<<30,vmAvailable:nil,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal)
+    let sample=ResourceSample(sampledAt:stamp,physical:128<<30,available:64<<30,vmAvailable:nil,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal,cpuSampledAt:stamp)
     try broker.submit(job:id,owner:owner,requestID:request,context:[ModelText(role:"user",content:"fixture-source-conflict")],
         binding:binding(conflict:false),nativeCapacityProven:true,sample:sample,admission:&admission,now:stamp)
     var reports=Data(),text=false,complete=false

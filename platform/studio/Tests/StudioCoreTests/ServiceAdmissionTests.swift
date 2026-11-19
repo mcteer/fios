@@ -7,7 +7,7 @@ func runServiceAdmissionTests()throws {
     defer {try? FileManager.default.removeItem(at:directory)}
     let image="sha256:"+String(repeating:"a",count:64)
     let model=WorkerDispatchBinding(baseURL:"http://127.0.0.1:1/v1",guardPath:"/fixture/observe.sock",host:"fixture-host",profileHash:String(repeating:"b",count:64),managerEpoch:UUID().uuidString.lowercased(),canonicalModel:"fixture/model",nativeModel:"fixture/model",nativeSnapshot:NativeSnapshot(host:"fixture-host",endpointHash:PythonWorkerFactory.digest("http://127.0.0.1:1/v1"),nativeEpoch:"fixture-native",sequence:1,sampledAt:1000,allClientLifecycleCoverage:true,residentModel:nil,outstandingOwners:0,loading:false),nativeCompatibilityAccepted:true,apiKey:nil)
-    let sample=ResourceSample(sampledAt:1000,physical:128<<30,available:64<<30,vmAvailable:8<<30,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal,vmSampledAt:1000)
+    let sample=ResourceSample(sampledAt:1000,physical:128<<30,available:64<<30,vmAvailable:8<<30,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal,vmSampledAt:1000,cpuSampledAt:1000)
     func scenario(kind:String,hasModel:Bool,service:ManagedService,desired:ServiceDesired,blocked:Bool,late:Bool)throws {
         let state=directory.appendingPathComponent(UUID().uuidString)
         let journal=try Journal(directory:state),tasks=TaskController(journal:journal,broker:ModelBroker(journal:journal))

@@ -21,7 +21,7 @@ func runJobLeaseStatusTests()throws {
     let sandbox=SandboxTaskController(journal:journal,jobs:jobs,tasks:tasks,artifacts:artifacts,socket:"/fixture/unused.sock",peerUID:geteuid())
     let commands=TaskCommands(journal:journal,tasks:tasks,sandbox:sandbox,artifacts:artifacts,approvedImages:[],peerUID:geteuid())
     var admission=AdmissionPolicy()
-    let sample=ResourceSample(sampledAt:1000,physical:24<<30,available:16<<30,vmAvailable:nil,diskFree:50<<30,cpu:10,pressure:.normal,thermal:.nominal)
+    let sample=ResourceSample(sampledAt:1000,physical:24<<30,available:16<<30,vmAvailable:nil,diskFree:50<<30,cpu:10,pressure:.normal,thermal:.nominal,cpuSampledAt:1000)
     func call(_ operation:String,_ now:Int64,id:String?=nil)throws->[String:Any] {
         let request=try ControlRequest.decode(JSONSerialization.data(withJSONObject:["version":1,"id":UUID().uuidString.lowercased(),
             "operation":operation,"payload":["owner":token,"job":id ?? job.id]]))

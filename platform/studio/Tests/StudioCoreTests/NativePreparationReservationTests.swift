@@ -456,7 +456,7 @@ func runPreparationBrokerTests(factory:PythonWorkerFactory,base:String,guardDire
         let scope=try binding.inferenceScope(),native=ManagedPreparationSource(peer:peer,mode:testMode)
         let broker=ModelBroker(journal:journal,factory:factory,preparationSource:native,preparationCoverage:{.all_clients})
         var admission=AdmissionPolicy()
-        let resource=ResourceSample(sampledAt:created,physical:128<<30,available:64<<30,vmAvailable:nil,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal)
+        let resource=ResourceSample(sampledAt:created,physical:128<<30,available:64<<30,vmAvailable:nil,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal,cpuSampledAt:created)
         if scenario=="healthy" {
             let blocked=ModelBroker(journal:journal,factory:factory,preparationSource:native,preparationCoverage:{.unknown})
             do {
@@ -658,7 +658,7 @@ func runPristinePreparationBrokerCancellationTest(factory:PythonWorkerFactory)th
     let peer=NativeControlPeer(pid:42,start:99,executable:try VerifiedExecutable(path:"/fixture/native",sha256:String(repeating:"d",count:64)))
     let source=PristineManagedPreparationFixture(peer:peer),broker=ModelBroker(journal:journal,factory:factory,preparationSource:source,preparationCoverage:{.all_clients})
     var admission=AdmissionPolicy()
-    let sample=ResourceSample(sampledAt:now,physical:128<<30,available:64<<30,vmAvailable:nil,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal)
+    let sample=ResourceSample(sampledAt:now,physical:128<<30,available:64<<30,vmAvailable:nil,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal,cpuSampledAt:now)
     try broker.submit(job:job,owner:owner,requestID:UUID().uuidString.lowercased(),context:[ModelText(role:"user",content:"fixture")],binding:binding,
         nativeCapacityProven:true,sample:sample,admission:&admission,now:now)
     guard source.base.entered.wait(timeout:.now()+2) == .success else {throw RuntimeError.deadline}

@@ -6,7 +6,7 @@ private func expectAdmissionReject(_ body: () throws -> Void) {
 func runAdmissionTests() throws {
     let resources = ResourceSample(sampledAt: 10_000, physical: 128 << 30, available: 64 << 30,
                                    vmAvailable: 8 << 30, diskFree: 100 << 30, cpu: 10,
-                                   pressure: .normal, thermal: .nominal, vmSampledAt:10_000)
+                                   pressure: .normal, thermal: .nominal, vmSampledAt:10_000,cpuSampledAt:10_000)
     for bytes:UInt64 in [(128<<30)+1,UInt64.max] {
         var impossible=AdmissionPolicy()
         let measured=resources.replacingVM(bytes,sampledAt:10000)
@@ -48,7 +48,7 @@ func runAdmissionTests() throws {
     admission.releaseProvenAbsent(job: b)
     expectAdmissionReject { try admission.reserve(job: b, memory: 512 << 20, cpus: 1, sample: resources, now: 15_001) }
     expectAdmissionReject { try admission.reserve(job: b, memory: 3 << 30, cpus: 1, sample: resources, now: 10_000) }
-    let nativeOnly=ResourceSample(sampledAt:10_000,physical:128<<30,available:64<<30,vmAvailable:nil,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal)
+    let nativeOnly=ResourceSample(sampledAt:10_000,physical:128<<30,available:64<<30,vmAvailable:nil,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal,cpuSampledAt:10_000)
     var nativeAdmission=AdmissionPolicy()
     try nativeAdmission.reserveWorker(key:"one",sample:nativeOnly,now:10_000)
     try nativeAdmission.reserveWorker(key:"two",sample:nativeOnly,now:10_000)
@@ -58,7 +58,7 @@ func runAdmissionTests() throws {
     var recovered=AdmissionPolicy()
     try recovered.restoreSandbox(old)
     try recovered.restoreSandbox(old) // Idempotent accounting, no double charge.
-    let tight=ResourceSample(sampledAt:10_000,physical:64<<30,available:18<<30,vmAvailable:8<<30,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal,vmSampledAt:10_000)
+    let tight=ResourceSample(sampledAt:10_000,physical:64<<30,available:18<<30,vmAvailable:8<<30,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal,vmSampledAt:10_000,cpuSampledAt:10_000)
     expectAdmissionReject {try recovered.reserveWorker(key:"new",sample:tight,now:10_000)}
     recovered.releaseProvenAbsent(job:old.job)
     try recovered.reserveWorker(key:"new",sample:tight,now:10_000)
