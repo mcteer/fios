@@ -167,6 +167,18 @@ func runBackupTests() throws {
     try FileManager.default.copyItem(at:bundle,to:corrupt)
     try Data("changed export".utf8).write(to:corrupt.appendingPathComponent("artifacts/"+artifact+".blob"))
     do {_=try StoppedStateBackup.verify(directory:corrupt,expectedSHA256:bundleReceipt.sha256);fatalError("Changed export verified")} catch JournalError.invalid {}
+    let nonregularBundle=root.appendingPathComponent("fifo-bundle")
+    try FileManager.default.copyItem(at:bundle,to:nonregularBundle)
+    let nonregularBlob=nonregularBundle.appendingPathComponent("artifacts/"+artifact+".blob")
+    try FileManager.default.removeItem(at:nonregularBlob)
+    guard mkfifo(nonregularBlob.path,0o600)==0 else {throw JournalError.storage}
+    let unpublished=root.appendingPathComponent("fifo-restore")
+    do {_=try StoppedStateBackup.restore(directory:nonregularBundle,expectedSHA256:bundleReceipt.sha256,destination:unpublished)
+        fatalError("Nonregular backup artifact restored")
+    } catch JournalError.invalid {}
+    var refusedBlob=stat()
+    guard lstat(nonregularBlob.path,&refusedBlob)==0,refusedBlob.st_mode&S_IFMT==S_IFIFO,
+          !FileManager.default.fileExists(atPath:unpublished.path) else {fatalError("Refused backup was mutated or published")}
     let foreignBundle=root.appendingPathComponent("foreign-bundle")
     try FileManager.default.copyItem(at:bundle,to:foreignBundle)
     let manifestPath=foreignBundle.appendingPathComponent("backup.json")

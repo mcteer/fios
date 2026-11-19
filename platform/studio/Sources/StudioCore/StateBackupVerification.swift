@@ -35,7 +35,7 @@ extension StoppedStateBackup {
         }
         let deadline=ProcessInfo.processInfo.systemUptime+30
         func hash(_ url:URL,maximum:Int64,collect:Bool=false)throws->(String,Int64,Data) {
-            let fd=open(url.path,O_RDONLY|O_NOFOLLOW|O_CLOEXEC)
+            let fd=open(url.path,O_RDONLY|O_NOFOLLOW|O_CLOEXEC|O_NONBLOCK)
             guard fd>=0 else {throw JournalError.invalid};defer {close(fd)}
             var info=stat()
             guard fstat(fd,&info)==0,info.st_mode&S_IFMT==S_IFREG,info.st_nlink==1,info.st_uid==geteuid(),info.st_mode&0o077==0,info.st_size>=0,info.st_size<=maximum else {throw JournalError.invalid}
