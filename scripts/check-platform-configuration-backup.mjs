@@ -83,8 +83,20 @@ try {
   cli(changed,['restore-state','--sha256',receipt.sha256,'--to',refused],{expected:1});
   assert(!existsSync(refused),'Restore published a destination for a changed sealed backup');
   assert.deepEqual(readFileSync(changedBlob),damaged);
+  // Isolate the configuration seal check in another copy, retaining both
+  // refusal inputs intact for inspection.
+  const configurationCopy=join(scratch,'changed-configuration-bundle');
+  cpSync(bundle,configurationCopy,{recursive:true,errorOnExist:true,force:false});
+  const changedConfig=join(configurationCopy,'configuration/runtime-enrollment.json');
+  const alteredConfig=Buffer.from(readFileSync(changedConfig));
+  assert(alteredConfig.length>0);alteredConfig[0]^=1;writeFileSync(changedConfig,alteredConfig);
+  cli(configurationCopy,['verify-backup','--sha256',receipt.sha256],{expected:1});
+  cli(configurationCopy,['restore-state','--sha256',receipt.sha256,'--to',refused],{expected:1});
+  assert(!existsSync(refused),'Restore published a destination for changed sealed configuration');
+  assert.deepEqual(readFileSync(changedConfig),alteredConfig);
+  assert.deepEqual(readFileSync(join(bundle,'configuration/runtime-enrollment.json')),opaque);
   assert.equal(hash(readFileSync(join(bundle,'backup.json'))),receipt.sha256);
-  const final={scope:'isolated_packaged_cli_configuration_backup',manifest_sha256:args[4],source_revision:review.manifest.source_revision,configuration_plan_executed:true,uninstall_proposal_matches:true,backup_sha256:receipt.sha256,network:'denied',failed_journal_retained:true,failed_export_retained:true,tampered_backup_refused_without_publication:true,model_posts:0,installed:false,activation:false,uncertainty:1,exports:1,scratch};
+  const final={scope:'isolated_packaged_cli_configuration_backup',manifest_sha256:args[4],source_revision:review.manifest.source_revision,configuration_plan_executed:true,uninstall_proposal_matches:true,backup_sha256:receipt.sha256,network:'denied',failed_journal_retained:true,failed_export_retained:true,tampered_backup_refused_without_publication:true,tampered_configuration_refused_without_publication:true,model_posts:0,installed:false,activation:false,uncertainty:1,exports:1,scratch};
   writeFileSync(join(scratch,'receipt.json'),JSON.stringify(final,null,2)+'\n',{mode:0o600});
   console.log(JSON.stringify(final));
 } catch(error) {
