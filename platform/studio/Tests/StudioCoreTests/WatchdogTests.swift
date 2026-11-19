@@ -45,5 +45,12 @@ func runWatchdogTests() throws {
         guard chmod(progress.path,0o600)==0 else {throw RuntimeError.launch}
         expect(SupervisorRuntime.progress(directory:directory,pid:42,now:1000)==expected)
     }
+    var progressBudget=WatchdogPolicy()
+    expect(try progressBudget.tick(now:0,managerAlive:false,lastProgress:nil) == .start)
+    let before=SupervisorRuntime.progress(directory:directory,pid:42,now:6499)
+    let boundary=SupervisorRuntime.progress(directory:directory,pid:42,now:6500)
+    expect(before==500 && boundary==500)
+    expect(try progressBudget.tick(now:6499,managerAlive:true,lastProgress:before) == .observe)
+    expect(try progressBudget.tick(now:6500,managerAlive:true,lastProgress:boundary) == .terminate)
     print("PASS: watchdog restart, hang, reap fence, durable-budget and clock tests")
 }
