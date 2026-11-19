@@ -10,13 +10,17 @@ enum SandboxExitStatus {
         let whole=String(stamp.prefix(19))+"Z",formatter=ISO8601DateFormatter()
         formatter.formatOptions=[.withInternetDateTime];formatter.timeZone=TimeZone(secondsFromGMT:0)
         guard let base=formatter.date(from:whole),formatter.string(from:base)==whole else {return nil}
-        var seconds=base.timeIntervalSince1970
+        let wholeSeconds=base.timeIntervalSince1970,current=now.timeIntervalSince1970
+        var fraction=0.0
         if stamp.utf8.count>20 {
-            guard let fraction=Double("0."+stamp.dropFirst(20).dropLast()) else {return nil}
-            seconds+=fraction
+            guard let parsed=Double("0."+stamp.dropFirst(20).dropLast()) else {return nil}
+            fraction=parsed
         }
-        let current=now.timeIntervalSince1970
-        guard seconds.isFinite,seconds>0,current.isFinite,current>=0,seconds<=current+1 else {return nil}
+        // Compare the fractional part to remaining headroom rather than
+        // adding it to an epoch-sized Double that rounds nanoseconds away.
+        guard wholeSeconds.isFinite,current.isFinite,current>=0,
+              wholeSeconds>=0,wholeSeconds>0 || fraction>0,
+              fraction<=(current-wholeSeconds)+1 else {return nil}
         return code
     }
 }

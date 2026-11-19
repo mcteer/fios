@@ -13,6 +13,20 @@ private final class SlotVMReader:VMResourceReading,@unchecked Sendable {
     }
 }
 func runSandboxExecutorTests() throws {
+    let now=Date(timeIntervalSince1970:1704067200) // 2024-01-01T00:00:00Z
+    for (running,stamp,expected):(Bool,String,Int?) in [
+        (false,"0001-01-01T00:00:00Z",nil),
+        (false,"2023-02-29T00:00:00Z",nil),
+        (false,"2024-01-01T00:00:01.001Z",nil),
+        (false,"2024-01-01T00:00:01.000000001Z",nil),
+        (false,"2024-01-01T00:00:01Z",0),
+        (false,"2023-12-31T23:59:59.999999999Z",0),
+        (true,"2024-01-01T00:00:00Z",nil),
+    ] {
+        guard SandboxExitStatus.recorded(running:running,code:0,finishedAt:stamp,now:now)==expected else {
+            fatalError("Sandbox exit proof accepted a sentinel, invalid or future stamp, or lost a valid boundary: \(stamp)")
+        }
+    }
     // Fixed harmless test executable, not Docker: no daemon operation.
     let path="/usr/bin/false"
     let sha=SHA256.hash(data:try Data(contentsOf:URL(fileURLWithPath:path))).map {String(format:"%02x",$0)}.joined()
