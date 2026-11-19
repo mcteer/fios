@@ -84,6 +84,13 @@ func runReadOnlyVMResourceTests() throws {
     revoked.tick(records:[record],jobs:[job],physical:host.physical,now:1001)
     revoked.tick(records:[],jobs:[job],physical:host.physical,now:1002)
     guard revoked.epoch(now:1002)==nil else {fatalError("VM observation retained a sample after observed target loss")}
+    let expiryWork=VMObservationFixture(),expiring=ReadOnlyVMResources(work:expiryWork)
+    let expiry=job.lease.expires,edge=expiry-5000
+    expiring.tick(records:[record],jobs:[job],physical:host.physical,now:edge)
+    expiryWork.replies=[reply(sample(edge))]
+    expiring.tick(records:[record],jobs:[job],physical:host.physical,now:edge)
+    guard expiring.epoch(now:expiry-1)==hash,expiring.epoch(now:expiry)==nil,
+          expiring.applying(to:host,now:expiry).vmAvailable==nil else {fatalError("VM observation survived its source lease at a fresh signal boundary")}
     let rollbackWork=VMObservationFixture(),rollback=ReadOnlyVMResources(work:rollbackWork)
     rollback.tick(records:[record],jobs:[job],physical:host.physical,now:1000)
     rollback.tick(records:[record],jobs:[job],physical:host.physical,now:999)

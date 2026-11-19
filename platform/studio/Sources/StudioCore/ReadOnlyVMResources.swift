@@ -77,7 +77,7 @@ final class ReadOnlyVMResources {
     private func stillOwned(_ target:Target,records:[SandboxRecord],jobs:[DurableJob],now:Int64)->Bool {
         records.contains { record in
             guard let current=self.target(record,jobs:jobs,now:now) else {return false}
-            return current.configuration==target.configuration && current.id==target.id && now<target.leaseUntil
+            return current.configuration==target.configuration && current.id==target.id && current.leaseUntil>=target.leaseUntil && now<target.leaseUntil
         }
     }
     func tick(records:[SandboxRecord],jobs:[DurableJob],physical:UInt64,now:Int64) {
@@ -109,7 +109,7 @@ final class ReadOnlyVMResources {
         catch {failedTargets.insert(target.id);latest=nil}
     }
     private func envelope(now:Int64)->VMResourceObservation? {
-        guard !fenced,now>=previous,let envelope=latest?.envelope,
+        guard !fenced,now>=previous,let latestTarget,now<latestTarget.leaseUntil,let envelope=latest?.envelope,
               VMResources.remaining(envelope,expectedRuntimeHash:envelope.runtimeHash,now:now) != nil else {return nil}
         return envelope
     }
