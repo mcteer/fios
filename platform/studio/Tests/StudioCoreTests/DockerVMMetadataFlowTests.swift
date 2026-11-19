@@ -6,16 +6,17 @@ private final class MetadataDaemonFixture:@unchecked Sendable {
     private let done=DispatchSemaphore(value:0)
     private(set) var requests:[Data]=[]
     private var failed=false
-    init(path:String,responses:[Data])throws {
+    init(path:String,responses:[Data],optionalLastResponse:Bool=false)throws {
         listener=try UnixControlSocket(path:path)
         DispatchQueue.global().async { [self] in
             defer {done.signal()}
             do {
-                for response in responses {
-                    let end=ProcessInfo.processInfo.systemUptime+2
+                for (index,response) in responses.enumerated() {
+                    let optional=optionalLastResponse && index==responses.count-1
+                    let end=ProcessInfo.processInfo.systemUptime+(optional ? 0.5:2)
                     var peer:Int32?
                     while peer==nil && ProcessInfo.processInfo.systemUptime<end {peer=try listener.acceptPeer();if peer==nil {Thread.sleep(forTimeInterval:0.001)}}
-                    guard let peer else {throw RuntimeError.deadline}
+                    guard let peer else {if optional {break};throw RuntimeError.deadline}
                     defer {close(peer)}
                     var request=Data(),complete=false
                     while !complete && ProcessInfo.processInfo.systemUptime<end {
@@ -104,5 +105,21 @@ func runDockerVMMetadataFlowTests()throws {
     do {_=try owned.read(configuration:configuration,id:id,leaseUntil:lease);fatalError("Malformed metadata exec was accepted")}catch DockerVMMetadataError.create {}
     do {_=try owned.read(configuration:configuration,id:id,leaseUntil:lease);fatalError("Uncertain parent metadata read was retried")}catch RuntimeError.invalid {}
     guard try fencedDaemon.finish().count==2 else {fatalError("Metadata uncertainty fence issued another daemon request")}
+    let clockCases:[(String,Int64,TimeInterval)]=[("expired",15000,1),("rewound",9999,1),("overbudget",10001,6.001)]
+    for (label,wall,tick) in clockCases {
+        let socket=directory+"/"+label+".sock"
+        let source=try MetadataDaemonFixture(path:socket,responses:[try json(parent),try json(["Id":"invalid"])],optionalLastResponse:true)
+        let fixtureRuntime=try DockerRuntime(executable:VerifiedExecutable(path:"/bin/false",sha256:String(repeating:"0",count:64)),socket:socket)
+        var wallReads=0,tickReads=0
+        let reader=try OwnedVMResourceReader(runtime:fixtureRuntime,approvedImages:[configuration.image],directMetadata:true,
+            now:{wallReads+=1;return wallReads==1 ? 10000:wall},uptime:{tickReads+=1;return tickReads==1 ? 1:tick})
+        var refused=false
+        do {_=try reader.read(configuration:configuration,id:id,leaseUntil:15000)}
+        catch RuntimeError.deadline {refused=true}
+        catch {}
+        guard refused,try source.finish().count==1 else {
+            fatalError("Owned VM metadata reached guest read with an invalid original clock/lease: \(label)")
+        }
+    }
     print("PASS: actual private mock Unix metadata create/start/completion flow, exact fixed cat/UID/path/argv, full exec/container binding and foreign completion refusal with no replay (mock daemon only)")
 }

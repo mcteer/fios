@@ -33,11 +33,15 @@ final class OwnedVMResourceReader:@unchecked Sendable {
     private let runtime:DockerRuntime
     private let images:Set<String>
     private let metadata:DockerVMMetadata?
+    private let now:()->Int64
+    private let uptime:()->TimeInterval
     private let lock=NSLock()
     private var fenced=Set<String>()
-    init(runtime:DockerRuntime,approvedImages:Set<String>,directMetadata:Bool=false) throws {
+    init(runtime:DockerRuntime,approvedImages:Set<String>,directMetadata:Bool=false,
+         now:@escaping ()->Int64=HostResources.nowMilliseconds,
+         uptime:@escaping ()->TimeInterval={ProcessInfo.processInfo.systemUptime}) throws {
         guard !approvedImages.isEmpty,approvedImages.count<=8 else {throw RuntimeError.invalid}
-        self.runtime=runtime;images=approvedImages
+        self.runtime=runtime;images=approvedImages;self.now=now;self.uptime=uptime
         metadata=directMetadata ? DockerVMMetadata(socketPath:runtime.socket,peerUID:geteuid(),endpointPolicy:runtime.endpointPolicy):nil
     }
     static func safeTarget(_ object:[String:Any],configuration:SandboxConfiguration,id:String)->Bool {
@@ -99,14 +103,23 @@ final class OwnedVMResourceReader:@unchecked Sendable {
     }
     func read(configuration:SandboxConfiguration,id:String,leaseUntil:Int64)throws->VMKernelSample {
         guard images.contains(configuration.image),id.utf8.count==64,id.utf8.allSatisfy({(48...57).contains($0)||(97...102).contains($0)}) else {throw RuntimeError.identity}
-        let began=ProcessInfo.processInfo.systemUptime,sampledAt=HostResources.nowMilliseconds()
-        guard sampledAt>=0,sampledAt<=ActivityPolicy.maximumTimestamp,leaseUntil<=ActivityPolicy.maximumTimestamp,leaseUntil>sampledAt,leaseUntil-sampledAt>=5000 else {throw RuntimeError.deadline}
+        let began=uptime(),sampledAt=now()
+        guard began.isFinite,began>=0,sampledAt>=0,sampledAt<=ActivityPolicy.maximumTimestamp,
+              leaseUntil<=ActivityPolicy.maximumTimestamp,leaseUntil>sampledAt,leaseUntil-sampledAt>=5000 else {throw RuntimeError.deadline}
+        var previousWall=sampledAt,previousTick=began
+        func checkpoint()throws {
+            let wall=now(),tick=uptime()
+            guard wall>=previousWall,wall<leaseUntil,wall-sampledAt<=5000,
+                  tick.isFinite,tick>=previousTick,tick-began<=5 else {throw RuntimeError.deadline}
+            previousWall=wall;previousTick=tick
+        }
         lock.lock()
         guard fenced.count<64,!fenced.contains(id) else {lock.unlock();throw RuntimeError.invalid}
         fenced.insert(id);lock.unlock()
         // Any error retains the fence. A CLI timeout is not guest-process
         // absence; do not repeatedly execute into an uncertain target.
         try verify(configuration,id:id)
+        try checkpoint() // Never publish the guest read after the original lease.
         let output:Data
         if let metadata {output=try metadata.read(id:id)}
         else {
@@ -115,9 +128,9 @@ final class OwnedVMResourceReader:@unchecked Sendable {
         }
         let sample:VMKernelSample
         do {sample=try Self.decode(output,sampledAt:sampledAt)}catch {throw VMMetadataReadError.payload}
+        try checkpoint()
         try verify(configuration,id:id)
-        let now=HostResources.nowMilliseconds()
-        guard ProcessInfo.processInfo.systemUptime-began<=5,now>=sampledAt-1000,now-sampledAt<=5000,now<leaseUntil else {throw RuntimeError.deadline}
+        try checkpoint()
         lock.lock();fenced.remove(id);lock.unlock()
         return sample
     }
