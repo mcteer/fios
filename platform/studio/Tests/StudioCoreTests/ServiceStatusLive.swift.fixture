@@ -47,7 +47,7 @@ private struct ForbiddenHeldRecovery:ServiceRecoverySending {
         }
         let cache=ServiceObservationCache(),now=HostResources.nowMilliseconds()
         let state=URL(fileURLWithPath:args[1]),held=args[2]=="held"
-        if held {
+        if held && !FileManager.default.fileExists(atPath:state.path) {
             try FileManager.default.createDirectory(at:state,withIntermediateDirectories:false,attributes:[.posixPermissions:0o700])
             try AtomicState.write(Data("{}".utf8),to:state.appendingPathComponent("migration-hold.json"))
         }

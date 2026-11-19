@@ -79,6 +79,16 @@ try{
   if(stopped.observed==='ready')assert.equal(stopped.message,'Service is still running; stop is requested.');
   assert.equal(status(state,['service','mlx','status']).desired,'maintenance');
   child.kill('SIGTERM');await until(()=>exited(child));assert.equal(child.exitCode,0);child=null;
+  if(mode==='held'){
+   child=spawn('/usr/bin/sandbox-exec',['-f',profile,binary,state,mode],{cwd:root,env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C',HOME:'/var/empty'},stdio:'ignore'});
+   const restarted=await until(()=>{assert(!exited(child),'Held manager exited early');const s=status(state);return s&&s.epoch!==combined.epoch?s:null;});
+   assert.equal(restarted.migration_maintenance,true);
+   assert.equal(restarted.service_recovery,'disabled');
+   assert.equal(restarted.services.mlx.desired,'maintenance');
+   assert.equal(restarted.services.orbstack.desired,'stopped');
+   for(const service of ['mlx','orbstack'])assert.equal(restarted.services[service].launch_pending,false);
+   child.kill('SIGTERM');await until(()=>exited(child));assert.equal(child.exitCode,0);child=null;
+  }
  }
  const state=join(directory,'storage-continuity');
  child=spawn('/usr/bin/sandbox-exec',['-f',profile,binary,state,'storage_continuity'],{cwd:root,env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C',HOME:'/var/empty'},stdio:'inherit'});
