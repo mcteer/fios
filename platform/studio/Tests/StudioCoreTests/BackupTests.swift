@@ -41,6 +41,19 @@ func runBackupTests() throws {
             do {_=try PrivateWriterLock(directory:state,kind:.servingCustody);fatalError("Custody module opened during offline writer fence")}catch ControlError.busy {}
         }
     }
+    let managerLock=state.appendingPathComponent("manager.lock").path
+    guard chmod(managerLock,0o644)==0 else {throw JournalError.storage}
+    do {
+        defer {_=chmod(managerLock,0o600)}
+        do {_=try StoppedPlatformState(directory:state);fatalError("Invalid manager lock metadata accepted")}
+        catch JournalError.invalid {}
+        for name in ["supervisor.lock","serving-custody.lock"] {
+            let contender=open(state.appendingPathComponent(name).path,O_RDWR|O_NOFOLLOW|O_CLOEXEC)
+            guard contender>=0 else {throw JournalError.storage}
+            defer {close(contender)}
+            guard flock(contender,LOCK_EX|LOCK_NB)==0 else {fatalError("Stopped-state refusal retained a writer fence")}
+        }
+    }
     let receipt=try StoppedJournalBackup.create(directory:state,destination:backup)
     guard receipt.schema==9,receipt.sha256.count==64,receipt.bytes>100 else {fatalError("No bounded integrity receipt")}
     let copy=root.appendingPathComponent("restored")
