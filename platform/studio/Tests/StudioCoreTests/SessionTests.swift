@@ -7,12 +7,24 @@ func runSessionTests() throws {
     defer { try? FileManager.default.removeItem(at:directory) }
     guard SessionState.read(directory:directory,boot:"boot-one",now:1000)==nil else { fatalError("Missing session fabricated") }
     let path=directory.appendingPathComponent("session.json")
+    guard mkfifo(path.path,0o600)==0 else {throw RuntimeError.launch}
+    guard SessionState.read(directory:directory,boot:"boot-one",now:1000)==nil else {fatalError("Nonregular session admitted")}
+    try FileManager.default.removeItem(at:path)
     let processStart=String(try WorkerResources.startIdentifier(pid:getpid()))
     var fields:[String:Any] = ["version":2,"uid":geteuid(),"pid":getpid(),"process_start":processStart,"boot":"boot-one","sampled_uptime_ms":1000,"console_session":true,"mlx_present":false,"orbstack_present":false,"lifecycle_enabled":false]
     try AtomicState.write(JSONSerialization.data(withJSONObject:fields),to:path)
     guard SessionState.read(directory:directory,boot:"boot-one",now:1001)?.console == true else { fatalError("Fresh session rejected") }
     guard SessionState.read(directory:directory,boot:"boot-two",now:1001)==nil else { fatalError("Previous boot session accepted") }
-    guard SessionState.read(directory:directory,boot:"boot-one",now:7000)==nil else { fatalError("Stale GUI status accepted") }
+    for now:Int64 in [0,6000] {
+        guard SessionState.read(directory:directory,boot:"boot-one",now:now)?.console==true else {fatalError("Exact session clock boundary refused")}
+    }
+    for now:Int64 in [-1,6001,.min,.max] {
+        guard SessionState.read(directory:directory,boot:"boot-one",now:now)==nil else {fatalError("Invalid or stale GUI status accepted")}
+    }
+    fields["sampled_uptime_ms"]=1001
+    try AtomicState.write(JSONSerialization.data(withJSONObject:fields),to:path)
+    guard SessionState.read(directory:directory,boot:"boot-one",now:0)==nil else {fatalError("Future GUI status exceeded clock tolerance")}
+    fields["sampled_uptime_ms"]=1000
     let invalidStarts:[Any]=[String((UInt64(processStart) ?? 0)+1),"0","01","1e3",true,123]
     for invalid in invalidStarts {
         fields["process_start"]=invalid

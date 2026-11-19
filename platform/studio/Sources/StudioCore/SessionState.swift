@@ -26,20 +26,22 @@ struct SessionState {
     let lifecycleEnabled:Bool
     static func read(directory:URL,boot:String,now:Int64)->SessionState? {
         let path=directory.appendingPathComponent("session.json").path
-        let fd=open(path,O_RDONLY|O_NOFOLLOW|O_CLOEXEC)
+        let fd=open(path,O_RDONLY|O_NOFOLLOW|O_CLOEXEC|O_NONBLOCK)
         guard fd>=0 else { return nil };defer { close(fd) }
         var info=stat()
         guard fstat(fd,&info)==0,info.st_mode & S_IFMT == S_IFREG,info.st_uid==geteuid(),
               info.st_mode & 0o077==0,info.st_nlink==1,(1...4096).contains(info.st_size),
               now>=0,now<=ActivityPolicy.maximumTimestamp else { return nil }
         var bytes=[UInt8](repeating:0,count:4097),offset=0
+        let deadline=ProcessInfo.processInfo.systemUptime+2
         while offset<bytes.count {
+            guard ProcessInfo.processInfo.systemUptime<deadline else {return nil}
             let count=bytes.withUnsafeMutableBytes { Darwin.read(fd,$0.baseAddress!.advanced(by:offset),$0.count-offset) }
             if count<0 && errno==EINTR { continue }
             guard count>=0 else { return nil }
             if count==0 { break };offset+=count
         }
-        guard offset<=4096 else { return nil }
+        guard offset==info.st_size,ProcessInfo.processInfo.systemUptime<deadline else { return nil }
         let data=Data(bytes.prefix(offset))
         guard (try? StrictJSON.validate(data,maximum:4096)) != nil,
               let fields=(try? JSONSerialization.jsonObject(with:data)) as? [String:Any],
