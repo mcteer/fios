@@ -57,6 +57,16 @@ func runNativeVMInventoryTests() throws {
     guard publicationChecks==2,try String(contentsOf:calls,encoding:.utf8)=="status\n" else {
         fatalError("Expired VM inventory started a dependent native command")
     }
+    try Data().write(to:calls)
+    let capReader=VerifiedVMCap(executable:executable,home:home.path)
+    let capBoot=String(repeating:"a",count:64),capNow=HostResources.nowMilliseconds()
+    let proof=try NativeVMLivenessProof(sample:VMKernelSample(sampledAt:capNow,total:16<<30,free:8<<30,bootHash:capBoot),
+        expectedBootHash:capBoot,now:capNow)
+    var capChecks=0
+    do {_=try capReader.capture(liveness:proof,checkpoint:{capChecks+=1;throw RuntimeError.deadline})
+        fatalError("Verified cap ignored its pre-spawn checkpoint")
+    } catch RuntimeError.deadline {}
+    guard capChecks==1,try Data(contentsOf:calls).isEmpty else {fatalError("Cap CLI ran despite checkpoint refusal")}
     let collector=VMEnvelopeReader(kernel:KernelVMFixture(),inventory:InventoryVMFixture(),nativeProfileHash:String(repeating:"a",count:64),physical:32<<30)
     let sample=try collector.read(configuration:configuration,id:id,leaseUntil:HostResources.nowMilliseconds()+30000)
     guard let envelope=sample.envelope,VMResources.remaining(envelope,expectedRuntimeHash:envelope.runtimeHash,now:HostResources.nowMilliseconds())==4<<30 else {fatalError("Complete VM collector lost envelope")}

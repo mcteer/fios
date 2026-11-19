@@ -16,7 +16,7 @@ private final class VMProfileFixture:VMResourceReading,NativeVMCapReading,@unche
         time+=advanceOnRead
         return VMKernelSample(sampledAt:sampledAt,total:8<<30,free:4<<30,bootHash:boot)
     }
-    func capture(liveness:NativeVMLivenessProof)throws->NativeVMCap {
+    func capture(liveness:NativeVMLivenessProof,checkpoint:()throws->Void)throws->NativeVMCap {
         captures+=1
         if failCap {throw RuntimeError.launch}
         return NativeVMCap(bytes:16<<30,sampledAt:time)

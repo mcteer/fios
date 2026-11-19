@@ -13,17 +13,23 @@ struct NativeVMLivenessProof:Sendable {
         sampledAt=sample.sampledAt;bootHash=sample.bootHash
     }
 }
-protocol NativeVMCapReading:Sendable {func capture(liveness:NativeVMLivenessProof)throws->NativeVMCap}
+protocol NativeVMCapReading:Sendable {
+    func capture(liveness:NativeVMLivenessProof,checkpoint:()throws->Void)throws->NativeVMCap
+}
 struct VerifiedVMCap:NativeVMCapReading {
     let executable:VerifiedExecutable
     let home:String
-    func capture(liveness:NativeVMLivenessProof)throws->NativeVMCap {
+    func capture(liveness:NativeVMLivenessProof,checkpoint:()throws->Void)throws->NativeVMCap {
         let began=ProcessInfo.processInfo.systemUptime,sampledAt=HostResources.nowMilliseconds()
         // Fresh verified global-kernel observation proves this exact VM is
         // already running; do not spawn a redundant status CLI or start it.
         guard sampledAt>=liveness.sampledAt,sampledAt-liveness.sampledAt<=1000 else {throw RuntimeError.identity}
         let environment=["HOME":home]
-        let result=try executable.run(arguments:["config","get","memory_mib"],timeout:1,maximumOutput:64,environment:environment)
+        let result=try executable.runChecked(arguments:["config","get","memory_mib"],timeout:1,maximumOutput:64,environment:environment,checkpoint:{
+            try checkpoint()
+            let wall=HostResources.nowMilliseconds()
+            guard wall>=sampledAt,wall-liveness.sampledAt<=1000 else {throw RuntimeError.deadline}
+        })
         guard result.status==0,let text=String(data:result.output,encoding:.utf8)?.trimmingCharacters(in:.whitespacesAndNewlines),
               !text.isEmpty,text.utf8.count<=8,text.first != "0",text.utf8.allSatisfy({(48...57).contains($0)}),
               let mib=UInt64(text),mib<=UInt64(ActivityPolicy.maximumTimestamp)/(1<<20),
@@ -103,11 +109,18 @@ final class SharedKernelVMReader:VMResourceReading,@unchecked Sendable {
             else {
                 reusedAt=nil
                 let proof=try NativeVMLivenessProof(sample:sample,expectedBootHash:permission.bootHash,now:readCompleted)
-                limit=try cap.capture(liveness:proof);cached=(limit,began)
+                limit=try cap.capture(liveness:proof,checkpoint:{
+                    let wall=now(),tick=uptime()
+                    guard (previousNow...ActivityPolicy.maximumTimestamp).contains(wall),tick.isFinite,tick>=previousUptime else {
+                        fenced=true;throw RuntimeError.identity
+                    }
+                    previousNow=wall;previousUptime=tick
+                    guard wall<leaseUntil,tick-began<=5,wall-proof.sampledAt<=1000 else {throw RuntimeError.deadline}
+                });cached=(limit,began)
             }
             let completed=now(),completedUptime=uptime()
-            guard completed>=readCompleted,completed<=ActivityPolicy.maximumTimestamp,
-                  completedUptime.isFinite,completedUptime>=readUptime else {fenced=true;throw RuntimeError.identity}
+            guard completed>=previousNow,completed<=ActivityPolicy.maximumTimestamp,
+                  completedUptime.isFinite,completedUptime>=previousUptime else {fenced=true;throw RuntimeError.identity}
             previousNow=completed;previousUptime=completedUptime
             guard completed<leaseUntil,completedUptime-began<=5,
                   reusedAt.map({completedUptime-$0<3}) ?? true,

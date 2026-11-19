@@ -18,7 +18,9 @@ private final class SharedKernelFixture:NativeVMCapReading,VMResourceReading,@un
         if uptimeReads==6 {return 4}
         return steady
     }
-    func capture(liveness:NativeVMLivenessProof)throws->NativeVMCap {
+    var wallAtCapPublication:Int64?
+    func capture(liveness:NativeVMLivenessProof,checkpoint:()throws->Void)throws->NativeVMCap {
+        if let wallAtCapPublication {time=wallAtCapPublication;try checkpoint()}
         captures+=1;if fail {throw RuntimeError.launch}
         return NativeVMCap(bytes:capValue,sampledAt:stale ? time-6000:time)
     }
@@ -82,6 +84,17 @@ func runSharedKernelVMTests()throws {
     let expiring=SharedKernelVMReader(kernel:expired,cap:expired,permission:permission,physical:128<<30,now:{expired.time},uptime:{expired.steady})
     do {_=try expiring.read(configuration:configuration,id:id,leaseUntil:15000);fatalError("Expired lease reached cap probe")}catch RuntimeError.deadline {}
     guard expired.captures==0 else {fatalError("Cap queried after lease expired during kernel read")}
+    let preflight=SharedKernelFixture();preflight.wallAtCapPublication=11001
+    let preflightReader=SharedKernelVMReader(kernel:preflight,cap:preflight,permission:permission,physical:128<<30,
+        now:{preflight.time},uptime:{preflight.steady})
+    do {_=try preflightReader.read(configuration:configuration,id:id,leaseUntil:60000);fatalError("Aged kernel published cap lookup")}
+    catch RuntimeError.deadline {}
+    guard preflight.captures==0 else {fatalError("Cap publication ran on an aged kernel proof")}
+    let boundary=SharedKernelFixture();boundary.wallAtCapPublication=11000
+    let boundaryReader=SharedKernelVMReader(kernel:boundary,cap:boundary,permission:permission,physical:128<<30,
+        now:{boundary.time},uptime:{boundary.steady})
+    let accepted=try boundaryReader.read(configuration:configuration,id:id,leaseUntil:60000)
+    guard boundary.captures==1,accepted.envelope?.sampledAt==10000 else {fatalError("Exact cap publication edge lost original kernel time")}
     let aging=SharedKernelFixture()
     let agingReader=SharedKernelVMReader(kernel:aging,cap:aging,permission:permission,physical:128<<30,now:{aging.time},uptime:{aging.steady})
     _=try agingReader.read(configuration:configuration,id:id,leaseUntil:60000)
