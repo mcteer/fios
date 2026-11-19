@@ -101,6 +101,15 @@ try {
   assert.equal(timedOut.lease.revoked,true);assert.equal(timedOut.lease.expires_at,renewed.lease.expires_at);
   task('job.create',{phase:'chunk',job,index:0,data:data.subarray(0,32768).toString('base64')},'invalid_request');
   const late=task('job.create',{phase:'end',job});assert.equal(late.state,'removed');assert.equal(late.job,job);
+  // Reuse both ordinary model reservation slots without completing either
+  // upload. This distinguishes durable timeout cleanup from a hidden slot leak.
+  const replacements=Array.from({length:2},()=>task('job.create',{...manifest,idempotency:randomUUID()}));
+  assert.equal(new Set(replacements.map(value=>value.job)).size,2);
+  for(const replacement of replacements){
+   assert.equal(replacement.state,'reserved');assert.notEqual(replacement.job,job);
+   assert.equal(task('job.cancel',{job:replacement.job}).lease.revoked,true);
+  }
+  await until(()=>replacements.every(({job:id})=>task('job.status',{job:id}).state==='removed'));
   await replaceManager(status.epoch);
   const restored=task('job.status',{job});
   assert.equal(restored.state,'removed');assert.equal(restored.lease.revoked,true);assert.equal(restored.event,undefined);
@@ -114,7 +123,7 @@ try {
   try {
    for(const table of ['inference','request_history','worker_launches'])assert.equal(db.prepare(`SELECT count(*) AS count FROM ${table} WHERE job=?`).get(job).count,0);
   } finally {db.close();}
-  return {scenario,expired_without_end:true,late_end_status_only:true,restart_checked:true,durable_dispatch_rows:0,state:restored.state,mock_model_posts:0,worker_slots_after_completion:0};
+  return {scenario,expired_without_end:true,late_end_status_only:true,restart_checked:true,reservation_slots_reused:2,durable_dispatch_rows:0,state:restored.state,mock_model_posts:0,worker_slots_after_completion:0};
  }
  if(scenario==='upload_restart'){
   assert.equal(posts,0);await replaceManager(status.epoch);
