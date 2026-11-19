@@ -227,6 +227,12 @@ test('SDK readiness projection stays separate from the historical bridge and pat
   assert.match(patch,/^\+.*phase\.cmpxchgStrong\(configuring, ready,/m);
   assert.match(patch,/^\+.*state\.fetchOr\(failed, .acq_rel\).*owners\.shared\(\)\.fence/m);
   assert.doesNotMatch(patch,/^\+.*(?:state\.store\(2|failed\.load)/m);
+  const firstHunk=patch.split(/^@@ .*$/m)[1];
+  const projected=firstHunk.split('\n').filter(line=>line.startsWith('+')||line.startsWith(' ')).map(line=>line.slice(1)).join('\n');
+  const canonical=readFileSync('platform/studio/native/sdk_request_ownership.zig','utf8').replace(/owners\.shared\./g,'owners.shared().');
+  const readiness=text=>text.slice(text.indexOf('const configuring:'),text.indexOf('// Called only'));
+  assert(readiness(projected).length>500);
+  assert.equal(readiness(projected),readiness(canonical),'readiness must match the canonical atomic handoff');
 });
 
 test('current slot custody stays within the existing scheduler and preserves its executable fixture',()=>{
