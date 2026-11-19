@@ -49,7 +49,12 @@ struct WatchdogPolicy: Sendable {
             }
             return .observe // Await verified reap. Never spawn alongside old process.
         }
-        let progress = lastProgress ?? lastStart
+        // A recycled PID can match a leftover progress record. Progress
+        // sampled before the current launch is not evidence for that child.
+        let progress = lastProgress.flatMap { value in
+            guard lastStart.map({value >= $0}) ?? true else {return nil}
+            return value
+        } ?? lastStart
         guard let progress, now - progress >= 6_000 else { return .observe }
         terminateAt = now
         return .terminate

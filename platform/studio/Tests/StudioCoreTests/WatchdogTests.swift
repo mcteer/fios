@@ -52,5 +52,13 @@ func runWatchdogTests() throws {
     expect(before==500 && boundary==500)
     expect(try progressBudget.tick(now:6499,managerAlive:true,lastProgress:before) == .observe)
     expect(try progressBudget.tick(now:6500,managerAlive:true,lastProgress:boundary) == .terminate)
+    var turnover=WatchdogPolicy()
+    expect(try turnover.tick(now:0,managerAlive:false,lastProgress:nil) == .start)
+    expect(try turnover.tick(now:10000,managerAlive:false,lastProgress:nil) == .start)
+    expect(try turnover.tick(now:15999,managerAlive:true,lastProgress:9000) == .observe)
+    var progressing=turnover
+    expect(try turnover.tick(now:16000,managerAlive:true,lastProgress:9000) == .terminate)
+    expect(try progressing.tick(now:16000,managerAlive:true,lastProgress:10001) == .observe)
+    expect(try progressing.tick(now:16001,managerAlive:true,lastProgress:10001) == .terminate)
     print("PASS: watchdog restart, hang, reap fence, durable-budget and clock tests")
 }
