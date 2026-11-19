@@ -164,5 +164,18 @@ func runDockerVMMetadataFlowTests()throws {
     guard observation.sampledAt==10000,observation.total==16<<20,observation.free==8<<20,try goodSource.finish().count==5 else {
         fatalError("Successful owned VM read redated its original sample or lost an observation phase")
     }
+    let finalSocket=directory+"/final-inspect-expired.sock"
+    let finalSource=try MetadataDaemonFixture(path:finalSocket,responses:[try json(parent),created,kernelStream,completed,try json(parent)],
+        optionalLastResponse:true,allowEmptyOptionalPeer:true)
+    let finalRuntime=try DockerRuntime(executable:VerifiedExecutable(path:"/bin/false",sha256:String(repeating:"0",count:64)),socket:finalSocket)
+    // Initial stamp, three reads per inspect (before exchange, before
+    // send and after proof), and two for each exec phase. Expire at the
+    // final inspect send, not at the preceding successful guest read.
+    var finalReads=0
+    let finalReader=try OwnedVMResourceReader(runtime:finalRuntime,approvedImages:[configuration.image],directMetadata:true,
+        now:{finalReads+=1;return finalReads==13 ? 15000:10000},uptime:{1})
+    do {_=try finalReader.read(configuration:configuration,id:id,leaseUntil:15000);fatalError("Expired final inspect returned VM capacity")}
+    catch RuntimeError.deadline {}
+    guard finalReads==13,try finalSource.finish().count==4 else {fatalError("Expired final inspect published a request")}
     print("PASS: actual private mock Unix metadata create/start/completion flow, exact fixed cat/UID/path/argv, full exec/container binding and foreign completion refusal with no replay (mock daemon only)")
 }
