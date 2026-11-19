@@ -90,5 +90,21 @@ private func runBackgroundCoverageWireTests()throws {
     var unavailable=NativeBackendFenceDiagnostics(configured:true,observeBackground:true)
     unavailable.completed(try sample(0),expectedInstance:instance,now:1000)
     guard (unavailable.summary(now:1000)["source_background"] as? [String:Any])?["sdk_residency_refresh_untracked"] is NSNull else {fatalError("Unavailable background observation became false")}
+    var sdkOnly=NativeBackendFenceDiagnostics(configured:true,observeBackground:true)
+    func sdkSample(_ uncertain:Bool,_ sequence:UInt8)throws->NativeBackendFenceSample {
+        var data=frame;data[6]=1;data[7]=uncertain ? 1:0;data[31]=sequence
+        return NativeBackendFenceSample(peer:peer,receivedAt:1000,fences:try NativeBackendFenceWire.backgroundReply(data,instance:instance))
+    }
+    sdkOnly.completed(try sdkSample(false,2),expectedInstance:instance,now:1000)
+    sdkOnly.completed(try sdkSample(true,3),expectedInstance:instance,now:1000)
+    let positive=sdkOnly.summary(now:1000),sources=positive["current_sources"] as? [String:Any]
+    guard sources?["sdk_uncertain"] as? Bool==true,sources?["llama_uncertain"] is NSNull,
+          positive["coverage"] as? String=="unknown",positive["authority"] as? Bool==false,
+          positive["retained_uncertainty"] as? Bool==true,positive["retained_coverage_gap"] as? Bool==false else {
+        fatalError("Sparse SDK uncertainty gained authority or erased the unknown sources")
+    }
+    sdkOnly.failed()
+    sdkOnly.completed(try sdkSample(false,4),expectedInstance:instance,now:1000)
+    guard sdkOnly.summary(now:1000)["state"] as? String=="fenced" else {fatalError("Later SDK false cleared its preceding positive fence")}
     print("PASS: explicit v3 background coverage stays separate from cleanup failure, preserves availability and sticky gaps, no authority or fallback")
 }
