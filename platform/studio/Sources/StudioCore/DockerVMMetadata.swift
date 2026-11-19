@@ -19,9 +19,10 @@ struct DockerVMMetadata:DockerVMMetadataReading {
     }
     private static let files=["/proc/meminfo","/proc/self/mountinfo","/proc/self/status","/proc/sys/kernel/random/boot_id"]
     private func valid(_ id:String)->Bool {id.utf8.count==64 && id.utf8.allSatisfy({(48...57).contains($0)||(97...102).contains($0)})}
-    func inspect(id:String)throws->[String:Any] {
+    func inspect(id:String)throws->[String:Any] {try inspect(id:id,checkpoint:{})}
+    func inspect(id:String,checkpoint:()throws->Void)throws->[String:Any] {
         guard valid(id) else {throw RuntimeError.identity}
-        return try object(exchange(method:"GET",path:"/v1.47/containers/"+id+"/json",body:nil,stream:false))
+        return try object(exchange(method:"GET",path:"/v1.47/containers/"+id+"/json",body:nil,stream:false,checkpoint:checkpoint))
     }
     func read(id:String)throws->Data {try read(id:id,checkpoint:{})}
     func read(id:String,checkpoint:()throws->Void)throws->Data {

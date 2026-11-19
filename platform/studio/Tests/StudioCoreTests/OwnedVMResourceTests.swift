@@ -40,8 +40,15 @@ func runOwnedVMResourceTests() throws {
     try FileManager.default.setAttributes([.posixPermissions:0o700],ofItemAtPath:cli.path)
     let hash=SHA256.hash(data:script).map{String(format:"%02x",$0)}.joined()
     let mock=try DockerRuntime(executable:VerifiedExecutable(path:cli.path,sha256:hash),socket:"/fixture/not-a-runtime.sock")
+    var preInspectReads=0
+    let expiredInspect=try OwnedVMResourceReader(runtime:mock,approvedImages:[image],now:{
+        preInspectReads+=1;return preInspectReads==1 ? 10000:15000
+    },uptime:{1})
+    do {_=try expiredInspect.read(configuration:configuration,id:id,leaseUntil:15000);fatalError("Expired inspect returned a VM sample")}
+    catch RuntimeError.deadline {}
+    guard !FileManager.default.fileExists(atPath:log.path) else {fatalError("Expired VM lease still published initial inspect")}
     var reads=0
-    let expired=try OwnedVMResourceReader(runtime:mock,approvedImages:[image],now:{reads+=1;return reads<3 ? 10000:15000},uptime:{1})
+    let expired=try OwnedVMResourceReader(runtime:mock,approvedImages:[image],now:{reads+=1;return reads<4 ? 10000:15000},uptime:{1})
     do {_=try expired.read(configuration:configuration,id:id,leaseUntil:15000);fatalError("Mock CLI exec ran after expiry during preflight")}
     catch RuntimeError.deadline {}
     guard try String(contentsOf:log,encoding:.utf8)=="inspect\n" else {fatalError("Expired CLI published guest execution")}

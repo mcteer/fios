@@ -6,7 +6,7 @@ private final class MetadataDaemonFixture:@unchecked Sendable {
     private let done=DispatchSemaphore(value:0)
     private(set) var requests:[Data]=[]
     private var failed=false
-    init(path:String,responses:[Data],optionalLastResponse:Bool=false,responded:@escaping @Sendable (Int)->Void={_ in})throws {
+    init(path:String,responses:[Data],optionalLastResponse:Bool=false,allowEmptyOptionalPeer:Bool=false,responded:@escaping @Sendable (Int)->Void={_ in})throws {
         listener=try UnixControlSocket(path:path)
         DispatchQueue.global().async { [self] in
             defer {done.signal()}
@@ -23,7 +23,10 @@ private final class MetadataDaemonFixture:@unchecked Sendable {
                         var bytes=[UInt8](repeating:0,count:4096)
                         let count=read(peer,&bytes,bytes.count)
                         if count>0 {request.append(contentsOf:bytes.prefix(count))}
-                        else if count==0 {throw RuntimeError.launch}
+                        else if count==0 {
+                            if optional && allowEmptyOptionalPeer && request.isEmpty {return}
+                            throw RuntimeError.launch
+                        }
                         else if ![EAGAIN,EWOULDBLOCK,EINTR].contains(errno) {throw RuntimeError.launch}
                         guard request.count<=8192 else {throw RuntimeError.outputLimit}
                         if let header=request.range(of:Data("\r\n\r\n".utf8)),let text=String(data:request[..<header.lowerBound],encoding:.ascii) {
@@ -120,7 +123,7 @@ func runDockerVMMetadataFlowTests()throws {
         let fixtureRuntime=try DockerRuntime(executable:VerifiedExecutable(path:"/bin/false",sha256:String(repeating:"0",count:64)),socket:socket)
         var wallReads=0,tickReads=0
         let reader=try OwnedVMResourceReader(runtime:fixtureRuntime,approvedImages:[configuration.image],directMetadata:true,
-            now:{wallReads+=1;return wallReads==1 ? 10000:wall},uptime:{tickReads+=1;return tickReads==1 ? 1:tick})
+            now:{wallReads+=1;return wallReads<=3 ? 10000:wall},uptime:{tickReads+=1;return tickReads<=3 ? 1:tick})
         var refused=false
         do {_=try reader.read(configuration:configuration,id:id,leaseUntil:15000)}
         catch RuntimeError.deadline {refused=true}
@@ -129,6 +132,16 @@ func runDockerVMMetadataFlowTests()throws {
             fatalError("Owned VM metadata reached guest read with an invalid original clock/lease: \(label)")
         }
     }
+    let inspectSocket=directory+"/inspect-expired.sock"
+    let inspectSource=try MetadataDaemonFixture(path:inspectSocket,responses:[try json(parent)],
+        optionalLastResponse:true,allowEmptyOptionalPeer:true)
+    let inspectRuntime=try DockerRuntime(executable:VerifiedExecutable(path:"/bin/false",sha256:String(repeating:"0",count:64)),socket:inspectSocket)
+    var inspectReads=0
+    let inspectReader=try OwnedVMResourceReader(runtime:inspectRuntime,approvedImages:[configuration.image],directMetadata:true,
+        now:{inspectReads+=1;return inspectReads<=2 ? 10000:15000},uptime:{1})
+    do {_=try inspectReader.read(configuration:configuration,id:id,leaseUntil:15000);fatalError("Expired inspect send returned capacity")}
+    catch RuntimeError.deadline {}
+    guard inspectReads==3,try inspectSource.finish().isEmpty else {fatalError("Expired inspect sent metadata bytes")}
     let startClock=MetadataFixtureClock(),startSocket=directory+"/start-expired.sock"
     let startSource=try MetadataDaemonFixture(path:startSocket,responses:[try json(parent),created,stream],optionalLastResponse:true,
         responded:{index in if index==1 {startClock.set(15000)}})

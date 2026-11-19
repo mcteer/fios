@@ -68,12 +68,12 @@ final class OwnedVMResourceReader:@unchecked Sendable {
               let state=object["State"] as? [String:Any],bool(state["Running"],true) else {return false}
         return true
     }
-    private func verify(_ configuration:SandboxConfiguration,id:String)throws {
+    private func verify(_ configuration:SandboxConfiguration,id:String,checkpoint:()throws->Void)throws {
         if let metadata {
-            guard Self.safeTarget(try metadata.inspect(id:id),configuration:configuration,id:id) else {throw VMMetadataReadError.target}
+            guard Self.safeTarget(try metadata.inspect(id:id,checkpoint:checkpoint),configuration:configuration,id:id) else {throw VMMetadataReadError.target}
             return
         }
-        let result=try runtime.command(["inspect","--type=container",id],timeout:1)
+        let result=try runtime.command(["inspect","--type=container",id],timeout:1,checkpoint:checkpoint)
         guard result.status==0 else {throw RuntimeError.launch}
         try StrictJSON.validate(result.output,maximum:1<<20)
         guard let values=try JSONSerialization.jsonObject(with:result.output) as? [[String:Any]],values.count==1,
@@ -118,7 +118,7 @@ final class OwnedVMResourceReader:@unchecked Sendable {
         fenced.insert(id);lock.unlock()
         // Any error retains the fence. A CLI timeout is not guest-process
         // absence; do not repeatedly execute into an uncertain target.
-        try verify(configuration,id:id)
+        try verify(configuration,id:id,checkpoint:checkpoint)
         try checkpoint() // Never publish the guest read after the original lease.
         let output:Data
         if let metadata {output=try metadata.read(id:id,checkpoint:checkpoint)}
@@ -129,7 +129,7 @@ final class OwnedVMResourceReader:@unchecked Sendable {
         let sample:VMKernelSample
         do {sample=try Self.decode(output,sampledAt:sampledAt)}catch {throw VMMetadataReadError.payload}
         try checkpoint()
-        try verify(configuration,id:id)
+        try verify(configuration,id:id,checkpoint:checkpoint)
         try checkpoint()
         lock.lock();fenced.remove(id);lock.unlock()
         return sample
