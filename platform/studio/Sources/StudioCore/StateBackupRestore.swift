@@ -65,18 +65,11 @@ extension StoppedStateBackup {
         let artifactDirectory=temporary.appendingPathComponent("artifacts")
         let artifactNames=try FileManager.default.contentsOfDirectory(atPath:artifactDirectory.path)
         let files=(["state.sqlite","backup.json","manager.lock","supervisor.lock","serving-custody.lock"]+recovery).map {temporary.appendingPathComponent($0)}+artifactNames.map {artifactDirectory.appendingPathComponent($0)}
-        for file in files {
-            let fd=open(file.path,O_RDONLY|O_NOFOLLOW|O_CLOEXEC)
-            guard fd>=0 else {throw JournalError.storage}
-            let result=fsync(fd);close(fd)
-            guard result==0 else {throw JournalError.storage}
-        }
+        for file in files {try syncRestoredFile(file)}
         if hasConfiguration {
             let config=temporary.appendingPathComponent("configuration")
             for name in try FileManager.default.contentsOfDirectory(atPath:config.path) {
-                let fd=open(config.appendingPathComponent(name).path,O_RDONLY|O_NOFOLLOW|O_CLOEXEC)
-                guard fd>=0 else {throw JournalError.storage}
-                let result=fsync(fd);close(fd);guard result==0 else {throw JournalError.storage}
+                try syncRestoredFile(config.appendingPathComponent(name))
             }
             let fd=open(config.path,O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC)
             guard fd>=0 else {throw JournalError.storage}
@@ -92,5 +85,15 @@ extension StoppedStateBackup {
         guard outer>=0 else {throw JournalError.storage};defer {close(outer)}
         guard fsync(outer)==0 else {throw JournalError.storage}
         return receipt
+    }
+    // Validate the actual input to fsync; a previous tree verification is
+    // not a reason to block opening a nonregular file in the private copy.
+    static func syncRestoredFile(_ file:URL)throws {
+        let fd=open(file.path,O_RDONLY|O_NOFOLLOW|O_CLOEXEC|O_NONBLOCK)
+        guard fd>=0 else {throw JournalError.storage};defer {close(fd)}
+        var info=stat()
+        guard fstat(fd,&info)==0,info.st_mode&S_IFMT==S_IFREG,info.st_nlink==1,
+              info.st_uid==geteuid(),info.st_mode&0o077==0 else {throw JournalError.invalid}
+        guard fsync(fd)==0 else {throw JournalError.storage}
     }
 }

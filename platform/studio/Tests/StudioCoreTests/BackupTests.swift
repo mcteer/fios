@@ -189,6 +189,8 @@ func runBackupTests() throws {
     let nonregularBlob=nonregularBundle.appendingPathComponent("artifacts/"+artifact+".blob")
     try FileManager.default.removeItem(at:nonregularBlob)
     guard mkfifo(nonregularBlob.path,0o600)==0 else {throw JournalError.storage}
+    do {try StoppedStateBackup.syncRestoredFile(nonregularBlob);fatalError("Restore sync accepted nonregular metadata")}
+    catch JournalError.invalid {}
     let unpublished=root.appendingPathComponent("fifo-restore")
     do {_=try StoppedStateBackup.restore(directory:nonregularBundle,expectedSHA256:bundleReceipt.sha256,destination:unpublished)
         fatalError("Nonregular backup artifact restored")
