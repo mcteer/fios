@@ -81,7 +81,11 @@ try{
  const initial=await until(()=>{assert(!exited(manager),`Private manager exited: ${managerErrors}`);return command(['status']);});
  assert(['waiting','received'].includes(initial.native_control.state));assert.equal(initial.native_control.authoritative,false);
  assert.equal(command(['service','mlx','running']).applied,false);
- const opened=await until(()=>{const value=command(['status']);return value?.native_control.state==='received'&&(value.native_ingress_admissions??value.native_admissions)===(readOnly?'unknown':'admissionsOpen')&&(!withBackendFences||value.native_control.backend_fences?.state==='received')&&(!withPrimaryActivity||value.native_control.primary_activity?.state==='received') ? value:null;});
+ let lastStatus;
+ const opened=await until(()=>{const value=command(['status']);if(value)lastStatus=value;return value?.native_control.state==='received'&&(value.native_ingress_admissions??value.native_admissions)===(readOnly?'unknown':'admissionsOpen')&&(!withBackendFences||value.native_control.backend_fences?.state==='received')&&(!withPrimaryActivity||value.native_control.primary_activity?.state==='received') ? value:null;}).catch(error=>{
+  const control=lastStatus?.native_control;
+  throw Error('Native diagnostic startup did not converge: '+JSON.stringify({review_directory:directory,manager_exited:exited(manager),control:control?.state,ingress:lastStatus?.native_ingress_admissions,backend:control?.backend_fences?.state,primary:control?.primary_activity?.state}),{cause:error});
+ });
  assert.equal(opened.native_admissions,'unsupported','FIO_INGRESS_ACK_EXPOSED_NATIVE_ADMISSION');
  assert.equal(opened.native_ingress_admissions,readOnly?'unknown':'admissionsOpen');if(readOnly)assert.equal(opened.native_control_mode,'observation_only');
  const diagnostic=opened.native_control;
