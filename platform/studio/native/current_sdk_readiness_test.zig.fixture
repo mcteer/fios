@@ -34,6 +34,10 @@ test "projected ready bridge preserves a negative diagnostic after uncertainty" 
     try std.testing.expect(owners.current().* == null);
     sdk.fios_native_request_owners_release(context);
     try std.testing.expectEqual(@as(u32, 1), sdk.diagnostic().active_contexts);
+    try std.testing.expectEqual(@as(c_int, 1), sdk.fios_native_request_owners_known_uncertain());
+    const snapshot = owners.shared().snapshot(io);
+    try std.testing.expect(snapshot.uncertain);
+    try std.testing.expectEqual(@as(usize, 1), snapshot.owned);
     try std.testing.expect(owners.shared().knownUncertain(io));
     try std.testing.expect(sdk.fios_native_request_owners_capture() == null);
     for ([_]sdk.HostEventDiagnostic{ sdk.hostEventDiagnostic(), sdk.metalEventDiagnostic() }) |diag| {
