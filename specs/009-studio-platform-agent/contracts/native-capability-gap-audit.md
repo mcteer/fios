@@ -172,6 +172,18 @@ completion/capacity issuer, atomic all-client guard and eligible production
 composition. Existing source fences remain independent and unchanged;39/55
 whole tasks are complete.
 
+### Bounded upstream recheck (2026-11-19)
+
+Public latest release is still `v26.11.2`. Public main
+`c1e256ada9228e0433e75e93b8b8a7167933ce75` is 14 commits ahead of the prior
+`92cecaaf…` checkpoint; the comparison reports 241 changed paths. The selected
+`src/host/api/submit.zig`, `src/host/registry/registry.zig`, and
+`src/engines/mlx/admission/bills.zig` diffs cover local submit behavior, registry
+path identity, and KV accounting. None of those selected changes exposes an
+independently authenticated all-client activity source, exact-root terminal
+proof or atomic all-client admission interface. This is not an exhaustive
+review of the 241 paths. No upstream change was imported or qualified.
+
 ### Candidate positive completion boundary (not implemented)
 
 A completion producer needs two distinct publication edges. The root must first stop accepting independent operations under the same lock used to begin them. Existing operations must still be able to hand off to legitimate descendant work; doing this by forbidding all retains in `responding` is incorrect. A descendant publication must be authorized by a live parent operation, and counted before releasing that parent, including deferred cancellation paths. Only after this graph closes may a backend completion issuer seal the tuple `(native epoch, correlation ID, root sequence)` against future publication. For each kind of backend submission, the original-root capability must survive command completion and any completion callback that can publish more work. An owner reference reaching zero or a single command buffer completing cannot substitute for closure of those edges.
