@@ -149,7 +149,7 @@ try {
   assert(startupEnrollment<patched.indexOf('var scheduler = try scheduler_mod.Scheduler.init('), 'startup load cannot precede tracker enrollment');
   const actorStart=schedulerSource.indexOf('fn doLoadOnInferenceThread(');
   const actorEnd=schedulerSource.indexOf('\nfn ',actorStart+1),actorLoad=schedulerSource.slice(actorStart,actorEnd);
-  const actorGuard=actorLoad.indexOf('try FiosActorLoadPreparation.begin(sch, params.entry.id, params.fios_parent)');
+  const actorGuard=actorLoad.indexOf('try FiosActorLoadPreparation.beginQueued(sch, params.entry.id, params.fios_parent, params.fios_origins)');
   assert(actorGuard>=0&&actorGuard<actorLoad.indexOf('params.entry.load_progress.start('), 'actor guard must precede every backend load branch');
   assert(schedulerSource.includes('.fios_parent = fios_preparation,'), 'queued load must carry its original preparation owner');
   for(const [producer,queue,handler,backend] of [
@@ -166,7 +166,12 @@ try {
   const thread = patched.slice(patched.indexOf('fn handleConnectionThread('), patched.indexOf('const MAX_JSON_DEPTH'));
   assert(thread.indexOf('defer fios_requests.leave(ownership_io, ownership)') >= 0);
   assert(thread.indexOf('defer fios_requests.leave(ownership_io, ownership)') < thread.indexOf('defer conn.close()'));
-  assert(patched.indexOf('try fios_requests.bind(stream.io, ownership, entry.id)') < patched.indexOf('const lm = scheduler.ensureLoaded(if (ownership_entry) |entry| entry.id else requested_model_id)'));
+  for (const requested of ['requested_model_id','requested_id']) {
+    const declaration=patched.indexOf(`const load_target_id = if (ownership_entry) |entry| entry.id else ${requested};`);
+    const bound=patched.lastIndexOf('if (ownership_entry) |entry| fios_requests.bind(stream.io, ownership, entry.id) catch',declaration);
+    const load=patched.indexOf('const lm = scheduler.ensureLoaded(load_target_id)',bound);
+    assert(bound>=0&&bound<declaration&&declaration<load, 'exact resolved ownership must precede native load');
+  }
   assert(patched.includes('fios_ownership.renderSnapshot(snapshot, &activity_buffer)'));
   assert(patched.includes('if (!peerIsLoopback(stream) or isTunneledRequest(request[0..header_end_pos]))'));
   console.log('Pinned source patch applies; syntax and Debug/ReleaseSafe ownership tests pass.');

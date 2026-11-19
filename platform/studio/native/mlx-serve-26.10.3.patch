@@ -6185,7 +6185,7 @@ index 720b2c6..b4b68b6 100644
      const src = @embedFile("server.zig");
      const gate = "if (!routeExists(" ++ "path)) {";
 -    const resolve = "scheduler.ensureLoaded(" ++ "requested_model_id)";
-+    const resolve = "const lm = scheduler.ensureLoaded(if (ownership_entry) |entry| entry.id else " ++ "requested_model_id)";
++    const resolve = "const ownership_entry = registry.resolveEntry(" ++ "requested_model_id)";
      const gate_at = std.mem.indexOf(u8, src, gate) orelse return error.GateMissing;
      const resolve_at = std.mem.indexOf(u8, src, resolve) orelse return error.ResolveMissing;
      try std.testing.expect(gate_at < resolve_at);
