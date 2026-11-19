@@ -1,0 +1,16 @@
+const std = @import("std");
+const owners = @import("fios/request_ownership.zig");
+const sdk = @import("fios/sdk_request_ownership.zig");
+
+test "projected current bridge forwards pre-init failure" {
+    const io = std.testing.io;
+    sdk.fios_native_request_owners_uncertain();
+    try owners.shared().initialize(io, @splat(7));
+    try std.testing.expect(!owners.shared().knownUncertain(io));
+    try std.testing.expectError(error.Unavailable, sdk.initialize(io));
+    try std.testing.expect(owners.shared().knownUncertain(io));
+    try std.testing.expect(sdk.fios_native_request_owners_capture() == null);
+    try std.testing.expect(sdk.diagnostic().uncertain);
+    try std.testing.expect(sdk.hostEventDiagnostic().uncertain);
+    try std.testing.expect(sdk.metalEventDiagnostic().uncertain);
+}

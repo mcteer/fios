@@ -1,0 +1,151 @@
+--- a/src/fios/sdk_request_ownership.zig
++++ b/src/fios/sdk_request_ownership.zig
+@@ -6,37 +6,56 @@
+ const maximum_depth = 64;
+ const Context = struct { retained: owners.Retained };
+ const Frame = struct { previous: ?owners.Token, group: ?[]const owners.Token, sequence: u64 };
+-var state: std.atomic.Value(u8) = .init(0); // absent, configuring, ready; never reset
++const configuring: u8 = 1;
++const ready: u8 = 2;
++const failed: u8 = 4;
++var state: std.atomic.Value(u8) = .init(0); // readiness and sticky gap share one cell
+ var source_io: ?std.Io = null;
+ var contexts: std.atomic.Value(u32) = .init(0);
+ var next_scope: std.atomic.Value(u64) = .init(0);
+-var failed: std.atomic.Value(bool) = .init(false);
+ threadlocal var frames: [maximum_depth]Frame = undefined;
+ threadlocal var depth: usize = 0;
+ 
++fn publishReady(phase: *std.atomic.Value(u8)) bool {
++    return phase.cmpxchgStrong(configuring, ready, .acq_rel, .acquire) == null;
++}
++
++test "readiness does not overwrite an uncertainty latch" {
++    var phase: std.atomic.Value(u8) = .init(configuring);
++    try std.testing.expectEqual(configuring, phase.fetchOr(failed, .acq_rel));
++    try std.testing.expect(!publishReady(&phase));
++    try std.testing.expectEqual(configuring | failed, phase.load(.acquire));
++    var ready_first: std.atomic.Value(u8) = .init(configuring);
++    try std.testing.expect(publishReady(&ready_first));
++    try std.testing.expectEqual(ready, ready_first.fetchOr(failed, .acq_rel));
++    try std.testing.expectEqual(ready | failed, ready_first.load(.acquire));
++}
++
+ pub fn initialize(io: std.Io) !void {
+-    if (state.cmpxchgStrong(0, 1, .acq_rel, .acquire) != null) return error.AlreadyConfigured;
+-    source_io = io;
+-    if (!owners.shared().initialized or failed.load(.acquire)) {
+-        failed.store(true, .release);
++    if (state.cmpxchgStrong(0, configuring, .acq_rel, .acquire)) |prior| {
++        if (prior != failed) return error.AlreadyConfigured;
+         owners.shared().fence(io);
+         return error.Unavailable;
+     }
+-    state.store(2, .release);
++    source_io = io;
++    if (!owners.shared().initialized or !publishReady(&state)) {
++        _ = state.fetchOr(failed, .acq_rel);
++        owners.shared().fence(io);
++        return error.Unavailable;
++    }
+ }
+ fn fence() void {
+-    failed.store(true, .release);
+-    if (state.load(.acquire) == 2) owners.shared().fence(source_io.?);
++    if (state.fetchOr(failed, .acq_rel) & ready != 0) owners.shared().fence(source_io.?);
+ }
+ pub const Diagnostic = struct { active_contexts: u32, uncertain: bool };
+ pub fn diagnostic() Diagnostic {
+-    return .{ .active_contexts = contexts.load(.acquire), .uncertain = failed.load(.acquire) };
++    return .{ .active_contexts = contexts.load(.acquire), .uncertain = state.load(.acquire) & failed != 0 };
+ }
+ 
+ // Called only by an immutable compiled SDK hook. A nil result outside an
+ // attributed native scope is unavailable, not evidence of zero model work.
+ pub export fn fios_native_request_owners_capture() ?*anyopaque {
+-    if (state.load(.acquire) != 2 or failed.load(.acquire)) return null;
++    if (state.load(.acquire) != ready) return null;
+     const io = source_io.?;
+     const retained = owners.retainCurrent(io) catch { fence(); return null; } orelse return null;
+     return createContext(retained);
+@@ -70,7 +89,7 @@
+ // Immutable token comparison only: no IO, allocation, tracker/SDK lock or
+ // inference. A missing current source is unavailable, never an empty set.
+ pub export fn fios_native_request_owners_covers_current(raw: ?*anyopaque) c_int {
+-    if (state.load(.acquire) != 2 or failed.load(.acquire)) return -1;
++    if (state.load(.acquire) != ready) return -1;
+     const context: *Context = @ptrCast(@alignCast(raw orelse return -1));
+     const held = context.retained.tokens[0..context.retained.count];
+     if (owners.current_group().*) |group| {
+@@ -84,7 +103,7 @@
+ // Buffer origins accumulate before submission. Keep the complete bounded
+ // union, never only its most recent origin or a sampled aggregate count.
+ pub export fn fios_native_request_owners_merge(first: ?*anyopaque, second: ?*anyopaque) ?*anyopaque {
+-    if (state.load(.acquire) != 2 or failed.load(.acquire)) return null;
++    if (state.load(.acquire) != ready) return null;
+     const left: *Context = @ptrCast(@alignCast(first orelse { fence(); return null; }));
+     const right: *Context = @ptrCast(@alignCast(second orelse { fence(); return null; }));
+     if (left.retained.tracker != owners.shared() or right.retained.tracker != owners.shared()) { fence(); return null; }
+@@ -107,8 +126,8 @@
+ // The SDK owns their shared lifetime through the complete callback cleanup.
+ pub export fn fios_native_request_owners_release(raw: ?*anyopaque) void {
+     const context: *Context = @ptrCast(@alignCast(raw orelse { fence(); return; }));
+-    if (state.load(.acquire) != 2) { fence(); return; }
+-    if (failed.load(.acquire)) return; // Quarantine original descriptor/references.
++    if (state.load(.acquire) & ready == 0) { fence(); return; }
++    if ((state.load(.acquire) & failed != 0)) return; // Quarantine original descriptor/references.
+     // Descriptor cleanup cannot retire original request references after an
+     // independently cached source fence. Check and release the whole group
+     // under the tracker's lock; do not invoke a backend probe from cleanup.
+@@ -117,7 +136,7 @@
+     _ = contexts.fetchSub(1, .acq_rel);
+ }
+ pub export fn fios_native_request_owners_enter(raw: ?*anyopaque) u64 {
+-    if (state.load(.acquire) != 2 or failed.load(.acquire) or depth == maximum_depth) { fence(); return 0; }
++    if (state.load(.acquire) != ready or depth == maximum_depth) { fence(); return 0; }
+     const context: *Context = @ptrCast(@alignCast(raw orelse { fence(); return 0; }));
+     if (context.retained.tracker != owners.shared() or context.retained.count == 0 or context.retained.count > owners.capacity) { fence(); return 0; }
+     var sequence = next_scope.load(.acquire);
+@@ -133,7 +152,7 @@
+     return sequence;
+ }
+ pub export fn fios_native_request_owners_leave(sequence: u64) c_int {
+-    if (state.load(.acquire) != 2 or depth == 0 or sequence == 0 or frames[depth - 1].sequence != sequence) { fence(); return 1; }
++    if (state.load(.acquire) & ready == 0 or depth == 0 or sequence == 0 or frames[depth - 1].sequence != sequence) { fence(); return 1; }
+     const original = frames[depth - 1];
+     depth -= 1;
+     owners.current().* = original.previous;
+@@ -145,7 +164,7 @@
+ // instead of importing the host-owned tracker and its cleanup enrollment graph.
+ // Missing source startup preserves legacy metadata behavior; false is no proof.
+ pub export fn fios_native_request_owners_known_uncertain() c_int {
+-    if (failed.load(.acquire)) return 1;
++    if ((state.load(.acquire) & failed != 0)) return 1;
+     const io = std.Io.Threaded.global_single_threaded.io();
+     const source = owners.shared();
+     source.mutex.lockUncancelable(io);
+@@ -220,20 +239,20 @@
+ var metal_events: CallbackEvents = .{};
+ pub const HostEventDiagnostic = struct { active: usize, retired: u64, uncertain: bool };
+ fn eventDiagnostic(events: *CallbackEvents) HostEventDiagnostic {
+-    if (state.load(.acquire) != 2) return .{ .active = 0, .retired = 0, .uncertain = true };
++    if (state.load(.acquire) & ready == 0) return .{ .active = 0, .retired = 0, .uncertain = true };
+     const io = source_io.?;
+     events.mutex.lockUncancelable(io);
+     var result: HostEventDiagnostic = .{ .active = events.active, .retired = events.retired,
+-        .uncertain = events.uncertain or failed.load(.acquire) };
++        .uncertain = events.uncertain or (state.load(.acquire) & failed != 0) };
+     events.mutex.unlock(io);
+     result.uncertain = result.uncertain or owners.shared().knownUncertain(io);
+     return result;
+ }
+ fn observeEvent(events: *CallbackEvents, raw: ?*anyopaque, id: u64, phase: u32) c_int {
+-    if (state.load(.acquire) != 2) { fence(); return 1; }
++    if (state.load(.acquire) & ready == 0) { fence(); return 1; }
+     const context: *const Context = @ptrCast(@alignCast(raw orelse { fence(); return 1; }));
+     const io = source_io.?;
+-    const source_uncertain = failed.load(.acquire) or owners.shared().knownUncertain(io);
++    const source_uncertain = (state.load(.acquire) & failed != 0) or owners.shared().knownUncertain(io);
+     events.mutex.lockUncancelable(io);
+     const accepted = (!source_uncertain or phase == 3) and events.observe(context, id, phase);
+     if (!accepted) events.uncertain = true;
