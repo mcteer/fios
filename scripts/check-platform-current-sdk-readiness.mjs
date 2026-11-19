@@ -17,7 +17,9 @@ function bytes(p,limit=8<<20){
   assert(s.isFile()&&s.nlink===1&&s.uid===process.getuid()&&(s.mode&0o022)===0&&s.size>0&&s.size<=limit&&realpathSync(p)===p);
   return readFileSync(p);
 }
-assert.equal(hash(bytes(zig,512<<20)),'1c5f706db0ed6d55451940f31dc05a6177d05696bc1fa5d853696d04c718b523');
+const compiler=hash(bytes(zig,512<<20));
+assert.equal(compiler,'1c5f706db0ed6d55451940f31dc05a6177d05696bc1fa5d853696d04c718b523');
+const runner=hash(bytes(import.meta.filename));
 const repository=resolve(import.meta.dirname,'..'),native=join(repository,'platform/studio/native');
 const directory=mkdtempSync('/private/tmp/fios-009-current-sdk-readiness-'),projection=join(directory,'src');
 const primary='fios/sdk_request_ownership.zig',tracker='fios/request_ownership.zig';
@@ -47,7 +49,8 @@ const candidate=hash(bytes(join(projection,primary)));
 assert.equal(candidate,'9c31abd758777a619ad974fa605fcc581f907f7ad826029286a9bb59d2fd7cfe');
 const fixture=bytes(join(native,'current_sdk_readiness_test.zig.fixture'));
 const main=join(projection,'readiness.zig'),options=join(directory,'options.zig');
-writeFileSync(main,fixture,{mode:0o600});writeFileSync(options,'pub const fios_source_ane = false;\n',{mode:0o600});
+const buildOptions='pub const fios_source_ane = false;\n';
+writeFileSync(main,fixture,{mode:0o600});writeFileSync(options,buildOptions,{mode:0o600});
 const modes=['Debug','ReleaseSafe'],filters=['projected current bridge','projected ready bridge','readiness does not overwrite'];
 for(const mode of modes){
   try{
@@ -58,7 +61,17 @@ for(const mode of modes){
     }
   }catch(error){console.error(`Retained failed ${mode} source projection: ${directory}`);throw error;}
 }
-for(const [name,digest] of Object.entries(inputs))assert.equal(hash(bytes(join(root,name))),digest);
-const receipt={scope:'declared_cpu_readiness_projection_only',directory,inputs,patch_sha256:hash(patch),fixture_sha256:hash(fixture),candidate,modes,filters,activation:false,native_authority:false};
+for(const [name,digest] of Object.entries(inputs)){
+  assert.equal(hash(bytes(join(root,name))),digest);
+  if(name!==primary)assert.equal(hash(bytes(join(projection,name))),digest);
+}
+assert.equal(hash(bytes(join(native,'mlx-serve-current-sdk-readiness-latch.patch'))),hash(patch));
+assert.equal(hash(bytes(join(native,'current_sdk_readiness_test.zig.fixture'))),hash(fixture));
+assert.equal(hash(bytes(zig,512<<20)),compiler);
+assert.equal(hash(bytes(import.meta.filename)),runner);
+assert.equal(hash(bytes(join(projection,primary))),candidate);
+assert.equal(hash(bytes(main)),hash(fixture));
+assert.equal(hash(bytes(options)),hash(buildOptions));
+const receipt={scope:'declared_cpu_readiness_projection_only',directory,inputs,compiler_sha256:compiler,runner_sha256:runner,options_sha256:hash(buildOptions),patch_sha256:hash(patch),fixture_sha256:hash(fixture),candidate,modes,filters,activation:false,native_authority:false};
 writeFileSync(join(directory,'receipt.json'),JSON.stringify(receipt,null,2)+'\n',{mode:0o600});
 console.log(JSON.stringify({ok:true,directory,candidate,declared_inputs:Object.keys(inputs).length,activation:false,native_authority:false}));
