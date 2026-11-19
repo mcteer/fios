@@ -125,11 +125,12 @@ try {
   const response=await rpc(state,'job.create',begin());assert.equal(response.ok,false);assert.equal(response.error,error);
   const status=await rpc(state,'status',{},'observe');assert.equal(status.native_activity,'unsupported');assert.equal(status.worker_reservations,0);assert.equal(status.unresolved_requests,0);
   await stop(child);
+  if(mode==='held')assert.equal(command('/usr/bin/sqlite3',['-readonly',join(state,'state.sqlite'),'SELECT (SELECT count(*) FROM jobs) || ":" || (SELECT count(*) FROM sandboxes) || ":" || (SELECT count(*) FROM request_history);']),'0:0:0','Held job refusal wrote durable execution state');
  }
  if(models){await modelCase(true);await modelCase(false);}
  if(mock) {
   passed=true;
-  console.log('PASS: real disposable manager IPC refuses default/closed/missing-source execution with zero workers/native requests; harmless stand-in only, no daemon calls.');
+  console.log('PASS: real disposable manager IPC refuses default/held/closed/missing-source execution with zero workers/native requests; harmless stand-in only, no daemon calls.');
  } else {
  const state=join(directory,'configured');let child=await start(state,'configured');
  const created=await rpc(state,'job.create',begin());assert.equal(created.ok,true,created.error);const job=created.result.job;assert.match(job,/^[a-f0-9-]{36}$/);jobs.push(job);
