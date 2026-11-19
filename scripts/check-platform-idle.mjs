@@ -11,7 +11,8 @@ function run(command,args,timeout=120000){
   return result.stdout.trim();
 }
 try{
-  run('swift',['build','-j','2','--package-path','platform/studio','-c','release']);
+  // A fresh hosted runner builds the entire release dependency graph.
+  run('swift',['build','-j','2','--package-path','platform/studio','-c','release'],600000);
   const bin=run('swift',['build','-j','2','--package-path','platform/studio','-c','release','--show-bin-path']);
   const source=join(directory,'IdleLive.swift'),binary=join(directory,'idle-live');
   writeFileSync(source,readFileSync(join(root,'platform/studio/Tests/StudioCoreTests/IdleLive.swift.fixture')));
