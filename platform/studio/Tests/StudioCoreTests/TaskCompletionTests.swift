@@ -78,19 +78,23 @@ private func exerciseCompletion(in directory:URL,token:String,clock:CompletionCl
             } catch AdmissionError.capacity {}
         } else {release.signal()}
     }
-    var interrupted=false
+    var interrupted=0
     let deadline=ProcessInfo.processInfo.systemUptime+2
     repeat {
         let events=try controller.tick(now:pollTime,uptime:max(pollTime,tick),admission:&admission,source:{_ in binding})
-        interrupted = interrupted || (events[id] ?? []).contains {if case .interrupted=$0 {return true};return false}
-        if !interrupted {Thread.sleep(forTimeInterval:0.005)}
-    }while !interrupted && ProcessInfo.processInfo.systemUptime<deadline
-    guard interrupted else {throw NSError(domain:"TaskCompletion",code:1,userInfo:[NSLocalizedDescriptionKey:"Normal interrupted completion was not delivered"])}
+        interrupted += (events[id] ?? []).filter {if case .interrupted=$0 {return true};return false}.count
+        if interrupted==0 {Thread.sleep(forTimeInterval:0.005)}
+    }while interrupted==0 && ProcessInfo.processInfo.systemUptime<deadline
+    guard interrupted==1 else {throw NSError(domain:"TaskCompletion",code:1,userInfo:[NSLocalizedDescriptionKey:"Normal interrupted completion was not delivered"])}
     guard let completed=try journal.jobs().first(where:{$0.id==id}),completed.state == .removed,completed.lease.revoked else {
         throw NSError(domain:"TaskCompletion",code:2,userInfo:[NSLocalizedDescriptionKey:"Interrupted model job remains running after its worker finishes"])
     }
     guard !broker.active(job:id),try journal.activeLaunchCount()==0,try journal.workerGrants().isEmpty else {
         fatalError("Cancelled no-process start left local worker state")
+    }
+    for offset:Int64 in [1,2] {
+        let events=try controller.tick(now:pollTime+offset,uptime:max(pollTime,tick)+offset,admission:&admission,source:{_ in binding})
+        guard events[id]?.isEmpty ?? true else {fatalError("Completed worker acknowledgement replayed an owner event")}
     }
     var releasedCapacity=admission
     try releasedCapacity.reserveWorker(key:"model:\(id):0",sample:sample,now:pollTime)
