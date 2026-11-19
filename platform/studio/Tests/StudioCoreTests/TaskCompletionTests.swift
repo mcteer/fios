@@ -44,6 +44,12 @@ private func exerciseCompletion(in directory:URL,token:String,clock:CompletionCl
         guard result[id]?.isEmpty ?? true,broker.active(job:id),
               try journal.jobs().first(where:{$0.id==id})?.state == .revoking,
               try journal.uncertainCount()==1 else {fatalError("Expired lease or watchdog lost pending worker custody")}
+        var heldCapacity=admission
+        try heldCapacity.reserveWorker(key:"unrelated",sample:sample,now:pollTime)
+        do {
+            try heldCapacity.reserveWorker(key:"third",sample:sample,now:pollTime)
+            fatalError("Revoked pending worker returned capacity before the result drained")
+        } catch AdmissionError.capacity {}
         release.signal()
     }
     var interrupted=false
@@ -60,6 +66,9 @@ private func exerciseCompletion(in directory:URL,token:String,clock:CompletionCl
     guard !broker.active(job:id),try journal.activeLaunchCount()==0,try journal.workerGrants().isEmpty else {
         fatalError("Cancelled no-process start left local worker state")
     }
+    var releasedCapacity=admission
+    try releasedCapacity.reserveWorker(key:"model:\(id):0",sample:sample,now:pollTime)
+    try releasedCapacity.reserveWorker(key:"unrelated",sample:sample,now:pollTime)
     let routes=try completionRoutes(journal:journal,directory:directory)
     if held {
         let status=try completionStatus(routes,id:id,token:token)
