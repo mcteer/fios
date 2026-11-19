@@ -5,17 +5,20 @@ import CoreFoundation
 public enum SupervisorStatus {
     public static func read(directory:URL,expectedExecutable:String) throws -> [String:Any] {
         let path=directory.appendingPathComponent("supervisor.json").path
-        let fd=open(path,O_RDONLY|O_NOFOLLOW|O_CLOEXEC)
+        let fd=open(path,O_RDONLY|O_NOFOLLOW|O_CLOEXEC|O_NONBLOCK)
         guard fd>=0 else { throw ControlError.busy };defer { close(fd) }
         var info=stat()
         guard fstat(fd,&info)==0,info.st_mode & S_IFMT == S_IFREG,info.st_uid==geteuid(),
               info.st_mode & 0o077==0,info.st_nlink==1,(1...4096).contains(info.st_size) else { throw ControlError.unauthorized }
         var bytes=[UInt8](repeating:0,count:4097),offset=0
+        let deadline=ProcessInfo.processInfo.systemUptime+2
         while offset<bytes.count {
+            guard ProcessInfo.processInfo.systemUptime<deadline else {throw ControlError.busy}
             let count=bytes.withUnsafeMutableBytes { Darwin.read(fd,$0.baseAddress!.advanced(by:offset),$0.count-offset) }
             if count<0 && errno==EINTR { continue };guard count>=0 else { throw ControlError.internal_error }
             if count==0 { break };offset+=count
         }
+        guard offset==info.st_size,ProcessInfo.processInfo.systemUptime<deadline else {throw ControlError.busy}
         let data=Data(bytes.prefix(offset));try StrictJSON.validate(data,maximum:4096)
         guard let value=try JSONSerialization.jsonObject(with:data) as? [String:Any],
               Set(value.keys)==Set(["version","boot","pid","process_start","state","starts","sampled_uptime_ms"]) else { throw ControlError.invalid_request }

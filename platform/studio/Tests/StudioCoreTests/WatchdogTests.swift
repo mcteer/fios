@@ -78,5 +78,9 @@ func runWatchdogTests() throws {
     expect(try Data(contentsOf:budgetPath)==malformedBytes)
     try JSONEncoder().encode(valid).write(to:budgetPath)
     expect(try SupervisorRestartBudget.read(directory:directory)?.starts==valid.starts)
+    let status=directory.appendingPathComponent("supervisor.json")
+    guard mkfifo(status.path,0o600)==0 else {throw RuntimeError.launch}
+    do {_=try SupervisorStatus.read(directory:directory,expectedExecutable:"/bin/false");fatalError("Nonregular supervisor status admitted")}
+    catch ControlError.unauthorized {}
     print("PASS: watchdog restart, hang, reap fence, durable-budget and clock tests")
 }
