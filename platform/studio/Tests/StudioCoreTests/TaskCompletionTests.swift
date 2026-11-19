@@ -61,6 +61,13 @@ private func exerciseCompletion(in directory:URL,token:String,clock:CompletionCl
         fatalError("Cancelled no-process start left local worker state")
     }
     let routes=try completionRoutes(journal:journal,directory:directory)
+    if held {
+        let status=try completionStatus(routes,id:id,token:token)
+        guard status["state"] as? String=="removed",status["unresolved_managed_requests"] as? Int==1,
+              status["event"]==nil,status["exit_verified"]==nil,status["code_complete"]==nil else {
+            fatalError("Worker timeout status confused local closure with native completion")
+        }
+    }
     try routes.tick(now:5000,uptime:5000,artifactResults:[],finished:[SandboxTaskFinished(job:stillRunning,codeComplete:true,exitVerified:true)])
     let observed=try completionStatus(routes,id:stillRunning,token:token)
     guard observed["code_complete"] as? Bool==true,observed["exit_verified"] as? Bool==true else {throw JournalError.invalid}
