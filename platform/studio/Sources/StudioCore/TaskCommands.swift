@@ -225,11 +225,13 @@ final class TaskCommands {
         outcomes=outcomes.filter {retained.contains($0.key)}
         for result in finished where retained.contains(result.job) {outcomes[result.job]=result}
         var rejected=Set(mailbox.expire(now:now,retained:retained))
-        for item in output where !outputLost.contains(item.job) && !rejected.contains(item.job) {
+        // Late events for jobs no longer in the journal cannot consume an
+        // output slot or interfere with a retained owner's terminal event.
+        for item in output where retained.contains(item.job) && !outputLost.contains(item.job) && !rejected.contains(item.job) {
             do {try mailbox.append(job:item.job,fields:["type":"output","stream":item.stream,"data":item.data.base64EncodedString()],now:now)}
             catch {rejected.insert(item.job);mailbox.discard(job:item.job)}
         }
-        for (id,events) in model where !outputLost.contains(id) {
+        for (id,events) in model where retained.contains(id) && !outputLost.contains(id) {
             for event in events {
                 if rejected.contains(id) {break}
                 let fields:[String:Any]

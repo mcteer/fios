@@ -81,7 +81,8 @@ private func exerciseJobLeaseStatus(directory:URL)throws->String {
     try journal.transitionJob(id:failed.id,to:.removed,now:28000)
     var worker=ModelWorkerProtocol(job:failed.id,attempt:0)
     let timeout=try worker.accept(JSONSerialization.data(withJSONObject:["v":1,"job_id":failed.id,"type":"error","code":"upstream_timeout"]))
-    try commands.tick(now:28000,uptime:28000,artifactResults:[],model:[failed.id:[timeout]])
+    let orphanOutput=(0..<4).map { _ in SandboxTaskOutput(job:UUID().uuidString.lowercased(),stream:"stdout",data:Data([65])) }
+    try commands.tick(now:28000,uptime:28000,artifactResults:[],output:orphanOutput,model:[failed.id:[timeout]])
     let failedStatus=try call("job.status",28001,id:failed.id)
     guard let event=failedStatus["event"] as? [String:Any],event["type"] as? String == "model.done",
           event["status"] as? String == "failed",event["code"] as? String == "upstream_timeout" else {
