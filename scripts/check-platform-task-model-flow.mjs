@@ -64,6 +64,12 @@ try {
  const created=task('job.create',manifest);
  assert.equal(created.state,'reserved');const job=created.job,deadline=created.lease.deadline_at;
  const observed=task('job.status',{job});assert.equal(observed.lease.expires_at,created.lease.expires_at);
+ if(scenario==='complete'){
+  task('job.create',{...manifest,sha256:sha(Buffer.from('different upload'))},'job_conflict');
+  const retained=task('job.status',{job});
+  assert.equal(retained.state,'reserved');assert.equal(retained.lease.expires_at,created.lease.expires_at);
+  assert.equal(posts,0);
+ }
  await delay(25);const renewed=task('job.renew',{job});assert(renewed.lease.expires_at>created.lease.expires_at);assert.equal(renewed.lease.deadline_at,deadline);
  let chunks=0;for(let offset=0;offset<data.length;offset+=32768){task('job.create',{phase:'chunk',job,index:chunks++,data:data.subarray(offset,offset+32768).toString('base64')});if(scenario==='upload_restart')break;}
  if(scenario==='upload_restart'){
