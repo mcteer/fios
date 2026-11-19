@@ -6,7 +6,7 @@ private final class MetadataDaemonFixture:@unchecked Sendable {
     private let done=DispatchSemaphore(value:0)
     private(set) var requests:[Data]=[]
     private var failed=false
-    init(path:String,responses:[Data],optionalLastResponse:Bool=false)throws {
+    init(path:String,responses:[Data],optionalLastResponse:Bool=false,responded:@escaping @Sendable (Int)->Void={_ in})throws {
         listener=try UnixControlSocket(path:path)
         DispatchQueue.global().async { [self] in
             defer {done.signal()}
@@ -42,6 +42,7 @@ private final class MetadataDaemonFixture:@unchecked Sendable {
                         if count<=0 {Thread.sleep(forTimeInterval:0.001)}
                     }
                     guard sent==response.count else {throw RuntimeError.deadline}
+                    responded(index)
                 }
             }catch {failed=true}
         }
@@ -49,6 +50,13 @@ private final class MetadataDaemonFixture:@unchecked Sendable {
     func finish()throws->[Data] {
         guard done.wait(timeout:.now()+3) == .success,!failed else {throw RuntimeError.deadline};return requests
     }
+}
+
+private final class MetadataFixtureClock:@unchecked Sendable {
+    private let lock=NSLock()
+    private var wall:Int64=10000
+    func now()->Int64 {lock.lock();defer {lock.unlock()};return wall}
+    func expire() {lock.lock();wall=15000;lock.unlock()}
 }
 
 func runDockerVMMetadataFlowTests()throws {
@@ -121,5 +129,13 @@ func runDockerVMMetadataFlowTests()throws {
             fatalError("Owned VM metadata reached guest read with an invalid original clock/lease: \(label)")
         }
     }
+    let startClock=MetadataFixtureClock(),startSocket=directory+"/start-expired.sock"
+    let startSource=try MetadataDaemonFixture(path:startSocket,responses:[try json(parent),created,stream],optionalLastResponse:true,
+        responded:{index in if index==1 {startClock.expire()}})
+    let startRuntime=try DockerRuntime(executable:VerifiedExecutable(path:"/bin/false",sha256:String(repeating:"0",count:64)),socket:startSocket)
+    let startReader=try OwnedVMResourceReader(runtime:startRuntime,approvedImages:[configuration.image],directMetadata:true,now:startClock.now,uptime:{1})
+    do {_=try startReader.read(configuration:configuration,id:id,leaseUntil:15000);fatalError("Expired metadata flow returned capacity")}
+    catch RuntimeError.deadline {}
+    guard try startSource.finish().count==2 else {fatalError("Metadata exec start was published after original lease expired")}
     print("PASS: actual private mock Unix metadata create/start/completion flow, exact fixed cat/UID/path/argv, full exec/container binding and foreign completion refusal with no replay (mock daemon only)")
 }

@@ -121,7 +121,7 @@ final class OwnedVMResourceReader:@unchecked Sendable {
         try verify(configuration,id:id)
         try checkpoint() // Never publish the guest read after the original lease.
         let output:Data
-        if let metadata {output=try metadata.read(id:id)}
+        if let metadata {output=try metadata.read(id:id,checkpoint:checkpoint)}
         else {
             let result=try runtime.command(["exec","--user","65533:65533","--workdir","/",id,"/bin/cat","/proc/meminfo","/proc/self/mountinfo","/proc/self/status","/proc/sys/kernel/random/boot_id"],timeout:1)
             guard result.status==0 else {throw RuntimeError.launch};output=result.output

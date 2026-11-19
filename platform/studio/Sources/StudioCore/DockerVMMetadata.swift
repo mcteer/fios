@@ -23,19 +23,20 @@ struct DockerVMMetadata:DockerVMMetadataReading {
         guard valid(id) else {throw RuntimeError.identity}
         return try object(exchange(method:"GET",path:"/v1.47/containers/"+id+"/json",body:nil,stream:false))
     }
-    func read(id:String)throws->Data {
+    func read(id:String)throws->Data {try read(id:id,checkpoint:{})}
+    func read(id:String,checkpoint:()throws->Void)throws->Data {
         guard valid(id) else {throw RuntimeError.identity}
         let body=try JSONSerialization.data(withJSONObject:["AttachStdin":false,"AttachStdout":true,"AttachStderr":true,"Tty":false,
             "Privileged":false,"User":"65533:65533","WorkingDir":"/","Cmd":["/bin/cat"]+Self.files])
-        let created=try object(exchange(method:"POST",path:"/v1.47/containers/"+id+"/exec",body:body,stream:false))
+        let created=try object(exchange(method:"POST",path:"/v1.47/containers/"+id+"/exec",body:body,stream:false,checkpoint:checkpoint))
         guard Set(created.keys)==["Id"],let exec=created["Id"] as? String,valid(exec) else {throw DockerVMMetadataError.create}
         let start=try JSONSerialization.data(withJSONObject:["Detach":false,"Tty":false])
-        let raw=try exchange(method:"POST",path:"/v1.47/exec/"+exec+"/start",body:start,stream:true)
+        let raw=try exchange(method:"POST",path:"/v1.47/exec/"+exec+"/start",body:start,stream:true,checkpoint:checkpoint)
         var multiplex=DockerMultiplex()
         let chunks=try multiplex.append(raw);try multiplex.finish()
         let data=chunks.reduce(into:Data()) {$0.append($1)}
         guard data.count<=32768 else {throw RuntimeError.outputLimit}
-        let completed=try object(exchange(method:"GET",path:"/v1.47/exec/"+exec+"/json",body:nil,stream:false))
+        let completed=try object(exchange(method:"GET",path:"/v1.47/exec/"+exec+"/json",body:nil,stream:false,checkpoint:checkpoint))
         func boolean(_ value:Any?,_ expected:Bool)->Bool {
             guard let number=value as? NSNumber,CFGetTypeID(number)==CFBooleanGetTypeID() else {return false};return number.boolValue==expected
         }
@@ -49,7 +50,8 @@ struct DockerVMMetadata:DockerVMMetadataReading {
         try StrictJSON.validate(data,maximum:1<<20)
         guard let value=try JSONSerialization.jsonObject(with:data) as? [String:Any] else {throw DockerVMMetadataError.object};return value
     }
-    private func exchange(method:String,path:String,body:Data?,stream:Bool)throws->Data {
+    private func exchange(method:String,path:String,body:Data?,stream:Bool,checkpoint:()throws->Void={})throws->Data {
+        try checkpoint()
         let end=ProcessInfo.processInfo.systemUptime+1
         if let endpointPolicy {
             guard endpointPolicy.path==socketPath,endpointPolicy.uid==peerUID else {throw DockerVMMetadataError.socket}
@@ -91,6 +93,7 @@ struct DockerVMMetadata:DockerVMMetadataReading {
                 try pinned?.verify(deadline:end);verified=true
             }
             if sent<request.count {
+                try checkpoint() // Revalidate after peer/endpoint work, before writing.
                 let count=request.withUnsafeBytes {write(fd,$0.baseAddress!.advanced(by:sent),request.count-sent)}
                 if count>0 {sent+=count}
                 else if ![EAGAIN,EWOULDBLOCK,EINTR].contains(errno) {throw RuntimeError.launch}
