@@ -62,6 +62,9 @@ func runDrainTests()throws {
     let ready=ServiceDrainSnapshot(scope:try scope(stamp:2000),nativeIdle:true,externalNativeWork:false,unmanagedRuntimeWork:false)
     guard try drain.poll(snapshot:ready,now:2000).state == .ready(identity) else {fatalError("Proof-complete empty drain did not become ready")}
     _=try drain.begin(snapshot:busy,role:.operator,now:1000)
+    let lastAllowed=ServiceDrainSnapshot(scope:try scope(stamp:60999),nativeIdle:true,externalNativeWork:false,unmanagedRuntimeWork:false)
+    guard try drain.poll(snapshot:lastAllowed,now:60999).state == .ready(identity) else {fatalError("Drain refused proof one millisecond before deadline")}
+    _=try drain.begin(snapshot:busy,role:.operator,now:1000)
     let late=ServiceDrainSnapshot(scope:try scope(stamp:61000),nativeIdle:true,externalNativeWork:false,unmanagedRuntimeWork:false)
     guard try drain.poll(snapshot:late,now:61000).state == .refused(.deadline) else {fatalError("Drain timeout escalated to native force/quit")}
     guard try drain.poll(snapshot:ready,now:62000).state == .refused(.deadline) else {fatalError("Expired drain revived")}
