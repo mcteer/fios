@@ -36,6 +36,11 @@ private struct ForbiddenHeldRecovery:ServiceRecoverySending {
                 _=try journal.reserveSandbox(job:DurableJob(id:id,idempotency:UUID().uuidString.lowercased(),ownerHash:hash,requestHash:hash,created:now),configuration:config)
                 try journal.commitSandboxCreate(config,now:now)
                 try SandboxLifecycle(journal:journal).created(job:id,runtimeID:String(repeating:"b",count:64))
+                let modelID=UUID().uuidString.lowercased()
+                _=try journal.reserveJob(DurableJob(id:modelID,idempotency:UUID().uuidString.lowercased(),ownerHash:hash,requestHash:hash,created:now))
+                try journal.transitionJob(id:modelID,to:.running,now:now)
+                try journal.claim(job:modelID,attempt:0,model:"fixture/model")
+                try journal.markUncertain(job:modelID,attempt:0)
             }
             let execution=try ManagerExecutionPorts(runtime:runtime,approvedImages:[image],resources:{_,_ in nil})
             try withExtendedLifetime(listener) {try ManagerRuntime.run(directory:state,nativeControl:nil,execution:execution)}
