@@ -207,6 +207,8 @@ private func runPreparationPlanBindingTests(peer:NativeControlPeer)throws {
           try journal.unresolvedCount()==2 else {fatalError("Failed observation write retained old local lease binding or changed durable custody")}
     _=try journal.observeLineage(job:job,attempt:0,scope:scope,peer:peer,sample:nil,now:now)
     do{try binding.validate(plan:plan,scope:scope,journal:journal,now:now);fatalError("Unknown lineage poll retained launch binding")}catch RuntimeError.identity {}
+    do{_=try WorkerPreparationBinding.capture(plan:plan,journal:journal,prepared:prepared,now:now);fatalError("Invalidated preparation observation recaptured for same plan")}catch RuntimeError.identity {}
+    _=try WorkerPreparationBinding.captureForNonDispatch(plan:plan,journal:journal,registration:prepared.registration)
     try journal.markUncertain(job:job,attempt:0)
     do{try binding.validate(plan:plan,scope:scope,journal:journal,now:now+1);fatalError("Uncertain inference retained launch binding")}catch RuntimeError.identity {}
     guard plan.consume(),!plan.consume(),source.counts.0==1,source.counts.1==1 else {fatalError("Binding created a process/consumed plan or retried native RPC")}

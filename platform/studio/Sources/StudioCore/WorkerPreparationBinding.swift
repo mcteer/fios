@@ -23,7 +23,7 @@ struct WorkerPreparationBinding:Sendable {
               lineage.lineage.instance==ack.instance,lineage.lineage.correlationID==ack.correlationID,
               lineage.lineage.rootSequence==ack.rootSequence,lineage.lineage.found,!lineage.lineage.uncertain,
               lineage.lineage.sampleSequence>ack.sampleSequence,
-              lineage.sampledAt>=registration.sample.requestedAt,(0...5000).contains(now-lineage.sampledAt),
+              lineage.sampledAt>=registration.verifiedAt,(0...5000).contains(now-lineage.sampledAt),
               let record=try journal.inferenceScope(job:plan.job,attempt:plan.attempt),record.state == .dispatched,
               try record.scope.encoded()==plan.scope.encoded(),
               ack.instance==plan.scope.nativeEpoch,ack.model.utf8.elementsEqual(plan.scope.nativeModel.utf8),
@@ -31,7 +31,9 @@ struct WorkerPreparationBinding:Sendable {
               try journal.activeLaunches().contains(where:{$0.job==plan.job && $0.attempt==plan.attempt && $0.nonce==plan.nonce}),
               try journal.originalNativeRoot(job:plan.job,attempt:plan.attempt,scope:plan.scope,peer:registration.peer)==ack.rootSequence else {throw RuntimeError.identity}
         try lineage.lineage.validate()
-        return Self(plan:plan,registration:registration,checkpoint:try journal.preparationBindingCheckpoint(plan:plan,peer:registration.peer,root:ack.rootSequence))
+        let checkpoint=try journal.preparationBindingCheckpoint(plan:plan,peer:registration.peer,root:ack.rootSequence)
+        guard plan.capturePreparationOnce() else {throw RuntimeError.identity}
+        return Self(plan:plan,registration:registration,checkpoint:checkpoint)
     }
     // Historical identity only. Missing/expired live observations cannot
     // authorize launch, but need not discard an exact original cleanup subject.

@@ -20,8 +20,14 @@ final class PlannedWorkerStart:@unchecked Sendable {
     let scope:InferenceScope
     private let lock=NSLock()
     private var consumed=false
+    private var capturedPreparation=false
     fileprivate init(job:String,attempt:Int,nonce:String,scope:InferenceScope) {
         self.job=job;self.attempt=attempt;self.nonce=nonce;self.scope=scope
+    }
+    func capturePreparationOnce()->Bool {
+        lock.lock();defer {lock.unlock()}
+        guard !consumed,!capturedPreparation else {return false}
+        capturedPreparation=true;return true
     }
     func consume()->Bool {
         lock.lock();defer {lock.unlock()}
