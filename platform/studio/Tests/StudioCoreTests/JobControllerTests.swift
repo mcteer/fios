@@ -640,5 +640,17 @@ func runCleanupStatusRecoveryTests() throws {
     // The ordinary manager tick released the local reservation, so a new
     // in-memory reservation for the same key no longer conflicts.
     try admission.reserve(job:unissuedID,memory:unissuedConfig.memory,cpus:1,sample:sample(105500),now:105500)
+    guard let closed=try journal.jobs().first(where:{$0.id==lateID})?.closedAt else {throw JournalError.invalid}
+    let beforeRetention=runtime.commands.count
+    try journal.expireTerminalJobs(now:closed+86_399_999)
+    guard try journal.sandboxRecords().contains(where:{$0.configuration.job==lateID && $0.removalProven}) else {
+        fatalError("Proven cleanup lost its tombstone before the retention boundary")
+    }
+    try journal.expireTerminalJobs(now:closed+86_400_000)
+    guard try !journal.sandboxRecords().contains(where:{$0.configuration.job==lateID}),
+          try !journal.jobs().contains(where:{$0.id==lateID}),runtime.commands.count==beforeRetention,
+          try journal.unresolvedCount()==1,try journal.uncertainCount()==1 else {
+        fatalError("Tombstone expiry invoked runtime work or changed independent inference custody")
+    }
     print("PASS: delayed and never-issued runtime cleanup preserve exact custody and reservation release")
 }
