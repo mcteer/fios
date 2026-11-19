@@ -35,43 +35,23 @@ final class VMResourceProfileReader:VMResourceReading,@unchecked Sendable {
         previous=stamp
         guard physical>0,physical<=UInt64(ActivityPolicy.maximumTimestamp),WireScalar.sha256(profileHash),WireScalar.sha256(reviewDigest),
               leaseUntil<=ActivityPolicy.maximumTimestamp,leaseUntil>stamp,leaseUntil-stamp>=5000 else {throw RuntimeError.deadline}
+        var bootstrap:(sample:VMKernelSample,wall:Int64,tick:TimeInterval)?
         if bound==nil {
             let first=try kernel.read(configuration:configuration,id:id,leaseUntil:leaseUntil)
             let completed=now()
             guard completed>=stamp else {fenced=true;throw RuntimeError.identity}
             previous=max(previous,completed)
             let permission=try SharedVMKernelPermission(nativeProfileHash:profileHash,bootHash:first.bootHash,reviewDigest:reviewDigest)
-            let once=FirstKernelSample(kernel:kernel,first:first,configuration:configuration,id:id,leaseUntil:leaseUntil)
+            bootstrap=(first,stamp,began)
             // Keep the exact inner instance on every failure; a later call may
             // never reset its clock/boot/uncertainty fence or its cap cache.
-            bound=SharedKernelVMReader(kernel:once,cap:cap,permission:permission,physical:physical,now:now,uptime:uptime)
+            bound=SharedKernelVMReader(kernel:kernel,cap:cap,permission:permission,physical:physical,now:now,uptime:uptime)
         }
-        let result=try bound!.read(configuration:configuration,id:id,leaseUntil:leaseUntil)
+        let result=try bound!.read(configuration:configuration,id:id,leaseUntil:leaseUntil,first:bootstrap)
         let completed=now(),elapsed=uptime()-began
         guard completed>=previous else {fenced=true;throw RuntimeError.identity}
         previous=completed
         guard elapsed>=0,elapsed<=5,completed<leaseUntil else {throw RuntimeError.deadline}
         return result
     }
-}
-
-// Reuse the exact first authenticated sample once, without a second exec or
-// changing its timestamp. Outer serialization protects this private instance.
-private final class FirstKernelSample:VMResourceReading,@unchecked Sendable {
-    let kernel:any VMResourceReading
-    let configuration:SandboxConfiguration
-    let id:String
-    let leaseUntil:Int64
-    private var first:VMKernelSample?
-    init(kernel:any VMResourceReading,first:VMKernelSample,configuration:SandboxConfiguration,id:String,leaseUntil:Int64) {
-        self.kernel=kernel;self.first=first;self.configuration=configuration;self.id=id;self.leaseUntil=leaseUntil
-    }
-    func read(configuration:SandboxConfiguration,id:String,leaseUntil:Int64)throws->VMKernelSample {
-        if let first {
-            guard configuration==self.configuration,id==self.id,leaseUntil==self.leaseUntil else {throw RuntimeError.identity}
-            self.first=nil;return first
-        }
-        return try kernel.read(configuration:configuration,id:id,leaseUntil:leaseUntil)
-    }
-    func releaseAfterVerifiedAbsence(id:String) {kernel.releaseAfterVerifiedAbsence(id:id)}
 }

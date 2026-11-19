@@ -74,15 +74,22 @@ final class SharedKernelVMReader:VMResourceReading,@unchecked Sendable {
     // Do not wait for off-loop native I/O on the lifecycle/controller thread.
     func releaseAfterVerifiedAbsence(id:String) {kernel.releaseAfterVerifiedAbsence(id:id)}
     func read(configuration:SandboxConfiguration,id:String,leaseUntil:Int64)throws->VMKernelSample {
+        try read(configuration:configuration,id:id,leaseUntil:leaseUntil,first:nil)
+    }
+    func read(configuration:SandboxConfiguration,id:String,leaseUntil:Int64,
+              first:(sample:VMKernelSample,wall:Int64,tick:TimeInterval)?)throws->VMKernelSample {
         lock.lock();defer{lock.unlock()}
-        let began=uptime(),stamp=now()
+        // Only the bound profile's first call can carry its already-read
+        // authenticated sample and original wall/monotonic window.
+        guard first==nil || previousNow == -1 else {throw RuntimeError.identity}
+        let began=first?.tick ?? uptime(),stamp=first?.wall ?? now()
         guard !fenced,stamp>=0,stamp<=ActivityPolicy.maximumTimestamp,stamp>=previousNow,
               began.isFinite,began>=previousUptime else {fenced=true;cached=nil;throw RuntimeError.identity}
         previousNow=stamp;previousUptime=began
         guard physical>0,physical<=UInt64(ActivityPolicy.maximumTimestamp),leaseUntil<=ActivityPolicy.maximumTimestamp,
               leaseUntil>stamp,leaseUntil-stamp>=5000 else {cached=nil;throw RuntimeError.deadline}
         do {
-            var sample=try kernel.read(configuration:configuration,id:id,leaseUntil:leaseUntil)
+            var sample=try first?.sample ?? kernel.read(configuration:configuration,id:id,leaseUntil:leaseUntil)
             guard sample.bootHash==permission.bootHash else {fenced=true;throw RuntimeError.identity}
             let readCompleted=now(),readUptime=uptime()
             guard readCompleted>=stamp,readCompleted<=ActivityPolicy.maximumTimestamp,

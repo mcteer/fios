@@ -8,10 +8,13 @@ private final class VMProfileFixture:VMResourceReading,NativeVMCapReading,@unche
     var reads=0,captures=0,releases=0
     var failCap=false
     var rollbackOnRead=false
+    var advanceOnRead:Int64=0
     func read(configuration:SandboxConfiguration,id:String,leaseUntil:Int64)throws->VMKernelSample {
         reads+=1
         if rollbackOnRead {time-=500}
-        return VMKernelSample(sampledAt:time,total:8<<30,free:4<<30,bootHash:boot)
+        let sampledAt=time
+        time+=advanceOnRead
+        return VMKernelSample(sampledAt:sampledAt,total:8<<30,free:4<<30,bootHash:boot)
     }
     func capture(liveness:NativeVMLivenessProof)throws->NativeVMCap {
         captures+=1
@@ -50,6 +53,17 @@ func runVMResourceProfileReaderTests() throws {
     fixture.boot=String(repeating:"b",count:64);fixture.time=14001
     do {_=try reader.read(configuration:config,id:id,leaseUntil:60000);fatalError("Cleanup revived fenced resource profile")}catch RuntimeError.identity {}
     guard fixture.reads==stopped,fixture.releases==1 else {fatalError("Fenced profile executed more metadata work")}
+    let delayed=VMProfileFixture();delayed.advanceOnRead=50
+    let delayedReader=delayed.reader()
+    let original=try delayedReader.read(configuration:config,id:id,leaseUntil:15000)
+    guard delayed.reads==1,delayed.captures==1,original.sampledAt==10000,original.envelope?.sampledAt==10000 else {
+        fatalError("Profile bootstrap did not retain the original kernel collection window")
+    }
+    let expired=VMProfileFixture();expired.advanceOnRead=5000
+    let expiring=expired.reader()
+    do {_=try expiring.read(configuration:config,id:id,leaseUntil:15000);fatalError("Expired bootstrap reached VM capacity")}
+    catch RuntimeError.deadline {}
+    guard expired.reads==1,expired.captures==0 else {fatalError("Expired bootstrap queried cap or replayed kernel")}
     let failed=VMProfileFixture();failed.failCap=true
     let failedReader=failed.reader()
     do {_=try failedReader.read(configuration:config,id:id,leaseUntil:60000);fatalError("Failed cap admitted capacity")}catch RuntimeError.launch {}
