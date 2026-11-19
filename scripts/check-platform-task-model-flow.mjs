@@ -63,6 +63,24 @@ try {
  const manifest={phase:'begin',idempotency:randomUUID(),kind:'model',length:data.length,sha256:sha(scenario==='digest_mismatch'?Buffer.from('different upload'):data),lifetime:60000,model:'fixture/model',image:null,memory:0,cpus:0};
  const created=task('job.create',manifest);
  assert.equal(created.state,'reserved');const job=created.job,deadline=created.lease.deadline_at;
+ if(scenario==='reserved_capacity'){
+  const second=task('job.create',{...manifest,idempotency:randomUUID()});
+  const thirdManifest={...manifest,idempotency:randomUUID()};
+  assert.notEqual(second.job,job);assert.equal(second.state,'reserved');
+  task('job.create',thirdManifest,'tracking_limit');
+  for(const original of [created,second]){
+   const current=task('job.status',{job:original.job});
+   assert.equal(current.state,'reserved');assert.equal(current.lease.expires_at,original.lease.expires_at);
+  }
+  assert.equal(task('job.cancel',{job:second.job}).lease.revoked,true);
+  await until(()=>task('job.status',{job:second.job}).state==='removed');
+  const third=task('job.create',thirdManifest);assert.equal(third.state,'reserved');assert.notEqual(third.job,second.job);
+  for(const id of [job,third.job])assert.equal(task('job.cancel',{job:id}).lease.revoked,true);
+  await until(()=>[job,third.job].every(id=>task('job.status',{job:id}).state==='removed'));
+  const summary=JSON.parse(command(cli,['--state',state,'status'],3000));
+  assert.equal(summary.worker_reservations,0);assert.equal(summary.unresolved_requests,0);assert.equal(posts,0);
+  return {scenario,reserved_slots:2,reused_after_local_cancel:true,mock_model_posts:0,worker_slots_after_completion:0};
+ }
  const observed=task('job.status',{job});assert.equal(observed.lease.expires_at,created.lease.expires_at);
  if(scenario==='complete'){
   task('job.create',{...manifest,sha256:sha(Buffer.from('different upload'))},'job_conflict');
@@ -151,7 +169,7 @@ try {
 }
 }
 const records=[];
-for(const scenario of ['complete','cancel','unavailable','upload_restart','unicode','invalid_history','replaced_source','duplicate_chunk','digest_mismatch'])records.push(await modelCase(scenario));
+for(const scenario of ['complete','cancel','unavailable','upload_restart','unicode','invalid_history','replaced_source','duplicate_chunk','digest_mismatch','reserved_capacity'])records.push(await modelCase(scenario));
 const receipt={scope:'normal_cli_model_job_completion_cancellation_and_service_failure',records,real_model_requests:0,runtime_actions:0,native_acceptance:false,cli_sha256:sha(readFileSync(cli)),manager_sha256:sha(readFileSync(binary))};
 writeFileSync(join(directory,'receipt.json'),JSON.stringify(receipt,null,2)+'\n');
 console.log(JSON.stringify({ok:true,directory,...receipt}));
