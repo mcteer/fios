@@ -8,6 +8,7 @@ private final class ServiceCensusFixture:ServiceProcessCensusReading,@unchecked 
     var calls=0
     var fail=false
     var entryCompletedAt:TimeInterval?
+    var entryWallCompletedAt:Int64?
     var verificationCompletedAt:TimeInterval?
     var time:Int64=10000
     var tick:TimeInterval=1
@@ -16,6 +17,7 @@ private final class ServiceCensusFixture:ServiceProcessCensusReading,@unchecked 
     func entry(pid:Int32)throws->ServiceProcessEntry? {
         if fail {throw ServiceError.invalid}
         if let entryCompletedAt {tick=entryCompletedAt}
+        if let entryWallCompletedAt {time=entryWallCompletedAt}
         return entries[pid]
     }
     func verify(_ entry:ServiceProcessEntry,executable:VerifiedExecutable,uid:uid_t,deadline:TimeInterval)throws->ServiceIdentity {
@@ -56,6 +58,15 @@ func runServiceProcessCensusTests() throws {
     let timed=ServiceCensusFixture();timed.entryCompletedAt=2
     guard try policy(timed).capture().presence == .unknown,timed.calls==1 else {
         fatalError("Process census started second enumeration after its original deadline")
+    }
+    for invalidWall:Int64 in [9999,11001,.max] {
+        let source=ServiceCensusFixture();source.entryWallCompletedAt=invalidWall
+        let observing=try policy(source)
+        guard observing.capture().presence == .unknown,source.calls==1 else {
+            fatalError("Process census started second enumeration after invalid wall clock")
+        }
+        source.time=11000;source.entryWallCompletedAt=nil
+        guard observing.capture().presence == .unknown,source.calls==1 else {fatalError("Process census recovered from a latched wall fence")}
     }
     let candidate=ServiceProcessEntry(pid:Int32.max,uid:geteuid(),realUID:getuid(),savedUID:geteuid(),start:2,path:binary.path)
     let multiple=ServiceCensusFixture();multiple.first=[getpid(),Int32.max,Int32.max-1]

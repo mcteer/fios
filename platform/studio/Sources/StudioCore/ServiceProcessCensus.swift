@@ -100,25 +100,27 @@ final class ServiceProcessCensus:@unchecked Sendable {
         lock.lock();defer {lock.unlock()}
         let stamp=now(),began=uptime()
         diagnostic="initial"
-        var presence=captureLocked(stamp:stamp,began:began)
-        let completed=now(),elapsed=uptime()-began
-        if completed<previous || completed<stamp || completed>ActivityPolicy.maximumTimestamp || !elapsed.isFinite || elapsed<0 || elapsed>=1 {
+        var lastTick=began
+        var presence=captureLocked(stamp:stamp,began:began,lastTick:&lastTick)
+        let completed=now(),tick=uptime(),elapsed=tick-began
+        if !(0...ActivityPolicy.maximumTimestamp).contains(stamp) || !(stamp...ActivityPolicy.maximumTimestamp).contains(completed)
+            || completed<previous || completed-stamp>1000 || !elapsed.isFinite || tick<lastTick || elapsed>=1 {
             fenced=true;presence = .unknown;diagnostic="clock_or_deadline"
         }
-        previous=max(previous,completed)
+        if (0...ActivityPolicy.maximumTimestamp).contains(completed) {previous=max(previous,completed)}
         return ServiceProcessSample(presence:presence,sampledAt:(0...ActivityPolicy.maximumTimestamp).contains(stamp) ? stamp:nil,reviewDigest:reviewDigest,uid:uid,diagnostic:diagnostic)
     }
-    private func captureLocked(stamp:Int64,began:TimeInterval)->ServiceProcessPresence {
+    private func captureLocked(stamp:Int64,began:TimeInterval,lastTick:inout TimeInterval)->ServiceProcessPresence {
         guard !fenced,stamp>=0,stamp<=ActivityPolicy.maximumTimestamp,stamp>=previous,began.isFinite,began>=0,
               uid==geteuid(),getuid()==geteuid() else {fenced=true;return .unknown}
         previous=stamp
-        var lastTick=began
         func withinBudget()->Bool {
-            let tick=uptime()
-            guard tick.isFinite,tick>=lastTick,tick-began<1 else {
+            let tick=uptime(),wall=now()
+            guard tick.isFinite,tick>=lastTick,tick-began<1,
+                  (previous...ActivityPolicy.maximumTimestamp).contains(wall),wall-stamp<=1000 else {
                 fenced=true;diagnostic="clock_or_deadline";return false
             }
-            lastTick=tick
+            lastTick=tick;previous=wall
             return true
         }
         do {
@@ -155,9 +157,6 @@ final class ServiceProcessCensus:@unchecked Sendable {
             let second=try source.pids(uid:uid)
             guard withinBudget(),second.count==first.count,Set(second)==Set(first),Set(second).count==second.count,
                   imageValid(),withinBudget(),try HostBoot.identity()==boot,withinBudget() else {return .unknown}
-            let completed=now()
-            guard completed>=previous,completed-stamp<=1000 else {fenced=true;return .unknown}
-            previous=completed
             if matches.isEmpty,let companion,let entry=companionEntry {
                 // A reviewed GUI is a distinct role, not the serving process.
                 // Recheck it across enumeration before reporting scoped absence.
@@ -172,8 +171,7 @@ final class ServiceProcessCensus:@unchecked Sendable {
             let identity=try source.verify(matches[0],executable:executable,uid:uid,deadline:began+1)
             diagnostic="candidate_postcheck"
             guard withinBudget(),identity.valid,identity.pid==matches[0].pid,identity.start==matches[0].start,identity.sha256==executable.sha256,
-                  imageValid(),withinBudget(),try HostBoot.identity()==boot,withinBudget(),now()>=previous else {return .unknown}
-            previous=now()
+                  imageValid(),withinBudget(),try HostBoot.identity()==boot,withinBudget() else {return .unknown}
             diagnostic="verified_present"
             return .present(identity)
         } catch {return .unknown}
