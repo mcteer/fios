@@ -55,6 +55,17 @@ func runLineageMigrationTests()throws {
           records[0].runtimeID==nil,try restoredJournal.jobs().first(where:{$0.id==sandboxJob})?.state == .reconciling else {throw JournalError.invalid}
     guard restoredJournal.migrationHeld,try restoredJournal.unresolvedCount()==1,try restoredJournal.uncertainCount()==1,
           try Data(contentsOf:backup.appendingPathComponent("state.sqlite"))==original else {throw JournalError.invalid}
+    let jobs=JobController(journal:restoredJournal,executor:UnavailableSandboxRuntime())
+    var admission=AdmissionPolicy()
+    let sample=ResourceSample(sampledAt:11000,physical:128<<30,available:64<<30,vmAvailable:8<<30,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal,vmSampledAt:11000)
+    try jobs.tick(now:11000,sample:sample,admission:&admission,inputReady:{_ in false},transportReady:{_ in false},cancelModel:{_ in})
+    try admission.reserve(job:UUID().uuidString.lowercased(),memory:512<<20,cpus:1,sample:sample,now:11000)
+    do {
+        try admission.reserve(job:UUID().uuidString.lowercased(),memory:512<<20,cpus:1,sample:sample,now:11000)
+        fatalError("Migrated pending sandbox was omitted from capacity")
+    } catch AdmissionError.capacity {}
+    guard restoredJournal.migrationHeld,jobs.cleanupStatus(now:11000)["pending_sandboxes"] as? Int==1,
+          try restoredJournal.unresolvedCount()==1 else {throw JournalError.invalid}
     let orphan=UUID().uuidString.lowercased(),hash=String(repeating:"c",count:64)
     let configuration=try SandboxConfiguration(job:orphan,nonce:hash,image:"sha256:"+hash,memory:512<<20,cpus:1)
     let payload=try JSONEncoder().encode(SandboxRecord(configuration:configuration)).map{String(format:"%02x",$0)}.joined()
