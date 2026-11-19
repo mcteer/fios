@@ -112,19 +112,30 @@ final class ServiceProcessCensus:@unchecked Sendable {
         guard !fenced,stamp>=0,stamp<=ActivityPolicy.maximumTimestamp,stamp>=previous,began.isFinite,began>=0,
               uid==geteuid(),getuid()==geteuid() else {fenced=true;return .unknown}
         previous=stamp
+        var lastTick=began
+        func withinBudget()->Bool {
+            let tick=uptime()
+            guard tick.isFinite,tick>=lastTick,tick-began<1 else {
+                fenced=true;diagnostic="clock_or_deadline";return false
+            }
+            lastTick=tick
+            return true
+        }
         do {
             diagnostic="image"
-            guard imageValid() else {fenced=true;return .unknown}
+            guard imageValid(),withinBudget() else {fenced=true;return .unknown}
             diagnostic="enumeration"
-            let boot=try HostBoot.identity(),first=try source.pids(uid:uid)
+            let boot=try HostBoot.identity()
+            guard withinBudget() else {return .unknown}
+            let first=try source.pids(uid:uid)
             guard (1..<32768).contains(first.count),Set(first).count==first.count,first.contains(getpid()),first.allSatisfy({$0>1}) else {return .unknown}
             var matches:[ServiceProcessEntry]=[],related=false
             var companionEntry:ServiceProcessEntry?
             diagnostic="inspection"
             for pid in first {
-                guard uptime()-began<1 else {return .unknown}
+                guard withinBudget() else {return .unknown}
                 guard let entry=try source.entry(pid:pid) else {if pid==getpid() {return .unknown};continue}
-                guard entry.pid==pid,entry.uid==uid,entry.start>0,entry.path.hasPrefix("/"),!entry.path.contains("\0"),entry.path.utf8.count<4*Int(MAXPATHLEN) else {return .unknown}
+                guard withinBudget(),entry.pid==pid,entry.uid==uid,entry.start>0,entry.path.hasPrefix("/"),!entry.path.contains("\0"),entry.path.utf8.count<4*Int(MAXPATHLEN) else {return .unknown}
                 var current=stat()
                 guard stat(entry.path,&current)==0 else {return .unknown}
                 if entry.path==executable.path || (current.st_dev==image.st_dev && current.st_ino==image.st_ino) {
@@ -132,7 +143,7 @@ final class ServiceProcessCensus:@unchecked Sendable {
                     matches.append(entry)
                 }
                 else if let companion,entry.path==companion.path {
-                    guard companionEntry==nil,entry.realUID==uid,entry.savedUID==uid else {return .unknown}
+                    guard withinBudget(),companionEntry==nil,entry.realUID==uid,entry.savedUID==uid else {return .unknown}
                     let known=try source.verify(entry,executable:companion,uid:uid,deadline:began+1)
                     guard known.valid,known.pid==entry.pid,known.start==entry.start,known.sha256==companion.sha256 else {return .unknown}
                     companionEntry=entry
@@ -140,25 +151,28 @@ final class ServiceProcessCensus:@unchecked Sendable {
                 else if roots.contains(where:{entry.path==$0 || entry.path.hasPrefix($0+"/")}) {related=true}
             }
             diagnostic="second_enumeration"
+            guard withinBudget() else {return .unknown}
             let second=try source.pids(uid:uid)
-            guard second.count==first.count,Set(second)==Set(first),Set(second).count==second.count,
-                  imageValid(),try HostBoot.identity()==boot,uptime()-began<1 else {return .unknown}
+            guard withinBudget(),second.count==first.count,Set(second)==Set(first),Set(second).count==second.count,
+                  imageValid(),withinBudget(),try HostBoot.identity()==boot,withinBudget() else {return .unknown}
             let completed=now()
             guard completed>=previous,completed-stamp<=1000 else {fenced=true;return .unknown}
             previous=completed
             if matches.isEmpty,let companion,let entry=companionEntry {
                 // A reviewed GUI is a distinct role, not the serving process.
                 // Recheck it across enumeration before reporting scoped absence.
+                guard withinBudget() else {return .unknown}
                 let known=try source.verify(entry,executable:companion,uid:uid,deadline:began+1)
-                guard known.valid,known.pid==entry.pid,known.start==entry.start,known.sha256==companion.sha256 else {return .unknown}
+                guard withinBudget(),known.valid,known.pid==entry.pid,known.start==entry.start,known.sha256==companion.sha256 else {return .unknown}
             }
             if matches.isEmpty {diagnostic=related ? "unreviewed_related_process":"scoped_absence";return related ? .unknown:.absent}
             guard matches.count==1 else {diagnostic="multiple_candidates";return .unknown}
             diagnostic="candidate_verification"
+            guard withinBudget() else {return .unknown}
             let identity=try source.verify(matches[0],executable:executable,uid:uid,deadline:began+1)
             diagnostic="candidate_postcheck"
-            guard identity.valid,identity.pid==matches[0].pid,identity.start==matches[0].start,identity.sha256==executable.sha256,
-                  imageValid(),try HostBoot.identity()==boot,uptime()-began<1,now()>=previous else {return .unknown}
+            guard withinBudget(),identity.valid,identity.pid==matches[0].pid,identity.start==matches[0].start,identity.sha256==executable.sha256,
+                  imageValid(),withinBudget(),try HostBoot.identity()==boot,withinBudget(),now()>=previous else {return .unknown}
             previous=now()
             diagnostic="verified_present"
             return .present(identity)

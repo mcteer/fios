@@ -7,11 +7,16 @@ private final class ServiceCensusFixture:ServiceProcessCensusReading,@unchecked 
     var first:[Int32]=[getpid()],second:[Int32]?=nil
     var calls=0
     var fail=false
+    var entryCompletedAt:TimeInterval?
     var time:Int64=10000
     var tick:TimeInterval=1
     init() {entries[getpid()]=ServiceProcessEntry(pid:getpid(),uid:geteuid(),realUID:getuid(),savedUID:geteuid(),start:1,path:"/usr/bin/true")}
     func pids(uid:uid_t)throws->[Int32] {calls+=1;return calls%2==1 ? first:second ?? first}
-    func entry(pid:Int32)throws->ServiceProcessEntry? {if fail {throw ServiceError.invalid};return entries[pid]}
+    func entry(pid:Int32)throws->ServiceProcessEntry? {
+        if fail {throw ServiceError.invalid}
+        if let entryCompletedAt {tick=entryCompletedAt}
+        return entries[pid]
+    }
     func verify(_ entry:ServiceProcessEntry,executable:VerifiedExecutable,uid:uid_t,deadline:TimeInterval)throws->ServiceIdentity {
         ServiceIdentity(pid:entry.pid,start:entry.start,sha256:executable.sha256)
     }
@@ -42,6 +47,14 @@ func runServiceProcessCensusTests() throws {
     guard try policy(changed).capture().presence == .unknown else {fatalError("Changed census became absence")}
     let missing=ServiceCensusFixture();missing.fail=true
     guard try policy(missing).capture().presence == .unknown else {fatalError("Inspection failure became absence")}
+    let lastAllowed=ServiceCensusFixture();lastAllowed.entryCompletedAt=1.999
+    guard try policy(lastAllowed).capture().presence == .absent,lastAllowed.calls==2 else {
+        fatalError("Process census refused complete scoped absence before its deadline")
+    }
+    let timed=ServiceCensusFixture();timed.entryCompletedAt=2
+    guard try policy(timed).capture().presence == .unknown,timed.calls==1 else {
+        fatalError("Process census started second enumeration after its original deadline")
+    }
     let candidate=ServiceProcessEntry(pid:Int32.max,uid:geteuid(),realUID:getuid(),savedUID:geteuid(),start:2,path:binary.path)
     let multiple=ServiceCensusFixture();multiple.first=[getpid(),Int32.max,Int32.max-1]
     multiple.entries[Int32.max]=candidate
