@@ -20,6 +20,13 @@ func runCPUTests() throws {
     }
     _=sampler.observe(ticks:[100,100,100,0],now:7000)
     guard sampler.observe(ticks:[1,1,1,0],now:8000)==nil else { fatalError("Reset CPU counters accepted as utilization") }
+    var bounded=CPUSampler()
+    guard bounded.observe(ticks:[100,100,100,100],now:10000)==nil,
+          bounded.observe(ticks:[100,100,101,100],now:15000)==0,
+          bounded.observe(ticks:[100,100,102,100],now:20001)==nil,
+          bounded.observe(ticks:[100,100,103,100],now:20002)==0 else {
+        fatalError("CPU sampling interval did not enforce exact age or recover with a fresh baseline")
+    }
     guard CPUSampler.readTicks()?.count==4 else { fatalError("Native CPU counters unavailable") }
     let now = HostResources.nowMilliseconds()
     let stale = HostResources.sample(statePath: NSTemporaryDirectory(), measuredCPU: 25, measuredCPUAt: now - 6000)

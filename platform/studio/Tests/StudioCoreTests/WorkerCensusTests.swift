@@ -32,11 +32,33 @@ func runWorkerCensusTests() throws {
         fatalError("Census sentinel check: degraded=\(recovery.degraded) pending=\(recovery.pending) alive=\(foreign.isRunning) path_available=\(length>0) path_in_policy=\(policy.paths.contains(value))")
     }
     foreign.terminate();foreign.waitUntilExit() // Test-owned sentinel, never signalled by census.
-    let proof=try policy.absence()
+    // Other same-UID runner processes can exit between enumeration and
+    // inspection. Each such sample remains unknown; allow a fresh full
+    // fixture observation within a finite window, never a partial proof.
+    let proofDeadline=ProcessInfo.processInfo.systemUptime+3
+    func observeAbsence<T>(_ collect:()throws->T)throws->T {
+        while ProcessInfo.processInfo.systemUptime<proofDeadline {
+            do {return try collect()}
+            catch WorkerResourceError.unavailable {Thread.sleep(forTimeInterval:0.025)}
+        }
+        throw WorkerResourceError.unavailable
+    }
+    let proof=try observeAbsence {try policy.absence()}
     do {try journal!.recordUnboundWorkerGone(job:id,attempt:0,nonce:nonce+"x",proof:proof);fatalError("Foreign launch nonce accepted")}catch JournalError.conflict {}
     guard try journal!.activeLaunchCount()==1 else {fatalError("Rejected proof mutated launch")}
     var released=AdmissionPolicy()
-    let recovered=try WorkerReconciler(journal:journal!,admission:&released,census:policy)
+    let recovered=try observeAbsence {
+        var attempt=AdmissionPolicy()
+        let result=try WorkerReconciler(journal:journal!,admission:&attempt,census:policy)
+        if result.degraded {
+            guard result.pending==1,try journal!.activeLaunchCount()==1,try journal!.uncertainCount()==1 else {
+                fatalError("Unavailable census aged away worker custody")
+            }
+            throw WorkerResourceError.unavailable
+        }
+        released=attempt
+        return result
+    }
     guard !recovered.degraded,recovered.pending==0,try journal!.activeLaunchCount()==0,
           try journal!.unresolvedCount()==1,try journal!.uncertainCount()==1 else {fatalError("Local absence cleared native uncertainty or failed to release local launch")}
     let sample=ResourceSample(sampledAt:10000,physical:128<<30,available:64<<30,vmAvailable:nil,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal,cpuSampledAt:10000)
