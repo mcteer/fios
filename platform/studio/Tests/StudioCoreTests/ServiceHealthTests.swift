@@ -100,6 +100,22 @@ func runServiceHealthTests() throws {
     guard boundaryListener.capture(sessionReady:true,credentialsReady:true)?.sampledAt==1000,phaseCalls==1 else {
         fatalError("Service health dropped original presence at exact freshness boundary")
     }
+    phaseWall=1000;phaseCalls=0
+    var crossTick:TimeInterval=2
+    let crossCapture=MLXServiceHealthCollector(presence:{phaseCalls+=1;return sample},health:{.healthy},now:{phaseWall},uptime:{crossTick})
+    guard crossCapture.capture(sessionReady:true,credentialsReady:true) != nil else {fatalError("Collector clock control unavailable")}
+    phaseWall=999
+    guard crossCapture.capture(sessionReady:true,credentialsReady:true)==nil,phaseCalls==2 else {
+        fatalError("Collector started a new capture before its previous wall watermark")
+    }
+    phaseWall=1000;crossTick=1
+    guard crossCapture.capture(sessionReady:true,credentialsReady:true)==nil,phaseCalls==2 else {
+        fatalError("Collector started a new capture before its previous uptime watermark")
+    }
+    crossTick=2
+    guard crossCapture.capture(sessionReady:true,credentialsReady:true)?.sampledAt==1000,phaseCalls==4 else {
+        fatalError("Recovered clock did not accept a fresh capture at the watermark")
+    }
     let loading=MLXServiceHealthCollector(presence:{sample},health:{.loading},now:{1000},uptime:{1})
     guard let pending=loading.capture(sessionReady:true,credentialsReady:true),!pending.responding,
           pending.credentialsReady else {fatalError("Loading became readiness or lost known credentials")}

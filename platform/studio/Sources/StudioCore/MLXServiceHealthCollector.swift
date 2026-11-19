@@ -14,6 +14,8 @@ final class ServiceHealthCollector:@unchecked Sendable {
     private let listener:((ServiceIdentity)->ServiceListenerIdentity?)?
     private let now:()->Int64
     private let uptime:()->TimeInterval
+    private var wallWatermark:Int64=0
+    private var tickWatermark:TimeInterval=0
 
     convenience init(mlxServing profile:MLXServingProcessProfile,probe:ServiceHealthProbe)throws {
         let census=try profile.makeCensus()
@@ -32,16 +34,17 @@ final class ServiceHealthCollector:@unchecked Sendable {
     func capture(sessionReady:Bool,credentialsReady:Bool)->ServiceObservation? {
         lock.lock();defer {lock.unlock()}
         let began=uptime(),collectedAt=now()
-        guard began.isFinite,began>=0,(0...ActivityPolicy.maximumTimestamp).contains(collectedAt) else {return nil}
-        var previousWall=collectedAt,previousTick=began
+        guard began.isFinite,began>=tickWatermark,(wallWatermark...ActivityPolicy.maximumTimestamp).contains(collectedAt) else {return nil}
+        wallWatermark=collectedAt;tickWatermark=began
         var original=collectedAt
         // A slow earlier step cannot start another observation after the
         // collection budget. Compare both clocks between dependent steps.
         func checkpoint()->Int64? {
             let wall=now(),tick=uptime()
-            guard (previousWall...ActivityPolicy.maximumTimestamp).contains(wall),tick.isFinite,
-                  tick>=previousTick,tick-began<4,wall-original<=5000 else {return nil}
-            previousWall=wall;previousTick=tick
+            guard (wallWatermark...ActivityPolicy.maximumTimestamp).contains(wall),tick.isFinite,
+                  tick>=tickWatermark else {return nil}
+            wallWatermark=wall;tickWatermark=tick
+            guard tick-began<4,wall-original<=5000 else {return nil}
             return wall
         }
         let before=presence()
