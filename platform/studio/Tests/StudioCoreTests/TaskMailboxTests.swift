@@ -12,6 +12,11 @@ func runTaskMailboxTests() throws {
     for _ in 0..<64 {try mailbox.append(job:job,fields:fields,now:1005)}
     do {try mailbox.append(job:job,fields:fields,now:1006);fatalError("Unbounded output queue")} catch MailboxError.capacity {}
     guard mailbox.expire(now:3005,retained:[job])==[job] else {fatalError("Output activity extended fixed backpressure deadline")}
+    var rewound=TaskMailbox()
+    try rewound.append(job:job,fields:fields,now:1000)
+    try rewound.append(job:job,fields:fields,now:1100)
+    do {try rewound.append(job:job,fields:fields,now:1099);fatalError("Mailbox appended after its queued clock rewound")}catch MailboxError.capacity {}
+    do {_=try rewound.pop(job:job,now:1099);fatalError("Mailbox emitted output across a queued clock rollback")}catch MailboxError.capacity {}
     var other=TaskMailbox()
     for _ in 0..<4 {try other.append(job:UUID().uuidString.lowercased(),fields:fields,now:1000)}
     do {try other.append(job:UUID().uuidString.lowercased(),fields:fields,now:1001);fatalError("Output exceeded four jobs")} catch MailboxError.capacity {}
