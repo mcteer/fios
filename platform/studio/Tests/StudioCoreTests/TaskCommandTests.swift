@@ -109,6 +109,16 @@ func runTaskCommandTests() throws {
           try call("artifact.read",["phase":"next","stream":stream],now:1009)["data"] as? String==source.base64EncodedString(),
           try call("artifact.read",["phase":"next","stream":stream],now:1010)["type"] as? String=="end" else {fatalError("Owner artifact stream invalid")}
     do {_=try call("artifact.read",["phase":"next","stream":stream],now:1011);fatalError("Consumed artifact stream revived")} catch TaskCommandError.unauthorized {}
+    let waiting=try call("artifact.read",["phase":"begin","artifact":artifact],now:1011)
+    guard let pendingStream=waiting["stream"] as? String,
+          try call("artifact.read",["phase":"next","stream":pendingStream],now:1012)["state"] as? String=="pending" else {
+        fatalError("Missing pending artifact stream")
+    }
+    try commands.tick(now:1012,uptime:1012,artifactResults:wait())
+    do {_=try call("artifact.read",["phase":"next","stream":pendingStream],now:1011);fatalError("Artifact stream forgot its pending poll clock")}
+    catch ArtifactError.unavailable {}
+    do {_=try call("artifact.read",["phase":"next","stream":pendingStream],now:1012);fatalError("Rewound stream resumed after clock catch-up")}
+    catch TaskCommandError.unauthorized {}
     var interrupted=begin;interrupted["idempotency"]=UUID().uuidString.lowercased()
     let pending=try call("job.create",interrupted,now:1012)
     guard let pendingID=pending["job"] as? String else {fatalError("Missing interrupted upload")}

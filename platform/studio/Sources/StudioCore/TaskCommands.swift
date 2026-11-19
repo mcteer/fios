@@ -27,7 +27,7 @@ final class TaskCommands {
     private var mailbox=TaskMailbox()
     private var outputLost=Set<String>()
     private var outcomes:[String:SandboxTaskFinished]=[:]
-    private struct Download {let owner:String;var stream:ArtifactDownload?;var failure=false;let created:Int64}
+    private struct Download {let owner:String;var stream:ArtifactDownload?;var failure=false;let created:Int64;var previous:Int64}
     private var downloads:[String:Download]=[:]
     init(journal:Journal,tasks:TaskController,sandbox:SandboxTaskController,artifacts:AsyncArtifacts,
          approvedImages:Set<String>,enrolled:Bool=false,peerUID:uid_t,
@@ -198,13 +198,14 @@ final class TaskCommands {
                 guard let id=value["artifact"] as? String,UUID(uuidString:id)?.uuidString.lowercased()==id else {throw TaskCommandError.invalid_request}
                 guard downloads.count<2,downloads[request.id]==nil else {throw TaskCommandError.resource_limit}
                 try artifacts.download(request:request.id,id:id,owner:owner,now:now)
-                downloads[request.id]=Download(owner:owner,created:now)
+                downloads[request.id]=Download(owner:owner,created:now,previous:now)
                 return ["stream":request.id,"state":"pending"]
             }
             try exact(["phase","stream"])
             guard phase=="next",let id=value["stream"] as? String,var download=downloads[id],download.owner==owner else {throw TaskCommandError.unauthorized}
-            guard !download.failure,now>=download.created,now-download.created<30000 else {downloads.removeValue(forKey:id);throw ArtifactError.unavailable}
-            guard var stream=download.stream else {return ["stream":id,"state":"pending"]}
+            guard !download.failure,now>=download.previous,now-download.created<30000 else {downloads.removeValue(forKey:id);throw ArtifactError.unavailable}
+            download.previous=now
+            guard var stream=download.stream else {downloads[id]=download;return ["stream":id,"state":"pending"]}
             let event:ArtifactDownloadEvent
             do {event=try stream.next(now:now)}
             catch {downloads.removeValue(forKey:id);throw error}
@@ -262,7 +263,7 @@ final class TaskCommands {
             downloads[result.request]=download
         }
         for id in Array(downloads.keys) {
-            if let stream=downloads[id],now<stream.created || now-stream.created>=30000 {downloads.removeValue(forKey:id)}
+            if let stream=downloads[id],now<stream.previous || now-stream.created>=30000 {downloads.removeValue(forKey:id)}
         }
     }
 }
