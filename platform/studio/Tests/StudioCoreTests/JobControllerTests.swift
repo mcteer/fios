@@ -544,6 +544,12 @@ func runCleanupStatusRecoveryTests() throws {
           try journal.sandboxRecords().first(where:{$0.configuration.job==lateID})?.removalProven==false else {
         fatalError("Storage continuity refusal was hidden or released custody")
     }
+    var unresolvedCapacity=admission
+    try unresolvedCapacity.reserve(job:UUID().uuidString.lowercased(),memory:512<<20,cpus:1,sample:sample(100000),now:100000)
+    do {
+        try unresolvedCapacity.reserve(job:UUID().uuidString.lowercased(),memory:512<<20,cpus:1,sample:sample(100000),now:100000)
+        fatalError("Storage continuity refusal returned an occupied reservation")
+    } catch AdmissionError.capacity {}
     do {
         try journal.transitionJob(id:lateID,to:.removed,now:100000)
         fatalError("Unproven sandbox cleanup allowed terminal transition")
@@ -563,6 +569,8 @@ func runCleanupStatusRecoveryTests() throws {
           commands.filter({if case .create=$0 {return true};return false}).count==1,
           !commands.contains(where:{if case .start=$0 {return true};return false}),
           try journal.unresolvedCount()==1,try journal.uncertainCount()==1 else {fatalError("Late sandbox was replayed, started, or released independent model uncertainty")}
+    var releasedCapacity=admission
+    for _ in 0..<2 {try releasedCapacity.reserve(job:UUID().uuidString.lowercased(),memory:512<<20,cpus:1,sample:sample(104000),now:104000)}
     let unissuedID=UUID().uuidString.lowercased()
     let unissued=try DurableJob(id:unissuedID,idempotency:UUID().uuidString.lowercased(),ownerHash:job.ownerHash,requestHash:job.requestHash,created:105000)
     let unissuedConfig=try SandboxConfiguration(job:unissuedID,nonce:lateConfig.nonce,image:configuration.image,memory:configuration.memory,cpus:1)
