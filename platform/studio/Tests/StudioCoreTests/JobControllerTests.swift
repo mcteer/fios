@@ -377,9 +377,10 @@ func runVMControllerTests() throws {
     try exerciseVMController(inconsistentReply:false)
     try exerciseVMController(inconsistentReply:true)
     try exerciseVMController(inconsistentReply:false,predatingReply:true)
+    try exerciseVMController(inconsistentReply:false,rollbackReply:true)
 }
 
-private func exerciseVMController(inconsistentReply:Bool,predatingReply:Bool=false) throws {
+private func exerciseVMController(inconsistentReply:Bool,predatingReply:Bool=false,rollbackReply:Bool=false) throws {
     let directory=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer {try? FileManager.default.removeItem(at:directory)}
     let journal=try Journal(directory:directory),runtime=FakeSandboxExecutor()
@@ -425,6 +426,7 @@ private func exerciseVMController(inconsistentReply:Bool,predatingReply:Bool=fal
     }
     guard controller.vmAvailable(now:23000)==4<<30 else {fatalError("Expected fresh VM capacity before revocation")}
     runtime.holdResourceResults=true
+    if rollbackReply {runtime.holdResponses=true}
     var revocationAt:Int64=23001
     for now:Int64 in [23500,24000,24500,25000] where runtime.resourceValues.isEmpty {
         runtime.resourceNow=now
@@ -432,6 +434,23 @@ private func exerciseVMController(inconsistentReply:Bool,predatingReply:Bool=fal
         revocationAt=now+1
     }
     guard runtime.resourceValues.count==1 else {fatalError("No in-flight VM fixture result before revocation")}
+    if rollbackReply {
+        // Give rollback's newest-job revocation a separate target so the
+        // observed sandbox still exists when its original reply drains.
+        revocationAt+=2000
+        try controller.tick(now:revocationAt-1,sample:sample(revocationAt-1),admission:&admission,transportReady:{_ in true},cancelModel:{_ in})
+        let newer=try DurableJob(id:UUID().uuidString.lowercased(),idempotency:UUID().uuidString.lowercased(),
+            ownerHash:job.ownerHash,requestHash:job.requestHash,created:revocationAt-2)
+        _=try journal.reserveJob(newer)
+        let rewound=revocationAt-2
+        runtime.holdResponses=true
+        try controller.tick(now:rewound,sample:sample(rewound),admission:&admission,transportReady:{_ in true},cancelModel:{_ in})
+        guard try journal.jobs().first(where:{$0.id==id})?.state == .running else {fatalError("Rollback fixture lost observed sandbox")}
+        runtime.holdResourceResults=false
+        try controller.tick(now:revocationAt,sample:sample(revocationAt),admission:&admission,transportReady:{_ in true},cancelModel:{_ in})
+        guard controller.vmAvailable(now:revocationAt)==nil else {fatalError("Job VM reply crossed an intervening wall-clock rollback")}
+        return
+    }
     try journal.transitionJob(id:id,to:.revoking,now:revocationAt)
     try controller.tick(now:revocationAt,sample:sample(revocationAt),admission:&admission,transportReady:{_ in true},cancelModel:{_ in})
     guard controller.vmAvailable(now:revocationAt)==nil else {fatalError("VM cache survived original target revocation")}

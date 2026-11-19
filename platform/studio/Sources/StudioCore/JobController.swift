@@ -16,7 +16,7 @@ final class JobController {
     private var revokingSince:[String:Int64]=[:]
     private var storageContinuityUnknown=Set<String>()
     private let collectVM:Bool
-    private var resourcePending:(job:String,id:String,leaseUntil:Int64,submittedAt:Int64)?
+    private var resourcePending:(job:String,id:String,leaseUntil:Int64,submittedAt:Int64,invalidated:Bool)?
     private var lastResource:Int64 = -2000
     private var latestVM:(sample:VMKernelSample,job:String,id:String,leaseUntil:Int64)?
     private var vmProbes=Set<String>()
@@ -81,10 +81,24 @@ final class JobController {
         for sandbox in managedSandboxes where !sandbox.removalProven {try admission.restoreSandbox(sandbox.configuration)}
         let rollback=now<previous;previous=max(previous,now)
         if rollback {candidateVM=nil}
+        if let pending=resourcePending,!pending.invalidated {
+            let ownsRuntime=managedSandboxes.contains {
+                $0.configuration.job==pending.job && $0.createIssued && $0.startIssued && !$0.removalProven && $0.runtimeID==pending.id
+            }
+            let validLease = try !rollback && ownsRuntime && now<pending.leaseUntil && journal.jobs().contains { job in
+                var lease=job.lease
+                return job.id==pending.job && job.state == .running && lease.expires>=pending.leaseUntil && lease.valid(now:now)
+            }
+            if !validLease {
+                // Keep the slot until the original result drains; a later
+                // matching snapshot cannot repair the intervening gap.
+                resourcePending?.invalidated=true
+            }
+        }
         for result in executor.drainResources() {
             guard let pending=resourcePending,pending.job==result.job,pending.id==result.runtimeID else {throw JournalError.conflict}
             resourcePending=nil
-            if !rollback,now<pending.leaseUntil,case .success(let value)=result.result,
+            if !pending.invalidated,case .success(let value)=result.result,
                value.sampledAt>=pending.submittedAt,value.validatedEnvelope(physical:sample.physical,now:now) != nil {
                 candidateVM=(value,pending.job,pending.id,pending.leaseUntil)
             }
@@ -164,7 +178,7 @@ final class JobController {
             }),let id=target.runtimeID,let job=jobIndex[target.configuration.job] {
                 do {
                     try executor.submitResources(configuration:target.configuration,id:id,leaseUntil:job.lease.expires)
-                    resourcePending=(job.id,id,job.lease.expires,now)
+                    resourcePending=(job.id,id,job.lease.expires,now,false)
                 } catch AdmissionError.capacity {} // No operation was enqueued.
                 catch {candidateVM=nil}
             }
