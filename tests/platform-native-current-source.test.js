@@ -221,6 +221,14 @@ test('current optional SDK bridge base retains the exact reviewed parent for lat
   assert.equal(expected.size,0);
 });
 
+test('SDK readiness projection stays separate from the historical bridge and patches only its companion',()=>{
+  const patch=readFileSync('platform/studio/native/mlx-serve-current-sdk-readiness-latch.patch','utf8');
+  assert.deepEqual([...patch.matchAll(/^\+\+\+ b\/(\S+)$/gm)].map(match=>match[1]),['src/fios/sdk_request_ownership.zig']);
+  assert.match(patch,/^\+.*phase\.cmpxchgStrong\(configuring, ready,/m);
+  assert.match(patch,/^\+.*state\.fetchOr\(failed, .acq_rel\).*owners\.shared\(\)\.fence/m);
+  assert.doesNotMatch(patch,/^\+.*(?:state\.store\(2|failed\.load)/m);
+});
+
 test('current slot custody stays within the existing scheduler and preserves its executable fixture',()=>{
   const patch=readFileSync('platform/studio/native/mlx-serve-26.11.2-slot-custody.patch','utf8');
   const sections=patch.split(/(?=^diff --git )/m).filter(Boolean);
