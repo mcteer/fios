@@ -60,7 +60,7 @@ try {
  if(scenario==='invalid_history')messages.unshift({role:'assistant',content:''});
  const data=Buffer.from(JSON.stringify(messages));
  if(scenario==='unicode'){assert.equal(data[32766],0xf0);assert.equal(data[32768],0x91);}
- const manifest={phase:'begin',idempotency:randomUUID(),kind:'model',length:data.length,sha256:sha(data),lifetime:60000,model:'fixture/model',image:null,memory:0,cpus:0};
+ const manifest={phase:'begin',idempotency:randomUUID(),kind:'model',length:data.length,sha256:sha(scenario==='digest_mismatch'?Buffer.from('different upload'):data),lifetime:60000,model:'fixture/model',image:null,memory:0,cpus:0};
  const created=task('job.create',manifest);
  assert.equal(created.state,'reserved');const job=created.job,deadline=created.lease.deadline_at;
  const observed=task('job.status',{job});assert.equal(observed.lease.expires_at,created.lease.expires_at);
@@ -82,7 +82,7 @@ try {
   await delay(50);assert.equal(posts,0);assert.equal(JSON.parse(command(cli,['--state',state,'status'],3000)).worker_reservations,0);
   return {scenario,restart_checked:true,input_bytes:data.length,input_chunks:chunks,partial_upload:true,replay_status_only:true,state:restored.state,mock_model_posts:posts,worker_slots_after_completion:0};
  }
- if(['invalid_history','replaced_source','duplicate_chunk'].includes(scenario)){
+ if(['invalid_history','replaced_source','duplicate_chunk','digest_mismatch'].includes(scenario)){
   if(scenario==='replaced_source')writeFileSync(join(nativeState,'replace-source-epoch'),'mock',{flag:'wx',mode:0o600});
   if(scenario==='duplicate_chunk'){
    task('job.create',{phase:'chunk',job,index:0,data:data.toString('base64')},'invalid_request');
@@ -142,7 +142,7 @@ try {
 }
 }
 const records=[];
-for(const scenario of ['complete','cancel','unavailable','upload_restart','unicode','invalid_history','replaced_source','duplicate_chunk'])records.push(await modelCase(scenario));
+for(const scenario of ['complete','cancel','unavailable','upload_restart','unicode','invalid_history','replaced_source','duplicate_chunk','digest_mismatch'])records.push(await modelCase(scenario));
 const receipt={scope:'normal_cli_model_job_completion_cancellation_and_service_failure',records,real_model_requests:0,runtime_actions:0,native_acceptance:false,cli_sha256:sha(readFileSync(cli)),manager_sha256:sha(readFileSync(binary))};
 writeFileSync(join(directory,'receipt.json'),JSON.stringify(receipt,null,2)+'\n');
 console.log(JSON.stringify({ok:true,directory,...receipt}));
