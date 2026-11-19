@@ -374,7 +374,9 @@ func runVMControllerTests() throws {
         try controller.tick(now:now,sample:sample(now),admission:&admission,transportReady:{_ in true},cancelModel:{_ in})
     }
     guard !runtime.resourceRequests.isEmpty,controller.vmAvailable(now:16500)==4<<30,controller.vmEpoch(now:16500)?.count==64,
-          controller.vmAvailable(now:30000)==nil else {fatalError("VM controller failed fresh/stale capacity publication")}
+          controller.vmAvailable(now:16499)==nil,controller.vmSampledAt(now:16499)==nil,controller.vmEpoch(now:16499)==nil,
+          controller.applyingVM(to:sample(16499),now:16499).vmAvailable==nil,
+          controller.vmAvailable(now:30000)==nil else {fatalError("VM controller failed fresh/stale/rewound capacity publication")}
     for pair in zip(runtime.resourceRequests,runtime.resourceRequests.dropFirst()) {guard pair.1-pair.0>=2000 else {fatalError("Unbounded VM polling")}}
     runtime.resourceFailure=true
     for tick in 0..<8 {

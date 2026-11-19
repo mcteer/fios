@@ -50,12 +50,11 @@ final class JobController {
         vmProbes.insert(id)
     }
     func vmAvailable(now:Int64)->UInt64? {
-        guard collectVM,let envelope=latestVM?.envelope else {return nil}
+        guard collectVM,now>=previous,let envelope=latestVM?.envelope else {return nil}
         return VMResources.remaining(envelope,expectedRuntimeHash:envelope.runtimeHash,now:now)
     }
     func applyingVM(to host:ResourceSample,now:Int64)->ResourceSample {
-        guard collectVM,let envelope=latestVM?.envelope,
-              let available=VMResources.remaining(envelope,expectedRuntimeHash:envelope.runtimeHash,now:now) else {return host.replacingVM(nil)}
+        guard let available=vmAvailable(now:now),let envelope=latestVM?.envelope else {return host.replacingVM(nil)}
         return host.replacingVM(available,sampledAt:envelope.sampledAt)
     }
     func vmSampledAt(now:Int64)->Int64? {vmAvailable(now:now)==nil ? nil : latestVM?.envelope?.sampledAt}
