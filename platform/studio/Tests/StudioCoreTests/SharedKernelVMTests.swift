@@ -95,6 +95,15 @@ func runSharedKernelVMTests()throws {
         now:{boundary.time},uptime:{boundary.steady})
     let accepted=try boundaryReader.read(configuration:configuration,id:id,leaseUntil:60000)
     guard boundary.captures==1,accepted.envelope?.sampledAt==10000 else {fatalError("Exact cap publication edge lost original kernel time")}
+    let capRollback=SharedKernelFixture();capRollback.wallAtCapPublication=9999
+    let rollbackReader=SharedKernelVMReader(kernel:capRollback,cap:capRollback,permission:permission,physical:128<<30,
+        now:{capRollback.time},uptime:{capRollback.steady})
+    do {_=try rollbackReader.read(configuration:configuration,id:id,leaseUntil:60000);fatalError("Cap lookup accepted pre-spawn rollback")}
+    catch RuntimeError.identity {}
+    capRollback.wallAtCapPublication=nil;capRollback.time=10001
+    do {_=try rollbackReader.read(configuration:configuration,id:id,leaseUntil:60000);fatalError("Cap lookup rollback fence revived")}
+    catch RuntimeError.identity {}
+    guard capRollback.captures==0,capRollback.reads==1 else {fatalError("Cap rollback performed additional source work")}
     let aging=SharedKernelFixture()
     let agingReader=SharedKernelVMReader(kernel:aging,cap:aging,permission:permission,physical:128<<30,now:{aging.time},uptime:{aging.steady})
     _=try agingReader.read(configuration:configuration,id:id,leaseUntil:60000)
