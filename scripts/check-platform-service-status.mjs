@@ -27,10 +27,11 @@ const status=(state,args=['status'])=>{
  return result.status===0 ? JSON.parse(result.stdout):null;
 };
 const messages={unknown:'Service status is unavailable.',starting:'Service is loading.',waiting_session:'Waiting for a user session.',waiting_credentials:'Waiting for service credentials.',stopped:'Service is stopped; running is requested.',ready:'Service is running.',degraded:'Service is present but not responding.'};
-const expected=(mode,service)=>mode==='held'?'stopped':mode==='unconfigured'?'unknown':mode==='loading' ? (service==='mlx'?'starting':'ready'):mode==='mixed' ? (service==='mlx'?'ready':'degraded'):mode;
+const expected=(mode,service)=>mode==='held'?'stopped':['unconfigured','future'].includes(mode)?'unknown':mode==='loading' ? (service==='mlx'?'starting':'ready'):mode==='mixed' ? (service==='mlx'?'ready':'degraded'):mode;
+const modes=['unconfigured','unknown','future','waiting_session','waiting_credentials','stopped','ready','degraded','mixed','loading','held'];
 let child;
 try{
- for(const mode of ['unconfigured','unknown','waiting_session','waiting_credentials','stopped','ready','degraded','mixed','loading','held']){
+ for(const mode of modes){
   const state=join(directory,mode);
   child=spawn('/usr/bin/sandbox-exec',['-f',profile,binary,state,mode],{cwd:root,env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C',HOME:'/var/empty'},stdio:'ignore'});
   await until(()=>{assert(!exited(child),'Status manager exited early');const observed=status(state);return observed&&['mlx','orbstack'].every(service=>observed.services[service].observed===expected(mode,service))&&(mode!=='unconfigured'||['native_health_source','orbstack_health_source','vm_resource_source'].every(key=>observed[key]==='unconfigured'));});
@@ -57,6 +58,7 @@ try{
    assert.equal(selected.message,messages[expected(mode,service)]);
    assert.equal(selected.message,combined.services[service].message);
    if(mode==='unknown'||mode==='unconfigured'){assert.equal(selected.sampled_at,null);assert.equal(selected.age_ms,null);}
+   else if(mode==='future'){assert(Number.isSafeInteger(selected.sampled_at));assert(selected.age_ms < -1000);assert.equal(selected.sampled_at,combined.services[service].sampled_at);}
    else{assert(Number.isSafeInteger(selected.sampled_at));assert(selected.age_ms>=0&&selected.age_ms<=5000);}
   }
   if(mode==='ready'){
@@ -114,7 +116,7 @@ try{
  assert.equal(reopened.runtime_cleanup.waiting_over_60s,false);
  assert(Number.isSafeInteger(reopened.runtime_cleanup.manager_observation_age_ms)&&reopened.runtime_cleanup.manager_observation_age_ms>=0);
  child.kill('SIGTERM');await until(()=>exited(child));assert.equal(child.exitCode,0);child=null;
- console.log(JSON.stringify({ok:true,states:10,service_views:20,aged_service_views:2,storage_continuity_refusal:1,storage_custody_survived_restart:true,native_actions:0,review_directory:directory}));
+ console.log(JSON.stringify({ok:true,states:modes.length,service_views:2*modes.length,aged_service_views:2,storage_continuity_refusal:1,storage_custody_survived_restart:true,native_actions:0,review_directory:directory}));
 }finally{
  if(child&&!exited(child)){child.kill('SIGTERM');try{await until(()=>exited(child),3000);}catch{child.kill('SIGKILL');await until(()=>exited(child),3000);}}
  // Retain the private development states; no database cleanup or native work.
