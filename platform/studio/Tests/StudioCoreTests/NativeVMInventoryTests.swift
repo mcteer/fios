@@ -89,5 +89,12 @@ func runNativeVMInventoryTests() throws {
     do {_=try aged.read(configuration:configuration,id:id,leaseUntil:12000);fatalError("Expired first inventory produced a VM envelope")}
     catch RuntimeError.identity {}
     guard ageInventory.captures==1 else {fatalError("First inventory age did not stop a second capture")}
+    let boundaryClock=InventoryClockFixture([1000,1001,6000,6000]),boundaryInventory=InventoryVMFixture(stamps:[1000,6000])
+    let boundary=VMEnvelopeReader(kernel:KernelVMFixture(stamp:1001),inventory:boundaryInventory,
+        nativeProfileHash:String(repeating:"a",count:64),physical:32<<30,wallClock:{boundaryClock.next()},uptime:{1})
+    let edge=try boundary.read(configuration:configuration,id:id,leaseUntil:12000)
+    guard boundaryInventory.captures==2,edge.envelope?.sampledAt==1000 else {
+        fatalError("VM inventory refused the exact age limit or redated the original source")
+    }
     print("PASS: composed VM collector brackets kernel read with native inventory/config, exports conservative envelope and rejects changed cap/unverified machine coverage")
 }
