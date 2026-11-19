@@ -2,8 +2,9 @@ import Foundation
 import CryptoKit
 
 private struct KernelVMFixture:VMResourceReading {
+    var stamp:Int64?=nil
     func read(configuration:SandboxConfiguration,id:String,leaseUntil:Int64)throws->VMKernelSample {
-        VMKernelSample(sampledAt:HostResources.nowMilliseconds(),total:16<<30,free:8<<30,bootHash:String(repeating:"b",count:64))
+        VMKernelSample(sampledAt:stamp ?? HostResources.nowMilliseconds(),total:16<<30,free:8<<30,bootHash:String(repeating:"b",count:64))
     }
 }
 private final class InventoryVMFixture:NativeVMInventoryReading,@unchecked Sendable {
@@ -11,10 +12,11 @@ private final class InventoryVMFixture:NativeVMInventoryReading,@unchecked Senda
     private var count=0
     let change:Bool
     let partial:Bool
-    init(change:Bool=false,partial:Bool=false) {self.change=change;self.partial=partial}
+    let stamps:[Int64]
+    init(change:Bool=false,partial:Bool=false,stamps:[Int64]=[]) {self.change=change;self.partial=partial;self.stamps=stamps}
     func capture()throws->NativeVMInventory {
         lock.lock();defer {lock.unlock()};count+=1
-        return NativeVMInventory(configuredCap:count>1 && change ? 10<<30 : 12<<30,sampledAt:HostResources.nowMilliseconds(),machineIDs:partial ? [String(repeating:"c",count:64)] : [])
+        return NativeVMInventory(configuredCap:count>1 && change ? 10<<30 : 12<<30,sampledAt:stamps.indices.contains(count-1) ? stamps[count-1]:HostResources.nowMilliseconds(),machineIDs:partial ? [String(repeating:"c",count:64)] : [])
     }
 }
 func runNativeVMInventoryTests() throws {
@@ -41,6 +43,11 @@ func runNativeVMInventoryTests() throws {
     for inventory in [InventoryVMFixture(change:true),InventoryVMFixture(partial:true)] {
         let unsafe=VMEnvelopeReader(kernel:KernelVMFixture(),inventory:inventory,nativeProfileHash:String(repeating:"a",count:64),physical:32<<30)
         do {_=try unsafe.read(configuration:configuration,id:id,leaseUntil:HostResources.nowMilliseconds()+30000);fatalError("Changed/partial native VM configuration accepted")}catch RuntimeError.identity {}
+    }
+    let stamp=HostResources.nowMilliseconds()-100
+    for stamps in [[stamp+1,stamp+2],[stamp-2,stamp-1],[stamp+1,stamp-1]] {
+        let unsafe=VMEnvelopeReader(kernel:KernelVMFixture(stamp:stamp),inventory:InventoryVMFixture(stamps:stamps),nativeProfileHash:String(repeating:"a",count:64),physical:32<<30)
+        do {_=try unsafe.read(configuration:configuration,id:id,leaseUntil:stamp+30000);fatalError("Unbracketed kernel sample crossed the collector boundary")}catch RuntimeError.identity {}
     }
     print("PASS: composed VM collector brackets kernel read with native inventory/config, exports conservative envelope and rejects changed cap/unverified machine coverage")
 }

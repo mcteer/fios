@@ -82,16 +82,20 @@ final class SharedKernelVMReader:VMResourceReading,@unchecked Sendable {
         do {
             var sample=try kernel.read(configuration:configuration,id:id,leaseUntil:leaseUntil)
             guard sample.bootHash==permission.bootHash else {fenced=true;throw RuntimeError.identity}
+            let readCompleted=now()
+            if readCompleted<stamp {fenced=true}
+            guard readCompleted>=stamp,readCompleted<=ActivityPolicy.maximumTimestamp,
+                  (stamp...readCompleted).contains(sample.sampledAt) else {throw RuntimeError.identity}
             let limit:NativeVMCap
             if let cached,began>=cached.uptime,began-cached.uptime<3 {limit=cached.value}
             else {
-                let proof=try NativeVMLivenessProof(sample:sample,expectedBootHash:permission.bootHash,now:now())
+                let proof=try NativeVMLivenessProof(sample:sample,expectedBootHash:permission.bootHash,now:readCompleted)
                 limit=try cap.capture(liveness:proof);cached=(limit,began)
             }
             let completed=now(),elapsed=uptime()-began
-            if completed<stamp {fenced=true}
+            if completed<readCompleted {fenced=true}
             previousNow=max(previousNow,completed)
-            guard completed>=stamp,completed<leaseUntil,elapsed>=0,elapsed<=5,
+            guard completed>=readCompleted,completed<leaseUntil,elapsed>=0,elapsed<=5,
                   physical>0,physical<=UInt64(ActivityPolicy.maximumTimestamp),limit.bytes>0,limit.bytes<=physical,
                   sample.total>0,sample.total<=physical,sample.free<=sample.total,
                   sample.sampledAt>=0,limit.sampledAt>=0,

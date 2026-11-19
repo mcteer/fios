@@ -10,12 +10,13 @@ private final class SharedKernelFixture:NativeVMCapReading,VMResourceReading,@un
     var fail=false
     var stale=false
     var advanceOnRead:Int64=0
+    var kernelTimestampDelta:Int64=0
     func capture(liveness:NativeVMLivenessProof)throws->NativeVMCap {
         captures+=1;if fail {throw RuntimeError.launch}
         return NativeVMCap(bytes:capValue,sampledAt:stale ? time-6000:time)
     }
     func read(configuration:SandboxConfiguration,id:String,leaseUntil:Int64)throws->VMKernelSample {
-        reads+=1;time+=advanceOnRead;return VMKernelSample(sampledAt:time,total:8<<30,free:4<<30,bootHash:boot)
+        reads+=1;time+=advanceOnRead;return VMKernelSample(sampledAt:time+kernelTimestampDelta,total:8<<30,free:4<<30,bootHash:boot)
     }
     func releaseAfterVerifiedAbsence(id:String) {}
 }
@@ -58,6 +59,12 @@ func runSharedKernelVMTests()throws {
     do {_=try clockReader.read(configuration:configuration,id:id,leaseUntil:60000);fatalError("Clock rollback retained VM authority")}catch RuntimeError.identity {}
     clock.time=10001
     do {_=try clockReader.read(configuration:configuration,id:id,leaseUntil:60000);fatalError("Clock rollback fence revived")}catch RuntimeError.identity {}
+    for delta:Int64 in [-1,1] {
+        let unbound=SharedKernelFixture();unbound.kernelTimestampDelta=delta
+        let guarded=SharedKernelVMReader(kernel:unbound,cap:unbound,permission:permission,physical:128<<30,now:{unbound.time},uptime:{unbound.steady})
+        do {_=try guarded.read(configuration:configuration,id:id,leaseUntil:60000);fatalError("Out-of-read kernel stamp authorized cap probe")}catch RuntimeError.identity {}
+        guard unbound.captures==0 else {fatalError("Invalid kernel time reached native cap source")}
+    }
     let between=SharedKernelFixture();between.advanceOnRead=500
     let betweenReader=SharedKernelVMReader(kernel:between,cap:between,permission:permission,physical:128<<30,now:{between.time},uptime:{between.steady})
     _=try betweenReader.read(configuration:configuration,id:id,leaseUntil:60000)

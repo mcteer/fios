@@ -580,16 +580,17 @@ private final class FixtureHandoffSource:NativeHandoffPreparing,@unchecked Senda
     let wrongRoot:Bool
     let lineageUnavailable:Bool
     let cancellationState:NativeHandoffState
+    let releaseTimeout:TimeInterval
     private let counterLock=NSLock()
     private var registrationCount=0
     private var cancellationCount=0
     var registrations:Int {counterLock.lock();defer {counterLock.unlock()};return registrationCount}
     var cancellations:Int {counterLock.lock();defer {counterLock.unlock()};return cancellationCount}
-    init(peer:NativeControlPeer,wrongRoot:Bool=false,lineageUnavailable:Bool=false,cancellationState:NativeHandoffState = .handedOff) {self.peer=peer;self.wrongRoot=wrongRoot;self.lineageUnavailable=lineageUnavailable;self.cancellationState=cancellationState}
+    init(peer:NativeControlPeer,wrongRoot:Bool=false,lineageUnavailable:Bool=false,cancellationState:NativeHandoffState = .handedOff,releaseTimeout:TimeInterval=2) {self.peer=peer;self.wrongRoot=wrongRoot;self.lineageUnavailable=lineageUnavailable;self.cancellationState=cancellationState;self.releaseTimeout=releaseTimeout}
     func registerHandoff(instance:String,correlationID:String)throws->NativeHandoffSample {
         counterLock.lock();registrationCount+=1;counterLock.unlock()
         entered.signal()
-        guard release.wait(timeout:.now()+2) == .success else {throw NativeControlError.deadline}
+        guard release.wait(timeout:.now()+releaseTimeout) == .success else {throw NativeControlError.deadline}
         return NativeHandoffSample(peer:peer,sampledAt:HostResources.nowMilliseconds(),result:NativeHandoffResult(operation:.register,instance:instance,correlationID:correlationID,rootSequence:UInt64.max,sampleSequence:1,state:.pending,uncertain:false))
     }
     func cancelHandoff(instance:String,correlationID:String,rootSequence:UInt64)throws->NativeHandoffSample {
@@ -613,7 +614,11 @@ private func runHandoffPreparationFailureTests(factory:PythonWorkerFactory)throw
         let snapshot=NativeSnapshot(host:"fixture-host",endpointHash:PythonWorkerFactory.digest(base),nativeEpoch:epoch,sequence:1,sampledAt:now,allClientLifecycleCoverage:true,residentModel:nil,outstandingOwners:0,loading:false)
         let binding=WorkerDispatchBinding(baseURL:base,guardPath:"/fixture/observe.sock",host:"fixture-host",profileHash:String(repeating:"f",count:64),managerEpoch:UUID().uuidString.lowercased(),canonicalModel:"fixture/model",nativeModel:"fixture/model",nativeSnapshot:snapshot,nativeCompatibilityAccepted:true,apiKey:nil)
         let peer=NativeControlPeer(pid:42,start:99,executable:try VerifiedExecutable(path:"/fixture/native",sha256:String(repeating:"d",count:64)))
-        let source=FixtureHandoffSource(peer:peer,wrongRoot:scenario.wrongRoot,lineageUnavailable:scenario.lineageUnavailable)
+        // The storage case deliberately waits on SQLite before releasing the
+        // synthetic registration. Its watchdog is not a native RPC deadline.
+        let heldDuringWrite=scenario.storageFailure && !scenario.lineageUnavailable
+        let source=FixtureHandoffSource(peer:peer,wrongRoot:scenario.wrongRoot,lineageUnavailable:scenario.lineageUnavailable,releaseTimeout:heldDuringWrite ? 10:2)
+        defer {source.release.signal()}
         let broker=ModelBroker(journal:journal,factory:factory,handoffSource:source)
         let id=UUID().uuidString.lowercased(),owner=String(repeating:"a",count:64)
         _=try journal.reserveJob(DurableJob(id:id,idempotency:UUID().uuidString.lowercased(),ownerHash:owner,requestHash:String(repeating:"b",count:64),created:now))
@@ -635,7 +640,7 @@ private func runHandoffPreparationFailureTests(factory:PythonWorkerFactory)throw
             guard sqlite3_open_v2(directory.appendingPathComponent("state.sqlite").path,&blocker,SQLITE_OPEN_READWRITE|SQLITE_OPEN_FULLMUTEX,nil)==SQLITE_OK,
                   sqlite3_exec(blocker,"BEGIN IMMEDIATE",nil,nil,nil)==SQLITE_OK else {throw JournalError.storage}
         }
-        if scenario.storageFailure && !scenario.lineageUnavailable {
+        if heldDuringWrite {
             // Lose the source while the real journal writer is blocked. A
             // later valid source must not resurrect the pending worker start.
             _=try broker.poll(now:HostResources.nowMilliseconds(),uptime:Int64(ProcessInfo.processInfo.systemUptime*1000),admission:&admission,source:{_ in nil})
@@ -646,7 +651,9 @@ private func runHandoffPreparationFailureTests(factory:PythonWorkerFactory)throw
         }
         source.release.signal()
         if scenario.storageFailure {
-            guard source.lineageReady.wait(timeout:.now()+1) == .success else {throw RuntimeError.deadline}
+            guard source.lineageReady.wait(timeout:.now()+2) == .success else {
+                fatalError("Fixture registration did not reach lineage after SQLite contention (held_during_write=\(heldDuringWrite))")
+            }
             var encounteredWrite=false
             let deadline=ProcessInfo.processInfo.systemUptime+3
             while !encounteredWrite && ProcessInfo.processInfo.systemUptime<deadline {
