@@ -8,6 +8,7 @@ private final class ServiceCensusFixture:ServiceProcessCensusReading,@unchecked 
     var calls=0
     var fail=false
     var entryCompletedAt:TimeInterval?
+    var verificationCompletedAt:TimeInterval?
     var time:Int64=10000
     var tick:TimeInterval=1
     init() {entries[getpid()]=ServiceProcessEntry(pid:getpid(),uid:geteuid(),realUID:getuid(),savedUID:geteuid(),start:1,path:"/usr/bin/true")}
@@ -18,7 +19,8 @@ private final class ServiceCensusFixture:ServiceProcessCensusReading,@unchecked 
         return entries[pid]
     }
     func verify(_ entry:ServiceProcessEntry,executable:VerifiedExecutable,uid:uid_t,deadline:TimeInterval)throws->ServiceIdentity {
-        ServiceIdentity(pid:entry.pid,start:entry.start,sha256:executable.sha256)
+        if let verificationCompletedAt {tick=verificationCompletedAt}
+        return ServiceIdentity(pid:entry.pid,start:entry.start,sha256:executable.sha256)
     }
 }
 func runServiceProcessCensusTests() throws {
@@ -72,6 +74,11 @@ func runServiceProcessCensusTests() throws {
     let guiAware=try ServiceProcessCensus(executable:executable,relatedRoots:[root.path],reviewDigest:review,uid:geteuid(),
         companion:application,source:related,now:{related.time},uptime:{related.tick})
     guard guiAware.capture().presence == .absent else {fatalError("Reviewed GUI presence hid missing serving process")}
+    related.verificationCompletedAt=2
+    let firstEnumerationCount=related.calls
+    guard guiAware.capture().presence == .unknown,related.calls-firstEnumerationCount==1 else {
+        fatalError("Timed-out companion verification started another enumeration")
+    }
     let servingProfile=try MLXServingProcessProfile(serverSHA256:hash,applicationSHA256:hash,reviewDigest:review,uid:geteuid())
     guard servingProfile.server.path=="/Applications/MLX-Serve.app/Contents/MacOS/mlx-serve",
           servingProfile.application.path=="/Applications/MLX-Serve.app/Contents/MacOS/MLXCore" else {
