@@ -96,7 +96,16 @@ try {
   const db=new DatabaseSync(join(state,'state.sqlite'),{readOnly:true});
   try {assert.equal(db.prepare('SELECT count(*) AS count FROM inference WHERE job=?').get(job).count,0);}
   finally {db.close();}
-  return {scenario,state:final.state,mock_model_posts:posts,worker_attempts:0,worker_slots_after_completion:0};
+  let restartChecked=false;
+  if(scenario==='digest_mismatch'){
+   await replaceManager(status.epoch);
+   const restored=task('job.status',{job});
+   assert.equal(restored.state,'removed');assert.equal(restored.lease.revoked,true);
+   assert.equal(restored.unresolved_managed_requests,0);assert.equal(restored.event,undefined);
+   assert.equal(task('job.create',manifest).job,job);assert.equal(posts,0);
+   restartChecked=true;
+  }
+  return {scenario,state:final.state,restart_checked:restartChecked,mock_model_posts:posts,worker_attempts:0,worker_slots_after_completion:0};
  }
  task('job.create',{phase:'end',job});
  if(scenario==='complete'){
