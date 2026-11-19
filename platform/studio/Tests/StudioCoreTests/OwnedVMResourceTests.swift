@@ -27,5 +27,29 @@ func runOwnedVMResourceTests() throws {
     do {_=try reader.read(configuration:configuration,id:id,leaseUntil:until);fatalError("Uncertain target automatically re-executed")}catch RuntimeError.invalid {}
     reader.releaseAfterVerifiedAbsence(id:id) // Trusted lifecycle proof seam, no public operation.
     do {_=try reader.read(configuration:configuration,id:id,leaseUntil:until);fatalError("False fixture produced VM sample")}catch RuntimeError.launch {}
+    let directory=FileManager.default.temporaryDirectory.appendingPathComponent("fios-owned-vm-"+job)
+    try FileManager.default.createDirectory(at:directory,withIntermediateDirectories:false,attributes:[.posixPermissions:0o700])
+    defer {try? FileManager.default.removeItem(at:directory)}
+    let cli=directory.appendingPathComponent("mock-docker"),log=directory.appendingPathComponent("operations")
+    let json=String(decoding:try JSONSerialization.data(withJSONObject:[target]),as:UTF8.self)
+    func quoted(_ value:String)->String {"'"+value.replacingOccurrences(of:"'",with:"'\\''")+"'"}
+    let script=Data(("#!/bin/sh\n[ \"$1\" = --host ] && [ \"$2\" = unix:///fixture/not-a-runtime.sock ] || exit 1\n" +
+        "printf '%s\\n' \"$3\" >> "+quoted(log.path)+"\n" +
+        "case \"$3\" in inspect) printf '%s' "+quoted(json)+";; exec) printf '%s' "+quoted(raw)+";; *) exit 1;; esac\n").utf8)
+    try script.write(to:cli)
+    try FileManager.default.setAttributes([.posixPermissions:0o700],ofItemAtPath:cli.path)
+    let hash=SHA256.hash(data:script).map{String(format:"%02x",$0)}.joined()
+    let mock=try DockerRuntime(executable:VerifiedExecutable(path:cli.path,sha256:hash),socket:"/fixture/not-a-runtime.sock")
+    var reads=0
+    let expired=try OwnedVMResourceReader(runtime:mock,approvedImages:[image],now:{reads+=1;return reads<3 ? 10000:15000},uptime:{1})
+    do {_=try expired.read(configuration:configuration,id:id,leaseUntil:15000);fatalError("Mock CLI exec ran after expiry during preflight")}
+    catch RuntimeError.deadline {}
+    guard try String(contentsOf:log,encoding:.utf8)=="inspect\n" else {fatalError("Expired CLI published guest execution")}
+    let good=try OwnedVMResourceReader(runtime:mock,approvedImages:[image],now:{10000},uptime:{1})
+    let result=try good.read(configuration:configuration,id:id,leaseUntil:15000)
+    guard result.sampledAt==10000,result.total==sample.total,result.free==sample.free,result.bootHash==sample.bootHash,
+          try String(contentsOf:log,encoding:.utf8)=="inspect\ninspect\nexec\ninspect\n" else {
+        fatalError("Valid owned VM CLI observation did not traverse all phases")
+    }
     print("PASS: fixed different-UID owned-container VM reader rejects foreign/privileged/host-namespace/mount/device targets and binds procfs observation to kernel boot hash")
 }
