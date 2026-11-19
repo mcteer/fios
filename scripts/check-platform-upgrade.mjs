@@ -58,7 +58,12 @@ async function cycle(release,directory,legacy=false) {
       if(result.status===0)status=JSON.parse(result.stdout);else await delay(50);
     }
     assert.equal(status?.ok,true);assert.equal(status.sandbox_admission,'disabled');
-    if(migrating&&!legacy)assert.equal(status.migration_maintenance,true);
+    if(!legacy){
+      assert.equal(status.migration_maintenance,migrating);
+      assert.equal(status.service_recovery,'disabled');
+      assert.equal(status.native_admissions,'unsupported');
+      assert.equal(status.runtime_cleanup.scope,'owned_runtime_cleanup');
+    }
     const observation=cli(release,directory,['activity']).observation;
     assert.equal(observation.coverage,'unsupported');
     const exported=cli(newRelease,directory,['export']);
