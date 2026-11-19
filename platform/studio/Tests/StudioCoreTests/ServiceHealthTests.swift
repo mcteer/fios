@@ -77,6 +77,20 @@ func runServiceHealthTests() throws {
     guard rewind.capture(sessionReady:true,credentialsReady:true)==nil,phaseCalls==0 else {
         fatalError("Service collection started health after intermediate wall-clock rollback")
     }
+    phaseWall=1000;phaseCalls=0
+    let agedListener=MLXServiceHealthCollector(presence:{sample},health:{phaseCalls+=1;return .healthy},listener:{_ in
+        phaseWall=6001;return socket
+    },now:{phaseWall},uptime:{1})
+    guard agedListener.capture(sessionReady:true,credentialsReady:true)==nil,phaseCalls==0 else {
+        fatalError("Expired original presence still started service health probe")
+    }
+    phaseWall=1000;phaseCalls=0
+    let boundaryListener=MLXServiceHealthCollector(presence:{sample},health:{phaseCalls+=1;return .healthy},listener:{_ in
+        phaseWall=6000;return socket
+    },now:{phaseWall},uptime:{1})
+    guard boundaryListener.capture(sessionReady:true,credentialsReady:true)?.sampledAt==1000,phaseCalls==1 else {
+        fatalError("Service health dropped original presence at exact freshness boundary")
+    }
     let loading=MLXServiceHealthCollector(presence:{sample},health:{.loading},now:{1000},uptime:{1})
     guard let pending=loading.capture(sessionReady:true,credentialsReady:true),!pending.responding,
           pending.credentialsReady else {fatalError("Loading became readiness or lost known credentials")}
