@@ -77,16 +77,21 @@ try{
  const original=descriptor();
  let turnoverManager=start('manager','known');
  await until(()=>existsSync(join(state,'validation-entered'))&&status()?.launch_pending);
+ const launchState=()=>JSON.parse(readFileSync(join(state,'service-recovery.json'),'utf8')).entries.find(entry=>entry.service==='mlx');
+ const originalLaunch=launchState();
+ assert.match(originalLaunch.pending,/^[a-f0-9-]{36}$/);assert.equal(originalLaunch.starts.length,1);
  firstHelper.kill('SIGTERM');await until(()=>exited(firstHelper));assert.equal(firstHelper.exitCode,0);
  const secondHelper=start('server','functional');
  await until(()=>descriptor().instance!==original.instance);
  await until(()=>status(['status'])?.service_recovery==='degraded');
  assert.equal(status().launch_pending,true);
+ assert.equal(launchState().pending,originalLaunch.pending);assert.deepEqual(launchState().starts,originalLaunch.starts);
  turnoverManager.kill('SIGTERM');await until(()=>exited(turnoverManager));assert.equal(turnoverManager.exitCode,0);
  turnoverManager=start('manager','known');
  await until(()=>status()?.launch_pending);await delay(2200);
  assert.equal(status(['status']).service_recovery,'configured');
  assert.equal(status().launch_pending,true);assert.equal(status().recovery.starts_in_window,1);
+ assert.equal(launchState().pending,originalLaunch.pending);assert.deepEqual(launchState().starts,originalLaunch.starts);
  assert.equal(Number(readFileSync(join(state,'calls'),'utf8')),0);
  console.log(JSON.stringify({ok:true,actual_manager:true,actual_session:true,application_port:'counter_only',application_calls:2,revoked_validation_calls:0,actual_validator_slot_retained:true,maintenance_survives_manager_restart:true,helper_turnover_retains_pending:true,native_actions:0,review_directory:directory}));
 }catch(error){console.error('RETAINED ordinary service recovery fixture:',directory);throw error;}finally{
