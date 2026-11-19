@@ -38,7 +38,12 @@ func runArtifactTests() throws {
     store=try ArtifactStore(directory:directory)
     guard try store!.retrieve(id:id,ownerHash:owner,now:1002)==Data("private result".utf8) else { fatalError("Restart lost artifact") }
     do { _=try store!.publish(job:job,ownerHash:owner,data:Data(repeating:0,count:16<<20),now:1003);fatalError("Per-job export cap exceeded") } catch ArtifactError.capacity {}
-    try store!.expire(now:1000+86_400_000)
+    let retention=1000+Int64(86_400_000)
+    var nearRetention=try store!.download(id:id,ownerHash:owner,now:retention-2)
+    guard case .begin=try nearRetention.next(now:retention-1) else {fatalError("Valid final retention tick lost artifact begin")}
+    do { _=try nearRetention.next(now:retention);fatalError("New stream extended the original artifact retention") } catch ArtifactError.unavailable {}
+    do { _=try nearRetention.next(now:retention-1);fatalError("Artifact stream revived after retention expiry") } catch ArtifactError.unavailable {}
+    try store!.expire(now:retention)
     do { _=try store!.retrieve(id:id,ownerHash:owner,now:1000+86_400_000);fatalError("Expired artifact readable") } catch ArtifactError.unavailable {}
     // A forged storage object cannot redirect writes or retrieval into a host file.
     let foreign=directory.appendingPathComponent("forged")
