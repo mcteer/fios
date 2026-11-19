@@ -19,6 +19,7 @@ fn assertSDKFrame(io: std.Io, uncertain: bool) !void {
     try std.testing.expectEqual(@as(u8, 1), frame[6]);
     try std.testing.expectEqual(@as(u8, @intFromBool(uncertain)), frame[7]);
     try std.testing.expectEqual(@as(u8, 0), frame[40]); // Background coverage stays unknown.
+    std.debug.print("sdk_fixture_frame={s}\n", .{std.fmt.bytesToHex(frame, .lower)});
 }
 
 test "projected current bridge forwards pre-init failure" {

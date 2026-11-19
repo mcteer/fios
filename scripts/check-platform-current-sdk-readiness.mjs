@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 // Exact-parent source projection only. No native service, SDK library or model.
 import assert from 'node:assert/strict';
-import {execFileSync} from 'node:child_process';
+import {execFileSync,spawnSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
-import {lstatSync,mkdirSync,mkdtempSync,readFileSync,realpathSync,writeFileSync} from 'node:fs';
+import {lstatSync,mkdirSync,mkdtempSync,readdirSync,readFileSync,realpathSync,writeFileSync} from 'node:fs';
 import {dirname,isAbsolute,join,relative,resolve} from 'node:path';
 
 const args=process.argv.slice(2);
@@ -53,15 +53,40 @@ const main=join(projection,'readiness.zig'),options=join(directory,'options.zig'
 const buildOptions='pub const fios_source_ane = false;\n';
 writeFileSync(main,fixture,{mode:0o600});writeFileSync(options,buildOptions,{mode:0o600});
 const modes=['Debug','ReleaseSafe'],filters=['projected current bridge','projected ready bridge','readiness does not overwrite'];
+const frames={};
 for(const mode of modes){
   try{
     // Imported upstream tests independently initialize process-lifetime state.
     // Keep this focused scenario and the atomic ordering unit in separate runs.
     for(const filter of filters){
-      run('/usr/bin/sandbox-exec',['-p','(version 1)(allow default)(deny network*)',zig,'test','--test-filter',filter,'-O',mode,'-lc','--dep','build_options','-Mroot='+main,'-Mbuild_options='+options]);
+      const result=spawnSync('/usr/bin/sandbox-exec',['-p','(version 1)(allow default)(deny network*)',zig,'test','--test-filter',filter,'-O',mode,'-lc','--dep','build_options','-Mroot='+main,'-Mbuild_options='+options],{cwd:directory,env,encoding:'utf8',timeout:90000,maxBuffer:1<<20});
+      const log=result.stderr??'';
+      if(result.error)throw result.error;
+      assert.equal(result.status,0,log);
+      if(filter==='projected ready bridge'){
+        const emitted=[...log.matchAll(/sdk_fixture_frame=([a-f0-9]{128})\b/g)];
+        assert.equal(emitted.length,2);
+        frames[mode]=emitted.map((match,index)=>{
+          const file=mode+'-sdk-'+index+'.fif9',data=Buffer.from(match[1],'hex');
+          writeFileSync(join(directory,file),data,{mode:0o600});
+          return {file,sha256:hash(data)};
+        });
+      }
     }
   }catch(error){console.error(`Retained failed ${mode} source projection: ${directory}`);throw error;}
 }
+const studio=join(repository,'platform/studio');
+const swiftFixture=bytes(join(studio,'Tests/StudioCoreTests/SDKReadinessFrames.swift.fixture'));
+const swiftMain=join(directory,'SDKReadinessFrames.swift'),decoder=join(directory,'decode');
+writeFileSync(swiftMain,swiftFixture,{mode:0o600});
+const studioCore=join(studio,'Sources/StudioCore'),sqliteModule=join(studio,'Sources/CSQLite');
+const swiftSources=readdirSync(studioCore).filter(name=>name.endsWith('.swift')).sort().map(name=>join(studioCore,name));
+const swiftInputs=Object.fromEntries([...swiftSources,...readdirSync(sqliteModule).sort().map(name=>join(sqliteModule,name))].map(file=>[relative(studio,file),hash(bytes(file))]));
+const isolated=(file,argv)=>run('/usr/bin/sandbox-exec',['-p','(version 1)(allow default)(deny network*)',file,...argv]);
+isolated('/usr/bin/swiftc',['-swift-version','6','-warnings-as-errors','-I',sqliteModule,...swiftSources,swiftMain,'-o',decoder]);
+for(const mode of modes)isolated(decoder,frames[mode].map(frame=>join(directory,frame.file)));
+for(const [name,digest] of Object.entries(swiftInputs))assert.equal(hash(bytes(join(studio,name))),digest);
+assert.equal(hash(bytes(join(studio,'Tests/StudioCoreTests/SDKReadinessFrames.swift.fixture'))),hash(swiftFixture));
 for(const [name,digest] of Object.entries(inputs)){
   assert.equal(hash(bytes(join(root,name))),digest);
   if(name!==primary)assert.equal(hash(bytes(join(projection,name))),digest);
@@ -73,6 +98,6 @@ assert.equal(hash(bytes(import.meta.filename)),runner);
 assert.equal(hash(bytes(join(projection,primary))),candidate);
 assert.equal(hash(bytes(main)),hash(fixture));
 assert.equal(hash(bytes(options)),hash(buildOptions));
-const receipt={scope:'declared_cpu_readiness_projection_only',directory,inputs,compiler_sha256:compiler,runner_sha256:runner,options_sha256:hash(buildOptions),patch_sha256:hash(patch),fixture_sha256:hash(fixture),candidate,modes,filters,activation:false,native_authority:false};
+const receipt={scope:'declared_cpu_readiness_projection_only',directory,inputs,compiler_sha256:compiler,runner_sha256:runner,options_sha256:hash(buildOptions),patch_sha256:hash(patch),fixture_sha256:hash(fixture),candidate,modes,filters,frames,swift_decode:{inputs:swiftInputs,fixture_sha256:hash(swiftFixture)},activation:false,native_authority:false};
 writeFileSync(join(directory,'receipt.json'),JSON.stringify(receipt,null,2)+'\n',{mode:0o600});
 console.log(JSON.stringify({ok:true,directory,candidate,declared_inputs:Object.keys(inputs).length,activation:false,native_authority:false}));
