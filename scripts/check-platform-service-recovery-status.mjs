@@ -77,8 +77,9 @@ try{
  const original=descriptor();
  let turnoverManager=start('manager','known');
  await until(()=>existsSync(join(state,'validation-entered'))&&status()?.launch_pending);
- const launchState=()=>JSON.parse(readFileSync(join(state,'service-recovery.json'),'utf8')).entries.find(entry=>entry.service==='mlx');
- const originalLaunch=launchState();
+ const launchState=(service='mlx')=>JSON.parse(readFileSync(join(state,'service-recovery.json'),'utf8')).entries.find(entry=>entry.service===service);
+ const originalLaunch=launchState(),originalOrbStack=launchState('orbstack');
+ const orbstackArgs=['service','orbstack','status'],originalOrbStackIntent=status(orbstackArgs).desired;
  assert.match(originalLaunch.pending,/^[a-f0-9-]{36}$/);assert.equal(originalLaunch.starts.length,1);
  firstHelper.kill('SIGTERM');await until(()=>exited(firstHelper));assert.equal(firstHelper.exitCode,0);
  const secondHelper=start('server','functional');
@@ -95,6 +96,8 @@ try{
  await until(()=>status()?.launch_pending);await delay(2200);
  assert.equal(status(['status']).service_recovery,'configured');
  assert.equal(status().desired,'maintenance');
+ assert.equal(status(orbstackArgs).desired,originalOrbStackIntent);
+ assert.deepEqual(launchState('orbstack'),originalOrbStack);
  assert.equal(status().launch_pending,true);assert.equal(status().recovery.starts_in_window,1);
  assert.equal(launchState().pending,originalLaunch.pending);assert.deepEqual(launchState().starts,originalLaunch.starts);
  assert.equal(Number(readFileSync(join(state,'calls'),'utf8')),0);
