@@ -34,7 +34,8 @@ async function ready(){
 const sha=data=>createHash('sha256').update(data).digest('hex');
 try {
  await ready();
- const fixture=JSON.parse(readFileSync(join(state,'fixture.json'),'utf8'));
+ const fixtureBytes=readFileSync(join(state,'fixture.json'));
+ const fixture=JSON.parse(fixtureBytes);
  function call(payload,operation='artifact.read',expectedExit=0,owner=fixture.owner){
   const id=randomUUID();
   const result=spawnSync(cli,['--state',state,'task'],{cwd:root,encoding:'utf8',timeout:3000,input:JSON.stringify({version:1,id,operation,payload:{...payload,owner}})});
@@ -78,6 +79,8 @@ try {
  await ready();
  assert.equal(call({phase:'next',stream:interrupted.stream},'artifact.read',1).error,'unauthorized');
  assert.equal(call({job:fixture.finished_job},'job.status').state,'removed');
+ assert.equal(call({job:fixture.finished_job},'job.status',1,otherOwner).error,'unauthorized');
+ assert.deepEqual(readFileSync(join(state,'fixture.json')),fixtureBytes,'Replacement reseeded fixture ownership');
  const records=[];
  for(const [index,artifact] of fixture.artifacts.entries()){
   const expected=Buffer.from(index===0?'Hello, Studio 👋\n'.repeat(4096):'');
