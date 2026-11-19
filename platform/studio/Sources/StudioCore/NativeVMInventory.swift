@@ -6,23 +6,32 @@ struct NativeVMInventory:Sendable {
     let machineIDs:Set<String>
 }
 protocol NativeVMInventoryReading:Sendable {
-    func capture()throws->NativeVMInventory
+    func capture(checkpoint:()throws->Void)throws->NativeVMInventory
+}
+extension NativeVMInventoryReading {
+    func capture()throws->NativeVMInventory {try capture(checkpoint:{})}
 }
 // Only a reviewed native profile supplies the canonical, identity-pinned CLI.
 // Fixed documented read-only operations; no start/run/ssh/config-set fallback.
 struct VerifiedVMInventory:NativeVMInventoryReading {
     let executable:VerifiedExecutable
     let home:String
-    func capture()throws->NativeVMInventory {
+    func capture(checkpoint:()throws->Void)throws->NativeVMInventory {
         let began=ProcessInfo.processInfo.systemUptime,sampledAt=HostResources.nowMilliseconds()
         let environment=["HOME":home]
-        let status=try executable.run(arguments:["status"],timeout:1,maximumOutput:64,environment:environment)
+        func command(_ arguments:[String],maximumOutput:Int)throws->CommandResult {
+            let remaining=5-(ProcessInfo.processInfo.systemUptime-began)
+            guard remaining>0 else {throw RuntimeError.deadline}
+            return try executable.runChecked(arguments:arguments,timeout:min(1,remaining),maximumOutput:maximumOutput,
+                environment:environment,checkpoint:checkpoint)
+        }
+        let status=try command(["status"],maximumOutput:64)
         guard VerifiedVMRunningProbe.isRunning(status) else {throw RuntimeError.launch}
-        let config=try executable.run(arguments:["config","get","memory_mib"],timeout:1,maximumOutput:64,environment:environment)
+        let config=try command(["config","get","memory_mib"],maximumOutput:64)
         guard config.status==0,let text=String(data:config.output,encoding:.utf8)?.trimmingCharacters(in:.whitespacesAndNewlines),
               !text.isEmpty,text.utf8.count<=8,text.first != "0",text.utf8.allSatisfy({(48...57).contains($0)}),
               let mib=UInt64(text),mib<=UInt64(ActivityPolicy.maximumTimestamp)/(1<<20) else {throw RuntimeError.invalid}
-        let inventory=try executable.run(arguments:["list","--format","json"],timeout:1,maximumOutput:65536,environment:environment)
+        let inventory=try command(["list","--format","json"],maximumOutput:65536)
         guard inventory.status==0 else {throw RuntimeError.launch}
         try StrictJSON.validate(inventory.output,maximum:65536)
         // Inspect ALL configured machines, not just running: starting/stopping
@@ -57,11 +66,15 @@ struct VMEnvelopeReader:VMResourceReading {
             return now
         }
         _=try checkpoint()
-        let first=try inventory.capture()
-        _=try checkpoint()
+        let first=try inventory.capture(checkpoint:{_=try checkpoint()})
+        func firstFresh(at time:Int64)throws {
+            guard (0...WireScalar.maximumTimestamp).contains(first.sampledAt),
+                  (-1000...5000).contains(time-first.sampledAt) else {throw RuntimeError.identity}
+        }
+        try firstFresh(at:checkpoint())
         var sample=try kernel.read(configuration:configuration,id:id,leaseUntil:leaseUntil)
-        _=try checkpoint()
-        let last=try inventory.capture(),now=try checkpoint()
+        try firstFresh(at:checkpoint())
+        let last=try inventory.capture(checkpoint:{try firstFresh(at:checkpoint())}),now=try checkpoint()
         guard first.configuredCap==last.configuredCap else {throw RuntimeError.identity}
         let context=VMEnvelopeContext(nativeProfileHash:nativeProfileHash,expectedBootHash:sample.bootHash,
             configuredCap:first.configuredCap,physical:physical,configurationSampledAt:min(first.sampledAt,last.sampledAt),

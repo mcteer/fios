@@ -10,8 +10,8 @@ private func inventoryCPU()throws->UInt64 {
 }
 private struct MeasuredVMInventory:NativeVMInventoryReading {
     let source:VerifiedVMInventory
-    func capture()throws->NativeVMInventory {
-        let began=try inventoryCPU(),value=try source.capture()
+    func capture(checkpoint:()throws->Void)throws->NativeVMInventory {
+        let began=try inventoryCPU(),value=try source.capture(checkpoint:checkpoint)
         let consumed=try inventoryCPU()-began
         print("METRIC: native inventory self_plus_reaped_child_cpu_ms=\(Int(ProcessCPU.seconds(ticks:consumed)*1000)); read-only CLI source breakdown, not idle acceptance")
         return value

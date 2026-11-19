@@ -15,7 +15,7 @@ private final class InventoryVMFixture:NativeVMInventoryReading,@unchecked Senda
     let stamps:[Int64]
     init(change:Bool=false,partial:Bool=false,stamps:[Int64]=[]) {self.change=change;self.partial=partial;self.stamps=stamps}
     var captures:Int {lock.lock();defer {lock.unlock()};return count}
-    func capture()throws->NativeVMInventory {
+    func capture(checkpoint:()throws->Void)throws->NativeVMInventory {
         lock.lock();defer {lock.unlock()};count+=1
         return NativeVMInventory(configuredCap:count>1 && change ? 10<<30 : 12<<30,sampledAt:stamps.indices.contains(count-1) ? stamps[count-1]:HostResources.nowMilliseconds(),machineIDs:partial ? [String(repeating:"c",count:64)] : [])
     }
@@ -44,6 +44,19 @@ func runNativeVMInventoryTests() throws {
           try String(contentsOf:home.appendingPathComponent("calls"),encoding:.utf8)=="status\nconfig\nlist\n" else {fatalError("Running inventory metadata sequence changed")}
 
     let configuration=try SandboxConfiguration(job:UUID().uuidString.lowercased(),nonce:String(repeating:"c",count:64),image:"sha256:"+String(repeating:"d",count:64),memory:512<<20,cpus:1),id=String(repeating:"e",count:64)
+    let calls=home.appendingPathComponent("calls")
+    try Data().write(to:calls)
+    var publicationChecks=0
+    do {
+        _=try reader.capture(checkpoint:{
+            publicationChecks+=1
+            if publicationChecks==2 {throw RuntimeError.deadline}
+        })
+        fatalError("VM inventory published after its inherited cutoff")
+    } catch RuntimeError.deadline {}
+    guard publicationChecks==2,try String(contentsOf:calls,encoding:.utf8)=="status\n" else {
+        fatalError("Expired VM inventory started a dependent native command")
+    }
     let collector=VMEnvelopeReader(kernel:KernelVMFixture(),inventory:InventoryVMFixture(),nativeProfileHash:String(repeating:"a",count:64),physical:32<<30)
     let sample=try collector.read(configuration:configuration,id:id,leaseUntil:HostResources.nowMilliseconds()+30000)
     guard let envelope=sample.envelope,VMResources.remaining(envelope,expectedRuntimeHash:envelope.runtimeHash,now:HostResources.nowMilliseconds())==4<<30 else {fatalError("Complete VM collector lost envelope")}
@@ -70,5 +83,11 @@ func runNativeVMInventoryTests() throws {
     let slow=VMEnvelopeReader(kernel:KernelVMFixture(stamp:1001),inventory:slowInventory,nativeProfileHash:String(repeating:"a",count:64),physical:32<<30,wallClock:{1001},uptime:{Double(steady.next())/1000})
     do {_=try slow.read(configuration:configuration,id:id,leaseUntil:2000);fatalError("Over-budget kernel read retained VM observation")}catch RuntimeError.deadline {}
     guard slowInventory.captures==1 else {fatalError("Over-budget read reached post-inventory")}
+    let ageClock=InventoryClockFixture([1000,1001,6001]),ageInventory=InventoryVMFixture(stamps:[1000,6001])
+    let aged=VMEnvelopeReader(kernel:KernelVMFixture(stamp:1001),inventory:ageInventory,nativeProfileHash:String(repeating:"a",count:64),
+        physical:32<<30,wallClock:{ageClock.next()},uptime:{1})
+    do {_=try aged.read(configuration:configuration,id:id,leaseUntil:12000);fatalError("Expired first inventory produced a VM envelope")}
+    catch RuntimeError.identity {}
+    guard ageInventory.captures==1 else {fatalError("First inventory age did not stop a second capture")}
     print("PASS: composed VM collector brackets kernel read with native inventory/config, exports conservative envelope and rejects changed cap/unverified machine coverage")
 }
