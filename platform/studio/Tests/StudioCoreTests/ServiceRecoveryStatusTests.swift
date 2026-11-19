@@ -40,5 +40,9 @@ func runServiceRecoveryStatusTests() throws {
     let cache=ServiceObservationCache();cache.publish(absent,for:.mlx)
     let telemetry=ServiceTelemetry.sample(journal:journal,observations:cache,recovery:recovery,now:22000,uptimeTick:22000)
     guard telemetry.first(where:{$0.service == .mlx})?.observed == .degraded else {throw ServiceError.invalid}
+    // Budget expiry must not make a cached absent sample launchable.
+    guard ServiceStatusPolicy.observed(desired:.running,observation:absent,launchPending:false,now:601000,restartWaiting:false) == .unknown,
+          try recovery.plan(service:.mlx,desired:.running,observation:absent,now:601000,tick:601000)==nil,
+          status(601000)["budget_state"] as? String=="available" else {throw ServiceError.invalid}
     print("PASS: ordinary service recovery status reports pending, per-service budget wait and expiry")
 }
