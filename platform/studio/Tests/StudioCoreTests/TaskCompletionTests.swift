@@ -2,7 +2,7 @@ import Foundation
 
 // A normal cancelled worker-start result is terminal output, even when the
 // surrounding owner job has not separately received a cancellation command.
-private func exerciseCompletion(in directory:URL,token:String,expireDuringStart:Bool=false)throws -> (String,String) {
+private func exerciseCompletion(in directory:URL,token:String,expireDuringStart:Bool=false,expireStartWatchdog:Bool=false)throws -> (String,String) {
     let journal=try Journal(directory:directory),owner=try TaskOwner(token:token,peerUID:geteuid()).hash
     func runningJob(lifetime:Int64=900_000)throws->String {
         let id=UUID().uuidString.lowercased()
@@ -17,10 +17,11 @@ private func exerciseCompletion(in directory:URL,token:String,expireDuringStart:
     try journal.claim(job:id,attempt:0,model:binding.canonicalModel,scope:binding.inferenceScope())
     let plan=try journal.planWorkerStart(job:id,attempt:0)
     let broker=ModelBroker(journal:journal)
+    let held=expireDuringStart || expireStartWatchdog
     let release=DispatchSemaphore(value:0)
     defer {release.signal()}
     try broker.retainStart(operation:PendingPythonWorker {cancelled in
-        if expireDuringStart {
+        if held {
             guard release.wait(timeout:.now()+3) == .success,cancelled() else {return .failure(.unavailable)}
         }
         return .failure(.cancelled)
@@ -29,18 +30,24 @@ private func exerciseCompletion(in directory:URL,token:String,expireDuringStart:
     var admission=AdmissionPolicy()
     let sample=ResourceSample(sampledAt:5000,physical:128<<30,available:64<<30,vmAvailable:nil,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal,cpuSampledAt:5000)
     try admission.reserveWorker(key:"model:\(id):0",sample:sample,now:5000)
-    let pollTime:Int64=expireDuringStart ? 5001:5000
-    if expireDuringStart {
-        let result=try controller.tick(now:pollTime,uptime:pollTime,admission:&admission,source:{_ in binding})
+    let pollTime:Int64=held ? 5001:5000
+    let tick:Int64=expireStartWatchdog ? 15000:pollTime
+    if expireStartWatchdog {
+        _=try controller.tick(now:pollTime,uptime:tick-1,admission:&admission,source:{_ in binding})
+        guard broker.active(job:id),try journal.uncertainCount()==0,
+              try journal.jobs().first(where:{$0.id==id})?.state == .running else {fatalError("Worker start was cancelled before its watchdog")}
+    }
+    if held {
+        let result=try controller.tick(now:pollTime,uptime:tick,admission:&admission,source:{_ in binding})
         guard result[id]?.isEmpty ?? true,broker.active(job:id),
               try journal.jobs().first(where:{$0.id==id})?.state == .revoking,
-              try journal.uncertainCount()==1 else {fatalError("Expired worker start lost its pending custody")}
+              try journal.uncertainCount()==1 else {fatalError("Expired lease or watchdog lost pending worker custody")}
         release.signal()
     }
     var interrupted=false
     let deadline=ProcessInfo.processInfo.systemUptime+2
     repeat {
-        let events=try controller.tick(now:pollTime,uptime:pollTime,admission:&admission,source:{_ in binding})
+        let events=try controller.tick(now:pollTime,uptime:tick,admission:&admission,source:{_ in binding})
         interrupted = interrupted || (events[id] ?? []).contains {if case .interrupted=$0 {return true};return false}
         if !interrupted {Thread.sleep(forTimeInterval:0.005)}
     }while !interrupted && ProcessInfo.processInfo.systemUptime<deadline
@@ -65,6 +72,7 @@ func runTaskCompletionTests()throws {
     defer {try? FileManager.default.removeItem(at:directory)}
     let token=TaskOwner.newToken()
     _=try exerciseCompletion(in:directory.appendingPathComponent("expiry"),token:token,expireDuringStart:true)
+    _=try exerciseCompletion(in:directory.appendingPathComponent("watchdog"),token:token,expireStartWatchdog:true)
     let (id,stillRunning)=try exerciseCompletion(in:directory,token:token)
     let reopened=try Journal(directory:directory)
     let otherToken=TaskOwner.newToken(),otherID=UUID().uuidString.lowercased()
