@@ -41,6 +41,20 @@ func runBackupTests() throws {
             do {_=try PrivateWriterLock(directory:state,kind:.servingCustody);fatalError("Custody module opened during offline writer fence")}catch ControlError.busy {}
         }
     }
+    do {
+        let stopped=try StoppedPlatformState(directory:state)
+        let database=state.appendingPathComponent("state.sqlite"),original=root.appendingPathComponent("original.sqlite")
+        try FileManager.default.moveItem(at:database,to:original)
+        defer {try? FileManager.default.removeItem(at:database);try? FileManager.default.moveItem(at:original,to:database)}
+        try FileManager.default.copyItem(at:original,to:database)
+        do {_=try StoppedJournalBackup.create(directory:state,destination:backup,stopped:stopped)
+            fatalError("Stopped proof accepted a different database with identical contents")
+        } catch JournalError.invalid {}
+        do {_=try JournalSchemaSnapshot(source:state,stopped:stopped)
+            fatalError("Snapshot accepted a different database under stopped proof")
+        } catch JournalError.invalid {}
+        guard !FileManager.default.fileExists(atPath:backup.path) else {fatalError("Mismatched stopped proof left an output")}
+    }
     let managerLock=state.appendingPathComponent("manager.lock").path
     guard chmod(managerLock,0o644)==0 else {throw JournalError.storage}
     do {

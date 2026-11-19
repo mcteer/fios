@@ -6,7 +6,8 @@ import Darwin
 // restored WAL-mode main files. Never let that preflight repair the original.
 final class JournalSchemaSnapshot {
     let directory:URL
-    init(source:URL)throws {
+    init(source:URL,stopped:StoppedPlatformState?=nil)throws {
+        guard stopped==nil || stopped?.directory==source.standardizedFileURL else {throw JournalError.invalid}
         directory=FileManager.default.temporaryDirectory.appendingPathComponent("fios-schema-"+UUID().uuidString.lowercased())
         guard mkdir(directory.path,0o700)==0 else {throw JournalError.storage}
         var completed=false
@@ -20,7 +21,8 @@ final class JournalSchemaSnapshot {
             defer {close(input)}
             var before=stat(),after=stat(),named=stat()
             guard fstat(input,&before)==0,before.st_mode&S_IFMT==S_IFREG,before.st_nlink==1,
-                  before.st_uid==geteuid(),before.st_mode&0o7777==0o600,before.st_size>=0,before.st_size<=64<<20 else {throw JournalError.invalid}
+                  before.st_uid==geteuid(),before.st_mode&0o7777==0o600,before.st_size>=0,before.st_size<=64<<20,
+                  suffix != "" || (stopped?.matchesDatabase(before) ?? true) else {throw JournalError.invalid}
             // Reconstruct SHM in private state; never copy stale reader locks.
             if suffix=="-shm" {continue}
             let output=open(directory.appendingPathComponent("state.sqlite"+suffix).path,O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC,0o600)

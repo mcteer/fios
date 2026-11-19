@@ -14,6 +14,11 @@ final class StoppedPlatformState {
         return SHA256.hash(data:Data("fios009-backup-host-v1\0".utf8)+data).map {String(format:"%02x",$0)}.joined()
     }
     let directory:URL
+    private let databaseDevice:dev_t
+    private let databaseInode:ino_t
+    func matchesDatabase(_ info:stat)->Bool {
+        info.st_dev==databaseDevice && info.st_ino==databaseInode
+    }
     private let fd:Int32
     private let supervisorFD:Int32
     private let custodyFD:Int32
@@ -59,6 +64,7 @@ final class StoppedPlatformState {
         let pinned=try validatedDatabase()
         guard lstat(directory.appendingPathComponent("state.sqlite").path,&value)==0,
               value.st_dev==pinned.st_dev,value.st_ino==pinned.st_ino else {throw JournalError.invalid}
+        databaseDevice=pinned.st_dev;databaseInode=pinned.st_ino
         fd=lock;custodyFD=custody;supervisorFD=supervisor;retained=true
     }
     deinit {flock(fd,LOCK_UN);close(fd);flock(custodyFD,LOCK_UN);close(custodyFD);flock(supervisorFD,LOCK_UN);close(supervisorFD)}
