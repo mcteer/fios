@@ -69,7 +69,10 @@ func runBackupTests() throws {
         }
     }
     let receipt=try StoppedJournalBackup.create(directory:state,destination:backup)
-    guard receipt.schema==9,receipt.sha256.count==64,receipt.bytes>100 else {fatalError("No bounded integrity receipt")}
+    let savedBytes=try Data(contentsOf:backup)
+    let independentlyHashed=SHA256.hash(data:savedBytes).map {String(format:"%02x",$0)}.joined()
+    guard receipt.schema==9,receipt.sha256==independentlyHashed,receipt.bytes==savedBytes.count,
+          receipt.bytes>100 else {fatalError("Stopped journal receipt did not match published bytes")}
     let copy=root.appendingPathComponent("restored")
     try FileManager.default.createDirectory(at:copy,withIntermediateDirectories:false,attributes:[.posixPermissions:0o700])
     try FileManager.default.copyItem(at:backup,to:copy.appendingPathComponent("state.sqlite"))
