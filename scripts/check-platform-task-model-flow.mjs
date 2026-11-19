@@ -121,7 +121,10 @@ try {
   manager.kill('SIGTERM');await until(()=>exited(manager),5000);assert.equal(manager.exitCode,0);
   const db=new DatabaseSync(join(state,'state.sqlite'),{readOnly:true});
   try {
-   for(const table of ['inference','request_history','worker_launches'])assert.equal(db.prepare(`SELECT count(*) AS count FROM ${table} WHERE job=?`).get(job).count,0);
+   for(const table of ['inference','request_history','worker_launches','worker_grants']){
+    const count=db.prepare(`SELECT count(*) AS count FROM ${table} WHERE job=?`);
+    for(const id of [job,...replacements.map(value=>value.job)])assert.equal(count.get(id).count,0);
+   }
   } finally {db.close();}
   return {scenario,expired_without_end:true,late_end_status_only:true,restart_checked:true,reservation_slots_reused:2,durable_dispatch_rows:0,state:restored.state,mock_model_posts:0,worker_slots_after_completion:0};
  }
