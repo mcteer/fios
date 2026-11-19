@@ -56,7 +56,7 @@ final class ReadOnlyVMResources {
         let leaseUntil:Int64
     }
     private let work:any VMObservationWork
-    private var pending:Target?
+    private var pending:(target:Target,submittedAt:Int64)?
     private var latest:VMKernelSample?
     private var latestTarget:Target?
     private var failedTargets=Set<String>()
@@ -85,12 +85,14 @@ final class ReadOnlyVMResources {
         previous=now
         if let latestTarget,!stillOwned(latestTarget,records:records,jobs:jobs,now:now) {latest=nil;self.latestTarget=nil}
         for result in work.drain() {
-            guard let target=pending,result.job==target.configuration.job,result.runtimeID==target.id else {
+            guard let request=pending,result.job==request.target.configuration.job,result.runtimeID==request.target.id else {
                 fenced=true;latest=nil;continue
             }
             pending=nil
+            let target=request.target
             guard !fenced,stillOwned(target,records:records,jobs:jobs,now:now),
-                  case .success(let sample)=result.result,sample.validatedEnvelope(physical:physical,now:now) != nil else {
+                  case .success(let sample)=result.result,sample.sampledAt>=request.submittedAt,
+                  sample.validatedEnvelope(physical:physical,now:now) != nil else {
                 failedTargets.insert(target.id);latest=nil;continue
             }
             latest=sample;latestTarget=target
@@ -99,7 +101,7 @@ final class ReadOnlyVMResources {
         guard let target=records.compactMap({self.target($0,jobs:jobs,now:now)}).first(where:{!failedTargets.contains($0.id)}) else {return}
         do {
             try work.submit(configuration:target.configuration,id:target.id,leaseUntil:target.leaseUntil)
-            pending=target;lastBegin=now
+            pending=(target,now);lastBegin=now
         } catch AdmissionError.capacity {} // No effect was submitted; use the same bounded channel later.
         catch {failedTargets.insert(target.id);latest=nil}
     }

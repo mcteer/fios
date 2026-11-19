@@ -55,6 +55,13 @@ func runReadOnlyVMResourceTests() throws {
     guard healthy.applying(to:host,now:3001).vmAvailable==4<<30,
           healthy.applying(to:host,now:3001).vmSampledAt==1000,healthy.epoch(now:3001)==hash,
           healthyWork.requests.count==2,healthy.epoch(now:6001)==nil else {fatalError("VM observation lost whole-envelope accounting/original freshness")}
+    let replayWork=VMObservationFixture(),replay=ReadOnlyVMResources(work:replayWork)
+    replay.tick(records:[record],jobs:[job],physical:host.physical,now:3000)
+    replayWork.replies=[reply(sample(2999))]
+    replay.tick(records:[record],jobs:[job],physical:host.physical,now:3001)
+    guard replay.epoch(now:3001)==nil,replay.applying(to:host,now:3001).vmAvailable==nil else {
+        fatalError("VM envelope predating submitted work became current capacity")
+    }
     healthyWork.replies=[VMReadResult(job:job.id,runtimeID:id,result:.failure(.unavailable))]
     healthy.tick(records:[record],jobs:[job],physical:host.physical,now:4000)
     // The original envelope is still within its freshness window. Failure,
