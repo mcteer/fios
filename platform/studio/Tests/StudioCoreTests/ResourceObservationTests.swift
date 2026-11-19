@@ -49,6 +49,13 @@ func runResourceObservationTests() throws {
         guard oversized.resources["vmAvailable"] is NSNull,quality(oversized,"vm_available")=="unknown",
               oversized.observation["vm_coverage"] as? String=="unknown" else {fatalError("FIO_VM_EXCEEDS_PHYSICAL_EXPORTED")}
     }
+    // A current host sample must not refresh a dated VM envelope or its epoch.
+    for at:Int64 in [4999,11001] {
+        let delayedVM=try frame(10000,sample.replacingVM(4<<30,sampledAt:at))
+        guard delayedVM.resources["vmAvailable"] is NSNull,quality(delayedVM,"vm_available")=="stale",
+              delayedVM.observation["vm_epoch"] is NSNull,delayedVM.observation["vm_coverage"] as? String=="unknown",
+              quality(delayedVM,"available_memory")=="observed" else {fatalError("Stale VM lease observation borrowed current host freshness")}
+    }
     let zeroVM=try frame(10000,sample.replacingVM(0,sampledAt:10000))
     guard zeroVM.resources["vmAvailable"] as? UInt64==0,quality(zeroVM,"vm_available")=="observed" else {fatalError("Observed zero VM capacity lost")}
     let invalid=ResourceSample(sampledAt:10000,physical:64<<30,available:65<<30,vmAvailable:nil,diskFree:UInt64.max,cpu:.nan,pressure:.unknown,thermal:.unknown)

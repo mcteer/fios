@@ -127,6 +127,13 @@ public final class StudioOpenTelemetry:PlatformTelemetry,@unchecked Sendable {
                   (-1000...5000).contains(HostResources.nowMilliseconds()-stamp) else {return nil}
             return stamp
         }
+        let freshVMTime: @Sendable (ResourceSample)->Int64? = { sample in
+            guard let time=sample.vmSampledAt,(0...WireScalar.maximumTimestamp).contains(time),
+                  let bytes=sample.vmAvailable,sample.physical>0,
+                  sample.physical<=UInt64(WireScalar.maximumTimestamp),bytes<=sample.physical,
+                  (-1000...5000).contains(HostResources.nowMilliseconds()-time) else {return nil}
+            return time
+        }
         let metrics:[(String,String,(ResourceSample)->Double?)]=[
             ("fios.platform.host.cpu.utilization","1",{ sample in freshCPUTime(sample).flatMap{_ in sample.cpu.map{$0/100}} }),
             ("fios.platform.host.cpu.sample.time","s",{ freshCPUTime($0).map{Double($0)/1000} }),
@@ -134,15 +141,8 @@ public final class StudioOpenTelemetry:PlatformTelemetry,@unchecked Sendable {
             ("fios.platform.host.memory.available","By",{$0.available.map{Double($0)}}),
             ("fios.platform.host.disk.free","By",{$0.diskFree.map{Double($0)}}),
             ("fios.platform.host.power.low","1",{$0.lowPowerMode.map{$0 ? 1.0:0.0}}),
-            ("fios.platform.vm.memory.available","By",{sample in
-                guard let time=sample.vmSampledAt,(0...WireScalar.maximumTimestamp).contains(time),(-1000...5000).contains(HostResources.nowMilliseconds()-time) else {return nil}
-                return sample.vmAvailable.map{Double($0)}
-            }),
-            ("fios.platform.vm.sample.time","s",{sample in
-                guard sample.vmAvailable != nil,let time=sample.vmSampledAt,(0...WireScalar.maximumTimestamp).contains(time),
-                      (-1000...5000).contains(HostResources.nowMilliseconds()-time) else {return nil}
-                return Double(time)/1000
-            })
+            ("fios.platform.vm.memory.available","By",{ sample in freshVMTime(sample).flatMap{_ in sample.vmAvailable.map{Double($0)}} }),
+            ("fios.platform.vm.sample.time","s",{ freshVMTime($0).map{Double($0)/1000} })
         ]
         for (name,unit,value) in metrics {
             _=meter.gaugeBuilder(name:name).setUnit(unit).buildWithCallback { observation in

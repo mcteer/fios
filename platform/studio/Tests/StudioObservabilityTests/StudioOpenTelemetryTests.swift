@@ -168,6 +168,15 @@ final class StudioOpenTelemetryTests:XCTestCase {
         XCTAssertFalse(telemetry.collectMetrics().contains{$0.name=="fios.platform.vm.sample.time" && !$0.data.points.isEmpty})
     }
 
+    func testOversizedVMEnvelopeDoesNotSuppressHostMemory() throws {
+        let telemetry=StudioOpenTelemetry(),now=HostResources.nowMilliseconds()
+        telemetry.resources(ResourceSample(sampledAt:now,physical:1024,available:512,
+            vmAvailable:1025,diskFree:4096,cpu:nil,pressure:.normal,thermal:.nominal,vmSampledAt:now))
+        let metrics=telemetry.collectMetrics()
+        XCTAssertFalse(metrics.contains{$0.name.hasPrefix("fios.platform.vm.") && !$0.data.points.isEmpty})
+        XCTAssertTrue(metrics.contains{$0.name=="fios.platform.host.memory.available" && !$0.data.points.isEmpty})
+    }
+
     func testGPUAndHostConditionMetrics() throws {
         let telemetry=StudioOpenTelemetry(),now=HostResources.nowMilliseconds()
         telemetry.resources(ResourceSample(sampledAt:now,physical:1024,available:512,
