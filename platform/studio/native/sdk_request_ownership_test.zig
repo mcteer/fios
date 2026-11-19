@@ -8,6 +8,8 @@ test "fios SDK owner context transfers and restores original references" {
     try std.testing.expect(sdk.fios_native_request_owners_capture() == null);
     try ownership.shared.initialize(io, @splat(7));
     try sdk.initialize(io);
+    try std.testing.expectError(error.AlreadyConfigured, sdk.initialize(io));
+    try std.testing.expect(!sdk.diagnostic().uncertain);
     try std.testing.expect(sdk.fios_native_request_owners_capture() == null);
     const root = try ownership.shared.enter(io);
     try ownership.shared.bind(io, root, "fixture/original");

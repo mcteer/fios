@@ -11,6 +11,7 @@ test "an SDK gap before initialization fences the tracker at enrollment" {
     try std.testing.expect(!ownership.shared.knownUncertain(io));
     try std.testing.expectError(error.Unavailable, sdk.initialize(io));
     try std.testing.expect(ownership.shared.knownUncertain(io));
+    try std.testing.expectError(error.Unavailable, sdk.initialize(io));
     try std.testing.expect(sdk.fios_native_request_owners_capture() == null);
     try std.testing.expectEqual(@as(u32, 0), sdk.diagnostic().active_contexts);
 }
