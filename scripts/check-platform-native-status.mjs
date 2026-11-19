@@ -179,6 +179,8 @@ try{
   if(withBackendFences)assert.notEqual(unavailable.native_control.backend_fences.state,'received');
   const lostActivity=command(['activity']).observation;
   assert.equal(lostActivity.coverage,'unknown');assert.equal(lostActivity.outstanding_owners,null);
+  assert.equal(unavailable.native_control.source_sequence,null);assert.equal(unavailable.native_control.source_sampled_at,null);
+  assert.equal(lostActivity.native_sequence,null);assert.equal(lostActivity.native_sampled_at,null);
   if(withLineage){assert.equal(lostActivity.local_ownership.unresolved_count,1);assert.equal(lostActivity.local_ownership.blocked,true);}
   sourceOutage={unavailable,lostActivity,models:0,native_authority:false};
  }
