@@ -26,6 +26,15 @@ enum GPUResources {
         guard utilization != nil || inUse != nil || allocated != nil else {return nil}
         return GPUSample(utilization:utilization,inUseBytes:inUse,allocatedBytes:allocated)
     }
+    // Registry counters carry no device collection clock. The local read
+    // start bounds their observation age without claiming device freshness.
+    static func observation(now:()->Int64=HostResources.nowMilliseconds,read:()->GPUSample?=sample)->(sample:GPUSample,at:Int64)? {
+        let start=now()
+        guard (0...WireScalar.maximumTimestamp).contains(start),let sample=read() else {return nil}
+        let end=now()
+        guard (start...WireScalar.maximumTimestamp).contains(end),end-start<=5000 else {return nil}
+        return (sample,start)
+    }
     static func sample()->GPUSample? {
         var iterator:io_iterator_t=0
         guard IOServiceGetMatchingServices(kIOMainPortDefault,IOServiceMatching("AGXAccelerator"),&iterator)==KERN_SUCCESS else {return nil}

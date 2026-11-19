@@ -128,9 +128,9 @@ public enum ManagerRuntime {
         var cpuSampler=CPUSampler()
         var resourceSample=activeExecution?.sample(now:timestamp(),cpu:nil) ?? HostResources.sample(statePath:directory.path)
         telemetry.resources(resourceSample)
-        var gpuSampledAt:Int64?=timestamp()
-        var gpuSample=GPUResources.sample()
-        if gpuSample == nil {gpuSampledAt=nil}
+        let initialGPU=GPUResources.observation()
+        var gpuSampledAt=initialGPU?.at
+        var gpuSample=initialGPU?.sample
         telemetry.gpu(gpuSample,sampledAt:gpuSampledAt)
         let termination=Termination()
         var clients:[PendingControl]=[]
@@ -261,9 +261,9 @@ public enum ManagerRuntime {
                 let cpu=cpuSampler.observe(ticks:CPUSampler.readTicks(),now:cpuSampledAt)
                 resourceSample=applyingVM(to:activeExecution?.sample(now:sampledAt,cpu:cpu) ?? HostResources.sample(statePath:directory.path,measuredCPU:cpu,measuredCPUAt:cpuSampledAt),now:sampledAt)
                 telemetry.resources(resourceSample)
-                gpuSampledAt=timestamp()
-                gpuSample=GPUResources.sample()
-                if gpuSample == nil {gpuSampledAt=nil}
+                let gpuObservation=GPUResources.observation()
+                gpuSampledAt=gpuObservation?.at
+                gpuSample=gpuObservation?.sample
                 telemetry.gpu(gpuSample,sampledAt:gpuSampledAt)
                 do {try artifacts.expire(request:UUID().uuidString.lowercased(),now:timestamp())}
                 catch ArtifactServiceFailure.capacity {} // Finite I/O slots, retry maintenance next cycle.
