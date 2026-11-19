@@ -9,10 +9,17 @@ private final class VMProfileFixture:VMResourceReading,NativeVMCapReading,@unche
     var failCap=false
     var rollbackOnRead=false
     var advanceOnRead:Int64=0
-    var clockReads=0
+    var clockReads=0,tickReads=0
+    var finalWallOverride:Int64=12049
+    func publicationUptime()->TimeInterval {
+        tickReads+=1
+        if tickReads==8 {return tick+0.5}
+        if tickReads==9 {return tick+0.25}
+        return tick
+    }
     func publicationClock()->Int64 {
         clockReads+=1
-        return clockReads==10 ? 12049:time
+        return clockReads==10 ? finalWallOverride:time
     }
     func read(configuration:SandboxConfiguration,id:String,leaseUntil:Int64)throws->VMKernelSample {
         reads+=1
@@ -75,6 +82,32 @@ func runVMResourceProfileReaderTests() throws {
     do {_=try publishing.read(configuration:config,id:id,leaseUntil:60000);fatalError("Final rollback fence revived")}
     catch RuntimeError.identity {}
     guard publication.reads==2,publication.captures==1 else {fatalError("Final rollback performed a new observation")}
+    let monotonic=VMProfileFixture()
+    let timed=VMResourceProfileReader(kernel:monotonic,cap:monotonic,
+        profileHash:String(repeating:"a",count:64),reviewDigest:String(repeating:"c",count:64),physical:128<<30,
+        now:{monotonic.time},uptime:monotonic.publicationUptime)
+    _=try timed.read(configuration:config,id:id,leaseUntil:60000)
+    monotonic.time=10500;monotonic.tick=2
+    do {_=try timed.read(configuration:config,id:id,leaseUntil:60000);fatalError("Outer VM profile published across final uptime rollback")}
+    catch RuntimeError.identity {}
+    guard monotonic.tickReads==9,monotonic.reads==2,monotonic.captures==1 else {fatalError("Uptime fixture did not reach final check")}
+    let stale=VMProfileFixture();stale.finalWallOverride=15001
+    let aged=VMResourceProfileReader(kernel:stale,cap:stale,
+        profileHash:String(repeating:"a",count:64),reviewDigest:String(repeating:"c",count:64),physical:128<<30,
+        now:stale.publicationClock,uptime:{stale.tick})
+    _=try aged.read(configuration:config,id:id,leaseUntil:60000)
+    stale.time=14999;stale.tick=2
+    do {_=try aged.read(configuration:config,id:id,leaseUntil:60000);fatalError("Outer VM profile published an aged cap")}
+    catch RuntimeError.identity {}
+    guard stale.clockReads==10,stale.reads==2,stale.captures==1 else {fatalError("Freshness fixture did not reach final publication")}
+    let edge=VMProfileFixture();edge.finalWallOverride=15000
+    let atEdge=VMResourceProfileReader(kernel:edge,cap:edge,
+        profileHash:String(repeating:"a",count:64),reviewDigest:String(repeating:"c",count:64),physical:128<<30,
+        now:edge.publicationClock,uptime:{edge.tick})
+    _=try atEdge.read(configuration:config,id:id,leaseUntil:60000)
+    edge.time=14999;edge.tick=2
+    let edgeSample=try atEdge.read(configuration:config,id:id,leaseUntil:60000)
+    guard edgeSample.envelope?.sampledAt==10000,edge.captures==1 else {fatalError("Publication lost cap at its exact age edge")}
     let expired=VMProfileFixture();expired.advanceOnRead=5000
     let expiring=expired.reader()
     do {_=try expiring.read(configuration:config,id:id,leaseUntil:15000);fatalError("Expired bootstrap reached VM capacity")}
