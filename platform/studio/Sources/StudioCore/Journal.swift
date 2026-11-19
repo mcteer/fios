@@ -18,11 +18,13 @@ final class PlannedWorkerStart:@unchecked Sendable {
     let attempt:Int
     let nonce:String
     let scope:InferenceScope
+    let preparationRevisionAtCreation:UInt64
     private let lock=NSLock()
     private var consumed=false
     private var capturedPreparation=false
-    fileprivate init(job:String,attempt:Int,nonce:String,scope:InferenceScope) {
+    fileprivate init(job:String,attempt:Int,nonce:String,scope:InferenceScope,preparationRevisionAtCreation:UInt64) {
         self.job=job;self.attempt=attempt;self.nonce=nonce;self.scope=scope
+        self.preparationRevisionAtCreation=preparationRevisionAtCreation
     }
     func capturePreparationOnce()->Bool {
         lock.lock();defer {lock.unlock()}
@@ -979,7 +981,7 @@ public final class Journal {
     func planWorkerStart(job:String,attempt:Int)throws->PlannedWorkerStart {
         guard let record=try inferenceScope(job:job,attempt:attempt),record.state == .reserved else {throw JournalError.conflict}
         let nonce=try planWorkerLaunch(job:job,attempt:attempt)
-        return PlannedWorkerStart(job:job,attempt:attempt,nonce:nonce,scope:record.scope)
+        return PlannedWorkerStart(job:job,attempt:attempt,nonce:nonce,scope:record.scope,preparationRevisionAtCreation:preparationLocalRevision)
     }
     // Only the original live factory can produce this evidence, after its
     // consumed plan exits before Process.run. It proves this attempt was not

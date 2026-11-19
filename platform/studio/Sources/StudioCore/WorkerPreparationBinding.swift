@@ -33,7 +33,7 @@ struct WorkerPreparationBinding:Sendable {
               try journal.originalNativeRoot(job:plan.job,attempt:plan.attempt,scope:plan.scope,peer:registration.peer)==ack.rootSequence else {throw RuntimeError.identity}
         try lineage.lineage.validate()
         let checkpoint=try journal.preparationBindingCheckpoint(plan:plan,peer:registration.peer,root:ack.rootSequence)
-        guard plan.capturePreparationOnce() else {throw RuntimeError.identity}
+        guard checkpoint.localRevision==plan.preparationRevisionAtCreation,plan.capturePreparationOnce() else {throw RuntimeError.identity}
         return Self(plan:plan,registration:registration,checkpoint:checkpoint)
     }
     // Historical identity only. Missing/expired live observations cannot

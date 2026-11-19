@@ -58,6 +58,7 @@ func runNativePreparationReservationTests()throws {
     }
     try runPreparationIdentityPersistenceTests(peer:peer)
     try runPreparationPlanBindingTests(peer:peer)
+    try runPreparationPlanBindingTests(peer:peer,transientBeforeCapture:true)
     try runOwnedPreparationCoherenceTests(peer:peer)
     print("PASS: finite off-loop original preparation identity, once-only RPC/result, exact Unicode/peer scope, optional lineage and nonrenewable timing; no native authority")
 }
@@ -137,7 +138,7 @@ private func runPreparationIdentityPersistenceTests(peer:NativeControlPeer)throw
     }
 }
 
-private func runPreparationPlanBindingTests(peer:NativeControlPeer)throws {
+private func runPreparationPlanBindingTests(peer:NativeControlPeer,transientBeforeCapture:Bool=false)throws {
     let directory=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer {try? FileManager.default.removeItem(at:directory)}
     let journal=try Journal(directory:directory),job=UUID().uuidString.lowercased(),other=UUID().uuidString.lowercased()
@@ -157,6 +158,16 @@ private func runPreparationPlanBindingTests(peer:NativeControlPeer)throws {
     let prepared=try reply.get(),now=HostResources.nowMilliseconds()
     do{_=try WorkerPreparationBinding.capture(plan:plan,journal:journal,prepared:prepared,now:now);fatalError("Uncheckpointed preparation became bound")}catch RuntimeError.identity {}
     guard try journal.observePreparationRegistration(job:job,attempt:0,scope:scope,peer:peer,sample:prepared.registration,now:now) else {fatalError("Original preparation identity not stored")}
+    if transientBeforeCapture {
+        let sibling=UUID().uuidString.lowercased()
+        try journal.claim(job:sibling,attempt:0,model:scope.canonicalModel)
+        try journal.complete(job:sibling,attempt:0)
+        do { _=try WorkerPreparationBinding.capture(plan:plan,journal:journal,prepared:prepared,now:now);fatalError("First capture reused preparation after transient sibling") }
+        catch RuntimeError.identity {}
+        _=try WorkerPreparationBinding.captureForNonDispatch(plan:plan,journal:journal,registration:prepared.registration)
+        guard try journal.unresolvedCount()==1,source.counts.0==1,source.counts.1==1 else {throw JournalError.invalid}
+        return
+    }
     let binding=try WorkerPreparationBinding.capture(plan:plan,journal:journal,prepared:prepared,now:now)
     try binding.validate(plan:plan,scope:scope,journal:journal,now:now)
     guard binding.rootSequence==UInt64.max,binding.launchNonce==plan.nonce else {fatalError("Original plan/root identity lost")}
