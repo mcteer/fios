@@ -19,7 +19,7 @@ enum StoppedArtifactBackup {
             guard lstat(url.path,&value)==0,value.st_mode&S_IFMT==S_IFDIR,value.st_uid==geteuid(),value.st_mode&0o077==0 else {throw JournalError.invalid}
         }
         func openPrivate(_ url:URL,maximum:Int64)throws->(Int32,Int64) {
-            let fd=open(url.path,O_RDONLY|O_NOFOLLOW|O_CLOEXEC)
+            let fd=open(url.path,O_RDONLY|O_NOFOLLOW|O_CLOEXEC|O_NONBLOCK)
             guard fd>=0 else {throw JournalError.invalid}
             var value=stat()
             guard fstat(fd,&value)==0,value.st_mode&S_IFMT==S_IFREG,value.st_nlink==1,value.st_uid==geteuid(),value.st_mode&0o077==0,value.st_size>=0,value.st_size<=maximum else {close(fd);throw JournalError.invalid}

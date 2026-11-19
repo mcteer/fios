@@ -122,6 +122,18 @@ func runBackupTests() throws {
     try JSONSerialization.data(withJSONObject:unknown).write(to:indexPath)
     do {_=try ArtifactStore(directory:state.appendingPathComponent("artifacts"),availableBytes:{100<<30});fatalError("Unknown artifact ownership fields ignored")} catch ArtifactError.invalid {}
     try indexBefore.write(to:indexPath)
+    do {
+        let savedIndex=root.appendingPathComponent("original-index")
+        try FileManager.default.moveItem(at:indexPath,to:savedIndex)
+        defer {try? FileManager.default.removeItem(at:indexPath);try? FileManager.default.moveItem(at:savedIndex,to:indexPath)}
+        guard mkfifo(indexPath.path,0o600)==0 else {throw JournalError.storage}
+        let destination=root.appendingPathComponent("nonregular-index")
+        do {_=try StoppedStateBackup.create(directory:state,destination:destination);fatalError("FIFO index accepted as stopped artifact metadata")}
+        catch JournalError.invalid {}
+        guard !FileManager.default.fileExists(atPath:destination.appendingPathComponent("backup.json").path) else {
+            fatalError("Invalid artifact index published a sealed backup")
+        }
+    }
     let sourceBlob=state.appendingPathComponent("artifacts/"+artifact+".blob")
     let wrongPayload=Data(repeating:0,count:payload.count)
     try wrongPayload.write(to:sourceBlob)
