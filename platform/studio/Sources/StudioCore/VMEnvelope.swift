@@ -36,7 +36,7 @@ enum VMEnvelope {
               Set(context.machineKernels.map(\.identityHash))==context.machineIDsBefore,
               context.machineKernels.allSatisfy({hash($0.identityHash) && $0.bootHash==sample.bootHash && fresh($0.sampledAt)}),
               fresh(sample.sampledAt),fresh(context.configurationSampledAt),fresh(context.topologyBeforeAt),fresh(context.topologyAfterAt),
-              context.topologyBeforeAt<=sample.sampledAt+1000,context.topologyAfterAt>=sample.sampledAt-1000 else {return nil}
+              context.topologyBeforeAt<=sample.sampledAt,sample.sampledAt<=context.topologyAfterAt else {return nil}
         let identity=["fios-vm-envelope-v1",context.nativeProfileHash,context.expectedBootHash,String(context.configuredCap),String(context.physical)]+context.machineIDsBefore.sorted()
         let runtimeHash=SHA256.hash(data:Data(identity.joined(separator:"\0").utf8)).map {String(format:"%02x",$0)}.joined()
         let earliest=([sample.sampledAt,context.configurationSampledAt,context.topologyBeforeAt,context.topologyAfterAt]+context.machineKernels.map(\.sampledAt)).min()!

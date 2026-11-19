@@ -43,14 +43,19 @@ func runPythonFactoryTests() throws {
     do {_=try WorkerMetadata.decode(JSONSerialization.data(withJSONObject:preparationMetadata),policySHA256:factory.metadata.policy_sha256);fatalError("Legacy metadata silently acquired preparation capability")}catch RuntimeError.identity {}
     print("PASS: exact legacy metadata2 and scoped-preparation metadata3 contracts; unsupported or mixed versions refuse")
     guard factory.metadata.policy_input_units==fixture["policy_input_units"] as? Int else { fatalError("Installed policy units diverged from cross-language fixture") }
-    try runNeverSpawnedWorkerTests(factory:factory)
-    try runHandoffNeverSpawnedTests(factory:factory)
-    try runHandoffPreparationFailureTests(factory:factory)
-    try runUnusedPreparationCancellationTest(factory:factory)
-    try runPreparationNonDispatchTests(factory:factory)
-    try runPristinePreparationBrokerCancellationTest(factory:factory)
-    try runUnusedFactoryWithdrawalTests(factory:factory)
-    try runPreparationFactoryNeverSpawnedTests(factory:factory)
+    func stage(_ name:String,_ check:(PythonWorkerFactory)throws->Void)throws {
+        progress(name)
+        try check(factory)
+    }
+    try stage("never-spawned",runNeverSpawnedWorkerTests)
+    try stage("handoff never-spawned",runHandoffNeverSpawnedTests)
+    try stage("preparation failure",runHandoffPreparationFailureTests)
+    try stage("unused preparation cancellation",runUnusedPreparationCancellationTest)
+    try stage("preparation non-dispatch",runPreparationNonDispatchTests)
+    try stage("pristine preparation cancellation",runPristinePreparationBrokerCancellationTest)
+    try stage("unused factory withdrawal",runUnusedFactoryWithdrawalTests)
+    try stage("preparation never-spawned",runPreparationFactoryNeverSpawnedTests)
+    progress("ordinary pipe worker")
     do {
         _=try PythonWorkerFactory(invocation:invocation.path,executableSHA256:String(repeating:"0",count:64),policySHA256:fixture["policy_sha256"] as! String)
         fatalError("Wrong interpreter hash accepted")
