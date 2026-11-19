@@ -68,6 +68,10 @@ func runTaskCompletionTests()throws {
         throw JournalError.invalid
     } catch TaskCommandError.unauthorized {}
     for (job,expected,unresolved) in [(id,"removed",1),(stillRunning,"reconciling",0)] {
+        do {
+            _=try completionStatus(commands,id:job,token:otherToken)
+            throw JournalError.invalid
+        } catch TaskCommandError.unauthorized {}
         let state=try completionStatus(commands,id:job,token:token)
         guard state["state"] as? String==expected,state["unresolved_managed_requests"] as? Int==unresolved,
               state["event"]==nil,state["code_complete"]==nil,state["exit_verified"]==nil else {throw JournalError.invalid}
