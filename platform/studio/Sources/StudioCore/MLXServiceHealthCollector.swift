@@ -33,21 +33,30 @@ final class ServiceHealthCollector:@unchecked Sendable {
         lock.lock();defer {lock.unlock()}
         let began=uptime(),collectedAt=now()
         guard began.isFinite,began>=0,(0...ActivityPolicy.maximumTimestamp).contains(collectedAt) else {return nil}
+        var previousWall=collectedAt,previousTick=began
+        // A slow earlier step cannot start another observation after the
+        // collection budget. Compare both clocks between dependent steps.
+        func checkpoint()->Int64? {
+            let wall=now(),tick=uptime()
+            guard (previousWall...ActivityPolicy.maximumTimestamp).contains(wall),tick.isFinite,
+                  tick>=previousTick,tick-began<4 else {return nil}
+            previousWall=wall;previousTick=tick
+            return wall
+        }
         let before=presence()
-        guard case .present(let identity)=before.presence,identity.valid,
-              let firstAt=before.sampledAt,(0...ActivityPolicy.maximumTimestamp).contains(firstAt),
+        guard let firstFinished=checkpoint(),case .present(let identity)=before.presence,identity.valid,
+              let firstAt=before.sampledAt,(0...firstFinished).contains(firstAt),
               (-1000...5000).contains(collectedAt-firstAt) else {return nil}
         let originalListener=listener?(identity)
-        guard listener==nil || originalListener != nil else {return nil}
+        guard (listener==nil || originalListener != nil),checkpoint() != nil else {return nil}
         let state=health()
-        let after=presence(),currentListener=listener?(identity)
-        let finished=now(),elapsed=uptime()-began
-        guard case .present(let current)=after.presence,current==identity,
+        guard checkpoint() != nil else {return nil}
+        let after=presence()
+        guard let lastFinished=checkpoint(),case .present(let current)=after.presence,current==identity,
               after.reviewDigest==before.reviewDigest,after.uid==before.uid,
-              let lastAt=after.sampledAt,lastAt>=firstAt,lastAt<=finished,
-              finished>=collectedAt,finished<=ActivityPolicy.maximumTimestamp,
-              elapsed.isFinite,elapsed>=0,elapsed<4 else {return nil}
-        guard listener==nil || currentListener==originalListener else {return nil}
+              let lastAt=after.sampledAt,lastAt>=firstAt,lastAt<=lastFinished else {return nil}
+        let currentListener=listener?(identity)
+        guard let finished=checkpoint(),listener==nil || currentListener==originalListener else {return nil}
         let original=min(collectedAt,firstAt)
         guard finished-original<=5000 else {return nil}
         return ServiceObservation(identity:identity,responding:state == .healthy,

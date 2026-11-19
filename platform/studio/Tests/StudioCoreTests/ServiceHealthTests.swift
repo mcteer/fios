@@ -61,6 +61,22 @@ func runServiceHealthTests() throws {
         return socket
     },now:{listenerStamp},uptime:{listenerTime})
     guard slowListener.capture(sessionReady:true,credentialsReady:true)==nil,slowCalls==2 else {fatalError("Final listener observation escaped total collection budget")}
+    var phaseUptime:TimeInterval=1,phaseCalls=0
+    let slowPresence=MLXServiceHealthCollector(presence:{phaseUptime=5;return sample},health:{phaseCalls+=1;return .healthy},now:{1000},uptime:{phaseUptime})
+    guard slowPresence.capture(sessionReady:true,credentialsReady:true)==nil,phaseCalls==0 else {
+        fatalError("Exhausted presence phase still started service health probe")
+    }
+    phaseUptime=1;phaseCalls=0
+    let slowProbe=MLXServiceHealthCollector(presence:{phaseCalls+=1;return sample},health:{phaseUptime=5;return .healthy},now:{1000},uptime:{phaseUptime})
+    guard slowProbe.capture(sessionReady:true,credentialsReady:true)==nil,phaseCalls==1 else {
+        fatalError("Exhausted health probe still started second census")
+    }
+    var phaseWall:Int64=1000
+    phaseCalls=0
+    let rewind=MLXServiceHealthCollector(presence:{phaseWall=999;return sample},health:{phaseCalls+=1;return .healthy},now:{phaseWall},uptime:{1})
+    guard rewind.capture(sessionReady:true,credentialsReady:true)==nil,phaseCalls==0 else {
+        fatalError("Service collection started health after intermediate wall-clock rollback")
+    }
     let loading=MLXServiceHealthCollector(presence:{sample},health:{.loading},now:{1000},uptime:{1})
     guard let pending=loading.capture(sessionReady:true,credentialsReady:true),!pending.responding,
           pending.credentialsReady else {fatalError("Loading became readiness or lost known credentials")}
