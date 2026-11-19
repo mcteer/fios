@@ -561,6 +561,13 @@ func runCleanupStatusRecoveryTests() throws {
           controller.cleanupStatus(now:98000)["manager_observation_age_ms"] as? Int64==500 else {
         fatalError("Failed cleanup tick redated observation or lost create custody")
     }
+    let cleanup=controller.cleanupObservation(now:98000)
+    let workload=WorkloadTelemetry.sample(journal:journal,artifactBytes:0,artifactJobs:0,now:98000,
+        cleanupPending:cleanup.pending,cleanupWaitMilliseconds:cleanup.wait,cleanupSampledAt:cleanup.observedAt)
+    guard workload?.sampledAt==98000,workload?.cleanupSampledAt==97500,workload?.cleanupPending==1,
+          workload?.unresolvedRecords==1,workload?.uncertainRecords==1 else {
+        fatalError("Workload projection lost the independent cleanup or inference observation")
+    }
     runtime.storageContinuityUnknown=true
     try tick(99500)
     try tick(100000)
