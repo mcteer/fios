@@ -384,6 +384,15 @@ func runVMControllerTests() throws {
         try controller.tick(now:now,sample:sample(now),admission:&admission,transportReady:{_ in true},cancelModel:{_ in})
     }
     guard controller.vmAvailable(now:20500)==nil,controller.vmEpoch(now:20500)==nil else {fatalError("Failed source retained verified VM capacity")}
+    runtime.resourceFailure=false
+    for now:Int64 in [21000,21500,22000,22500,23000] {
+        runtime.resourceNow=now
+        try controller.tick(now:now,sample:sample(now),admission:&admission,transportReady:{_ in true},cancelModel:{_ in})
+    }
+    guard controller.vmAvailable(now:23000)==4<<30 else {fatalError("Expected fresh VM capacity before revocation")}
+    try journal.transitionJob(id:id,to:.revoking,now:23001)
+    try controller.tick(now:23001,sample:sample(23001),admission:&admission,transportReady:{_ in true},cancelModel:{_ in})
+    guard controller.vmAvailable(now:23001)==nil else {fatalError("VM cache survived original target revocation")}
     print("PASS: serialized VM coordinator polls owned running targets at2s, publishes only fresh envelopes and immediately invalidates failed/stale resource authority (fake runtime telemetry)")
 }
 

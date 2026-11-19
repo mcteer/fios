@@ -16,9 +16,9 @@ final class JobController {
     private var revokingSince:[String:Int64]=[:]
     private var storageContinuityUnknown=Set<String>()
     private let collectVM:Bool
-    private var resourcePending:(job:String,id:String)?
+    private var resourcePending:(job:String,id:String,leaseUntil:Int64)?
     private var lastResource:Int64 = -2000
-    private var latestVM:VMKernelSample?
+    private var latestVM:(sample:VMKernelSample,job:String,id:String,leaseUntil:Int64)?
     private var vmProbes=Set<String>()
     init(journal:Journal,executor:any SandboxExecuting,collectVM:Bool=false) {
         self.journal=journal;self.executor=executor;self.collectVM=collectVM;lifecycle=SandboxLifecycle(journal:journal)
@@ -50,15 +50,16 @@ final class JobController {
         vmProbes.insert(id)
     }
     func vmAvailable(now:Int64)->UInt64? {
-        guard collectVM,now>=previous,let envelope=latestVM?.envelope else {return nil}
+        guard collectVM,now>=previous,let latestVM,now<latestVM.leaseUntil,
+              let envelope=latestVM.sample.envelope else {return nil}
         return VMResources.remaining(envelope,expectedRuntimeHash:envelope.runtimeHash,now:now)
     }
     func applyingVM(to host:ResourceSample,now:Int64)->ResourceSample {
-        guard let available=vmAvailable(now:now),let envelope=latestVM?.envelope else {return host.replacingVM(nil)}
+        guard let available=vmAvailable(now:now),let envelope=latestVM?.sample.envelope else {return host.replacingVM(nil)}
         return host.replacingVM(available,sampledAt:envelope.sampledAt)
     }
-    func vmSampledAt(now:Int64)->Int64? {vmAvailable(now:now)==nil ? nil : latestVM?.envelope?.sampledAt}
-    func vmEpoch(now:Int64)->String? {vmAvailable(now:now)==nil ? nil : latestVM?.envelope?.runtimeHash}
+    func vmSampledAt(now:Int64)->Int64? {vmAvailable(now:now)==nil ? nil : latestVM?.sample.envelope?.sampledAt}
+    func vmEpoch(now:Int64)->String? {vmAvailable(now:now)==nil ? nil : latestVM?.sample.envelope?.runtimeHash}
     private func dispatch(_ command:SandboxCommand,job:String) throws {
         if case .inspect=command,let last=lastInspect[job],previous>=last,previous-last<2000 {return}
         do {
@@ -69,18 +70,22 @@ final class JobController {
     }
     func tick(now:Int64,sample:ResourceSample,admission:inout AdmissionPolicy,
               inputReady:(String)->Bool={_ in true},transportReady:(String)->Bool,cancelModel:(String)throws->Void) throws {
+        var candidateVM=latestVM
+        latestVM=nil // Publish only after a successful tick and durable target recheck.
         guard (0...ActivityPolicy.maximumTimestamp).contains(now) else { throw JournalError.invalid }
         let managedSandboxes=try journal.sandboxRecords()
         let sandboxIDs=Set(managedSandboxes.filter {!$0.removalProven}.map { $0.configuration.job })
         for sandbox in managedSandboxes where !sandbox.removalProven {try admission.restoreSandbox(sandbox.configuration)}
         let rollback=now<previous;previous=max(previous,now)
-        if rollback {latestVM=nil}
+        if rollback {candidateVM=nil}
         for result in executor.drainResources() {
             guard let pending=resourcePending,pending.job==result.job,pending.id==result.runtimeID else {throw JournalError.conflict}
             resourcePending=nil
-            if !rollback,case .success(let value)=result.result,let envelope=value.envelope,
-               VMResources.remaining(envelope,expectedRuntimeHash:envelope.runtimeHash,now:now) != nil {latestVM=value}
-            else {latestVM=nil}
+            if !rollback,now<pending.leaseUntil,case .success(let value)=result.result,let envelope=value.envelope,
+               VMResources.remaining(envelope,expectedRuntimeHash:envelope.runtimeHash,now:now) != nil {
+                candidateVM=(value,pending.job,pending.id,pending.leaseUntil)
+            }
+            else {candidateVM=nil}
         }
         let safe = !rollback && admission.resourcesSafe(sample,now:now,needsVM:true)
         let probeSafe = !rollback && admission.resourcesSafe(sample,now:now,needsVM:false)
@@ -155,9 +160,9 @@ final class JobController {
             }),let id=target.runtimeID,let job=jobIndex[target.configuration.job] {
                 do {
                     try executor.submitResources(configuration:target.configuration,id:id,leaseUntil:job.lease.deadline)
-                    resourcePending=(job.id,id)
+                    resourcePending=(job.id,id,job.lease.deadline)
                 } catch AdmissionError.capacity {} // No operation was enqueued.
-                catch {latestVM=nil}
+                catch {candidateVM=nil}
             }
         }
         var pendingCleanup=Set<String>()
@@ -212,6 +217,13 @@ final class JobController {
                 }
             }
             if let command=try lifecycle.next(job:id,now:now,resourcesSafe:!rollback && (safeFor(id) || id != victim)) { try dispatch(command,job:id) }
+        }
+        if let observed=candidateVM {
+            if now<observed.leaseUntil,
+               try journal.jobs().contains(where:{$0.id==observed.job && $0.state == .running && $0.lease.deadline==observed.leaseUntil}),
+               try journal.sandboxRecords().contains(where:{$0.configuration.job==observed.job && !$0.removalProven && $0.runtimeID==observed.id}) {
+                latestVM=observed
+            }
         }
         revokingSince=revokingSince.filter{pendingCleanup.contains($0.key)}
         if now>=lastCycle+2000 { lastCycle=now }
