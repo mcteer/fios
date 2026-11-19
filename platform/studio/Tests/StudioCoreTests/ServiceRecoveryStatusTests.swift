@@ -53,5 +53,15 @@ func runServiceRecoveryStatusTests() throws {
           status(601000)["budget_state"] as? String=="pending",
           try recovery.plan(service:.mlx,desired:.running,observation:current,now:601000,tick:601000)==nil else {throw ServiceError.invalid}
     try recovery.notSent(service:.mlx,id:renewed.id)
-    print("PASS: ordinary service recovery status reports pending, per-service budget wait and expiry")
+    guard try recovery.plan(service:.mlx,desired:.running,observation:current,now:600999,tick:600999)==nil,
+          status(601000)["budget_state"] as? String=="clock_fenced",
+          status(601000)["budget_wait_ms"] is NSNull,
+          try recovery.plan(service:.mlx,desired:.running,observation:current,now:601000,tick:601000)==nil else {throw ServiceError.invalid}
+    let freshHealthy=ServiceObservation(identity:healthy.identity,responding:true,sessionReady:true,credentialsReady:true,
+        nativeIdle:nil,runtimeUnmanaged:nil,sampledAt:601000)
+    guard ServiceStatusPolicy.observed(desired:.running,observation:freshHealthy,launchPending:false,now:601000) == .ready,
+          status(601000)["budget_state"] as? String=="clock_fenced" else {throw ServiceError.invalid}
+    let persisted=try JSONSerialization.jsonObject(with:Data(contentsOf:directory.appendingPathComponent("service-recovery.json"))) as? [String:Any]
+    guard persisted?["fenced"] as? Bool==true else {throw ServiceError.invalid}
+    print("PASS: ordinary service recovery status reports pending, per-service budget wait and expiry independently of the persisted clock fence")
 }
