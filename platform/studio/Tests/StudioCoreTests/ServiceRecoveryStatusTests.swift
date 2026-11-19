@@ -71,9 +71,11 @@ private func checkRecoveryClockFenceReopen(directory:URL,hash:String)throws {
     let pins:[ManagedService:String]=[.mlx:hash,.orbstack:hash]
     let absent=ServiceObservation(identity:nil,responding:false,sessionReady:true,credentialsReady:true,
         nativeIdle:nil,runtimeUnmanaged:nil,sampledAt:2000)
-    let original:ServiceLaunchCommand
+    let original:ServiceLaunchCommand,inference=UUID().uuidString.lowercased()
     do {
         let journal=try Journal(directory:directory)
+        try journal.claim(job:inference,attempt:0,model:"fixture/model")
+        try journal.markUncertain(job:inference,attempt:0)
         let recovery=try ServiceRecoveryController(journal:journal,approvedHashes:pins)
         guard let planned=try recovery.plan(service:.mlx,desired:.running,observation:absent,now:2000,tick:2000) else {throw ServiceError.invalid}
         original=planned
@@ -88,4 +90,8 @@ private func checkRecoveryClockFenceReopen(directory:URL,hash:String)throws {
           cancel.operation == .cancel,cancel.command.id==original.id,
           try recovery.next(service:.orbstack,desired:.running,observation:absent,now:2000,tick:2000)==nil,
           recovery.summary(service:.mlx,tick:2000)["budget_state"] as? String=="clock_fenced" else {throw ServiceError.invalid}
+    try recovery.receive(cancel,result:.notSent)
+    guard try recovery.next(service:.mlx,desired:.running,observation:absent,now:2001,tick:2001)==nil,
+          recovery.summary(service:.mlx,tick:2001)["budget_state"] as? String=="clock_fenced",
+          try journal.unresolvedCount(job:inference)==1,try journal.uncertainCount()==1 else {throw ServiceError.invalid}
 }
