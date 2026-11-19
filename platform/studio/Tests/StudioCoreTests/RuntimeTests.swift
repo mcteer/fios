@@ -16,6 +16,17 @@ func runRuntimeTests() throws {
     guard checks==1,try runtime.run(arguments:[],timeout:2).status==0 else {
         fatalError("Refused runtime publication did not return command capacity")
     }
+    var expiredChecks=0
+    do {
+        _=try runtime.runChecked(arguments:[],timeout:0.5,checkpoint:{
+            expiredChecks+=1
+            Thread.sleep(forTimeInterval:0.51)
+        })
+        fatalError("Runtime publication returned success after its original deadline")
+    } catch RuntimeError.deadline {}
+    guard expiredChecks==1,try runtime.run(arguments:[],timeout:2).status==0 else {
+        fatalError("Expired publication checkpoint did not return command capacity")
+    }
     // A silent child must not keep the actor blocked in output collection.
     let sleepURL=URL(fileURLWithPath:"/bin/sleep")
     let sleepDigest=SHA256.hash(data:try Data(contentsOf:sleepURL)).map {String(format:"%02x",$0)}.joined()
