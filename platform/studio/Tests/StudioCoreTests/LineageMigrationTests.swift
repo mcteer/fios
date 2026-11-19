@@ -48,5 +48,31 @@ func runLineageMigrationTests()throws {
     let restoredJournal=try Journal(directory:restored)
     guard restoredJournal.migrationHeld,try restoredJournal.unresolvedCount()==1,try restoredJournal.uncertainCount()==1,
           try Data(contentsOf:backup.appendingPathComponent("state.sqlite"))==original else {throw JournalError.invalid}
-    print("PASS: explicit copy-only schema8→9 migration and rebackup/restore retain exact scope, unresolved uncertainty and durable maintenance; original backup unchanged")
+    let orphan=UUID().uuidString.lowercased(),hash=String(repeating:"c",count:64)
+    let configuration=try SandboxConfiguration(job:orphan,nonce:hash,image:"sha256:"+hash,memory:512<<20,cpus:1)
+    let payload=try JSONEncoder().encode(SandboxRecord(configuration:configuration)).map{String(format:"%02x",$0)}.joined()
+    let bad=root.appendingPathComponent("orphan-backup"),refused=root.appendingPathComponent("orphan-migration")
+    try FileManager.default.copyItem(at:backup,to:bad)
+    let badDB=bad.appendingPathComponent("state.sqlite"),badManifest=bad.appendingPathComponent("backup.json")
+    do {
+        var db:OpaquePointer?
+        guard sqlite3_open_v2(badDB.path,&db,SQLITE_OPEN_READWRITE,nil)==SQLITE_OK else {throw JournalError.storage}
+        defer {sqlite3_close(db)}
+        let sql="INSERT INTO sandboxes(job,payload) VALUES('\(orphan)',CAST(X'\(payload)' AS TEXT))"
+        guard sqlite3_exec(db,sql,nil,nil,nil)==SQLITE_OK else {throw JournalError.storage}
+    }
+    let badBytes=try Data(contentsOf:badDB)
+    manifest["journal_bytes"]=badBytes.count
+    manifest["journal_sha256"]=SHA256.hash(data:badBytes).map{String(format:"%02x",$0)}.joined()
+    let badMetadata=try JSONSerialization.data(withJSONObject:manifest,options:[.sortedKeys])
+    try badMetadata.write(to:badManifest)
+    let badDigest=SHA256.hash(data:badMetadata).map{String(format:"%02x",$0)}.joined()
+    _=try StoppedStateBackup.verify(directory:bad,expectedSHA256:badDigest,journalSchema:8)
+    do {
+        _=try StoppedStateBackup.migrateEight(directory:bad,expectedSHA256:badDigest,destination:refused)
+        fatalError("Migration published orphan sandbox custody")
+    } catch JournalError.invalid {}
+    guard !FileManager.default.fileExists(atPath:refused.path),try Data(contentsOf:badDB)==badBytes,
+          try Data(contentsOf:badManifest)==badMetadata else {throw JournalError.conflict}
+    print("PASS: explicit copy-only schema8→9 migration retains exact scope and uncertainty; orphan sandbox backup refused without publication or source mutation")
 }
