@@ -12,6 +12,8 @@ struct VMKernelSample:Sendable {
     let bootHash:String
     var envelope:VMResourceObservation? = nil
 
+    // Validate payload coherence only. The caller still binds the reply to its
+    // specific target, original lease and authorized collector.
     func validatedEnvelope(physical:UInt64,now:Int64)->VMResourceObservation? {
         guard let envelope,(0...WireScalar.maximumTimestamp).contains(now),
               total>0,total<=physical,free<=total,WireScalar.sha256(bootHash),

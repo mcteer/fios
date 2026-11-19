@@ -99,7 +99,12 @@ public enum ManagerRuntime {
             if activeExecution?.vmSource == .cached {return sample}
             return jobs.applyingVM(to:sample,now:now)
         }
-        func vmEpoch(now:Int64)->String? {readOnlyVM?.epoch(now:now) ?? jobs.vmEpoch(now:now)}
+        func vmEpoch(now:Int64)->String? {
+            // Match applyingVM's source selection, including an unavailable result.
+            if let readOnlyVM {return readOnlyVM.epoch(now:now)}
+            if activeExecution?.vmSource == .cached {return nil}
+            return jobs.vmEpoch(now:now)
+        }
         func timestamp()->Int64 { Int64(Date().timeIntervalSince1970*1000) }
         try audit.record(.started,now:timestamp())
         defer { try? audit.record(.stopped,now:timestamp()) }
