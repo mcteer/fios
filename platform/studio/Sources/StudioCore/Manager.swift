@@ -233,8 +233,7 @@ public enum ManagerRuntime {
                               let desired=ServiceDesired(rawValue:try journal.desired(service:"mlx")) {
                         let observation=approvedServiceObservation(.mlx)
                         let failed=observation.map {value in value.identity==receipt.identity && !value.responding &&
-                            value.sessionReady && value.credentialsReady && value.health == .unavailable && value.sampledAt>=0 &&
-                            (-1000...5000).contains(sampledAt-value.sampledAt)} ?? false
+                            value.sessionReady && value.credentialsReady && value.health == .unavailable && value.fresh(now:sampledAt)} ?? false
                         if desired == .stopped || (desired == .running && failed),
                            let intent=activeServingLifecycle.intent(receipt,desired),
                            let request=try serviceRecovery.planStop(intent,now:sampledAt,tick:tick) {

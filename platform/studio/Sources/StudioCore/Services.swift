@@ -23,6 +23,10 @@ struct ServiceObservation:Sendable {
     let sampledAt:Int64
     // Retained metadata state only; it grants no lifecycle/native authority.
     var health:ServiceHealthState? = nil
+    func fresh(now:Int64)->Bool {
+        let bounds=0...WireScalar.maximumTimestamp
+        return bounds.contains(now) && bounds.contains(sampledAt) && (-1000...5000).contains(now-sampledAt)
+    }
 }
 enum ServiceAction:Equatable {
     case observe, launch, quit(ServiceIdentity), forceQuit(ServiceIdentity)
@@ -36,9 +40,7 @@ struct ServicePolicy {
     private let uptime:@Sendable()->TimeInterval
     init(uptime:@escaping @Sendable()->TimeInterval={ProcessInfo.processInfo.systemUptime}) {self.uptime=uptime}
     func action(service:ManagedService,desired:ServiceDesired,observation:ServiceObservation,now:Int64) throws -> ServiceAction {
-        guard now>=0,now<=ActivityPolicy.maximumTimestamp,observation.sampledAt>=0,
-              observation.sampledAt<=ActivityPolicy.maximumTimestamp,
-              (-1000...5000).contains(now-observation.sampledAt) else { throw ServiceError.stale }
+        guard observation.fresh(now:now) else { throw ServiceError.stale }
         if let identity=observation.identity, !identity.valid { throw ServiceError.invalid }
         guard observation.identity != nil || !observation.responding else {throw ServiceError.invalid}
         if desired == .running && observation.identity == nil {

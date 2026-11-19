@@ -332,7 +332,7 @@ func runPreparationFactoryTransportTests(factory:PythonWorkerFactory,base:String
             NativeRegistryModelFact(model:"fixture/idle-other",readyDeclared:true,transitioning:false,uncertain:false,claimable:true,counts:.zero)]))
         guard let observation=try preparation.observation(lineage:lineage,activity:activity,journal:journal,sourceCoverage:.all_clients,now:now) else {throw RuntimeError.identity}
         let subject=try NativePreparationSubject(payload:["job_id":job,"attempt":0,"root_sequence":String(UInt64.max),"correlation_id":preparation.correlationID])
-        if available {try observation.encoded(subject:subject,managerEpoch:epoch,journal:journal,now:now).write(to:cache)}else if FileManager.default.fileExists(atPath:cache.path) {try FileManager.default.removeItem(at:cache)}
+        if available {try observation.encoded(subject:subject,managerEpoch:epoch,journal:journal,now:now).write(to:cache,options:.atomic)}else if FileManager.default.fileExists(atPath:cache.path) {try FileManager.default.removeItem(at:cache)}
         let started=Int64(ProcessInfo.processInfo.systemUptime*1000)
         let operation=try factory.beginPreparationStart(binding:dispatch,plan:plan,preparation:preparation,observation:observation,journal:journal,started:started,now:now)
         var transport:Result<StartedPythonWorker,WorkerStartFailure>?
@@ -491,7 +491,7 @@ func runPreparationBrokerTests(factory:PythonWorkerFactory,base:String,guardDire
             guard sqlite3_exec(writer,"ROLLBACK",nil,nil,nil)==SQLITE_OK else {throw JournalError.storage}
         }
         let subject=try NativePreparationSubject(payload:["job_id":id,"attempt":0,"root_sequence":String(UInt64.max),"correlation_id":scope.nativeRequestCorrelationID(job:id,attempt:0)])
-        var posts:Int?,completed=false
+        var posts:Int?,completed=false,failure:String?
         let finishBy=ProcessInfo.processInfo.systemUptime+10
         while broker.active(job:id) && ProcessInfo.processInfo.systemUptime<finishBy {
             let now=HostResources.nowMilliseconds()
@@ -501,10 +501,11 @@ func runPreparationBrokerTests(factory:PythonWorkerFactory,base:String,guardDire
                 canonicalModel:binding.canonicalModel,nativeModel:binding.nativeModel,nativeSnapshot:unknown,nativeCompatibilityAccepted:true,apiKey:nil)
             guard try !NativeAdmission.permitsDispatch(current,now:now) else {fatalError("Scoped broker raised generic unknown activity")}
             let events=try broker.poll(now:now,uptime:Int64(ProcessInfo.processInfo.systemUptime*1000),admission:&admission,source:{_ in current})
-            if let sample=broker.preparationObservation(subject,now:now),let data=try? sample.encoded(subject:subject,managerEpoch:epoch,journal:journal,now:now) {try data.write(to:cache)}
+            if let sample=broker.preparationObservation(subject,now:now),let data=try? sample.encoded(subject:subject,managerEpoch:epoch,journal:journal,now:now) {try data.write(to:cache,options:.atomic)}
             for event in events[id] ?? [] {
                 if case .usage(let count,_)=event {posts=count}
                 if case .complete=event {completed=true}
+                if case .failed(let code)=event {failure=code}
             }
             usleep(5000)
         }
@@ -512,7 +513,7 @@ func runPreparationBrokerTests(factory:PythonWorkerFactory,base:String,guardDire
               try journal.requestCount(job:id)==1,try journal.inferenceScope(job:id,attempt:0)?.state == .uncertain else {fatalError("Preparation broker lost local/native separation")}
         if scenario == "healthy" {
             guard completed,posts==1,native.counts==[1,1,1,0] else {
-                fatalError("Preparation broker did not launch exact once-only original scope: completed=\(completed), posts=\(posts.map(String.init) ?? "none"), reserve/lineage/consume/withdraw=\(native.counts)")
+                fatalError("Preparation broker did not launch exact once-only original scope: completed=\(completed), posts=\(posts.map(String.init) ?? "none"), failure=\(failure ?? "none"), reserve/lineage/consume/withdraw=\(native.counts)")
             }
         }else {
             let limit=ProcessInfo.processInfo.systemUptime+1

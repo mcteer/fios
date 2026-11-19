@@ -69,9 +69,7 @@ enum ServiceStatusPolicy {
         }
     }
     static func observed(desired:ServiceDesired,observation:ServiceObservation?,launchPending:Bool,now:Int64,restartWaiting:Bool=false)->ServiceObserved {
-        guard let observation,now>=0,now<=ActivityPolicy.maximumTimestamp,
-              observation.sampledAt>=0,observation.sampledAt<=ActivityPolicy.maximumTimestamp,
-              (-1000...5000).contains(now-observation.sampledAt) else {return .unknown}
+        guard let observation,observation.fresh(now:now) else {return .unknown}
         if let identity=observation.identity {
             guard identity.valid else {return .unknown}
             if desired == .running && !observation.responding && !observation.sessionReady {return .waiting_session}
