@@ -130,6 +130,14 @@ func runResourceObservationTests() throws {
           quality(incomplete,"disk_free")=="observed",quality(incomplete,"cpu")=="observed" else {
         fatalError("Short kernel reads fabricated host resources or hid independent signals")
     }
+    let otherwiseSafe=ResourceSample(sampledAt:10000,physical:64<<30,available:32<<30,vmAvailable:nil,
+                                      diskFree:100<<30,cpu:0,pressure:.normal,thermal:.nominal,cpuSampledAt:10000)
+    let pressureUnknown=ResourceSample(sampledAt:10000,physical:64<<30,available:32<<30,vmAvailable:nil,
+                                        diskFree:100<<30,cpu:0,pressure:shortPressure,thermal:.nominal,cpuSampledAt:10000)
+    guard AdmissionPolicy().resourcesSafe(otherwiseSafe,now:10000,needsVM:false),
+          !AdmissionPolicy().resourcesSafe(pressureUnknown,now:10000,needsVM:false) else {
+        fatalError("Unknown pressure supplied resource admission despite otherwise safe host readings")
+    }
     let bytes=try JSONSerialization.data(withJSONObject:["resources":rejected.resources,"resource_observation":rejected.observation])
     guard bytes.count<8192 else {fatalError("Resource export exceeded bounded metadata")}
     print("PASS: per-signal age/availability, independent host/GPU/VM timing, exact freshness edges, observed zero/power and invalid/unbound capacity refusal; no native-idle authority")
