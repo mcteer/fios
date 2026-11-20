@@ -271,9 +271,8 @@ public enum ManagerRuntime {
                         }
                     }
                 }
-                let cpuSampledAt=timestamp()
-                let cpu=cpuSampler.observe(ticks:CPUSampler.readTicks(),now:cpuSampledAt)
-                resourceSample=applyingVM(to:activeExecution?.sample(now:sampledAt,cpu:cpu) ?? HostResources.sample(statePath:directory.path,measuredCPU:cpu,measuredCPUAt:cpuSampledAt),now:sampledAt)
+                let cpu=cpuSampler.measure(now:timestamp)
+                resourceSample=applyingVM(to:activeExecution?.sample(now:sampledAt,cpu:cpu?.value) ?? HostResources.sample(statePath:directory.path,measuredCPU:cpu?.value,measuredCPUAt:cpu?.at),now:sampledAt)
                 publishResources(resourceSample,now:sampledAt)
                 let gpuObservation=GPUResources.observation()
                 gpuSampledAt=gpuObservation?.at

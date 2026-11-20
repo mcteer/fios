@@ -18,6 +18,19 @@ struct CPUSampler {
         guard total>0,deltas.allSatisfy({$0<=1_000_000}) else { return nil }
         return Double(total-deltas[Int(CPU_STATE_IDLE)])/Double(total)*100
     }
+    // Mach supplies no collection timestamp. A bounded read may use its
+    // original start, but a failed or late read must break the interval.
+    mutating func measure(now:()->Int64=HostResources.nowMilliseconds,read:()->[UInt32]?=readTicks)->(value:Double,at:Int64)? {
+        let start=now()
+        guard (clockWatermark...ActivityPolicy.maximumTimestamp).contains(start) else {previous=nil;return nil}
+        let ticks=read()
+        let end=now()
+        guard (start...ActivityPolicy.maximumTimestamp).contains(end),end-start<=5000 else {
+            _=observe(ticks:nil,now:start)
+            return nil
+        }
+        return observe(ticks:ticks,now:start).map {($0,start)}
+    }
     static func readTicks()->[UInt32]? {
         let host=mach_host_self();defer { _=mach_port_deallocate(mach_task_self_,host) }
         return readTicks {buffer,count in host_statistics(host,HOST_CPU_LOAD_INFO,buffer,&count)}

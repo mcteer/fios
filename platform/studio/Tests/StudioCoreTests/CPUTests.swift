@@ -32,6 +32,17 @@ func runCPUTests() throws {
             fatalError("Mismatched CPU kernel count became a complete tick sample")
         }
     }
+    var timed=CPUSampler()
+    func measure(_ start:Int64,_ end:Int64,_ tick:UInt32)->(value:Double,at:Int64)? {
+        var times=[start,end]
+        return timed.measure(now:{times.removeFirst()},read:{[tick,tick,tick,0]})
+    }
+    guard measure(1000,1000,1)==nil,measure(2000,7000,2)?.at==2000,
+          measure(8000,8000,3)==nil,measure(9000,14001,4)==nil,
+          measure(14002,14002,5)==nil,measure(15000,15000,6)?.at==15000,
+          measure(16000,15999,7)==nil,measure(17000,17000,8)==nil else {
+        fatalError("Late or regressed CPU read was published, redated or retained as baseline")
+    }
     var discontinuity=CPUSampler()
     _=discontinuity.observe(ticks:[1,1,1,0],now:1000)
     let short=CPUSampler.readTicks {buffer,count in buffer[0]=10;count=1;return KERN_SUCCESS}
