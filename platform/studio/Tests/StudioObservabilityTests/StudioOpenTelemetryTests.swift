@@ -161,11 +161,16 @@ final class StudioOpenTelemetryTests:XCTestCase {
         let clock=try XCTUnwrap(telemetry.collectMetrics().first{$0.name=="fios.platform.vm.sample.time"})
         XCTAssertEqual(clock.unit,"s")
         XCTAssertEqual((clock.data.points as! [DoublePointData]).first!.value,Double(now-1000)/1000)
-        telemetry.resources(ResourceSample(sampledAt:now,physical:1024,available:512,
-                                           vmAvailable:256,diskFree:4096,cpu:25,pressure:.normal,thermal:.nominal,
-                                           vmSampledAt:now-6000))
-        XCTAssertFalse(telemetry.collectMetrics().contains{$0.name=="fios.platform.vm.memory.available" && !$0.data.points.isEmpty})
-        XCTAssertFalse(telemetry.collectMetrics().contains{$0.name=="fios.platform.vm.sample.time" && !$0.data.points.isEmpty})
+        for (capacity, stamp): (UInt64?,Int64?) in [(256,now-6000),(0,now+3000),(nil,now),(0,nil)] {
+            telemetry.resources(ResourceSample(sampledAt:now,physical:1024,available:512,
+                vmAvailable:capacity,diskFree:4096,cpu:0,pressure:.normal,thermal:.nominal,vmSampledAt:stamp,cpuSampledAt:now))
+            let metrics=telemetry.collectMetrics().filter{!$0.data.points.isEmpty}
+            XCTAssertFalse(metrics.contains{$0.name.hasPrefix("fios.platform.vm.")})
+            let cpu=try XCTUnwrap(metrics.first{$0.name=="fios.platform.host.cpu.utilization"})
+            XCTAssertEqual((cpu.data.points as? [DoublePointData])?.first?.value,0)
+            let cpuClock=try XCTUnwrap(metrics.first{$0.name=="fios.platform.host.cpu.sample.time"})
+            XCTAssertEqual((cpuClock.data.points as? [DoublePointData])?.first?.value,Double(now)/1000)
+        }
     }
 
     func testInvalidHostByteCountsDoNotBecomeGauges() {
