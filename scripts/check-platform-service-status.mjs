@@ -3,8 +3,9 @@
 // No native service, runtime daemon, model or installed state is contacted.
 import assert from 'node:assert/strict';
 import {spawn,spawnSync} from 'node:child_process';
-import {mkdtempSync,readdirSync,copyFileSync,writeFileSync} from 'node:fs';
+import {mkdtempSync,readdirSync,copyFileSync,writeFileSync,readFileSync} from 'node:fs';
 import {join,resolve} from 'node:path';
+import {randomBytes,randomUUID} from 'node:crypto';
 import {setTimeout as delay} from 'node:timers/promises';
 assert.deepEqual(process.argv.slice(2),['--isolated']);assert.equal(process.platform,'darwin');assert.notEqual(process.getuid(),0);
 const root=resolve(import.meta.dirname,'..'),directory=mkdtempSync('/private/tmp/fios-009-service-status-');
@@ -151,7 +152,31 @@ try{
  assert.equal(reopened.runtime_cleanup.waiting_over_60s,false);
  assert(Number.isSafeInteger(reopened.runtime_cleanup.manager_observation_age_ms)&&reopened.runtime_cleanup.manager_observation_age_ms>=0);
  child.kill('SIGTERM');await until(()=>exited(child));assert.equal(child.exitCode,0);child=null;
- console.log(JSON.stringify({ok:true,states:modes.length,service_views:2*modes.length,aged_service_views:2,aged_combined_views:2,restarted_intent_scenarios:3,storage_continuity_refusal:1,storage_custody_survived_restart:true,native_actions:0,review_directory:directory}));
+ const workerState=join(directory,'unknown-worker');
+ let priorEpoch=null;
+ for(let launch=0;launch<2;launch++){
+  child=spawn('/usr/bin/sandbox-exec',['-f',profile,binary,workerState,'unknown_worker_reopen'],{cwd:root,env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C',HOME:'/var/empty'},stdio:'inherit'});
+  const current=await until(()=>{assert(!exited(child),'Unknown-worker manager exited early');const s=status(workerState);return s&&s.epoch!==priorEpoch?s:null;});
+  priorEpoch=current.epoch;
+  assert.equal(current.unresolved_requests,1);assert.equal(current.worker_reservations,1);
+  const identity=JSON.parse(readFileSync(join(workerState,'fixture-owner.json'),'utf8'));
+  function ownerStatus(owner,exit){
+   const id=randomUUID();
+   const result=spawnSync(cli,['--state',workerState,'task'],{cwd:root,encoding:'utf8',timeout:3000,input:JSON.stringify({version:1,id,operation:'job.status',payload:{job:identity.job,owner}})});
+   assert.equal(result.status,exit);
+   const response=JSON.parse(result.stdout);
+   assert.equal(response.id,id);assert.equal(response.ok,exit===0);
+   return response.ok?response.result:response;
+  }
+  assert.equal(ownerStatus(randomBytes(32).toString('base64'),1).error,'unauthorized');
+  for(let read=0;read<2;read++){
+   const owner=ownerStatus(identity.owner,0);
+   assert.equal(owner.state,'reconciling');assert.equal(owner.unresolved_managed_requests,1);
+   for(const key of ['event','exit_verified','code_complete'])assert(!Object.hasOwn(owner,key));
+  }
+  child.kill('SIGTERM');await until(()=>exited(child));assert.equal(child.exitCode,0);child=null;
+ }
+ console.log(JSON.stringify({ok:true,unknown_worker_custody_survived_restart:true,states:modes.length,service_views:2*modes.length,aged_service_views:2,aged_combined_views:2,restarted_intent_scenarios:3,storage_continuity_refusal:1,storage_custody_survived_restart:true,native_actions:0,review_directory:directory}));
 }finally{
  if(child&&!exited(child)){child.kill('SIGTERM');try{await until(()=>exited(child),3000);}catch{child.kill('SIGKILL');await until(()=>exited(child),3000);}}
  // Retain the private development states; no database cleanup or native work.

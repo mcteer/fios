@@ -50,6 +50,23 @@ private struct UnavailableStatusSource:NativeReadOnlyClientSource {
             try withExtendedLifetime(listener) {try ManagerRuntime.run(directory:state,nativeControl:nil,execution:execution)}
             return
         }
+        if args[2] == "unknown_worker_reopen" {
+            let state=URL(fileURLWithPath:args[1])
+            let seed=state.appendingPathComponent("fixture-owner.json")
+            if !FileManager.default.fileExists(atPath:seed.path) {
+                let journal=try Journal(directory:state),now=HostResources.nowMilliseconds()
+                let token=TaskOwner.newToken(),id=UUID().uuidString.lowercased()
+                let owner=try TaskOwner(token:token,peerUID:geteuid())
+                _=try journal.reserveJob(DurableJob(id:id,idempotency:UUID().uuidString.lowercased(),ownerHash:owner.hash,requestHash:String(repeating:"a",count:64),created:now))
+                try journal.transitionJob(id:id,to:.running,now:now)
+                try journal.claim(job:id,attempt:0,model:"fixture/model")
+                _=try journal.planWorkerLaunch(job:id,attempt:0)
+                try journal.markUncertain(job:id,attempt:0)
+                try AtomicState.write(JSONSerialization.data(withJSONObject:["owner":token,"job":id]),to:seed)
+            }
+            try ManagerRuntime.run(directory:state)
+            return
+        }
         if args[2] == "native_source_gap" {
             try ManagerRuntime.run(directory:URL(fileURLWithPath:args[1]),nativeControl:nil,nativeObserverSource:UnavailableStatusSource())
             return
