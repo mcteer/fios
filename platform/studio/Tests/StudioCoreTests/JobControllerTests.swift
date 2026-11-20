@@ -667,7 +667,12 @@ func runCleanupStatusRecoveryTests() throws {
     runtime.storageContinuityUnknown=false
     let lateRuntimeID=String(repeating:"d",count:64)
     runtime.present[lateID]=(lateConfig,lateRuntimeID,false)
-    for now:Int64 in stride(from:101500,through:106000,by:500) {try tick(now)}
+    for now:Int64 in stride(from:101500,through:104500,by:500) {try tick(now)}
+    guard runtime.commands.contains(where:{if case .remove=$0 {return true};return false}),
+          runtime.present[lateID]==nil,
+          try journal.sandboxRecords().first(where:{$0.configuration.job==lateID})?.removalProven==false,
+          try journal.uncertainCount()==1 else {fatalError("Remove acknowledgement released custody before observed absence")}
+    for now:Int64 in stride(from:105000,through:106000,by:500) {try tick(now)}
     let final=try journal.sandboxRecords().first{$0.configuration.job==lateID}
     let commands=beforeRestart+runtime.commands
     guard final?.runtimeID==lateRuntimeID,final?.removalProven==true,
