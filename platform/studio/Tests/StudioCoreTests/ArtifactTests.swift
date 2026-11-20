@@ -68,6 +68,16 @@ func runArtifactTests() throws {
           try store!.retrieve(id:survivor,ownerHash:owner,now:retention+4)==Data("retained export".utf8) else {
         fatalError("Deletion recovery left marked blob or changed independent export")
     }
+    // Model interruption after unlink but before clearing the durable marker.
+    store=nil
+    try AtomicState.write(JSONSerialization.data(withJSONObject:index),to:indexURL)
+    store=try ArtifactStore(directory:directory)
+    let cleaned=try JSONSerialization.jsonObject(with:Data(contentsOf:indexURL)) as! [String:Any]
+    let remaining=cleaned["records"] as! [[String:Any]]
+    guard remaining.count==1,remaining.first?["id"] as? String==survivor,
+          try store!.retrieve(id:survivor,ownerHash:owner,now:retention+4)==Data("retained export".utf8) else {
+        fatalError("Already-unlinked deletion replay changed independent artifact state")
+    }
     // A forged storage object cannot redirect writes or retrieval into a host file.
     let foreign=directory.appendingPathComponent("forged")
     try FileManager.default.createSymbolicLink(atPath:foreign.path,withDestinationPath:"/etc/hosts")
