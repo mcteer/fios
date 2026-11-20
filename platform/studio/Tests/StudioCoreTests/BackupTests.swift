@@ -94,6 +94,18 @@ func runBackupTests() throws {
             guard ticks==copyChecks,try Data(contentsOf:target).count==savedBytes.count,
                   try Data(contentsOf:sourceJournal)==originalJournal else {fatalError("SQLite copy clock changed source or lost diagnostic output")}
         }
+        for (index,cutoff) in [110.0,99.0,Double.nan].enumerated() {
+            var postStepChecks=0
+            let postStep=root.appendingPathComponent("copy-post-step-refused-\(index).sqlite")
+            do {
+                _=try StoppedJournalBackup.create(directory:state,destination:postStep,stopped:stopped,
+                    copyUptime:{postStepChecks+=1;return postStepChecks==copyChecks-1 ? cutoff:100},
+                    hashUptime:{fatalError("Refused SQLite step reached hashing")})
+                fatalError("Returned SQLite step accepted at invalid clock or exact budget")
+            } catch RuntimeError.deadline {}
+            guard postStepChecks==copyChecks-1,FileManager.default.fileExists(atPath:postStep.path),
+                  try Data(contentsOf:sourceJournal)==originalJournal else {fatalError("Refused SQLite step changed custody")}
+        }
         guard timelyReceipt.bytes==receipt.bytes,checkpoints>=3 else {fatalError("Missing backup receipt clock checkpoints")}
         var calls=0
         do {

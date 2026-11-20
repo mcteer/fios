@@ -373,6 +373,8 @@ studioctl --state /ABS/NEW_BACKUP verify-backup --sha256 REVIEWED_DIGEST
 studioctl --state /ABS/NEW_BACKUP restore-state --sha256 REVIEWED_DIGEST --to /ABS/NEW_STATE
 ```
 
+Backup creation holds one stopped-state fence across the bundle, but uses separate cooperative deadlines for the SQLite copy (10 seconds through output sync), journal hashing (10 seconds), and export copy (30 seconds). These are phase limits, not a command-wide wall-clock guarantee or syscall cancellation. If creation fails, preserve the partial directory for diagnosis and retry only into a fresh destination. Do not treat the presence of `backup.json` as success; require the command's receipt and verify its reviewed digest before restore.
+
 If service-recovery metadata exists, the stopped bundle uses version2 and preserves its exact unresolved launch intents and start budgets; otherwise it retains version1. Verification/restore include that file and reject tampering. Older tools must refuse version2 rather than omit its state or clear pending launches. The recovery controller is not yet wired to a production session transport.
 
 The optional configuration form creates a version4 bundle. It preserves only
