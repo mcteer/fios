@@ -83,12 +83,22 @@ extension StoppedStateBackup {
         guard fsync(artifacts)==0 else {throw JournalError.storage}
         let folder=open(temporary.path,O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC)
         guard folder>=0 else {throw JournalError.storage};defer {close(folder)}
-        guard fsync(folder)==0 else {throw JournalError.storage}
+        var copied=stat()
+        guard fstat(folder,&copied)==0,fsync(folder)==0 else {throw JournalError.storage}
         // Publish and sync against the same retained destination parent.
-        guard lstat(parent.path,&info)==0,info.st_dev==parentInfo.st_dev,info.st_ino==parentInfo.st_ino,
-              info.st_mode==parentInfo.st_mode,info.st_uid==parentInfo.st_uid,
+        func matchesCopy(_ name:String)->Bool {
+            var entry=stat()
+            return fstatat(outer,name,&entry,AT_SYMLINK_NOFOLLOW)==0 &&
+                entry.st_dev==copied.st_dev && entry.st_ino==copied.st_ino &&
+                entry.st_mode==copied.st_mode && entry.st_uid==copied.st_uid
+        }
+        func matchesParent()->Bool {
+            lstat(parent.path,&info)==0 && info.st_dev==parentInfo.st_dev && info.st_ino==parentInfo.st_ino &&
+                info.st_mode==parentInfo.st_mode && info.st_uid==parentInfo.st_uid
+        }
+        guard matchesParent(),matchesCopy(temporary.lastPathComponent),
               renameatx_np(outer,temporary.lastPathComponent,outer,destination.lastPathComponent,UInt32(RENAME_EXCL))==0 else {throw JournalError.conflict}
-        guard fsync(outer)==0 else {throw JournalError.storage}
+        guard fsync(outer)==0,matchesParent(),matchesCopy(destination.lastPathComponent) else {throw JournalError.storage}
         return receipt
     }
     // Validate the actual input to fsync; a previous tree verification is
