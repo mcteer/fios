@@ -207,6 +207,24 @@ final class StudioOpenTelemetryTests:XCTestCase {
         }
     }
 
+    func testInvalidCPUWithdrawsBothPreviouslyObservedGauges() throws {
+        let telemetry=StudioOpenTelemetry(),now=HostResources.nowMilliseconds()
+        for (cpu,stamp,observed): (Double?,Int64?,Bool) in [(0,now,true),(nil,now,false),(0,now,true),(.nan,now,false),(0,nil,false)] {
+            telemetry.resources(ResourceSample(sampledAt:now,physical:1024,available:512,
+                vmAvailable:0,diskFree:4096,cpu:cpu,pressure:.normal,thermal:.nominal,vmSampledAt:now,cpuSampledAt:stamp))
+            let metrics=telemetry.collectMetrics().filter{!$0.data.points.isEmpty}
+            let cpuMetrics=metrics.filter{$0.name.hasPrefix("fios.platform.host.cpu.")}
+            XCTAssertEqual(cpuMetrics.count,observed ? 2:0)
+            if observed {
+                let value=try XCTUnwrap(cpuMetrics.first{$0.name=="fios.platform.host.cpu.utilization"})
+                let clock=try XCTUnwrap(cpuMetrics.first{$0.name=="fios.platform.host.cpu.sample.time"})
+                XCTAssertEqual((value.data.points as? [DoublePointData])?.first?.value,0)
+                XCTAssertEqual((clock.data.points as? [DoublePointData])?.first?.value,Double(now)/1000)
+            }
+            XCTAssertTrue(metrics.contains{$0.name=="fios.platform.vm.memory.available"})
+        }
+    }
+
     func testGPUAgeDoesNotHideFreshCPUAndVM() {
         let telemetry=StudioOpenTelemetry(),now=HostResources.nowMilliseconds()
         telemetry.resources(ResourceSample(sampledAt:now,physical:1024,available:512,
