@@ -10,7 +10,8 @@ struct ArtifactBackupReceipt {let artifacts:Int;let bytes:Int64;let indexSHA256:
 enum StoppedArtifactBackup {
     private struct Record:Decodable {let id:String;let job:String;let ownerHash:String;let created:Int64;let bytes:Int;let sha256:String;let state:String}
     private struct Index:Decodable {let version:Int;let records:[Record]}
-    static func create(directory:URL,destination:URL,stopped:StoppedPlatformState?=nil)throws->ArtifactBackupReceipt {
+    static func create(directory:URL,destination:URL,stopped:StoppedPlatformState?=nil,
+                       uptime:()->TimeInterval={ProcessInfo.processInfo.systemUptime})throws->ArtifactBackupReceipt {
         let proof=try stopped ?? StoppedPlatformState(directory:directory)
         defer {withExtendedLifetime(proof) {}}
         guard proof.directory==directory.standardizedFileURL else {throw JournalError.invalid}
@@ -88,7 +89,13 @@ enum StoppedArtifactBackup {
         guard mkdir(destination.path,0o700)==0 else {throw JournalError.conflict}
         // A failed copy remains private diagnostic data, never a valid
         // export receipt. Do not recursively delete its destination by name.
-        let end=ProcessInfo.processInfo.systemUptime+30
+        let began=uptime()
+        var previous=began
+        func checkCopyClock()throws {
+            let now=uptime()
+            guard began.isFinite,began>=0,now.isFinite,now>=previous,now-began<30 else {throw RuntimeError.deadline}
+            previous=now
+        }
         var copiedFiles:[ArtifactBackupFile]=[]
         for (record,length) in files {
             let name=record.id+".blob",(input,_)=try openPrivate(source.appendingPathComponent(name),maximum:16<<20)
@@ -97,7 +104,7 @@ enum StoppedArtifactBackup {
             guard output>=0 else {throw JournalError.storage};defer {close(output)}
             var hash=SHA256(),copied:Int64=0,buffer=[UInt8](repeating:0,count:65536)
             while true {
-                guard ProcessInfo.processInfo.systemUptime<end else {throw RuntimeError.deadline}
+                try checkCopyClock()
                 let count=Darwin.read(input,&buffer,buffer.count)
                 if count<0 && errno==EINTR {continue}
                 guard count>=0,copied+Int64(max(0,count))<=length else {throw JournalError.invalid}
@@ -105,6 +112,7 @@ enum StoppedArtifactBackup {
                 let data=Data(buffer.prefix(count));hash.update(data:data)
                 var position=0
                 while position<count {
+                    try checkCopyClock()
                     let written=data.withUnsafeBytes {Darwin.write(output,$0.baseAddress!.advanced(by:position),count-position)}
                     if written<0 && errno==EINTR {continue}
                     guard written>0 else {throw JournalError.storage};position+=written
@@ -116,12 +124,15 @@ enum StoppedArtifactBackup {
             if record.state=="ready" {guard copied==record.bytes,digest==record.sha256 else {throw JournalError.invalid}}
             copiedFiles.append(ArtifactBackupFile(path:name,bytes:copied,sha256:digest))
         }
+        try checkCopyClock()
         try metadata.write(to:destination.appendingPathComponent("index.json"),options:.withoutOverwriting)
         try FileManager.default.setAttributes([.posixPermissions:0o600],ofItemAtPath:destination.appendingPathComponent("index.json").path)
         let (indexFD,_)=try openPrivate(destination.appendingPathComponent("index.json"),maximum:1<<20);defer {close(indexFD)}
         let parent=open(destination.path,O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC)
         guard parent>=0 else {throw JournalError.storage};defer {close(parent)}
         guard fsync(indexFD)==0,fsync(parent)==0 else {throw JournalError.storage}
-        return ArtifactBackupReceipt(artifacts:files.count,bytes:total,indexSHA256:SHA256.hash(data:metadata).map {String(format:"%02x",$0)}.joined(),files:copiedFiles.sorted {$0.path<$1.path})
+        let receipt=ArtifactBackupReceipt(artifacts:files.count,bytes:total,indexSHA256:SHA256.hash(data:metadata).map {String(format:"%02x",$0)}.joined(),files:copiedFiles.sorted {$0.path<$1.path})
+        try checkCopyClock()
+        return receipt
     }
 }

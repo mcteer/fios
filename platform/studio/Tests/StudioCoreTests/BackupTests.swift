@@ -139,7 +139,19 @@ func runBackupTests() throws {
     }
     let exports=root.appendingPathComponent("exports-copy")
     let indexBefore=try Data(contentsOf:state.appendingPathComponent("artifacts/index.json"))
-    let saved=try StoppedArtifactBackup.create(directory:state,destination:exports)
+    var artifactCheckpoints=0
+    let saved=try StoppedArtifactBackup.create(directory:state,destination:exports,uptime:{artifactCheckpoints+=1;return 100})
+    let lateExports=root.appendingPathComponent("late-exports")
+    var artifactCalls=0
+    do {
+        _=try StoppedArtifactBackup.create(directory:state,destination:lateExports,uptime:{artifactCalls+=1;return artifactCalls==artifactCheckpoints ? 130:100})
+        fatalError("Stopped export returned receipt at exact copy deadline")
+    } catch RuntimeError.deadline {}
+    guard artifactCalls==artifactCheckpoints,
+          try Data(contentsOf:lateExports.appendingPathComponent(artifact+".blob"))==payload,
+          try Data(contentsOf:state.appendingPathComponent("artifacts/index.json"))==indexBefore else {
+        fatalError("Late stopped export changed source or removed diagnostic copy")
+    }
     guard saved.artifacts==1,saved.bytes==payload.count,saved.indexSHA256.count==64,
           try Data(contentsOf:state.appendingPathComponent("artifacts/index.json"))==indexBefore else {fatalError("Export snapshot mutated source or lost data")}
     do {
