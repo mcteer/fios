@@ -109,7 +109,18 @@ func runServiceDrainControllerTests()throws {
         fatalError("Writer-contended drain stranded a sibling cancellation or changed uncertain custody")
     }
     guard sqlite3_exec(writer,"ROLLBACK",nil,nil,nil)==SQLITE_OK else {throw JournalError.storage}
-    _=try fenced.poll(service:.mlx,now:1006,uptime:61005)
+    let fenceOrbScope=try ServiceAffectedScope(service:.orbstack,identity:identity,managerEpoch:epoch,nativeEpoch:"native-fixture",
+        nativeScopeDigest:String(repeating:"d",count:64),runtimeScopeDigest:String(repeating:"e",count:64),
+        ownedJobs:[],unresolvedManagedRequests:[first],sampledAt:1006)
+    fenceCache.publish(ServiceDrainSnapshot(scope:fenceOrbScope,nativeIdle:false,externalNativeWork:false,unmanagedRuntimeWork:false),for:.orbstack)
+    guard try fenced.begin(service:.orbstack,role:.operator,now:1006,uptime:61005).state == .draining else {throw ServiceError.invalid}
+    fenceCache.publish(nil,for:.orbstack)
+    guard sqlite3_exec(writer,"BEGIN IMMEDIATE",nil,nil,nil)==SQLITE_OK else {throw JournalError.storage}
+    do {try fenced.pollAll(now:1006,uptime:61005);fatalError("Contended multi-service drain did not report storage error")}catch JournalError.storage {}
+    guard fenced.status(service:.orbstack)?.state == .refused(.activityUnknown),
+          try fenceJournal.uncertainCount()==1 else {fatalError("MLX writer fence suppressed independent OrbStack source refusal")}
+    guard sqlite3_exec(writer,"ROLLBACK",nil,nil,nil)==SQLITE_OK else {throw JournalError.storage}
+    try fenced.pollAll(now:1007,uptime:61006)
     guard try fenceJournal.jobs().allSatisfy({$0.state == .removed}),
           try fenceJournal.uncertainCount()==1 else {fatalError("Deferred drain cancellation did not retire exact local jobs")}
     let readyJournal=try Journal(directory:directory.appendingPathComponent("ready")),readyCache=ServiceDrainObservationCache()

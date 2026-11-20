@@ -105,7 +105,12 @@ final class ServiceDrainController {
         return progress
     }
     func pollAll(now:Int64,uptime:Int64)throws {
-        for service in Array(reports.keys) {_=try poll(service:service,now:now,uptime:uptime)}
+        var storageContended=false
+        for service in reports.keys.sorted(by:{$0.rawValue<$1.rawValue}) {
+            do {_=try poll(service:service,now:now,uptime:uptime)}
+            catch JournalError.storage {storageContended=true}
+        }
+        if storageContended {throw JournalError.storage}
     }
     // A newer explicit operator desired-running intent supersedes the drain
     // report. Already revoked jobs/uncertainty are never resumed/refunded.
