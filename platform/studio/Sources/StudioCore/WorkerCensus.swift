@@ -35,8 +35,9 @@ struct WorkerCensusPolicy {
     // Startup-only, before this manager can spawn work. Any candidate (even an
     // unrelated same-image process) retains uncertainty; never signal it.
     func absence()throws->WorkerCensusAbsence {
+        let began=ProcessInfo.processInfo.systemUptime
         try validateImages()
-        let boot=try HostBoot.identity(),uid=geteuid(),began=ProcessInfo.processInfo.systemUptime
+        let boot=try HostBoot.identity(),uid=geteuid()
         guard uid != 0 else {throw WorkerResourceError.invalid}
         var pids=[Int32](repeating:0,count:32768)
         // Kernel UID filtering avoids requiring visibility into unrelated
@@ -66,7 +67,9 @@ struct WorkerCensusPolicy {
         }
         try validateImages()
         guard try HostBoot.identity()==boot else {throw WorkerResourceError.unavailable}
-        return WorkerCensusAbsence(boot:boot,uid:uid,sampledAt:ProcessInfo.processInfo.systemUptime)
+        let completed=ProcessInfo.processInfo.systemUptime
+        guard WorkerCensusAbsence.withinWindow(from:began,to:completed,includeDeadline:false) else {throw WorkerResourceError.unavailable}
+        return WorkerCensusAbsence(boot:boot,uid:uid,sampledAt:began)
     }
 }
 
@@ -75,8 +78,13 @@ struct WorkerCensusAbsence {
     private let uid:uid_t
     private let sampledAt:TimeInterval
     fileprivate init(boot:String,uid:uid_t,sampledAt:TimeInterval) {self.boot=boot;self.uid=uid;self.sampledAt=sampledAt}
+    static func withinWindow(from start:TimeInterval,to end:TimeInterval,includeDeadline:Bool)->Bool {
+        guard start.isFinite,end.isFinite,start>=0,end>=start else {return false}
+        let age=end-start
+        return includeDeadline ? age<=1 : age<1
+    }
     func validate()throws {
-        let age=ProcessInfo.processInfo.systemUptime-sampledAt
-        guard uid==geteuid(),try HostBoot.identity()==boot,age>=0,age<=1 else {throw WorkerResourceError.unavailable}
+        guard uid==geteuid(),try HostBoot.identity()==boot else {throw WorkerResourceError.unavailable}
+        guard Self.withinWindow(from:sampledAt,to:ProcessInfo.processInfo.systemUptime,includeDeadline:true) else {throw WorkerResourceError.unavailable}
     }
 }

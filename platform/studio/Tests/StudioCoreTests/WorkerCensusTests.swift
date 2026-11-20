@@ -2,6 +2,12 @@ import Foundation
 import Darwin
 
 func runWorkerCensusTests() throws {
+    let within=WorkerCensusAbsence.withinWindow
+    guard within(10,10.999,false),!within(10,11,false),
+          within(10,11,true),!within(10,11.001,true),
+          !within(10,9.999,true),!within(.nan,11,true),!within(10,.infinity,true) else {
+        fatalError("Worker absence failed its original clock boundary")
+    }
     let directory=URL(fileURLWithPath:"/tmp/fios-worker-census-"+UUID().uuidString.lowercased()).resolvingSymlinksInPath()
     try FileManager.default.createDirectory(at:directory,withIntermediateDirectories:false,attributes:[.posixPermissions:0o700])
     defer {try? FileManager.default.removeItem(at:directory)}
