@@ -131,15 +131,14 @@ public struct VerifiedExecutable:Sendable {
         while !eof || process.isRunning {
             var buffer = [UInt8](repeating:0,count:4096)
             let count = read(fd,&buffer,buffer.count)
-            if count > 0 {
-                if failure == nil {
-                    if output.count + count > maximumOutput {failure = .outputLimit}
-                    else {output.append(contentsOf:buffer.prefix(count))}
-                }
-            } else if count == 0 { eof = true }
-            else if errno != EAGAIN && errno != EINTR { if failure == nil {failure = .launch}; eof = true }
+            let readError=errno
             let now = ProcessInfo.processInfo.systemUptime
-            if now >= deadline && failure == nil { failure = .deadline }
+            // Output first observed at or after the cutoff cannot supersede
+            // the deadline, nor can later drain failures replace a cause.
+            if failure == nil {failure=Self.outputFailure(now:now,deadline:deadline,count:count,error:readError,remaining:maximumOutput-output.count)}
+            if count > 0 {
+                if failure == nil {output.append(contentsOf:buffer.prefix(count))}
+            } else if count == 0 || (readError != EAGAIN && readError != EINTR) {eof = true}
             if failure != nil && termAt == nil {
                 termAt = now
                 signalOwned(SIGTERM)
@@ -158,6 +157,12 @@ public struct VerifiedExecutable:Sendable {
         // slot release independently requires kernel absence. No blocking join.
         if let failure { throw failure }
         return try Self.terminalResult(deadline:deadline,output:output,status:{process.terminationStatus})
+    }
+    static func outputFailure(now:TimeInterval,deadline:TimeInterval,count:Int,error:Int32,remaining:Int)->RuntimeError? {
+        guard now.isFinite,now>=0,now<deadline else {return .deadline}
+        if count>remaining {return .outputLimit}
+        if count<0,error != EAGAIN,error != EINTR {return .launch}
+        return nil
     }
     static func terminalResult(deadline:TimeInterval,output:Data,status:()->Int32,
                                uptime:()->TimeInterval={ProcessInfo.processInfo.systemUptime})throws->CommandResult {

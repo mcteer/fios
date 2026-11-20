@@ -18,6 +18,14 @@ func runRuntimeTests() throws {
             guard terminal==101.999,checked.status==0,checked.output.isEmpty else {fatalError("Invalid terminal clock returned child success")}
         } catch RuntimeError.deadline {guard terminal != 101.999 else {throw RuntimeError.deadline}}
     }
+    guard case .outputLimit?=VerifiedExecutable.outputFailure(now:101.999,deadline:102,count:8,error:0,remaining:7),
+          case .deadline?=VerifiedExecutable.outputFailure(now:102,deadline:102,count:8,error:0,remaining:7),
+          case .launch?=VerifiedExecutable.outputFailure(now:101.999,deadline:102,count:-1,error:EIO,remaining:7),
+          case .deadline?=VerifiedExecutable.outputFailure(now:102,deadline:102,count:-1,error:EIO,remaining:7),
+          VerifiedExecutable.outputFailure(now:101.999,deadline:102,count:7,error:0,remaining:7)==nil,
+          VerifiedExecutable.outputFailure(now:101.999,deadline:102,count:-1,error:EAGAIN,remaining:7)==nil else {
+        fatalError("Command read classified output against a renewed or ambiguous cutoff")
+    }
     var checks=0
     do {
         _=try runtime.runChecked(arguments:[],timeout:2,checkpoint:{checks+=1;throw RuntimeError.deadline})
