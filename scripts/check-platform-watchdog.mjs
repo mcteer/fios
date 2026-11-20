@@ -84,7 +84,17 @@ try {
   assert.equal(seen.size, 3);
   assert.ok([...seen].every(pid => !alive(pid)), 'An exhausted budget launched a fourth manager');
   await stop(secondSupervisor);
-  console.log('PASS: actual isolated supervisor rejects fresh timer-only heartbeat as loop progress; three finite spaced starts, child reap and exhausted budget survive supervisor restart. No native/boot/install acceptance.');
+  const budgetPath = join(state, 'restart-budget.json');
+  const invalidBudget = JSON.stringify({ ...budget, starts: [1000, 10999] });
+  writeFileSync(budgetPath, invalidBudget);
+  const beforeRefusal = readFileSync(join(state, 'supervisor.json'));
+  const refused = start();
+  await until(() => refused.exitCode !== null || refused.signalCode !== null, 5000);
+  assert.ok(refused.exitCode > 0, 'Invalid saved budget must refuse startup, not reset history');
+  assert.equal(readFileSync(budgetPath, 'utf8'), invalidBudget, 'Refusal rewrote persisted budget');
+  assert.deepEqual(readFileSync(join(state, 'supervisor.json')), beforeRefusal, 'Refused startup published supervisor status');
+  assert.equal(seen.size, 3, 'Refused startup published new manager progress');
+  console.log('PASS: actual isolated supervisor rejects fresh timer-only heartbeat as loop progress; three spaced starts, child reap and exhausted budget survive restart; invalid saved budget refuses startup without rewrite or publication. No native/boot/install acceptance.');
 } finally {
   // Stop only our direct Process handles. Fixture children observe their own
   // private lease removal and also self-expire; never signal a reused PID.
