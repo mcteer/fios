@@ -239,5 +239,23 @@ func runTaskCommandTests() throws {
           artifacts.reservingDisk(in:sample).diskCommitted==UInt64(source.count) else {
         fatalError("Retiring read handles released durable export disk charge")
     }
+    let retentionEdge:Int64=1005+86_400_000
+    try commands.tick(now:retentionEdge-2,uptime:retentionEdge-2,artifactResults:[])
+    let nearRetention=try repeatDownload(now:retentionEdge-2)
+    guard let retentionHandle=nearRetention["stream"] as? String else {throw RuntimeError.invalid}
+    try commands.tick(now:retentionEdge-1,uptime:retentionEdge-1,artifactResults:wait())
+    guard try call("artifact.read",["phase":"next","stream":retentionHandle],now:retentionEdge-1)["type"] as? String=="begin" else {
+        fatalError("Open handle lost final in-retention tick")
+    }
+    do {_=try call("artifact.read",["phase":"next","stream":retentionHandle],now:retentionEdge);fatalError("Open handle extended export retention")}
+    catch ArtifactError.unavailable {}
+    do {_=try call("artifact.read",["phase":"next","stream":retentionHandle],now:retentionEdge);fatalError("Expired export handle revived")}
+    catch TaskCommandError.unauthorized {}
+    guard artifacts.reservingDisk(in:sample).diskCommitted==UInt64(source.count) else {fatalError("Read-side refusal released durable bytes")}
+    try artifacts.expire(request:UUID().uuidString.lowercased(),now:retentionEdge)
+    try commands.tick(now:retentionEdge,uptime:retentionEdge,artifactResults:wait())
+    guard artifacts.statistics.bytes==0,artifacts.reservingDisk(in:sample).diskCommitted==0 else {
+        fatalError("Proven artifact expiry did not release retained charge")
+    }
     print("PASS: task-role/opaque-owner API, closed/source-loss admission, reserve-before-input, once-only validation, proof-gated cancel and asynchronous owner-only finite artifact routing")
 }
