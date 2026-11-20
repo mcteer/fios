@@ -87,6 +87,17 @@ func runNativeReadOnlyObservationTests()throws {
           afterGap.operation == .observe,afterGap.instance==nil,afterGap.sequence==0 else {
         fatalError("Observation failure rewrote intent or replayed a native change")
     }
+    // Intent takes over the occupied read slot, but a failed read does not
+    // authorize an action against an unobserved or previous native instance.
+    try coordinator.setDesired(.maintenance,role:.operator)
+    guard try coordinator.beginReconciliation()==nil,!coordinator.observationOnly else {throw NativeControlError.invalid}
+    coordinator.failed(id:afterGap.id)
+    guard coordinator.phase == .unknown,!coordinator.lifecycleApplied,
+          try journal.recordedDesired(service:.mlx) == .maintenance,
+          let reread=try coordinator.beginReconciliation(),reread.id != afterGap.id,
+          reread.operation == .observe,reread.instance==nil,reread.sequence==0 else {
+        fatalError("Failed intent-bearing read lost durable maintenance or replayed an action")
+    }
     var diagnostics=NativeControlDiagnostics(configured:true),sample=reply(.observe,closed:false)
     sample.nativeSampleSequence=1;sample.nativeSampledAt=900
     diagnostics.completed(sample,receivedAt:1000)
