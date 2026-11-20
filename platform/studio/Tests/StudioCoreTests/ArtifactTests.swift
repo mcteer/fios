@@ -39,6 +39,7 @@ func runArtifactTests() throws {
     guard try store!.retrieve(id:id,ownerHash:owner,now:1002)==Data("private result".utf8) else { fatalError("Restart lost artifact") }
     do { _=try store!.publish(job:job,ownerHash:owner,data:Data(repeating:0,count:16<<20),now:1003);fatalError("Per-job export cap exceeded") } catch ArtifactError.capacity {}
     let second=try store!.publish(job:UUID().uuidString.lowercased(),ownerHash:owner,data:Data("second export".utf8),now:1004)
+    let survivor=try store!.publish(job:UUID().uuidString.lowercased(),ownerHash:owner,data:Data("retained export".utf8),now:1005)
     let retention=1000+Int64(86_400_000)
     var nearRetention=try store!.download(id:id,ownerHash:owner,now:retention-2)
     guard case .begin=try nearRetention.next(now:retention-1) else {fatalError("Valid final retention tick lost artifact begin")}
@@ -55,6 +56,18 @@ func runArtifactTests() throws {
     }
     do {_=try store!.download(id:second,ownerHash:owner,now:retention+4);fatalError("Reopen extended independent artifact retention")}
     catch ArtifactError.unavailable {}
+    // Reopen after the durable deletion marker but before the owned unlink.
+    store=nil
+    index=try JSONSerialization.jsonObject(with:Data(contentsOf:indexURL)) as! [String:Any]
+    metadata=index["records"] as! [[String:Any]]
+    guard let deletion=metadata.firstIndex(where:{$0["id"] as? String==second}) else {throw ArtifactError.invalid}
+    metadata[deletion]["state"]="deleting";index["records"]=metadata
+    try AtomicState.write(JSONSerialization.data(withJSONObject:index),to:indexURL)
+    store=try ArtifactStore(directory:directory)
+    guard !FileManager.default.fileExists(atPath:directory.appendingPathComponent(second+".blob").path),
+          try store!.retrieve(id:survivor,ownerHash:owner,now:retention+4)==Data("retained export".utf8) else {
+        fatalError("Deletion recovery left marked blob or changed independent export")
+    }
     // A forged storage object cannot redirect writes or retrieval into a host file.
     let foreign=directory.appendingPathComponent("forged")
     try FileManager.default.createSymbolicLink(atPath:foreign.path,withDestinationPath:"/etc/hosts")
