@@ -515,9 +515,9 @@ func runSandboxExitProofTests()throws {
 func runCleanupStatusRecoveryTests() throws {
     let directory=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer {try? FileManager.default.removeItem(at:directory)}
-    let journal=try Journal(directory:directory)
+    var journal:Journal! = try Journal(directory:directory)
     var runtime=FakeSandboxExecutor()
-    var controller=JobController(journal:journal,executor:runtime)
+    var controller:JobController! = JobController(journal:journal,executor:runtime)
     var admission=AdmissionPolicy()
     func sample(_ now:Int64)->ResourceSample {
         ResourceSample(sampledAt:now,physical:128<<30,available:64<<30,vmAvailable:8<<30,
@@ -634,6 +634,12 @@ func runCleanupStatusRecoveryTests() throws {
           try journal.sandboxRecords().first(where:{$0.configuration.job==lateID})?.removalProven==false,
           try journal.uncertainCount()==1 else {fatalError("Generic inspection failure erased the storage refusal or custody")}
     let beforeRestart=runtime.commands
+    // Release the old writer lock before reopening the same disposable state.
+    controller=nil
+    journal=nil
+    journal=try Journal(directory:directory)
+    guard try journal.sandboxRecords().contains(where:{$0.configuration.job==lateID && $0.createIssued && !$0.removalProven}),
+          try journal.uncertainCount()==1 else {fatalError("Reopened journal lost durable sandbox or inference custody")}
     runtime=FakeSandboxExecutor()
     controller=JobController(journal:journal,executor:runtime)
     runtime.storageContinuityUnknown=true
