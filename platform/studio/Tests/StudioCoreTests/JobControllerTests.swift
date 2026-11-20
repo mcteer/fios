@@ -144,6 +144,7 @@ func runJobControllerTests() throws {
     }
     guard try journal.jobs().first(where:{$0.id==ids[1]})?.state == .removed else { fatalError("Owned sandbox cleanup did not finish") }
     try checkModelSandboxSourceTurnover()
+    try checkSandboxResponseOverflowIsolation()
     try checkDeferredCreateRestart()
     try checkReservedCreateSlot()
     print("PASS: asynchronous sandbox coordinator, transport-before-start fencing, newest-owned pressure revocation and proof-gated cleanup")
@@ -301,6 +302,39 @@ private func checkModelSandboxSourceTurnover() throws {
               try journal.requestCount(job:id)==0 else {fatalError("Model sandbox turnover crossed create/start or inference custody")}
         if !createBeforeTurnover, !runtime.commands.isEmpty {fatalError("Source turnover before create dispatched an effect")}
     }
+}
+
+private func checkSandboxResponseOverflowIsolation() throws {
+    let directory=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer {try? FileManager.default.removeItem(at:directory)}
+    let journal=try Journal(directory:directory),runtime=FakeSandboxExecutor()
+    let jobs=JobController(journal:journal,executor:runtime),tasks=TaskController(journal:journal,broker:ModelBroker(journal:journal))
+    let artifacts=AsyncArtifacts(store:try ArtifactStore(directory:directory.appendingPathComponent("artifacts")))
+    let sandbox=SandboxTaskController(journal:journal,jobs:jobs,tasks:tasks,artifacts:artifacts,socket:"/fixture/never.sock",peerUID:geteuid())
+    let ids=(0..<2).map {_ in UUID().uuidString.lowercased()}.sorted()
+    let owner=String(repeating:"a",count:64)
+    for id in ids {
+        let configuration=try SandboxConfiguration(job:id,nonce:owner,image:"sha256:"+owner,memory:512<<20,cpus:1)
+        let job=try DurableJob(id:id,idempotency:UUID().uuidString.lowercased(),ownerHash:owner,requestHash:owner,created:10000)
+        _=try journal.reserveSandbox(job:job,configuration:configuration)
+        try sandbox.register(id:id,owner:owner,source:Data(),inputSHA256:"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",binding:nil,now:10000)
+    }
+    var writer:OpaquePointer?
+    guard sqlite3_open_v2(directory.appendingPathComponent("state.sqlite").path,&writer,SQLITE_OPEN_READWRITE|SQLITE_OPEN_FULLMUTEX,nil)==SQLITE_OK else {throw JournalError.storage}
+    defer {sqlite3_close(writer)}
+    guard sqlite3_exec(writer,"BEGIN IMMEDIATE",nil,nil,nil)==SQLITE_OK else {throw JournalError.storage}
+    let frame=Data("{\"version\":1,\"type\":\"model.done\"}".utf8)
+    try sandbox.deliverModelResponses([ids[0]:Array(repeating:frame,count:65),ids[1]:[frame]],now:10500,uptime:10500)
+    guard tasks.cancellationPending(for:ids[0]),!tasks.cancellationPending(for:ids[1]) else {fatalError("Response overflow cancelled the wrong sandbox")}
+    try sandbox.deliverModelResponses([ids[1]:Array(repeating:frame,count:63)],now:10501,uptime:10501)
+    guard !tasks.cancellationPending(for:ids[1]) else {fatalError("Sibling exceeded exactly 64 frames")}
+    try sandbox.deliverModelResponses([ids[1]:[frame]],now:10502,uptime:10502)
+    guard tasks.cancellationPending(for:ids[1]),runtime.commands.isEmpty else {fatalError("Sibling did not retain its initial queued frame")}
+    guard sqlite3_exec(writer,"ROLLBACK",nil,nil,nil)==SQLITE_OK else {throw JournalError.storage}
+    var admission=AdmissionPolicy()
+    let sample=ResourceSample(sampledAt:11000,physical:128<<30,available:64<<30,vmAvailable:8<<30,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal,vmSampledAt:11000,cpuSampledAt:11000)
+    _=try sandbox.tick(now:11000,uptime:11,sample:sample,admission:&admission,source:{_ in nil},nativeCapacityProven:false)
+    guard try journal.jobs().allSatisfy({$0.state == .removed}),runtime.commands.isEmpty else {fatalError("Overflow cleanup issued runtime work")}
 }
 
 func runVMProbePermissionTests() throws {

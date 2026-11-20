@@ -54,6 +54,18 @@ final class SandboxTaskController {
             try tasks.cancel(id:id,owner:session.owner,now:now,uptime:uptime)
         }
     }
+    func deliverModelResponses(_ responses:[String:[Data]],now:Int64,uptime:Int64)throws {
+        for id in responses.keys.sorted() {
+            guard let frames=responses[id],let session=sessions[id],!session.stream.terminal,!session.stream.revoked else {continue}
+            do {for frame in frames {try session.stream.response(frame)}}
+            catch {
+                // Quarantine closes this byte session before touching SQLite.
+                // A contended cancellation must not discard sibling responses.
+                do {try revoke(id:id,now:now,uptime:uptime)}
+                catch JournalError.storage {continue}
+            }
+        }
+    }
     func tick(now:Int64,uptime:TimeInterval,sample:ResourceSample,admission:inout AdmissionPolicy,
               source:(String)->WorkerDispatchBinding?,nativeCapacityProven:Bool) throws -> SandboxTaskUpdates {
         guard uptime.isFinite,uptime>=0,uptime<Double(Int64.max/1000) else {throw ControlError.invalid_request}
@@ -73,11 +85,7 @@ final class SandboxTaskController {
             let sandboxIDs=Set(try journal.sandboxRecords().map(\.configuration.job))
             updates.model=events.filter {!sandboxIDs.contains($0.key)}
         }
-        for (id,frames) in try tasks.sandboxModelData(events) {
-            guard let session=sessions[id],!session.stream.terminal,!session.stream.revoked else {continue}
-            do {for frame in frames {try session.stream.response(frame)}}
-            catch {try revoke(id:id,now:now,uptime:clock)}
-        }
+        try deliverModelResponses(tasks.sandboxModelData(events),now:now,uptime:clock)
         for id in Array(sessions.keys) {
             guard var session=sessions[id],let job=try journal.jobs().first(where:{$0.id==id}),
                   let record=try journal.sandboxRecords().first(where:{$0.configuration.job==id}) else {throw JournalError.storage}
@@ -93,7 +101,16 @@ final class SandboxTaskController {
                 session.stream.revoke(attach:session.attach)
                 continue
             }
-            guard !session.stream.revoked,!tasks.cancellationPending(for:id) else {continue}
+            if session.stream.revoked {
+                // Retry exact local cancellation even if the previous attempt
+                // could not read its durable row to enqueue cancellation.
+                if !tasks.cancellationPending(for:id) {
+                    do {try revoke(id:id,now:now,uptime:clock)}
+                    catch JournalError.storage {}
+                }
+                continue
+            }
+            guard !tasks.cancellationPending(for:id) else {continue}
             do {
                 // Before create or start, a missing/replaced source is not
                 // permission to launch a model-bearing sandbox. Plain code
