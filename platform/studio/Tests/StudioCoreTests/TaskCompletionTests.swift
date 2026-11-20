@@ -158,6 +158,11 @@ func runTaskCompletionTests()throws {
               status["event"]==nil,try reopened.requestCount(job:job)==1 else {
             fatalError("Reopen dropped worker timeout custody or replayed output")
         }
+        var restored=AdmissionPolicy()
+        _=try WorkerReconciler(journal:reopened,admission:&restored)
+        let sample=ResourceSample(sampledAt:5000,physical:128<<30,available:64<<30,vmAvailable:nil,diskFree:100<<30,cpu:0,pressure:.normal,thermal:.nominal,cpuSampledAt:5000)
+        for key in ["first","second"] {try restored.reserveWorker(key:key,sample:sample,now:5000)}
+        guard try reopened.uncertainCount()==1 else {fatalError("Local no-process completion settled native uncertainty on reopen") }
     }
     guard ModelBroker.startWatchdogExpired(uptime:.max,started:.min),
           ModelBroker.startWatchdogExpired(uptime:.min,started:.max),
