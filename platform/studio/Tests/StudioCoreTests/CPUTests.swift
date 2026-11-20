@@ -27,6 +27,23 @@ func runCPUTests() throws {
           bounded.observe(ticks:[100,100,103,100],now:20002)==0 else {
         fatalError("CPU sampling interval did not enforce exact age or recover with a fresh baseline")
     }
+    for count:mach_msg_type_number_t in [0,3,5] {
+        guard CPUSampler.readTicks({buffer,reported in buffer[0]=10;reported=count;return KERN_SUCCESS})==nil else {
+            fatalError("Mismatched CPU kernel count became a complete tick sample")
+        }
+    }
+    var discontinuity=CPUSampler()
+    _=discontinuity.observe(ticks:[1,1,1,0],now:1000)
+    let short=CPUSampler.readTicks {buffer,count in buffer[0]=10;count=1;return KERN_SUCCESS}
+    guard discontinuity.observe(ticks:short,now:2000)==nil,
+          discontinuity.observe(ticks:[2,2,2,0],now:3000)==nil,
+          discontinuity.observe(ticks:[3,3,3,0],now:4000) != nil else {fatalError("Short kernel read bridged the CPU sampling interval")}
+    let full=CPUSampler.readTicks {buffer,count in
+        guard count==4 else {return KERN_INVALID_ARGUMENT}
+        for i in 0..<4 {buffer[i]=integer_t(i+1)}
+        return KERN_SUCCESS
+    }
+    guard full==[1,2,3,4] else {fatalError("Full CPU kernel count lost exact ticks")}
     guard CPUSampler.readTicks()?.count==4 else { fatalError("Native CPU counters unavailable") }
     let now = HostResources.nowMilliseconds()
     let stale = HostResources.sample(statePath: NSTemporaryDirectory(), measuredCPU: 25, measuredCPUAt: now - 6000)

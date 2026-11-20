@@ -19,13 +19,17 @@ struct CPUSampler {
         return Double(total-deltas[Int(CPU_STATE_IDLE)])/Double(total)*100
     }
     static func readTicks()->[UInt32]? {
-        var statistics=host_cpu_load_info_data_t()
-        var count=mach_msg_type_number_t(MemoryLayout<host_cpu_load_info_data_t>.size/MemoryLayout<integer_t>.size)
         let host=mach_host_self();defer { _=mach_port_deallocate(mach_task_self_,host) }
+        return readTicks {buffer,count in host_statistics(host,HOST_CPU_LOAD_INFO,buffer,&count)}
+    }
+    static func readTicks(_ read:(UnsafeMutablePointer<integer_t>,inout mach_msg_type_number_t)->kern_return_t)->[UInt32]? {
+        var statistics=host_cpu_load_info_data_t()
+        let expected=mach_msg_type_number_t(MemoryLayout<host_cpu_load_info_data_t>.size/MemoryLayout<integer_t>.size)
+        var count=expected
         let code=withUnsafeMutablePointer(to:&statistics) { pointer in
-            pointer.withMemoryRebound(to:integer_t.self,capacity:Int(count)) { host_statistics(host,HOST_CPU_LOAD_INFO,$0,&count) }
+            pointer.withMemoryRebound(to:integer_t.self,capacity:Int(expected)) { read($0,&count) }
         }
-        guard code==KERN_SUCCESS else { return nil }
+        guard code==KERN_SUCCESS,count==expected else { return nil }
         return withUnsafePointer(to:&statistics.cpu_ticks) { pointer in
             pointer.withMemoryRebound(to:UInt32.self,capacity:4) { Array(UnsafeBufferPointer(start:$0,count:4)) }
         }
