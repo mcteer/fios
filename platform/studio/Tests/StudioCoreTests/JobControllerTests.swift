@@ -642,9 +642,16 @@ func runCleanupStatusRecoveryTests() throws {
           try journal.uncertainCount()==1 else {fatalError("Reopened journal lost durable sandbox or inference custody")}
     runtime=FakeSandboxExecutor()
     controller=JobController(journal:journal,executor:runtime)
+    admission=AdmissionPolicy()
     runtime.storageContinuityUnknown=true
     try tick(101100)
     try tick(101200)
+    var recoveredCapacity=admission
+    try recoveredCapacity.reserve(job:UUID().uuidString.lowercased(),memory:512<<20,cpus:1,sample:sample(101200),now:101200)
+    do {
+        try recoveredCapacity.reserve(job:UUID().uuidString.lowercased(),memory:512<<20,cpus:1,sample:sample(101200),now:101200)
+        fatalError("Reopened manager failed to reconstruct the outstanding charge")
+    } catch AdmissionError.capacity {}
     guard controller.cleanupStatus(now:101200)["storage_continuity_unknown"] as? Int==1,
           try journal.sandboxRecords().first(where:{$0.configuration.job==lateID})?.removalProven==false,
           try journal.uncertainCount()==1,
