@@ -58,12 +58,19 @@ try{
  await until(()=>snapshot()?.metrics['fios.platform.host.cpu.utilization']?.points.length===1);
  const resources=JSON.parse(run(join(bin,'studioctl'),['--state',state,'resources'],3000));
  assert.equal(resources.resource_observation.signals.cpu.availability,'observed');
+ assert.equal(resources.resource_observation.signals.vm_available.availability,'unknown');
+ assert.equal(resources.resources.vmAvailable,null);
+ assert.equal(resources.resource_observation.vm_epoch,null);
  const originalCPUTime=resources.resource_observation.signals.cpu.sampled_at;
  const originalHostTime=resources.resource_observation.sampled_at;
  assert(originalCPUTime<=originalHostTime);
  const measured=await until(()=>{const value=snapshot();return value?.metrics['fios.platform.host.cpu.sample.time']?.points[0]?.value===originalCPUTime/1000 ? value:null;});
  assert.equal(scalar(measured,'fios.platform.resource.sample.time'),originalHostTime/1000);
  assert.ok(Math.abs(scalar(measured,'fios.platform.host.cpu.utilization')-resources.resources.cpu/100)<1e-9);
+ for(const name of ['fios.platform.vm.memory.available','fios.platform.vm.sample.time']){
+  assert.equal(measured.metrics[name]?.points.length??0,0,`${name} substituted a measurement for unavailable VM`);
+ }
+ assert.equal(scalar(measured,'fios.platform.sandbox.memory.reserved'),0);
  const result=JSON.parse(run(join(bin,'studioctl'),['--state',state,'service','mlx','maintenance'],3000));assert.equal(result.applied,false);
  const changed=await until(()=>{const value=snapshot();return value?.logs.includes('fios.platform.desiredChanged') ? value:null;});
  assert.equal(changed.metrics['fios.platform.events'].points.reduce((sum,point)=>sum+point.value,0),2);
