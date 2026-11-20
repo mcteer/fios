@@ -31,6 +31,15 @@ func runCommandSlotTests() throws {
         try heldSlots.acquire()
         FileHandle.standardError.write(Data("COMMAND_SLOT_RELEASED_UNPROVEN_CHILD\n".utf8));throw RuntimeError.identity
     } catch RuntimeError.capacity {}
+    // Refusing publication of a different, never-spawned operation refunds
+    // only that operation; recycling its slot cannot release the retained child.
+    heldSlots.release(nil)
+    for _ in 0..<2 {
+        try heldSlots.acquire()
+        do {try heldSlots.acquire();fatalError("Independent command refund cleared unresolved child custody")}
+        catch RuntimeError.capacity {}
+        heldSlots.release(nil)
+    }
     guard unproven.joined==0 else {
         FileHandle.standardError.write(Data("COMMAND_SLOT_WAITED_ON_NOTIFICATION\n".utf8));throw RuntimeError.identity
     }
