@@ -136,8 +136,9 @@ public enum ManagerRuntime {
         let boot=try HostBoot.identity()
         var lastHeartbeat:TimeInterval = -2
         var cpuSampler=CPUSampler()
-        var resourceSample=activeExecution?.sample(now:timestamp(),cpu:nil) ?? HostResources.sample(statePath:directory.path)
-        publishResources(resourceSample,now:timestamp())
+        let initialSampleAt=timestamp()
+        var resourceSample=applyingVM(to:activeExecution?.sample(now:initialSampleAt,cpu:nil) ?? HostResources.sample(statePath:directory.path),now:initialSampleAt)
+        publishResources(resourceSample,now:initialSampleAt)
         let initialGPU=GPUResources.observation()
         var gpuSampledAt=initialGPU?.at
         var gpuSample=initialGPU?.sample
