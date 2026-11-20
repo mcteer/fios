@@ -145,6 +145,13 @@ func runResourceObservationTests() throws {
                                         diskFree:100<<30,cpu:0,pressure:shortPressure,thermal:.nominal,cpuSampledAt:10000)
     let memoryUnknown=ResourceSample(sampledAt:10000,physical:64<<30,available:shortAvailable,vmAvailable:nil,
                                       diskFree:100<<30,cpu:0,pressure:.normal,thermal:.nominal,cpuSampledAt:10000)
+    let measuredZero=ResourceSample(sampledAt:10000,physical:64<<30,available:0,vmAvailable:nil,
+                                     diskFree:100<<30,cpu:0,pressure:.normal,thermal:.nominal,cpuSampledAt:10000)
+    let zeroFrame=try frame(10000,measuredZero)
+    guard zeroFrame.resources["available"] as? UInt64==0,quality(zeroFrame,"available_memory")=="observed",
+          !AdmissionPolicy().resourcesSafe(measuredZero,now:10000,needsVM:false) else {
+        fatalError("Observed zero memory failed export or satisfied resource admission")
+    }
     guard !AdmissionPolicy().resourcesSafe(memoryUnknown,now:10000,needsVM:false) else {
         fatalError("Unknown available memory supplied resource admission despite otherwise safe host readings")
     }
