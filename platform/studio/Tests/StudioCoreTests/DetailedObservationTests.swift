@@ -28,6 +28,15 @@ enum DetailedObservationTests {
             let bytes=try JSONSerialization.data(withJSONObject:object)
             do {_=try ActivityObservationExport.decode(bytes);fatalError("Malformed detailed activity accepted")}catch{}
         }
+        guard meta(1,1,6000,1000).hasFreshNativeSample,
+              meta(1,1,1000,2000).hasFreshNativeSample,
+              !meta(1,1,6001,1000).hasFreshNativeSample,
+              !meta(1,1,1000,2001).hasFreshNativeSample,
+              !meta(1,0,1000,1000).hasFreshNativeSample,
+              !meta(1,1,Int64.max,Int64.min).hasFreshNativeSample,
+              !meta(1,1,Int64.min,Int64.max).hasFreshNativeSample else {
+            fatalError("Readonly native freshness accepted invalid independent clocks")
+        }
         var idle=validator()
         guard try idle.accept(encode(),now:1000) == .idle else {fatalError("Detailed idle rejected")}
         var ceiling=validator(.unknown)

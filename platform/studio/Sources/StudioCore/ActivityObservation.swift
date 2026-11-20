@@ -16,7 +16,10 @@ struct ActivityObservationMetadata:Sendable {
     let nativeSequence:Int64?
     let nativeSampledAt:Int64?
     var hasFreshNativeSample:Bool {
-        guard nativeSequence != nil,let nativeSampledAt else {return false}
+        guard let nativeSequence,let nativeSampledAt,
+              (1...WireScalar.maximumTimestamp).contains(nativeSequence),
+              (0...WireScalar.maximumTimestamp).contains(sampledAt),
+              (0...WireScalar.maximumTimestamp).contains(nativeSampledAt) else {return false}
         return (-1000...5000).contains(sampledAt-nativeSampledAt)
     }
     func validate()throws {
