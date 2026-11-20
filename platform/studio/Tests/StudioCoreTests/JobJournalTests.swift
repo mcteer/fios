@@ -80,6 +80,15 @@ func runJobJournalTests() throws {
             guard accepted else {fatalError("Fresh host sample extended independent VM freshness")}
         } catch AdmissionError.stale {guard !accepted else {throw AdmissionError.stale}}
         try workerProbe.reserveWorker(key:"second",sample:mixed,now:10_000)
+        let mixedCPU=ResourceSample(sampledAt:10_000,physical:128<<30,available:native+(1536<<20),vmAvailable:8<<30,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal,vmSampledAt:10_000,cpuSampledAt:Int64(vmAt))
+        for sandboxRequest in [false,true] {
+            var probe=restored
+            do {
+                if sandboxRequest {try probe.reserve(job:nextSandbox,memory:512<<20,cpus:1,sample:mixedCPU,now:10_000)}
+                else {try probe.reserveWorker(key:"second",sample:mixedCPU,now:10_000)}
+                guard accepted else {fatalError("Fresh host sample extended independent CPU freshness")}
+            } catch AdmissionError.stale {guard !accepted else {throw AdmissionError.stale}}
+        }
     }
     var exactWorker=restored,exactSandbox=restored
     try exactWorker.reserveWorker(key:"second",sample:exact,now:10_000)
