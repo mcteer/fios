@@ -17,5 +17,16 @@ func runVMResourceTests() throws {
           VMResources.remaining(value(true,2001),expectedRuntimeHash:hash,now:1000)==nil,
           VMResources.remaining(value(true,1000,17<<30),expectedRuntimeHash:hash,now:1000)==nil,
           VMResources.remaining(value(true,1000,1<<30),expectedRuntimeHash:hash,now:1000)==0 else {fatalError("VM cap/whole-VM/freshness/identity policy failed")}
+    let managerEpoch=UUID().uuidString.lowercased()
+    for (now,stamp,fresh): (Int64,Int64,Bool) in [(1000,2000,true),(1000,2001,false),(6000,1000,true),(6001,1000,false)] {
+        let remaining=VMResources.remaining(value(true,stamp),expectedRuntimeHash:hash,now:now)
+        let sample=ResourceSample(sampledAt:now,physical:64<<30,available:32<<30,vmAvailable:4<<30,diskFree:100<<30,
+                                  cpu:0,pressure:.normal,thermal:.nominal,vmSampledAt:stamp,cpuSampledAt:now)
+        let report=try ResourceObservationExport.encode(sample:sample,gpu:nil,gpuSampledAt:nil,now:now,epoch:managerEpoch,sequence:1,vmEpoch:hash)
+        guard remaining==(fresh ? 4<<30:nil),report.resources["vmAvailable"] as? UInt64==remaining,
+              (report.observation["vm_epoch"] as? String)==(fresh ? hash:nil) else {
+            fatalError("VM envelope and projection disagree at an exact clock boundary")
+        }
+    }
     print("PASS: whole-VM capacity policy distinguishes configured cap from remaining bytes, fences partial/stale/foreign/impossible readings; real global sensor integration outstanding")
 }
