@@ -20,9 +20,13 @@ private final class SharedKernelFixture:NativeVMCapReading,VMResourceReading,@un
         return steady
     }
     var wallAtCapPublication:Int64?
+    var steadyAtCapPublication:TimeInterval?
+    var steadyAtCapCompletion:TimeInterval?
     func capture(liveness:NativeVMLivenessProof,checkpoint:()throws->Void)throws->NativeVMCap {
         if let wallAtCapPublication {time=wallAtCapPublication;try checkpoint()}
+        if let steadyAtCapPublication {steady=steadyAtCapPublication;try checkpoint()}
         captures+=1;if fail {throw RuntimeError.launch}
+        if let steadyAtCapCompletion {steady=steadyAtCapCompletion}
         return NativeVMCap(bytes:capValue,sampledAt:stale ? time-6000:time+capTimestampDelta)
     }
     func read(configuration:SandboxConfiguration,id:String,leaseUntil:Int64)throws->VMKernelSample {
@@ -75,13 +79,26 @@ func runSharedKernelVMTests()throws {
         do {_=try guarded.read(configuration:configuration,id:id,leaseUntil:60000);fatalError("Out-of-read kernel stamp authorized cap probe")}catch RuntimeError.identity {}
         guard unbound.captures==0 else {fatalError("Invalid kernel time reached native cap source")}
     }
-    for delta in [Double.nan,-0.5,5.001] {
+    for delta in [Double.nan,-0.5,5,5.001] {
         let bad=SharedKernelFixture();bad.steadyDeltaOnRead=delta
         let guarded=SharedKernelVMReader(kernel:bad,cap:bad,permission:permission,physical:128<<30,now:{bad.time},uptime:{bad.steady})
         do {_=try guarded.read(configuration:configuration,id:id,leaseUntil:60000);fatalError("Invalid elapsed kernel read reached cap probe")}catch RuntimeError.identity {}
         guard bad.captures==0 else {fatalError("Invalid elapsed kernel read queried cap")}
     }
     let expired=SharedKernelFixture();expired.advanceOnRead=5000
+    for beforeCapture in [false,true] {
+        let edge=SharedKernelFixture()
+        if beforeCapture {edge.steadyAtCapPublication=6} else {edge.steadyAtCapCompletion=6}
+        let guarded=SharedKernelVMReader(kernel:edge,cap:edge,permission:permission,physical:128<<30,now:{edge.time},uptime:{edge.steady})
+        do {
+            _=try guarded.read(configuration:configuration,id:id,leaseUntil:16000)
+            fatalError("Shared VM accepted exact compound budget cutoff")
+        } catch RuntimeError.deadline {
+            guard beforeCapture,edge.captures==0 else {throw RuntimeError.invalid}
+        } catch RuntimeError.identity {
+            guard !beforeCapture,edge.captures==1 else {throw RuntimeError.invalid}
+        }
+    }
     let expiring=SharedKernelVMReader(kernel:expired,cap:expired,permission:permission,physical:128<<30,now:{expired.time},uptime:{expired.steady})
     do {_=try expiring.read(configuration:configuration,id:id,leaseUntil:15000);fatalError("Expired lease reached cap probe")}catch RuntimeError.deadline {}
     guard expired.captures==0 else {fatalError("Cap queried after lease expired during kernel read")}

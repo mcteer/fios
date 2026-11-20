@@ -107,7 +107,7 @@ final class SharedKernelVMReader:VMResourceReading,@unchecked Sendable {
             guard readCompleted>=stamp,readCompleted<=ActivityPolicy.maximumTimestamp,
                   readUptime.isFinite,readUptime>=began else {fenced=true;throw RuntimeError.identity}
             previousNow=readCompleted;previousUptime=readUptime
-            guard readUptime-began<=5,(stamp...readCompleted).contains(sample.sampledAt) else {throw RuntimeError.identity}
+            guard readUptime-began<5,(stamp...readCompleted).contains(sample.sampledAt) else {throw RuntimeError.identity}
             guard readCompleted<leaseUntil else {throw RuntimeError.deadline}
             let limit:NativeVMCap
             let reusedAt:TimeInterval?
@@ -121,7 +121,7 @@ final class SharedKernelVMReader:VMResourceReading,@unchecked Sendable {
                         fenced=true;throw RuntimeError.identity
                     }
                     previousNow=wall;previousUptime=tick
-                    guard wall<leaseUntil,tick-began<=5,wall-proof.sampledAt<=1000 else {throw RuntimeError.deadline}
+                    guard wall<leaseUntil,tick-began<5,wall-proof.sampledAt<=1000 else {throw RuntimeError.deadline}
                 });cached=(limit,began)
             }
             let completed=now(),completedUptime=uptime()
@@ -129,7 +129,7 @@ final class SharedKernelVMReader:VMResourceReading,@unchecked Sendable {
                   completedUptime.isFinite,completedUptime>=previousUptime else {fenced=true;throw RuntimeError.identity}
             previousNow=completed;previousUptime=completedUptime
             let capOrdered = reusedAt.map {completedUptime-$0<3} ?? (readCompleted...completed).contains(limit.sampledAt)
-            guard completed<leaseUntil,completedUptime-began<=5,capOrdered,
+            guard completed<leaseUntil,completedUptime-began<5,capOrdered,
                   physical>0,physical<=UInt64(ActivityPolicy.maximumTimestamp),limit.bytes>0,limit.bytes<=physical,
                   sample.total>0,sample.total<=physical,sample.free<=sample.total,
                   sample.sampledAt>=0,limit.sampledAt>=0,
