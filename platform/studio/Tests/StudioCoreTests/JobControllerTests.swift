@@ -384,10 +384,11 @@ func runVMControllerTests() throws {
     try exerciseVMController(inconsistentReply:false,predatingReply:true)
     try exerciseVMController(inconsistentReply:false,rollbackReply:true)
     try exerciseVMController(inconsistentReply:false,invalidClockReply:true)
-    try exerciseVMController(inconsistentReply:false,foreignReply:true)
+    try exerciseVMController(inconsistentReply:false,foreignReplyFirst:true)
+    try exerciseVMController(inconsistentReply:false,foreignReplyFirst:false)
 }
 
-private func exerciseVMController(inconsistentReply:Bool,predatingReply:Bool=false,rollbackReply:Bool=false,invalidClockReply:Bool=false,foreignReply:Bool=false) throws {
+private func exerciseVMController(inconsistentReply:Bool,predatingReply:Bool=false,rollbackReply:Bool=false,invalidClockReply:Bool=false,foreignReplyFirst:Bool?=nil) throws {
     let directory=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer {try? FileManager.default.removeItem(at:directory)}
     let journal=try Journal(directory:directory),runtime=FakeSandboxExecutor()
@@ -441,10 +442,10 @@ private func exerciseVMController(inconsistentReply:Bool,predatingReply:Bool=fal
         revocationAt=now+1
     }
     guard runtime.resourceValues.count==1 else {fatalError("No in-flight VM fixture result before revocation")}
-    if foreignReply {
+    if let foreignReplyFirst {
         let requests=runtime.resourceRequests
         guard let original=requests.last,let exact=runtime.resourceValues.first else {throw JournalError.invalid}
-        runtime.resourceValues.insert(VMReadResult(job:exact.job,runtimeID:String(repeating:"f",count:64),result:exact.result),at:0)
+        runtime.resourceValues.insert(VMReadResult(job:exact.job,runtimeID:String(repeating:"f",count:64),result:exact.result),at:foreignReplyFirst ? 0:runtime.resourceValues.count)
         runtime.holdResourceResults=false
         do {
             try controller.tick(now:revocationAt,sample:sample(revocationAt),admission:&admission,transportReady:{_ in true},cancelModel:{_ in})
