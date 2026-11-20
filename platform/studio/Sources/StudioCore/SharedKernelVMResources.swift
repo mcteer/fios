@@ -25,15 +25,17 @@ struct VerifiedVMCap:NativeVMCapReading {
         // already running; do not spawn a redundant status CLI or start it.
         guard sampledAt>=liveness.sampledAt,sampledAt-liveness.sampledAt<=1000 else {throw RuntimeError.identity}
         let environment=["HOME":home]
-        let result=try executable.runChecked(arguments:["config","get","memory_mib"],timeout:1,maximumOutput:64,environment:environment,checkpoint:{
+        func check()throws {
             try checkpoint()
             let wall=HostResources.nowMilliseconds()
             guard wall>=sampledAt,wall-liveness.sampledAt<=1000 else {throw RuntimeError.deadline}
-        })
+        }
+        let result=try executable.runChecked(arguments:["config","get","memory_mib"],timeout:1,maximumOutput:64,environment:environment,checkpoint:check)
         guard result.status==0,let text=String(data:result.output,encoding:.utf8)?.trimmingCharacters(in:.whitespacesAndNewlines),
               !text.isEmpty,text.utf8.count<=8,text.first != "0",text.utf8.allSatisfy({(48...57).contains($0)}),
-              let mib=UInt64(text),mib<=UInt64(ActivityPolicy.maximumTimestamp)/(1<<20),
-              ProcessInfo.processInfo.systemUptime-began<=3 else {throw RuntimeError.invalid}
+              let mib=UInt64(text),mib<=UInt64(ActivityPolicy.maximumTimestamp)/(1<<20) else {throw RuntimeError.invalid}
+        try check()
+        guard ProcessInfo.processInfo.systemUptime-began<3 else {throw RuntimeError.deadline}
         return NativeVMCap(bytes:mib*(1<<20),sampledAt:sampledAt)
     }
 }

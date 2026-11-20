@@ -38,8 +38,9 @@ struct VerifiedVMInventory:NativeVMInventoryReading {
         // states must not silently disappear from capacity coverage.
         // Nonempty inventory needs separately acquired same-kernel/state proofs.
         // Do not invent coverage from counts or parse unreviewed item schemas.
-        guard let machines=try JSONSerialization.jsonObject(with:inventory.output) as? [Any],machines.isEmpty,
-              ProcessInfo.processInfo.systemUptime-began<=5 else {throw RuntimeError.identity}
+        guard let machines=try JSONSerialization.jsonObject(with:inventory.output) as? [Any],machines.isEmpty else {throw RuntimeError.identity}
+        try checkpoint()
+        guard ProcessInfo.processInfo.systemUptime-began<5 else {throw RuntimeError.deadline}
         return NativeVMInventory(configuredCap:mib*(1<<20),sampledAt:sampledAt,machineIDs:[])
     }
 }

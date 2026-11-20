@@ -58,6 +58,18 @@ func runNativeVMInventoryTests() throws {
         fatalError("Expired VM inventory started a dependent native command")
     }
     try Data().write(to:calls)
+    var finalChecks=0
+    do {
+        _=try reader.capture(checkpoint:{
+            finalChecks+=1
+            if finalChecks==4 {throw RuntimeError.deadline}
+        })
+        fatalError("Inventory output crossed its inherited final publication cutoff")
+    } catch RuntimeError.deadline {}
+    guard finalChecks==4,try String(contentsOf:calls,encoding:.utf8)=="status\nconfig\nlist\n" else {
+        fatalError("Inventory final cutoff did not follow all fixed reads")
+    }
+    try Data().write(to:calls)
     let capReader=VerifiedVMCap(executable:executable,home:home.path)
     let capBoot=String(repeating:"a",count:64),capNow=HostResources.nowMilliseconds()
     let proof=try NativeVMLivenessProof(sample:VMKernelSample(sampledAt:capNow,total:16<<30,free:8<<30,bootHash:capBoot),
@@ -67,6 +79,17 @@ func runNativeVMInventoryTests() throws {
         fatalError("Verified cap ignored its pre-spawn checkpoint")
     } catch RuntimeError.deadline {}
     guard capChecks==1,try Data(contentsOf:calls).isEmpty else {fatalError("Cap CLI ran despite checkpoint refusal")}
+    capChecks=0
+    do {
+        _=try capReader.capture(liveness:proof,checkpoint:{
+            capChecks+=1
+            if capChecks==2 {throw RuntimeError.deadline}
+        })
+        fatalError("Cap output crossed its inherited final publication cutoff")
+    } catch RuntimeError.deadline {}
+    guard capChecks==2,try String(contentsOf:calls,encoding:.utf8)=="config\n" else {
+        fatalError("Cap final cutoff did not follow exactly one fixed read")
+    }
     let collector=VMEnvelopeReader(kernel:KernelVMFixture(),inventory:InventoryVMFixture(),nativeProfileHash:String(repeating:"a",count:64),physical:32<<30)
     let sample=try collector.read(configuration:configuration,id:id,leaseUntil:HostResources.nowMilliseconds()+30000)
     guard let envelope=sample.envelope,VMResources.remaining(envelope,expectedRuntimeHash:envelope.runtimeHash,now:HostResources.nowMilliseconds())==4<<30 else {fatalError("Complete VM collector lost envelope")}
