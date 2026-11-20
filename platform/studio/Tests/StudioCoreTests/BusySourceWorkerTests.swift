@@ -6,18 +6,24 @@ import CSQLite
 // A delayed mock response distinguishes post-dispatch source loss from a
 // pre-send refusal. Separate journal/admission state, no native model call.
 func runBusySourceWorkerTests(directory:URL,factory:PythonWorkerFactory,original:WorkerDispatchBinding,postReports:Int32,explicitCancel:Bool=false)throws->Data {
-    func readReports()->Data {
+    func readReports()throws->Data {
         var result=Data(),buffer=[UInt8](repeating:0,count:4096)
         while true {
             let count=Darwin.read(postReports,&buffer,buffer.count)
-            if count<=0 {break};result.append(contentsOf:buffer.prefix(count))
+            if count<0 {
+                if errno==EINTR {continue}
+                if errno==EAGAIN || errno==EWOULDBLOCK {break}
+                throw RuntimeError.launch
+            }
+            guard count>0 else {throw RuntimeError.launch}
+            result.append(contentsOf:buffer.prefix(count))
             if result.count>4096 {fatalError("Mock count output exceeded bound")}
         }
         return result
     }
     // Prove all earlier healthy requests and pre-send refusals retained their
     // original exact count before this one independent fixture starts.
-    let previous=String(decoding:readReports(),as:UTF8.self).split(separator:"\n")
+    let previous=String(decoding:try readReports(),as:UTF8.self).split(separator:"\n")
     if explicitCancel {
         guard previous.isEmpty else {throw RuntimeError.identity}
     } else {
@@ -50,7 +56,7 @@ func runBusySourceWorkerTests(directory:URL,factory:PythonWorkerFactory,original
             if case .text=event {text=true};if case .complete=event {complete=true}
             if case .failed=event {fatalError("Busy-source mock worker failed before count receipt (explicitCancel=\(explicitCancel))")}
         }
-        reports.append(readReports());Thread.sleep(forTimeInterval:0.005)
+        reports.append(try readReports());Thread.sleep(forTimeInterval:0.005)
     }
     guard reports.contains(10) else {
         fatalError("Busy-source mock POST count deadline (explicitCancel=\(explicitCancel), activeWorkers=\(broker.activeWorkers), bytes=\(reports.count))")
@@ -101,7 +107,7 @@ func runBusySourceWorkerTests(directory:URL,factory:PythonWorkerFactory,original
     }
     // Return only the one content-free aggregate already consumed above to
     // the enclosing count assertion; there can be no additional POST.
-    guard readReports().isEmpty else {throw RuntimeError.identity}
+    guard try readReports().isEmpty else {throw RuntimeError.identity}
     print("PASS: post-dispatch foreign busy model revokes/reaps private worker, suppresses text and retains exact native uncertainty; mock only")
     return reports
 }
