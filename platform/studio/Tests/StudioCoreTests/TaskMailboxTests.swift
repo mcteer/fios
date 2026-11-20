@@ -43,6 +43,31 @@ func runTaskMailboxTests() throws {
           try isolated.pop(job:another,now:3002)?["event_index"] as? Int==1 else {
         fatalError("Discard replayed owner output, reset ordinals, or disturbed another job")
     }
+    var byteBound=TaskMailbox()
+    let large:[String:Any]=["type":"output","data":String(repeating:"a",count:59000)]
+    for _ in 0..<17 {try byteBound.append(job:job,fields:large,now:1000)}
+    do {try byteBound.append(job:job,fields:large,now:1000);fatalError("Mailbox bypassed aggregate byte bound")}
+    catch MailboxError.capacity {}
+    guard try byteBound.pop(job:job,now:1001)?["event_index"] as? Int==0 else {fatalError("Byte refusal displaced existing output")}
+    try byteBound.append(job:job,fields:large,now:1001)
+    for index in 1...17 {
+        guard try byteBound.pop(job:job,now:1002)?["event_index"] as? Int==index else {
+            fatalError("Mailbox byte refusal consumed an event ordinal")
+        }
+    }
+    var frameBound=TaskMailbox()
+    let overhead=try JSONSerialization.data(withJSONObject:["type":"output","data":"","event_index":0]).count
+    let exactSize=60000-overhead
+    do {
+        try frameBound.append(job:job,fields:["type":"output","data":String(repeating:"a",count:exactSize+1)],now:1000)
+        fatalError("Mailbox accepted an oversized serialized frame")
+    } catch MailboxError.capacity {}
+    let exactData=String(repeating:"a",count:exactSize)
+    try frameBound.append(job:job,fields:["type":"output","data":exactData],now:1000)
+    let exactFrame=try frameBound.pop(job:job,now:1001)
+    guard exactFrame?["event_index"] as? Int==0,exactFrame?["data"] as? String==exactData else {
+        fatalError("Mailbox frame limit altered valid data or consumed its ordinal")
+    }
     var other=TaskMailbox()
     for _ in 0..<4 {try other.append(job:UUID().uuidString.lowercased(),fields:fields,now:1000)}
     do {try other.append(job:UUID().uuidString.lowercased(),fields:fields,now:1001);fatalError("Output exceeded four jobs")} catch MailboxError.capacity {}
