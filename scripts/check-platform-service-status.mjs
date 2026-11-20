@@ -157,6 +157,9 @@ try{
  assert.equal(cleanupResources.resource_observation.vm_epoch,null);
  assert.equal(cleanupResources.resource_observation.signals.vm_available.availability,'unknown');
  assert.equal(cleanupResources.resources.vmAvailable,null);
+ assert(Number.isSafeInteger(cleanupResources.resources.vmSampledAt),'Synthetic cached source did not supply its original time');
+ assert.equal(cleanupResources.resources.cpu,0);
+ assert.equal(cleanupResources.resource_observation.signals.cpu.availability,'observed');
  const afterResources=await until(()=>status(state));
  assert.equal(afterResources.epoch,reopened.epoch);
  assert.equal(afterResources.runtime_cleanup.pending_sandboxes,2);

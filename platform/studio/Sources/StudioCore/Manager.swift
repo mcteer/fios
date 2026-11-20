@@ -105,6 +105,11 @@ public enum ManagerRuntime {
             if activeExecution?.vmSource == .cached {return nil}
             return jobs.vmEpoch(now:now)
         }
+        func publishResources(_ sample:ResourceSample,now:Int64) {
+            // A cached fixture sample is not an observed VM gauge without
+            // a source epoch. Do not alter the separate admission sample.
+            telemetry.resources(vmEpoch(now:now).map(WireScalar.sha256)==true ? sample:sample.replacingVM(nil))
+        }
         func timestamp()->Int64 { Int64(Date().timeIntervalSince1970*1000) }
         try audit.record(.started,now:timestamp())
         defer { try? audit.record(.stopped,now:timestamp()) }
@@ -132,7 +137,7 @@ public enum ManagerRuntime {
         var lastHeartbeat:TimeInterval = -2
         var cpuSampler=CPUSampler()
         var resourceSample=activeExecution?.sample(now:timestamp(),cpu:nil) ?? HostResources.sample(statePath:directory.path)
-        telemetry.resources(resourceSample)
+        publishResources(resourceSample,now:timestamp())
         let initialGPU=GPUResources.observation()
         var gpuSampledAt=initialGPU?.at
         var gpuSample=initialGPU?.sample
@@ -264,7 +269,7 @@ public enum ManagerRuntime {
                 let cpuSampledAt=timestamp()
                 let cpu=cpuSampler.observe(ticks:CPUSampler.readTicks(),now:cpuSampledAt)
                 resourceSample=applyingVM(to:activeExecution?.sample(now:sampledAt,cpu:cpu) ?? HostResources.sample(statePath:directory.path,measuredCPU:cpu,measuredCPUAt:cpuSampledAt),now:sampledAt)
-                telemetry.resources(resourceSample)
+                publishResources(resourceSample,now:sampledAt)
                 let gpuObservation=GPUResources.observation()
                 gpuSampledAt=gpuObservation?.at
                 gpuSample=gpuObservation?.sample
