@@ -145,6 +145,7 @@ func runJobControllerTests() throws {
     guard try journal.jobs().first(where:{$0.id==ids[1]})?.state == .removed else { fatalError("Owned sandbox cleanup did not finish") }
     try checkModelSandboxSourceTurnover()
     try checkSandboxResponseOverflowIsolation()
+    try checkSandboxResponseOverflowIsolation(artifactFailure:true)
     try checkDeferredCreateRestart()
     try checkReservedCreateSlot()
     print("PASS: asynchronous sandbox coordinator, transport-before-start fencing, newest-owned pressure revocation and proof-gated cleanup")
@@ -304,12 +305,12 @@ private func checkModelSandboxSourceTurnover() throws {
     }
 }
 
-private func checkSandboxResponseOverflowIsolation() throws {
+private func checkSandboxResponseOverflowIsolation(artifactFailure:Bool=false) throws {
     let directory=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer {try? FileManager.default.removeItem(at:directory)}
     let journal=try Journal(directory:directory),runtime=FakeSandboxExecutor()
     let jobs=JobController(journal:journal,executor:runtime),tasks=TaskController(journal:journal,broker:ModelBroker(journal:journal))
-    let artifacts=AsyncArtifacts(store:try ArtifactStore(directory:directory.appendingPathComponent("artifacts")))
+    let artifacts=AsyncArtifacts(store:try ArtifactStore(directory:directory.appendingPathComponent("artifacts"),availableBytes:{0}))
     let sandbox=SandboxTaskController(journal:journal,jobs:jobs,tasks:tasks,artifacts:artifacts,socket:"/fixture/never.sock",peerUID:geteuid())
     let ids=(0..<2).map {_ in UUID().uuidString.lowercased()}.sorted()
     let owner=String(repeating:"a",count:64)
@@ -324,7 +325,25 @@ private func checkSandboxResponseOverflowIsolation() throws {
     defer {sqlite3_close(writer)}
     guard sqlite3_exec(writer,"BEGIN IMMEDIATE",nil,nil,nil)==SQLITE_OK else {throw JournalError.storage}
     let frame=Data("{\"version\":1,\"type\":\"model.done\"}".utf8)
-    try sandbox.deliverModelResponses([ids[0]:Array(repeating:frame,count:65),ids[1]:[frame]],now:10500,uptime:10500)
+    if artifactFailure {
+        try sandbox.publishExport(job:ids[0],exportID:UUID().uuidString.lowercased(),owner:owner,bytes:Data([42]),now:10500)
+        let expiry=UUID().uuidString.lowercased()
+        try artifacts.expire(request:expiry,now:10500)
+        var batch:[ArtifactServiceResult]=[]
+        let deadline=ProcessInfo.processInfo.systemUptime+3
+        while batch.count<2,ProcessInfo.processInfo.systemUptime<deadline {
+            batch+=artifacts.drain()
+            if batch.count<2 {Thread.sleep(forTimeInterval:0.005)}
+        }
+        guard batch.count==2,batch[0].request != expiry,case .failure(.capacity)=batch[0].result else {fatalError("Missing injected artifact capacity refusal")}
+        let delivered=try sandbox.deliverArtifactResults(batch,now:10500,uptime:10500)
+        guard delivered.count==1,delivered[0].request==expiry,case .success(.expired)=delivered[0].result else {
+            fatalError("Failed export and writer fence dropped independent artifact result")
+        }
+        try sandbox.deliverModelResponses([ids[1]:[frame]],now:10500,uptime:10500)
+    } else {
+        try sandbox.deliverModelResponses([ids[0]:Array(repeating:frame,count:65),ids[1]:[frame]],now:10500,uptime:10500)
+    }
     guard tasks.cancellationPending(for:ids[0]),!tasks.cancellationPending(for:ids[1]) else {fatalError("Response overflow cancelled the wrong sandbox")}
     try sandbox.deliverModelResponses([ids[1]:Array(repeating:frame,count:63)],now:10501,uptime:10501)
     guard !tasks.cancellationPending(for:ids[1]) else {fatalError("Sibling exceeded exactly 64 frames")}

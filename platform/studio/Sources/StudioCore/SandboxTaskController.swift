@@ -54,6 +54,12 @@ final class SandboxTaskController {
             try tasks.cancel(id:id,owner:session.owner,now:now,uptime:uptime)
         }
     }
+    private func quarantine(id:String,now:Int64,uptime:Int64)throws {
+        // revoke closes the byte session first. A durable writer failure is
+        // retryable without dropping already-drained sibling results.
+        do {try revoke(id:id,now:now,uptime:uptime)}
+        catch JournalError.storage {}
+    }
     func deliverModelResponses(_ responses:[String:[Data]],now:Int64,uptime:Int64)throws {
         for id in responses.keys.sorted() {
             guard let frames=responses[id],let session=sessions[id],!session.stream.terminal,!session.stream.revoked else {continue}
@@ -61,25 +67,35 @@ final class SandboxTaskController {
             catch {
                 // Quarantine closes this byte session before touching SQLite.
                 // A contended cancellation must not discard sibling responses.
-                do {try revoke(id:id,now:now,uptime:uptime)}
-                catch JournalError.storage {continue}
+                try quarantine(id:id,now:now,uptime:uptime)
             }
         }
+    }
+    func publishExport(job:String,exportID:String,owner:String,bytes:Data,now:Int64)throws {
+        guard pendingExports.count<2 else {throw ArtifactServiceFailure.capacity}
+        let request=UUID().uuidString.lowercased()
+        try artifacts.publish(request:request,job:job,owner:owner,data:bytes,now:now)
+        pendingExports[request]=(job,exportID)
+    }
+    func deliverArtifactResults(_ results:[ArtifactServiceResult],now:Int64,uptime:Int64)throws -> [ArtifactServiceResult] {
+        var unrelated:[ArtifactServiceResult]=[]
+        for result in results {
+            guard let export=pendingExports.removeValue(forKey:result.request) else {unrelated.append(result);continue}
+            switch result.result {
+            case .success(.published(let id)):
+                do {try sessions[export.job]?.stream.saved(id:export.id,artifactID:id)}
+                catch {try quarantine(id:export.job,now:now,uptime:uptime)}
+            default:try quarantine(id:export.job,now:now,uptime:uptime)
+            }
+        }
+        return unrelated
     }
     func tick(now:Int64,uptime:TimeInterval,sample:ResourceSample,admission:inout AdmissionPolicy,
               source:(String)->WorkerDispatchBinding?,nativeCapacityProven:Bool) throws -> SandboxTaskUpdates {
         guard uptime.isFinite,uptime>=0,uptime<Double(Int64.max/1000) else {throw ControlError.invalid_request}
         let clock=Int64(uptime*1000)
         var updates=SandboxTaskUpdates()
-        for result in artifacts.drain() {
-            guard let export=pendingExports.removeValue(forKey:result.request) else {updates.artifactResults.append(result);continue}
-            switch result.result {
-            case .success(.published(let id)):
-                do {try sessions[export.job]?.stream.saved(id:export.id,artifactID:id)}
-                catch {try revoke(id:export.job,now:now,uptime:clock)}
-            default:try revoke(id:export.job,now:now,uptime:clock)
-            }
-        }
+        updates.artifactResults=try deliverArtifactResults(artifacts.drain(),now:now,uptime:clock)
         let events=try tasks.tick(now:now,uptime:clock,admission:&admission,source:source)
         if !events.isEmpty {
             let sandboxIDs=Set(try journal.sandboxRecords().map(\.configuration.job))
@@ -105,8 +121,7 @@ final class SandboxTaskController {
                 // Retry exact local cancellation even if the previous attempt
                 // could not read its durable row to enqueue cancellation.
                 if !tasks.cancellationPending(for:id) {
-                    do {try revoke(id:id,now:now,uptime:clock)}
-                    catch JournalError.storage {}
+                    try quarantine(id:id,now:now,uptime:clock)
                 }
                 continue
             }
@@ -147,10 +162,7 @@ final class SandboxTaskController {
                         try tasks.sandboxModelFrame(id:id,runtimeID:runtimeID,data:data,binding:binding,nativeCapacityProven:nativeCapacityProven,sample:sample,admission:&admission,now:now,uptime:clock)
                     case .output(let stream,_,let data):updates.output.append(SandboxTaskOutput(job:id,stream:stream,data:data))
                     case .artifact(let exportID,let bytes):
-                        guard pendingExports.count<2 else {throw ArtifactServiceFailure.capacity}
-                        let request=UUID().uuidString.lowercased()
-                        try artifacts.publish(request:request,job:id,owner:session.owner,data:bytes,now:now)
-                        pendingExports[request]=(id,exportID)
+                        try publishExport(job:id,exportID:exportID,owner:session.owner,bytes:bytes,now:now)
                     case .done(let success):
                         session.codeComplete=success;sessions[id]=session
                         try tasks.cancel(id:id,owner:session.owner,now:now,uptime:clock)
