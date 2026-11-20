@@ -141,6 +141,7 @@ try{
  child=spawn('/usr/bin/sandbox-exec',['-f',profile,binary,state,'storage_continuity'],{cwd:root,env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C',HOME:'/var/empty'},stdio:'inherit'});
  const held=await until(()=>{assert(!exited(child),'Cleanup-status manager exited early');const s=status(state);return s?.runtime_cleanup?.storage_continuity_unknown===2 ? s:null;});
  assert.equal(held.runtime_cleanup.pending_sandboxes,2);
+ assert.equal(held.native_admissions,'unsupported');assert.equal(held.native_control.authoritative,false);
  assert.equal(held.unresolved_requests,1);assert.equal(held.worker_reservations,0);
  assert.equal(held.runtime_cleanup.waiting_over_60s,false);
  assert(Number.isSafeInteger(held.runtime_cleanup.manager_observation_age_ms)&&held.runtime_cleanup.manager_observation_age_ms>=0);
@@ -152,6 +153,7 @@ try{
  child=spawn('/usr/bin/sandbox-exec',['-f',profile,binary,state,'storage_continuity_reopen'],{cwd:root,env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C',HOME:'/var/empty'},stdio:'inherit'});
  const reopened=await until(()=>{assert(!exited(child),'Reopened cleanup-status manager exited early');const s=status(state);return s?.epoch!==held.epoch&&s?.runtime_cleanup?.storage_continuity_unknown===2 ? s:null;});
  assert.equal(reopened.runtime_cleanup.pending_sandboxes,2);
+ assert.equal(reopened.native_admissions,'unsupported');assert.equal(reopened.native_control.authoritative,false);
  assert.equal(reopened.unresolved_requests,1);assert.equal(reopened.worker_reservations,0);
  await until(()=>{assert(!exited(child));return twoPublications();});
  const cleanupResources=await until(()=>{
