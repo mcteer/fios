@@ -632,8 +632,10 @@ func runCleanupStatusRecoveryTests() throws {
     let removed=try journal.jobs().first{$0.id==id};precondition(removed?.state == .removed)
     let completed=controller.cleanupStatus(now:92000)
     precondition(completed["pending_sandboxes"] as? Int == 0 && completed["waiting_over_60s"] as? Bool == false)
+    precondition(completed["observed_wait_ms"] as? Int64 == 0 && completed["storage_continuity_unknown"] as? Int == 0)
     let unresolved=try journal.unresolvedCount(),uncertain=try journal.uncertainCount()
-    precondition(unresolved==1 && uncertain==1)
+    guard unresolved==1,uncertain==1,try journal.hasClaim(job:modelID,attempt:0),
+          try journal.unresolvedCount(job:id)==0 else {fatalError("Completed sandbox cleanup changed independent inference custody") }
     let lateID=UUID().uuidString.lowercased()
     let late=try DurableJob(id:lateID,idempotency:UUID().uuidString.lowercased(),ownerHash:job.ownerHash,requestHash:job.requestHash,created:93000)
     let lateConfig=try SandboxConfiguration(job:lateID,nonce:String(repeating:"c",count:64),image:configuration.image,memory:configuration.memory,cpus:1)
