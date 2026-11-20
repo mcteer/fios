@@ -91,6 +91,12 @@ func runNativeControlContinuityTests() throws {
             fatalError("Local clock discontinuity did not fence native ingress transport")
         }
     }
+    var transportGap=NativeControlDiagnostics(configured:true,backendFencesConfigured:true,primaryActivityConfigured:true)
+    guard transportGap.completed(sample(),receivedAt:1000) else {throw NativeControlError.invalid}
+    transportGap.failed();transportGap.begin()
+    guard transportGap.completed(sample(43,1001),receivedAt:1001),transportGap.capture(now:1001)?.sequence==43 else {
+        fatalError("Ordinary source transport gap was confused with a local clock fence")
+    }
     var legacy=sample();legacy.nativeSampleSequence=nil;legacy.nativeSampledAt=nil
     var mixed=NativeControlDiagnostics(configured:true)
     mixed.completed(sample(),receivedAt:1000)

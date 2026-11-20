@@ -32,7 +32,7 @@ struct NativeControlDiagnostics {
         let now=now ?? receivedAt
         guard configured,!fenced else {failed();return false}
         guard (0...ActivityPolicy.maximumTimestamp).contains(now),now>=previousNow else {
-            fenced=true;failed()
+            fenced=true;clearIngress()
             backendObservations.fenceClock();primaryObservations.fenceClock()
             return false
         }
@@ -70,7 +70,8 @@ struct NativeControlDiagnostics {
         }
         return true
     }
-    mutating func failed() {value=nil;receivedAt=nil;unavailable=true;backendObservations.failed();primaryObservations.failed()}
+    private mutating func clearIngress() {value=nil;receivedAt=nil;unavailable=true}
+    mutating func failed() {clearIngress();backendObservations.failed();primaryObservations.failed()}
     private func fresh(_ time:Int64,now:Int64)->Bool {
         (0...ActivityPolicy.maximumTimestamp).contains(time) && (0...ActivityPolicy.maximumTimestamp).contains(now) &&
         (-1000...5000).contains(now-time)
