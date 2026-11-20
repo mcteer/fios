@@ -113,5 +113,19 @@ func runServiceDrainControllerTests()throws {
           try failedJournal.desired(service:"mlx")=="maintenance" else {
         fatalError("Restored source scope revived an attempt or changed durable cleanup")
     }
+    let isolatedCache=ServiceDrainObservationCache()
+    let mlx=try snapshot(jobs:[],requests:[],idle:true)
+    let orbScope=try ServiceAffectedScope(service:.orbstack,identity:identity,managerEpoch:epoch,nativeEpoch:"fixture-native",
+        nativeScopeDigest:String(repeating:"d",count:64),runtimeScopeDigest:String(repeating:"e",count:64),
+        ownedJobs:[],unresolvedManagedRequests:[],sampledAt:1000)
+    let orb=ServiceDrainSnapshot(scope:orbScope,nativeIdle:true,externalNativeWork:false,unmanagedRuntimeWork:false)
+    isolatedCache.publish(mlx,for:.mlx);isolatedCache.publish(orb,for:.orbstack)
+    let mlxGeneration=isolatedCache.versionedSnapshot(for:.mlx)?.generation
+    isolatedCache.publish(mlx,for:.orbstack)
+    guard isolatedCache.snapshot(for:.orbstack)==nil,
+          isolatedCache.versionedSnapshot(for:.mlx)?.generation==mlxGeneration,
+          isolatedCache.snapshot(for:.mlx)?.scope.digest==mlx.scope.digest else {
+        fatalError("Foreign service snapshot retained target readiness or changed source scope")
+    }
     print("PASS: source-cache-bound operator drain persists maintenance before owned revoke, retains independent uncertainty/jobs, refuses hidden claims/new scope, expires at60s and rechecks ready; synthetic source, no native actuator")
 }
