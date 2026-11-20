@@ -6,6 +6,13 @@ func runGPUResourceTests() throws {
         let observation=GPUResources.observation(now:{times.removeFirst()},read:{GPUSample(utilization:0,inUseBytes:nil,allocatedBytes:nil)})
         guard observation?.at == ((10000...15000).contains(end) ? 10000:nil) else {fatalError("GPU registry read did not preserve bounded observation start")}
     }
+    for end:UInt64 in [0,1,5_000_000_001,5_000_000_002] {
+        var uptime:[UInt64]=[1,end]
+        let observation=GPUResources.observation(now:{10000},uptime:{uptime.removeFirst()},read:{GPUSample(utilization:0,inUseBytes:nil,allocatedBytes:nil)})
+        guard observation?.at == ((1...5_000_000_001).contains(end) ? 10000:nil) else {
+            fatalError("GPU read let wall time hide an elapsed deadline or uptime regression")
+        }
+    }
     guard GPUResources.observation(now:{Int64.min},read:{fatalError("Invalid GPU clock reached registry read")})==nil else {fatalError("Invalid clock accepted")}
     guard GPUResources.decode([:])==nil,GPUResources.decode(["Device Utilization %":true])==nil,
           GPUResources.decode(["Device Utilization %":101])==nil,GPUResources.decode(["Device Utilization %":Double.nan])==nil else {fatalError("GPU missing/invalid sensor fabricated utilization")}

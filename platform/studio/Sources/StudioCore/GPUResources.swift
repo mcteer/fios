@@ -1,4 +1,5 @@
 import Foundation
+import Dispatch
 import CoreFoundation
 import IOKit
 
@@ -28,11 +29,13 @@ enum GPUResources {
     }
     // Registry counters carry no device collection clock. The local read
     // start bounds their observation age without claiming device freshness.
-    static func observation(now:()->Int64=HostResources.nowMilliseconds,read:()->GPUSample?=sample)->(sample:GPUSample,at:Int64)? {
-        let start=now()
+    static func observation(now:()->Int64=HostResources.nowMilliseconds,
+                            uptime:()->UInt64={DispatchTime.now().uptimeNanoseconds},read:()->GPUSample?=sample)->(sample:GPUSample,at:Int64)? {
+        let started=uptime(),start=now()
         guard (0...WireScalar.maximumTimestamp).contains(start),let sample=read() else {return nil}
-        let end=now()
-        guard (start...WireScalar.maximumTimestamp).contains(end),end-start<=5000 else {return nil}
+        let end=now(),ended=uptime()
+        guard (start...WireScalar.maximumTimestamp).contains(end),end-start<=5000,
+              ended>=started,ended-started<=5_000_000_000 else {return nil}
         return (sample,start)
     }
     static func sample()->GPUSample? {
