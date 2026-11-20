@@ -69,11 +69,14 @@ try {
   const verified=JSON.parse(cli(bundle,['verify-backup','--sha256',receipt.sha256]));
   assert.equal(verified.journal_compatible,true);
   const result=JSON.parse(cli(bundle,['restore-state','--sha256',receipt.sha256,'--to',restored]));
-  for(const projection of [verified,result]){
+  function assertStoppedReceipts(receipt,...projections){
+   for(const projection of projections){
     assert.equal(projection.ok,true);
     assert.equal(projection.installed,false);assert.equal(projection.activation,false);
     for(const key of ['scope','bytes','artifacts','sha256'])assert.equal(projection[key],receipt[key],`Stopped receipt disagrees on ${key}`);
+   }
   }
+  assertStoppedReceipts(receipt,verified,result);
   assert.equal(result.started,false);assert.equal(result.installed,false);assert.equal(result.activation,false);
   assert.deepEqual(readFileSync(join(restored,'configuration/runtime-enrollment.json')),opaque);
   assert.equal(readFileSync(join(restored,'configuration/session-enrollment.json')).length,0);
@@ -98,7 +101,14 @@ try {
   const pendingReceipt=JSON.parse(cli(pendingState,['backup-state','--to',pendingBackup]));
   assert.deepEqual(readFileSync(pendingIndex),pendingBytes);
   assert.deepEqual(readFileSync(join(pendingBackup,'artifacts/index.json')),pendingBytes);
-  cli(pendingBackup,['restore-state','--sha256',pendingReceipt.sha256,'--to',pendingRestore]);
+  assert.equal(pendingReceipt.scope,'platform_journal_and_exports');
+  const pendingManifest=JSON.parse(readFileSync(join(pendingBackup,'backup.json')));
+  assert.equal(pendingReceipt.artifacts,pendingManifest.artifact_files.length);
+  assert.equal(pendingReceipt.bytes,pendingManifest.journal_bytes+pendingManifest.artifact_files.reduce((sum,file)=>sum+file.bytes,0));
+  const pendingVerified=JSON.parse(cli(pendingBackup,['verify-backup','--sha256',pendingReceipt.sha256]));
+  const pendingRestored=JSON.parse(cli(pendingBackup,['restore-state','--sha256',pendingReceipt.sha256,'--to',pendingRestore]));
+  assertStoppedReceipts(pendingReceipt,pendingVerified,pendingRestored);
+  assert.equal(pendingVerified.journal_compatible,true);assert.equal(pendingRestored.started,false);
   const restoredIndex=join(pendingRestore,'artifacts/index.json');
   assert.deepEqual(readFileSync(restoredIndex),pendingBytes);
   assert.deepEqual(JSON.parse(run(helper,['check',pendingRestore])),{uncertain:1,exports:1});
