@@ -130,6 +130,10 @@ broker/worker transport do not supply the missing source authority. See
 [worker activity contract](worker-activity-v2.md) and
 [worker preparation client](worker-preparation-client.md).
 
+### Public v26.11.3 release delta (2026-11-20)
+
+The public tag binds `90047978512c5a18ee277448812932350f2c7351`. The Git tag-to-tag comparison against v26.11.2 has 1,037 changed path entries; the following is a scoped source read, not a complete compatibility review or proof of the installed version. The HTTP server adds memory-attribution gauges and counts `submit_waiting` alongside the scheduler pending queue under its lock. These are sampled accounting, not a causal all-client activity envelope, original-request terminal evidence, or an atomic admission reservation. They cannot make zero an idle witness or settle retained uncertainty. The public app `ProcessRegistry.swift` and `src/host/lan/` paths are unchanged; that alone does not qualify installed handover, discover a serving endpoint, or justify changing pins.
+
 ### Bounded upstream recheck (2026-11-16)
 
 The public latest release remains v26.11.2. Main92cecaaf83c47f7bcc81c21250d8e50a7bdfe462 is97 commits ahead of the pinned release and4 beyond the prior218c766 audit. The [four-commit comparison](https://github.com/ddalcu/mlx-serve/compare/218c76640228e3860f8a4a67075c9fcd1fa29cae...92cecaaf83c47f7bcc81c21250d8e50a7bdfe462) changes10 cache/prefill/accounting/sampling-related files. Those changed paths provide no new normalized activity/terminal/admission interface to adopt. This is a bounded comparison, not an exhaustive absence claim about all upstream source. No newer code or installed version was imported.
