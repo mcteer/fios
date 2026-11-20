@@ -28,7 +28,7 @@ async function stop(child) {
 }
 let retain=false;
 try {
- for(const mode of ['unknown-field','malformed-boot','negative-start','unordered-starts','duplicate-field','writable','hardlink','symlink','fifo','directory']) {
+ for(const mode of ['unknown-field','malformed-boot','negative-start','unordered-starts','too-close-starts','duplicate-field','writable','hardlink','symlink','fifo','directory']) {
   const state=path.join(temporary,mode);mkdirSync(state,{mode:0o700});states.push(state);
   const file=path.join(state,'restart-budget.json');
   if(mode==='hardlink')linkSync(sentinel,file);
@@ -41,6 +41,7 @@ try {
    if(mode==='malformed-boot')payload=JSON.stringify({boot:'not-a-boot-uuid',starts:[]});
    if(mode==='negative-start')payload=JSON.stringify({boot,starts:[-1]});
    if(mode==='unordered-starts')payload=JSON.stringify({boot,starts:[2,1]});
+   if(mode==='too-close-starts')payload=JSON.stringify({boot,starts:[1000,10999]});
    if(mode==='duplicate-field')payload=`{"boot":"${boot}","starts":[],"starts":[]}`;
    writeFileSync(file,payload,{mode:0o600});if(mode==='writable')chmodSync(file,0o666);
   }
