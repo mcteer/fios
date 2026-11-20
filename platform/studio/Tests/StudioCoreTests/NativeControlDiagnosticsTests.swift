@@ -122,6 +122,14 @@ func runNativeControlContinuityTests() throws {
           (combined.summary(now:1002)["primary_activity"] as? [String:Any])?["state"] as? String=="unavailable" else {
         fatalError("New ingress capture disguised replay of the pre-gap primary capture")
     }
+    let nextPrimary=NativePrimaryActivitySample(peer:peer,receivedAt:1003,activity:NativePrimaryActivity(phaseVersion:2,
+        instance:instance,sampleSequence:12,sampledAt:1003,uncertain:false,owners:0,ingress:0,preparing:0,queued:0,active:0,responding:0,models:[]))
+    guard combined.completed(sample(45,1003),receivedAt:1003,backendFences:.failure(.unavailable),primaryActivity:.success(nextPrimary)) else {throw NativeControlError.invalid}
+    guard combined.completed(sample(46,1004),receivedAt:1004,backendFences:.success(backend)) else {throw NativeControlError.invalid}
+    let backendGap=combined.summary(now:1004)
+    guard (backendGap["backend_fences"] as? [String:Any])?["state"] as? String=="unavailable",
+          (backendGap["primary_activity"] as? [String:Any])?["state"] as? String=="received",
+          combined.capture(now:1004)?.sequence==46 else {fatalError("Backend outage/replay affected independent primary or ingress evidence")}
     var legacy=sample();legacy.nativeSampleSequence=nil;legacy.nativeSampledAt=nil
     var mixed=NativeControlDiagnostics(configured:true)
     mixed.completed(sample(),receivedAt:1000)
