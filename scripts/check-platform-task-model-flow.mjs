@@ -194,7 +194,10 @@ try {
  },15000);
  if(['complete','unicode'].includes(scenario)){assert.equal(text,'MOCK_ONLY');assert.equal(terminal,'complete');}
  if(scenario==='unavailable'){assert.equal(text,'');assert.equal(terminal,'failed');assert.equal(failureCode,'upstream_http');}
- assert.equal(posts,1);assert.equal(final.lease.deadline_at,deadline);assert.equal(final.lease.revoked,true);
+ // The synchronous CLI may consume the terminal event before Node drains
+ // the separate mock process's stdout. Wait for the report, never replay.
+ await until(()=>{if(streamFailure)throw streamFailure;assert(!exited(mock),`Mock exited before reporting ${scenario}`);return posts>=1;},3000);
+ assert.equal(posts,1,`Expected exactly one mock POST for ${scenario}`);assert.equal(final.lease.deadline_at,deadline);assert.equal(final.lease.revoked,true);
  await until(()=>JSON.parse(command(cli,['--state',state,'status'],3000)).worker_reservations===0);
  assert.equal(final.unresolved_managed_requests,1);
  let restartChecked=false;
