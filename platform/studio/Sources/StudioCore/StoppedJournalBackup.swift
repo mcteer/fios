@@ -36,7 +36,10 @@ public enum StoppedJournalBackup {
             guard lstat(destination.path+suffix,&existing) != 0,errno==ENOENT else {throw JournalError.conflict}
         }
         let output=open(destination.path,O_RDWR|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC,0o600)
-        guard output>=0 else {throw JournalError.storage};close(output)
+        guard output>=0 else {throw JournalError.storage}
+        defer {close(output)}
+        var created=stat()
+        guard fstat(output,&created)==0 else {throw JournalError.storage}
         // Retain failed output/SQLite sidecars for diagnosis. No receipt is
         // returned and no pathname cleanup assumes their current ownership.
         // A restored WAL-mode main file may lack SHM/WAL initialization.
@@ -49,6 +52,9 @@ public enum StoppedJournalBackup {
             if let source {sqlite3_close(source)}
             withExtendedLifetime(snapshot) {}
         }
+        var targetName=stat()
+        guard lstat(destination.path,&targetName)==0,targetName.st_dev==created.st_dev,targetName.st_ino==created.st_ino,
+              targetName.st_nlink==1,targetName.st_size==0 else {throw JournalError.storage}
         guard sqlite3_open_v2(snapshot.directory.appendingPathComponent("state.sqlite").path,&source,SQLITE_OPEN_READWRITE|SQLITE_OPEN_FULLMUTEX,nil)==SQLITE_OK,
               sqlite3_open_v2(destination.path,&target,SQLITE_OPEN_READWRITE|SQLITE_OPEN_FULLMUTEX,nil)==SQLITE_OK else {throw JournalError.storage}
         func scalar(_ sql:String)throws->Int {
@@ -76,7 +82,8 @@ public enum StoppedJournalBackup {
         let saved=open(destination.path,O_RDONLY|O_NOFOLLOW|O_CLOEXEC|O_NONBLOCK)
         guard saved>=0 else {throw JournalError.storage};defer {close(saved)}
         var savedInfo=stat()
-        guard fstat(saved,&savedInfo)==0,savedInfo.st_mode&S_IFMT==S_IFREG,savedInfo.st_nlink==1,
+        guard fstat(saved,&savedInfo)==0,savedInfo.st_dev==created.st_dev,savedInfo.st_ino==created.st_ino,
+              savedInfo.st_mode&S_IFMT==S_IFREG,savedInfo.st_nlink==1,
               savedInfo.st_uid==geteuid(),savedInfo.st_mode&0o077==0,(100...(64<<20)).contains(savedInfo.st_size),
               fsync(saved)==0 else {throw JournalError.storage}
         var digest=SHA256(),buffer=[UInt8](repeating:0,count:65536),total:Int64=0
@@ -90,7 +97,9 @@ public enum StoppedJournalBackup {
         }
         var named=stat()
         guard lstat(destination.path,&named)==0,named.st_dev==savedInfo.st_dev,named.st_ino==savedInfo.st_ino,
-              named.st_size==savedInfo.st_size else {throw JournalError.storage}
+              named.st_size==savedInfo.st_size,named.st_uid==savedInfo.st_uid,named.st_mode==savedInfo.st_mode,named.st_nlink==1,
+              named.st_mtimespec.tv_sec==savedInfo.st_mtimespec.tv_sec,named.st_mtimespec.tv_nsec==savedInfo.st_mtimespec.tv_nsec,
+              named.st_ctimespec.tv_sec==savedInfo.st_ctimespec.tv_sec,named.st_ctimespec.tv_nsec==savedInfo.st_ctimespec.tv_nsec else {throw JournalError.storage}
         let parent=open(destination.deletingLastPathComponent().path,O_RDONLY|O_NOFOLLOW|O_DIRECTORY|O_CLOEXEC)
         guard parent>=0 else {throw JournalError.storage};defer {close(parent)}
         guard fsync(parent)==0 else {throw JournalError.storage}
