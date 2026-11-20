@@ -20,8 +20,11 @@ extension StoppedStateBackup {
         let sourcePath=directory.resolvingSymlinksInPath().standardizedFileURL.path
         let targetPath=parent.resolvingSymlinksInPath().appendingPathComponent(destination.lastPathComponent).standardizedFileURL.path
         guard targetPath != sourcePath,!targetPath.hasPrefix(sourcePath+"/") else {throw JournalError.invalid}
-        var info=stat()
-        guard lstat(parent.path,&info)==0,info.st_mode&S_IFMT==S_IFDIR,info.st_uid==geteuid(),info.st_mode&0o077==0 else {throw JournalError.invalid}
+        let outer=open(parent.path,O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC)
+        guard outer>=0 else {throw JournalError.invalid};defer {close(outer)}
+        var parentInfo=stat(),info=stat()
+        guard fstat(outer,&parentInfo)==0,parentInfo.st_mode&S_IFMT==S_IFDIR,
+              parentInfo.st_uid==geteuid(),parentInfo.st_mode&0o077==0 else {throw JournalError.invalid}
         guard lstat(destination.path,&info) != 0,errno==ENOENT else {throw JournalError.conflict}
         let disk=try FileManager.default.attributesOfFileSystem(forPath:parent.path)
         guard let free=(disk[.systemFreeSize] as? NSNumber)?.int64Value,free>=receipt.bytes+(10<<30) else {throw JournalError.storage}
@@ -80,9 +83,11 @@ extension StoppedStateBackup {
         guard fsync(artifacts)==0 else {throw JournalError.storage}
         let folder=open(temporary.path,O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC)
         guard folder>=0 else {throw JournalError.storage};defer {close(folder)}
-        guard fsync(folder)==0,renamex_np(temporary.path,destination.path,UInt32(RENAME_EXCL))==0 else {throw JournalError.conflict}
-        let outer=open(parent.path,O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC)
-        guard outer>=0 else {throw JournalError.storage};defer {close(outer)}
+        guard fsync(folder)==0 else {throw JournalError.storage}
+        // Publish and sync against the same retained destination parent.
+        guard lstat(parent.path,&info)==0,info.st_dev==parentInfo.st_dev,info.st_ino==parentInfo.st_ino,
+              info.st_mode==parentInfo.st_mode,info.st_uid==parentInfo.st_uid,
+              renameatx_np(outer,temporary.lastPathComponent,outer,destination.lastPathComponent,UInt32(RENAME_EXCL))==0 else {throw JournalError.conflict}
         guard fsync(outer)==0 else {throw JournalError.storage}
         return receipt
     }
