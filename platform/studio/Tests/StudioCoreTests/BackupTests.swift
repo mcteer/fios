@@ -140,6 +140,13 @@ func runBackupTests() throws {
     let exports=root.appendingPathComponent("exports-copy")
     let indexBefore=try Data(contentsOf:state.appendingPathComponent("artifacts/index.json"))
     var artifactCheckpoints=0
+    let earlyExports=root.appendingPathComponent("metadata-deadline-exports")
+    var earlyChecks=0
+    do {
+        _=try StoppedArtifactBackup.create(directory:state,destination:earlyExports,uptime:{earlyChecks+=1;return earlyChecks>=3 ? 130:100})
+        fatalError("Stopped backup renewed an expired metadata clock")
+    } catch RuntimeError.deadline {}
+    guard earlyChecks==3,!FileManager.default.fileExists(atPath:earlyExports.path) else {fatalError("Metadata deadline created a destination")}
     let saved=try StoppedArtifactBackup.create(directory:state,destination:exports,uptime:{artifactCheckpoints+=1;return 100})
     let lateExports=root.appendingPathComponent("late-exports")
     var artifactCalls=0

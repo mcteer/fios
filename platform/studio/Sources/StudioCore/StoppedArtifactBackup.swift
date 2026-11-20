@@ -15,6 +15,13 @@ enum StoppedArtifactBackup {
         let proof=try stopped ?? StoppedPlatformState(directory:directory)
         defer {withExtendedLifetime(proof) {}}
         guard proof.directory==directory.standardizedFileURL else {throw JournalError.invalid}
+        let began=uptime()
+        var previous=began
+        func checkCopyClock()throws {
+            let now=uptime()
+            guard began.isFinite,began>=0,now.isFinite,now>=previous,now-began<30 else {throw RuntimeError.deadline}
+            previous=now
+        }
         func privateDirectory(_ url:URL)throws {
             var value=stat()
             guard lstat(url.path,&value)==0,value.st_mode&S_IFMT==S_IFDIR,value.st_uid==geteuid(),value.st_mode&0o077==0 else {throw JournalError.invalid}
@@ -30,6 +37,7 @@ enum StoppedArtifactBackup {
             let (fd,length)=try openPrivate(url,maximum:maximum);defer {close(fd)}
             var data=Data(),buffer=[UInt8](repeating:0,count:32768)
             while true {
+                try checkCopyClock()
                 let count=Darwin.read(fd,&buffer,buffer.count)
                 if count<0 && errno==EINTR {continue}
                 guard count>=0,Int64(data.count+max(0,count))<=maximum else {throw JournalError.invalid}
@@ -86,16 +94,10 @@ enum StoppedArtifactBackup {
         guard try FileManager.default.contentsOfDirectory(atPath:source.path).allSatisfy({allowed.contains($0)}) else {throw JournalError.invalid}
         let disk=try FileManager.default.attributesOfFileSystem(forPath:destination.deletingLastPathComponent().path)
         guard let free=(disk[.systemFreeSize] as? NSNumber)?.int64Value,free>=total+(10<<30) else {throw JournalError.storage}
+        try checkCopyClock()
         guard mkdir(destination.path,0o700)==0 else {throw JournalError.conflict}
         // A failed copy remains private diagnostic data, never a valid
         // export receipt. Do not recursively delete its destination by name.
-        let began=uptime()
-        var previous=began
-        func checkCopyClock()throws {
-            let now=uptime()
-            guard began.isFinite,began>=0,now.isFinite,now>=previous,now-began<30 else {throw RuntimeError.deadline}
-            previous=now
-        }
         var copiedFiles:[ArtifactBackupFile]=[]
         for (record,length) in files {
             let name=record.id+".blob",(input,_)=try openPrivate(source.appendingPathComponent(name),maximum:16<<20)
