@@ -322,6 +322,20 @@ func runBackupTests() throws {
     try AtomicState.write(Data(),to:configuration.appendingPathComponent("session-enrollment.json"))
     try AtomicState.write(Data("unrelated".utf8),to:configuration.appendingPathComponent("unrelated.json"))
     try FileManager.default.setAttributes([.posixPermissions:0o644],ofItemAtPath:configuration.appendingPathComponent("runtime-enrollment.json").path)
+    var captureCalls=0
+    _=try ConfigurationBackup.capture(directory:configuration,uptime:{captureCalls+=1;return 100})
+    for final in [101.999,102,100.25,Double.infinity] {
+        var calls=0
+        do {
+            _=try ConfigurationBackup.capture(directory:configuration,uptime:{
+                calls+=1;return calls==1 ? 100:calls==captureCalls ? final:100.5
+            })
+            guard final==101.999 else {fatalError("Configuration capture accepted invalid final clock")}
+        } catch RuntimeError.deadline {guard final != 101.999 else {throw RuntimeError.deadline}}
+        guard calls==captureCalls,try Data(contentsOf:configuration.appendingPathComponent("runtime-enrollment.json"))==policy else {
+            fatalError("Late configuration capture changed source or missed checkpoint")
+        }
+    }
     let configured=root.appendingPathComponent("configured-backup")
     let configuredReceipt=try StoppedStateBackup.create(directory:state,destination:configured,configuration:configuration)
     guard configuredReceipt.scope=="platform_journal_exports_and_configuration" else {fatalError("Missing configuration scope")}

@@ -28,17 +28,23 @@ struct ConfigurationBackup {
         a.st_dev==b.st_dev && a.st_ino==b.st_ino && a.st_uid==b.st_uid && a.st_gid==b.st_gid && a.st_mode==b.st_mode && a.st_nlink==b.st_nlink && a.st_size==b.st_size &&
         a.st_mtimespec.tv_sec==b.st_mtimespec.tv_sec && a.st_mtimespec.tv_nsec==b.st_mtimespec.tv_nsec && a.st_ctimespec.tv_sec==b.st_ctimespec.tv_sec && a.st_ctimespec.tv_nsec==b.st_ctimespec.tv_nsec
     }
-    static func capture(directory:URL)throws->ConfigurationBackup {
+    static func capture(directory:URL,uptime:()->TimeInterval={ProcessInfo.processInfo.systemUptime})throws->ConfigurationBackup {
+        let began=uptime()
+        var previous=began
+        func checkClock()throws {
+            let now=uptime()
+            guard began.isFinite,began>=0,now.isFinite,now>=previous,now-began<2 else {throw RuntimeError.deadline}
+            previous=now
+        }
         guard directory.isFileURL else {throw JournalError.invalid}
         let parent=open(directory.path,O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC)
         guard parent>=0 else {throw JournalError.invalid};defer {close(parent)}
         var initial=stat(),final=stat(),namedParent=stat()
         guard fstat(parent,&initial)==0,[0,geteuid()].contains(initial.st_uid),initial.st_mode&0o7022==0,noACL(parent) else {throw JournalError.invalid}
-        let deadline=ProcessInfo.processInfo.systemUptime+2
         var files=[File](),payloads=[String:Data]()
         var identities:[String:stat]=[:]
         for name in names {
-            guard ProcessInfo.processInfo.systemUptime<deadline else {throw RuntimeError.deadline}
+            try checkClock()
             let fd=openat(parent,name,O_RDONLY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC)
             if fd<0,errno==ENOENT {files.append(File(name:name,bytes:nil,sha256:nil,originalUID:nil,originalMode:nil));continue}
             guard fd>=0 else {throw JournalError.invalid};defer {close(fd)}
@@ -46,7 +52,7 @@ struct ConfigurationBackup {
             guard fstat(fd,&before)==0,before.st_mode&S_IFMT==S_IFREG,[0,geteuid()].contains(before.st_uid),before.st_mode&0o7022==0,before.st_nlink==1,(0...65536).contains(before.st_size),noACL(fd) else {throw JournalError.invalid}
             var data=Data(),buffer=[UInt8](repeating:0,count:4096)
             while true {
-                guard ProcessInfo.processInfo.systemUptime<deadline else {throw RuntimeError.deadline}
+                try checkClock()
                 let count=Darwin.read(fd,&buffer,min(buffer.count,65537-data.count))
                 if count<0,errno==EINTR {continue}
                 guard count>=0,data.count+count<=65536 else {throw JournalError.invalid}
@@ -56,6 +62,7 @@ struct ConfigurationBackup {
             files.append(File(name:name,bytes:data.count,sha256:digest(data),originalUID:before.st_uid,originalGID:before.st_gid,originalMode:before.st_mode&0o7777));payloads[name]=data;identities[name]=after
         }
         guard fstat(parent,&final)==0,stable(initial,final),lstat(directory.path,&namedParent)==0,stable(final,namedParent),noACL(parent) else {throw JournalError.invalid}
+        try checkClock()
         return ConfigurationBackup(files:files,payloads:payloads,identities:identities,directoryIdentity:final)
     }
     func recheck(directory:URL)throws {
