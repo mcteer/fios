@@ -49,6 +49,11 @@ func runServiceRuntimeScopeTests()throws {
     try journal.confirmSandboxAbsent(job:id)
     for state:JobState in [.stopping,.removing,.removed] {try journal.transitionJob(id:id,to:state,now:1001)}
     cache.publish(try snapshot(stamp:1002),for:.orbstack)
+    let afterCleanup=try drain.poll(service:.orbstack,now:1002,uptime:1002)
+    guard afterCleanup.state == .refused(.activityUnknown),afterCleanup.revokeOwned.isEmpty,
+          try journal.recordedDesired(service:.orbstack) == .maintenance else {
+        fatalError("Local sandbox cleanup revived a refused runtime drain or reset desired state")
+    }
     guard try drain.begin(service:.orbstack,role:.operator,now:1002,uptime:1002).state == .ready(identity) else {throw RuntimeError.identity}
     _=try force.prepare(service:.orbstack,role:.operator,now:1002)
     try runRecoveredRuntimeScopeTests(directory:directory.appendingPathComponent("recovered"))
