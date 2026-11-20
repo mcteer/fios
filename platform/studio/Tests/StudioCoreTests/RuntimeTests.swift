@@ -56,7 +56,14 @@ func runRuntimeTests() throws {
         _=try writer.run(arguments:["fixture"],timeout:2,maximumOutput:7)
         fatalError("Command returned partial success past its output budget")
     } catch RuntimeError.outputLimit {}
-    guard try runtime.run(arguments:[],timeout:2).status==0 else {fatalError("Output refusal leaked a command slot")}
+    for _ in 0..<2 {
+        do {
+            _=try writer.run(arguments:["fixture"],timeout:2,maximumOutput:0)
+            fatalError("Spawned command returned bytes against a zero output budget")
+        } catch RuntimeError.outputLimit {}
+        let empty=try runtime.run(arguments:[],timeout:2,maximumOutput:0)
+        guard empty.status==0,empty.output.isEmpty else {fatalError("Output refusal leaked a command slot or confused empty output")}
+    }
     // A silent child must not keep the actor blocked in output collection.
     let sleepURL=URL(fileURLWithPath:"/bin/sleep")
     let sleepDigest=SHA256.hash(data:try Data(contentsOf:sleepURL)).map {String(format:"%02x",$0)}.joined()
