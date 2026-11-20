@@ -157,8 +157,13 @@ public struct VerifiedExecutable:Sendable {
         // EOF plus Foundation exit observation makes terminationStatus available;
         // slot release independently requires kernel absence. No blocking join.
         if let failure { throw failure }
-        let status=process.terminationStatus
-        guard ProcessInfo.processInfo.systemUptime<deadline else {throw RuntimeError.deadline}
-        return CommandResult(status:status,output:output)
+        return try Self.terminalResult(deadline:deadline,output:output,status:{process.terminationStatus})
+    }
+    static func terminalResult(deadline:TimeInterval,output:Data,status:()->Int32,
+                               uptime:()->TimeInterval={ProcessInfo.processInfo.systemUptime})throws->CommandResult {
+        let exit=status()
+        let observed=uptime()
+        guard deadline.isFinite,observed.isFinite,observed>=0,observed<deadline else {throw RuntimeError.deadline}
+        return CommandResult(status:exit,output:output)
     }
 }

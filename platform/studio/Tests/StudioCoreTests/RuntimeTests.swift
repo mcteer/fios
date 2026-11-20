@@ -8,6 +8,16 @@ func runRuntimeTests() throws {
     let runtime = try VerifiedExecutable(path: trueURL.path, sha256: digest)
     let result = try runtime.run(arguments: [], timeout: 2, maximumOutput: 1024)
     precondition(result.status == 0 && result.output.isEmpty)
+    for terminal in [101.999,102,-1,Double.nan,Double.infinity] {
+        var readExit=false
+        do {
+            let checked=try VerifiedExecutable.terminalResult(deadline:102,output:result.output,status:{readExit=true;return result.status},uptime:{
+                precondition(readExit,"Terminal clock was checked before observing child status")
+                return terminal
+            })
+            guard terminal==101.999,checked.status==0,checked.output.isEmpty else {fatalError("Invalid terminal clock returned child success")}
+        } catch RuntimeError.deadline {guard terminal != 101.999 else {throw RuntimeError.deadline}}
+    }
     var checks=0
     do {
         _=try runtime.runChecked(arguments:[],timeout:2,checkpoint:{checks+=1;throw RuntimeError.deadline})
