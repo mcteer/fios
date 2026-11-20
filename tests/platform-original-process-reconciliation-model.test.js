@@ -6,11 +6,12 @@ const processA = {boot: 'boot-a', pid: 42, start: 'start-a', artifact: 'artifact
 const processB = {...processA, start: 'start-b'};
 const scopeA = {nativeEpoch: 'native-a', process: processA};
 const scopeB = {nativeEpoch: 'native-b', process: processB};
-const sameProcess = (a,b) => ['boot','pid','start','artifact'].every(field => a[field] === b[field]);
+const sameProcess = (a,b) => Number.isSafeInteger(a.pid) && a.pid > 1 && a.pid === b.pid &&
+  ['boot','start','artifact'].every(field => typeof a[field] === 'string' && a[field].length > 0 && a[field] === b[field]);
 
 function reconcilesOriginal(scope, witness) {
-  if (!scope.process || !witness?.process || witness.kind !== 'independent_exact_process_absence' || !witness.verified) return false;
-  return witness.nativeEpoch === scope.nativeEpoch && sameProcess(scope.process,witness.process);
+  if (!scope.process || !witness?.process || witness.kind !== 'independent_exact_process_absence' || witness.verified !== true) return false;
+  return typeof scope.nativeEpoch === 'string' && scope.nativeEpoch.length > 0 && witness.nativeEpoch === scope.nativeEpoch && sameProcess(scope.process,witness.process);
 }
 
 const originalAbsence = {kind: 'independent_exact_process_absence', verified: true, nativeEpoch: 'native-a', process: processA};
@@ -31,4 +32,10 @@ test('observer failure or transport evidence cannot supply an original absence w
   }
   assert.equal(reconcilesOriginal(scopeA,{...originalAbsence,verified:false}),false);
   assert.equal(reconcilesOriginal({nativeEpoch:'native-a'},originalAbsence),false);
+  assert.equal(reconcilesOriginal(scopeA,{...originalAbsence,verified:'true'}),false);
+  for (const field of ['boot','pid','start','artifact']) {
+    const partial = {...processA};delete partial[field];
+    assert.equal(reconcilesOriginal({...scopeA,process:partial},{...originalAbsence,process:partial}),false,field);
+  }
+  assert.equal(reconcilesOriginal({process:processA},{...originalAbsence,nativeEpoch:undefined}),false);
 });
