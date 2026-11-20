@@ -325,6 +325,13 @@ final class StudioOpenTelemetryTests:XCTestCase {
         XCTAssertEqual(value("fios.platform.gpu.memory.in_use"),1024)
         XCTAssertEqual(value("fios.platform.gpu.memory.allocated"),2048)
         XCTAssertEqual(value("fios.platform.gpu.sample.time"),Double(now)/1000)
+        let fractional=NSDecimalNumber(string:"1000000000000000.01")
+        let mixed=try XCTUnwrap(GPUResources.decode(["Device Utilization %":0,"In use system memory":fractional,
+                                                    "Alloc system memory":WireScalar.maximumTimestamp]))
+        telemetry.gpu(mixed,sampledAt:now)
+        XCTAssertNil(value("fios.platform.gpu.memory.in_use"))
+        XCTAssertEqual(value("fios.platform.gpu.memory.allocated"),Double(WireScalar.maximumTimestamp))
+        XCTAssertEqual(value("fios.platform.gpu.utilization"),0)
         telemetry.gpu(GPUResources.decode(["Device Utilization %":25]),sampledAt:now)
         XCTAssertEqual(value("fios.platform.gpu.utilization"),0.25)
         XCTAssertNil(value("fios.platform.gpu.memory.in_use"))
