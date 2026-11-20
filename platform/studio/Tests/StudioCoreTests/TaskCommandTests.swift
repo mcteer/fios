@@ -217,6 +217,8 @@ func runTaskCommandTests() throws {
           try call("artifact.read",["phase":"next","stream":replacementStream],now:31021)["type"] as? String=="end" else {
         fatalError("Expired transfer changed retained artifact bytes")
     }
+    let retainedExport=artifacts.statistics
+    guard retainedExport.bytes==Int64(source.count),retainedExport.jobs==1 else {fatalError("Unexpected retained export charge")}
     let firstPending=try repeatDownload(now:31022),secondPending=try call("artifact.read",["phase":"begin","artifact":artifact],now:31022)
     guard let firstHandle=firstPending["stream"] as? String,let secondHandle=secondPending["stream"] as? String else {throw RuntimeError.invalid}
     try commands.tick(now:61022,uptime:61022,artifactResults:[])
@@ -232,5 +234,10 @@ func runTaskCommandTests() throws {
     try commands.tick(now:61022,uptime:61022,artifactResults:retiredResults)
     guard try repeatDownload(now:61022)["state"] as? String=="pending" else {fatalError("Drained operations did not return capacity")}
     try commands.tick(now:61022,uptime:61022,artifactResults:wait())
+    let afterExpiry=artifacts.statistics
+    guard afterExpiry.bytes==retainedExport.bytes,afterExpiry.jobs==retainedExport.jobs,
+          artifacts.reservingDisk(in:sample).diskCommitted==UInt64(source.count) else {
+        fatalError("Retiring read handles released durable export disk charge")
+    }
     print("PASS: task-role/opaque-owner API, closed/source-loss admission, reserve-before-input, once-only validation, proof-gated cancel and asynchronous owner-only finite artifact routing")
 }
