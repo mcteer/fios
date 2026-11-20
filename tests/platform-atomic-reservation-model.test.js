@@ -73,7 +73,7 @@ class Gate {
 
   reserve(observation, target) {
     if (observation?.epoch !== this.#epoch || observation.revision !== this.#revision ||
-        observation.target !== target || !this.#covered) return null;
+        observation.target !== target || this.#covered !== true) return null;
     return this.#enter(target);
   }
 
@@ -89,7 +89,7 @@ class Gate {
 
   bindIngress(hold, target) {
     const owner = this.#owners.get(hold);
-    if (this.#fenced || owner?.state !== 'ingress' ||
+    if (typeof target !== 'string' || target.length === 0 || this.#fenced || owner?.state !== 'ingress' ||
         [...this.#owners.values()].some(other => other.target !== null && other.target !== target)) return false;
     owner.target = target;
     owner.state = 'bound';
@@ -128,7 +128,7 @@ class Gate {
   }
 
   #enter(target, state = 'reserved') {
-    if (this.#fenced || [...this.#owners.values()].some(owner => owner.target !== target)) return null;
+    if (typeof target !== 'string' || target.length === 0 || this.#fenced || [...this.#owners.values()].some(owner => owner.target !== target)) return null;
     const hold = Symbol();
     this.#owners.set(hold, { target, state, receipt: null, expires: this.#clock + 5 });
     this.#revision++;
@@ -244,14 +244,28 @@ test('reservation blocks conflicting external publication until its exact hold r
 });
 
 test('no known conflict is insufficient when coverage is unknown or later fenced', () => {
-  const unknown = new Gate();
-  assert.equal(unknown.reserve(unknown.observe('model/a'), 'model/a'), null);
+  for (const covered of [undefined,false,'true',1]) {
+    const unknown = new Gate({ covered });
+    assert.equal(unknown.reserve(unknown.observe('model/a'), 'model/a'), null);
+  }
   const gate = new Gate({ covered: true });
   const hold = gate.reserve(gate.observe('model/a'), 'model/a');
   assert(hold);
   gate.fence();
   assert(gate.cancelBeforePublication(hold));
   assert.equal(gate.reserve(gate.observe('model/a'), 'model/a'), null);
+});
+
+test('incomplete targets cannot bind ingress or publish work', () => {
+  const gate = new Gate({ covered: true });
+  for (const target of [undefined,null,'',42]) {
+    assert.equal(gate.reserve(gate.observe(target),target),null);
+    assert.equal(gate.external(target),null);
+    const ingress=gate.acceptIngress();
+    assert.equal(gate.bindIngress(ingress,target),false);
+    assert(gate.abandonIngress(ingress));
+  }
+  assert(gate.reserve(gate.observe('model/a'),'model/a'));
 });
 
 test('published work retains custody until a matching terminal receipt', () => {
