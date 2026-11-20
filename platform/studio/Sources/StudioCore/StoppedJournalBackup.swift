@@ -16,7 +16,8 @@ public enum StoppedJournalBackup {
         let stopped=try StoppedPlatformState(directory:directory)
         return try create(directory:directory,destination:destination,stopped:stopped)
     }
-    static func create(directory:URL,destination:URL,stopped:StoppedPlatformState)throws->JournalBackupReceipt {
+    static func create(directory:URL,destination:URL,stopped:StoppedPlatformState,
+                       hashUptime:()->TimeInterval={ProcessInfo.processInfo.systemUptime})throws->JournalBackupReceipt {
         defer {withExtendedLifetime(stopped) {}}
         guard stopped.directory==directory.standardizedFileURL else {throw JournalError.invalid}
         guard directory.isFileURL,destination.isFileURL else {throw JournalError.invalid}
@@ -87,22 +88,30 @@ public enum StoppedJournalBackup {
               savedInfo.st_uid==geteuid(),savedInfo.st_mode&0o077==0,(100...(64<<20)).contains(savedInfo.st_size),
               fsync(saved)==0 else {throw JournalError.storage}
         var digest=SHA256(),buffer=[UInt8](repeating:0,count:65536),total:Int64=0
-        let hashDeadline=ProcessInfo.processInfo.systemUptime+10
+        let hashStarted=hashUptime()
+        var hashClock=hashStarted
+        func checkHashClock()throws {
+            let now=hashUptime()
+            guard hashStarted.isFinite,hashStarted>=0,now.isFinite,now>=hashClock,now-hashStarted<10 else {throw RuntimeError.deadline}
+            hashClock=now
+        }
         while total<savedInfo.st_size {
-            guard ProcessInfo.processInfo.systemUptime<hashDeadline else {throw RuntimeError.deadline}
+            try checkHashClock()
             let count=Darwin.read(saved,&buffer,min(buffer.count,Int(savedInfo.st_size-total)))
             if count<0 && errno==EINTR {continue}
             guard count>0 else {throw JournalError.storage}
             total+=Int64(count);digest.update(data:Data(buffer.prefix(count)))
         }
+        let parent=open(destination.deletingLastPathComponent().path,O_RDONLY|O_NOFOLLOW|O_DIRECTORY|O_CLOEXEC)
+        guard parent>=0 else {throw JournalError.storage};defer {close(parent)}
+        guard fsync(parent)==0 else {throw JournalError.storage}
+        let sha256=digest.finalize().map {String(format:"%02x",$0)}.joined()
         var named=stat()
         guard lstat(destination.path,&named)==0,named.st_dev==savedInfo.st_dev,named.st_ino==savedInfo.st_ino,
               named.st_size==savedInfo.st_size,named.st_uid==savedInfo.st_uid,named.st_mode==savedInfo.st_mode,named.st_nlink==1,
               named.st_mtimespec.tv_sec==savedInfo.st_mtimespec.tv_sec,named.st_mtimespec.tv_nsec==savedInfo.st_mtimespec.tv_nsec,
               named.st_ctimespec.tv_sec==savedInfo.st_ctimespec.tv_sec,named.st_ctimespec.tv_nsec==savedInfo.st_ctimespec.tv_nsec else {throw JournalError.storage}
-        let parent=open(destination.deletingLastPathComponent().path,O_RDONLY|O_NOFOLLOW|O_DIRECTORY|O_CLOEXEC)
-        guard parent>=0 else {throw JournalError.storage};defer {close(parent)}
-        guard fsync(parent)==0 else {throw JournalError.storage}
-        return JournalBackupReceipt(schema:9,bytes:savedInfo.st_size,sha256:digest.finalize().map {String(format:"%02x",$0)}.joined())
+        try checkHashClock()
+        return JournalBackupReceipt(schema:9,bytes:savedInfo.st_size,sha256:sha256)
     }
 }

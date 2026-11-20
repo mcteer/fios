@@ -73,6 +73,21 @@ func runBackupTests() throws {
     let independentlyHashed=SHA256.hash(data:savedBytes).map {String(format:"%02x",$0)}.joined()
     guard receipt.schema==9,receipt.sha256==independentlyHashed,receipt.bytes==savedBytes.count,
           receipt.bytes>100 else {fatalError("Stopped journal receipt did not match published bytes")}
+    do {
+        let stopped=try StoppedPlatformState(directory:state)
+        let timely=root.appendingPathComponent("timely.sqlite"),late=root.appendingPathComponent("late.sqlite")
+        var checkpoints=0
+        let timelyReceipt=try StoppedJournalBackup.create(directory:state,destination:timely,stopped:stopped,hashUptime:{checkpoints+=1;return 10})
+        guard timelyReceipt.bytes==receipt.bytes,checkpoints>=3 else {fatalError("Missing backup receipt clock checkpoints")}
+        var calls=0
+        do {
+            _=try StoppedJournalBackup.create(directory:state,destination:late,stopped:stopped,hashUptime:{calls+=1;return calls==checkpoints ? 20:10})
+            fatalError("Stopped backup returned a receipt at its hash deadline")
+        } catch RuntimeError.deadline {}
+        guard calls==checkpoints,try Data(contentsOf:late).count==savedBytes.count,try Data(contentsOf:backup)==savedBytes else {
+            fatalError("Late receipt refusal changed original or removed diagnostic output")
+        }
+    }
     let copy=root.appendingPathComponent("restored")
     try FileManager.default.createDirectory(at:copy,withIntermediateDirectories:false,attributes:[.posixPermissions:0o700])
     try FileManager.default.copyItem(at:backup,to:copy.appendingPathComponent("state.sqlite"))
