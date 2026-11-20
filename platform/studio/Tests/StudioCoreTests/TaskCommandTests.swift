@@ -203,11 +203,13 @@ func runTaskCommandTests() throws {
     let expiredResult=try wait()
     let replacement=try repeatDownload(now:31018)
     guard let replacementStream=replacement["stream"] as? String,replacementStream != boundStream else {fatalError("Expired stream blocked independent authorized download")}
-    try commands.tick(now:31018,uptime:31018,artifactResults:expiredResult)
+    guard expiredResult.map(\.request)==[boundStream] else {fatalError("Expired completion did not carry the original handle")}
+    let lateFailure=ArtifactServiceResult(request:boundStream,result:.failure(.unavailable))
+    try commands.tick(now:31018,uptime:31018,artifactResults:[lateFailure])
     do {_=try call("artifact.read",["phase":"next","stream":boundStream],now:31018);fatalError("Late async result resurrected an expired artifact stream")}
     catch TaskCommandError.unauthorized {}
     guard try call("artifact.read",["phase":"next","stream":replacementStream],now:31018)["state"] as? String=="pending" else {
-        fatalError("Expired download completion populated its replacement")
+        fatalError("Expired download failure changed its replacement")
     }
     try commands.tick(now:31019,uptime:31019,artifactResults:wait())
     guard try call("artifact.read",["phase":"next","stream":replacementStream],now:31019)["type"] as? String=="begin",
