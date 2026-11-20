@@ -47,6 +47,19 @@ func runOwnedVMResourceTests() throws {
     do {_=try expiredInspect.read(configuration:configuration,id:id,leaseUntil:15000);fatalError("Expired inspect returned a VM sample")}
     catch RuntimeError.deadline {}
     guard !FileManager.default.fileExists(atPath:log.path) else {fatalError("Expired VM lease still published initial inspect")}
+    for edge in [false,true] {
+        var wallCalls=0,tickCalls=0
+        let boundary=try OwnedVMResourceReader(runtime:mock,approvedImages:[image],now:{
+            wallCalls+=1;return edge && wallCalls>1 ? 15000:10000
+        },uptime:{
+            tickCalls+=1;return !edge && tickCalls>1 ? 6:1
+        })
+        do {
+            _=try boundary.read(configuration:configuration,id:id,leaseUntil:16000)
+            fatalError("Owned VM read accepted exact observation budget cutoff")
+        } catch RuntimeError.deadline {}
+        guard !FileManager.default.fileExists(atPath:log.path) else {fatalError("Observation deadline still published inspect")}
+    }
     var reads=0
     let expired=try OwnedVMResourceReader(runtime:mock,approvedImages:[image],now:{reads+=1;return reads<4 ? 10000:15000},uptime:{1})
     do {_=try expired.read(configuration:configuration,id:id,leaseUntil:15000);fatalError("Mock CLI exec ran after expiry during preflight")}

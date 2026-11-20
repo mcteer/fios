@@ -109,8 +109,8 @@ final class OwnedVMResourceReader:@unchecked Sendable {
         var previousWall=sampledAt,previousTick=began
         func checkpoint()throws {
             let wall=now(),tick=uptime()
-            guard wall>=previousWall,wall<leaseUntil,wall-sampledAt<=5000,
-                  tick.isFinite,tick>=previousTick,tick-began<=5 else {throw RuntimeError.deadline}
+            guard wall>=previousWall,wall<leaseUntil,wall-sampledAt<5000,
+                  tick.isFinite,tick>=previousTick,tick-began<5 else {throw RuntimeError.deadline}
             previousWall=wall;previousTick=tick
         }
         lock.lock()
