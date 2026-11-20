@@ -78,6 +78,16 @@ func runNativeControlContinuityTests() throws {
         guard subject.capture(now:1002)==nil,subject.ingressSample(now:1002)==nil,
               subject.summary(now:1002)["state"] as? String=="fenced" else {fatalError("NATIVE_INGRESS_CONTINUITY_FENCE_REOPENED")}
     }
+    for invalid in [Int64.min,Int64.max] {
+        var subject=NativeControlDiagnostics(configured:true)
+        guard subject.completed(sample(),receivedAt:1000),
+              !subject.completed(sample(43,1001),receivedAt:1001,now:invalid) else {fatalError("Native ingress accepted an invalid local timestamp")}
+        subject.begin()
+        guard !subject.completed(sample(44,1002),receivedAt:1002),
+              subject.capture(now:1002)==nil,subject.summary(now:1002)["state"] as? String=="fenced" else {
+            fatalError("Local clock discontinuity did not fence native ingress transport")
+        }
+    }
     var legacy=sample();legacy.nativeSampleSequence=nil;legacy.nativeSampledAt=nil
     var mixed=NativeControlDiagnostics(configured:true)
     mixed.completed(sample(),receivedAt:1000)

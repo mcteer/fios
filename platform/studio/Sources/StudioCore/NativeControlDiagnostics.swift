@@ -30,8 +30,8 @@ struct NativeControlDiagnostics {
     }
     @discardableResult mutating func completed(_ value:NativeIngressStatus,receivedAt:Int64,backendFences:Result<NativeBackendFenceSample,NativeControlError>?=nil,primaryActivity:Result<NativePrimaryActivitySample,NativeControlError>?=nil,now:Int64?=nil)->Bool {
         let now=now ?? receivedAt
-        guard configured,!fenced,(0...ActivityPolicy.maximumTimestamp).contains(now) else {failed();return false}
-        guard now>=previousNow else {fenced=true;failed();return false}
+        guard configured,!fenced else {failed();return false}
+        guard (0...ActivityPolicy.maximumTimestamp).contains(now),now>=previousNow else {fenced=true;failed();return false}
         previousNow=now // Rejected replies cannot hide a later observed clock rollback.
         guard fresh(receivedAt,now:now),(try? NativeControlWire.instanceBytes(value.instance)) != nil,
               value.status == .ok || value.status == .maintenance else {failed();return false}
