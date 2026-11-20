@@ -36,8 +36,7 @@ try {
  await ready();
  const fixtureBytes=readFileSync(join(state,'fixture.json'));
  const fixture=JSON.parse(fixtureBytes);
- function call(payload,operation='artifact.read',expectedExit=0,owner=fixture.owner){
-  const id=randomUUID();
+ function call(payload,operation='artifact.read',expectedExit=0,owner=fixture.owner,id=randomUUID()){
   const result=spawnSync(cli,['--state',state,'task'],{cwd:root,encoding:'utf8',timeout:3000,input:JSON.stringify({version:1,id,operation,payload:{...payload,owner}})});
   if(expectedExit===null)assert([0,1].includes(result.status));
   else assert.equal(result.status,expectedExit,'Normal task CLI request returned an unexpected exit code');
@@ -88,10 +87,15 @@ try {
   assert.equal(finished.event,undefined,'Status replayed output for a finished job after restart');
  }
  assert.deepEqual(readFileSync(join(state,'fixture.json')),fixtureBytes,'Replacement reseeded fixture ownership');
- const records=[];
+ const records=[],beginCorrelation=randomUUID();
+ let previousStream;
  for(const [index,artifact] of fixture.artifacts.entries()){
   const expected=Buffer.from(index===0?'Hello, Studio 👋\n'.repeat(4096):'');
-  const started=call({phase:'begin',artifact});assert.equal(started.state,'pending');assert.match(started.stream,/^[a-f0-9-]{36}$/);assert.notEqual(started.stream,started.id);
+  const started=call({phase:'begin',artifact},'artifact.read',0,fixture.owner,beginCorrelation);
+  assert.equal(started.state,'pending');assert.match(started.stream,/^[a-f0-9-]{36}$/);assert.notEqual(started.stream,started.id);
+  assert.notEqual(started.stream,previousStream);
+  if(previousStream)assert.equal(call({phase:'next',stream:previousStream},'artifact.read',1).error,'unauthorized');
+  assert.equal(call({phase:'begin',artifact},'artifact.read',1,fixture.owner,beginCorrelation).error,'resource_limit');
   const denied=call({phase:'next',stream:started.stream},'artifact.read',1,otherOwner);
   assert.equal(denied.error,'unauthorized');
   const deadline=performance.now()+5000,parts=[];let metadata,done=false;
@@ -105,6 +109,7 @@ try {
   }
   assert(metadata);assert.deepEqual(Buffer.concat(parts),expected);
   assert.equal(call({phase:'next',stream:started.stream},'artifact.read',1).error,'unauthorized');
+  previousStream=started.stream;
   records.push({bytes:expected.length,chunks:parts.length,sha256:sha(expected),complete:true});
  }
  const receipt={scope:'normal_real_manager_cli_artifact_downloads',finished_job_status:true,finished_job_renewal_error_correlated:true,unowned_and_missing_same_terminal_error:true,completed_stream_replay_refused:true,restarted_stream_refused_and_export_retained:true,records,manager_sha256:sha(readFileSync(binary)),cli_sha256:sha(readFileSync(cli)),model_requests:0,runtime_actions:0,installed_service_actions:0};

@@ -156,14 +156,29 @@ func runTaskCommandTests() throws {
     catch ArtifactError.unavailable {}
     do {_=try call("artifact.read",["phase":"next","stream":pendingStream],now:1012);fatalError("Rewound stream resumed after clock catch-up")}
     catch TaskCommandError.unauthorized {}
-    let ticking=try call("artifact.read",["phase":"begin","artifact":artifact],now:1012)
+    let ticking=try repeatDownload(now:1012)
     guard let tickStream=ticking["stream"] as? String,
           try call("artifact.read",["phase":"next","stream":tickStream],now:1013)["state"] as? String=="pending" else {
         fatalError("Missing pending artifact before tick rollback")
     }
-    try commands.tick(now:1012,uptime:1014,artifactResults:wait())
+    let delayedDownload=try wait()
+    try commands.tick(now:1012,uptime:1014,artifactResults:[])
     do {_=try call("artifact.read",["phase":"next","stream":tickStream],now:1014);fatalError("Manager tick rollback left an artifact stream live")}
     catch TaskCommandError.unauthorized {}
+    let replacementDownload=try repeatDownload(now:1014)
+    guard let replacementStream=replacementDownload["stream"] as? String,replacementStream != tickStream else {
+        fatalError("Replacement aliased an expired stream")
+    }
+    try commands.tick(now:1014,uptime:1014,artifactResults:delayedDownload)
+    guard try call("artifact.read",["phase":"next","stream":replacementStream],now:1014)["state"] as? String=="pending" else {
+        fatalError("Late download completion populated its replacement")
+    }
+    try commands.tick(now:1014,uptime:1014,artifactResults:wait())
+    guard try call("artifact.read",["phase":"next","stream":replacementStream],now:1014)["artifact"] as? String==artifact,
+          try call("artifact.read",["phase":"next","stream":replacementStream],now:1014)["data"] as? String==source.base64EncodedString(),
+          try call("artifact.read",["phase":"next","stream":replacementStream],now:1014)["type"] as? String=="end" else {
+        fatalError("Replacement failed to accept its own artifact completion")
+    }
     var interrupted=begin;interrupted["idempotency"]=UUID().uuidString.lowercased()
     let pending=try call("job.create",interrupted,now:1012)
     guard let pendingID=pending["job"] as? String else {fatalError("Missing interrupted upload")}
@@ -178,18 +193,22 @@ func runTaskCommandTests() throws {
     guard try journal.jobs().first(where:{$0.id==pendingID})?.state == .revoking,
           try journal.sandboxRecords().first(where:{$0.configuration.job==pendingID})?.createIssued == false,
           try journal.requestCount(job:pendingID)==0 else {fatalError("Interrupted upload replayed or discarded ownership")}
-    let bound=try call("artifact.read",["phase":"begin","artifact":artifact],now:1016)
+    let bound=try repeatDownload(now:1016)
     guard let boundStream=bound["stream"] as? String,
           try call("artifact.read",["phase":"next","stream":boundStream],now:31015)["state"] as? String=="pending" else {
         fatalError("Pending artifact was unavailable before its original deadline")
     }
     do {_=try call("artifact.read",["phase":"next","stream":boundStream],now:31016);fatalError("Pending poll extended the artifact deadline")}
     catch ArtifactError.unavailable {}
-    try commands.tick(now:31016,uptime:31016,artifactResults:wait())
-    do {_=try call("artifact.read",["phase":"next","stream":boundStream],now:31017);fatalError("Late async result resurrected an expired artifact stream")}
-    catch TaskCommandError.unauthorized {}
-    let replacement=try call("artifact.read",["phase":"begin","artifact":artifact],now:31018)
+    let expiredResult=try wait()
+    let replacement=try repeatDownload(now:31018)
     guard let replacementStream=replacement["stream"] as? String,replacementStream != boundStream else {fatalError("Expired stream blocked independent authorized download")}
+    try commands.tick(now:31018,uptime:31018,artifactResults:expiredResult)
+    do {_=try call("artifact.read",["phase":"next","stream":boundStream],now:31018);fatalError("Late async result resurrected an expired artifact stream")}
+    catch TaskCommandError.unauthorized {}
+    guard try call("artifact.read",["phase":"next","stream":replacementStream],now:31018)["state"] as? String=="pending" else {
+        fatalError("Expired download completion populated its replacement")
+    }
     try commands.tick(now:31019,uptime:31019,artifactResults:wait())
     guard try call("artifact.read",["phase":"next","stream":replacementStream],now:31019)["type"] as? String=="begin",
           try call("artifact.read",["phase":"next","stream":replacementStream],now:31020)["data"] as? String==source.base64EncodedString(),
