@@ -84,6 +84,14 @@ class PlatformGuardTests(unittest.IsolatedAsyncioTestCase):
                     with self.assertRaises(NativeGuardError):
                         validate_observation(value, self.profile, self.command, self.now)
 
+    def test_v2_busy_allows_explicit_unknown_resource_context(self):
+        busy = observation_v2(self.profile, self.command, self.now, 'responding')
+        busy['resources'] = {'sampled_at': None, 'pressure': 'unknown', 'thermal': 'unknown'}
+        validate_observation(busy, self.profile, self.command, self.now)
+        busy['resources']['sampled_at'] = self.now - 5001
+        with self.assertRaises(NativeGuardError):
+            validate_observation(busy, self.profile, self.command, self.now)
+
     def test_v2_unknown_conflicts_and_malformed_refuse(self):
         import copy
         original=observation_v2(self.profile,self.command,self.now)
