@@ -5,7 +5,7 @@
 | Open task | Remaining behavior and dependency |
 | --- | --- |
 | T002 | Verify the native contract against exact enrolled builds on both Studios; depends on the source boundary and separately authorized acceptance. |
-| T008 | Verify the enrolled global VM profile and combined collector with no implicit VM start; resource-only source checks remain independent. |
+| T008 | Verify the enrolled global VM profile and combined collector with no implicit VM start. Source/isolated evidence covers the local sampling and fail-closed behavior (including partial CPU/memory/pressure reads and malformed GPU bytes); it does not verify installed profile identity, global VM scope, or native headroom. |
 | T009 | Finish normal-entry runtime composition against the enrolled executable, daemon and VM identities; installed positive cases require enrollment. |
 | T018 | Exercise every enabled ingress/modality and ownership phase against the authoritative producer; depends on T020 and verified compatibility. |
 | T019 | Exercise actual same-model/conflicting admission and cancel/restart reconciliation; depends on T021–T022. |

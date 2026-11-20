@@ -143,6 +143,11 @@ func runResourceObservationTests() throws {
                                       diskFree:100<<30,cpu:0,pressure:.normal,thermal:.nominal,cpuSampledAt:10000)
     let pressureUnknown=ResourceSample(sampledAt:10000,physical:64<<30,available:32<<30,vmAvailable:nil,
                                         diskFree:100<<30,cpu:0,pressure:shortPressure,thermal:.nominal,cpuSampledAt:10000)
+    let memoryUnknown=ResourceSample(sampledAt:10000,physical:64<<30,available:shortAvailable,vmAvailable:nil,
+                                      diskFree:100<<30,cpu:0,pressure:.normal,thermal:.nominal,cpuSampledAt:10000)
+    guard !AdmissionPolicy().resourcesSafe(memoryUnknown,now:10000,needsVM:false) else {
+        fatalError("Unknown available memory supplied resource admission despite otherwise safe host readings")
+    }
     guard AdmissionPolicy().resourcesSafe(otherwiseSafe,now:10000,needsVM:false),
           !AdmissionPolicy().resourcesSafe(pressureUnknown,now:10000,needsVM:false) else {
         fatalError("Unknown pressure supplied resource admission despite otherwise safe host readings")
