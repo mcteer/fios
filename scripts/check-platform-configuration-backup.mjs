@@ -42,6 +42,17 @@ try {
   cli(state,['backup','--to',standalone],{expected:1});
   assert.equal(lstatSync(standalone).ino,publishedStat.ino);
   assert.deepEqual(readFileSync(standalone),publishedJournal);
+  for(const suffix of ['-wal','-shm','-journal']) {
+    const refusedBase=join(scratch,`standalone-collision${suffix}.sqlite`);
+    const sidecar=refusedBase+suffix;
+    const original=Buffer.from(`unrelated private ${suffix} data`);
+    writeFileSync(sidecar,original,{mode:0o600,flag:'wx'});
+    const inode=lstatSync(sidecar).ino;
+    cli(state,['backup','--to',refusedBase],{expected:1});
+    assert(!existsSync(refusedBase),'Sidecar collision published a journal');
+    assert.equal(lstatSync(sidecar).ino,inode);
+    assert.deepEqual(readFileSync(sidecar),original);
+  }
   const proposalArgs=['--release',release,'--sha256',args[4],'--host','fios-edge-a.lab','--state',state,'--configuration',configuration,'--to',bundle];
   const proposal=JSON.parse(run(process.execPath,[join(root,'scripts/install-platform.mjs'),'plan-backup-config',...proposalArgs]));
   const uninstall=JSON.parse(run(process.execPath,[join(root,'scripts/install-platform.mjs'),'plan-uninstall-config',...proposalArgs]));
@@ -112,7 +123,7 @@ try {
   const recovery=JSON.parse(cli(bundle,['restore-state','--sha256',receipt.sha256,'--to',refused]));
   assert.equal(recovery.started,false);assert.equal(recovery.installed,false);assert.equal(recovery.activation,false);
   assert.deepEqual(JSON.parse(run(helper,['check',refused])),{uncertain:1,exports:1});
-  const final={scope:'isolated_packaged_cli_configuration_backup',manifest_sha256:args[4],source_revision:review.manifest.source_revision,configuration_plan_executed:true,uninstall_proposal_matches:true,backup_sha256:receipt.sha256,journal_only_receipt_verified:true,journal_only_overwrite_refused:true,network:'denied',failed_journal_retained:true,failed_export_retained:true,tampered_backup_refused_without_publication:true,tampered_configuration_refused_without_publication:true,original_restores_after_refusals:true,model_posts:0,installed:false,activation:false,uncertainty:1,exports:1,scratch};
+  const final={scope:'isolated_packaged_cli_configuration_backup',manifest_sha256:args[4],source_revision:review.manifest.source_revision,configuration_plan_executed:true,uninstall_proposal_matches:true,backup_sha256:receipt.sha256,journal_only_receipt_verified:true,journal_only_overwrite_refused:true,journal_only_sidecar_collisions_refused:3,network:'denied',failed_journal_retained:true,failed_export_retained:true,tampered_backup_refused_without_publication:true,tampered_configuration_refused_without_publication:true,original_restores_after_refusals:true,model_posts:0,installed:false,activation:false,uncertainty:1,exports:1,scratch};
   writeFileSync(join(scratch,'receipt.json'),JSON.stringify(final,null,2)+'\n',{mode:0o600});
   console.log(JSON.stringify(final));
 } catch(error) {
