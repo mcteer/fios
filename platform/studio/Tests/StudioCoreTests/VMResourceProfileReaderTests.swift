@@ -109,6 +109,20 @@ func runVMResourceProfileReaderTests() throws {
     let edgeSample=try atEdge.read(configuration:config,id:id,leaseUntil:60000)
     guard edgeSample.envelope?.sampledAt==10000,edge.captures==1 else {fatalError("Publication lost cap at its exact age edge")}
     let expired=VMProfileFixture();expired.advanceOnRead=5000
+    for elapsed in [4.999,5.0] {
+        let fixture=VMProfileFixture()
+        let profile=VMResourceProfileReader(kernel:fixture,cap:fixture,profileHash:String(repeating:"a",count:64),
+            reviewDigest:String(repeating:"c",count:64),physical:128<<30,now:{fixture.time},uptime:{
+                fixture.tickReads+=1;return fixture.tickReads==4 ? 1+elapsed:1
+            })
+        do {
+            let result=try profile.read(configuration:config,id:id,leaseUntil:16000)
+            guard elapsed<5,result.envelope?.sampledAt==10000 else {fatalError("Profile published at original deadline")}
+        } catch RuntimeError.deadline {
+            guard elapsed==5 else {throw RuntimeError.deadline}
+        }
+        guard fixture.tickReads==4,fixture.reads==1,fixture.captures==1 else {fatalError("Profile deadline fixture did not reach final publication")}
+    }
     let expiring=expired.reader()
     do {_=try expiring.read(configuration:config,id:id,leaseUntil:15000);fatalError("Expired bootstrap reached VM capacity")}
     catch RuntimeError.deadline {}

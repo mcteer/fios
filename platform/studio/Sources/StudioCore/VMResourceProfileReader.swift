@@ -53,7 +53,7 @@ final class VMResourceProfileReader:VMResourceReading,@unchecked Sendable {
         let elapsed=tick-began
         guard completed>=previous else {fenced=true;throw RuntimeError.identity}
         previous=completed
-        guard elapsed>=0,elapsed<=5,completed<leaseUntil else {throw RuntimeError.deadline}
+        guard elapsed>=0,elapsed<5,completed<leaseUntil else {throw RuntimeError.deadline}
         guard let envelope=result.envelope,
               VMResources.remaining(envelope,expectedRuntimeHash:envelope.runtimeHash,now:completed) != nil else {throw RuntimeError.identity}
         return result
