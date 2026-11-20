@@ -200,6 +200,21 @@ func runBackupTests() throws {
     do {_=try StoppedStateBackup.create(directory:state,destination:alias.appendingPathComponent("artifacts/nested"));fatalError("Snapshot entered source exports through an alias")} catch JournalError.invalid {}
     let checked=try StoppedStateBackup.verify(directory:bundle,expectedSHA256:bundleReceipt.sha256)
     guard checked.bytes==bundleReceipt.bytes,checked.artifacts==1 else {fatalError("Snapshot verification differs")}
+    var verifyCalls=0
+    _=try StoppedStateBackup.verify(directory:bundle,expectedSHA256:bundleReceipt.sha256,journalSchema:9,uptime:{verifyCalls+=1;return 100})
+    let manifestBytes=try Data(contentsOf:bundle.appendingPathComponent("backup.json"))
+    for final in [129.999,130,100.25,Double.nan] {
+        var calls=0
+        do {
+            let value=try StoppedStateBackup.verify(directory:bundle,expectedSHA256:bundleReceipt.sha256,journalSchema:9,uptime:{
+                calls+=1;return calls==1 ? 100:calls==verifyCalls ? final:100.5
+            })
+            guard final==129.999,value.sha256==checked.sha256 else {fatalError("Stopped verification returned late receipt")}
+        } catch RuntimeError.deadline {guard final != 129.999 else {throw RuntimeError.deadline}}
+        guard calls==verifyCalls,try Data(contentsOf:bundle.appendingPathComponent("backup.json"))==manifestBytes else {
+            fatalError("Verification did not preserve sealed bytes through final checkpoint")
+        }
+    }
     let sealedEntries=try FileManager.default.contentsOfDirectory(atPath:bundle.path).sorted()
     let compatible=try StoppedStateBackup.verifyCompatibility(directory:bundle,expectedSHA256:bundleReceipt.sha256)
     guard compatible.bytes==checked.bytes,compatible.artifacts==checked.artifacts,

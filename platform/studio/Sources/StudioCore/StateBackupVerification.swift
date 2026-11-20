@@ -20,10 +20,12 @@ extension StoppedStateBackup {
     public static func verify(directory:URL,expectedSHA256:String)throws->StateBackupReceipt {
         try verify(directory:directory,expectedSHA256:expectedSHA256,journalSchema:9)
     }
-    static func verify(directory:URL,expectedSHA256:String,journalSchema:Int)throws->StateBackupReceipt {
-        try verifyContents(directory:directory,expectedSHA256:expectedSHA256,journalSchema:journalSchema).0
+    static func verify(directory:URL,expectedSHA256:String,journalSchema:Int,
+                       uptime:()->TimeInterval={ProcessInfo.processInfo.systemUptime})throws->StateBackupReceipt {
+        try verifyContents(directory:directory,expectedSHA256:expectedSHA256,journalSchema:journalSchema,uptime:uptime).0
     }
-    private static func verifyContents(directory:URL,expectedSHA256:String,journalSchema:Int)throws->(StateBackupReceipt,String) {
+    private static func verifyContents(directory:URL,expectedSHA256:String,journalSchema:Int,
+                                       uptime:()->TimeInterval={ProcessInfo.processInfo.systemUptime})throws->(StateBackupReceipt,String) {
         guard [7,8,9].contains(journalSchema) else {throw JournalError.invalid}
         struct Manifest:Decodable {
             let version:Int;let scope:String;let host_hash:String;let owner_uid:UInt32;let journal_schema:Int;let journal_application_id:String
@@ -36,7 +38,13 @@ extension StoppedStateBackup {
             var info=stat()
             guard lstat(url.path,&info)==0,info.st_mode&S_IFMT==S_IFDIR,info.st_uid==geteuid(),info.st_mode&0o077==0 else {throw JournalError.invalid}
         }
-        let deadline=ProcessInfo.processInfo.systemUptime+30
+        let began=uptime()
+        var previous=began
+        func checkClock()throws {
+            let now=uptime()
+            guard began.isFinite,began>=0,now.isFinite,now>=previous,now-began<30 else {throw RuntimeError.deadline}
+            previous=now
+        }
         func hash(_ url:URL,maximum:Int64,collect:Bool=false)throws->(String,Int64,Data) {
             let fd=open(url.path,O_RDONLY|O_NOFOLLOW|O_CLOEXEC|O_NONBLOCK)
             guard fd>=0 else {throw JournalError.invalid};defer {close(fd)}
@@ -44,7 +52,7 @@ extension StoppedStateBackup {
             guard fstat(fd,&info)==0,info.st_mode&S_IFMT==S_IFREG,info.st_nlink==1,info.st_uid==geteuid(),info.st_mode&0o077==0,info.st_size>=0,info.st_size<=maximum else {throw JournalError.invalid}
             var hash=SHA256(),count:Int64=0,data=Data(),buffer=[UInt8](repeating:0,count:65536)
             while true {
-                guard ProcessInfo.processInfo.systemUptime<deadline else {throw RuntimeError.deadline}
+                try checkClock()
                 let size=Darwin.read(fd,&buffer,buffer.count)
                 if size<0 && errno==EINTR {continue}
                 guard size>=0,count+Int64(max(0,size))<=maximum else {throw JournalError.invalid}
@@ -121,6 +129,7 @@ extension StoppedStateBackup {
         let (journal,length,header)=try hash(directory.appendingPathComponent("state.sqlite"),maximum:64<<20)
         guard journal==manifest.journal_sha256,length==manifest.journal_bytes,header.count==100,
               Array(header.prefix(16))==Array("SQLite format 3\0".utf8),Array(header[60..<64])==[0,0,0,UInt8(journalSchema)],Array(header[68..<72])==[0x46,0x49,0x53,0x39] else {throw JournalError.invalid}
+        try checkClock()
         return (StateBackupReceipt(scope:scope,bytes:length+total+configurationBytes+recoveryBytes+holdBytes,artifacts:manifest.artifact_files.count,sha256:receiptHash),journal)
     }
 }
