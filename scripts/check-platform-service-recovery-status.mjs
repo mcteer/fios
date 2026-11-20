@@ -94,26 +94,34 @@ try{
  assert.equal(status(orbstackArgs).desired,originalOrbStackIntent);
  const otherIntent=JSON.parse(run(cli,['--state',state,'service','orbstack','stopped'],3000));
  assert.equal(otherIntent.applied,false);
- assert.equal(status(orbstackArgs).desired,'stopped');
- assert.equal(status().desired,'maintenance');
- assert.equal(status().launch_pending,true);
+ const afterOtherIntent=await until(()=>{
+  assert(!exited(turnoverManager),'Turnover manager exited after separate service intent');
+  return status(['status']);
+ },5000);
+ assert.equal(afterOtherIntent.services.orbstack.desired,'stopped');
+ assert.equal(afterOtherIntent.services.mlx.desired,'maintenance');
+ assert.equal(afterOtherIntent.services.mlx.launch_pending,true);
  assert.deepEqual(launchState(),originalLaunch);
  turnoverManager.kill('SIGTERM');await until(()=>exited(turnoverManager));assert.equal(turnoverManager.exitCode,0);
  turnoverManager=start('manager','known');
  await until(()=>status()?.launch_pending);await delay(2200);
- const combinedTurnover=status(['status']);
+ const readReopened=args=>until(()=>{
+  assert(!exited(turnoverManager),'Reopened turnover manager exited before status');
+  return status(args);
+ },5000);
+ const combinedTurnover=await readReopened(['status']);
  assert.equal(combinedTurnover.service_recovery,'configured');
  assert.equal(combinedTurnover.native_control.authoritative,false);
  for(const [service,args] of [['mlx',undefined],['orbstack',orbstackArgs]]){
-  const selected=status(args),combined=combinedTurnover.services[service];
+  const selected=await readReopened(args),combined=combinedTurnover.services[service];
   for(const key of ['desired','observed','launch_pending','message'])assert.equal(selected[key],combined[key],`${service} disagreement on ${key}`);
   for(const key of ['budget_state','starts_in_window'])assert.equal(selected.recovery[key],combined.recovery[key],`${service} recovery disagreement on ${key}`);
  }
- assert.equal(status().desired,'maintenance');
- assert.equal(status(orbstackArgs).desired,'stopped');
- assert.equal(status(orbstackArgs).launch_pending,false);
+ assert.equal(combinedTurnover.services.mlx.desired,'maintenance');
+ assert.equal(combinedTurnover.services.orbstack.desired,'stopped');
+ assert.equal(combinedTurnover.services.orbstack.launch_pending,false);
  assert.deepEqual(launchState('orbstack'),originalOrbStack);
- assert.equal(status().launch_pending,true);assert.equal(status().recovery.starts_in_window,1);
+ assert.equal(combinedTurnover.services.mlx.launch_pending,true);assert.equal(combinedTurnover.services.mlx.recovery.starts_in_window,1);
  assert.equal(launchState().pending,originalLaunch.pending);assert.deepEqual(launchState().starts,originalLaunch.starts);
  assert.equal(Number(readFileSync(join(state,'calls'),'utf8')),0);
  turnoverManager.kill('SIGTERM');await until(()=>exited(turnoverManager));assert.equal(turnoverManager.exitCode,0);
