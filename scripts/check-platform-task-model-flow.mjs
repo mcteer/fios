@@ -25,7 +25,7 @@ const cli=join(command('swift',['build','--package-path','platform/studio','--sh
 async function modelCase(scenario){
 const caseDirectory=join(directory,scenario);mkdirSync(caseDirectory,{mode:0o700});
 const state=join(caseDirectory,'state'),nativeState=join(caseDirectory,'native'),children=[];
-const token=randomBytes(32).toString('base64');let mock,manager,posts=0,port,streamFailure;
+const token=randomBytes(32).toString('base64');let mock,manager,posts=0,port,streamFailure,buffered='',mockClosed=false,caseFailed=false;
 function task(operation,payload,expectedError){
  const id=randomUUID(),result=spawnSync(cli,['--state',state,'task'],{cwd:root,encoding:'utf8',timeout:3000,input:JSON.stringify({version:1,id,operation,payload:{...payload,owner:token}})});
  assert.equal(result.status,expectedError?1:0,'Unexpected CLI task exit');const reply=JSON.parse(result.stdout);assert.equal(reply.id,id);
@@ -44,7 +44,7 @@ try {
  await until(()=>{assert(!exited(manager),'Private manager exited');return existsSync(join(state,'observe.sock'));});
  const status=JSON.parse(command(cli,['--state',state,'status'],3000));
  mock=spawn(python,['-I','-B',join(root,'tests/fixtures/platform/native-server.py'),nativeState,status.epoch],{cwd:root,env:environment,stdio:['pipe','pipe','pipe']});children.push(mock);
- let buffered='';
+ mock.once('close',()=>{mockClosed=true;});
  mock.stdout.on('data',bytes=>{try{buffered+=bytes;assert(buffered.length<4096);while(buffered.includes('\n')){const end=buffered.indexOf('\n'),value=JSON.parse(buffered.slice(0,end));buffered=buffered.slice(end+1);if(value.port!==undefined)port=value.port;else{assert.equal(value.posts,posts+1);posts=value.posts;}}}catch(error){streamFailure=error;}});
  mock.stderr.on('data',()=>{streamFailure=Error('Local model mock failed');});
  await until(()=>{if(streamFailure)throw streamFailure;assert(!exited(mock));return port;});
@@ -208,9 +208,18 @@ try {
   await delay(50);assert.equal(posts,1);assert.equal(JSON.parse(command(cli,['--state',state,'status'],3000)).worker_reservations,0);restartChecked=true;
  }
  return {scenario,unicode_boundary_preserved:scenario==='unicode',restart_checked:restartChecked,input_bytes:data.length,input_chunks:chunks,output_events:ordinal,terminal:terminal??null,failure_code:failureCode??null,state:final.state,cancelled_while_running:wasRunning,lease_read_did_not_extend:true,renewal_extended_expiry:true,deadline_unchanged:true,mock_model_posts:posts,worker_slots_after_completion:0};
+} catch(error) {
+ caseFailed=true;throw error;
 } finally {
- if(manager&&!exited(manager))manager.kill('SIGTERM');if(mock&&!exited(mock))mock.stdin.end();
- await until(()=>children.every(exited),5000);
+ if(manager&&!exited(manager))manager.kill('SIGTERM');
+ try {await until(()=>children.filter(child=>child!==mock).every(exited),5000);}
+ finally {if(mock&&!exited(mock))mock.stdin.end();await until(()=>!mock||mockClosed,5000);}
+ if(!caseFailed){
+  if(streamFailure)throw streamFailure;
+  assert.equal(buffered,'',`Truncated final mock report for ${scenario}`);
+  const expected=['complete','cancel','unavailable','unicode'].includes(scenario)?1:0;
+  assert.equal(posts,expected,`Unexpected final mock POST count for ${scenario}`);
+ }
 }
 }
 const records=[];
