@@ -28,14 +28,20 @@ struct ConfigurationBackup {
         a.st_dev==b.st_dev && a.st_ino==b.st_ino && a.st_uid==b.st_uid && a.st_gid==b.st_gid && a.st_mode==b.st_mode && a.st_nlink==b.st_nlink && a.st_size==b.st_size &&
         a.st_mtimespec.tv_sec==b.st_mtimespec.tv_sec && a.st_mtimespec.tv_nsec==b.st_mtimespec.tv_nsec && a.st_ctimespec.tv_sec==b.st_ctimespec.tv_sec && a.st_ctimespec.tv_nsec==b.st_ctimespec.tv_nsec
     }
-    static func capture(directory:URL,uptime:()->TimeInterval={ProcessInfo.processInfo.systemUptime})throws->ConfigurationBackup {
-        let began=uptime()
-        var previous=began
-        func checkClock()throws {
-            let now=uptime()
+    private struct ReadWindow {
+        let began:TimeInterval
+        var previous:TimeInterval
+        init(_ now:TimeInterval) {began=now;previous=now}
+        mutating func check(_ now:TimeInterval)throws {
             guard began.isFinite,began>=0,now.isFinite,now>=previous,now-began<2 else {throw RuntimeError.deadline}
             previous=now
         }
+    }
+    static func capture(directory:URL,uptime:()->TimeInterval={ProcessInfo.processInfo.systemUptime})throws->ConfigurationBackup {
+        var window=ReadWindow(uptime())
+        return try capture(directory:directory,checkClock:{try window.check(uptime())})
+    }
+    private static func capture(directory:URL,checkClock:()throws->Void)throws->ConfigurationBackup {
         guard directory.isFileURL else {throw JournalError.invalid}
         let parent=open(directory.path,O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC)
         guard parent>=0 else {throw JournalError.invalid};defer {close(parent)}
@@ -79,7 +85,9 @@ struct ConfigurationBackup {
         guard fsync(fd)==0 else {throw JournalError.storage}
         return (Self.digest(data),Int64(data.count+payloads.values.reduce(0){$0+$1.count}))
     }
-    static func verify(directory:URL,expected:String)throws->Int64 {
+    static func verify(directory:URL,expected:String,uptime:()->TimeInterval={ProcessInfo.processInfo.systemUptime})throws->Int64 {
+        var window=ReadWindow(uptime())
+        func checkClock()throws {try window.check(uptime())}
         let fd=open(directory.path,O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC)
         guard fd>=0 else {throw JournalError.invalid};defer {close(fd)}
         var info=stat()
@@ -91,6 +99,7 @@ struct ConfigurationBackup {
         guard fstat(manifestFD,&info)==0,info.st_mode&S_IFMT==S_IFREG,info.st_uid==geteuid(),info.st_nlink==1,info.st_mode&0o7777==0o600,(1...65536).contains(info.st_size),noACL(manifestFD) else {throw JournalError.invalid}
         var buffer=[UInt8](repeating:0,count:65537),offset=0
         while offset<buffer.count {
+            try checkClock()
             let n=buffer.withUnsafeMutableBytes {Darwin.read(manifestFD,$0.baseAddress!.advanced(by:offset),$0.count-offset)}
             if n<0,errno==EINTR {continue};guard n>=0 else {throw JournalError.invalid};if n==0 {break};offset+=n
         }
@@ -104,7 +113,7 @@ struct ConfigurationBackup {
         guard [1,2].contains(manifest.version),manifest.scope=="opaque_configuration_data_only",manifest.files.map(\.name)==names else {throw JournalError.invalid}
         let presentKeys:Set<String>=Set(["name","bytes","sha256","originalUID","originalMode"]+(manifest.version==2 ? ["originalGID"]:[]))
         guard rows.allSatisfy({Set($0.keys)==Set(["name"]) || Set($0.keys)==presentKeys}) else {throw JournalError.invalid}
-        let snapshot=try capture(directory:directory)
+        let snapshot=try capture(directory:directory,checkClock:checkClock)
         var present=Set(["manifest.json"]),total=Int64(data.count)
         for (declared,actual) in zip(manifest.files,snapshot.files) {
             guard declared.bytes==actual.bytes,declared.sha256==actual.sha256 else {throw JournalError.invalid}
@@ -116,6 +125,7 @@ struct ConfigurationBackup {
             } else {guard declared.originalUID==nil,declared.originalGID==nil,declared.originalMode==nil,declared.sha256==nil else {throw JournalError.invalid}}
         }
         guard Set(try FileManager.default.contentsOfDirectory(atPath:directory.path))==present else {throw JournalError.invalid}
+        try checkClock()
         return total
     }
 }

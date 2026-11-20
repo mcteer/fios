@@ -340,7 +340,22 @@ func runBackupTests() throws {
     let configuredReceipt=try StoppedStateBackup.create(directory:state,destination:configured,configuration:configuration)
     guard configuredReceipt.scope=="platform_journal_exports_and_configuration" else {fatalError("Missing configuration scope")}
     _=try StoppedStateBackup.verify(directory:configured,expectedSHA256:configuredReceipt.sha256)
-    let configurationManifest=try JSONDecoder().decode(ConfigurationBackup.Manifest.self,from:Data(contentsOf:configured.appendingPathComponent("configuration/manifest.json")))
+    let sealedConfiguration=configured.appendingPathComponent("configuration")
+    let configManifestBytes=try Data(contentsOf:sealedConfiguration.appendingPathComponent("manifest.json"))
+    let configDigest=SHA256.hash(data:configManifestBytes).map {String(format:"%02x",$0)}.joined()
+    var configVerifyCalls=0
+    _=try ConfigurationBackup.verify(directory:sealedConfiguration,expected:configDigest,uptime:{configVerifyCalls+=1;return 100})
+    var lateVerifyCalls=0
+    do {
+        _=try ConfigurationBackup.verify(directory:sealedConfiguration,expected:configDigest,uptime:{
+            lateVerifyCalls+=1;return lateVerifyCalls==configVerifyCalls ? 102:100
+        })
+        fatalError("Configuration verification returned after its original deadline")
+    } catch RuntimeError.deadline {}
+    guard lateVerifyCalls==configVerifyCalls,try Data(contentsOf:sealedConfiguration.appendingPathComponent("manifest.json"))==configManifestBytes else {
+        fatalError("Configuration verification timeout changed sealed manifest")
+    }
+    let configurationManifest=try JSONDecoder().decode(ConfigurationBackup.Manifest.self,from:configManifestBytes)
     guard configurationManifest.version==2,configurationManifest.files.count==6,configurationManifest.files[0].originalMode==0o644,
           configurationManifest.files[0].originalGID==getegid(),configurationManifest.files[1].originalGID==getegid(),
           configurationManifest.files[2].originalGID==nil,
