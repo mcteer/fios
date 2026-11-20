@@ -160,20 +160,26 @@ try{
   priorEpoch=current.epoch;
   assert.equal(current.unresolved_requests,1);assert.equal(current.worker_reservations,1);
   const identity=JSON.parse(readFileSync(join(workerState,'fixture-owner.json'),'utf8'));
-  function ownerStatus(owner,exit){
+  function ownerStatus(owner,exit,operation='job.status'){
    const id=randomUUID();
-   const result=spawnSync(cli,['--state',workerState,'task'],{cwd:root,encoding:'utf8',timeout:3000,input:JSON.stringify({version:1,id,operation:'job.status',payload:{job:identity.job,owner}})});
+   const result=spawnSync(cli,['--state',workerState,'task'],{cwd:root,encoding:'utf8',timeout:3000,input:JSON.stringify({version:1,id,operation,payload:{job:identity.job,owner}})});
    assert.equal(result.status,exit);
    const response=JSON.parse(result.stdout);
    assert.equal(response.id,id);assert.equal(response.ok,exit===0);
    return response.ok?response.result:response;
   }
-  assert.equal(ownerStatus(randomBytes(32).toString('base64'),1).error,'unauthorized');
+  const foreign=randomBytes(32).toString('base64');
+  assert.equal(ownerStatus(foreign,1).error,'unauthorized');
+  assert.equal(ownerStatus(foreign,1,'job.renew').error,'unauthorized');
+  assert.equal(ownerStatus(identity.owner,1,'job.renew').error,'job_conflict');
   for(let read=0;read<2;read++){
    const owner=ownerStatus(identity.owner,0);
    assert.equal(owner.state,'reconciling');assert.equal(owner.unresolved_managed_requests,1);
    for(const key of ['event','exit_verified','code_complete'])assert(!Object.hasOwn(owner,key));
   }
+  const afterRenewal=status(workerState);
+  assert.equal(afterRenewal.epoch,current.epoch);
+  assert.equal(afterRenewal.unresolved_requests,1);assert.equal(afterRenewal.worker_reservations,1);
   child.kill('SIGTERM');await until(()=>exited(child));assert.equal(child.exitCode,0);child=null;
  }
  console.log(JSON.stringify({ok:true,unknown_worker_custody_survived_restart:true,states:modes.length,service_views:2*modes.length,aged_service_views:2,aged_combined_views:2,restarted_intent_scenarios:3,storage_continuity_refusal:1,storage_custody_survived_restart:true,native_actions:0,review_directory:directory}));
