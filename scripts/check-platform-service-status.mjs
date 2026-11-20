@@ -149,6 +149,19 @@ try{
  const reopened=await until(()=>{assert(!exited(child),'Reopened cleanup-status manager exited early');const s=status(state);return s?.epoch!==held.epoch&&s?.runtime_cleanup?.storage_continuity_unknown===2 ? s:null;});
  assert.equal(reopened.runtime_cleanup.pending_sandboxes,2);
  assert.equal(reopened.unresolved_requests,1);assert.equal(reopened.worker_reservations,0);
+ const cleanupResources=await until(()=>{
+  assert(!exited(child),'Reopened cleanup manager exited before resource read');
+  return status(state,['resources']);
+ });
+ assert.equal(cleanupResources.resource_observation.vm_coverage,'unknown');
+ assert.equal(cleanupResources.resource_observation.vm_epoch,null);
+ assert.equal(cleanupResources.resource_observation.signals.vm_available.availability,'unknown');
+ assert.equal(cleanupResources.resources.vmAvailable,null);
+ const afterResources=await until(()=>status(state));
+ assert.equal(afterResources.epoch,reopened.epoch);
+ assert.equal(afterResources.runtime_cleanup.pending_sandboxes,2);
+ assert.equal(afterResources.runtime_cleanup.storage_continuity_unknown,2);
+ assert.equal(afterResources.unresolved_requests,1);
  assert.equal(reopened.runtime_cleanup.waiting_over_60s,false);
  assert(Number.isSafeInteger(reopened.runtime_cleanup.manager_observation_age_ms)&&reopened.runtime_cleanup.manager_observation_age_ms>=0);
  child.kill('SIGTERM');await until(()=>exited(child));assert.equal(child.exitCode,0);child=null;
