@@ -133,6 +133,14 @@ func runServiceDrainControllerTests()throws {
           try fenceJournal.uncertainCount()==1,try fenceJournal.desired(service:"mlx")=="maintenance" else {
         fatalError("Writer-contended drain stranded a sibling cancellation or changed uncertain custody")
     }
+    fenceCache.publish(try snapshot(jobs:[first,second],requests:[first],source:"replacement-fixture",stamp:1006),for:.mlx)
+    do {_=try fenced.begin(service:.mlx,role:.operator,now:1006,uptime:61005);fatalError("Writer-fenced replacement drain was accepted")}
+    catch JournalError.storage {}
+    guard fenced.status(service:.mlx)?.state == .draining,
+          fenceTasks.cancellationPending(for:first),fenceTasks.cancellationPending(for:second) else {
+        fatalError("Writer-fenced replacement retired prior drain or deferred cancellation")
+    }
+    fenceCache.publish(try snapshot(jobs:[first,second],requests:[first],stamp:1006),for:.mlx)
     guard sqlite3_exec(writer,"ROLLBACK",nil,nil,nil)==SQLITE_OK else {throw JournalError.storage}
     let fenceOrbScope=try ServiceAffectedScope(service:.orbstack,identity:identity,managerEpoch:epoch,nativeEpoch:"native-fixture",
         nativeScopeDigest:String(repeating:"d",count:64),runtimeScopeDigest:String(repeating:"e",count:64),
