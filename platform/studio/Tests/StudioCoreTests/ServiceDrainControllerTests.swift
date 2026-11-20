@@ -72,9 +72,18 @@ func runServiceDrainControllerTests()throws {
           try journal.jobs().first(where:{$0.id==queued})?.state == .running else {throw JournalError.conflict}
     cache.publish(try snapshot(jobs:[owned],requests:[other]),for:.mlx)
     _=try controller.begin(service:.mlx,role:.operator,now:1000,uptime:1000)
+    let prior=controller.status(service:.mlx)
+    clock.value = .infinity
+    cache.publish(try snapshot(jobs:[queued],requests:[other],stamp:1001),for:.mlx)
+    do {_=try controller.begin(service:.mlx,role:.operator,now:1001,uptime:60000);fatalError("Invalid drain replacement accepted")}
+    catch ServiceError.invalid {}
+    guard controller.status(service:.mlx)?.state == prior?.state,
+          controller.status(service:.mlx)?.revokeOwned == prior?.revokeOwned,
+          try journal.jobs().first(where:{$0.id==queued})?.state == .running,
+          try journal.uncertainCount()==1 else {fatalError("Rejected drain replacement changed the existing report or custody")}
     clock.value=61
     cache.publish(try snapshot(jobs:[],requests:[other],stamp:1001),for:.mlx)
-    guard try controller.poll(service:.mlx,now:1001,uptime:61000).state == .refused(.deadline) else {throw JournalError.conflict}
+    guard try controller.poll(service:.mlx,now:1001,uptime:61000).state == .refused(.deadline) else {fatalError("Rejected drain replacement reset the original deadline")}
     cache.publish(try snapshot(jobs:[],requests:[other],stamp:1002),for:.mlx)
     _=try controller.begin(service:.mlx,role:.operator,now:1002,uptime:61001)
     let newerRequest=UUID().uuidString.lowercased()
