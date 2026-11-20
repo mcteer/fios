@@ -84,13 +84,23 @@ func runTaskCommandTests() throws {
     try commands.tick(now:1003,uptime:1003,artifactResults:[],model:[id:[.text(kind:"answer",content:"opaque model output")]])
     let modelEvent=try call("job.status",["job":id],now:1003)["event"] as? [String:Any]
     guard modelEvent?["content"] as? String=="opaque model output",modelEvent?["event_index"] as? Int==1 else {fatalError("Draining output reset ordinal")}
+    let independent=UUID().uuidString.lowercased(),independentOwner=try TaskOwner(token:foreign,peerUID:geteuid()).hash
+    _=try journal.reserveJob(DurableJob(id:independent,idempotency:UUID().uuidString.lowercased(),ownerHash:independentOwner,
+        requestHash:String(repeating:"e",count:64),created:1003))
+    try journal.transitionJob(id:independent,to:.running,now:1003)
+    try journal.claim(job:independent,attempt:0,model:"fixture/model")
+    try journal.markUncertain(job:independent,attempt:0)
     try commands.tick(now:1003,uptime:1003,artifactResults:[],output:Array(repeating:SandboxTaskOutput(job:id,stream:"stdout",data:opaque),count:65))
     let lost=try call("job.status",["job":id],now:1003)
-    guard lost["output_lost"] as? Bool==true,lost["event"]==nil,try journal.jobs().first?.state == .revoking else {fatalError("Backpressure did not irreversibly revoke task")}
+    guard lost["output_lost"] as? Bool==true,lost["event"]==nil,try journal.jobs().first(where:{$0.id==id})?.state == .revoking else {fatalError("Backpressure did not irreversibly revoke task")}
     try commands.tick(now:1003,uptime:1003,artifactResults:[],output:[SandboxTaskOutput(job:id,stream:"stdout",data:opaque)])
     guard try call("job.status",["job":id],now:1003)["event"]==nil else {fatalError("Lost output mailbox revived")}
     _=try call("job.cancel",["job":id],now:1004)
-    guard try journal.jobs().first?.state == .revoking else {fatalError("Sandbox cancel declared premature absence")}
+    guard try journal.jobs().first(where:{$0.id==id})?.state == .revoking else {fatalError("Sandbox cancel declared premature absence")}
+    guard try journal.jobs().first(where:{$0.id==independent})?.state == .running,
+          try journal.hasClaim(job:independent,attempt:0),try journal.uncertainCount()==1 else {
+        fatalError("Mailbox saturation or cancellation changed independent custody")
+    }
     let publication=UUID().uuidString.lowercased(),owner=try TaskOwner(token:token,peerUID:geteuid()).hash
     try artifacts.publish(request:publication,job:id,owner:owner,data:source,now:1005)
     func wait()throws->[ArtifactServiceResult] {
