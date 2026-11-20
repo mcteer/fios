@@ -212,12 +212,15 @@ jobs:
           node scripts/check-platform.mjs --mock
           node scripts/check-platform.mjs --mock --release
           node scripts/check-platform-activity-worker-frames.mjs --isolated
-      - name: Check isolated process, service and recovery behavior
+      - name: Check isolated manager process and boot behavior
         if: matrix.lane == 'process'
         run: |
           node scripts/check-platform-process.mjs --isolated
           node scripts/check-platform-boot.mjs --isolated
           node scripts/check-platform-boot-state.mjs --isolated
+      - name: Check isolated task, drain and service behavior
+        if: matrix.lane == 'process'
+        run: |
           node scripts/check-platform-manager-execution.mjs --mock --models
           node scripts/check-platform-drain.mjs --isolated
           node scripts/check-platform-service-status.mjs --isolated
@@ -225,6 +228,9 @@ jobs:
           node scripts/check-platform-task-model-flow.mjs --isolated
           node scripts/check-platform-service-recovery-status.mjs --isolated
           node scripts/check-platform-mlx-process-runtime.mjs --isolated
+      - name: Check isolated session and supervisor recovery
+        if: matrix.lane == 'process'
+        run: |
           node scripts/check-platform-session.mjs --isolated
           node scripts/check-platform-session-control.mjs --isolated
           node scripts/check-platform-session-driver.mjs --isolated
