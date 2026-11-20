@@ -37,11 +37,13 @@ final class ServiceForceController {
     func prepare(service:ManagedService,role:ControlRole,now:Int64)throws->ServiceForceChallenge {
         guard role == .operator else {throw ServiceError.invalid}
         let current=try current(service,now:now),scope=current.value.scope
-        // Durable admission closure precedes even issuing consent. A failure
-        // leaves no new token and never restores a previous running intent.
+        // Validate privately before writing intent; publish consent only
+        // after the durable maintenance fence and its generation exist.
+        var candidate=policy
+        let token=try candidate.prepareForce(scope:scope,role:role,now:now)
         try journal.setDesired(service:service.rawValue,desired:ServiceDesired.maintenance.rawValue)
         guard let intentGeneration=journal.serviceIntentGeneration(service:service) else {throw ServiceError.invalid}
-        let token=try policy.prepareForce(scope:scope,role:role,now:now)
+        policy=candidate
         challenges[service]=(token,current.generation,intentGeneration)
         return ServiceForceChallenge(token:token,scopeDigest:scope.digest)
     }

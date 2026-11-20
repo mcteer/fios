@@ -1,10 +1,13 @@
 import Foundation
 
+private final class ForceFixtureClock:@unchecked Sendable {var uptime:TimeInterval=1}
+
 func runServiceForceControllerTests()throws {
     let directory=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer {try? FileManager.default.removeItem(at:directory)}
     let journal=try Journal(directory:directory),cache=ServiceDrainObservationCache(),epoch=UUID().uuidString.lowercased()
-    let controller=try ServiceForceController(journal:journal,managerEpoch:epoch,observations:cache)
+    let clock=ForceFixtureClock()
+    let controller=try ServiceForceController(journal:journal,managerEpoch:epoch,observations:cache,uptime:{clock.uptime})
     let identity=ServiceIdentity(pid:42,start:100,sha256:String(repeating:"a",count:64))
     func snapshot(stamp:Int64=1000,external:Bool?=true,requests:[String]=[])throws->ServiceDrainSnapshot {
         ServiceDrainSnapshot(scope:try ServiceAffectedScope(service:.mlx,identity:identity,managerEpoch:epoch,nativeEpoch:"force-fixture",
@@ -16,6 +19,11 @@ func runServiceForceControllerTests()throws {
         do {_=try controller.prepare(service:.mlx,role:role,now:1000);throw RuntimeError.identity}catch ServiceError.invalid {}
     }
     guard try journal.recordedDesired(service:.mlx)==nil else {throw RuntimeError.identity}
+    clock.uptime = .nan
+    do {_=try controller.prepare(service:.mlx,role:.operator,now:1000);fatalError("Invalid force policy clock accepted")}
+    catch ServiceError.invalid {}
+    guard try journal.recordedDesired(service:.mlx)==nil else {fatalError("Invalid force clock committed maintenance")}
+    clock.uptime=1
     let initial=try controller.prepare(service:.mlx,role:.operator,now:1000)
     guard try journal.recordedDesired(service:.mlx) == .maintenance else {
         FileHandle.standardError.write(Data("FORCE_CONSENT_WITHOUT_DURABLE_MAINTENANCE\n".utf8));throw RuntimeError.identity
