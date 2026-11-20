@@ -71,17 +71,28 @@ private struct UnavailableStatusSource:NativeReadOnlyClientSource {
                 ResourceSample(sampledAt:now,physical:64<<30,available:32<<30,vmAvailable:0,diskFree:100<<30,
                                cpu:0,pressure:.normal,thermal:.nominal,vmSampledAt:now,cpuSampledAt:now)
             })
-            struct AssertBoundTelemetry:PlatformTelemetry {
+            final class AssertBoundTelemetry:PlatformTelemetry,@unchecked Sendable {
                 let instrumentation="fixture"
+                private let lock=NSLock()
+                private let state:URL
+                private var resourcePublications=0
+                init(state:URL) {self.state=state}
                 func event(_ event:OperationalEvent) {}
                 func gpu(_ sample:GPUSample?,sampledAt:Int64?) {}
                 func workload(_ sample:PlatformWorkloadSample?) {}
                 func resources(_ sample:ResourceSample) {
                     precondition(sample.vmAvailable==nil && sample.vmSampledAt==nil,"Unbound cached VM reached telemetry")
                     precondition(sample.cpu==0 && sample.cpuSampledAt != nil,"VM omission discarded independent CPU")
+                    lock.lock();defer {lock.unlock()}
+                    resourcePublications+=1
+                    if resourcePublications<=2 {
+                        let marker=state.appendingPathComponent("fixture-resource-publications")
+                        do {try AtomicState.write(Data(String(resourcePublications).utf8),to:marker)}
+                        catch {fatalError("Unable to record private resource publication")}
+                    }
                 }
             }
-            try withExtendedLifetime(listener) {try ManagerRuntime.run(directory:state,nativeControl:nil,execution:execution,telemetry:AssertBoundTelemetry())}
+            try withExtendedLifetime(listener) {try ManagerRuntime.run(directory:state,nativeControl:nil,execution:execution,telemetry:AssertBoundTelemetry(state:state))}
             return
         }
         if args[2] == "unknown_worker_reopen" {
