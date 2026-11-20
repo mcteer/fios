@@ -45,6 +45,18 @@ func runCPUTests() throws {
     }
     guard full==[1,2,3,4] else {fatalError("Full CPU kernel count lost exact ticks")}
     guard CPUSampler.readTicks()?.count==4 else { fatalError("Native CPU counters unavailable") }
+    let expectedWords=mach_msg_type_number_t(MemoryLayout<vm_statistics64_data_t>.size/MemoryLayout<integer_t>.size)
+    for words in [0,expectedWords-1,expectedWords+1] {
+        guard HostResources.freeMemory(physical:1<<20,pageSize:4096,read:{buffer,count in
+            buffer[0]=3;count=words;return KERN_SUCCESS
+        })==nil else {fatalError("Incomplete kernel memory reply supplied available bytes")}
+    }
+    guard HostResources.freeMemory(physical:8192,pageSize:4096,read:{buffer,_ in buffer[0]=3;return KERN_SUCCESS})==8192,
+          HostResources.freeMemory(physical:8192,pageSize:UInt64.max,read:{buffer,_ in buffer[0]=3;return KERN_SUCCESS})==nil,
+          HostResources.memoryPressure(read:{level,size in level=1;size=3;return 0}) == .unknown,
+          HostResources.memoryPressure(read:{level,_ in level=1;return 0}) == .normal else {
+        fatalError("Host memory reply bounds or pressure decoding changed")
+    }
     let now = HostResources.nowMilliseconds()
     let stale = HostResources.sample(statePath: NSTemporaryDirectory(), measuredCPU: 25, measuredCPUAt: now - 6000)
     guard stale.cpu == nil, stale.sampledAt >= now, stale.diskFree != nil else {
