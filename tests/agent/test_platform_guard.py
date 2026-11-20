@@ -73,6 +73,17 @@ class PlatformGuardTests(unittest.IsolatedAsyncioTestCase):
         busy=observation_v2(self.profile,self.command,self.now,'active','other/model')
         with self.assertRaises(NativeGuardError):validate_observation(busy,self.profile,self.command,self.now)
 
+    def test_v2_busy_does_not_refresh_independent_resource_time(self):
+        busy = observation_v2(self.profile, self.command, self.now, 'responding')
+        for offset, accepted in [(-5000, True), (-5001, False), (1000, True), (1001, False)]:
+            with self.subTest(offset=offset):
+                value = {**busy, 'resources': {**busy['resources'], 'sampled_at': self.now + offset}}
+                if accepted:
+                    validate_observation(value, self.profile, self.command, self.now)
+                else:
+                    with self.assertRaises(NativeGuardError):
+                        validate_observation(value, self.profile, self.command, self.now)
+
     def test_v2_unknown_conflicts_and_malformed_refuse(self):
         import copy
         original=observation_v2(self.profile,self.command,self.now)

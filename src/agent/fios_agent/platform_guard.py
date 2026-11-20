@@ -120,7 +120,8 @@ def _current_observation(value,now):
             or not isinstance(resources,dict) or set(resources)!={'sampled_at','pressure','thermal'}
             or resources['pressure'] not in ('normal','warning','critical','unknown')
             or resources['thermal'] not in ('nominal','fair','serious','critical','unknown')
-            or (resources['sampled_at'] is not None and not _integer(resources['sampled_at']))
+            or (resources['sampled_at'] is not None and (not _integer(resources['sampled_at'])
+                or not -1000 <= now - resources['sampled_at'] <= 5000))
             or (resources['sampled_at'] is None and (resources['pressure']!='unknown' or resources['thermal']!='unknown'))
             or not isinstance(services,dict) or set(services)!={'mlx','orbstack'}
             or any(v not in ('starting','ready','waiting_session','waiting_credentials','stopped','degraded','unknown') for v in services.values())):
