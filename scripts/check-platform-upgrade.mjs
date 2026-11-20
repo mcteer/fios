@@ -81,6 +81,15 @@ try {
   run('/usr/bin/env',['swiftc','-O','-whole-module-optimization','-num-threads','2','-swift-version','6','-warnings-as-errors','-I',join(root,'platform/studio/Sources/CSQLite'),...found,source,'-o',helper],120000);
   run(helper,[migrateSeven?'seed-seven':migrateEight?'seed-eight':'seed',state]);
   await cycle(oldRelease,state,migrating);
+  const occupiedBackup=join(scratch,'occupied-backup');mkdirSync(occupiedBackup,{mode:0o700});
+  const backupSentinel=join(occupiedBackup,'unrelated');writeFileSync(backupSentinel,'preserve\n',{mode:0o600});
+  const backupDirectory=statSync(occupiedBackup,{bigint:true});
+  const originalJournal=readFileSync(join(state,'state.sqlite'));
+  const refusedBackup=spawnSync(join(oldRelease,'bin/studioctl'),['--state',state,'backup-state','--to',occupiedBackup],{stdio:'ignore',timeout:5000});
+  assert.equal(refusedBackup.status,1,'Backup accepted an occupied destination');
+  assert.equal(statSync(occupiedBackup,{bigint:true}).ino,backupDirectory.ino);
+  assert.deepEqual(readdirSync(occupiedBackup),['unrelated']);assert.equal(readFileSync(backupSentinel,'utf8'),'preserve\n');
+  assert.deepEqual(readFileSync(join(state,'state.sqlite')),originalJournal);
   const bundle=join(scratch,'bundle');const backup=cli(oldRelease,state,['backup-state','--to',bundle]);
   assert.match(backup.sha256,/^[a-f0-9]{64}$/);
   let restored;
@@ -112,6 +121,13 @@ try {
     const sealedEntries=readdirSync(bundle).sort();
     const sealedDatabase=()=>createHash('sha256').update(readFileSync(join(bundle,'state.sqlite'))).digest('hex');
     const originalDatabase=sealedDatabase();
+    const sealedDirectory=statSync(bundle,{bigint:true});
+    const duplicate=spawnSync(join(oldRelease,'bin/studioctl'),['--state',state,'backup-state','--to',bundle],{stdio:'ignore',timeout:5000});
+    assert.equal(duplicate.status,1,'Duplicate backup replaced a sealed archive');
+    const unchangedSeal=statSync(bundle,{bigint:true});
+    assert.equal(unchangedSeal.dev,sealedDirectory.dev);assert.equal(unchangedSeal.ino,sealedDirectory.ino);
+    assert.deepEqual(readdirSync(bundle).sort(),sealedEntries);assert.equal(sealedDatabase(),originalDatabase);
+    assert.equal(createHash('sha256').update(readFileSync(join(bundle,'backup.json'))).digest('hex'),backup.sha256);
     for(let run=0;run<2;run++){
       assert.equal(cli(newRelease,bundle,['verify-backup','--sha256',backup.sha256]).sha256,backup.sha256);
       assert.deepEqual(readdirSync(bundle).sort(),sealedEntries,'Verification changed sealed archive entries');
