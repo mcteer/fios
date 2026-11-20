@@ -144,7 +144,31 @@ private func exerciseCompletion(in directory:URL,token:String,clock:CompletionCl
     return (id,stillRunning)
 }
 
+private func verifyDeferredTerminalWrite()throws {
+    let directory=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer {try? FileManager.default.removeItem(at:directory)}
+    let journal=try Journal(directory:directory),id=UUID().uuidString.lowercased()
+    let controller=TaskController(journal:journal,broker:ModelBroker(journal:journal))
+    let hash=String(repeating:"a",count:64)
+    _=try journal.reserveJob(DurableJob(id:id,idempotency:UUID().uuidString.lowercased(),ownerHash:hash,requestHash:hash,created:1000))
+    try journal.transitionJob(id:id,to:.running,now:1000)
+    try journal.claim(job:id,attempt:0,model:"fixture/model",requestID:id)
+    try journal.markUncertain(job:id,attempt:0)
+    var writer:OpaquePointer?
+    guard sqlite3_open_v2(directory.appendingPathComponent("state.sqlite").path,&writer,SQLITE_OPEN_READWRITE|SQLITE_OPEN_FULLMUTEX,nil)==SQLITE_OK else {throw JournalError.storage}
+    defer {sqlite3_close(writer)}
+    guard sqlite3_exec(writer,"BEGIN IMMEDIATE",nil,nil,nil)==SQLITE_OK else {throw JournalError.storage}
+    try controller.settleModelJobs(journal.jobs(),events:[id:[.interrupted]],now:1001)
+    guard try journal.jobs().first?.state == .running,try journal.uncertainCount()==1 else {fatalError("Fenced terminal write changed durable state")}
+    guard sqlite3_exec(writer,"ROLLBACK",nil,nil,nil)==SQLITE_OK else {throw JournalError.storage}
+    try controller.settleModelJobs(journal.jobs(),events:[:],now:1002)
+    guard try journal.jobs().first?.state == .removed,try journal.uncertainCount()==1 else {
+        fatalError("Deferred terminal transition required event replay or settled native uncertainty")
+    }
+}
+
 func runTaskCompletionTests()throws {
+    try verifyDeferredTerminalWrite()
     let directory=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer {try? FileManager.default.removeItem(at:directory)}
     let token=TaskOwner.newToken()

@@ -9,6 +9,7 @@ final class TaskController {
     private struct SandboxScope { let owner:String;var binding:WorkerDispatchBinding;var channel:SandboxModelChannel }
     private var sandboxScopes:[String:SandboxScope]=[:]
     private var pendingCancellation:Set<String>=[]
+    private var pendingModelCompletion:Set<String>=[]
     init(journal:Journal,broker:ModelBroker) { self.journal=journal;self.broker=broker }
 
     var failedLaunches:Set<WorkerLaunchKey> {broker.failedLaunches}
@@ -168,18 +169,30 @@ final class TaskController {
             sandboxScopes[id]?.channel.revoke()
             if !broker.active(job:id) { sandboxScopes.removeValue(forKey:id) }
         }
-        for job in unsettled where !sandboxIDs.contains(job.id) {
-            let terminal=(data[job.id] ?? []).contains { event in
-                switch event { case .complete,.failed,.interrupted: return true;default:return false }
-            }
-            var state=job.state
-            if terminal && state == .running {
-                try journal.transitionJob(id:job.id,to:.revoking,now:now);state = .revoking
-            }
-            if [.revoking,.reconciling].contains(state) { try finishIfLocallyGone(id:job.id,now:now) }
-        }
+        try settleModelJobs(unsettled.filter{!sandboxIDs.contains($0.id)},events:data,now:now)
         // Typed model text stays data. No management operation is derived
         // from it, and no result is automatically persisted as an artifact.
         return data
+    }
+    func settleModelJobs(_ jobs:[DurableJob],events:[String:[ModelWorkerEvent]],now:Int64)throws {
+        // Retain only transition intent, never a replayable worker event.
+        // A refused write cannot discard an already-drained broker result or
+        // prevent independent workers from delivering events this turn.
+        pendingModelCompletion.formIntersection(jobs.map(\.id))
+        for job in jobs where job.state == .running {
+            if (events[job.id] ?? []).contains(where:{event in
+                switch event {case .complete,.failed,.interrupted:return true;default:return false}
+            }) {pendingModelCompletion.insert(job.id)}
+        }
+        for job in jobs {
+            do {
+                var state=job.state
+                if state == .running && pendingModelCompletion.contains(job.id) {
+                    try journal.transitionJob(id:job.id,to:.revoking,now:now);state = .revoking
+                }
+                pendingModelCompletion.remove(job.id)
+                if [.revoking,.reconciling].contains(state) {try finishIfLocallyGone(id:job.id,now:now)}
+            } catch JournalError.storage {continue}
+        }
     }
 }
