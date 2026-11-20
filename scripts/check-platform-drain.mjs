@@ -60,6 +60,13 @@ try{
     child.stdin.write(JSON.stringify({epoch:first.epoch,mode:'omit'})+'\n');
     await until(()=>readFileSync(join(directory,mode+'-cache-ready'),'utf8')==='omit');
     await until(async()=>{const value=await rpc(state,'status',{},'observe');return value.services.mlx.drain?.state==='refused'&&value.services.mlx.drain.reason==='activity_unknown';});
+    child.stdin.write(JSON.stringify({epoch:first.epoch,mode:'original'})+'\n');
+    await until(()=>readFileSync(marker,'utf8')==='original');
+    const latched=await rpc(state,'status',{},'observe');
+    assert.equal(latched.services.mlx.drain.state,'refused');
+    assert.equal(latched.services.mlx.drain.reason,'activity_unknown');
+    assert.equal(latched.services.mlx.desired,'maintenance');
+    assert.equal(latched.unresolved_requests,2);
     const resume=await rpc(state,'service.desired',{service:'mlx',desired:'running'});assert.equal(resume.ok,true);assert.equal(resume.applied,false);
     assert.equal((await rpc(state,'status',{},'observe')).services.mlx.drain,undefined,'Superseded drain report survived newer operator intent');
    }
