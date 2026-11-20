@@ -77,6 +77,16 @@ func runNativeReadOnlyObservationTests()throws {
     guard try coordinator.receive(id:newSource.id,value:reply(.observe,closed:true,source:String(repeating:"b",count:32)))==nil,
           coordinator.phase == .unknown,!coordinator.lifecycleApplied,
           try journal.recordedDesired(service:.mlx) == .running else {throw NativeControlError.invalid}
+    let interrupted=coordinator.beginObservation()!
+    coordinator.failed(id:newSource.id)
+    guard coordinator.beginObservation()==nil else {fatalError("Stale completion released an unrelated observation")}
+    coordinator.failed(id:interrupted.id)
+    guard coordinator.phase == .unknown,!coordinator.lifecycleApplied,
+          try journal.recordedDesired(service:.mlx) == .running,
+          let afterGap=coordinator.beginObservation(),afterGap.id != interrupted.id,
+          afterGap.operation == .observe,afterGap.instance==nil,afterGap.sequence==0 else {
+        fatalError("Observation failure rewrote intent or replayed a native change")
+    }
     var diagnostics=NativeControlDiagnostics(configured:true),sample=reply(.observe,closed:false)
     sample.nativeSampleSequence=1;sample.nativeSampledAt=900
     diagnostics.completed(sample,receivedAt:1000)
