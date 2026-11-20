@@ -66,8 +66,14 @@ try {
   assert.equal(receipt.installed,false);assert.equal(receipt.activation,false);
   const manifest=readFileSync(join(bundle,'backup.json'));
   assert.equal(hash(manifest),receipt.sha256);assert.equal(JSON.parse(manifest).version,4);
-  assert.equal(JSON.parse(cli(bundle,['verify-backup','--sha256',receipt.sha256])).ok,true);
+  const verified=JSON.parse(cli(bundle,['verify-backup','--sha256',receipt.sha256]));
+  assert.equal(verified.journal_compatible,true);
   const result=JSON.parse(cli(bundle,['restore-state','--sha256',receipt.sha256,'--to',restored]));
+  for(const projection of [verified,result]){
+    assert.equal(projection.ok,true);
+    assert.equal(projection.installed,false);assert.equal(projection.activation,false);
+    for(const key of ['scope','bytes','artifacts','sha256'])assert.equal(projection[key],receipt[key],`Stopped receipt disagrees on ${key}`);
+  }
   assert.equal(result.started,false);assert.equal(result.installed,false);assert.equal(result.activation,false);
   assert.deepEqual(readFileSync(join(restored,'configuration/runtime-enrollment.json')),opaque);
   assert.equal(readFileSync(join(restored,'configuration/session-enrollment.json')).length,0);
