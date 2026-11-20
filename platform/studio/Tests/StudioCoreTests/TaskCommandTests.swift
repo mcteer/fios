@@ -151,5 +151,13 @@ func runTaskCommandTests() throws {
     try commands.tick(now:31016,uptime:31016,artifactResults:wait())
     do {_=try call("artifact.read",["phase":"next","stream":boundStream],now:31017);fatalError("Late async result resurrected an expired artifact stream")}
     catch TaskCommandError.unauthorized {}
+    let replacement=try call("artifact.read",["phase":"begin","artifact":artifact],now:31018)
+    guard let replacementStream=replacement["stream"] as? String,replacementStream != boundStream else {fatalError("Expired stream blocked independent authorized download")}
+    try commands.tick(now:31019,uptime:31019,artifactResults:wait())
+    guard try call("artifact.read",["phase":"next","stream":replacementStream],now:31019)["type"] as? String=="begin",
+          try call("artifact.read",["phase":"next","stream":replacementStream],now:31020)["data"] as? String==source.base64EncodedString(),
+          try call("artifact.read",["phase":"next","stream":replacementStream],now:31021)["type"] as? String=="end" else {
+        fatalError("Expired transfer changed retained artifact bytes")
+    }
     print("PASS: task-role/opaque-owner API, closed/source-loss admission, reserve-before-input, once-only validation, proof-gated cancel and asynchronous owner-only finite artifact routing")
 }
