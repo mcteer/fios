@@ -63,6 +63,14 @@ test('reviewed release tree refuses changed bytes, extra files, symlinks and har
     const plan=JSON.parse(review.stdout);
     assert.equal(plan.state,'blocked');assert.equal(plan.changes_made,false);assert.deepEqual(plan.privileged_commands,[]);
     assert.ok(plan.blockers.includes('authoritative_native_coverage_unproven'));
+    assert.ok(plan.blockers.includes('incomplete_release_tree'));
+    const relabeled=Buffer.from(JSON.stringify({...receipt,package_complete:true},null,2)+'\n');
+    writeFileSync(join(directory,'release.json'),relabeled);
+    const relabeledHash=createHash('sha256').update(relabeled).digest('hex');
+    assert.throws(()=>validatePlatformRelease(directory,relabeledHash));
+    const relabeledPlan=spawnSync(process.execPath,['scripts/install-platform.mjs','plan','--release',directory,'--sha256',relabeledHash,'--host','fios-edge-a.lab'],{encoding:'utf8',timeout:3000});
+    assert.equal(relabeledPlan.status,1);assert.equal(relabeledPlan.stdout,'');
+    writeFileSync(join(directory,'release.json'),bytes);
     const apply=spawnSync(process.execPath,['scripts/install-platform.mjs','apply','--release',directory,'--sha256',hash,'--host','fios-edge-a.lab'],{encoding:'utf8',timeout:3000});
     assert.equal(apply.status,1);assert.equal(apply.stdout,'');
     const state=join(outside,'state'),destination=join(outside,'backup with spaces');
