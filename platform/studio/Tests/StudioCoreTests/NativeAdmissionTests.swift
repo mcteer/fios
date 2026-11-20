@@ -8,15 +8,19 @@ func runNativeAdmissionBindingTests() throws {
     let tasks=TaskController(journal:journal,broker:ModelBroker(journal:journal))
     let base="http://127.0.0.1:1/v1",host="fixture-host",hash=PythonWorkerFactory.digest("http://127.0.0.1:1/v1")
     let epoch=UUID().uuidString.lowercased(),owner=String(repeating:"a",count:64)
-    func binding(host observedHost:String,hash observedHash:String,resident:String?=nil,owners:Int=0,loading:Bool=false)->WorkerDispatchBinding {
+    func binding(host observedHost:String,hash observedHash:String,resident:String?=nil,owners:Int=0,loading:Bool=false,coverage:Bool=true)->WorkerDispatchBinding {
         let snapshot=NativeSnapshot(host:observedHost,endpointHash:observedHash,nativeEpoch:"fixture-native",sequence:1,sampledAt:1000,
-            allClientLifecycleCoverage:true,residentModel:resident,outstandingOwners:owners,loading:loading)
+            allClientLifecycleCoverage:coverage,residentModel:resident,outstandingOwners:owners,loading:loading)
         return WorkerDispatchBinding(baseURL:base,guardPath:"/fixture/observe.sock",host:host,profileHash:String(repeating:"b",count:64),
             managerEpoch:epoch,canonicalModel:"fixture/model",nativeModel:"fixture/model",nativeSnapshot:snapshot,nativeCompatibilityAccepted:true,apiKey:nil)
     }
     let sample=ResourceSample(sampledAt:1000,physical:128<<30,available:64<<30,vmAvailable:nil,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal,cpuSampledAt:1000)
     var admission=AdmissionPolicy()
-    for candidate in [binding(host:"other-fixture-host",hash:hash),binding(host:host,hash:String(repeating:"c",count:64))] {
+    let partial=binding(host:host,hash:hash,coverage:false)
+    guard try !NativeAdmission.retainsSource(partial,now:1000),try !NativeAdmission.permitsDispatch(partial,now:1000) else {
+        fatalError("Coherent but partial idle source gained native authority")
+    }
+    for candidate in [binding(host:"other-fixture-host",hash:hash),binding(host:host,hash:String(repeating:"c",count:64)),partial] {
         do {
             _=try tasks.reserveModelUpload(owner:owner,idempotency:UUID().uuidString.lowercased(),requestHash:String(repeating:"d",count:64),
                 binding:candidate,nativeCapacityProven:true,sample:sample,admission:&admission,now:1000)
