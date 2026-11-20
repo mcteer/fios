@@ -44,17 +44,27 @@ func runNativeReadOnlyObservationTests()throws {
     do {try queue.submit(observation);fatalError("Pending observation allowed duplicate worker")}
     catch RuntimeError.capacity {}
     source.release.signal()
-    let deadline=ProcessInfo.processInfo.systemUptime+1
-    var result:NativeControlResult?
-    while result==nil,ProcessInfo.processInfo.systemUptime<deadline {
-        result=queue.poll()
-        if result==nil {Thread.sleep(forTimeInterval:0.005)}
+    func awaitResult()throws->NativeControlResult {
+        let deadline=ProcessInfo.processInfo.systemUptime+1
+        while ProcessInfo.processInfo.systemUptime<deadline {
+            if let result=queue.poll() {return result}
+            Thread.sleep(forTimeInterval:0.005)
+        }
+        throw NativeControlError.deadline
     }
-    guard let result,result.id==observation.id,case .failure(.unavailable)=result.value,
+    let result=try awaitResult()
+    guard result.id==observation.id,case .failure(.unavailable)=result.value,
           result.primaryActivity==nil,result.backendFences==nil,queue.poll()==nil else {
         fatalError("Unavailable read-only source minted a frame or replayed its result")
     }
     let closedRead=coordinator.beginObservation()!
+    try queue.submit(closedRead)
+    guard source.entered.wait(timeout:.now()+1) == .success else {throw NativeControlError.deadline}
+    source.release.signal()
+    let nextResult=try awaitResult()
+    guard nextResult.id==closedRead.id,case .failure(.unavailable)=nextResult.value,queue.poll()==nil else {
+        fatalError("Drained read-only source failed to return capacity or replayed an old reply")
+    }
     guard try coordinator.receive(id:closedRead.id,value:reply(.observe,closed:true))==nil,
           coordinator.phase == .admissionsClosed else {throw NativeControlError.invalid}
     try coordinator.setDesired(.running,role:.operator)
