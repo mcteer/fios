@@ -186,12 +186,14 @@ func runArtifactTests() throws {
     store=nil
     do { _=try ArtifactStore(directory:directory);fatalError("Unexpected storage symlink accepted") } catch ArtifactError.invalid {}
     let deletionDirectory=directory.appendingPathComponent("deletion-commit-fixture")
-    var failDeletionIntent=false,failDeletionCommit=false
+    var failDeletionIntent=false,failDeletionCommit=false,failAfterVisibleCommit=false
     let deletionStore=try ArtifactStore(directory:deletionDirectory,availableBytes:{50<<30},writeIndex:{bytes,target in
         let object=try JSONSerialization.jsonObject(with:bytes) as! [String:Any]
         let deleting=(object["records"] as! [[String:Any]]).contains(where:{$0["state"] as? String=="deleting"})
         if (failDeletionIntent && deleting) || (failDeletionCommit && !deleting) {throw ArtifactError.storage}
         try AtomicState.write(bytes,to:target)
+        // Simulate an ambiguous write error after replacement is visible.
+        if failAfterVisibleCommit,!deleting {throw ArtifactError.storage}
     })
     let deleted=try deletionStore.publish(job:UUID().uuidString.lowercased(),ownerHash:owner,data:Data([42]),now:1000)
     let preserved=try deletionStore.publish(job:UUID().uuidString.lowercased(),ownerHash:owner,data:Data([43,44]),now:2000)
@@ -211,10 +213,16 @@ func runArtifactTests() throws {
           deletionStore.retainedBytes==3,
           try deletionStore.retrieve(id:preserved,ownerHash:owner,now:86_401_000)==Data([43,44]) else {fatalError("Failed final deletion commit released custody or lost retained sibling")}
     failDeletionCommit=false
-    try deletionStore.expire(now:86_401_001)
+    failAfterVisibleCommit=true
+    do {try deletionStore.expire(now:86_401_001);fatalError("Visible final replacement did not surface injected error")}catch ArtifactError.storage {}
+    let afterAmbiguous=try JSONSerialization.jsonObject(with:Data(contentsOf:deletionIndex)) as! [String:Any]
+    guard (afterAmbiguous["records"] as! [[String:Any]]).compactMap({$0["id"] as? String})==[preserved],
+          deletionStore.retainedBytes==3 else {fatalError("Visible but unacknowledged write released custody")}
+    failAfterVisibleCommit=false
+    try deletionStore.expire(now:86_401_002)
     let afterRetry=try JSONSerialization.jsonObject(with:Data(contentsOf:deletionIndex)) as! [String:Any]
     guard (afterRetry["records"] as! [[String:Any]]).compactMap({$0["id"] as? String})==[preserved],deletionStore.retainedBytes==2,
-          try deletionStore.retrieve(id:preserved,ownerHash:owner,now:86_401_001)==Data([43,44]) else {
+          try deletionStore.retrieve(id:preserved,ownerHash:owner,now:86_401_002)==Data([43,44]) else {
         fatalError("Exact deletion intent did not retry its durable commit")
     }
     print("PASS: private generated artifacts, owner/hash/length checks, restart, finite quotas, expiry and traversal/symlink refusal")
