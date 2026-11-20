@@ -43,8 +43,8 @@ public enum HostResources {
         // original collection time remain unknown, rather than gaining this clock.
         let cpuObservation = measuredCPU.flatMap { value -> (value: Double, at: Int64)? in
             guard value.isFinite, (0...100).contains(value), let time = measuredCPUAt,
-                  (0...ActivityPolicy.maximumTimestamp).contains(time),
-                  (0...5000).contains(collectedAt - time) else { return nil }
+                  let age=ResourceClock.age(now:collectedAt,sampledAt:time),
+                  age>=0,ResourceClock.fresh(age:age) else { return nil }
             return (value, time)
         }
         let physical = ProcessInfo.processInfo.physicalMemory

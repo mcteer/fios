@@ -16,6 +16,16 @@ final class StudioOpenTelemetryTests:XCTestCase {
         XCTAssertNil(sample.cpu,"A supplied CPU value without its collection time must not acquire the later host clock")
     }
 
+    func testHostSamplerDoesNotPublishCPUFromAfterHostCollection() {
+        let future=HostResources.nowMilliseconds()+1000
+        for stamp in [future,Int64.min,Int64.max] {
+            let sample=HostResources.sample(statePath:NSTemporaryDirectory(),measuredCPU:0,measuredCPUAt:stamp)
+            XCTAssertNil(sample.cpu)
+            XCTAssertNil(sample.cpuSampledAt)
+            XCTAssertGreaterThan(sample.physical,0)
+        }
+    }
+
     func testHostSampleAndSDKKeepOriginalCPUCollectionTime() throws {
         let original=HostResources.nowMilliseconds()-1000
         let sample=HostResources.sample(statePath:NSTemporaryDirectory(),measuredCPU:12.5,measuredCPUAt:original)
