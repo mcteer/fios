@@ -89,7 +89,7 @@ func runArtifactTests() throws {
     guard let incompleteRow=metadata.firstIndex(where:{$0["id"] as? String==incomplete}) else {throw ArtifactError.invalid}
     metadata[incompleteRow]["state"]="pending";index["records"]=metadata
     try AtomicState.write(JSONSerialization.data(withJSONObject:index),to:indexURL)
-    store=try ArtifactStore(directory:directory)
+    store=try ArtifactStore(directory:directory,availableBytes:{disk})
     do {_=try store!.download(id:incomplete,ownerHash:owner,now:retention+4);fatalError("Interrupted artifact became readable")}
     catch ArtifactError.unavailable {}
     let afterRecovery=try JSONSerialization.jsonObject(with:Data(contentsOf:indexURL)) as! [String:Any]
@@ -98,6 +98,22 @@ func runArtifactTests() throws {
           try Data(contentsOf:incompleteBlob)==Data("i".utf8),
           try store!.retrieve(id:survivor,ownerHash:owner,now:retention+4)==Data("retained export".utf8) else {
         fatalError("Incomplete publication recovery removed diagnostic bytes or changed independent export")
+    }
+    disk=(UInt64(10)<<30)+1
+    do {_=try store!.publish(job:incompleteJob,ownerHash:owner,data:Data([1]),now:retention+4);fatalError("Failed publication refunded original disk commitment")}
+    catch ArtifactError.capacity {}
+    guard try Data(contentsOf:incompleteBlob)==Data("i".utf8) else {fatalError("Capacity refusal changed failed export")}
+    let survivorBlob=directory.appendingPathComponent(survivor+".blob")
+    let parked=directory.appendingPathComponent(UUID().uuidString.lowercased())
+    try FileManager.default.moveItem(at:survivorBlob,to:parked)
+    do {
+        defer {try? FileManager.default.removeItem(at:survivorBlob);try? FileManager.default.moveItem(at:parked,to:survivorBlob)}
+        guard mkfifo(survivorBlob.path,0o600)==0 else {throw ArtifactError.storage}
+        do {_=try store!.download(id:survivor,ownerHash:owner,now:retention+4);fatalError("Nonregular artifact was readable")}
+        catch ArtifactError.invalid {}
+    }
+    guard try store!.retrieve(id:survivor,ownerHash:owner,now:retention+4)==Data("retained export".utf8) else {
+        fatalError("Nonregular read refusal changed owner export")
     }
     // A forged storage object cannot redirect writes or retrieval into a host file.
     let foreign=directory.appendingPathComponent("forged")

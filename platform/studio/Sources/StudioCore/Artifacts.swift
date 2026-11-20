@@ -88,7 +88,8 @@ final class ArtifactStore {
         try AtomicState.write(data,to:directory.appendingPathComponent("index.json"))
     }
     private func read(_ name:String,maximum:Int) throws -> Data {
-        let fd=open(directory.appendingPathComponent(name).path,O_RDONLY|O_NOFOLLOW|O_CLOEXEC)
+        // Check descriptor type without waiting on an unexpected pipe.
+        let fd=open(directory.appendingPathComponent(name).path,O_RDONLY|O_NOFOLLOW|O_CLOEXEC|O_NONBLOCK)
         guard fd>=0 else { throw ArtifactError.unavailable };defer { close(fd) }
         var info=stat()
         guard fstat(fd,&info)==0,info.st_mode & S_IFMT == S_IFREG,info.st_uid==geteuid(),
