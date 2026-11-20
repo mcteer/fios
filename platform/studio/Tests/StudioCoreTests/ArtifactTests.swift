@@ -38,6 +38,7 @@ func runArtifactTests() throws {
     store=try ArtifactStore(directory:directory)
     guard try store!.retrieve(id:id,ownerHash:owner,now:1002)==Data("private result".utf8) else { fatalError("Restart lost artifact") }
     do { _=try store!.publish(job:job,ownerHash:owner,data:Data(repeating:0,count:16<<20),now:1003);fatalError("Per-job export cap exceeded") } catch ArtifactError.capacity {}
+    let second=try store!.publish(job:UUID().uuidString.lowercased(),ownerHash:owner,data:Data("second export".utf8),now:1004)
     let retention=1000+Int64(86_400_000)
     var nearRetention=try store!.download(id:id,ownerHash:owner,now:retention-2)
     guard case .begin=try nearRetention.next(now:retention-1) else {fatalError("Valid final retention tick lost artifact begin")}
@@ -45,6 +46,15 @@ func runArtifactTests() throws {
     do { _=try nearRetention.next(now:retention-1);fatalError("Artifact stream revived after retention expiry") } catch ArtifactError.unavailable {}
     try store!.expire(now:retention)
     do { _=try store!.retrieve(id:id,ownerHash:owner,now:1000+86_400_000);fatalError("Expired artifact readable") } catch ArtifactError.unavailable {}
+    store=nil
+    store=try ArtifactStore(directory:directory)
+    do {_=try store!.download(id:id,ownerHash:owner,now:retention);fatalError("Pruned export returned after reopen")}
+    catch ArtifactError.unavailable {}
+    guard try store!.retrieve(id:second,ownerHash:owner,now:retention+3)==Data("second export".utf8) else {
+        fatalError("Another export's original retention was shortened")
+    }
+    do {_=try store!.download(id:second,ownerHash:owner,now:retention+4);fatalError("Reopen extended independent artifact retention")}
+    catch ArtifactError.unavailable {}
     // A forged storage object cannot redirect writes or retrieval into a host file.
     let foreign=directory.appendingPathComponent("forged")
     try FileManager.default.createSymbolicLink(atPath:foreign.path,withDestinationPath:"/etc/hosts")
