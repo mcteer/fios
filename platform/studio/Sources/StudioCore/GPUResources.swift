@@ -20,7 +20,7 @@ enum GPUResources {
         }
         let utilization=number("Device Utilization %").flatMap{$0.doubleValue<=100 ? $0.doubleValue:nil}
         func bytes(_ name:String)->UInt64? {
-            guard let value=number(name),value.doubleValue<=Double(ActivityPolicy.maximumTimestamp),value.doubleValue.rounded(.down)==value.doubleValue else {return nil};return value.uint64Value
+            WireScalar.integer(fields[name]).map(UInt64.init)
         }
         let inUse=bytes("In use system memory"),allocated=bytes("Alloc system memory")
         guard utilization != nil || inUse != nil || allocated != nil else {return nil}

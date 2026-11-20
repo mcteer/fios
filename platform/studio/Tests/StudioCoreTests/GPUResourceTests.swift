@@ -13,5 +13,12 @@ func runGPUResourceTests() throws {
     guard let measured=GPUResources.decode(["Device Utilization %":37.5,"In use system memory":1024,"Alloc system memory":2048]),measured.utilization==37.5,measured.inUseBytes==1024,measured.allocatedBytes==2048 else {fatalError("GPU counters incorrectly decoded")}
     guard GPUResources.decode(["Device Utilization %":0,"In use system memory":true])?.inUseBytes==nil,
           GPUResources.decode(["Device Utilization %":0,"Alloc system memory":UInt64.max])?.allocatedBytes==nil else {fatalError("GPU invalid or non-interoperable memory count accepted")}
+    let boundary=WireScalar.maximumTimestamp
+    let fractional=NSDecimalNumber(string:"1000000000000000.01")
+    guard GPUResources.decode(["In use system memory":boundary])?.inUseBytes==UInt64(boundary),
+          GPUResources.decode(["In use system memory":boundary+1])==nil,
+          GPUResources.decode(["In use system memory":fractional])==nil else {
+        fatalError("GPU byte counters accepted a rounded fraction or lost the exact integer boundary")
+    }
     print("PASS: GPU registry counter bounds, genuine zero versus missing data and distinct in-use/allocated memory; no idle/capacity inference")
 }
