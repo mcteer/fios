@@ -186,7 +186,8 @@ func runArtifactTests() throws {
     store=nil
     do { _=try ArtifactStore(directory:directory);fatalError("Unexpected storage symlink accepted") } catch ArtifactError.invalid {}
     let deletionDirectory=directory.appendingPathComponent("deletion-commit-fixture")
-    var failDeletionIntent=false,failDeletionCommit=false,failAfterVisibleCommit=false
+    var failDeletionIntent=false,failDeletionSync=false,failDeletionCommit=false,failAfterVisibleCommit=false
+    var deletionSyncs=0
     let deletionStore=try ArtifactStore(directory:deletionDirectory,availableBytes:{50<<30},writeIndex:{bytes,target in
         let object=try JSONSerialization.jsonObject(with:bytes) as! [String:Any]
         let deleting=(object["records"] as! [[String:Any]]).contains(where:{$0["state"] as? String=="deleting"})
@@ -194,6 +195,10 @@ func runArtifactTests() throws {
         try AtomicState.write(bytes,to:target)
         // Simulate an ambiguous write error after replacement is visible.
         if failAfterVisibleCommit,!deleting {throw ArtifactError.storage}
+    },syncDeletionDirectory:{target in
+        deletionSyncs+=1
+        if failDeletionSync {throw ArtifactError.storage}
+        try ArtifactStore.syncDirectory(target)
     })
     let deleted=try deletionStore.publish(job:UUID().uuidString.lowercased(),ownerHash:owner,data:Data([42]),now:1000)
     let preserved=try deletionStore.publish(job:UUID().uuidString.lowercased(),ownerHash:owner,data:Data([43,44]),now:2000)
@@ -203,8 +208,15 @@ func runArtifactTests() throws {
     do {try deletionStore.expire(now:86_401_000);fatalError("Deletion intent write did not fail")}catch ArtifactError.storage {}
     guard try Data(contentsOf:deletionIndex)==originalIndex,
           try Data(contentsOf:deletionDirectory.appendingPathComponent(deleted+".blob"))==Data([42]),
-          deletionStore.retainedBytes==3 else {fatalError("Undurable deletion intent changed disk custody")}
+          deletionStore.retainedBytes==3,deletionSyncs==0 else {fatalError("Undurable deletion intent changed disk custody")}
     failDeletionIntent=false
+    failDeletionSync=true
+    do {try deletionStore.expire(now:86_401_000);fatalError("Directory sync failure allowed final index commit")}catch ArtifactError.storage {}
+    let unsynced=try JSONSerialization.jsonObject(with:Data(contentsOf:deletionIndex)) as! [String:Any]
+    guard (unsynced["records"] as! [[String:Any]]).first?["state"] as? String=="deleting",
+          !FileManager.default.fileExists(atPath:deletionDirectory.appendingPathComponent(deleted+".blob").path),
+          deletionStore.retainedBytes==3,deletionSyncs==1 else {fatalError("Failed directory sync released deletion intent")}
+    failDeletionSync=false
     failDeletionCommit=true
     do {try deletionStore.expire(now:86_401_000);fatalError("Final deletion index write did not fail")}catch ArtifactError.storage {}
     let committedIntent=try JSONSerialization.jsonObject(with:Data(contentsOf:deletionIndex)) as! [String:Any]
@@ -221,7 +233,7 @@ func runArtifactTests() throws {
     failAfterVisibleCommit=false
     try deletionStore.expire(now:86_401_002)
     let afterRetry=try JSONSerialization.jsonObject(with:Data(contentsOf:deletionIndex)) as! [String:Any]
-    guard (afterRetry["records"] as! [[String:Any]]).compactMap({$0["id"] as? String})==[preserved],deletionStore.retainedBytes==2,
+    guard (afterRetry["records"] as! [[String:Any]]).compactMap({$0["id"] as? String})==[preserved],deletionStore.retainedBytes==2,deletionSyncs==4,
           try deletionStore.retrieve(id:preserved,ownerHash:owner,now:86_401_002)==Data([43,44]) else {
         fatalError("Exact deletion intent did not retry its durable commit")
     }

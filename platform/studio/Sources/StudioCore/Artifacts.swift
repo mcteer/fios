@@ -18,6 +18,7 @@ final class ArtifactStore {
     private let availableBytes:()->UInt64?
     private let readUptime:()->TimeInterval
     private let writeIndex:(Data,URL)throws->Void
+    private let syncDeletionDirectory:(URL)throws->Void
     private var records:[Record]=[]
     private var lock:Int32 = -1
     private var previous:Int64 = -1
@@ -30,9 +31,10 @@ final class ArtifactStore {
     private static func hash(_ data:Data)->String { SHA256.hash(data:data).map { String(format:"%02x",$0) }.joined() }
 
     init(directory:URL,availableBytes:(()->UInt64?)?=nil,readUptime:@escaping ()->TimeInterval={ProcessInfo.processInfo.systemUptime},
-         writeIndex:@escaping (Data,URL)throws->Void=AtomicState.write) throws {
+         writeIndex:@escaping (Data,URL)throws->Void=AtomicState.write,
+         syncDeletionDirectory:@escaping (URL)throws->Void=ArtifactStore.syncDirectory) throws {
         guard directory.isFileURL else { throw ArtifactError.invalid }
-        self.directory=directory;self.readUptime=readUptime;self.writeIndex=writeIndex
+        self.directory=directory;self.readUptime=readUptime;self.writeIndex=writeIndex;self.syncDeletionDirectory=syncDeletionDirectory
         self.availableBytes=availableBytes ?? {
             let attributes=try? FileManager.default.attributesOfFileSystem(forPath:directory.path)
             return (attributes?[.systemFreeSize] as? NSNumber)?.uint64Value
@@ -172,6 +174,11 @@ final class ArtifactStore {
         guard let record=records.first(where:{$0.id==id}) else { throw ArtifactError.unavailable }
         return try ArtifactDownload(id:id,data:data,created:now,expires:record.created+86_400_000)
     }
+    static func syncDirectory(_ directory:URL)throws {
+        let fd=open(directory.path,O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC)
+        guard fd>=0 else {throw ArtifactError.storage};defer {close(fd)}
+        guard fsync(fd)==0 else {throw ArtifactError.storage}
+    }
     private func finishDeletions() throws {
         let deleting=records.filter {$0.state == .deleting}
         guard !deleting.isEmpty else {return}
@@ -183,6 +190,9 @@ final class ArtifactStore {
                       info.st_mode & 0o077==0,unlink(path)==0 else { throw ArtifactError.invalid }
             } else if errno != ENOENT { throw ArtifactError.storage }
         }
+        // Persist removals before replacing the last durable record of them.
+        // This includes missing blobs left by a prior interrupted attempt.
+        try syncDeletionDirectory(directory)
         let retained=records
         records.removeAll(where:{$0.state == .deleting})
         do {try save()}
