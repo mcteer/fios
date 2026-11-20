@@ -99,6 +99,13 @@ func runSharedKernelVMTests()throws {
             guard !beforeCapture,edge.captures==1 else {throw RuntimeError.invalid}
         }
     }
+    let near=SharedKernelFixture()
+    near.steadyDeltaOnRead=4.999
+    near.steadyAtCapPublication=5.999
+    near.steadyAtCapCompletion=5.999
+    let nearlyExpired=SharedKernelVMReader(kernel:near,cap:near,permission:permission,physical:128<<30,now:{near.time},uptime:{near.steady})
+    let nearSample=try nearlyExpired.read(configuration:configuration,id:id,leaseUntil:16000)
+    guard near.captures==1,nearSample.envelope?.sampledAt==10000 else {fatalError("Just-inside shared VM budget lost original observation")}
     let expiring=SharedKernelVMReader(kernel:expired,cap:expired,permission:permission,physical:128<<30,now:{expired.time},uptime:{expired.steady})
     do {_=try expiring.read(configuration:configuration,id:id,leaseUntil:15000);fatalError("Expired lease reached cap probe")}catch RuntimeError.deadline {}
     guard expired.captures==0 else {fatalError("Cap queried after lease expired during kernel read")}

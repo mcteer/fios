@@ -107,6 +107,8 @@ final class SharedKernelVMReader:VMResourceReading,@unchecked Sendable {
             guard readCompleted>=stamp,readCompleted<=ActivityPolicy.maximumTimestamp,
                   readUptime.isFinite,readUptime>=began else {fenced=true;throw RuntimeError.identity}
             previousNow=readCompleted;previousUptime=readUptime
+            // Elapsed execution and wall-clock evidence age are independent.
+            // An inclusive sample-age limit never extends the execution cutoff.
             guard readUptime-began<5,(stamp...readCompleted).contains(sample.sampledAt) else {throw RuntimeError.identity}
             guard readCompleted<leaseUntil else {throw RuntimeError.deadline}
             let limit:NativeVMCap
