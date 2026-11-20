@@ -189,7 +189,21 @@ func runTaskCompletionTests()throws {
             try admission.reserveWorker(key:"third",sample:sample,now:5000)
             fatalError("Unknown completion returned worker capacity on reopen")
         } catch AdmissionError.capacity {}
-        guard try reopened.uncertainCount()==1 else {fatalError("Startup capacity recovery settled independent inference uncertainty")}
+        let foreignOwner=TaskOwner.newToken()
+        do {
+            _=try completionStatus(routes,id:unknownID,token:foreignOwner)
+            fatalError("Foreign owner received unknown completion status")
+        } catch TaskCommandError.unauthorized {}
+        for _ in 0..<2 {
+            let repeated=try completionStatus(routes,id:unknownID,token:token)
+            guard repeated["state"] as? String=="reconciling",repeated["unresolved_managed_requests"] as? Int==1,
+                  repeated["event"]==nil,repeated["exit_verified"]==nil,repeated["code_complete"]==nil else {
+                fatalError("Reading unknown completion replayed output or invented proof")
+            }
+        }
+        guard try reopened.uncertainCount()==1,try reopened.activeLaunchCount()==1,try reopened.requestCount(job:unknownID)==1 else {
+            fatalError("Startup recovery or status polling changed independent custody")
+        }
     }
     let (id,stillRunning)=try exerciseCompletion(in:directory,token:token)
     let reopened=try Journal(directory:directory)
