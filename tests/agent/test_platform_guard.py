@@ -73,6 +73,12 @@ class PlatformGuardTests(unittest.IsolatedAsyncioTestCase):
         busy=observation_v2(self.profile,self.command,self.now,'active','other/model')
         with self.assertRaises(NativeGuardError):validate_observation(busy,self.profile,self.command,self.now)
 
+    def test_v2_invalid_local_clock_refuses_before_age_arithmetic(self):
+        value = observation_v2(self.profile, self.command, self.now, 'responding')
+        for invalid in (None, True, str(self.now), float(self.now), -1, 2**63 - 1):
+            with self.subTest(invalid=invalid), self.assertRaises(NativeGuardError):
+                validate_observation(value, self.profile, self.command, invalid)
+
     def test_v2_busy_does_not_refresh_independent_resource_time(self):
         busy = observation_v2(self.profile, self.command, self.now, 'responding')
         for offset, accepted in [(-5000, True), (-5001, False), (1000, True), (1001, False)]:
@@ -104,7 +110,8 @@ class PlatformGuardTests(unittest.IsolatedAsyncioTestCase):
                    {'models':original['models']*2},
                    {'local_ownership':{'unresolved_count':1,'uncertain':True,'blocked':False}},
                    {'local_ownership':{'unresolved_count':1,'uncertain':False,'blocked':True}},
-                   {'resources':{'sampled_at':None,'pressure':'normal','thermal':'nominal'}}]
+                   *({'resources':{'sampled_at':invalid,'pressure':'normal','thermal':'nominal'}}
+                     for invalid in (None,True,str(self.now),float(self.now),-1,2**63-1))]
         for changes in mutations:
             with self.subTest(changes=changes),self.assertRaises(NativeGuardError):
                 validate_observation({**copy.deepcopy(original),**changes},self.profile,self.command,self.now)

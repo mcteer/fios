@@ -113,7 +113,14 @@ enum DetailedObservationTests {
         changed=base;changed["source_age_ms"]=1;try refuses(changed)
         changed=base;changed["sampled_at"]=6001;changed["source_age_ms"]=5001;try refuses(changed)
         changed=base;changed["local_ownership"]=["unresolved_count":1,"uncertain":false,"blocked":false];try refuses(changed)
-        changed=base;changed["resources"]=["sampled_at":NSNull(),"pressure":"normal","thermal":"nominal"];try refuses(changed)
+        for invalid:Any in [NSNull(),true,"1000",-1,Int64.max] {
+            changed=base;changed["resources"]=["sampled_at":invalid,"pressure":"normal","thermal":"nominal"];try refuses(changed)
+        }
+        changed=base;changed["resources"]=["sampled_at":1234,"pressure":"normal","thermal":"nominal"]
+        let integerResource=String(decoding:try JSONSerialization.data(withJSONObject:changed),as:UTF8.self)
+        let floatingResource=integerResource.replacingOccurrences(of:"\"sampled_at\":1234",with:"\"sampled_at\":1234.0")
+        precondition(floatingResource != integerResource)
+        do {_=try ActivityObservationExport.decode(Data(floatingResource.utf8));fatalError("Floating resource time was coerced")}catch{}
         let duplicate=base["models"] as! [[String:Any]]
         changed=base;changed["models"]=duplicate+duplicate;try refuses(changed)
         base["version"]=1
