@@ -12,6 +12,7 @@ struct NativePrimaryActivityDiagnostics {
         (0...ActivityPolicy.maximumTimestamp).contains(time) && (0...ActivityPolicy.maximumTimestamp).contains(now) && (-1000...5000).contains(now-time)
     }
     mutating func failed() {value=nil;unavailable=true}
+    mutating func fenceClock() {if configured {fenced=true};failed()}
     mutating func bind(instance:String) {
         if let checkpoint,checkpoint.activity.instance != instance {fenced=true;failed()}
     }
