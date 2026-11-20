@@ -39,8 +39,18 @@ try{
   for(const lane of ['observe','task']){const result=await rpc(state,'service.drain',{service:'mlx'},lane);assert.equal(result.ok,false);assert.equal(result.error,'unauthorized');}
   const missing=await rpc(state,'service.drain',{service:'mlx'});assert.equal(missing.ok,false);assert.equal(missing.error,'native_unsupported');
   if(mode!=='closed'){
+   const marker=join(directory,mode+'-cache-ready');
+   if(mode==='configured'){
+    child.stdin.write(JSON.stringify({epoch:randomUUID(),mode:'prior'})+'\n');
+    await until(()=>existsSync(marker)&&readFileSync(marker,'utf8')==='prior');
+    const refused=await rpc(state,'service.drain',{service:'mlx'});assert.equal(refused.ok,false);
+    const unchanged=await rpc(state,'status',{},'observe');
+    assert.equal(unchanged.services.mlx.desired,first.services.mlx.desired);
+    assert.equal(unchanged.services.mlx.drain,undefined);
+    assert.equal(unchanged.unresolved_requests,first.unresolved_requests);
+   }
    child.stdin.write(JSON.stringify({epoch:first.epoch,mode:'original'})+'\n');
-   await until(()=>existsSync(join(directory,mode+'-cache-ready')));
+   await until(()=>existsSync(marker)&&readFileSync(marker,'utf8')==='original');
    const result=await rpc(state,'service.drain',{service:'mlx'});
    if(mode==='held'){assert.equal(result.ok,false);assert.equal(result.error,'native_unsupported');}
    else{

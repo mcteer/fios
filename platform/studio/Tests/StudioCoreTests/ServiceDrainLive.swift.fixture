@@ -38,9 +38,9 @@ private func prepare(_ directory:URL)throws->(String,String) {
                         try StrictJSON.validate(bytes,maximum:1024)
                         guard let value=try JSONSerialization.jsonObject(with:bytes) as? [String:String],
                               Set(value.keys)==Set(["epoch","mode"]),let epoch=value["epoch"],WireScalar.uuid(epoch),
-                              let command=value["mode"],["original","omit","missing"].contains(command) else {throw RuntimeError.invalid}
+                              let command=value["mode"],["original","prior","omit","missing"].contains(command) else {throw RuntimeError.invalid}
                         if command=="missing" {cache.publish(nil,for:.mlx)}else {
-                            let scope=try ServiceAffectedScope(service:.mlx,identity:ServiceIdentity(pid:42,start:100,sha256:String(repeating:"c",count:64)),managerEpoch:epoch,nativeEpoch:"fixture-native",nativeScopeDigest:String(repeating:"d",count:64),runtimeScopeDigest:nil,ownedJobs:command=="original" ? [ids.0]:[],unresolvedManagedRequests:command=="original" ? [ids.0,ids.1]:[],sampledAt:HostResources.nowMilliseconds())
+                            let scope=try ServiceAffectedScope(service:.mlx,identity:ServiceIdentity(pid:42,start:100,sha256:String(repeating:"c",count:64)),managerEpoch:epoch,nativeEpoch:"fixture-native",nativeScopeDigest:String(repeating:"d",count:64),runtimeScopeDigest:nil,ownedJobs:command=="omit" ? []:[ids.0],unresolvedManagedRequests:command=="omit" ? []:[ids.0,ids.1],sampledAt:HostResources.nowMilliseconds())
                             cache.publish(ServiceDrainSnapshot(scope:scope,nativeIdle:command=="omit",externalNativeWork:false,unmanagedRuntimeWork:nil),for:.mlx)
                         }
                         try AtomicState.write(Data(command.utf8),to:parent.appendingPathComponent(name+"-cache-ready"))
