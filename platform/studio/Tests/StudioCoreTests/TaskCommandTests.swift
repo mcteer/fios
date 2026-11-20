@@ -129,7 +129,22 @@ func runTaskCommandTests() throws {
         }
         throw RuntimeError.deadline
     }
-    guard case .success(.published(let artifact))=try wait()[0].result else {fatalError("Fixture artifact failed")}
+    let completedBy=ProcessInfo.processInfo.systemUptime+3
+    while artifacts.statistics.bytes<Int64(source.count),ProcessInfo.processInfo.systemUptime<completedBy {
+        Thread.sleep(forTimeInterval:0.005)
+    }
+    guard artifacts.statistics.bytes==Int64(source.count) else {fatalError("Fixture export did not complete before failed heartbeat")}
+    let drainJournal=try Journal(directory:directory.appendingPathComponent("drain-state"))
+    let drainTasks=TaskController(journal:drainJournal,broker:ModelBroker(journal:drainJournal))
+    let drainSandbox=SandboxTaskController(journal:drainJournal,jobs:JobController(journal:drainJournal,executor:NeverRuntime()),tasks:drainTasks,artifacts:artifacts,socket:"/fixture/never.sock",peerUID:geteuid())
+    var drainAdmission=AdmissionPolicy()
+    do {
+        _=try drainSandbox.tick(now:-1,uptime:1,sample:sample,admission:&drainAdmission,source:{_ in nil},nativeCapacityProven:false)
+        fatalError("Fixture heartbeat accepted invalid journal clock")
+    } catch JournalError.invalid {}
+    let retried=try drainSandbox.tick(now:1005,uptime:1.005,sample:sample,admission:&drainAdmission,source:{_ in nil},nativeCapacityProven:false)
+    guard retried.artifactResults.count==1,retried.artifactResults[0].request==publication,
+          case .success(.published(let artifact))=retried.artifactResults[0].result else {fatalError("Failed heartbeat stranded a completed artifact result")}
     let downloadBegin=try request("artifact.read",["phase":"begin","artifact":artifact])
     func repeatDownload(now:Int64)throws->[String:Any] {
         try commands.handle(downloadBegin,role:.task,sample:sample,admission:&admission,binding:{_ in nil},nativeCapacityProven:false,now:now,uptime:1000)
