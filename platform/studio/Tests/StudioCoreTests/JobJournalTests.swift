@@ -56,9 +56,16 @@ func runJobJournalTests() throws {
     journal=nil;journal=try Journal(directory:directory)
     try journal!.recoverWorkerMetadata()
     guard try journal!.activeLaunchCount()==1,try journal!.workerGrants().isEmpty,try journal!.unresolvedCount()==1 else { fatalError("Restart cleared unbound launch/memory/native uncertainty") }
+    let sandboxID=UUID().uuidString.lowercased()
+    let sandbox=try SandboxConfiguration(job:sandboxID,nonce:String(repeating:"a",count:64),image:"sha256:"+String(repeating:"b",count:64),memory:512<<20,cpus:1)
+    _=try journal!.reserveSandbox(job:DurableJob(id:sandboxID,idempotency:UUID().uuidString.lowercased(),ownerHash:String(repeating:"c",count:64),requestHash:String(repeating:"d",count:64),created:9000),configuration:sandbox)
+    try journal!.commitSandboxCreate(sandbox,now:9000)
+    journal=nil;journal=try Journal(directory:directory)
     var restored=AdmissionPolicy()
-    try ModelBroker.restoreReservations(journal:journal!,admission:&restored)
-    let sensors=ResourceSample(sampledAt:10_000,physical:128<<30,available:64<<30,vmAvailable:nil,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal,cpuSampledAt:10_000)
+    _=try WorkerReconciler(journal:journal!,admission:&restored)
+    let sensors=ResourceSample(sampledAt:10_000,physical:128<<30,available:64<<30,vmAvailable:8<<30,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal,vmSampledAt:10_000,cpuSampledAt:10_000)
+    try restored.reserve(job:UUID().uuidString.lowercased(),memory:512<<20,cpus:1,sample:sensors,now:10_000)
+    do {try restored.reserve(job:UUID().uuidString.lowercased(),memory:512<<20,cpus:1,sample:sensors,now:10_000);fatalError("Issued sandbox lost its slot alongside worker recovery")} catch AdmissionError.capacity {}
     try restored.reserveWorker(key:"second",sample:sensors,now:10_000)
     do { try restored.reserveWorker(key:"third",sample:sensors,now:10_000);fatalError("Unbound launch lost its memory slot on restart") } catch AdmissionError.capacity {}
     print("PASS: durable job/request/launch idempotency, pre-spawn slot recovery and uncertainty-safe terminal retention")
