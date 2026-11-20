@@ -108,7 +108,10 @@ test('reviewed release tree refuses changed bytes, extra files, symlinks and har
     assert.equal(rollbackPlan.operation,'stopped_state_rollback_review');assert.equal(rollbackPlan.previous_journal_schema,9);
     assert.equal(rollbackPlan.current_manifest_sha256,hash);assert.equal(rollbackPlan.previous_manifest_sha256,previousHash);
     assert.equal(rollbackPlan.changes_made,false);assert.equal(rollbackPlan.activation,false);assert.deepEqual(rollbackPlan.privileged_commands,[]);
+    assert.deepEqual(rollbackPlan.unverified_at_review,['backup_origin','backup_receipt','backup_journal_compatibility','destination_writer_absent']);
     assert.equal(rollbackPlan.proposed_commands[0].program,join(previous,'bin/studioctl'));
+    assert.deepEqual(rollbackPlan.proposed_commands[0].arguments.slice(-3),['verify-backup','--sha256','d'.repeat(64)]);
+    assert.equal(rollbackPlan.proposed_commands[0].execution,'operator_only');
     assert.equal(rollbackPlan.proposed_commands[1].arguments.at(-1),join(realpathSync.native(outside),'restored'));assert.equal(existsSync(restored),false);
     previousHash=previousReceipt(8);
     assert.equal(invoke(['plan-rollback',...rollbackArgs()]).status,1);
