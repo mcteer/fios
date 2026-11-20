@@ -100,8 +100,15 @@ final class JobController {
                 resourcePending?.invalidated=true
             }
         }
+        var resourceConflict=false
         for result in executor.drainResources() {
-            guard let pending=resourcePending,pending.job==result.job,pending.id==result.runtimeID else {throw JournalError.conflict}
+            guard let pending=resourcePending,pending.job==result.job,pending.id==result.runtimeID else {
+                // A foreign completion does not consume the original slot or
+                // justify publishing its subsequent result as continuous.
+                resourcePending?.invalidated=true
+                resourceConflict=true
+                continue // Still drain a matching completion in this batch.
+            }
             resourcePending=nil
             if !pending.invalidated,case .success(let value)=result.result,
                value.sampledAt>=pending.submittedAt,value.validatedEnvelope(physical:sample.physical,now:now) != nil {
@@ -109,6 +116,7 @@ final class JobController {
             }
             else {candidateVM=nil}
         }
+        if resourceConflict {throw JournalError.conflict}
         let safe = !rollback && admission.resourcesSafe(sample,now:now,needsVM:true)
         let probeSafe = !rollback && admission.resourcesSafe(sample,now:now,needsVM:false)
         // Host pressure applies to every owned job, including model-only
