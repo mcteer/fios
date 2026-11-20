@@ -6,15 +6,24 @@ import { createConnection } from 'node:net';
 import { randomUUID, randomBytes, createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
+import { validatePlatformRelease } from './lib/platform-release.mjs';
 
 // Explicitly local disposable manager processes; no host service commands.
-if (process.argv.length !== 3 || process.argv[2] !== '--isolated') throw new Error('Usage: node scripts/check-platform-process.mjs --isolated');
+const args=process.argv.slice(2);
+assert(args[0]==='--isolated'&&(args.length===1||(args.length===5&&args[1]==='--release'&&args[3]==='--sha256')),
+  'Usage: node scripts/check-platform-process.mjs --isolated [--release ABS_RELEASE --sha256 REVIEWED_SHA256]');
 const root = fileURLToPath(new URL('../', import.meta.url));
-const built = spawnSync('swift', ['build', '--package-path', 'platform/studio'], { cwd: root, encoding: 'utf8', timeout: 120_000 });
-assert.equal(built.status, 0, 'Native package build failed');
-const shown = spawnSync('swift', ['build', '--package-path', 'platform/studio', '--show-bin-path'], { cwd: root, encoding: 'utf8', timeout: 30_000 });
-assert.equal(shown.status, 0);
-const bin = shown.stdout.trim();
+let bin;
+if(args.length===5){
+  validatePlatformRelease(args[2],args[4]);
+  bin=join(args[2],'bin');
+}else{
+  const built = spawnSync('swift', ['build', '--package-path', 'platform/studio'], { cwd: root, encoding: 'utf8', timeout: 120_000 });
+  assert.equal(built.status, 0, 'Native package build failed');
+  const shown = spawnSync('swift', ['build', '--package-path', 'platform/studio', '--show-bin-path'], { cwd: root, encoding: 'utf8', timeout: 30_000 });
+  assert.equal(shown.status, 0);
+  bin=shown.stdout.trim();
+}
 const state = mkdtempSync('/tmp/fios009-process-');
 const children = [];
 function start(name) {
