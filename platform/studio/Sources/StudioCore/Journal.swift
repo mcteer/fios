@@ -1076,9 +1076,10 @@ public final class Journal {
     }
     func recordUnboundWorkerGone(job:String,attempt:Int,nonce:String,proof:WorkerCensusAbsence)throws {
         try validate(job:job,attempt:attempt)
-        try proof.validate()
         try transaction {
             guard try scalar("SELECT count(*) FROM worker_grants WHERE job=? AND attempt=?",[job,String(attempt)])==0 else {throw JournalError.conflict}
+            // Acquiring the writer fence must not renew an old census proof.
+            try proof.validate()
             try execute("UPDATE worker_launches SET reaped=1 WHERE job=? AND attempt=? AND nonce=? AND boot=? AND reaped=0",[job,String(attempt),nonce,proof.boot])
             guard sqlite3_changes(db)==1 else {throw JournalError.conflict}
             // Only local memory/process bookkeeping. Inference is untouched.

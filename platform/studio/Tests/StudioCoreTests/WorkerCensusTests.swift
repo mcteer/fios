@@ -52,6 +52,14 @@ func runWorkerCensusTests() throws {
     let proof=try observeAbsence {try policy.absence()}
     do {try journal!.recordUnboundWorkerGone(job:id,attempt:0,nonce:nonce+"x",proof:proof);fatalError("Foreign launch nonce accepted")}catch JournalError.conflict {}
     guard try journal!.activeLaunchCount()==1 else {fatalError("Rejected proof mutated launch")}
+    Thread.sleep(forTimeInterval:1.01)
+    do {
+        try journal!.recordUnboundWorkerGone(job:id,attempt:0,nonce:nonce,proof:proof)
+        fatalError("Expired census proof released worker custody behind writer fence")
+    } catch WorkerResourceError.unavailable {}
+    guard try journal!.activeLaunchCount()==1,try journal!.uncertainCount()==1 else {
+        fatalError("Expired census proof changed custody")
+    }
     var released=AdmissionPolicy()
     let recovered=try observeAbsence {
         var attempt=AdmissionPolicy()
