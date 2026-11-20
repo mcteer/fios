@@ -112,6 +112,9 @@ try {
     assert.deepEqual(readFileSync(join(copy,'artifacts/index.json')),incompleteBytes);
     assert.deepEqual(readFileSync(join(copy,incompleteBlob)),prefix);
   }
+  assert.deepEqual(JSON.parse(run(helper,['check-incomplete',incompleteRestore])),{uncertain:1,exports:0,failed_exports:1});
+  assert.deepEqual(readFileSync(join(incompleteRestore,incompleteBlob)),prefix);
+  for(const copy of [incompleteState,incompleteBackup])assert.deepEqual(readFileSync(join(copy,'artifacts/index.json')),incompleteBytes);
   const future=join(scratch,'future-state'),failedJournal=join(scratch,'failed-journal.sqlite');
   run(helper,['seed',future]);run(helper,['future',future]);
   assert.equal(cli(future,['backup','--to',failedJournal],{expected:1}),'');
@@ -157,7 +160,7 @@ try {
   const recovery=JSON.parse(cli(bundle,['restore-state','--sha256',receipt.sha256,'--to',refused]));
   assert.equal(recovery.started,false);assert.equal(recovery.installed,false);assert.equal(recovery.activation,false);
   assert.deepEqual(JSON.parse(run(helper,['check',refused])),{uncertain:1,exports:1});
-  const final={scope:'isolated_packaged_cli_configuration_backup',manifest_sha256:args[4],source_revision:review.manifest.source_revision,configuration_plan_executed:true,uninstall_proposal_matches:true,backup_sha256:receipt.sha256,journal_only_receipt_verified:true,journal_only_overwrite_refused:true,journal_only_sidecar_collisions_refused:3,pending_index_preserved_until_private_reopen:true,incomplete_pending_preserved_offline:true,network:'denied',failed_journal_retained:true,failed_export_retained:true,tampered_backup_refused_without_publication:true,tampered_configuration_refused_without_publication:true,original_restores_after_refusals:true,model_posts:0,installed:false,activation:false,uncertainty:1,exports:1,scratch};
+  const final={scope:'isolated_packaged_cli_configuration_backup',manifest_sha256:args[4],source_revision:review.manifest.source_revision,configuration_plan_executed:true,uninstall_proposal_matches:true,backup_sha256:receipt.sha256,journal_only_receipt_verified:true,journal_only_overwrite_refused:true,journal_only_sidecar_collisions_refused:3,pending_index_preserved_until_private_reopen:true,incomplete_pending_preserved_offline:true,incomplete_private_reopen_failed_without_erasure:true,network:'denied',failed_journal_retained:true,failed_export_retained:true,tampered_backup_refused_without_publication:true,tampered_configuration_refused_without_publication:true,original_restores_after_refusals:true,model_posts:0,installed:false,activation:false,uncertainty:1,exports:1,scratch};
   writeFileSync(join(scratch,'receipt.json'),JSON.stringify(final,null,2)+'\n',{mode:0o600});
   console.log(JSON.stringify(final));
 } catch(error) {

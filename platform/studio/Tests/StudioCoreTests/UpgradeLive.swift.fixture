@@ -5,7 +5,7 @@ import CryptoKit
 @main struct UpgradeFixture {
     static func main()throws {
         let args=CommandLine.arguments
-        guard args.count==3,["seed","seed-seven","seed-eight","check","check-legacy","future"].contains(args[1]),args[2].hasPrefix("/tmp/fios009-upgrade-") else {throw JournalError.invalid}
+        guard args.count==3,["seed","seed-seven","seed-eight","check","check-incomplete","check-legacy","future"].contains(args[1]),args[2].hasPrefix("/tmp/fios009-upgrade-") else {throw JournalError.invalid}
         let directory=URL(fileURLWithPath:args[2]),owner=String(repeating:"a",count:64)
         let payload=Data("UPGRADE_EXPLICIT_EXPORT_FIXTURE".utf8)
         if args[1]=="future" {
@@ -45,6 +45,15 @@ import CryptoKit
         let index=try JSONSerialization.jsonObject(with:Data(contentsOf:directory.appendingPathComponent("artifacts/index.json"))) as! [String:Any]
         guard let records=index["records"] as? [[String:Any]],records.count==1,let id=records[0]["id"] as? String else {throw JournalError.invalid}
         let store=try ArtifactStore(directory:directory.appendingPathComponent("artifacts"),availableBytes:{100<<30})
+        if args[1]=="check-incomplete" {
+            do {_=try store.download(id:id,ownerHash:owner,now:HostResources.nowMilliseconds());throw JournalError.invalid}
+            catch ArtifactError.unavailable {}
+            let reopened=try JSONSerialization.jsonObject(with:Data(contentsOf:directory.appendingPathComponent("artifacts/index.json"))) as! [String:Any]
+            guard let rows=reopened["records"] as? [[String:Any]],rows.count==1,
+                  rows[0]["id"] as? String==id,rows[0]["state"] as? String=="failed" else {throw JournalError.invalid}
+            print("{\"uncertain\":1,\"exports\":0,\"failed_exports\":1}")
+            return
+        }
         var stream=try store.download(id:id,ownerHash:owner,now:HostResources.nowMilliseconds())
         var result=Data(),ended=false
         while !ended {
