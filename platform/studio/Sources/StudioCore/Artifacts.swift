@@ -17,6 +17,7 @@ final class ArtifactStore {
     private let directory:URL
     private let availableBytes:()->UInt64?
     private let readUptime:()->TimeInterval
+    private let writeIndex:(Data,URL)throws->Void
     private var records:[Record]=[]
     private var lock:Int32 = -1
     private var previous:Int64 = -1
@@ -28,9 +29,10 @@ final class ArtifactStore {
     }
     private static func hash(_ data:Data)->String { SHA256.hash(data:data).map { String(format:"%02x",$0) }.joined() }
 
-    init(directory:URL,availableBytes:(()->UInt64?)?=nil,readUptime:@escaping ()->TimeInterval={ProcessInfo.processInfo.systemUptime}) throws {
+    init(directory:URL,availableBytes:(()->UInt64?)?=nil,readUptime:@escaping ()->TimeInterval={ProcessInfo.processInfo.systemUptime},
+         writeIndex:@escaping (Data,URL)throws->Void=AtomicState.write) throws {
         guard directory.isFileURL else { throw ArtifactError.invalid }
-        self.directory=directory;self.readUptime=readUptime
+        self.directory=directory;self.readUptime=readUptime;self.writeIndex=writeIndex
         self.availableBytes=availableBytes ?? {
             let attributes=try? FileManager.default.attributesOfFileSystem(forPath:directory.path)
             return (attributes?[.systemFreeSize] as? NSNumber)?.uint64Value
@@ -94,7 +96,7 @@ final class ArtifactStore {
     private func save() throws {
         let data=try JSONEncoder().encode(Index(version:1,records:records))
         guard data.count<=1<<20 else { throw ArtifactError.capacity }
-        try AtomicState.write(data,to:directory.appendingPathComponent("index.json"))
+        try writeIndex(data,directory.appendingPathComponent("index.json"))
     }
     private func read(_ name:String,maximum:Int,expectedSHA256:String?=nil) throws -> Data {
         let began=readUptime()
@@ -181,8 +183,15 @@ final class ArtifactStore {
                       info.st_mode & 0o077==0,unlink(path)==0 else { throw ArtifactError.invalid }
             } else if errno != ENOENT { throw ArtifactError.storage }
         }
+        let retained=records
         records.removeAll(where:{$0.state == .deleting})
-        try save()
+        do {try save()}
+        catch {
+            // Blob absence is reusable on retry, but the final index write
+            // must succeed before releasing this exact record or its charge.
+            records=retained
+            throw error
+        }
     }
     func expire(now:Int64) throws {
         try check(now:now)

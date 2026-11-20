@@ -185,5 +185,26 @@ func runArtifactTests() throws {
     try FileManager.default.createSymbolicLink(atPath:foreign.path,withDestinationPath:"/etc/hosts")
     store=nil
     do { _=try ArtifactStore(directory:directory);fatalError("Unexpected storage symlink accepted") } catch ArtifactError.invalid {}
+    let deletionDirectory=directory.appendingPathComponent("deletion-commit-fixture")
+    var failEmptyIndex=false
+    let deletionStore=try ArtifactStore(directory:deletionDirectory,availableBytes:{50<<30},writeIndex:{bytes,target in
+        let object=try JSONSerialization.jsonObject(with:bytes) as! [String:Any]
+        if failEmptyIndex,(object["records"] as! [[String:Any]]).isEmpty {throw ArtifactError.storage}
+        try AtomicState.write(bytes,to:target)
+    })
+    let deleted=try deletionStore.publish(job:UUID().uuidString.lowercased(),ownerHash:owner,data:Data([42]),now:1000)
+    failEmptyIndex=true
+    do {try deletionStore.expire(now:86_401_000);fatalError("Final deletion index write did not fail")}catch ArtifactError.storage {}
+    let deletionIndex=deletionDirectory.appendingPathComponent("index.json")
+    let committedIntent=try JSONSerialization.jsonObject(with:Data(contentsOf:deletionIndex)) as! [String:Any]
+    guard (committedIntent["records"] as! [[String:Any]]).first?["state"] as? String=="deleting",
+          !FileManager.default.fileExists(atPath:deletionDirectory.appendingPathComponent(deleted+".blob").path),
+          deletionStore.retainedBytes==1 else {fatalError("Failed final deletion commit released in-memory custody")}
+    failEmptyIndex=false
+    try deletionStore.expire(now:86_401_001)
+    let afterRetry=try JSONSerialization.jsonObject(with:Data(contentsOf:deletionIndex)) as! [String:Any]
+    guard (afterRetry["records"] as! [[String:Any]]).isEmpty,deletionStore.retainedBytes==0 else {
+        fatalError("Exact deletion intent did not retry its durable commit")
+    }
     print("PASS: private generated artifacts, owner/hash/length checks, restart, finite quotas, expiry and traversal/symlink refusal")
 }
