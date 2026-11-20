@@ -515,8 +515,9 @@ func runSandboxExitProofTests()throws {
 func runCleanupStatusRecoveryTests() throws {
     let directory=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer {try? FileManager.default.removeItem(at:directory)}
-    let journal=try Journal(directory:directory),runtime=FakeSandboxExecutor()
-    let controller=JobController(journal:journal,executor:runtime)
+    let journal=try Journal(directory:directory)
+    var runtime=FakeSandboxExecutor()
+    var controller=JobController(journal:journal,executor:runtime)
     var admission=AdmissionPolicy()
     func sample(_ now:Int64)->ResourceSample {
         ResourceSample(sampledAt:now,physical:128<<30,available:64<<30,vmAvailable:8<<30,
@@ -632,32 +633,44 @@ func runCleanupStatusRecoveryTests() throws {
     guard controller.cleanupStatus(now:101000)["storage_continuity_unknown"] as? Int==1,
           try journal.sandboxRecords().first(where:{$0.configuration.job==lateID})?.removalProven==false,
           try journal.uncertainCount()==1 else {fatalError("Generic inspection failure erased the storage refusal or custody")}
-    runtime.inspectionUnavailable=false
+    let beforeRestart=runtime.commands
+    runtime=FakeSandboxExecutor()
+    controller=JobController(journal:journal,executor:runtime)
+    runtime.storageContinuityUnknown=true
+    try tick(101100)
+    try tick(101200)
+    guard controller.cleanupStatus(now:101200)["storage_continuity_unknown"] as? Int==1,
+          try journal.sandboxRecords().first(where:{$0.configuration.job==lateID})?.removalProven==false,
+          try journal.uncertainCount()==1,
+          runtime.commands.allSatisfy({if case .inspect=$0 {return true};return false}) else {
+        fatalError("Recreated controller released custody or replayed a command after lost inspection")
+    }
+    runtime.storageContinuityUnknown=false
     let lateRuntimeID=String(repeating:"d",count:64)
     runtime.present[lateID]=(lateConfig,lateRuntimeID,false)
-    for now:Int64 in [101500,102000,102500,103500,104000] {try tick(now)}
+    for now:Int64 in stride(from:101500,through:106000,by:500) {try tick(now)}
     let final=try journal.sandboxRecords().first{$0.configuration.job==lateID}
-    let commands=runtime.commands
+    let commands=beforeRestart+runtime.commands
     guard final?.runtimeID==lateRuntimeID,final?.removalProven==true,
-          controller.cleanupStatus(now:104000)["storage_continuity_unknown"] as? Int==0,
+          controller.cleanupStatus(now:106000)["storage_continuity_unknown"] as? Int==0,
           commands.filter({if case .create=$0 {return true};return false}).count==1,
           !commands.contains(where:{if case .start=$0 {return true};return false}),
           try journal.unresolvedCount()==1,try journal.uncertainCount()==1 else {fatalError("Late sandbox was replayed, started, or released independent model uncertainty")}
     var releasedCapacity=admission
-    for _ in 0..<2 {try releasedCapacity.reserve(job:UUID().uuidString.lowercased(),memory:512<<20,cpus:1,sample:sample(104000),now:104000)}
+    for _ in 0..<2 {try releasedCapacity.reserve(job:UUID().uuidString.lowercased(),memory:512<<20,cpus:1,sample:sample(106000),now:106000)}
     let unissuedID=UUID().uuidString.lowercased()
-    let unissued=try DurableJob(id:unissuedID,idempotency:UUID().uuidString.lowercased(),ownerHash:job.ownerHash,requestHash:job.requestHash,created:105000)
+    let unissued=try DurableJob(id:unissuedID,idempotency:UUID().uuidString.lowercased(),ownerHash:job.ownerHash,requestHash:job.requestHash,created:107000)
     let unissuedConfig=try SandboxConfiguration(job:unissuedID,nonce:lateConfig.nonce,image:configuration.image,memory:configuration.memory,cpus:1)
     _=try journal.reserveSandbox(job:unissued,configuration:unissuedConfig)
-    try admission.reserve(job:unissuedID,memory:unissuedConfig.memory,cpus:1,sample:sample(105000),now:105000)
-    try journal.transitionJob(id:unissuedID,to:.revoking,now:105000)
+    try admission.reserve(job:unissuedID,memory:unissuedConfig.memory,cpus:1,sample:sample(107000),now:107000)
+    try journal.transitionJob(id:unissuedID,to:.revoking,now:107000)
     let beforeLocal=runtime.commands.count
-    try tick(105000)
-    try tick(105500)
+    try tick(107000)
+    try tick(107500)
     guard runtime.commands.count==beforeLocal else {fatalError("Unissued reservation dispatched a cleanup command")}
     // The ordinary manager tick released the local reservation, so a new
     // in-memory reservation for the same key no longer conflicts.
-    try admission.reserve(job:unissuedID,memory:unissuedConfig.memory,cpus:1,sample:sample(105500),now:105500)
+    try admission.reserve(job:unissuedID,memory:unissuedConfig.memory,cpus:1,sample:sample(107500),now:107500)
     guard let closed=try journal.jobs().first(where:{$0.id==lateID})?.closedAt else {throw JournalError.invalid}
     let beforeRetention=runtime.commands.count
     try journal.expireTerminalJobs(now:closed+86_399_999)
