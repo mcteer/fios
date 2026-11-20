@@ -672,6 +672,9 @@ func runCleanupStatusRecoveryTests() throws {
           runtime.present[lateID]==nil,
           try journal.sandboxRecords().first(where:{$0.configuration.job==lateID})?.removalProven==false,
           try journal.uncertainCount()==1 else {fatalError("Remove acknowledgement released custody before observed absence")}
+    try assertCharge(admission,now:104500)
+    let afterAck=controller.cleanupStatus(now:104500)
+    guard afterAck["pending_sandboxes"] as? Int==1 else {fatalError("Remove acknowledgement omitted pending cleanup")}
     for now:Int64 in stride(from:105000,through:106000,by:500) {try tick(now)}
     let final=try journal.sandboxRecords().first{$0.configuration.job==lateID}
     let commands=beforeRestart+runtime.commands
