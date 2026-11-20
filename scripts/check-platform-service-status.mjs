@@ -27,15 +27,23 @@ const status=(state,args=['status'])=>{
  return result.status===0 ? JSON.parse(result.stdout):null;
 };
 const messages={unknown:'Service status is unavailable.',starting:'Service is loading.',waiting_session:'Waiting for a user session.',waiting_credentials:'Waiting for service credentials.',stopped:'Service is stopped; running is requested.',ready:'Service is running.',degraded:'Service is present but not responding.'};
-const expected=(mode,service)=>mode==='held'?'stopped':['unconfigured','future'].includes(mode)?'unknown':mode==='loading' ? (service==='mlx'?'starting':'ready'):mode==='mixed' ? (service==='mlx'?'ready':'degraded'):mode;
-const modes=['unconfigured','unknown','future','waiting_session','waiting_credentials','stopped','ready','degraded','mixed','loading','held'];
+const expected=(mode,service)=>mode==='held'?'stopped':['unconfigured','native_source_gap','future'].includes(mode)?'unknown':mode==='loading' ? (service==='mlx'?'starting':'ready'):mode==='mixed' ? (service==='mlx'?'ready':'degraded'):mode;
+const modes=['unconfigured','native_source_gap','unknown','future','waiting_session','waiting_credentials','stopped','ready','degraded','mixed','loading','held'];
 let child;
 try{
  for(const mode of modes){
   const state=join(directory,mode);
   child=spawn('/usr/bin/sandbox-exec',['-f',profile,binary,state,mode],{cwd:root,env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C',HOME:'/var/empty'},stdio:'ignore'});
   await until(()=>{assert(!exited(child),'Status manager exited early');const observed=status(state);return observed&&['mlx','orbstack'].every(service=>observed.services[service].observed===expected(mode,service))&&(mode!=='unconfigured'||['native_health_source','orbstack_health_source','vm_resource_source'].every(key=>observed[key]==='unconfigured'));});
-  const combined=status(state);
+  const combined=mode==='native_source_gap'?await until(()=>{const frame=status(state);return frame?.native_control.state==='unavailable'&&frame;}):status(state);
+  if(mode==='native_source_gap'){
+   assert.equal(combined.native_control_mode,'observation_only');assert.equal(combined.native_admissions,'unsupported');
+   const diagnostics=combined.native_control;
+   assert.equal(diagnostics.authoritative,false);assert.equal(diagnostics.source_sequence,null);assert.equal(diagnostics.reported_counts,null);
+   for(const key of ['primary_activity','backend_fences']){
+    assert.equal(diagnostics[key].state,'unavailable');assert.equal(diagnostics[key].authority,false);
+   }
+  }
   assert.equal(combined.migration_maintenance,mode==='held');
   if(mode==='held'){
    assert.equal(combined.service_recovery,'disabled');
@@ -61,7 +69,7 @@ try{
    assert.equal(selected.observed,combined.services[service].observed);
    assert.equal(selected.message,messages[expected(mode,service)]);
    assert.equal(selected.message,combined.services[service].message);
-   if(mode==='unknown'||mode==='unconfigured'){assert.equal(selected.sampled_at,null);assert.equal(selected.age_ms,null);}
+   if(['unknown','unconfigured','native_source_gap'].includes(mode)){assert.equal(selected.sampled_at,null);assert.equal(selected.age_ms,null);}
    else if(mode==='future'){assert(Number.isSafeInteger(selected.sampled_at));assert(selected.age_ms < -1000);assert.equal(selected.sampled_at,combined.services[service].sampled_at);}
    else{assert(Number.isSafeInteger(selected.sampled_at));assert(selected.age_ms>=0&&selected.age_ms<=5000);}
   }

@@ -12,6 +12,10 @@ private struct ForbiddenHeldRecovery:ServiceRecoverySending {
     func request(_ request:ServiceRecoveryRequest)throws->SessionLaunchResult {fatalError("Migration hold allowed a service request")}
 }
 
+private struct UnavailableStatusSource:NativeReadOnlyClientSource {
+    func resolve()throws->NativeReadOnlyClient {throw NativeControlError.unavailable}
+}
+
 @main struct ServiceStatusLive {
     static func main() throws {
         let args=CommandLine.arguments
@@ -44,6 +48,10 @@ private struct ForbiddenHeldRecovery:ServiceRecoverySending {
             }
             let execution=try ManagerExecutionPorts(runtime:runtime,approvedImages:[image],resources:{_,_ in nil})
             try withExtendedLifetime(listener) {try ManagerRuntime.run(directory:state,nativeControl:nil,execution:execution)}
+            return
+        }
+        if args[2] == "native_source_gap" {
+            try ManagerRuntime.run(directory:URL(fileURLWithPath:args[1]),nativeControl:nil,nativeObserverSource:UnavailableStatusSource())
             return
         }
         if args[2] == "unconfigured" {
