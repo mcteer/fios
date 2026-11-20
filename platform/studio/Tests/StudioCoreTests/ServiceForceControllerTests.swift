@@ -1,4 +1,5 @@
 import Foundation
+import CSQLite
 
 private final class ForceFixtureClock:@unchecked Sendable {var uptime:TimeInterval=1}
 
@@ -67,9 +68,29 @@ func runServiceForceControllerTests()throws {
         FileHandle.standardError.write(Data("FORCE_REUSED_SUPERSEDED_INTENT\n".utf8));throw RuntimeError.identity
     }catch ServiceError.invalid {}
     let good=try controller.prepare(service:.mlx,role:.operator,now:1002)
-    try journal.setDesired(service:"orbstack",desired:"maintenance")
+    let generation=journal.serviceIntentGeneration(service:.mlx)
+    clock.uptime = .infinity
+    do {_=try controller.prepare(service:.mlx,role:.operator,now:1002);fatalError("Invalid replacement force proposal accepted")}
+    catch ServiceError.invalid {}
+    guard journal.serviceIntentGeneration(service:.mlx)==generation else {fatalError("Rejected force proposal superseded the prior consent")}
+    clock.uptime=1
     guard try controller.confirm(service:.mlx,role:.operator,token:good.token,scopeDigest:good.scopeDigest,now:1002) == .forceQuit(identity) else {throw RuntimeError.identity}
-    do {_=try controller.confirm(service:.mlx,role:.operator,token:good.token,scopeDigest:good.scopeDigest,now:1002);throw RuntimeError.identity}catch ServiceError.invalid {}
+    let prior=try controller.prepare(service:.mlx,role:.operator,now:1002)
+    let priorGeneration=journal.serviceIntentGeneration(service:.mlx)
+    var writer:OpaquePointer?
+    guard sqlite3_open_v2(directory.appendingPathComponent("state.sqlite").path,&writer,SQLITE_OPEN_READWRITE|SQLITE_OPEN_FULLMUTEX,nil)==SQLITE_OK else {throw JournalError.storage}
+    defer {sqlite3_close(writer)}
+    guard sqlite3_exec(writer,"BEGIN IMMEDIATE",nil,nil,nil)==SQLITE_OK else {throw JournalError.storage}
+    do {_=try controller.prepare(service:.mlx,role:.operator,now:1002);fatalError("Contended force proposal published consent")}
+    catch JournalError.storage {}
+    guard sqlite3_exec(writer,"ROLLBACK",nil,nil,nil)==SQLITE_OK,
+          journal.serviceIntentGeneration(service:.mlx) != priorGeneration else {fatalError("Failed force write did not fence prior consent")}
+    do {_=try controller.confirm(service:.mlx,role:.operator,token:prior.token,scopeDigest:prior.scopeDigest,now:1002);fatalError("Prior consent survived a failed intent write")}
+    catch ServiceError.invalid {}
+    let renewed=try controller.prepare(service:.mlx,role:.operator,now:1002)
+    try journal.setDesired(service:"orbstack",desired:"maintenance")
+    guard try controller.confirm(service:.mlx,role:.operator,token:renewed.token,scopeDigest:renewed.scopeDigest,now:1002) == .forceQuit(identity) else {throw RuntimeError.identity}
+    do {_=try controller.confirm(service:.mlx,role:.operator,token:renewed.token,scopeDigest:renewed.scopeDigest,now:1002);throw RuntimeError.identity}catch ServiceError.invalid {}
     cache.publish(try snapshot(stamp:1002,external:nil),for:.mlx)
     do {_=try controller.prepare(service:.mlx,role:.operator,now:1002);throw RuntimeError.identity}catch ServiceError.invalid {}
     let requestJob=UUID().uuidString.lowercased(),requestID=UUID().uuidString.lowercased(),substitute=UUID().uuidString.lowercased()
