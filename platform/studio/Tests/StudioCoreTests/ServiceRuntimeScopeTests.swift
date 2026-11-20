@@ -81,9 +81,15 @@ private func runRecoveredRuntimeScopeTests(directory:URL)throws {
     let scope=try ServiceAffectedScope(service:.orbstack,identity:identity,managerEpoch:epoch,nativeEpoch:"recovered-runtime-fixture",
         nativeScopeDigest:String(repeating:"f",count:64),runtimeScopeDigest:String(repeating:"a",count:64),
         ownedJobs:[],unresolvedManagedRequests:[request],sampledAt:1001)
-    cache.publish(ServiceDrainSnapshot(scope:scope,nativeIdle:false,externalNativeWork:false,unmanagedRuntimeWork:false),for:.orbstack)
     let drain=try ServiceDrainController(journal:recovered,tasks:TaskController(journal:recovered,broker:ModelBroker(journal:recovered)),managerEpoch:epoch,observations:cache)
     let force=try ServiceForceController(journal:recovered,managerEpoch:epoch,observations:cache)
+    let previousScope=try ServiceAffectedScope(service:.orbstack,identity:identity,managerEpoch:UUID().uuidString.lowercased(),
+        nativeEpoch:scope.nativeEpoch,nativeScopeDigest:String(repeating:"f",count:64),runtimeScopeDigest:String(repeating:"a",count:64),
+        ownedJobs:[id],unresolvedManagedRequests:[request],sampledAt:1001)
+    cache.publish(ServiceDrainSnapshot(scope:previousScope,nativeIdle:false,externalNativeWork:false,unmanagedRuntimeWork:false),for:.orbstack)
+    do {_=try drain.begin(service:.orbstack,role:.operator,now:1001,uptime:1001);fatalError("Earlier manager scope survived reopen")}
+    catch ServiceError.stale {}
+    cache.publish(ServiceDrainSnapshot(scope:scope,nativeIdle:false,externalNativeWork:false,unmanagedRuntimeWork:false),for:.orbstack)
     do {_=try drain.begin(service:.orbstack,role:.operator,now:1001,uptime:1001);throw RuntimeError.identity}
     catch ServiceError.invalid {}
     do {_=try force.prepare(service:.orbstack,role:.operator,now:1001);throw RuntimeError.identity}
