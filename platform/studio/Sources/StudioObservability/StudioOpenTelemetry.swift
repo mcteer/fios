@@ -34,7 +34,7 @@ private final class ResourceMetrics:@unchecked Sendable {
     func updateGPU(_ value:GPUSample?,sampledAt:Int64?) {lock.lock();gpu=value;gpuAt=sampledAt;lock.unlock()}
     func currentGPU()->(sample:GPUSample,sampledAt:Int64)? {
         lock.lock();defer {lock.unlock()}
-        guard let gpu,let gpuAt,(0...WireScalar.maximumTimestamp).contains(gpuAt),(-1000...5000).contains(HostResources.nowMilliseconds()-gpuAt) else {return nil}
+        guard let gpu,let gpuAt,ResourceClock.fresh(now:HostResources.nowMilliseconds(),sampledAt:gpuAt) else {return nil}
         let utilization=gpu.utilization.flatMap{$0.isFinite && (0...100).contains($0) ? $0:nil}
         func bytes(_ value:UInt64?)->UInt64? {value.flatMap{$0<=UInt64(WireScalar.maximumTimestamp) ? $0:nil}}
         let inUse=bytes(gpu.inUseBytes),allocated=bytes(gpu.allocatedBytes)
@@ -69,7 +69,7 @@ private final class ResourceMetrics:@unchecked Sendable {
     func current(requireHostClock:Bool=true)->ResourceSample? {
         lock.lock();defer {lock.unlock()}
         if !requireHostClock {return sample} // Caller must validate the independent clock.
-        guard let sample,(0...WireScalar.maximumTimestamp).contains(sample.sampledAt),(-1000...5000).contains(HostResources.nowMilliseconds()-sample.sampledAt) else {return nil}
+        guard let sample,ResourceClock.fresh(now:HostResources.nowMilliseconds(),sampledAt:sample.sampledAt) else {return nil}
         return sample
     }
 }
@@ -124,8 +124,7 @@ public final class StudioOpenTelemetry:PlatformTelemetry,@unchecked Sendable {
         }
         let freshCPUTime: @Sendable (ResourceSample)->Int64? = { sample in
             guard let stamp=sample.cpuSampledAt,let cpu=sample.cpu,cpu.isFinite,(0...100).contains(cpu),
-                  (0...WireScalar.maximumTimestamp).contains(stamp),
-                  (-1000...5000).contains(HostResources.nowMilliseconds()-stamp) else {return nil}
+                  ResourceClock.fresh(now:HostResources.nowMilliseconds(),sampledAt:stamp) else {return nil}
             return stamp
         }
         let boundedBytes: @Sendable (UInt64)->Double? = { bytes in
@@ -135,9 +134,9 @@ public final class StudioOpenTelemetry:PlatformTelemetry,@unchecked Sendable {
             sample.physical>0 ? boundedBytes(sample.physical):nil
         }
         let freshVMTime: @Sendable (ResourceSample)->Int64? = { sample in
-            guard let time=sample.vmSampledAt,(0...WireScalar.maximumTimestamp).contains(time),
+            guard let time=sample.vmSampledAt,
                   let bytes=sample.vmAvailable,boundedPhysical(sample) != nil,bytes<=sample.physical,
-                  (-1000...5000).contains(HostResources.nowMilliseconds()-time) else {return nil}
+                  ResourceClock.fresh(now:HostResources.nowMilliseconds(),sampledAt:time) else {return nil}
             return time
         }
         let hostMetrics:[(String,String,(ResourceSample)->Double?)]=[

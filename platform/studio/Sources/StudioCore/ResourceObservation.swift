@@ -8,10 +8,10 @@ enum ResourceObservationExport {
         guard WireScalar.uuid(epoch),now>=0,now<=ActivityPolicy.maximumTimestamp,sequence>=0,sequence<=ActivityPolicy.maximumTimestamp else {throw ControlError.internal_error}
         let empty=NSNull(),maximum=UInt64(ActivityPolicy.maximumTimestamp)
         var values:[String:Any]=[:],signals:[String:[String:Any]]=[:]
-        func validTime(_ time:Int64?)->Int64? {time.flatMap { (0...ActivityPolicy.maximumTimestamp).contains($0) ? $0:nil }}
+        func validTime(_ time:Int64?)->Int64? {time.flatMap { ResourceClock.valid($0) ? $0:nil }}
         func publish(_ name:String,key:String,value:Any?,at:Int64?,unknown:Any?=nil) {
-            let time=validTime(at),age=time.map {now-$0}
-            let fresh=age.map {(-1000...5000).contains($0)} ?? false
+            let time=validTime(at),age=time.flatMap {ResourceClock.age(now:now,sampledAt:$0)}
+            let fresh=age.map {ResourceClock.fresh(age:$0)} ?? false
             let availability=value == nil || time == nil ? "unknown":fresh ? "observed":"stale"
             values[key]=availability == "observed" ? value!:unknown ?? empty
             signals[name]=["availability":availability,"sampled_at":time.map {$0 as Any} ?? empty,"age_ms":age.map {$0 as Any} ?? empty]

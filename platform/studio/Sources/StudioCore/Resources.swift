@@ -1,6 +1,18 @@
 import Foundation
 import Darwin
 
+public enum ResourceClock {
+    static func valid(_ stamp:Int64)->Bool {(0...WireScalar.maximumTimestamp).contains(stamp)}
+    static func age(now:Int64,sampledAt:Int64)->Int64? {
+        guard valid(now),valid(sampledAt) else {return nil}
+        return now-sampledAt
+    }
+    static func fresh(age:Int64)->Bool {(-1000...5000).contains(age)}
+    public static func fresh(now:Int64,sampledAt:Int64)->Bool {
+        age(now:now,sampledAt:sampledAt).map {fresh(age:$0)} ?? false
+    }
+}
+
 public struct ResourceSample: Codable, Sendable {
     public let sampledAt: Int64
     public let physical: UInt64

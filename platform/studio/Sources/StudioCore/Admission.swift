@@ -8,12 +8,9 @@ struct AdmissionPolicy {
     private var workers = Set<String>()
 
     private func headroom(_ sample: ResourceSample, now: Int64, newMemory: UInt64, needsVM: Bool) throws {
-        guard now >= 0, sample.sampledAt >= 0,
-              now <= ActivityPolicy.maximumTimestamp, sample.sampledAt <= ActivityPolicy.maximumTimestamp,
-              (-1000...5000).contains(now - sample.sampledAt) else { throw AdmissionError.stale }
+        guard ResourceClock.fresh(now:now,sampledAt:sample.sampledAt) else { throw AdmissionError.stale }
         guard let cpu=sample.cpu else {throw AdmissionError.capacity}
-        guard let cpuAt=sample.cpuSampledAt,(0...ActivityPolicy.maximumTimestamp).contains(cpuAt),
-              (-1000...5000).contains(now-cpuAt) else {throw AdmissionError.stale}
+        guard let cpuAt=sample.cpuSampledAt,ResourceClock.fresh(now:now,sampledAt:cpuAt) else {throw AdmissionError.stale}
         guard sample.pressure == .normal, [.nominal,.fair].contains(sample.thermal),
               cpu.isFinite, (0...80).contains(cpu),
               let available = sample.available, available <= sample.physical,
@@ -27,8 +24,7 @@ struct AdmissionPolicy {
         else { throw AdmissionError.capacity }
         if needsVM {
             // A fresh host reading cannot date an independent VM reading.
-            guard let vmAt=sample.vmSampledAt,vmAt>=0,vmAt<=ActivityPolicy.maximumTimestamp,
-                  (-1000...5000).contains(now-vmAt) else {throw AdmissionError.stale}
+            guard let vmAt=sample.vmSampledAt,ResourceClock.fresh(now:now,sampledAt:vmAt) else {throw AdmissionError.stale}
             let committed=reservations.values.reduce(UInt64(0), { $0 + $1.memory })
             guard let vm=sample.vmAvailable,vm<=sample.physical,vm>=committed,vm-committed>=newMemory else { throw AdmissionError.capacity }
         }
