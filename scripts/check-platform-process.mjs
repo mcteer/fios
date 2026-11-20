@@ -93,6 +93,20 @@ try {
   assert.equal(resourceObservation.sampled_at,resources.sampledAt);
   assert.equal(typeof resources.lowPowerMode,'boolean');
   assert.match(resourceObservation.epoch,/^[a-f0-9-]{36}$/);assert.ok(Number.isSafeInteger(resourceObservation.sequence));
+  const repeated=await until(()=>{
+    const before=status('resources')?.resource_observation,after=status('resources')?.resource_observation;
+    return before&&after&&before.sequence===after.sequence ? [before,after] : null;
+  },4000);
+  assert.equal(repeated[0].epoch,repeated[1].epoch);
+  for(const signal of ['physical_memory','disk_free','cpu'])
+    assert.equal(repeated[0].signals[signal].sampled_at,repeated[1].signals[signal].sampled_at,`${signal} was redated at read time`);
+  const nextResources=await until(()=>{
+    const next=status('resources')?.resource_observation;
+    return next&&next.sequence>repeated[1].sequence ? next:null;
+  },6000);
+  assert.equal(nextResources.epoch,repeated[1].epoch);
+  assert.ok(nextResources.sampled_at>repeated[1].sampled_at,'Advancing sequence reused the host measurement time');
+  assert.equal(nextResources.signals.vm_available.availability,'unknown');
   const liveBackup=spawnSync(join(bin,'studioctl'),['--state',state,'backup','--to',join(state,'snapshot.sqlite')],{encoding:'utf8',timeout:3000});
   assert.equal(liveBackup.status,1,'Offline backup must refuse a live manager');
   const duplicate = start('studio-manager');
