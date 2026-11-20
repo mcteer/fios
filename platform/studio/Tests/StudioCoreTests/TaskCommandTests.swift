@@ -90,7 +90,8 @@ func runTaskCommandTests() throws {
     try journal.transitionJob(id:independent,to:.running,now:1003)
     try journal.claim(job:independent,attempt:0,model:"fixture/model")
     try journal.markUncertain(job:independent,attempt:0)
-    try commands.tick(now:1003,uptime:1003,artifactResults:[],output:Array(repeating:SandboxTaskOutput(job:id,stream:"stdout",data:opaque),count:65))
+    try commands.tick(now:1003,uptime:1003,artifactResults:[],output:Array(repeating:SandboxTaskOutput(job:id,stream:"stdout",data:opaque),count:65),
+        model:[independent:[.complete]])
     let lost=try call("job.status",["job":id],now:1003)
     guard lost["output_lost"] as? Bool==true,lost["event"]==nil,try journal.jobs().first(where:{$0.id==id})?.state == .revoking else {fatalError("Backpressure did not irreversibly revoke task")}
     try commands.tick(now:1003,uptime:1003,artifactResults:[],output:[SandboxTaskOutput(job:id,stream:"stdout",data:opaque)])
@@ -100,6 +101,14 @@ func runTaskCommandTests() throws {
     guard try journal.jobs().first(where:{$0.id==independent})?.state == .running,
           try journal.hasClaim(job:independent,attempt:0),try journal.uncertainCount()==1 else {
         fatalError("Mailbox saturation or cancellation changed independent custody")
+    }
+    let independentStatus=try call("job.status",["job":independent],auth:foreign,now:1004)
+    let independentEvent=independentStatus["event"] as? [String:Any]
+    guard independentStatus["unresolved_managed_requests"] as? Int==1,
+          independentEvent?["type"] as? String=="model.done",independentEvent?["event_index"] as? Int==0,
+          independentEvent?["status"] as? String=="complete",
+          try call("job.status",["job":independent],auth:foreign,now:1004)["event"]==nil else {
+        fatalError("One mailbox's saturation swallowed or replayed another owner's terminal output")
     }
     let publication=UUID().uuidString.lowercased(),owner=try TaskOwner(token:token,peerUID:geteuid()).hash
     try artifacts.publish(request:publication,job:id,owner:owner,data:source,now:1005)
