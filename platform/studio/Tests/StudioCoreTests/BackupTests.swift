@@ -297,6 +297,26 @@ func runBackupTests() throws {
     var restoreCalls=0
     _=try StoppedStateBackup.restore(directory:bundle,expectedSHA256:bundleReceipt.sha256,destination:restoredState,
                                     migrateFrom:nil,uptime:{restoreCalls+=1;return 100})
+    let nearTarget=root.appendingPathComponent("near-limit-restore")
+    var nearCalls=0
+    let nearReceipt=try StoppedStateBackup.restore(directory:bundle,expectedSHA256:bundleReceipt.sha256,destination:nearTarget,
+                                                    migrateFrom:nil,uptime:{nearCalls+=1;return nearCalls==restoreCalls ? 129.999:100})
+    guard nearCalls==restoreCalls,nearReceipt.sha256==bundleReceipt.sha256,
+          try Data(contentsOf:nearTarget.appendingPathComponent("backup.json"))==manifestBytes else {
+        fatalError("Near-limit stopped restore did not publish its verified copy")
+    }
+    for final in [99.0,Double.nan] {
+        let refused=root.appendingPathComponent("invalid-clock-restore")
+        var calls=0
+        do {
+            _=try StoppedStateBackup.restore(directory:bundle,expectedSHA256:bundleReceipt.sha256,destination:refused,
+                                            migrateFrom:nil,uptime:{calls+=1;return calls==restoreCalls ? final:100})
+            fatalError("Stopped restore published with an invalid final clock")
+        } catch RuntimeError.deadline {}
+        guard calls==restoreCalls,!FileManager.default.fileExists(atPath:refused.path) else {
+            fatalError("Invalid clock restore was published or skipped final fence")
+        }
+    }
     let lateTarget=root.appendingPathComponent("late-restore")
     let beforeRestore=Set(try FileManager.default.contentsOfDirectory(atPath:root.path))
     var lateRestoreCalls=0
