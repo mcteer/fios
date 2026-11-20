@@ -43,8 +43,11 @@ final class SandboxTaskSession {
     func saved(id:String,artifactID:String) throws {
         // A task may exit while an already validated export is being durably
         // published. Keep that export, but never revive its finished pipe.
+        // Revocation already discarded all acknowledgement state. A late
+        // durable success is not a new protocol failure or cancellation.
+        guard !revoked else {return}
         let receipt=try stream.saved(id:id,artifactID:artifactID)
-        if !terminal && !revoked {try response(receipt)}
+        if !terminal {try response(receipt)}
     }
     func renew() throws {try response(Data("{\"version\":1,\"type\":\"lease.renew\"}".utf8))}
     func poll(attach:DockerAttach,started:Bool,now:Int64,uptime:TimeInterval) throws -> [SandboxStreamEvent] {

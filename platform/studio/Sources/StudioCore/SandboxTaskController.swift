@@ -105,10 +105,12 @@ final class SandboxTaskController {
             guard var session=sessions[id],let job=try journal.jobs().first(where:{$0.id==id}),
                   let record=try journal.sandboxRecords().first(where:{$0.configuration.job==id}) else {throw JournalError.storage}
             if job.state == .removed {
-                // Local cleanup proof is not native inference completion.
+                // Retain outcome metadata until exports drain, not the byte
+                // session. Local removal is not native inference completion.
+                session.stream.revoke(attach:session.attach)
                 if !pendingExports.values.contains(where:{$0.job==id}) {
                     updates.finished.append(SandboxTaskFinished(job:id,codeComplete:session.codeComplete,exitVerified:jobs.exitProof[id]==true))
-                    session.attach?.close();sessions.removeValue(forKey:id)
+                    sessions.removeValue(forKey:id)
                 }
                 continue
             }

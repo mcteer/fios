@@ -54,6 +54,7 @@ func runSandboxModelTests() throws {
     let preAttach=try SandboxTaskSession(source:Data("fixture".utf8),deadline:2000,now:1000)
     try preAttach.renew()
     preAttach.revoke(attach:nil)
+    try preAttach.saved(id:request,artifactID:siblingID)
     guard preAttach.revoked,!preAttach.uploaded else {fatalError("Pre-attach revocation kept the session live")}
     do {try preAttach.renew();fatalError("Revoked pre-attach session accepted new output")}
     catch ControlError.invalid_request {}
