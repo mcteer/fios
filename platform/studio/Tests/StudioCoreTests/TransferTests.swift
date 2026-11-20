@@ -29,6 +29,21 @@ func runTransferTests() throws {
         do {try malformed.append(index:0,base64:encoded,now:1001);fatalError("Oversized/invalid/noncanonical chunk accepted")}catch TransferError.invalid{}
         do {try malformed.validate(now:1002);fatalError("Invalid chunk stream resurrected")}catch TransferError.invalid{}
     }
+    let fullInput=Data(repeating:97,count:4<<20)
+    let fullHash=SHA256.hash(data:fullInput).map {String(format:"%02x",$0)}.joined()
+    let canonicalChunk=chunk.base64EncodedString()
+    var full=try ChunkTransfer(length:fullInput.count,sha256:fullHash,created:1000,kind:.input)
+    var overrun=try ChunkTransfer(length:fullInput.count,sha256:fullHash,created:1000,kind:.input)
+    for index in 0..<(fullInput.count/chunk.count) {
+        try full.append(index:index,base64:canonicalChunk,now:1001)
+        try overrun.append(index:index,base64:canonicalChunk,now:1001)
+    }
+    guard try full.finish(now:1002)==fullInput else {fatalError("Exactly 4MiB did not survive bounded framing")}
+    do {
+        try overrun.append(index:fullInput.count/chunk.count,base64:"YQ==",now:1002)
+        fatalError("Extra byte accepted after full input budget")
+    } catch TransferError.invalid {}
+    do {_=try overrun.finish(now:1003);fatalError("Overrunning stream revived at finish")}catch TransferError.invalid{}
     var duplicate=try ChunkTransfer(length:2*data.count,sha256:hash,created:1000,kind:.input)
     try duplicate.append(index:0,base64:data.base64EncodedString(),now:1001)
     do {try duplicate.append(index:0,base64:data.base64EncodedString(),now:1002);fatalError("Duplicate chunk accepted")}catch TransferError.invalid{}
