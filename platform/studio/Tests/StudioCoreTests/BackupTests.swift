@@ -152,6 +152,17 @@ func runBackupTests() throws {
         fatalError("Metadata deadline created a destination or changed the source before retry")
     }
     let saved=try StoppedArtifactBackup.create(directory:state,destination:exports,uptime:{artifactCheckpoints+=1;return 100})
+    let nearExports=root.appendingPathComponent("near-deadline-exports")
+    var nearArtifactChecks=0
+    let nearSaved=try StoppedArtifactBackup.create(directory:state,destination:nearExports,uptime:{
+        nearArtifactChecks+=1;return nearArtifactChecks==artifactCheckpoints ? 129.999:100
+    })
+    guard nearArtifactChecks==artifactCheckpoints,nearSaved.artifacts==saved.artifacts,nearSaved.bytes==saved.bytes,
+          nearSaved.indexSHA256==saved.indexSHA256,nearSaved.files.map(\.sha256)==saved.files.map(\.sha256),
+          try Data(contentsOf:nearExports.appendingPathComponent("index.json"))==indexBefore,
+          try Data(contentsOf:nearExports.appendingPathComponent(artifact+".blob"))==payload else {
+        fatalError("Just-inside stopped export changed receipt or copied bytes")
+    }
     let lateExports=root.appendingPathComponent("late-exports")
     var artifactCalls=0
     do {
