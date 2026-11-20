@@ -53,8 +53,11 @@ func runResourceObservationTests() throws {
     }
     let missingTime=try frame(10000,nil,nil)
     guard missingTime.resources["gpu"] is NSNull,quality(missingTime,"gpu")=="unknown" else {fatalError("Undated GPU counter accepted")}
-    let noVM=try ResourceObservationExport.encode(sample:sample,gpu:nil,gpuSampledAt:nil,now:10000,epoch:epoch,sequence:1,vmEpoch:nil)
-    guard noVM.resources["vmAvailable"] is NSNull,quality(noVM,"vm_available")=="unknown" else {fatalError("Unbound VM capacity published")}
+    for unbound:String? in [nil,"",String(repeating:"A",count:64),String(repeating:"a",count:63)] {
+        let noVM=try ResourceObservationExport.encode(sample:sample,gpu:nil,gpuSampledAt:nil,now:10000,epoch:epoch,sequence:1,vmEpoch:unbound)
+        guard noVM.resources["vmAvailable"] is NSNull,quality(noVM,"vm_available")=="unknown",
+              noVM.observation["vm_epoch"] is NSNull,noVM.resources["cpu"] as? Double==0 else {fatalError("Unbound VM capacity published or CPU discarded")}
+    }
     for bytes:UInt64 in [(64<<30)+1,UInt64.max] {
         let oversized=try frame(10000,sample.replacingVM(bytes,sampledAt:10000))
         guard oversized.resources["vmAvailable"] is NSNull,quality(oversized,"vm_available")=="unknown",
