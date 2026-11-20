@@ -217,5 +217,20 @@ func runTaskCommandTests() throws {
           try call("artifact.read",["phase":"next","stream":replacementStream],now:31021)["type"] as? String=="end" else {
         fatalError("Expired transfer changed retained artifact bytes")
     }
+    let firstPending=try repeatDownload(now:31022),secondPending=try call("artifact.read",["phase":"begin","artifact":artifact],now:31022)
+    guard let firstHandle=firstPending["stream"] as? String,let secondHandle=secondPending["stream"] as? String else {throw RuntimeError.invalid}
+    try commands.tick(now:61022,uptime:61022,artifactResults:[])
+    for handle in [firstHandle,secondHandle] {
+        do {_=try call("artifact.read",["phase":"next","stream":handle],now:61022);fatalError("Expired handle remained readable")}
+        catch TaskCommandError.unauthorized {}
+    }
+    do {_=try repeatDownload(now:61022);fatalError("Handle expiry refunded an undrained artifact operation")}
+    catch ArtifactServiceFailure.capacity {}
+    var retiredResults=try wait()
+    if retiredResults.count==1 {retiredResults+=try wait()}
+    guard Set(retiredResults.map(\.request))==[firstHandle,secondHandle] else {fatalError("Undrained operations lost original handle identities")}
+    try commands.tick(now:61022,uptime:61022,artifactResults:retiredResults)
+    guard try repeatDownload(now:61022)["state"] as? String=="pending" else {fatalError("Drained operations did not return capacity")}
+    try commands.tick(now:61022,uptime:61022,artifactResults:wait())
     print("PASS: task-role/opaque-owner API, closed/source-loss admission, reserve-before-input, once-only validation, proof-gated cancel and asynchronous owner-only finite artifact routing")
 }
