@@ -36,6 +36,18 @@ try {
  await ready();
  const fixtureBytes=readFileSync(join(state,'fixture.json'));
  const fixture=JSON.parse(fixtureBytes);
+ const expired=fixture.expired_artifact,archive=join(state,'artifacts');
+ assert.match(expired,/^[a-f0-9-]{36}$/);
+ const expiryDeadline=performance.now()+8000;
+ for(;;){
+  const index=JSON.parse(readFileSync(join(archive,'index.json')));
+  if(!existsSync(join(archive,expired+'.blob'))&&!index.records.some(record=>record.id===expired)){
+   assert.deepEqual(index.records.map(record=>record.id).sort(),[...fixture.artifacts].sort());
+   break;
+  }
+  assert(!exited()&&performance.now()<expiryDeadline,'Manager failed to retire expired fixture export');
+  await delay(25);
+ }
  function call(payload,operation='artifact.read',expectedExit=0,owner=fixture.owner,id=randomUUID()){
   const result=spawnSync(cli,['--state',state,'task'],{cwd:root,encoding:'utf8',timeout:3000,input:JSON.stringify({version:1,id,operation,payload:{...payload,owner}})});
   if(expectedExit===null)assert([0,1].includes(result.status));
@@ -50,18 +62,18 @@ try {
  }
  // An owner who guesses a real artifact ID must see the same terminal
  // response as if it did not exist. Neither stream may publish metadata.
- for(const artifact of [fixture.artifacts[0],randomUUID()]){
-  const started=call({phase:'begin',artifact},'artifact.read',0,otherOwner);
+ for(const [artifact,owner] of [[fixture.artifacts[0],otherOwner],[randomUUID(),otherOwner],[expired,otherOwner],[expired,fixture.owner]]){
+  const started=call({phase:'begin',artifact},'artifact.read',0,owner);
   assert.equal(started.state,'pending');assert.match(started.stream,/^[a-f0-9-]{36}$/);assert.notEqual(started.stream,started.id);
   const deadline=performance.now()+5000;
   for(;;){
    assert(performance.now()<deadline,'Unowned artifact stream did not terminate');
-   const event=call({phase:'next',stream:started.stream},'artifact.read',null,otherOwner);
+   const event=call({phase:'next',stream:started.stream},'artifact.read',null,owner);
    if(event.ok===false){assert.equal(event.error,'invalid_request');assert.equal(event.result,undefined);break;}
    assert.equal(event.state,'pending');assert.equal(event.type,undefined);
    await delay(10);
   }
-  assert.equal(call({phase:'next',stream:started.stream},'artifact.read',1,otherOwner).error,'unauthorized');
+  assert.equal(call({phase:'next',stream:started.stream},'artifact.read',1,owner).error,'unauthorized');
  }
  const interrupted=call({phase:'begin',artifact:fixture.artifacts[0]});
  assert.equal(interrupted.state,'pending');

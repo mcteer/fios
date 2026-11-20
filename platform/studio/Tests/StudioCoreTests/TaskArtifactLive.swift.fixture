@@ -21,13 +21,14 @@ import Darwin
             try journal.transitionJob(id:job,to:.revoking,now:now)
             try journal.transitionJob(id:job,to:.removed,now:now)
         }
-        let artifacts:[String]
+        let artifacts:[String],expired:String
         do {
             let store=try ArtifactStore(directory:directory.appendingPathComponent("artifacts"),availableBytes:{50<<30})
+            expired=try store.publish(job:job,ownerHash:owner,data:Data("expired fixture".utf8),now:now-86_400_001)
             artifacts=[try store.publish(job:job,ownerHash:owner,data:content,now:now),
                        try store.publish(job:job,ownerHash:owner,data:Data(),now:now)]
         }
-        try AtomicState.write(JSONSerialization.data(withJSONObject:["owner":token,"artifacts":artifacts,"finished_job":job]),to:directory.appendingPathComponent("fixture.json"))
+        try AtomicState.write(JSONSerialization.data(withJSONObject:["owner":token,"artifacts":artifacts,"expired_artifact":expired,"finished_job":job]),to:directory.appendingPathComponent("fixture.json"))
         try ManagerRuntime.run(directory:directory)
     }
 }
