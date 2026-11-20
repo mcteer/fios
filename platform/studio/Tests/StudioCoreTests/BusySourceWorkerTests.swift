@@ -48,8 +48,12 @@ func runBusySourceWorkerTests(directory:URL,factory:PythonWorkerFactory,original
         let events=try broker.poll(now:HostResources.nowMilliseconds(),uptime:Int64(ProcessInfo.processInfo.systemUptime*1000),admission:&admission,source:{_ in binding(conflict:false)})
         for event in events[id] ?? [] {
             if case .text=event {text=true};if case .complete=event {complete=true}
+            if case .failed=event {fatalError("Busy-source mock worker failed before count receipt (explicitCancel=\(explicitCancel))")}
         }
         reports.append(readReports());Thread.sleep(forTimeInterval:0.005)
+    }
+    guard reports.contains(10) else {
+        fatalError("Busy-source mock POST count deadline (explicitCancel=\(explicitCancel), activeWorkers=\(broker.activeWorkers), bytes=\(reports.count))")
     }
     guard let report=try JSONSerialization.jsonObject(with:reports) as? [String:Int],report["posts"]==(explicitCancel ? 11:10),
           broker.activeWorkers==1,!text,!complete else {throw RuntimeError.identity}
