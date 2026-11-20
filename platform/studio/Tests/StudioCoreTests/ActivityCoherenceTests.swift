@@ -51,6 +51,14 @@ enum ActivityCoherenceTests {
                 FileHandle.standardError.write(Data("ACTIVITY_FIXTURE_MISMATCH: \(row.id)\n".utf8));throw PolicyError.invalidObservation
             }
         }
-        print("PASS: 31 strict normalized activity vectors; no native/backend coverage or admission authority")
+        let active=NativePhaseCounts(ingress:0,preparing:0,queued:0,active:1,responding:0)
+        let model=NativeModelActivity(model:"fixture/same",resident:true,counts:active)
+        for ceiling:NativeCoverage in [.unknown,.unsupported] {
+            let result=NativeActivityCoherence.evaluate(coverage:.all_clients,sourceCoverage:ceiling,
+                totals:active,unattributed:.zero,models:[model],transitioning:false)
+            guard result.coverage==ceiling,result.state == .unknown,result.owners==nil,
+                  !result.permits(target:model.model) else {throw PolicyError.invalidObservation}
+        }
+        print("PASS: 31 strict normalized activity vectors and busy independent ceiling refusals; no native/backend coverage or admission authority")
     }
 }
