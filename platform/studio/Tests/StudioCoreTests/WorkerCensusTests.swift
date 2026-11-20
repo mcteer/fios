@@ -1,5 +1,6 @@
 import Foundation
 import Darwin
+import CSQLite
 
 func runWorkerCensusTests() throws {
     let within=WorkerCensusAbsence.withinWindow
@@ -52,12 +53,28 @@ func runWorkerCensusTests() throws {
     let proof=try observeAbsence {try policy.absence()}
     do {try journal!.recordUnboundWorkerGone(job:id,attempt:0,nonce:nonce+"x",proof:proof);fatalError("Foreign launch nonce accepted")}catch JournalError.conflict {}
     guard try journal!.activeLaunchCount()==1 else {fatalError("Rejected proof mutated launch")}
-    Thread.sleep(forTimeInterval:1.01)
+    let statePath=directory.appendingPathComponent("state/state.sqlite").path
+    let locked=DispatchSemaphore(value:0),release=DispatchSemaphore(value:0),done=DispatchSemaphore(value:0)
+    DispatchQueue.global().async {
+        var db:OpaquePointer?
+        defer {sqlite3_close(db);done.signal()}
+        guard sqlite3_open_v2(statePath,&db,SQLITE_OPEN_READWRITE|SQLITE_OPEN_FULLMUTEX,nil)==SQLITE_OK,
+              sqlite3_exec(db,"BEGIN IMMEDIATE",nil,nil,nil)==SQLITE_OK else {return}
+        locked.signal()
+        _=release.wait(timeout:.now()+2)
+        sqlite3_exec(db,"ROLLBACK",nil,nil,nil)
+    }
+    guard locked.wait(timeout:.now()+1) == .success else {throw JournalError.storage}
+    let contendedProof=try observeAbsence {try policy.absence()}
+    Thread.sleep(forTimeInterval:0.65)
+    try contendedProof.validate()
+    DispatchQueue.global().asyncAfter(deadline:.now()+0.45) {release.signal()}
     do {
-        try journal!.recordUnboundWorkerGone(job:id,attempt:0,nonce:nonce,proof:proof)
+        try journal!.recordUnboundWorkerGone(job:id,attempt:0,nonce:nonce,proof:contendedProof)
         fatalError("Expired census proof released worker custody behind writer fence")
     } catch WorkerResourceError.unavailable {}
-    guard try journal!.activeLaunchCount()==1,try journal!.uncertainCount()==1 else {
+    guard done.wait(timeout:.now()+1) == .success,
+          try journal!.activeLaunchCount()==1,try journal!.uncertainCount()==1 else {
         fatalError("Expired census proof changed custody")
     }
     var released=AdmissionPolicy()
