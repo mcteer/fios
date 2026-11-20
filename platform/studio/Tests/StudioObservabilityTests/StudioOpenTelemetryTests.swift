@@ -304,6 +304,24 @@ final class StudioOpenTelemetryTests:XCTestCase {
         }
     }
 
+    func testShortHostMemoryReadsRemoveOnlyTheirGauges() {
+        let telemetry=StudioOpenTelemetry(),now=HostResources.nowMilliseconds()
+        func sample(_ available:UInt64?,_ pressure:MemoryPressure)->ResourceSample {
+            ResourceSample(sampledAt:now,physical:8192,available:available,vmAvailable:nil,diskFree:4096,
+                           cpu:0,pressure:pressure,thermal:.nominal,cpuSampledAt:now)
+        }
+        func present()->Set<String> {Set(telemetry.collectMetrics().filter{!$0.data.points.isEmpty}.map(\.name))}
+        telemetry.resources(sample(0,.normal))
+        let known=present(),unavailable:Set<String>=["fios.platform.host.memory.available","fios.platform.host.memory.pressure"]
+        XCTAssertTrue(unavailable.isSubset(of:known))
+        let shortMemory=HostResources.freeMemory(physical:8192,pageSize:4096) {_,count in count-=1;return 0}
+        let shortPressure=HostResources.memoryPressure { level,count in level=1;count-=1;return 0 }
+        telemetry.resources(sample(shortMemory,shortPressure))
+        XCTAssertEqual(present(),known.subtracting(unavailable))
+        telemetry.resources(sample(0,.normal))
+        XCTAssertEqual(present(),known)
+    }
+
     func testGPUMemoryRemainsObservedWithoutUtilization() throws {
         let now=HostResources.nowMilliseconds()
         let gpu=try XCTUnwrap(GPUResources.decode(["In use system memory":1024,"Alloc system memory":2048]))
