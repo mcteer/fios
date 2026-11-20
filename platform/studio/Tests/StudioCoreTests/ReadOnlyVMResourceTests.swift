@@ -158,7 +158,9 @@ func runReadOnlyVMResourceTests() throws {
     rollback.tick(records:[record],jobs:[job],physical:host.physical,now:999)
     rollbackWork.replies=[reply(sample())]
     rollback.tick(records:[record],jobs:[job],physical:host.physical,now:3000)
-    guard rollbackWork.requests.count==1,rollback.epoch(now:3000)==nil else {fatalError("VM observation clock rollback reopened pending work")}
+    guard rollbackWork.requests.count==1,rollbackWork.replies.isEmpty,rollback.epoch(now:3000)==nil else {
+        fatalError("VM clock rollback retained a delivered reply or reopened work")
+    }
     let fencedHost=rollback.applying(to:host,now:3000),fencedEpoch=rollback.epoch(now:3000)
     let fencedMetric=ResourceObservationExport.telemetrySample(fencedHost,vmEpoch:fencedEpoch)
     let fencedReport=try ResourceObservationExport.encode(sample:fencedHost,gpu:nil,gpuSampledAt:nil,now:3000,
@@ -166,6 +168,12 @@ func runReadOnlyVMResourceTests() throws {
     guard fencedMetric.vmAvailable==nil,fencedMetric.vmSampledAt==nil,fencedMetric.cpuSampledAt==1000,
           fencedReport.resources["vmAvailable"] is NSNull,fencedReport.observation["vm_epoch"] is NSNull,
           fencedReport.resources["cpu"] as? Double==0 else {fatalError("VM clock fence leaked capacity or discarded independent CPU")}
+    for now:Int64 in [5000,7000,9000] {
+        rollback.tick(records:[record],jobs:[job],physical:host.physical,now:now)
+        guard rollbackWork.requests.count==1,rollback.epoch(now:now)==nil else {
+            fatalError("Draining the fenced reply restored VM observation authority")
+        }
+    }
     for invalid in [Int64.min,WireScalar.maximumTimestamp+1,Int64.max] {
         let work=VMObservationFixture(),subject=ReadOnlyVMResources(work:work)
         subject.tick(records:[record],jobs:[job],physical:host.physical,now:1000)
