@@ -2,7 +2,8 @@
 // Ordinary real-manager/CLI status integration with synthetic observations.
 // No native service, runtime daemon, model or installed state is contacted.
 import assert from 'node:assert/strict';
-import {spawn,spawnSync} from 'node:child_process';
+import {execFile,spawn,spawnSync} from 'node:child_process';
+import {createServer} from 'node:net';
 import {mkdtempSync,readdirSync,copyFileSync,writeFileSync,readFileSync,unlinkSync} from 'node:fs';
 import {join,resolve} from 'node:path';
 import {randomBytes,randomUUID} from 'node:crypto';
@@ -226,7 +227,35 @@ try{
   assert.equal(afterRenewal.unresolved_requests,1);assert.equal(afterRenewal.worker_reservations,1);
   child.kill('SIGTERM');await until(()=>exited(child));assert.equal(child.exitCode,0);child=null;
  }
- console.log(JSON.stringify({ok:true,unknown_worker_custody_survived_restart:true,states:modes.length,service_views:2*modes.length,aged_service_views:2,aged_combined_views:2,restarted_intent_scenarios:3,storage_continuity_refusal:2,storage_custody_survived_restart:true,native_actions:0,review_directory:directory}));
+ // Only a disposable Unix peer is used here: the partial-write fault is
+ // covered in the controller fixture, not injected into a live service.
+ const deferred=mkdtempSync('/private/tmp/fios-deferred-');
+ const fields={ok:false,error:'internal',maintenance_applied:true,cancellation_deferred:true,native_action_applied:false,
+  drain:{state:'draining',admission_closed:true,revocations_requested:1,native_action_applied:false}};
+ let requests=0;
+ const peer=createServer(socket=>{
+  let input=Buffer.alloc(0);socket.setTimeout(2500,()=>socket.destroy());
+  socket.on('data',part=>{
+   input=Buffer.concat([input,part]);assert(input.length<=65540);
+   if(input.length<4||input.length<4+input.readUInt32BE())return;
+   const request=JSON.parse(input.subarray(4));requests++;
+   assert.equal(request.operation,'service.drain');assert.deepEqual(request.payload,{service:'orbstack'});
+   const body=Buffer.from(JSON.stringify({version:1,id:request.id,...fields})),header=Buffer.alloc(4);
+   header.writeUInt32BE(body.length);socket.end(Buffer.concat([header,body]));
+  });
+ });
+ try {
+  await new Promise((accept,reject)=>peer.once('error',reject).listen(join(deferred,'control.sock'),accept));
+  await new Promise((accept,reject)=>execFile(cli,['--state',deferred,'service','orbstack','drain'],{timeout:3000,maxBuffer:65536},(error,stdout,stderr)=>{
+   try {
+    assert.equal(error?.code,1);assert.equal(stderr,'');
+    const {id,version,...result}=JSON.parse(stdout);
+    assert.equal(version,1);assert.match(id,/^[a-f0-9-]{36}$/);assert.deepEqual(result,fields);assert.equal(requests,1);
+    accept();
+   }catch(failure){reject(failure);}
+  }));
+ } finally {await new Promise(resolve=>peer.close(resolve));}
+ console.log(JSON.stringify({ok:true,deferred_cli_exit:1,unknown_worker_custody_survived_restart:true,states:modes.length,service_views:2*modes.length,aged_service_views:2,aged_combined_views:2,restarted_intent_scenarios:3,storage_continuity_refusal:2,storage_custody_survived_restart:true,native_actions:0,review_directory:directory}));
 }finally{
  if(child&&!exited(child)){child.kill('SIGTERM');try{await until(()=>exited(child),3000);}catch{child.kill('SIGKILL');await until(()=>exited(child),3000);}}
  // Retain the private development states; no database cleanup or native work.
