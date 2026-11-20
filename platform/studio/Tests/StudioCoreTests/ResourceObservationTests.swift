@@ -92,6 +92,25 @@ func runResourceObservationTests() throws {
             fatalError("Mixed status refreshed stale CPU or withheld independently fresh signals")
         }
     }
+    var preserved=sample
+    preserved.cpuSampledAt=5000
+    let removedVM=preserved.replacingVM(nil,sampledAt:10000)
+    for replacement in [removedVM,removedVM.replacingVM(0,sampledAt:10001)] {
+        let status=try frame(10001,replacement)
+        let clocks=status.observation["signals"] as? [String:[String:Any]]
+        guard replacement.cpuSampledAt==5000,status.resources["cpu"] is NSNull,
+              clocks?["cpu"]?["age_ms"] as? Int64==5001 else {fatalError("Replacing VM data redated CPU")}
+    }
+    let vmRemoved=sample.replacingVM(nil)
+    for (stamp,expected): (Int64?,String) in [(nil,"unknown"),(4999,"stale"),(5000,"observed")] {
+        let replacement=stamp.map {vmRemoved.replacingVM(0,sampledAt:$0)} ?? vmRemoved
+        let projected=try frame(10000,replacement)
+        guard replacement.cpuSampledAt==10000,projected.resources["cpu"] as? Double==0,
+              quality(projected,"cpu")=="observed",quality(projected,"vm_available")==expected,
+              (projected.observation["vm_epoch"] as? String)==(expected=="observed" ? vmEpoch:nil) else {
+            fatalError("VM replacement changed independent fresh CPU or exposed an unobserved epoch")
+        }
+    }
     let zeroVM=try frame(10000,sample.replacingVM(0,sampledAt:10000))
     guard zeroVM.resources["vmAvailable"] as? UInt64==0,quality(zeroVM,"vm_available")=="observed" else {fatalError("Observed zero VM capacity lost")}
     let invalid=ResourceSample(sampledAt:10000,physical:64<<30,available:65<<30,vmAvailable:nil,diskFree:UInt64.max,cpu:.nan,pressure:.unknown,thermal:.unknown)
