@@ -1,5 +1,14 @@
 import Foundation
 
+private final class HeldUnavailableObservationSource:NativeReadOnlyClientSource,@unchecked Sendable {
+    let entered=DispatchSemaphore(value:0),release=DispatchSemaphore(value:0)
+    func resolve()throws->NativeReadOnlyClient {
+        entered.signal()
+        guard release.wait(timeout:.now()+2) == .success else {throw NativeControlError.deadline}
+        throw NativeControlError.unavailable
+    }
+}
+
 // Normal read/control sequencing metadata. No native process or model here.
 func runNativeReadOnlyObservationTests()throws {
     let directory=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -25,6 +34,26 @@ func runNativeReadOnlyObservationTests()throws {
     guard pause.operation == .pause,pause.instance==instance else {throw NativeControlError.invalid}
     guard try coordinator.receive(id:pause.id,value:reply(.pause,closed:true))==nil,
           coordinator.phase == .admissionsClosed else {throw NativeControlError.invalid}
+    // Exercise the ordinary asynchronous read-only worker without a socket.
+    let source=HeldUnavailableObservationSource(),queue=AsyncNativeControl(observerSource:source)
+    defer {source.release.signal()}
+    do {try queue.submit(pause);fatalError("Read-only resolver accepted a control operation")}
+    catch NativeControlError.unauthorized {}
+    try queue.submit(observation)
+    guard source.entered.wait(timeout:.now()+1) == .success,queue.poll()==nil else {throw NativeControlError.deadline}
+    do {try queue.submit(observation);fatalError("Pending observation allowed duplicate worker")}
+    catch RuntimeError.capacity {}
+    source.release.signal()
+    let deadline=ProcessInfo.processInfo.systemUptime+1
+    var result:NativeControlResult?
+    while result==nil,ProcessInfo.processInfo.systemUptime<deadline {
+        result=queue.poll()
+        if result==nil {Thread.sleep(forTimeInterval:0.005)}
+    }
+    guard let result,result.id==observation.id,case .failure(.unavailable)=result.value,
+          result.primaryActivity==nil,result.backendFences==nil,queue.poll()==nil else {
+        fatalError("Unavailable read-only source minted a frame or replayed its result")
+    }
     let closedRead=coordinator.beginObservation()!
     guard try coordinator.receive(id:closedRead.id,value:reply(.observe,closed:true))==nil,
           coordinator.phase == .admissionsClosed else {throw NativeControlError.invalid}
