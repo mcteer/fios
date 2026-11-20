@@ -1,6 +1,11 @@
 import Foundation
+import CSQLite
 
-private final class DrainControllerClock:@unchecked Sendable {var value:TimeInterval=1}
+private final class DrainControllerClock:@unchecked Sendable {
+    var value:TimeInterval=1
+    var onRead:(()->Void)?
+    func read()->TimeInterval {onRead?();return value}
+}
 
 func runServiceDrainControllerTests()throws {
     let directory=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -10,7 +15,7 @@ func runServiceDrainControllerTests()throws {
     let cache=ServiceDrainObservationCache(),clock=DrainControllerClock()
     let controller=try ServiceDrainController(journal:journal,tasks:tasks,managerEpoch:epoch,observations:cache,uptime:{clock.value})
     let identity=ServiceIdentity(pid:42,start:100,sha256:String(repeating:"b",count:64))
-    func job()throws->String {
+    func job(in journal:Journal)throws->String {
         let id=UUID().uuidString.lowercased()
         _=try journal.reserveJob(DurableJob(id:id,idempotency:UUID().uuidString.lowercased(),ownerHash:owner,requestHash:String(repeating:"c",count:64),created:1000))
         try journal.transitionJob(id:id,to:.running,now:1000);return id
@@ -22,7 +27,7 @@ func runServiceDrainControllerTests()throws {
     do {_=try controller.begin(service:.mlx,role:.operator,now:1000,uptime:1000);throw RuntimeError.identity}
     catch ServiceError.stale {}
     guard try journal.recordedDesired(service:.mlx)==nil else {throw JournalError.conflict}
-    let owned=try job(),other=try job()
+    let owned=try job(in:journal),other=try job(in:journal)
     try journal.claim(job:other,attempt:0,model:"fixture/model",requestID:other)
     try journal.markUncertain(job:other,attempt:0)
     cache.publish(try snapshot(jobs:[owned],requests:[owned]),for:.mlx)
@@ -54,7 +59,7 @@ func runServiceDrainControllerTests()throws {
     // be captured by an earlier drain just because it appeared in the cache.
     cache.publish(try snapshot(jobs:[owned],requests:[other]),for:.mlx)
     _=try controller.begin(service:.mlx,role:.operator,now:1000,uptime:1000)
-    let queued=try job()
+    let queued=try job(in:journal)
     cache.publish(try snapshot(jobs:[queued],requests:[other],stamp:1001),for:.mlx)
     guard try controller.poll(service:.mlx,now:1001,uptime:1001).state == .refused(.scopeChanged),
           try journal.jobs().first(where:{$0.id==queued})?.state == .running else {throw JournalError.conflict}
@@ -83,6 +88,30 @@ func runServiceDrainControllerTests()throws {
           try journal.uncertainCount()==2,try journal.desired(service:"mlx")=="maintenance" else {
         fatalError("Controller revoked durable owned work after external refusal")
     }
+    let fenceDirectory=directory.appendingPathComponent("batch-writer-fence"),fenceJournal=try Journal(directory:fenceDirectory)
+    let fenceTasks=TaskController(journal:fenceJournal,broker:ModelBroker(journal:fenceJournal)),fenceCache=ServiceDrainObservationCache()
+    let first=try job(in:fenceJournal),second=try job(in:fenceJournal)
+    try fenceJournal.claim(job:first,attempt:0,model:"fixture/model",requestID:first)
+    try fenceJournal.markUncertain(job:first,attempt:0)
+    let fenceClock=DrainControllerClock()
+    let fenced=try ServiceDrainController(journal:fenceJournal,tasks:fenceTasks,managerEpoch:epoch,observations:fenceCache,uptime:{fenceClock.read()})
+    var writer:OpaquePointer?
+    guard sqlite3_open_v2(fenceDirectory.appendingPathComponent("state.sqlite").path,&writer,SQLITE_OPEN_READWRITE|SQLITE_OPEN_FULLMUTEX,nil)==SQLITE_OK else {throw JournalError.storage}
+    defer {sqlite3_close(writer)}
+    fenceClock.onRead={
+        guard sqlite3_exec(writer,"BEGIN IMMEDIATE",nil,nil,nil)==SQLITE_OK else {fatalError("Fixture could not hold writer fence after maintenance commit")}
+    }
+    fenceCache.publish(try snapshot(jobs:[first,second],requests:[first],stamp:1005),for:.mlx)
+    do {_=try fenced.begin(service:.mlx,role:.operator,now:1005,uptime:61004);fatalError("Contended drain reported complete durable cancellation")}catch JournalError.storage {}
+    fenceClock.onRead=nil
+    guard fenceTasks.cancellationPending(for:first),fenceTasks.cancellationPending(for:second),
+          try fenceJournal.uncertainCount()==1,try fenceJournal.desired(service:"mlx")=="maintenance" else {
+        fatalError("Writer-contended drain stranded a sibling cancellation or changed uncertain custody")
+    }
+    guard sqlite3_exec(writer,"ROLLBACK",nil,nil,nil)==SQLITE_OK else {throw JournalError.storage}
+    _=try fenced.poll(service:.mlx,now:1006,uptime:61005)
+    guard try fenceJournal.jobs().allSatisfy({$0.state == .removed}),
+          try fenceJournal.uncertainCount()==1 else {fatalError("Deferred drain cancellation did not retire exact local jobs")}
     let readyJournal=try Journal(directory:directory.appendingPathComponent("ready")),readyCache=ServiceDrainObservationCache()
     let ready=try ServiceDrainController(journal:readyJournal,tasks:TaskController(journal:readyJournal,broker:ModelBroker(journal:readyJournal)),managerEpoch:epoch,observations:readyCache)
     readyCache.publish(try snapshot(jobs:[],requests:[],idle:true),for:.mlx)

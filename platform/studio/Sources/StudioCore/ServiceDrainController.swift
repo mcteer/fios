@@ -70,10 +70,17 @@ final class ServiceDrainController {
     }
     private func revoke(_ progress:ServiceDrainProgress,now:Int64,uptime:Int64)throws {
         let owned=Dictionary(uniqueKeysWithValues:try journal.jobs().map {($0.id,$0.ownerHash)})
+        var storageContended=false
         for id in progress.revokeOwned {
             guard let owner=owned[id] else {throw ServiceError.invalid}
-            try tasks.cancel(id:id,owner:owner,now:now,uptime:uptime)
+            do {try tasks.cancel(id:id,owner:owner,now:now,uptime:uptime)}
+            catch JournalError.storage {
+                // The exact local intent stays pending. Attempt siblings
+                // rather than leaving their workers live behind the fence.
+                storageContended=true
+            }
         }
+        if storageContended {throw JournalError.storage}
     }
     func begin(service:ManagedService,role:ControlRole,now:Int64,uptime:Int64)throws->ServiceDrainProgress {
         guard role == .operator else {throw ServiceError.invalid}
