@@ -30,8 +30,7 @@ enum VMResources {
     static func remaining(_ value:VMResourceObservation,expectedRuntimeHash:String,now:Int64)->UInt64? {
         guard value.allVMConsumersCovered,value.runtimeHash==expectedRuntimeHash,
               value.runtimeHash.utf8.count==64,value.runtimeHash.utf8.allSatisfy({(48...57).contains($0)||(97...102).contains($0)}),
-              now>=0,now<=ActivityPolicy.maximumTimestamp,value.sampledAt>=0,value.sampledAt<=ActivityPolicy.maximumTimestamp,
-              value.sampledAt<=now+1000,now-value.sampledAt<=5000,
+              ResourceClock.fresh(now:now,sampledAt:value.sampledAt),
               value.configuredCap>0,value.total>0,value.free<=value.total else {return nil}
         // Count all non-free VM pages as occupied, including cache/system
         // services/machines. No speculative reclaim or double free allowance.

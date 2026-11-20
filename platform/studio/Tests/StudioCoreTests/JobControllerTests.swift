@@ -455,6 +455,16 @@ private func exerciseVMController(inconsistentReply:Bool,predatingReply:Bool=fal
               try journal.jobs().first(where:{$0.id==id})?.state == .running else {
             fatalError("Owned VM reply crossed an invalid intervening clock")
         }
+        guard let original=runtime.resourceRequests.last else {throw JournalError.invalid}
+        let freshAt=max(revocationAt+1,original+2000)
+        runtime.resourceNow=freshAt
+        try controller.tick(now:freshAt,sample:sample(freshAt),admission:&admission,transportReady:{_ in true},cancelModel:{_ in})
+        guard runtime.resourceRequests==requests+[freshAt],controller.vmEpoch(now:freshAt)==nil else {
+            fatalError("New VM submission reinstated the rejected observation")
+        }
+        try controller.tick(now:freshAt+1,sample:sample(freshAt+1),admission:&admission,transportReady:{_ in true},cancelModel:{_ in})
+        guard controller.vmAvailable(now:freshAt+1)==4<<30,controller.vmSampledAt(now:freshAt+1)==freshAt,
+              runtime.resourceRequests==requests+[freshAt] else {fatalError("Fresh owned VM reply did not recover with its own source time")}
         return
     }
     if rollbackReply {
