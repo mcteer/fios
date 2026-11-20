@@ -386,9 +386,10 @@ func runVMControllerTests() throws {
     try exerciseVMController(inconsistentReply:false,invalidClockReply:true)
     try exerciseVMController(inconsistentReply:false,foreignReplyFirst:true)
     try exerciseVMController(inconsistentReply:false,foreignReplyFirst:false)
+    try exerciseVMController(inconsistentReply:false,foreignReplyFirst:true,splitForeignDelivery:true)
 }
 
-private func exerciseVMController(inconsistentReply:Bool,predatingReply:Bool=false,rollbackReply:Bool=false,invalidClockReply:Bool=false,foreignReplyFirst:Bool?=nil) throws {
+private func exerciseVMController(inconsistentReply:Bool,predatingReply:Bool=false,rollbackReply:Bool=false,invalidClockReply:Bool=false,foreignReplyFirst:Bool?=nil,splitForeignDelivery:Bool=false) throws {
     let directory=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer {try? FileManager.default.removeItem(at:directory)}
     let journal=try Journal(directory:directory),runtime=FakeSandboxExecutor()
@@ -445,6 +446,7 @@ private func exerciseVMController(inconsistentReply:Bool,predatingReply:Bool=fal
     if let foreignReplyFirst {
         let requests=runtime.resourceRequests
         guard let original=requests.last,let exact=runtime.resourceValues.first else {throw JournalError.invalid}
+        if splitForeignDelivery {runtime.resourceValues=[]}
         runtime.resourceValues.insert(VMReadResult(job:exact.job,runtimeID:String(repeating:"f",count:64),result:exact.result),at:foreignReplyFirst ? 0:runtime.resourceValues.count)
         runtime.holdResourceResults=false
         do {
@@ -454,10 +456,19 @@ private func exerciseVMController(inconsistentReply:Bool,predatingReply:Bool=fal
         guard runtime.resourceValues.isEmpty,controller.vmEpoch(now:revocationAt)==nil,runtime.resourceRequests==requests else {
             fatalError("Foreign VM completion published capacity or reissued a read")
         }
-        let freshAt=original+2000
+        var freshAt=original+2000
+        if splitForeignDelivery {
+            try controller.tick(now:freshAt,sample:sample(freshAt),admission:&admission,transportReady:{_ in true},cancelModel:{_ in})
+            guard runtime.resourceRequests==requests,controller.vmEpoch(now:freshAt)==nil else {
+                fatalError("Foreign-only delivery released the pending exact read")
+            }
+            runtime.resourceValues=[exact]
+            freshAt+=1
+        }
         runtime.resourceNow=freshAt
         try controller.tick(now:freshAt,sample:sample(freshAt),admission:&admission,transportReady:{_ in true},cancelModel:{_ in})
         guard runtime.resourceRequests==requests+[freshAt] else {fatalError("Foreign VM result stranded matching completion custody")}
+        guard controller.vmEpoch(now:freshAt)==nil else {fatalError("Drained conflicted reply was published")}
         try controller.tick(now:freshAt+1,sample:sample(freshAt+1),admission:&admission,transportReady:{_ in true},cancelModel:{_ in})
         guard controller.vmSampledAt(now:freshAt+1)==freshAt else {fatalError("Only a distinct fresh VM reply may recover")}
         return
