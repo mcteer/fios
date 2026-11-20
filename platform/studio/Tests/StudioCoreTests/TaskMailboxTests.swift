@@ -26,6 +26,15 @@ func runTaskMailboxTests() throws {
           try isolated.pop(job:another,now:3000)?["event_index"] as? Int==0 else {
         fatalError("Mailbox expiry changed another job's valid output")
     }
+    try isolated.append(job:job,fields:fields,now:3001)
+    try isolated.append(job:another,fields:fields,now:3001)
+    isolated.discard(job:job)
+    try isolated.append(job:job,fields:fields,now:3002)
+    guard try isolated.pop(job:job,now:3002)?["event_index"] as? Int==2,
+          try isolated.pop(job:job,now:3002)==nil,
+          try isolated.pop(job:another,now:3002)?["event_index"] as? Int==1 else {
+        fatalError("Discard replayed owner output, reset ordinals, or disturbed another job")
+    }
     var other=TaskMailbox()
     for _ in 0..<4 {try other.append(job:UUID().uuidString.lowercased(),fields:fields,now:1000)}
     do {try other.append(job:UUID().uuidString.lowercased(),fields:fields,now:1001);fatalError("Output exceeded four jobs")} catch MailboxError.capacity {}
