@@ -54,7 +54,8 @@ try {
   managedPID = first.pid;
   assert.equal(status().sandbox_admission, 'disabled');
   const owner=randomBytes(32).toString('base64');
-  const proposed=task('job.create',{owner,phase:'begin',idempotency:randomUUID(),kind:'sandbox',length:0,sha256:createHash('sha256').update('').digest('hex'),lifetime:900000,model:null,image:'sha256:'+'a'.repeat(64),memory:512*1024*1024,cpus:1});
+  const request={owner,phase:'begin',idempotency:randomUUID(),kind:'sandbox',length:0,sha256:createHash('sha256').update('').digest('hex'),lifetime:900000,model:null,image:'sha256:'+'a'.repeat(64),memory:512*1024*1024,cpus:1};
+  const proposed=task('job.create',request);
   assert.equal(proposed?.ok,false);assert.equal(proposed.error,'native_unsupported','Task IPC must not bypass unenrolled activation');
   const foreign=task('job.status',{owner,job:randomUUID()});
   assert.equal(foreign?.error,'unauthorized');
@@ -138,6 +139,10 @@ try {
   });
   managedPID = second.pid;
   assert.notEqual(second.epoch, first.epoch);
+  assert.equal(status()?.sandbox_admission,'disabled');
+  const refusedAfterRestart=task('job.create',{...request,idempotency:randomUUID()});
+  assert.equal(refusedAfterRestart?.ok,false);
+  assert.equal(refusedAfterRestart.error,'native_unsupported','Manager replacement opened unenrolled task execution');
   const afterRestart=await until(()=>{
     const resource=status('resources');
     return resource?.resource_observation?.epoch===second.epoch ? resource:null;
