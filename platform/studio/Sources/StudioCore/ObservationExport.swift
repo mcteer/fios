@@ -29,7 +29,10 @@ struct ObservationValidator {
     mutating func accept(_ data:Data,now:Int64) throws -> HostActivity {
         guard !fenced,WireScalar.host(host),WireScalar.sha256(endpointHash),WireScalar.sha256(profileHash),
               WireScalar.uuid(managerEpoch),!nativeEpoch.isEmpty,nativeEpoch.utf8.count<=128 else {throw ObservationError.identity}
-        guard (0...WireScalar.maximumTimestamp).contains(now) else {throw ObservationError.invalid}
+        guard (0...WireScalar.maximumTimestamp).contains(now) else {
+            fenced=true
+            throw ObservationError.invalid
+        }
         guard now>=previousNow else {
             fenced=true
             throw ObservationError.replay

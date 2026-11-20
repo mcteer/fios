@@ -23,6 +23,14 @@ func runObservationTests() throws {
     do {_=try clock.accept(data(epoch:"native-one",sequence:2),now:7000);fatalError("Stale sample accepted")}catch PolicyError.staleObservation {}
     do {_=try clock.accept(data(epoch:"native-one",sequence:2,sampled:1001),now:1001);fatalError("Rejected stale sample hid a local clock rollback")}catch ObservationError.replay {}
     do {_=try clock.accept(data(epoch:"native-one",sequence:3,sampled:7001),now:7001);fatalError("Clock-fenced source revived without reenrollment")}catch ObservationError.identity {}
+    for invalid in [Int64.min,Int64.max] {
+        var consumer=enrolled("native-one")
+        _=try consumer.accept(data(epoch:"native-one",sequence:1),now:1000)
+        do {_=try consumer.accept(data(epoch:"native-one",sequence:2),now:invalid);fatalError("Out-of-domain local clock accepted")}
+        catch ObservationError.invalid {}
+        do {_=try consumer.accept(data(epoch:"native-one",sequence:2,sampled:1002),now:1002);fatalError("Out-of-domain clock failed to fence the consumer")}
+        catch ObservationError.identity {}
+    }
     do {_=try validator.accept(data(epoch:"native-one",sequence:1,coverage:"supported"),now:1000);fatalError("Non-contract coverage token accepted")}catch ObservationError.invalid {}
     guard try validator.accept(data(epoch:"native-one",sequence:1),now:1000) == .idle else { fatalError("Authoritative idle rejected") }
     do { _=try validator.accept(data(epoch:"native-one",sequence:1),now:1001);fatalError("Snapshot replay accepted") } catch ObservationError.replay {}
