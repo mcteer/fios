@@ -123,7 +123,15 @@ try {
   const prefix=readFileSync(join(incompleteState,incompleteBlob)).subarray(0,1);
   writeFileSync(incompleteIndex,incompleteBytes);writeFileSync(join(incompleteState,incompleteBlob),prefix);
   const incompleteReceipt=JSON.parse(cli(incompleteState,['backup-state','--to',incompleteBackup]));
-  cli(incompleteBackup,['restore-state','--sha256',incompleteReceipt.sha256,'--to',incompleteRestore]);
+  const incompleteManifest=JSON.parse(readFileSync(join(incompleteBackup,'backup.json')));
+  assert.deepEqual(incompleteManifest.artifact_files,[{path:incomplete.records[0].id+'.blob',bytes:prefix.length,sha256:hash(prefix)}]);
+  assert(incomplete.records[0].bytes>prefix.length);
+  assert.equal(incompleteReceipt.artifacts,1);
+  assert.equal(incompleteReceipt.bytes,lstatSync(join(incompleteBackup,'state.sqlite')).size+prefix.length);
+  const incompleteVerified=JSON.parse(cli(incompleteBackup,['verify-backup','--sha256',incompleteReceipt.sha256]));
+  const incompleteRestored=JSON.parse(cli(incompleteBackup,['restore-state','--sha256',incompleteReceipt.sha256,'--to',incompleteRestore]));
+  assertStoppedReceipts(incompleteReceipt,incompleteVerified,incompleteRestored);
+  assert.equal(incompleteVerified.journal_compatible,true);assert.equal(incompleteRestored.started,false);
   for(const copy of [incompleteState,incompleteBackup,incompleteRestore]){
     assert.deepEqual(readFileSync(join(copy,'artifacts/index.json')),incompleteBytes);
     assert.deepEqual(readFileSync(join(copy,incompleteBlob)),prefix);
