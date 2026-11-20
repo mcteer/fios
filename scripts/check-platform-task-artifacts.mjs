@@ -73,6 +73,9 @@ try {
   assert.equal(event.state,'pending');await delay(10);
  }
  await stop();
+ const retainedArtifactFiles=['index.json',...fixture.artifacts.map(id=>id+'.blob')];
+ const retainedArchive=()=>Object.fromEntries(retainedArtifactFiles.map(name=>[name,sha(readFileSync(join(state,'artifacts',name)))]));
+ const originalArchive=retainedArchive();
  assert(!existsSync(join(state,'task.sock')),'Stopped fixture left a task socket');
  child=launch('--resume');
  await ready();
@@ -112,7 +115,9 @@ try {
   previousStream=started.stream;
   records.push({bytes:expected.length,chunks:parts.length,sha256:sha(expected),complete:true});
  }
- const receipt={scope:'normal_real_manager_cli_artifact_downloads',finished_job_status:true,finished_job_renewal_error_correlated:true,unowned_and_missing_same_terminal_error:true,completed_stream_replay_refused:true,restarted_stream_refused_and_export_retained:true,records,manager_sha256:sha(readFileSync(binary)),cli_sha256:sha(readFileSync(cli)),model_requests:0,runtime_actions:0,installed_service_actions:0};
+ await stop();
+ assert.deepEqual(retainedArchive(),originalArchive,'Manager replacement or downloads changed durable archive bytes');
+ const receipt={scope:'normal_real_manager_cli_artifact_downloads',stopped_archive_unchanged:true,finished_job_status:true,finished_job_renewal_error_correlated:true,unowned_and_missing_same_terminal_error:true,completed_stream_replay_refused:true,restarted_stream_refused_and_export_retained:true,records,manager_sha256:sha(readFileSync(binary)),cli_sha256:sha(readFileSync(cli)),model_requests:0,runtime_actions:0,installed_service_actions:0};
  writeFileSync(join(directory,'receipt.json'),JSON.stringify(receipt,null,2)+'\n');
  console.log(JSON.stringify({ok:true,directory,downloads:records.length,chunks:records.map(r=>r.chunks),model_requests:0,runtime_actions:0}));
 } finally {

@@ -66,7 +66,9 @@ final class ArtifactStore {
             }
             let allowed=Set(records.map { $0.id+".blob" }).union(["store.lock","index.json"])
             guard names.allSatisfy({allowed.contains($0)}) else { throw ArtifactError.invalid }
+            var indexChanged = !names.contains("index.json")
             for index in records.indices where records[index].state == .pending {
+                indexChanged=true
                 let record=records[index]
                 do {
                     _=try read(record.id+".blob",maximum:record.bytes,expectedSHA256:record.sha256)
@@ -77,7 +79,7 @@ final class ArtifactStore {
                     throw ArtifactError.unavailable
                 } catch {records[index].state = .failed}
             }
-            try save()
+            if indexChanged {try save()}
             try finishDeletions()
         } catch {
             close(lock);lock = -1;throw error
@@ -169,7 +171,9 @@ final class ArtifactStore {
         return try ArtifactDownload(id:id,data:data,created:now,expires:record.created+86_400_000)
     }
     private func finishDeletions() throws {
-        for record in records where record.state == .deleting {
+        let deleting=records.filter {$0.state == .deleting}
+        guard !deleting.isEmpty else {return}
+        for record in deleting {
             let path=directory.appendingPathComponent(record.id+".blob").path
             var info=stat()
             if lstat(path,&info)==0 {
