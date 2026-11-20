@@ -101,15 +101,20 @@ try{
   if(stopped.observed==='ready')assert.equal(stopped.message,'Service is still running; stop is requested.');
   assert.equal(status(state,['service','mlx','status']).desired,'maintenance');
   child.kill('SIGTERM');await until(()=>exited(child));assert.equal(child.exitCode,0);child=null;
-  if(mode==='held'){
+  if(['held','unconfigured','native_source_gap'].includes(mode)){
    child=spawn('/usr/bin/sandbox-exec',['-f',profile,binary,state,mode],{cwd:root,env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C',HOME:'/var/empty'},stdio:'ignore'});
-   const restarted=await until(()=>{assert(!exited(child),'Held manager exited early');const s=status(state);return s&&s.epoch!==combined.epoch?s:null;});
-   assert.equal(restarted.migration_maintenance,true);
+   const restarted=await until(()=>{
+    assert(!exited(child),'Restarted status manager exited early');const s=status(state);
+    return s&&s.epoch!==combined.epoch&&(mode!=='native_source_gap'||s.native_control.state==='unavailable')?s:null;
+   });
+   assert.equal(restarted.migration_maintenance,mode==='held');
+   assert.equal(restarted.native_admissions,'unsupported');
    assert.equal(restarted.service_recovery,'disabled');
    assert.equal(restarted.services.mlx.desired,'maintenance');
    assert.equal(restarted.services.orbstack.desired,'stopped');
    for(const service of ['mlx','orbstack']){
     assert.equal(restarted.services[service].launch_pending,false);
+    assert.equal(restarted.services[service].observed,expected(mode,service));
     for(const action of [['drain'],['force','prepare']]){
      const denied=spawnSync(cli,['--state',state,'service',service,...action],{cwd:root,encoding:'utf8',timeout:3000});
      assert.equal(denied.status,1);
@@ -136,7 +141,7 @@ try{
  assert.equal(reopened.runtime_cleanup.waiting_over_60s,false);
  assert(Number.isSafeInteger(reopened.runtime_cleanup.manager_observation_age_ms)&&reopened.runtime_cleanup.manager_observation_age_ms>=0);
  child.kill('SIGTERM');await until(()=>exited(child));assert.equal(child.exitCode,0);child=null;
- console.log(JSON.stringify({ok:true,states:modes.length,service_views:2*modes.length,aged_service_views:2,aged_combined_views:2,storage_continuity_refusal:1,storage_custody_survived_restart:true,native_actions:0,review_directory:directory}));
+ console.log(JSON.stringify({ok:true,states:modes.length,service_views:2*modes.length,aged_service_views:2,aged_combined_views:2,restarted_intent_scenarios:3,storage_continuity_refusal:1,storage_custody_survived_restart:true,native_actions:0,review_directory:directory}));
 }finally{
  if(child&&!exited(child)){child.kill('SIGTERM');try{await until(()=>exited(child),3000);}catch{child.kill('SIGKILL');await until(()=>exited(child),3000);}}
  // Retain the private development states; no database cleanup or native work.
