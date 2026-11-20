@@ -52,6 +52,21 @@ private struct UnavailableStatusSource:NativeReadOnlyClientSource {
                 try journal.claim(job:modelID,attempt:0,model:"fixture/model")
                 try journal.markUncertain(job:modelID,attempt:0)
             }
+            do {
+                let journal=try Journal(directory:state)
+                let records=try journal.sandboxRecords().sorted {$0.configuration.job<$1.configuration.job}
+                guard records.count==2,records.allSatisfy({$0.createIssued && !$0.removalProven}),
+                      Set(records.map(\.configuration.name)).count==2,
+                      records.filter({$0.runtimeID==nil}).count==1 else {throw JournalError.invalid}
+                let identities=records.map {record in
+                    ["job":record.configuration.job,"name":record.configuration.name,"nonce":record.configuration.nonce,
+                     "image":record.configuration.image,"runtime_id":record.runtimeID.map{$0 as Any} ?? NSNull()] as [String:Any]
+                }
+                let bytes=try JSONSerialization.data(withJSONObject:identities,options:[.sortedKeys])
+                let receipt=state.appendingPathComponent("fixture-create-identities.json")
+                if args[2]=="storage_continuity" {try AtomicState.write(bytes,to:receipt)}
+                else {guard try Data(contentsOf:receipt)==bytes else {throw JournalError.conflict}}
+            }
             let execution=try ManagerExecutionPorts(runtime:runtime,approvedImages:[image],resources:{_,_ in nil})
             try withExtendedLifetime(listener) {try ManagerRuntime.run(directory:state,nativeControl:nil,execution:execution)}
             return
