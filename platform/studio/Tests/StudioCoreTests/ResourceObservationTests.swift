@@ -22,6 +22,15 @@ func runResourceObservationTests() throws {
     func quality(_ frame:ResourceObservationExport.Frame,_ name:String)->String? {
         ((frame.observation["signals"] as? [String:[String:Any]])?[name])?["availability"] as? String
     }
+    let mixedGPU=GPUResources.decode(["Device Utilization %":0,"In use system memory":NSDecimalNumber(string:"1000000000000000.01"),
+                                      "Alloc system memory":WireScalar.maximumTimestamp])
+    let gpuFrame=try ResourceObservationExport.encode(sample:sample,gpu:mixedGPU,gpuSampledAt:10000,now:10000,epoch:epoch,sequence:1,vmEpoch:vmEpoch)
+    guard gpuFrame.resources["gpu_in_use_bytes"] is NSNull,quality(gpuFrame,"gpu_in_use_memory")=="unknown",
+          gpuFrame.resources["gpu_allocated_bytes"] as? UInt64==UInt64(WireScalar.maximumTimestamp),quality(gpuFrame,"gpu_allocated_memory")=="observed",
+          gpuFrame.resources["gpu"] as? Double==0,quality(gpuFrame,"gpu")=="observed",
+          gpuFrame.observation["gpu_coverage"] as? String=="observed_registry" else {
+        fatalError("Invalid GPU byte count contaminated independent GPU export signals")
+    }
     let fresh=try frame(10000)
     guard fresh.resources["cpu"] as? Double==0,fresh.resources["gpu"] as? Double==0,
           fresh.resources["lowPowerMode"] as? Bool==false,quality(fresh,"cpu")=="observed",quality(fresh,"vm_available")=="observed",
