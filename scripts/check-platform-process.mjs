@@ -135,8 +135,11 @@ try {
   },4000);
   assert.notEqual(afterRestart.resource_observation.epoch,nextResources.epoch);
   assert.equal(afterRestart.resource_observation.signals.vm_available.availability,'unknown');
-  const restartedCPU=afterRestart.resource_observation.signals.cpu;
-  if(restartedCPU.availability==='observed') assert.ok(restartedCPU.sampled_at>nextResources.sampled_at,'New manager reused predecessor CPU sample');
+  const restartedCPU=await until(()=>{
+    const observation=status('resources')?.resource_observation;
+    return observation?.epoch===second.epoch&&observation.signals.cpu.availability==='observed' ? observation.signals.cpu:null;
+  },8000);
+  assert.ok(restartedCPU.sampled_at>nextResources.sampled_at,'New manager reused predecessor CPU sample');
   process.kill(managedPID, 'SIGSTOP');
   assert.ok(status('supervisor')?.supervisor,'Supervisor status must not depend on a responsive manager');
   const third = await until(() => {
