@@ -216,7 +216,11 @@ public enum ManagerRuntime {
             }
             try nativeLineage?.drain(now:timestamp())
             try workerRecovery.poll(now:Int64(now*1000),admission:&admission,failedLaunches:tasks.failedLaunches)
-            try drainer?.pollAll(now:timestamp(),uptime:Int64(now*1000))
+            do {try drainer?.pollAll(now:timestamp(),uptime:Int64(now*1000))}
+            catch JournalError.storage {
+                // The drain retains exact cancellation intents and retries.
+                // Do not stop supervising workers because that write is held.
+            }
             resourceSample=applyingVM(to:resourceSample,now:timestamp())
             let updates=try sandboxes.tick(now:timestamp(),uptime:now,sample:artifacts.reservingDisk(in:resourceSample),admission:&admission,source:bindingForJob,nativeCapacityProven:activeExecution?.nativeCapacityProven() ?? false)
             resourceSample=applyingVM(to:resourceSample,now:timestamp())
