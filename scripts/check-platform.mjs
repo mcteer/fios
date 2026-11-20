@@ -84,6 +84,11 @@ try {
   const removalBuild=spawnSync('swiftc',['-parse-as-library','-swift-version','6','-warnings-as-errors','-O',removalSource,'-o',removalBinary],{cwd:root,stdio:'inherit',timeout:30000});
   if(removalBuild.error)throw removalBuild.error;
   if(removalBuild.status!==0)throw Error('Finite sandbox-removal fixture build failed');
+  const eofSource=join(directory,'CommandEOFLive.swift'),eofBinary=join(directory,'command-eof');
+  copyFileSync(resolve(root,'platform/studio/Tests/StudioCoreTests/CommandEOFLive.swift.fixture'),eofSource);
+  const eofBuild=spawnSync('swiftc',['-swift-version','6','-warnings-as-errors','-O',eofSource,'-o',eofBinary],{cwd:root,stdio:'inherit',timeout:30000});
+  if(eofBuild.error)throw eofBuild.error;
+  if(eofBuild.status!==0)throw Error('Finite command EOF fixture build failed');
   const sources = ['Sources/StudioCore', 'Tests/StudioCoreTests'].flatMap(part => {
     const path = resolve(root, 'platform/studio', part);
     return readdirSync(path).filter(name => name.endsWith('.swift')).sort().map(name => {
@@ -133,7 +138,7 @@ try {
   const compileMode=process.argv[3]==='--release'
     ? ['-O','-whole-module-optimization','-num-threads','2']
     : ['-j2'];
-  const env={...process.env,FIOS_PLATFORM_MOCK_PORT:String(port),FIOS_PLATFORM_SETID_FIXTURE:setidFixture,
+  const env={...process.env,FIOS_PLATFORM_MOCK_PORT:String(port),FIOS_PLATFORM_SETID_FIXTURE:setidFixture,FIOS_PLATFORM_COMMAND_EOF_FIXTURE:eofBinary,
     FIOS_PLATFORM_LOCK_SETID_FIXTURE:setidLock,FIOS_PLATFORM_CENSUS_FIXTURE:censusBinary,FIOS_PLATFORM_ENDPOINT_FIXTURE:endpointBinary,
     FIOS_PLATFORM_VM_STATUS_FIXTURE:vmStatusBinary,FIOS_PLATFORM_VM_INVENTORY_FIXTURE:vmInventoryBinary,
     FIOS_PLATFORM_RSS_FIXTURE:rssBinary,FIOS_PLATFORM_SANDBOX_REMOVAL_FIXTURE:removalBinary};

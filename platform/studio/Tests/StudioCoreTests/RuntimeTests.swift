@@ -91,6 +91,16 @@ func runRuntimeTests() throws {
     let sleepURL=URL(fileURLWithPath:"/bin/sleep")
     let sleepDigest=SHA256.hash(data:try Data(contentsOf:sleepURL)).map {String(format:"%02x",$0)}.joined()
     let sleeper=try VerifiedExecutable(path:sleepURL.path,sha256:sleepDigest)
+    guard let eofPath=ProcessInfo.processInfo.environment["FIOS_PLATFORM_COMMAND_EOF_FIXTURE"],
+          URL(fileURLWithPath:eofPath).lastPathComponent=="command-eof" else {fatalError("Missing runner-owned EOF fixture")}
+    let eofHash=SHA256.hash(data:try Data(contentsOf:URL(fileURLWithPath:eofPath))).map {String(format:"%02x",$0)}.joined()
+    let eofChild=try VerifiedExecutable(path:eofPath,sha256:eofHash)
+    let eofBegan=ProcessInfo.processInfo.systemUptime
+    do {
+        _=try eofChild.run(arguments:[],timeout:0.5,maximumOutput:0)
+        fatalError("Pipe EOF was mistaken for command exit")
+    } catch RuntimeError.deadline {}
+    guard ProcessInfo.processInfo.systemUptime-eofBegan<3 else {fatalError("EOF-before-exit stalled process supervision")}
     let sleepBegan=ProcessInfo.processInfo.systemUptime
     do {
         _=try sleeper.run(arguments:["8"],timeout:0.5,maximumOutput:64)
