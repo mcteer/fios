@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {spawn,spawnSync} from 'node:child_process';
-import {mkdtempSync,readFileSync,readdirSync,rmSync,cpSync,chmodSync,writeFileSync,existsSync} from 'node:fs';
+import {mkdirSync,mkdtempSync,readFileSync,readdirSync,rmSync,cpSync,chmodSync,writeFileSync,existsSync,statSync} from 'node:fs';
 import {join,resolve} from 'node:path';
 import {createHash} from 'node:crypto';
 import {setTimeout as delay} from 'node:timers/promises';
@@ -117,6 +117,16 @@ try {
       assert.deepEqual(readdirSync(bundle).sort(),sealedEntries,'Verification changed sealed archive entries');
       assert.equal(sealedDatabase(),originalDatabase,'Verification changed sealed journal');
     }
+    const occupied=join(scratch,'occupied-restore');mkdirSync(occupied,{mode:0o700});
+    const sentinel=join(occupied,'unrelated');writeFileSync(sentinel,'retain this directory\n',{mode:0o600});
+    const originalDirectory=statSync(occupied,{bigint:true});
+    const refused=spawnSync(join(newRelease,'bin/studioctl'),['--state',bundle,'restore-state','--sha256',backup.sha256,'--to',occupied],{stdio:'ignore',timeout:5000});
+    assert.equal(refused.status,1,'Restore accepted an occupied destination');
+    const unchangedDirectory=statSync(occupied,{bigint:true});
+    assert.equal(unchangedDirectory.dev,originalDirectory.dev);assert.equal(unchangedDirectory.ino,originalDirectory.ino);
+    assert.deepEqual(readdirSync(occupied),['unrelated']);assert.equal(readFileSync(sentinel,'utf8'),'retain this directory\n');
+    assert.deepEqual(readdirSync(bundle).sort(),sealedEntries);assert.equal(sealedDatabase(),originalDatabase);
+    assert.equal(createHash('sha256').update(readFileSync(join(bundle,'backup.json'))).digest('hex'),backup.sha256);
     restored=join(scratch,'restored');
     cli(newRelease,bundle,['restore-state','--sha256',backup.sha256,'--to',restored]);
     await cycle(newRelease,restored);await cycle(oldRelease,restored);
@@ -130,6 +140,7 @@ try {
     assert.equal(result.status,1,'Unknown ownership schema ran a manager');assert.equal(digest(),before,'Rejected ownership schema was mutated');
     const refused=spawnSync(join(release,'bin/studioctl'),['--state',future,'backup-state','--to',join(scratch,'future-backup-must-not-exist')],{stdio:'ignore',timeout:2000});
     assert.equal(refused.status,1);assert.equal(digest(),before);
+    assert.equal(existsSync(join(scratch,'future-backup-must-not-exist')),false,'Refused future schema published a backup');
   }
   if(migrating)console.log(`PASS: reviewed schema${oldSchema} old artifact→stopped backup→explicit held schema9 migration/rebackup/restore→old rollback from retained original; incompatible startup refused unchanged, uncertainty/export/budget retained; source fixture only, no installed/native acceptance`);
   else console.log('PASS: verified old/new/old development artifacts, same-schema9 ownership/export preservation, stopped old backup→new verify/restore→old startup, future10 refusal without database mutation; disposable local state ONLY, no installed rollback/schema migration/native acceptance');
