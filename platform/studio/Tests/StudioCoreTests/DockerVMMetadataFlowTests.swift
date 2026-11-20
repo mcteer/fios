@@ -142,6 +142,15 @@ func runDockerVMMetadataFlowTests()throws {
     do {_=try inspectReader.read(configuration:configuration,id:id,leaseUntil:15000);fatalError("Expired inspect send returned capacity")}
     catch RuntimeError.deadline {}
     guard inspectReads==3,try inspectSource.finish().isEmpty else {fatalError("Expired inspect sent metadata bytes")}
+    let finalClock=MetadataFixtureClock(),finalInspectSocket=directory+"/inspect-final-expired.sock"
+    let finalInspectSource=try MetadataDaemonFixture(path:finalInspectSocket,responses:[try json(parent)],
+        responded:{_ in finalClock.set(15000)})
+    let finalMetadata=DockerVMMetadata(socketPath:finalInspectSocket,peerUID:geteuid())
+    do {
+        _=try finalMetadata.inspect(id:id,checkpoint:{if finalClock.now()>=15000 {throw RuntimeError.deadline}})
+        fatalError("Metadata response crossed its inherited final cutoff")
+    } catch RuntimeError.deadline {}
+    guard try finalInspectSource.finish().count==1 else {fatalError("Final cutoff did not follow one fixed inspect")}
     let startClock=MetadataFixtureClock(),startSocket=directory+"/start-expired.sock"
     let startSource=try MetadataDaemonFixture(path:startSocket,responses:[try json(parent),created,stream],optionalLastResponse:true,
         responded:{index in if index==1 {startClock.set(15000)}})
@@ -168,14 +177,13 @@ func runDockerVMMetadataFlowTests()throws {
     let finalSource=try MetadataDaemonFixture(path:finalSocket,responses:[try json(parent),created,kernelStream,completed,try json(parent)],
         optionalLastResponse:true,allowEmptyOptionalPeer:true)
     let finalRuntime=try DockerRuntime(executable:VerifiedExecutable(path:"/bin/false",sha256:String(repeating:"0",count:64)),socket:finalSocket)
-    // Initial stamp, three reads per inspect (before exchange, before
-    // send and after proof), and two for each exec phase. Expire at the
-    // final inspect send, not at the preceding successful guest read.
+    // Include the response check for the initial inspect and each of
+    // the three exec exchanges. Expire at the final inspect send.
     var finalReads=0
     let finalReader=try OwnedVMResourceReader(runtime:finalRuntime,approvedImages:[configuration.image],directMetadata:true,
-        now:{finalReads+=1;return finalReads==13 ? 15000:10000},uptime:{1})
+        now:{finalReads+=1;return finalReads==17 ? 15000:10000},uptime:{1})
     do {_=try finalReader.read(configuration:configuration,id:id,leaseUntil:15000);fatalError("Expired final inspect returned VM capacity")}
     catch RuntimeError.deadline {}
-    guard finalReads==13,try finalSource.finish().count==4 else {fatalError("Expired final inspect published a request")}
+    guard finalReads==17,try finalSource.finish().count==4 else {fatalError("Expired final inspect published a request")}
     print("PASS: actual private mock Unix metadata create/start/completion flow, exact fixed cat/UID/path/argv, full exec/container binding and foreign completion refusal with no replay (mock daemon only)")
 }

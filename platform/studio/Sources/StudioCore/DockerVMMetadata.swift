@@ -110,6 +110,8 @@ struct DockerVMMetadata:DockerVMMetadataReading {
                 if let expected=peerIdentity {
                     guard try endpointPolicy?.peer?.verifyIdentity(expected,deadline:end)==expected else {throw RuntimeError.identity}
                 }
+                try checkpoint()
+                guard ProcessInfo.processInfo.systemUptime<end else {throw RuntimeError.deadline}
                 return body
             }
             else if ![EAGAIN,EWOULDBLOCK,EINTR].contains(errno) {throw RuntimeError.launch}
