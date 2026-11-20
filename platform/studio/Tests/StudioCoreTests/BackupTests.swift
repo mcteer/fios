@@ -163,7 +163,9 @@ func runBackupTests() throws {
           try Data(contentsOf:state.appendingPathComponent("artifacts/index.json"))==indexBefore else {
         fatalError("Late stopped export changed source or removed diagnostic copy")
     }
-    guard saved.artifacts==1,saved.bytes==payload.count,saved.indexSHA256.count==64,
+    let exportedIndex=try Data(contentsOf:exports.appendingPathComponent("index.json"))
+    let exportedIndexDigest=SHA256.hash(data:exportedIndex).map {String(format:"%02x",$0)}.joined()
+    guard saved.artifacts==1,saved.bytes==payload.count,exportedIndex==indexBefore,saved.indexSHA256==exportedIndexDigest,
           try Data(contentsOf:state.appendingPathComponent("artifacts/index.json"))==indexBefore else {fatalError("Export snapshot mutated source or lost data")}
     do {
         let restored=try ArtifactStore(directory:exports,availableBytes:{100<<30})

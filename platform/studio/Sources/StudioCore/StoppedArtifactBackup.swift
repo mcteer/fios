@@ -35,6 +35,9 @@ enum StoppedArtifactBackup {
         }
         func readMetadata(_ url:URL,maximum:Int64)throws->Data {
             let (fd,length)=try openPrivate(url,maximum:maximum);defer {close(fd)}
+            return try readMetadata(fd,length:length,maximum:maximum)
+        }
+        func readMetadata(_ fd:Int32,length:Int64,maximum:Int64)throws->Data {
             var data=Data(),buffer=[UInt8](repeating:0,count:32768)
             while true {
                 try checkCopyClock()
@@ -129,11 +132,13 @@ enum StoppedArtifactBackup {
         try checkCopyClock()
         try metadata.write(to:destination.appendingPathComponent("index.json"),options:.withoutOverwriting)
         try FileManager.default.setAttributes([.posixPermissions:0o600],ofItemAtPath:destination.appendingPathComponent("index.json").path)
-        let (indexFD,_)=try openPrivate(destination.appendingPathComponent("index.json"),maximum:1<<20);defer {close(indexFD)}
+        let (indexFD,indexLength)=try openPrivate(destination.appendingPathComponent("index.json"),maximum:1<<20);defer {close(indexFD)}
         let parent=open(destination.path,O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC)
         guard parent>=0 else {throw JournalError.storage};defer {close(parent)}
         guard fsync(indexFD)==0,fsync(parent)==0 else {throw JournalError.storage}
-        let receipt=ArtifactBackupReceipt(artifacts:files.count,bytes:total,indexSHA256:SHA256.hash(data:metadata).map {String(format:"%02x",$0)}.joined(),files:copiedFiles.sorted {$0.path<$1.path})
+        let copiedMetadata=try readMetadata(indexFD,length:indexLength,maximum:1<<20)
+        guard copiedMetadata==metadata else {throw JournalError.invalid}
+        let receipt=ArtifactBackupReceipt(artifacts:files.count,bytes:total,indexSHA256:SHA256.hash(data:copiedMetadata).map {String(format:"%02x",$0)}.joined(),files:copiedFiles.sorted {$0.path<$1.path})
         try checkCopyClock()
         return receipt
     }
