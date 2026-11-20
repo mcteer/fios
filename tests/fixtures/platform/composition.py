@@ -61,13 +61,20 @@ class CompositionTests(unittest.TestCase):
             self.assertEqual(receipt['python_candidate_sha256'],args[3])
             for flag in ('package_complete','approved','immutable_tree_enrolled','installed','activation','native_authority'):
                 self.assertFalse(receipt[flag])
-            planned=subprocess.run(['node',str(ROOT/'scripts/install-platform.mjs'),'plan-composition','--candidate',str(output),
-                '--sha256',result['composition_sha256'],'--host','fios-edge-a.lab'],capture_output=True,timeout=10)
-            self.assertEqual(planned.returncode,0,planned.stderr)
-            plan=json.loads(planned.stdout);self.assertEqual(plan['state'],'blocked');self.assertEqual(plan['privileged_commands'],[])
-            self.assertFalse(plan['installed']);self.assertFalse(plan['native_authority']);self.assertFalse(args[4].exists())
-            self.assertEqual([item['files'] for item in plan['installation_layout']],[10,2])
-            self.assertEqual(plan['installation_layout'][1]['destination'], '/Library/Application Support/Fios/Studio/python/runtime')
+            for host in ('fios-edge-a.lab','fios-edge-b.lab'):
+                planned=subprocess.run(['node',str(ROOT/'scripts/install-platform.mjs'),'plan-composition','--candidate',str(output),
+                    '--sha256',result['composition_sha256'],'--host',host],capture_output=True,timeout=10)
+                self.assertEqual(planned.returncode,0,planned.stderr)
+                plan=json.loads(planned.stdout);self.assertEqual(plan['host'],host)
+                self.assertEqual(plan['state'],'blocked');self.assertEqual(plan['privileged_commands'],[])
+                for flag in ('installed','native_authority','activation','changes_made','candidate_programs_executed'):
+                    self.assertFalse(plan[flag],flag)
+                self.assertEqual(plan['launchd_registration'],'not_proposed')
+                self.assertIn('native_contract_and_enrollment_unproven',plan['blockers'])
+                self.assertIn('installed_acceptance_pending',plan['blockers'])
+                self.assertFalse(args[4].exists())
+                self.assertEqual([item['files'] for item in plan['installation_layout']],[10,2])
+                self.assertEqual(plan['installation_layout'][1]['destination'], '/Library/Application Support/Fios/Studio/python/runtime')
             for name,record in receipt['files'].items():
                 self.assertEqual(sha((output/name).read_bytes()),record['sha256'])
 
