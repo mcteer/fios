@@ -186,17 +186,25 @@ func runArtifactTests() throws {
     store=nil
     do { _=try ArtifactStore(directory:directory);fatalError("Unexpected storage symlink accepted") } catch ArtifactError.invalid {}
     let deletionDirectory=directory.appendingPathComponent("deletion-commit-fixture")
-    var failDeletionCommit=false
+    var failDeletionIntent=false,failDeletionCommit=false
     let deletionStore=try ArtifactStore(directory:deletionDirectory,availableBytes:{50<<30},writeIndex:{bytes,target in
         let object=try JSONSerialization.jsonObject(with:bytes) as! [String:Any]
-        if failDeletionCommit,!(object["records"] as! [[String:Any]]).contains(where:{$0["state"] as? String=="deleting"}) {throw ArtifactError.storage}
+        let deleting=(object["records"] as! [[String:Any]]).contains(where:{$0["state"] as? String=="deleting"})
+        if (failDeletionIntent && deleting) || (failDeletionCommit && !deleting) {throw ArtifactError.storage}
         try AtomicState.write(bytes,to:target)
     })
     let deleted=try deletionStore.publish(job:UUID().uuidString.lowercased(),ownerHash:owner,data:Data([42]),now:1000)
     let preserved=try deletionStore.publish(job:UUID().uuidString.lowercased(),ownerHash:owner,data:Data([43,44]),now:2000)
+    let deletionIndex=deletionDirectory.appendingPathComponent("index.json")
+    let originalIndex=try Data(contentsOf:deletionIndex)
+    failDeletionIntent=true
+    do {try deletionStore.expire(now:86_401_000);fatalError("Deletion intent write did not fail")}catch ArtifactError.storage {}
+    guard try Data(contentsOf:deletionIndex)==originalIndex,
+          try Data(contentsOf:deletionDirectory.appendingPathComponent(deleted+".blob"))==Data([42]),
+          deletionStore.retainedBytes==3 else {fatalError("Undurable deletion intent changed disk custody")}
+    failDeletionIntent=false
     failDeletionCommit=true
     do {try deletionStore.expire(now:86_401_000);fatalError("Final deletion index write did not fail")}catch ArtifactError.storage {}
-    let deletionIndex=deletionDirectory.appendingPathComponent("index.json")
     let committedIntent=try JSONSerialization.jsonObject(with:Data(contentsOf:deletionIndex)) as! [String:Any]
     guard (committedIntent["records"] as! [[String:Any]]).first?["state"] as? String=="deleting",
           !FileManager.default.fileExists(atPath:deletionDirectory.appendingPathComponent(deleted+".blob").path),
