@@ -383,9 +383,10 @@ func runVMControllerTests() throws {
     try exerciseVMController(inconsistentReply:true)
     try exerciseVMController(inconsistentReply:false,predatingReply:true)
     try exerciseVMController(inconsistentReply:false,rollbackReply:true)
+    try exerciseVMController(inconsistentReply:false,invalidClockReply:true)
 }
 
-private func exerciseVMController(inconsistentReply:Bool,predatingReply:Bool=false,rollbackReply:Bool=false) throws {
+private func exerciseVMController(inconsistentReply:Bool,predatingReply:Bool=false,rollbackReply:Bool=false,invalidClockReply:Bool=false) throws {
     let directory=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer {try? FileManager.default.removeItem(at:directory)}
     let journal=try Journal(directory:directory),runtime=FakeSandboxExecutor()
@@ -439,6 +440,23 @@ private func exerciseVMController(inconsistentReply:Bool,predatingReply:Bool=fal
         revocationAt=now+1
     }
     guard runtime.resourceValues.count==1 else {fatalError("No in-flight VM fixture result before revocation")}
+    if invalidClockReply {
+        let requests=runtime.resourceRequests
+        for invalid in [Int64.min,ActivityPolicy.maximumTimestamp+1] {
+            do {
+                try controller.tick(now:invalid,sample:sample(invalid),admission:&admission,transportReady:{_ in true},cancelModel:{_ in})
+                fatalError("Invalid owned VM clock was accepted")
+            } catch JournalError.invalid {}
+        }
+        guard runtime.resourceValues.count==1,runtime.resourceRequests==requests else {fatalError("Invalid clock consumed or reissued pending VM work")}
+        runtime.holdResourceResults=false
+        try controller.tick(now:revocationAt,sample:sample(revocationAt),admission:&admission,transportReady:{_ in true},cancelModel:{_ in})
+        guard runtime.resourceValues.isEmpty,runtime.resourceRequests==requests,controller.vmEpoch(now:revocationAt)==nil,
+              try journal.jobs().first(where:{$0.id==id})?.state == .running else {
+            fatalError("Owned VM reply crossed an invalid intervening clock")
+        }
+        return
+    }
     if rollbackReply {
         // Give rollback's newest-job revocation a separate target so the
         // observed sandbox still exists when its original reply drains.

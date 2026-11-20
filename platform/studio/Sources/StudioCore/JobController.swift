@@ -75,7 +75,12 @@ final class JobController {
               inputReady:(String)->Bool={_ in true},transportReady:(String)->Bool,cancelModel:(String)throws->Void) throws {
         var candidateVM=latestVM
         latestVM=nil // Publish only after a successful tick and durable target recheck.
-        guard (0...ActivityPolicy.maximumTimestamp).contains(now) else { throw JournalError.invalid }
+        guard (0...ActivityPolicy.maximumTimestamp).contains(now) else {
+            // Keep custody until this exact reply drains, but an invalid
+            // intervening clock cannot certify continuity of the original read.
+            resourcePending?.invalidated=true
+            throw JournalError.invalid
+        }
         let managedSandboxes=try journal.sandboxRecords()
         let sandboxIDs=Set(managedSandboxes.filter {!$0.removalProven}.map { $0.configuration.job })
         for sandbox in managedSandboxes where !sandbox.removalProven {try admission.restoreSandbox(sandbox.configuration)}
