@@ -72,6 +72,15 @@ func runJobJournalTests() throws {
     let tight=ResourceSample(sampledAt:10_000,physical:128<<30,available:native+(1536<<20)-1,vmAvailable:8<<30,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal,vmSampledAt:10_000,cpuSampledAt:10_000)
     do {try restored.reserveWorker(key:"second",sample:tight,now:10_000);fatalError("A restored charge was omitted from combined memory headroom")} catch AdmissionError.capacity {}
     let exact=ResourceSample(sampledAt:10_000,physical:128<<30,available:native+(1536<<20),vmAvailable:8<<30,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal,vmSampledAt:10_000,cpuSampledAt:10_000)
+    for (vmAt,accepted) in [(4999,false),(5000,true),(11000,true),(11001,false)] {
+        let mixed=ResourceSample(sampledAt:10_000,physical:128<<30,available:native+(1536<<20),vmAvailable:8<<30,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal,vmSampledAt:Int64(vmAt),cpuSampledAt:10_000)
+        var sandboxProbe=restored,workerProbe=restored
+        do {
+            try sandboxProbe.reserve(job:nextSandbox,memory:512<<20,cpus:1,sample:mixed,now:10_000)
+            guard accepted else {fatalError("Fresh host sample extended independent VM freshness")}
+        } catch AdmissionError.stale {guard !accepted else {throw AdmissionError.stale}}
+        try workerProbe.reserveWorker(key:"second",sample:mixed,now:10_000)
+    }
     var exactWorker=restored,exactSandbox=restored
     try exactWorker.reserveWorker(key:"second",sample:exact,now:10_000)
     try exactSandbox.reserve(job:nextSandbox,memory:512<<20,cpus:1,sample:exact,now:10_000)
