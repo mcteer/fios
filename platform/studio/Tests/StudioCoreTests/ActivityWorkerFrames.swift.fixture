@@ -13,6 +13,21 @@ import Foundation
                 totals:counts,models:rows,context:ActivityObservationContext())
             try data.write(to:directory.appendingPathComponent(name+".json"))
         }
+        let responding=NativePhaseCounts(ingress:0,preparing:0,queued:0,active:0,responding:1)
+        for offset:Int64 in [-5001,-5000,1000,1001] {
+            let context=ActivityObservationContext(sampledAt:now+offset,pressure:.normal,thermal:.nominal)
+            let data=try ActivityObservationExport.encode(metadata:metadata,coverage:.all_clients,sourceCoverage:.all_clients,
+                totals:responding,models:[NativeModelActivity(model:"fixture/model@studio-a",resident:true,counts:responding)],context:context)
+            var consumer=ObservationValidator(host:metadata.host,endpointHash:metadata.endpointHash,profileHash:metadata.profileHash,
+                managerEpoch:metadata.managerEpoch,nativeEpoch:metadata.nativeEpoch,sourceCoverage:.all_clients)
+            let expected=(-5000...1000).contains(offset)
+            do {
+                guard try consumer.accept(data,now:now) == .busy(model:"fixture/model@studio-a"),expected else {
+                    throw PolicyError.invalidObservation
+                }
+            } catch PolicyError.staleObservation where !expected {}
+            try data.write(to:directory.appendingPathComponent("resource-\(offset).json"))
+        }
         try emitPreparation(directory:directory)
     }
 }

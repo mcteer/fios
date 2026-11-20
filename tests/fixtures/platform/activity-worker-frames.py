@@ -24,6 +24,18 @@ for name in ('idle','queued','active','responding','preparing','unknown','confli
         if name not in ('preparing','unknown','conflict'):raise
 print('PASS actual Swift current exports -> installed Python:4 eligible fixtures/3 preparation-or-unknown refusals; no native authority')
 
+for offset in (-5001,-5000,1000,1001):
+    value=json.loads((root/f'resource-{offset}.json').read_text())
+    now=value['sampled_at']
+    assert value['resources']['sampled_at']==now+offset
+    try:
+        validate_observation(value,profile,command,now)
+    except NativeGuardError:
+        assert offset in (-5001,1001),f'Valid resource age refused: {offset}'
+    else:
+        assert offset in (-5000,1000),f'Invalid resource age accepted: {offset}'
+print('PASS Swift responding frames -> installed Python: independent resource-clock boundaries')
+
 preparation=json.loads((root/'preparation.json').read_text())
 validate_preparation_observation(preparation,profile,command,'18446744073709551615',int(time.time()*1000))
 for changes in ({'source_coverage':'unknown'},{'root_sequence':'1'},{'lease_expires_at':int(time.time()*1000)}):
