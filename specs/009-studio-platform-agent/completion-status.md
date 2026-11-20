@@ -15,8 +15,8 @@
 | T027 | Wire normal service recovery through trusted original-process identity and enrolled lifecycle paths; source and isolated recovery cases can run before installation. |
 | T028 | Complete bounded drain/one-use force with authoritative external and unknown-work exclusion; depends on T020–T021 and enrolled lifecycle. |
 | T030 | Validate the complete service recovery/drain flow after T027–T028, then separately run installed scenarios. |
-| T036 | Complete public sandbox orchestration/reconciliation on the approved immutable image through enrolled runtime and VM profiles (T008–T009); image approval is not enrollment. |
-| T045 | Compose the model-only and sandbox task paths with the real native admission/reconciliation boundary and actual execution adapters (T021–T022, T036). |
+| T036 | Complete public sandbox orchestration/reconciliation on the approved immutable image through enrolled runtime and VM profiles (T008–T009); image approval is not enrollment. The ordinary manager and its replacement refuse task creation until reviewed execution ports are composed. |
+| T045 | Compose the model-only and sandbox task paths with the real native admission/reconciliation boundary and actual execution adapters (T021–T022, T036). A mock endpoint and an installed local worker show pipe behavior, not an enrolled Studio dispatch path or original-request settlement. |
 | T049 | Complete reviewed protected installation, rollback and uninstall; actual privileged acceptance requires separate approval and a qualified artifact. Data staging is not installation. |
 | T051 | Run separately approved installed scenarios on both Studios after native and lifecycle qualification. Core-only small-model results do not count. |
 | T055 | Finish functional/evidence consistency, get exact-head CI and approved merge, verify merged-main CI and deployment; keep native acceptance separate. |
