@@ -94,8 +94,8 @@ final class SandboxTaskSession {
             return events
         } catch {revoke(attach:attach);throw error}
     }
-    func revoke(attach:DockerAttach) {
+    func revoke(attach:DockerAttach?) {
         revoked=true;source.removeAll();responses.removeAll();responseBytes=0
-        stream.revoke();attach.close()
+        stream.revoke();attach?.close()
     }
 }

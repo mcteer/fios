@@ -49,7 +49,7 @@ final class SandboxTaskController {
         return (try? NativeAdmission.retainsSource(current,now:now)) == true
     }
     private func revoke(id:String,now:Int64,uptime:Int64) throws {
-        if let session=sessions[id],let attach=session.attach {session.stream.revoke(attach:attach)}
+        if let session=sessions[id] {session.stream.revoke(attach:session.attach)}
         if let job=try journal.jobs().first(where:{$0.id==id}),![.revoking,.stopping,.removing,.removed].contains(job.state),let session=sessions[id] {
             try tasks.cancel(id:id,owner:session.owner,now:now,uptime:uptime)
         }
@@ -90,9 +90,10 @@ final class SandboxTaskController {
                 continue
             }
             if [.revoking,.stopping,.removing,.reconciling].contains(job.state) {
-                if let attach=session.attach {session.stream.revoke(attach:attach)}
+                session.stream.revoke(attach:session.attach)
                 continue
             }
+            guard !session.stream.revoked,!tasks.cancellationPending(for:id) else {continue}
             do {
                 // Before create or start, a missing/replaced source is not
                 // permission to launch a model-bearing sandbox. Plain code
@@ -142,8 +143,8 @@ final class SandboxTaskController {
             } catch {try revoke(id:id,now:now,uptime:clock)}
         }
         try jobs.tick(now:now,sample:sample,admission:&admission,
-                      inputReady:{id in self.sessions[id] != nil && !self.tasks.cancellationPending(for:id)},
-                      transportReady:{id in self.sessions[id]?.attach?.ready==true && !self.tasks.cancellationPending(for:id)},cancelModel:{id in
+                      inputReady:{id in self.sessions[id]?.stream.revoked==false && !self.tasks.cancellationPending(for:id)},
+                      transportReady:{id in self.sessions[id]?.stream.revoked==false && self.sessions[id]?.attach?.ready==true && !self.tasks.cancellationPending(for:id)},cancelModel:{id in
             if let job=try self.journal.jobs().first(where:{$0.id==id}) {try self.tasks.cancel(id:id,owner:job.ownerHash,now:now,uptime:clock)}
         })
         return updates

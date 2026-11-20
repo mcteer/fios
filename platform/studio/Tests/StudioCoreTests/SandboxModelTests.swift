@@ -28,6 +28,15 @@ func runSandboxModelTests() throws {
     guard terminal.count==1,let done=try JSONSerialization.jsonObject(with:terminal[0]) as? [String:Any],
           done["id"] as? String==request,done["status"] as? String=="interrupted",
           try cancelled.forward(.interrupted).isEmpty else {fatalError("Cancelled request published success or replayed terminal output")}
+    let siblingID=UUID().uuidString.lowercased(),siblingJob=UUID().uuidString.lowercased()
+    let siblingRuntime=String(repeating:"c",count:64)
+    var sibling=try SandboxModelChannel(job:siblingJob,runtimeID:siblingRuntime)
+    _=try sibling.accept(try packet(["version":1,"type":"model.request","id":siblingID,"prompt":"fixture"]),runtimeID:siblingRuntime)
+    let siblingTerminal=try sibling.forward(.complete)
+    guard siblingTerminal.count==1,let siblingDone=try JSONSerialization.jsonObject(with:siblingTerminal[0]) as? [String:Any],
+          siblingDone["id"] as? String==siblingID,siblingDone["status"] as? String=="complete" else {
+        fatalError("Independent sandbox terminal output inherited sibling cancellation")
+    }
     var revoked=try SandboxModelChannel(job:job,runtimeID:runtime)
     _=try revoked.accept(call,runtimeID:runtime)
     revoked.revoke()
@@ -42,5 +51,11 @@ func runSandboxModelTests() throws {
         _=try valid.forward(.complete)
     }
     do { _=try valid.accept(call,runtimeID:runtime);fatalError("Fifth sandbox request accepted") } catch ControlError.invalid_request {}
+    let preAttach=try SandboxTaskSession(source:Data("fixture".utf8),deadline:2000,now:1000)
+    try preAttach.renew()
+    preAttach.revoke(attach:nil)
+    guard preAttach.revoked,!preAttach.uploaded else {fatalError("Pre-attach revocation kept the session live")}
+    do {try preAttach.renew();fatalError("Revoked pre-attach session accepted new output")}
+    catch ControlError.invalid_request {}
     print("PASS: job/runtime-bound sandbox model frames, irreversible rejection, four-request cap and generated text stays data")
 }

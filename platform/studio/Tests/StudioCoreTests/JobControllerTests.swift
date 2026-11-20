@@ -247,7 +247,7 @@ private func checkDeferredCreateRestart()throws {
 }
 
 private func checkModelSandboxSourceTurnover() throws {
-    for (createBeforeTurnover,regress) in [(false,false),(true,false),(true,true)] {
+    for (createBeforeTurnover,regress,writerFence) in [(false,false,false),(true,false,false),(true,true,false),(false,false,true)] {
         let directory=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer {try? FileManager.default.removeItem(at:directory)}
         let journal=try Journal(directory:directory),runtime=FakeSandboxExecutor()
@@ -274,7 +274,21 @@ private func checkModelSandboxSourceTurnover() throws {
             try tick(10000,"original",sequence:regress ? 3:1)
             guard runtime.commands.count==1,case .create=runtime.commands[0] else {fatalError("Fixture did not issue create before turnover")}
         }
-        try tick(10500,regress ? "original":"replacement",sequence:regress ? 2:1)
+        if writerFence {
+            var writer:OpaquePointer?
+            guard sqlite3_open_v2(directory.appendingPathComponent("state.sqlite").path,&writer,SQLITE_OPEN_READWRITE|SQLITE_OPEN_FULLMUTEX,nil)==SQLITE_OK else {throw JournalError.storage}
+            defer {sqlite3_close(writer)}
+            guard sqlite3_exec(writer,"BEGIN IMMEDIATE",nil,nil,nil)==SQLITE_OK else {throw JournalError.storage}
+            do {try tick(10500,"replacement");fatalError("Fixture writer fence did not delay cancellation")}
+            catch JournalError.storage {}
+            guard tasks.cancellationPending(for:id),runtime.commands.isEmpty,try journal.jobs()[0].state == .reserved else {
+                fatalError("Deferred pre-attach cancellation issued work or lost intent")
+            }
+            do {try tick(10600,"original")}catch JournalError.storage {}
+            guard tasks.cancellationPending(for:id),runtime.commands.isEmpty else {fatalError("Restored source resumed pre-attach work behind writer fence")}
+            guard sqlite3_exec(writer,"ROLLBACK",nil,nil,nil)==SQLITE_OK else {throw JournalError.storage}
+        }
+        try tick(writerFence ? 10700:10500,writerFence || regress ? "original":"replacement",sequence:regress ? 2:1)
         if createBeforeTurnover {
             guard try journal.jobs()[0].state == .revoking else {fatalError("Pending sandbox accepted a regressed source before attach")}
         }
