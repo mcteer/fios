@@ -30,7 +30,10 @@ func runDrainTests()throws {
     let composed=ServiceDrainSnapshot(scope:try scope(epoch:"native/é"),nativeIdle:true,externalNativeWork:false,unmanagedRuntimeWork:false)
     let decomposed=ServiceDrainSnapshot(scope:try scope(stamp:1001,epoch:"native/e\u{301}"),nativeIdle:true,externalNativeWork:false,unmanagedRuntimeWork:false)
     _=try epochDrain.begin(snapshot:composed,role:.operator,now:1000)
-    guard try epochDrain.poll(snapshot:decomposed,now:1001).state == .refused(.scopeChanged) else {
+    let aliasRefusal=try epochDrain.poll(snapshot:decomposed,now:1001)
+    let originalAfterAlias=try epochDrain.poll(snapshot:composed,now:1002)
+    guard aliasRefusal.state == .refused(.scopeChanged),aliasRefusal.revokeOwned.isEmpty,
+          originalAfterAlias.state == .refused(.scopeChanged),originalAfterAlias.revokeOwned.isEmpty else {
         FileHandle.standardError.write(Data("DRAIN_NORMALIZED_NATIVE_EPOCH\n".utf8));throw ServiceError.invalid
     }
     var force=ServicePolicy()

@@ -106,5 +106,12 @@ func runServiceDrainControllerTests()throws {
     guard try failed.poll(service:.mlx,now:1001,uptime:1001).state == .refused(.activityUnknown) else {
         FileHandle.standardError.write(Data("DRAIN_HID_OWNED_LEDGER_JOB\n".utf8));throw JournalError.conflict
     }
+    failedCache.publish(try snapshot(jobs:[stopping],requests:[],stamp:1002),for:.mlx)
+    let restoredScope=try failed.poll(service:.mlx,now:1002,uptime:1002)
+    guard restoredScope.state == .refused(.activityUnknown),restoredScope.revokeOwned.isEmpty,
+          try failedJournal.jobs().first(where:{$0.id==stopping})?.state == .stopping,
+          try failedJournal.desired(service:"mlx")=="maintenance" else {
+        fatalError("Restored source scope revived an attempt or changed durable cleanup")
+    }
     print("PASS: source-cache-bound operator drain persists maintenance before owned revoke, retains independent uncertainty/jobs, refuses hidden claims/new scope, expires at60s and rechecks ready; synthetic source, no native actuator")
 }
