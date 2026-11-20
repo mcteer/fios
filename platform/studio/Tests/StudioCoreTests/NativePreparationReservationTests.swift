@@ -276,6 +276,10 @@ private func runOwnedPreparationCoherenceTests(peer:NativeControlPeer)throws {
     let wrongRoot=NativeRequestLineageSample(peer:peer,sampledAt:lineage.sampledAt,lineage:NativeRequestLineage(instance:instance,correlationID:id,
         sampleSequence:12,rootSequence:7,found:true,uncertain:false,references:1,owners:1,ingress:0,preparing:1,active:0,responding:0))
     guard NativeOwnedPreparationCoherence.evaluate(registration:registration,lineage:wrongRoot,activity:current,sourceCoverage:.all_clients,now:now)==nil else {fatalError("Foreign original root accepted")}
+    let restartedPeer=NativeControlPeer(pid:peer.pid,start:peer.start+1,executable:peer.executable)
+    let restartedLineage=NativeRequestLineageSample(peer:restartedPeer,sampledAt:lineage.sampledAt,lineage:lineage.lineage)
+    guard NativeOwnedPreparationCoherence.evaluate(registration:registration,lineage:restartedLineage,activity:current,sourceCoverage:.all_clients,now:now)==nil,
+          evaluate(activity(samplePeer:restartedPeer))==nil else {fatalError("Same-PID replacement inherited original preparation coherence")}
     let reorderedLineage=NativeRequestLineageSample(peer:peer,sampledAt:now+3,lineage:lineage.lineage)
     guard NativeOwnedPreparationCoherence.evaluate(registration:registration,lineage:reorderedLineage,
         activity:activity(stamp:now+2,receivedAt:now+4),sourceCoverage:.all_clients,now:now+4)==nil else {
