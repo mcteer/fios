@@ -143,6 +143,11 @@ try {
     assert.deepEqual(readdirSync(occupied),['unrelated']);assert.equal(readFileSync(sentinel,'utf8'),'retain this directory\n');
     assert.deepEqual(readdirSync(bundle).sort(),sealedEntries);assert.equal(sealedDatabase(),originalDatabase);
     assert.equal(createHash('sha256').update(readFileSync(join(bundle,'backup.json'))).digest('hex'),backup.sha256);
+    const staleReceipt=(backup.sha256.startsWith('0')?'1':'0')+backup.sha256.slice(1);
+    const staleDestination=join(scratch,'stale-receipt-restore');
+    const stale=spawnSync(join(newRelease,'bin/studioctl'),['--state',bundle,'restore-state','--sha256',staleReceipt,'--to',staleDestination],{stdio:'ignore',timeout:5000});
+    assert.equal(stale.status,1,'Restore accepted a nonmatching receipt');
+    assert.equal(existsSync(staleDestination),false);assert.equal(sealedDatabase(),originalDatabase);
     restored=join(scratch,'restored');
     cli(newRelease,bundle,['restore-state','--sha256',backup.sha256,'--to',restored]);
     await cycle(newRelease,restored);await cycle(oldRelease,restored);
