@@ -176,6 +176,15 @@ func runTaskCompletionTests()throws {
               status["event"]==nil,try reopened.activeLaunchCount()==1,try reopened.unresolvedCount(job:unknownID)==1 else {
             fatalError("Reopen discarded unknown launch custody")
         }
+        var admission=AdmissionPolicy()
+        _=try WorkerReconciler(journal:reopened,admission:&admission)
+        let sample=ResourceSample(sampledAt:5000,physical:128<<30,available:64<<30,vmAvailable:nil,diskFree:100<<30,cpu:0,pressure:.normal,thermal:.nominal,cpuSampledAt:5000)
+        try admission.reserveWorker(key:"unrelated",sample:sample,now:5000)
+        do {
+            try admission.reserveWorker(key:"third",sample:sample,now:5000)
+            fatalError("Unknown completion returned worker capacity on reopen")
+        } catch AdmissionError.capacity {}
+        guard try reopened.uncertainCount()==1 else {fatalError("Startup capacity recovery settled independent inference uncertainty")}
     }
     let (id,stillRunning)=try exerciseCompletion(in:directory,token:token)
     let reopened=try Journal(directory:directory)
