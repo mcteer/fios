@@ -2,7 +2,7 @@
 // Disposable real supervisor/manager only; no native service or enrollment.
 import assert from 'node:assert/strict';
 import {spawn,spawnSync} from 'node:child_process';
-import {mkdtempSync,readFileSync,rmSync} from 'node:fs';
+import {mkdirSync,mkdtempSync,readFileSync,renameSync,rmdirSync,rmSync} from 'node:fs';
 import {setTimeout as delay} from 'node:timers/promises';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
@@ -36,7 +36,29 @@ try {
  assert(publications.size<=4,`Unchanged supervisor durably published ${publications.size} times in 2.25s; watchdog polling must not force four fsync publications/second`);
  const result=run(path.join(bin,'studioctl'),['--state',state,'supervisor'],3000);
  assert.equal(result.status,0,'Coalescing made independently read status stale');
- console.log(`PASS: real unchanged supervisor publishes ${publications.size} fresh bounded snapshots/2.25s, not four durable writes/second; child/watchdog loops remain independent; no native action.`);
+ const statusPath=path.join(state,'supervisor.json'),progressPath=path.join(state,'progress.json');
+ const before=JSON.parse(readFileSync(progressPath));
+ renameSync(statusPath,path.join(state,'prior-supervisor.json'));
+ mkdirSync(statusPath,{mode:0o700}); // Refuse only the private status rename, not restart-budget persistence.
+ try {
+  const deadline=performance.now()+5000;
+  for(;;){
+   assert(!exited(),'Status write failure terminated the supervisor');
+   const current=JSON.parse(readFileSync(progressPath));
+   assert.equal(current.pid,managerPID);assert.equal(current.epoch,before.epoch);
+   if(current.progress>=before.progress+3)break;
+   assert(performance.now()<deadline,'Same manager did not publish progress through status refusal');
+   await delay(25);
+  }
+ } finally {rmdirSync(statusPath);}
+ const recoveryDeadline=performance.now()+3000;
+ for(;;){
+  let value;
+  try{value=JSON.parse(readFileSync(statusPath));}catch{}
+  if(value){assert.equal(value.pid,child.pid);assert.equal(value.state,'running');assert.equal(value.starts,1);assert(value.sampled_uptime_ms>last);break;}
+  assert(!exited()&&performance.now()<recoveryDeadline,'Status publication did not recover');await delay(25);
+ }
+ console.log(`PASS: real unchanged supervisor publishes ${publications.size} fresh bounded snapshots/2.25s, not four durable writes/second; same manager survives status-only write refusal and publication recovers without a restart; no native action.`);
 }finally {
  if(!exited())child.kill('SIGTERM');
  const deadline=performance.now()+12000;

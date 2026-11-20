@@ -70,6 +70,7 @@ public enum SupervisorRuntime {
         var publishedState:PlatformSupervisorState?
         var publishedStarts:Int?
         var publishedAt:Int64 = -1000
+        var publicationFailedAt:Int64?
         let termination=Termination()
         while !termination.requested {
             try autoreleasepool {
@@ -121,12 +122,20 @@ public enum SupervisorRuntime {
             if custodyFailed {state = .degraded}
             // Keep 250ms watchdog polling, but unchanged telemetry needs only
             // 1s durability (reader freshness is 5s). Publish every transition.
-            if state != publishedState || policy.startHistory.count != publishedStarts || now-publishedAt >= 1000 {
+            let publicationRetryReady=publicationFailedAt.map {now-$0>=1000} ?? true
+            if publicationRetryReady && (state != publishedState || policy.startHistory.count != publishedStarts || now-publishedAt >= 1000 || publicationFailedAt != nil) {
                 let sampledAt=HostResources.nowMilliseconds()
                 let status:[String:Any] = ["version":1,"boot":boot,"pid":getpid(),"process_start":birth,"state":state.rawValue,"starts":policy.startHistory.count,"sampled_uptime_ms":now]
-                try AtomicState.write(JSONSerialization.data(withJSONObject:status),to:directory.appendingPathComponent("supervisor.json"))
-                telemetry.supervisor(PlatformSupervisorSample(state:state,starts:policy.startHistory.count,sampledAt:sampledAt))
-                publishedState=state;publishedStarts=policy.startHistory.count;publishedAt=now
+                do {
+                    try AtomicState.write(JSONSerialization.data(withJSONObject:status),to:directory.appendingPathComponent("supervisor.json"))
+                    telemetry.supervisor(PlatformSupervisorSample(state:state,starts:policy.startHistory.count,sampledAt:sampledAt))
+                    publishedState=state;publishedStarts=policy.startHistory.count;publishedAt=now;publicationFailedAt=nil
+                } catch JournalError.storage {
+                    // Output loss is not child failure. Do not drop custody or
+                    // restart the manager; retry status only, at bounded cadence.
+                    if publicationFailedAt==nil {telemetry.supervisor(nil);telemetry.event(.rejected)}
+                    publicationFailedAt=now
+                }
             }
             }
             Thread.sleep(forTimeInterval:0.25)
