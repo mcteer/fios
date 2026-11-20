@@ -46,6 +46,10 @@ try{
    assert.equal(combined.native_health_source,'unconfigured');assert.equal(combined.orbstack_health_source,'unconfigured');
    assert.equal(combined.vm_resource_source,'unconfigured');
    assert.equal(combined.native_admissions,'unsupported');assert.equal(combined.native_ingress_admissions,'unconfigured');assert.equal(combined.service_recovery,'disabled');assert.equal(combined.sandbox_admission,'disabled');
+   const diagnostics=combined.native_control;
+   assert.equal(diagnostics.state,'unconfigured');assert.equal(diagnostics.authoritative,false);
+   for(const key of ['received_at','source_sampled_at','source_sequence','reported_counts'])assert.equal(diagnostics[key],null);
+   for(const key of ['primary_activity','backend_fences'])assert(!Object.hasOwn(diagnostics,key));
   }
 
   assert.equal(combined.runtime_cleanup.scope,'owned_runtime_cleanup');
