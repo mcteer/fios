@@ -643,15 +643,21 @@ func runCleanupStatusRecoveryTests() throws {
     runtime=FakeSandboxExecutor()
     controller=JobController(journal:journal,executor:runtime)
     admission=AdmissionPolicy()
+    var startupAdmission=AdmissionPolicy()
+    _=try WorkerReconciler(journal:journal,admission:&startupAdmission)
+    func assertCharge(_ policy:AdmissionPolicy,now:Int64)throws {
+        var recoveredCapacity=policy
+        try recoveredCapacity.reserve(job:UUID().uuidString.lowercased(),memory:512<<20,cpus:1,sample:sample(now),now:now)
+        do {
+            try recoveredCapacity.reserve(job:UUID().uuidString.lowercased(),memory:512<<20,cpus:1,sample:sample(now),now:now)
+            fatalError("Reopened manager failed to reconstruct the outstanding charge")
+        } catch AdmissionError.capacity {}
+    }
+    try assertCharge(startupAdmission,now:101100) // Before any executor command.
     runtime.storageContinuityUnknown=true
     try tick(101100)
     try tick(101200)
-    var recoveredCapacity=admission
-    try recoveredCapacity.reserve(job:UUID().uuidString.lowercased(),memory:512<<20,cpus:1,sample:sample(101200),now:101200)
-    do {
-        try recoveredCapacity.reserve(job:UUID().uuidString.lowercased(),memory:512<<20,cpus:1,sample:sample(101200),now:101200)
-        fatalError("Reopened manager failed to reconstruct the outstanding charge")
-    } catch AdmissionError.capacity {}
+    try assertCharge(admission,now:101200) // Fresh, independently restored by tick.
     guard controller.cleanupStatus(now:101200)["storage_continuity_unknown"] as? Int==1,
           try journal.sandboxRecords().first(where:{$0.configuration.job==lateID})?.removalProven==false,
           try journal.uncertainCount()==1,
