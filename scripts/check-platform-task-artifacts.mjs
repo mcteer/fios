@@ -2,7 +2,7 @@
 // Normal real-manager/CLI artifact downloads, without inference or runtime actions.
 import assert from 'node:assert/strict';
 import {spawn,spawnSync} from 'node:child_process';
-import {mkdtempSync,readdirSync,readFileSync,writeFileSync,copyFileSync,existsSync} from 'node:fs';
+import {mkdtempSync,readdirSync,readFileSync,writeFileSync,copyFileSync,existsSync,statSync} from 'node:fs';
 import {join,resolve} from 'node:path';
 import {createHash,randomBytes,randomUUID} from 'node:crypto';
 import {setTimeout as delay} from 'node:timers/promises';
@@ -74,7 +74,10 @@ try {
  }
  await stop();
  const retainedArtifactFiles=['index.json',...fixture.artifacts.map(id=>id+'.blob')];
- const retainedArchive=()=>Object.fromEntries(retainedArtifactFiles.map(name=>[name,sha(readFileSync(join(state,'artifacts',name)))]));
+ const retainedArchive=()=>Object.fromEntries(retainedArtifactFiles.map(name=>{
+  const path=join(state,'artifacts',name),info=statSync(path,{bigint:true});
+  return [name,{sha256:sha(readFileSync(path)),device:info.dev,inode:info.ino}];
+ }));
  const originalArchive=retainedArchive();
  assert(!existsSync(join(state,'task.sock')),'Stopped fixture left a task socket');
  child=launch('--resume');
@@ -116,7 +119,7 @@ try {
   records.push({bytes:expected.length,chunks:parts.length,sha256:sha(expected),complete:true});
  }
  await stop();
- assert.deepEqual(retainedArchive(),originalArchive,'Manager replacement or downloads changed durable archive bytes');
+ assert.deepEqual(retainedArchive(),originalArchive,'Manager replacement or downloads changed durable archive identity or bytes');
  const receipt={scope:'normal_real_manager_cli_artifact_downloads',stopped_archive_unchanged:true,finished_job_status:true,finished_job_renewal_error_correlated:true,unowned_and_missing_same_terminal_error:true,completed_stream_replay_refused:true,restarted_stream_refused_and_export_retained:true,records,manager_sha256:sha(readFileSync(binary)),cli_sha256:sha(readFileSync(cli)),model_requests:0,runtime_actions:0,installed_service_actions:0};
  writeFileSync(join(directory,'receipt.json'),JSON.stringify(receipt,null,2)+'\n');
  console.log(JSON.stringify({ok:true,directory,downloads:records.length,chunks:records.map(r=>r.chunks),model_requests:0,runtime_actions:0}));
