@@ -89,10 +89,17 @@ func runNativeVMInventoryTests() throws {
     let rolled=VMEnvelopeReader(kernel:KernelVMFixture(stamp:1000),inventory:rolledInventory,nativeProfileHash:String(repeating:"a",count:64),physical:32<<30,wallClock:{rollback.next()},uptime:{1})
     do {_=try rolled.read(configuration:configuration,id:id,leaseUntil:2000);fatalError("Wall rollback retained VM observation")}catch RuntimeError.identity {}
     guard rolledInventory.captures==1 else {fatalError("Wall rollback reached another inventory capture")}
-    let steady=InventoryClockFixture([1000,1000,1001,6001]),slowInventory=InventoryVMFixture(stamps:[1000,1002])
-    let slow=VMEnvelopeReader(kernel:KernelVMFixture(stamp:1001),inventory:slowInventory,nativeProfileHash:String(repeating:"a",count:64),physical:32<<30,wallClock:{1001},uptime:{Double(steady.next())/1000})
-    do {_=try slow.read(configuration:configuration,id:id,leaseUntil:2000);fatalError("Over-budget kernel read retained VM observation")}catch RuntimeError.deadline {}
-    guard slowInventory.captures==1 else {fatalError("Over-budget read reached post-inventory")}
+    for cutoff:Int64 in [6000,6001] {
+        let steady=InventoryClockFixture([1000,1000,1001,cutoff]),slowInventory=InventoryVMFixture(stamps:[1000,1002])
+        let slow=VMEnvelopeReader(kernel:KernelVMFixture(stamp:1001),inventory:slowInventory,nativeProfileHash:String(repeating:"a",count:64),physical:32<<30,wallClock:{1001},uptime:{Double(steady.next())/1000})
+        do {_=try slow.read(configuration:configuration,id:id,leaseUntil:2000);fatalError("At-or-over-budget kernel read retained VM observation")}catch RuntimeError.deadline {}
+        guard slowInventory.captures==1 else {fatalError("At-or-over-budget read reached post-inventory")}
+    }
+    let nearSteady=InventoryClockFixture([1000,1000,1001,5999,5999]),nearInventory=InventoryVMFixture(stamps:[1000,1001])
+    let near=VMEnvelopeReader(kernel:KernelVMFixture(stamp:1001),inventory:nearInventory,nativeProfileHash:String(repeating:"a",count:64),
+        physical:32<<30,wallClock:{1001},uptime:{Double(nearSteady.next())/1000})
+    let nearSample=try near.read(configuration:configuration,id:id,leaseUntil:2000)
+    guard nearInventory.captures==2,nearSample.envelope?.sampledAt==1000 else {fatalError("Just-inside inventory read lost earliest evidence")}
     let ageClock=InventoryClockFixture([1000,1001,6001]),ageInventory=InventoryVMFixture(stamps:[1000,6001])
     let aged=VMEnvelopeReader(kernel:KernelVMFixture(stamp:1001),inventory:ageInventory,nativeProfileHash:String(repeating:"a",count:64),
         physical:32<<30,wallClock:{ageClock.next()},uptime:{1})

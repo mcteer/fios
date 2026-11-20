@@ -61,7 +61,7 @@ struct VMEnvelopeReader:VMResourceReading {
             let now=wallClock(),steady=uptime()
             guard (0...WireScalar.maximumTimestamp).contains(now),now>=previousWall,
                   began.isFinite,began>=0,steady.isFinite,steady>=previousUptime else {throw RuntimeError.identity}
-            guard leaseUntil<=WireScalar.maximumTimestamp,now<leaseUntil,steady-began<=5 else {throw RuntimeError.deadline}
+            guard leaseUntil<=WireScalar.maximumTimestamp,now<leaseUntil,steady-began<5 else {throw RuntimeError.deadline}
             previousWall=now;previousUptime=steady
             return now
         }
