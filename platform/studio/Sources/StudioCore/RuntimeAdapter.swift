@@ -132,10 +132,12 @@ public struct VerifiedExecutable:Sendable {
             var buffer = [UInt8](repeating:0,count:4096)
             let count = read(fd,&buffer,buffer.count)
             if count > 0 {
-                if output.count + count > maximumOutput { failure = .outputLimit }
-                else if failure == nil { output.append(contentsOf:buffer.prefix(count)) }
+                if failure == nil {
+                    if output.count + count > maximumOutput {failure = .outputLimit}
+                    else {output.append(contentsOf:buffer.prefix(count))}
+                }
             } else if count == 0 { eof = true }
-            else if errno != EAGAIN && errno != EINTR { failure = .launch; eof = true }
+            else if errno != EAGAIN && errno != EINTR { if failure == nil {failure = .launch}; eof = true }
             let now = ProcessInfo.processInfo.systemUptime
             if now >= deadline && failure == nil { failure = .deadline }
             if failure != nil && termAt == nil {
@@ -155,6 +157,8 @@ public struct VerifiedExecutable:Sendable {
         // EOF plus Foundation exit observation makes terminationStatus available;
         // slot release independently requires kernel absence. No blocking join.
         if let failure { throw failure }
-        return CommandResult(status:process.terminationStatus,output:output)
+        let status=process.terminationStatus
+        guard ProcessInfo.processInfo.systemUptime<deadline else {throw RuntimeError.deadline}
+        return CommandResult(status:status,output:output)
     }
 }
