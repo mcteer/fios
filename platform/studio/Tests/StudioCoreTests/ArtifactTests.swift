@@ -78,6 +78,27 @@ func runArtifactTests() throws {
           try store!.retrieve(id:survivor,ownerHash:owner,now:retention+4)==Data("retained export".utf8) else {
         fatalError("Already-unlinked deletion replay changed independent artifact state")
     }
+    let incompleteJob=UUID().uuidString.lowercased()
+    let incomplete=try store!.publish(job:incompleteJob,ownerHash:owner,data:Data("incomplete export".utf8),now:retention+4)
+    store=nil
+    let incompleteBlob=directory.appendingPathComponent(incomplete+".blob")
+    let incompleteWriter=try FileHandle(forWritingTo:incompleteBlob)
+    try incompleteWriter.truncate(atOffset:1);try incompleteWriter.close()
+    index=try JSONSerialization.jsonObject(with:Data(contentsOf:indexURL)) as! [String:Any]
+    metadata=index["records"] as! [[String:Any]]
+    guard let incompleteRow=metadata.firstIndex(where:{$0["id"] as? String==incomplete}) else {throw ArtifactError.invalid}
+    metadata[incompleteRow]["state"]="pending";index["records"]=metadata
+    try AtomicState.write(JSONSerialization.data(withJSONObject:index),to:indexURL)
+    store=try ArtifactStore(directory:directory)
+    do {_=try store!.download(id:incomplete,ownerHash:owner,now:retention+4);fatalError("Interrupted artifact became readable")}
+    catch ArtifactError.unavailable {}
+    let afterRecovery=try JSONSerialization.jsonObject(with:Data(contentsOf:indexURL)) as! [String:Any]
+    let failedRows=afterRecovery["records"] as! [[String:Any]]
+    guard failedRows.first(where:{$0["id"] as? String==incomplete})?["state"] as? String=="failed",
+          try Data(contentsOf:incompleteBlob)==Data("i".utf8),
+          try store!.retrieve(id:survivor,ownerHash:owner,now:retention+4)==Data("retained export".utf8) else {
+        fatalError("Incomplete publication recovery removed diagnostic bytes or changed independent export")
+    }
     // A forged storage object cannot redirect writes or retrieval into a host file.
     let foreign=directory.appendingPathComponent("forged")
     try FileManager.default.createSymbolicLink(atPath:foreign.path,withDestinationPath:"/etc/hosts")
