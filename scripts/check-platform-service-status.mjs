@@ -164,7 +164,9 @@ try{
  assert.equal(cleanupResources.resource_observation.vm_epoch,null);
  assert.equal(cleanupResources.resource_observation.signals.vm_available.availability,'unknown');
  assert.equal(cleanupResources.resources.vmAvailable,null);
- assert(Number.isSafeInteger(cleanupResources.resources.vmSampledAt),'Synthetic cached source did not supply its original time');
+ assert.equal(cleanupResources.resources.vmSampledAt,null,'Unbound synthetic VM timestamp became public evidence');
+ assert.equal(cleanupResources.resource_observation.vm_sampled_at,null);
+ assert.equal(cleanupResources.resource_observation.signals.vm_available.sampled_at,null);
  assert.equal(cleanupResources.resources.cpu,0);
  assert.equal(cleanupResources.resource_observation.signals.cpu.availability,'observed');
  const readonly=await until(()=>status(state,['export']));

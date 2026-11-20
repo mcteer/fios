@@ -55,7 +55,9 @@ try{
    if(mode==='held'){assert.equal(result.ok,false);assert.equal(result.error,'native_unsupported');}
    else{
     assert.equal(result.ok,true);assert.equal(result.maintenance_applied,true);assert.equal(result.native_action_applied,false);assert.equal(result.drain.revocations_requested,1);assert.equal(result.drain.state,'draining');
-    const status=await rpc(state,'status',{},'observe');assert.equal(status.services.mlx.desired,'maintenance');assert.equal(status.unresolved_requests,2);assert.equal(status.worker_reservations,2);
+    const status=await rpc(state,'status',{},'observe');
+    const otherService=status.services.orbstack;
+    assert.equal(status.services.mlx.desired,'maintenance');assert.equal(status.unresolved_requests,2);assert.equal(status.worker_reservations,2);
     const force=await rpc(state,'service.force',{service:'mlx',phase:'prepare'});assert.equal(force.ok,false);assert.equal(force.error,'native_unsupported');assert.equal(force.applied,false);
     child.stdin.write(JSON.stringify({epoch:first.epoch,mode:'omit'})+'\n');
     await until(()=>readFileSync(join(directory,mode+'-cache-ready'),'utf8')==='omit');
@@ -67,6 +69,9 @@ try{
     assert.equal(latched.services.mlx.drain.reason,'activity_unknown');
     assert.equal(latched.services.mlx.desired,'maintenance');
     assert.equal(latched.unresolved_requests,2);
+    for(const key of ['desired','launch_pending'])assert.equal(latched.services.orbstack[key],otherService[key]);
+    assert.equal(latched.services.orbstack.drain,undefined,'MLX drain refusal crossed into OrbStack');
+    assert.deepEqual(latched.services.orbstack.recovery,otherService.recovery);
     const resume=await rpc(state,'service.desired',{service:'mlx',desired:'running'});assert.equal(resume.ok,true);assert.equal(resume.applied,false);
     assert.equal((await rpc(state,'status',{},'observe')).services.mlx.drain,undefined,'Superseded drain report survived newer operator intent');
    }
