@@ -149,6 +149,26 @@ try {
   assert.deepEqual(JSON.parse(run(helper,['check-incomplete',incompleteRestore])),{uncertain:1,exports:0,failed_exports:1});
   assert.deepEqual(readFileSync(join(incompleteRestore,incompleteBlob)),prefix);
   for(const copy of [incompleteState,incompleteBackup])assert.deepEqual(readFileSync(join(copy,'artifacts/index.json')),incompleteBytes);
+  const digestState=join(scratch,'digest-state'),digestBundle=join(scratch,'digest-bundle'),digestRestore=join(scratch,'digest-restored');
+  run(helper,['seed',digestState]);
+  const digestIndex=join(digestState,'artifacts/index.json'),digestRecord=JSON.parse(readFileSync(digestIndex));
+  assert.equal(digestRecord.records.length,1);
+  const row=digestRecord.records[0];row.state='pending';
+  const digestIndexBytes=Buffer.from(JSON.stringify(digestRecord)),digestBlob=join('artifacts',row.id+'.blob');
+  const changedPayload=readFileSync(join(digestState,digestBlob));changedPayload[0]^=1;
+  assert.equal(changedPayload.length,row.bytes);assert.notEqual(hash(changedPayload),row.sha256);
+  writeFileSync(digestIndex,digestIndexBytes);writeFileSync(join(digestState,digestBlob),changedPayload);
+  const digestReceipt=JSON.parse(cli(digestState,['backup-state','--to',digestBundle]));
+  const digestVerified=JSON.parse(cli(digestBundle,['verify-backup','--sha256',digestReceipt.sha256]));
+  const digestRestored=JSON.parse(cli(digestBundle,['restore-state','--sha256',digestReceipt.sha256,'--to',digestRestore]));
+  assertStoppedReceipts(digestReceipt,digestVerified,digestRestored);
+  for(const copy of [digestState,digestBundle,digestRestore]){
+    assert.deepEqual(readFileSync(join(copy,'artifacts/index.json')),digestIndexBytes);
+    assert.deepEqual(readFileSync(join(copy,digestBlob)),changedPayload);
+  }
+  assert.deepEqual(JSON.parse(run(helper,['check-incomplete',digestRestore])),{uncertain:1,exports:0,failed_exports:1});
+  assert.deepEqual(readFileSync(join(digestRestore,digestBlob)),changedPayload);
+  for(const copy of [digestState,digestBundle])assert.deepEqual(readFileSync(join(copy,'artifacts/index.json')),digestIndexBytes);
   const future=join(scratch,'future-state'),failedJournal=join(scratch,'failed-journal.sqlite');
   run(helper,['seed',future]);run(helper,['future',future]);
   assert.equal(cli(future,['backup','--to',failedJournal],{expected:1}),'');
