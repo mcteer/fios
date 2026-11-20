@@ -13,6 +13,7 @@ private class FakeSandboxExecutor:SandboxExecuting {
     var loseCreateReply=false
     var acknowledgeInspection=false
     var storageContinuityUnknown=false
+    var inspectionUnavailable=false
     var resourceNow:Int64=0
     var resourceFailure=false
     var mismatchedResourceEnvelope=false
@@ -47,6 +48,10 @@ private class FakeSandboxExecutor:SandboxExecuting {
             let id=String(repeating:job.first=="a" ? "a" : "b",count:64)
             present[job]=(config,id,false);result = .created(id)
         case .inspect:
+            if inspectionUnavailable {
+                values.append(SandboxExecution(job:job,result:.failure(.unavailable)))
+                return
+            }
             if storageContinuityUnknown {
                 values.append(SandboxExecution(job:job,result:.failure(.storageContinuityUnknown)))
                 return
@@ -621,6 +626,13 @@ func runCleanupStatusRecoveryTests() throws {
         fatalError("Terminal metadata retention discarded unresolved sandbox custody")
     }
     runtime.storageContinuityUnknown=false
+    runtime.inspectionUnavailable=true
+    try tick(100500)
+    try tick(101000)
+    guard controller.cleanupStatus(now:101000)["storage_continuity_unknown"] as? Int==1,
+          try journal.sandboxRecords().first(where:{$0.configuration.job==lateID})?.removalProven==false,
+          try journal.uncertainCount()==1 else {fatalError("Generic inspection failure erased the storage refusal or custody")}
+    runtime.inspectionUnavailable=false
     let lateRuntimeID=String(repeating:"d",count:64)
     runtime.present[lateID]=(lateConfig,lateRuntimeID,false)
     for now:Int64 in [101500,102000,102500,103500,104000] {try tick(now)}
