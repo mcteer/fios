@@ -175,6 +175,26 @@ func runBackupTests() throws {
             fatalError("Export clock refusal lost already-verified diagnostic index")
         }
     }
+    let changedIndexTarget=root.appendingPathComponent("changed-readback-index")
+    let changedIndexPath=changedIndexTarget.appendingPathComponent("index.json")
+    var changedIndex=indexBefore
+    changedIndex[changedIndex.startIndex] ^= 1
+    var indexChecks=0,replacementWritten=false
+    do {
+        _=try StoppedArtifactBackup.create(directory:state,destination:changedIndexTarget,uptime:{
+            indexChecks+=1
+            if indexChecks==artifactCheckpoints-2 {
+                do {try changedIndex.write(to:changedIndexPath);replacementWritten=true}
+                catch {fatalError("Unable to change disposable destination index: \(error)")}
+            }
+            return 100
+        })
+        fatalError("Same-size destination index mutation received a receipt")
+    } catch JournalError.invalid {}
+    guard replacementWritten,try Data(contentsOf:changedIndexPath)==changedIndex,
+          try Data(contentsOf:state.appendingPathComponent("artifacts/index.json"))==indexBefore else {
+        fatalError("Destination readback refusal did not preserve source and diagnostic bytes")
+    }
     let exportedIndex=try Data(contentsOf:exports.appendingPathComponent("index.json"))
     let exportedIndexDigest=SHA256.hash(data:exportedIndex).map {String(format:"%02x",$0)}.joined()
     guard saved.artifacts==1,saved.bytes==payload.count,exportedIndex==indexBefore,saved.indexSHA256==exportedIndexDigest,
