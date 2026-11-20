@@ -126,6 +126,26 @@ func runArtifactTests() throws {
           try store!.retrieve(id:survivor,ownerHash:owner,now:retention+4)==Data("retained export".utf8) else {
         fatalError("Incomplete publication recovery removed diagnostic bytes or changed independent export")
     }
+    let mismatchedBytes=Data("digest mismatch".utf8),mismatchedJob=UUID().uuidString.lowercased()
+    let mismatched=try store!.publish(job:mismatchedJob,ownerHash:owner,data:mismatchedBytes,now:retention+4)
+    store=nil
+    let mismatchedBlob=directory.appendingPathComponent(mismatched+".blob")
+    var changed=mismatchedBytes;changed[changed.startIndex] ^= 1
+    try changed.write(to:mismatchedBlob)
+    index=try JSONSerialization.jsonObject(with:Data(contentsOf:indexURL)) as! [String:Any]
+    metadata=index["records"] as! [[String:Any]]
+    guard let mismatchedRow=metadata.firstIndex(where:{$0["id"] as? String==mismatched}) else {throw ArtifactError.invalid}
+    metadata[mismatchedRow]["state"]="pending";index["records"]=metadata
+    try AtomicState.write(JSONSerialization.data(withJSONObject:index),to:indexURL)
+    store=try ArtifactStore(directory:directory,availableBytes:{disk})
+    do {_=try store!.download(id:mismatched,ownerHash:owner,now:retention+4);fatalError("Size alone promoted a pending export")}
+    catch ArtifactError.unavailable {}
+    let reopenedMetadata=try JSONSerialization.jsonObject(with:Data(contentsOf:indexURL)) as! [String:Any]
+    guard (reopenedMetadata["records"] as? [[String:Any]])?.first(where:{$0["id"] as? String==mismatched})?["state"] as? String=="failed",
+          try Data(contentsOf:mismatchedBlob)==changed,
+          try store!.retrieve(id:survivor,ownerHash:owner,now:retention+4)==Data("retained export".utf8) else {
+        fatalError("Digest refusal lost diagnostic bytes or changed independent export")
+    }
     disk=(UInt64(10)<<30)+1
     do {_=try store!.publish(job:incompleteJob,ownerHash:owner,data:Data([1]),now:retention+4);fatalError("Failed publication refunded original disk commitment")}
     catch ArtifactError.capacity {}
