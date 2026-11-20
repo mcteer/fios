@@ -81,6 +81,16 @@ func runReadOnlyVMResourceTests() throws {
     guard replay.epoch(now:3001)==nil,replay.applying(to:host,now:3001).vmAvailable==nil else {
         fatalError("VM envelope predating submitted work became current capacity")
     }
+    let duplicateWork=VMObservationFixture(),duplicate=ReadOnlyVMResources(work:duplicateWork)
+    duplicate.tick(records:[record],jobs:[job],physical:host.physical,now:3000)
+    let exactReply=reply(sample(3000))
+    duplicateWork.replies=[exactReply,exactReply]
+    duplicate.tick(records:[record],jobs:[job],physical:host.physical,now:3001)
+    duplicate.tick(records:[record],jobs:[job],physical:host.physical,now:5000)
+    guard duplicateWork.replies.isEmpty,duplicateWork.requests.count==1,duplicate.epoch(now:5000)==nil,
+          duplicate.applying(to:host,now:5000).vmAvailable==nil else {
+        fatalError("Duplicate read-only VM completion kept a candidate or restored observation")
+    }
     healthyWork.replies=[VMReadResult(job:job.id,runtimeID:id,result:.failure(.unavailable))]
     healthy.tick(records:[record],jobs:[job],physical:host.physical,now:4000)
     // The original envelope is still within its freshness window. Failure,
