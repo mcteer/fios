@@ -207,6 +207,20 @@ final class StudioOpenTelemetryTests:XCTestCase {
         }
     }
 
+    func testGPUAgeDoesNotHideFreshCPUAndVM() {
+        let telemetry=StudioOpenTelemetry(),now=HostResources.nowMilliseconds()
+        telemetry.resources(ResourceSample(sampledAt:now,physical:1024,available:512,
+            vmAvailable:0,diskFree:4096,cpu:0,pressure:.normal,thermal:.nominal,vmSampledAt:now,cpuSampledAt:now))
+        let gpu=GPUSample(utilization:0,inUseBytes:256,allocatedBytes:512)
+        for (delta,observed): (Int64,Bool) in [(0,true),(-6000,false),(3000,false)] {
+            telemetry.gpu(gpu,sampledAt:now+delta)
+            let names=Set(telemetry.collectMetrics().filter{!$0.data.points.isEmpty}.map{$0.name})
+            XCTAssertEqual(names.contains{$0.hasPrefix("fios.platform.gpu.")},observed)
+            XCTAssertTrue(names.contains("fios.platform.host.cpu.utilization"))
+            XCTAssertTrue(names.contains("fios.platform.vm.memory.available"))
+        }
+    }
+
     func testOversizedVMEnvelopeDoesNotSuppressHostMemory() throws {
         let telemetry=StudioOpenTelemetry(),now=HostResources.nowMilliseconds()
         telemetry.resources(ResourceSample(sampledAt:now,physical:1024,available:512,
