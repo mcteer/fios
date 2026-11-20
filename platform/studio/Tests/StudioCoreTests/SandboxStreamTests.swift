@@ -14,6 +14,14 @@ func runSandboxStreamTests() throws {
     _=try stream.accept(frame("artifact.chunk",["id":id,"index":0,"data":data.base64EncodedString()]),now:1003)
     guard case .artifact(let request,let bytes)=try stream.accept(frame("artifact.end",["id":id]),now:1004),request==id,bytes==data else {fatalError("Artifact transfer was not verified")}
     let saved=UUID().uuidString.lowercased()
+    var terminalFirst=stream
+    guard case .done(true)=try terminalFirst.accept(frame("done",["status":"complete","exit_code":0,"output_bytes":text.count+data.count]),now:1005) else {
+        fatalError("Completion could not precede a durable export receipt")
+    }
+    do {_=try terminalFirst.saved(id:id,artifactID:"invalid");fatalError("Malformed durable receipt accepted")}catch ControlError.invalid_request {}
+    let lateReceipt=try JSONSerialization.jsonObject(with:terminalFirst.saved(id:id,artifactID:saved)) as! [String:Any]
+    guard lateReceipt["id"] as? String==id,lateReceipt["artifact_id"] as? String==saved else {fatalError("Late receipt lost exact correlation")}
+    do {_=try terminalFirst.saved(id:id,artifactID:saved);fatalError("Late receipt replayed")}catch ControlError.invalid_request {}
     let receipt=try JSONSerialization.jsonObject(with:stream.saved(id:id,artifactID:saved)) as! [String:Any]
     guard receipt["artifact_id"] as? String==saved else {fatalError("Generated artifact identity lost")}
     do {_=try stream.saved(id:id,artifactID:saved);fatalError("Artifact receipt replayed")} catch ControlError.invalid_request {}

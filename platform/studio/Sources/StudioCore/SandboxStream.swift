@@ -86,7 +86,7 @@ struct SandboxStream {
         } catch {closed=true;artifact=nil;throw error}
     }
     mutating func saved(id:String,artifactID:String) throws -> Data {
-        guard awaitingSaved.remove(id) != nil,uuid(artifactID) != nil else {throw ControlError.invalid_request}
+        guard uuid(artifactID) != nil,awaitingSaved.remove(id) != nil else {throw ControlError.invalid_request}
         return try JSONSerialization.data(withJSONObject:["version":1,"type":"artifact.saved","id":id,"artifact_id":artifactID])
     }
     mutating func revoke() {closed=true;artifact=nil;awaitingSaved.removeAll()}
