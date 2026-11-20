@@ -223,6 +223,14 @@ final class TaskCommands {
     func tick(now:Int64,uptime:Int64,artifactResults:[ArtifactServiceResult],output:[SandboxTaskOutput]=[],model:[String:[ModelWorkerEvent]]=[:],finished:[SandboxTaskFinished]=[]) throws {
         guard !uploads.isEmpty || !downloads.isEmpty || mailbox.hasRetainedState || !outputLost.isEmpty || !outcomes.isEmpty ||
               !artifactResults.isEmpty || !output.isEmpty || !model.isEmpty || !finished.isEmpty else {return}
+        // Receipt routing is local to opaque handles and must survive an
+        // unrelated storage error later in the heartbeat.
+        for result in artifactResults {
+            guard var download=downloads[result.request] else {continue}
+            if case .success(.download(let stream))=result.result {download.stream=stream}
+            else {download.failure=true}
+            downloads[result.request]=download
+        }
         let allJobs=try journal.jobs()
         let retained=Set(allJobs.map(\.id));outputLost.formIntersection(retained)
         outcomes=outcomes.filter {retained.contains($0.key)}
@@ -257,12 +265,6 @@ final class TaskCommands {
             guard var upload=uploads[id] else {continue}
             do {try upload.transfer.validate(now:now);uploads[id]=upload}
             catch {uploads.removeValue(forKey:id);try tasks.cancel(id:id,owner:upload.owner,now:now,uptime:uptime)}
-        }
-        for result in artifactResults {
-            guard var download=downloads[result.request] else {continue}
-            if case .success(.download(let stream))=result.result {download.stream=stream}
-            else {download.failure=true}
-            downloads[result.request]=download
         }
         for id in Array(downloads.keys) {
             if let stream=downloads[id],now<stream.previous || now-stream.created>=30000 {downloads.removeValue(forKey:id)}

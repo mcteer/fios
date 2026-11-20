@@ -95,7 +95,6 @@ final class SandboxTaskController {
         guard uptime.isFinite,uptime>=0,uptime<Double(Int64.max/1000) else {throw ControlError.invalid_request}
         let clock=Int64(uptime*1000)
         var updates=SandboxTaskUpdates()
-        updates.artifactResults=try deliverArtifactResults(artifacts.drain(),now:now,uptime:clock)
         let events=try tasks.tick(now:now,uptime:clock,admission:&admission,source:source)
         if !events.isEmpty {
             let sandboxIDs=Set(try journal.sandboxRecords().map(\.configuration.job))
@@ -176,6 +175,9 @@ final class SandboxTaskController {
                       transportReady:{id in self.sessions[id]?.stream.revoked==false && self.sessions[id]?.attach?.ready==true && !self.tasks.cancellationPending(for:id)},cancelModel:{id in
             if let job=try self.journal.jobs().first(where:{$0.id==id}) {try self.tasks.cancel(id:id,owner:job.ownerHash,now:now,uptime:clock)}
         })
+        // Keep completed operation slots pinned until all earlier heartbeat
+        // work succeeds; a thrown job update must not strand a download.
+        updates.artifactResults=try deliverArtifactResults(artifacts.drain(),now:now,uptime:clock)
         return updates
     }
 }

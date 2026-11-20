@@ -1,6 +1,7 @@
 import Foundation
 import Darwin
 import CryptoKit
+import CSQLite
 
 private final class NeverRuntime:SandboxExecuting {
     var active:Int {0}
@@ -137,7 +138,22 @@ func runTaskCommandTests() throws {
     do {_=try repeatDownload(now:1006);fatalError("Active begin correlation opened a duplicate stream")}
     catch TaskCommandError.resource_limit {}
     guard let stream=started["stream"] as? String else {fatalError("No finite download handle")}
-    try commands.tick(now:1007,uptime:1007,artifactResults:wait())
+    do {
+        let contended=UUID().uuidString.lowercased()
+        _=try journal.reserveJob(DurableJob(id:contended,idempotency:UUID().uuidString.lowercased(),ownerHash:owner,requestHash:owner,created:1006))
+        let receipt=try wait()
+        var writer:OpaquePointer?
+        guard sqlite3_open_v2(directory.appendingPathComponent("state/state.sqlite").path,&writer,SQLITE_OPEN_READWRITE|SQLITE_OPEN_FULLMUTEX,nil)==SQLITE_OK else {throw JournalError.storage}
+        defer {sqlite3_close(writer)}
+        guard sqlite3_exec(writer,"BEGIN IMMEDIATE",nil,nil,nil)==SQLITE_OK else {throw JournalError.storage}
+        let overlarge=SandboxTaskOutput(job:contended,stream:"stdout",data:Data(repeating:97,count:60000))
+        do {
+            try commands.tick(now:1007,uptime:1007,artifactResults:receipt,output:[overlarge])
+            fatalError("Fixture did not contend on unrelated output cancellation")
+        } catch JournalError.storage {}
+        guard tasks.cancellationPending(for:contended),
+              sqlite3_exec(writer,"ROLLBACK",nil,nil,nil)==SQLITE_OK else {throw JournalError.storage}
+    }
     do {_=try call("artifact.read",["phase":"next","stream":stream],auth:foreign,now:1008);fatalError("Foreign owner used download handle")} catch TaskCommandError.unauthorized {}
     guard try call("artifact.read",["phase":"next","stream":stream],now:1008)["type"] as? String=="begin",
           try call("artifact.read",["phase":"next","stream":stream],now:1009)["data"] as? String==source.base64EncodedString(),
