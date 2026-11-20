@@ -225,5 +225,28 @@ func runArtifactTests() throws {
           try deletionStore.retrieve(id:preserved,ownerHash:owner,now:86_401_002)==Data([43,44]) else {
         fatalError("Exact deletion intent did not retry its durable commit")
     }
+    let reopenedDirectory=directory.appendingPathComponent("visible-commit-reopen")
+    var visibleFailure=false
+    let survivingID:String
+    do {
+        let beforeRestart=try ArtifactStore(directory:reopenedDirectory,availableBytes:{50<<30},writeIndex:{bytes,target in
+            try AtomicState.write(bytes,to:target)
+            if visibleFailure {
+                let document=try JSONSerialization.jsonObject(with:bytes) as! [String:Any]
+                if (document["records"] as! [[String:Any]]).count==1 {throw ArtifactError.storage}
+            }
+        })
+        _=try beforeRestart.publish(job:UUID().uuidString.lowercased(),ownerHash:owner,data:Data([45]),now:1000)
+        survivingID=try beforeRestart.publish(job:UUID().uuidString.lowercased(),ownerHash:owner,data:Data([46]),now:2000)
+        visibleFailure=true
+        do {try beforeRestart.expire(now:86_401_000);fatalError("Injected visible write failure not surfaced")}catch ArtifactError.storage {}
+        guard beforeRestart.retainedBytes==2 else {fatalError("Unacknowledged write cleared charge before restart")}
+    }
+    let reopenedIndex=reopenedDirectory.appendingPathComponent("index.json")
+    let visibleBytes=try Data(contentsOf:reopenedIndex)
+    let afterRestart=try ArtifactStore(directory:reopenedDirectory)
+    guard afterRestart.retainedBytes==1,
+          try afterRestart.retrieve(id:survivingID,ownerHash:owner,now:86_401_001)==Data([46]),
+          try Data(contentsOf:reopenedIndex)==visibleBytes else {fatalError("Restart resurrected expired charge or rewrote ready sibling")}
     print("PASS: private generated artifacts, owner/hash/length checks, restart, finite quotas, expiry and traversal/symlink refusal")
 }
