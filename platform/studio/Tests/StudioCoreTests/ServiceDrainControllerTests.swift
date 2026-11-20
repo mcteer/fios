@@ -3,8 +3,7 @@ import CSQLite
 
 private final class DrainControllerClock:@unchecked Sendable {
     var value:TimeInterval=1
-    var onRead:(()->Void)?
-    func read()->TimeInterval {onRead?();return value}
+    var onMaintenanceCommit:(()->Void)?
 }
 
 func runServiceDrainControllerTests()throws {
@@ -41,6 +40,14 @@ func runServiceDrainControllerTests()throws {
         catch ServiceError.invalid {}
     }
     guard try journal.recordedDesired(service:.mlx)==nil else {throw JournalError.conflict}
+    clock.value = .nan
+    do {_=try controller.begin(service:.mlx,role:.operator,now:1000,uptime:1000);fatalError("Invalid policy clock accepted")}
+    catch ServiceError.invalid {}
+    guard try journal.recordedDesired(service:.mlx)==nil,controller.status(service:.mlx)==nil,
+          try journal.jobs().first(where:{$0.id==owned})?.state == .running else {
+        fatalError("Invalid drain clock changed durable intent before refusing")
+    }
+    clock.value=1
     let began=try controller.begin(service:.mlx,role:.operator,now:1000,uptime:1000)
     guard began.state == .draining,began.revokeOwned==[owned],
           try journal.desired(service:"mlx")=="maintenance",
@@ -94,7 +101,8 @@ func runServiceDrainControllerTests()throws {
     try fenceJournal.claim(job:first,attempt:0,model:"fixture/model",requestID:first)
     try fenceJournal.markUncertain(job:first,attempt:0)
     let fenceClock=DrainControllerClock()
-    let fenced=try ServiceDrainController(journal:fenceJournal,tasks:fenceTasks,managerEpoch:epoch,observations:fenceCache,uptime:{fenceClock.read()})
+    let fenced=try ServiceDrainController(journal:fenceJournal,tasks:fenceTasks,managerEpoch:epoch,observations:fenceCache,
+                                         uptime:{fenceClock.value},didPersistMaintenance:{fenceClock.onMaintenanceCommit?()})
     var writer:OpaquePointer?
     guard sqlite3_open_v2(fenceDirectory.appendingPathComponent("state.sqlite").path,&writer,SQLITE_OPEN_READWRITE|SQLITE_OPEN_FULLMUTEX,nil)==SQLITE_OK else {throw JournalError.storage}
     defer {sqlite3_close(writer)}
@@ -104,14 +112,14 @@ func runServiceDrainControllerTests()throws {
     catch JournalError.storage {}
     guard fenced.status(service:.mlx)==nil,!fenceTasks.cancellationPending(for:first),!fenceTasks.cancellationPending(for:second),
           sqlite3_exec(writer,"ROLLBACK",nil,nil,nil)==SQLITE_OK else {fatalError("Failed maintenance write advertised deferred cancellation")}
-    fenceClock.onRead={
+    fenceClock.onMaintenanceCommit={
         guard sqlite3_exec(writer,"BEGIN IMMEDIATE",nil,nil,nil)==SQLITE_OK else {fatalError("Fixture could not hold writer fence after maintenance commit")}
     }
     do {_=try fenced.begin(service:.mlx,role:.operator,now:1005,uptime:61004);fatalError("Contended drain reported complete durable cancellation")}
     catch ServiceDrainBeginError.cancellationDeferred(let progress) {
         guard progress.state == .draining,Set(progress.revokeOwned)==Set([first,second]) else {throw ServiceError.invalid}
     }
-    fenceClock.onRead=nil
+    fenceClock.onMaintenanceCommit=nil
     guard fenceTasks.cancellationPending(for:first),fenceTasks.cancellationPending(for:second),
           try fenceJournal.uncertainCount()==1,try fenceJournal.desired(service:"mlx")=="maintenance" else {
         fatalError("Writer-contended drain stranded a sibling cancellation or changed uncertain custody")

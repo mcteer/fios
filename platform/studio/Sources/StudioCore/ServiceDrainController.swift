@@ -46,13 +46,16 @@ final class ServiceDrainController {
     private let managerEpoch:String
     private let observations:ServiceDrainObservationCache
     private var policy:ServiceDrainPolicy
+    private let didPersistMaintenance:(()->Void)?
     private var reports:[ManagedService:ServiceDrainProgress]=[:]
     private var originalOwned:[ManagedService:Set<String>]=[:]
     init(journal:Journal,tasks:TaskController,managerEpoch:String,observations:ServiceDrainObservationCache,
-         uptime:@escaping @Sendable()->TimeInterval={ProcessInfo.processInfo.systemUptime})throws {
+         uptime:@escaping @Sendable()->TimeInterval={ProcessInfo.processInfo.systemUptime},
+         didPersistMaintenance:(()->Void)?=nil)throws {
         guard WireScalar.uuid(managerEpoch) else {throw ServiceError.invalid}
         self.journal=journal;self.tasks=tasks;self.managerEpoch=managerEpoch;self.observations=observations
         policy=ServiceDrainPolicy(uptime:uptime)
+        self.didPersistMaintenance=didPersistMaintenance
     }
     private func current(_ service:ManagedService,now:Int64,original:Set<String>?=nil)throws->ServiceDrainSnapshot {
         guard let value=observations.snapshot(for:service),value.scope.service==service,
@@ -87,10 +90,14 @@ final class ServiceDrainController {
     func begin(service:ManagedService,role:ControlRole,now:Int64,uptime:Int64)throws->ServiceDrainProgress {
         guard role == .operator else {throw ServiceError.invalid}
         let snapshot=try current(service,now:now)
-        // Commit this independent admission fence before any owned job can be
-        // cancelled. Failure never rolls maintenance back or clears claims.
+        // Validate the clock and scope on a private candidate before committing
+        // maintenance. A storage refusal never publishes the candidate or
+        // cancels work; after commit, no failure rolls maintenance back.
+        var candidate=policy
+        let progress=try candidate.begin(snapshot:snapshot,role:role,now:now)
         try journal.setDesired(service:service.rawValue,desired:ServiceDesired.maintenance.rawValue)
-        let progress=try policy.begin(snapshot:snapshot,role:role,now:now)
+        didPersistMaintenance?()
+        policy=candidate
         reports[service]=progress;originalOwned[service]=Set(snapshot.scope.ownedJobs)
         do {try revoke(progress,now:now,uptime:uptime)}
         catch JournalError.storage {throw ServiceDrainBeginError.cancellationDeferred(progress)}
