@@ -1,6 +1,6 @@
 # Spec009 completion status
 
-**39/55 whole tasks complete; 16 open.** Draft [PR #10](https://github.com/mcteer/fios/pull/10) remains the delivery branch. Exact `4682bc5` run `44500183042` passed all eight lanes and the aggregate. Later commits require their own results; see [validation](validation.md). No merge, deployment or installed acceptance.
+**39/55 whole tasks complete; 16 open.** Draft [PR #10](https://github.com/mcteer/fios/pull/10) remains the delivery branch. Exact `0f2c19d` run `44717218713` passed. `7339e3f` run `44720921984` failed the process fixture on an obsolete timestamp expectation; the corrected fixture passed locally and exact pushed repair `561b131` run `44723396321` is pending. Later commits require their own results; see [validation](validation.md). No merge, deployment or installed acceptance.
 
 | Open task | Remaining behavior and dependency |
 | --- | --- |
