@@ -12,6 +12,14 @@ func runTaskMailboxTests() throws {
     for _ in 0..<64 {try mailbox.append(job:job,fields:fields,now:1005)}
     do {try mailbox.append(job:job,fields:fields,now:1006);fatalError("Unbounded output queue")} catch MailboxError.capacity {}
     guard mailbox.expire(now:3005,retained:[job])==[job] else {fatalError("Output activity extended fixed backpressure deadline")}
+    var partial=TaskMailbox()
+    try partial.append(job:job,fields:fields,now:1000)
+    try partial.append(job:job,fields:fields,now:1100)
+    guard try partial.pop(job:job,now:2999)?["event_index"] as? Int==0,
+          partial.expire(now:3099,retained:[job]).isEmpty,
+          partial.expire(now:3100,retained:[job])==[job] else {
+        fatalError("Polling renewed the remaining mailbox frame's deadline")
+    }
     var rewound=TaskMailbox()
     try rewound.append(job:job,fields:fields,now:1000)
     try rewound.append(job:job,fields:fields,now:1100)
