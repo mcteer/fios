@@ -78,6 +78,15 @@ func runRuntimeTests() throws {
         _=try listReader.run(arguments:[missing],timeout:2,maximumOutput:stderr.output.count-1)
         fatalError("Stderr bypassed the fixed output budget")
     } catch RuntimeError.outputLimit {}
+    // Exercise stream routing using an inert executable, not an interpreter:
+    // ls rejects the fixed metadata argv on stderr without any model action.
+    let metadataArgs=["-I","-B","-m","fios_agent.platform_worker","--metadata"]
+    let ordinaryMetadata=try listReader.run(arguments:metadataArgs,timeout:2,maximumOutput:4096)
+    let isolatedMetadata=try listReader.platformWorkerMetadata(invocation:listPath)
+    guard ordinaryMetadata.status != 0,!ordinaryMetadata.output.isEmpty,
+          isolatedMetadata.status==ordinaryMetadata.status,isolatedMetadata.output.isEmpty else {
+        fatalError("Fixed metadata invocation mixed a child diagnostic into its stdout")
+    }
     // A silent child must not keep the actor blocked in output collection.
     let sleepURL=URL(fileURLWithPath:"/bin/sleep")
     let sleepDigest=SHA256.hash(data:try Data(contentsOf:sleepURL)).map {String(format:"%02x",$0)}.joined()
