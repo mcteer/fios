@@ -11,6 +11,12 @@ func runOperatorServiceStatusTests() throws {
         precondition(unavailable["error"] as? String == "unavailable")
         let desired=OperatorServiceCommand(arguments:["service",service,"running"])!
         precondition(desired.socketName == "control.sock")
+        let drain=OperatorServiceCommand(arguments:["service",service,"drain"])!
+        let partial:[String:Any]=["ok":false,"error":"internal","maintenance_applied":true,
+                                  "cancellation_deferred":true,"native_action_applied":false,
+                                  "drain":["state":"draining","revocations_requested":2]]
+        let rendered=try drain.renderResponse(partial)
+        precondition(NSDictionary(dictionary:rendered).isEqual(to:partial),"CLI hid or reclassified partial drain failure")
         let acknowledgement=try desired.renderResponse(["ok":true,"applied":false])
         precondition(acknowledgement["applied"] as? Bool == false)
         for action in [["maintenance"],["stopped"],["drain"],["force","prepare"],
