@@ -178,6 +178,19 @@ try {
   assert.deepEqual(JSON.parse(run(helper,['check-incomplete',digestRestore])),{uncertain:1,exports:0,failed_exports:1});
   assert.deepEqual(readFileSync(join(digestRestore,digestBlob)),changedPayload);
   for(const copy of [digestState,digestBundle])assert.deepEqual(readFileSync(join(copy,'artifacts/index.json')),digestIndexBytes);
+  const failedIndex=readFileSync(join(digestRestore,'artifacts/index.json'));
+  assert.equal(JSON.parse(failedIndex).records[0].state,'failed');
+  const failedBundle=join(scratch,'failed-record-bundle'),failedRestore=join(scratch,'failed-record-restored');
+  const failedReceipt=JSON.parse(cli(digestRestore,['backup-state','--to',failedBundle]));
+  const failedVerified=JSON.parse(cli(failedBundle,['verify-backup','--sha256',failedReceipt.sha256]));
+  const failedRestored=JSON.parse(cli(failedBundle,['restore-state','--sha256',failedReceipt.sha256,'--to',failedRestore]));
+  assertStoppedReceipts(failedReceipt,failedVerified,failedRestored);
+  for(const copy of [digestRestore,failedBundle,failedRestore]){
+    assert.deepEqual(readFileSync(join(copy,'artifacts/index.json')),failedIndex);
+    assert.deepEqual(readFileSync(join(copy,digestBlob)),changedPayload);
+  }
+  assert.deepEqual(JSON.parse(run(helper,['check-incomplete',failedRestore])),{uncertain:1,exports:0,failed_exports:1});
+  assert.deepEqual(readFileSync(join(failedRestore,digestBlob)),changedPayload);
   const future=join(scratch,'future-state'),failedJournal=join(scratch,'failed-journal.sqlite');
   run(helper,['seed',future]);run(helper,['future',future]);
   assert.equal(cli(future,['backup','--to',failedJournal],{expected:1}),'');
