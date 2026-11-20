@@ -100,7 +100,15 @@ try{
   const stop=status(state,['service','orbstack','stopped']);assert.equal(stop.applied,false);
   const stopped=status(state,['service','orbstack','status']);assert.equal(stopped.desired,'stopped');
   if(stopped.observed==='ready')assert.equal(stopped.message,'Service is still running; stop is requested.');
-  assert.equal(status(state,['service','mlx','status']).desired,'maintenance');
+  const intentSnapshot=status(state,['status']);
+  assert.equal(intentSnapshot.services.mlx.desired,'maintenance');
+  assert.equal(intentSnapshot.services.orbstack.desired,'stopped');
+  for(const service of ['mlx','orbstack']) {
+   const selected=status(state,['service',service,'status']);
+   assert.equal(selected.desired,intentSnapshot.services[service].desired);
+   assert.equal(selected.launch_pending,false);
+   assert.equal(intentSnapshot.services[service].launch_pending,false);
+  }
   child.kill('SIGTERM');await until(()=>exited(child));assert.equal(child.exitCode,0);child=null;
   if(['held','unconfigured','native_source_gap'].includes(mode)){
    child=spawn('/usr/bin/sandbox-exec',['-f',profile,binary,state,mode],{cwd:root,env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C',HOME:'/var/empty'},stdio:'ignore'});
