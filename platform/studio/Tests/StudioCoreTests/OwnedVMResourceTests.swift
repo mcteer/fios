@@ -65,7 +65,12 @@ func runOwnedVMResourceTests() throws {
     do {_=try expired.read(configuration:configuration,id:id,leaseUntil:15000);fatalError("Mock CLI exec ran after expiry during preflight")}
     catch RuntimeError.deadline {}
     guard try String(contentsOf:log,encoding:.utf8)=="inspect\n" else {fatalError("Expired CLI published guest execution")}
-    let good=try OwnedVMResourceReader(runtime:mock,approvedImages:[image],now:{10000},uptime:{1})
+    var goodWall=0,goodTick=0
+    let good=try OwnedVMResourceReader(runtime:mock,approvedImages:[image],now:{
+        goodWall+=1;return goodWall==1 ? 10000:14999
+    },uptime:{
+        goodTick+=1;return goodTick==1 ? 1:5.999
+    })
     let result=try good.read(configuration:configuration,id:id,leaseUntil:15000)
     guard result.sampledAt==10000,result.total==sample.total,result.free==sample.free,result.bootHash==sample.bootHash,
           try String(contentsOf:log,encoding:.utf8)=="inspect\ninspect\nexec\ninspect\n" else {
