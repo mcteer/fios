@@ -87,8 +87,11 @@ func runArtifactTests() throws {
     store=nil
     index=try JSONSerialization.jsonObject(with:Data(contentsOf:indexURL)) as! [String:Any]
     metadata=index["records"] as! [[String:Any]]
-    guard let deletion=metadata.firstIndex(where:{$0["id"] as? String==second}) else {throw ArtifactError.invalid}
-    metadata[deletion]["state"]="deleting";index["records"]=metadata
+    guard let deletion=metadata.firstIndex(where:{$0["id"] as? String==second}),
+          let pendingSurvivor=metadata.firstIndex(where:{$0["id"] as? String==survivor}) else {throw ArtifactError.invalid}
+    metadata[deletion]["state"]="deleting"
+    metadata[pendingSurvivor]["state"]="pending"
+    index["records"]=metadata
     try AtomicState.write(JSONSerialization.data(withJSONObject:index),to:indexURL)
     store=try ArtifactStore(directory:directory)
     guard !FileManager.default.fileExists(atPath:directory.appendingPathComponent(second+".blob").path),
@@ -101,10 +104,14 @@ func runArtifactTests() throws {
     store=try ArtifactStore(directory:directory)
     let cleaned=try JSONSerialization.jsonObject(with:Data(contentsOf:indexURL)) as! [String:Any]
     let remaining=cleaned["records"] as! [[String:Any]]
-    guard remaining.count==1,remaining.first?["id"] as? String==survivor,
+    guard remaining.count==1,remaining.first?["id"] as? String==survivor,remaining.first?["state"] as? String=="ready",
           try store!.retrieve(id:survivor,ownerHash:owner,now:retention+4)==Data("retained export".utf8) else {
         fatalError("Already-unlinked deletion replay changed independent artifact state")
     }
+    store=nil
+    let repairedIndex=try Data(contentsOf:indexURL)
+    store=try ArtifactStore(directory:directory)
+    guard try Data(contentsOf:indexURL)==repairedIndex else {fatalError("Clean reopen rewrote recovered mixed index")}
     let incompleteJob=UUID().uuidString.lowercased()
     let incomplete=try store!.publish(job:incompleteJob,ownerHash:owner,data:Data("incomplete export".utf8),now:retention+4)
     store=nil
