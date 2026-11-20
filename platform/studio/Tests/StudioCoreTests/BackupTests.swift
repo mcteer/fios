@@ -76,8 +76,24 @@ func runBackupTests() throws {
     do {
         let stopped=try StoppedPlatformState(directory:state)
         let timely=root.appendingPathComponent("timely.sqlite"),late=root.appendingPathComponent("late.sqlite")
-        var checkpoints=0
-        let timelyReceipt=try StoppedJournalBackup.create(directory:state,destination:timely,stopped:stopped,hashUptime:{checkpoints+=1;return 10})
+        var checkpoints=0,copyChecks=0
+        let timelyReceipt=try StoppedJournalBackup.create(directory:state,destination:timely,stopped:stopped,
+            copyUptime:{copyChecks+=1;return 100},hashUptime:{checkpoints+=1;return 10})
+        guard copyChecks>=5 else {fatalError("Missing SQLite copy clock checkpoints")}
+        let sourceJournal=state.appendingPathComponent("state.sqlite"),originalJournal=try Data(contentsOf:sourceJournal)
+        for elapsed in [9.999,10] {
+            var ticks=0,hashStarted=false
+            let target=root.appendingPathComponent("copy-clock-\(elapsed).sqlite")
+            do {
+                let outcome=try StoppedJournalBackup.create(directory:state,destination:target,stopped:stopped,
+                    copyUptime:{ticks+=1;return ticks==copyChecks ? 100+elapsed:100},hashUptime:{hashStarted=true;return 10})
+                guard elapsed<10,outcome.bytes==receipt.bytes,hashStarted else {fatalError("SQLite copy renewed its cutoff for hashing")}
+            } catch RuntimeError.deadline {
+                guard elapsed==10,!hashStarted else {throw RuntimeError.deadline}
+            }
+            guard ticks==copyChecks,try Data(contentsOf:target).count==savedBytes.count,
+                  try Data(contentsOf:sourceJournal)==originalJournal else {fatalError("SQLite copy clock changed source or lost diagnostic output")}
+        }
         guard timelyReceipt.bytes==receipt.bytes,checkpoints>=3 else {fatalError("Missing backup receipt clock checkpoints")}
         var calls=0
         do {

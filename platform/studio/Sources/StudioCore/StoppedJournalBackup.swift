@@ -17,6 +17,7 @@ public enum StoppedJournalBackup {
         return try create(directory:directory,destination:destination,stopped:stopped)
     }
     static func create(directory:URL,destination:URL,stopped:StoppedPlatformState,
+                       copyUptime:()->TimeInterval={ProcessInfo.processInfo.systemUptime},
                        hashUptime:()->TimeInterval={ProcessInfo.processInfo.systemUptime})throws->JournalBackupReceipt {
         defer {withExtendedLifetime(stopped) {}}
         guard stopped.directory==directory.standardizedFileURL else {throw JournalError.invalid}
@@ -68,13 +69,21 @@ public enum StoppedJournalBackup {
         guard try scalar("PRAGMA application_id")==0x46495339,try scalar("PRAGMA user_version")==9 else {throw JournalError.invalid}
         let pages=try scalar("PRAGMA page_count"),pageSize=try scalar("PRAGMA page_size")
         guard pages>0,(512...65536).contains(pageSize),pages<=(64<<20)/pageSize else {throw JournalError.invalid}
+        let copyStarted=copyUptime()
+        var copyClock=copyStarted
+        func checkCopyClock()throws {
+            let now=copyUptime()
+            guard copyStarted.isFinite,copyStarted>=0,now.isFinite,now>=copyClock,now-copyStarted<10 else {throw RuntimeError.deadline}
+            copyClock=now
+        }
+        try checkCopyClock()
         guard let operation=sqlite3_backup_init(target,"main",source,"main") else {throw JournalError.storage}
         var finalized=false
         defer {if !finalized {sqlite3_backup_finish(operation)}}
-        let end=ProcessInfo.processInfo.systemUptime+10
         while true {
-            guard ProcessInfo.processInfo.systemUptime<end else {throw JournalError.storage}
+            try checkCopyClock()
             let result=sqlite3_backup_step(operation,128)
+            try checkCopyClock()
             if result==SQLITE_DONE {break}
             guard result==SQLITE_OK else {throw JournalError.storage}
         }
@@ -87,6 +96,7 @@ public enum StoppedJournalBackup {
               savedInfo.st_mode&S_IFMT==S_IFREG,savedInfo.st_nlink==1,
               savedInfo.st_uid==geteuid(),savedInfo.st_mode&0o077==0,(100...(64<<20)).contains(savedInfo.st_size),
               fsync(saved)==0 else {throw JournalError.storage}
+        try checkCopyClock()
         var digest=SHA256(),buffer=[UInt8](repeating:0,count:65536),total:Int64=0
         let hashStarted=hashUptime()
         var hashClock=hashStarted
