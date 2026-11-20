@@ -193,7 +193,13 @@ test('mixed-root handoff validates every parent before counting either root', ()
   assert(model.release(bParent));
   assert.equal(model.closed(a), false);
   assert.equal(model.closed(b), false);
+  const lateCallback = model.inherit([batch]);
+  assert(lateCallback);
   assert(model.release(batch));
+  assert.equal(model.inherit([batch]), null);
+  assert.equal(model.closed(a), false);
+  assert.equal(model.closed(b), false);
+  assert(model.release(lateCallback));
   assert.equal(model.closed(a), true);
   assert.equal(model.closed(b), true);
 });
