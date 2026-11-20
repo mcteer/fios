@@ -104,6 +104,7 @@ try {
   assert.equal(call({phase:'begin',artifact},'artifact.read',1,fixture.owner,beginCorrelation).error,'resource_limit');
   const denied=call({phase:'next',stream:started.stream},'artifact.read',1,otherOwner);
   assert.equal(denied.error,'unauthorized');
+  assert.equal(call({phase:'next',stream:started.stream},'artifact.read',1,otherOwner).error,'unauthorized');
   const deadline=performance.now()+5000,parts=[];let metadata,done=false;
   while(!done){
    assert(performance.now()<deadline,'Normal artifact transfer timeout');
