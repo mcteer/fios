@@ -719,11 +719,16 @@ func runCleanupStatusRecoveryTests() throws {
         } catch AdmissionError.capacity {}
     }
     try assertCharge(startupAdmission,now:101100) // Before any executor command.
+    let unobserved=controller.cleanupStatus(now:101100)
+    guard unobserved["observed_at"] is NSNull,unobserved["observed_wait_ms"] is NSNull,
+          unobserved["manager_observation_age_ms"] is NSNull else {fatalError("Reopened manager invented an observation from durable custody")}
     runtime.storageContinuityUnknown=true
     try tick(101100)
     try tick(101200)
     try assertCharge(admission,now:101200) // Fresh, independently restored by tick.
-    guard controller.cleanupStatus(now:101200)["storage_continuity_unknown"] as? Int==1,
+    let reconstructed=controller.cleanupStatus(now:101200)
+    guard reconstructed["storage_continuity_unknown"] as? Int==1,
+          reconstructed["observed_wait_ms"] as? Int64==100,reconstructed["observed_at"] as? Int64==101200,
           try journal.sandboxRecords().first(where:{$0.configuration.job==lateID})?.removalProven==false,
           try journal.uncertainCount()==1,
           runtime.commands.allSatisfy({if case .inspect=$0 {return true};return false}) else {
