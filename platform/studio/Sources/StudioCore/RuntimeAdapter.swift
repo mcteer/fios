@@ -128,10 +128,11 @@ public struct VerifiedExecutable:Sendable {
         var termAt: TimeInterval?
         var killed = false
         var eof = false
+        var buffer = [UInt8](repeating:0,count:4096)
         while !eof || process.isRunning {
-            var buffer = [UInt8](repeating:0,count:4096)
-            let count = read(fd,&buffer,buffer.count)
-            let readError=errno
+            // EOF ends pipe work, not process supervision or its deadline.
+            let count = eof ? 0 : read(fd,&buffer,buffer.count)
+            let readError = count < 0 ? errno : 0
             let now = ProcessInfo.processInfo.systemUptime
             // Output first observed at or after the cutoff cannot supersede
             // the deadline, nor can later drain failures replace a cause.
