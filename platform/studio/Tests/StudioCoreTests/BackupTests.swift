@@ -163,6 +163,18 @@ func runBackupTests() throws {
           try Data(contentsOf:state.appendingPathComponent("artifacts/index.json"))==indexBefore else {
         fatalError("Late stopped export changed source or removed diagnostic copy")
     }
+    for final in [99.0,Double.nan] {
+        let target=root.appendingPathComponent("invalid-export-clock-\(UUID().uuidString)")
+        var calls=0
+        do {
+            _=try StoppedArtifactBackup.create(directory:state,destination:target,uptime:{calls+=1;return calls==artifactCheckpoints ? final:100})
+            fatalError("Stopped export issued a receipt with an invalid final clock")
+        } catch RuntimeError.deadline {}
+        guard calls==artifactCheckpoints,
+              try Data(contentsOf:target.appendingPathComponent("index.json"))==indexBefore else {
+            fatalError("Export clock refusal lost already-verified diagnostic index")
+        }
+    }
     let exportedIndex=try Data(contentsOf:exports.appendingPathComponent("index.json"))
     let exportedIndexDigest=SHA256.hash(data:exportedIndex).map {String(format:"%02x",$0)}.joined()
     guard saved.artifacts==1,saved.bytes==payload.count,exportedIndex==indexBefore,saved.indexSHA256==exportedIndexDigest,
