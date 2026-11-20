@@ -36,6 +36,8 @@ final class ServiceDrainObservationCache:@unchecked Sendable {
 
 }
 
+enum ServiceDrainBeginError:Error {case cancellationDeferred(ServiceDrainProgress)}
+
 // Serialized manager-side drain coordination. A ready report remains a
 // diagnostic decision, never a stop/force permit. There is no native actuator.
 final class ServiceDrainController {
@@ -90,7 +92,8 @@ final class ServiceDrainController {
         try journal.setDesired(service:service.rawValue,desired:ServiceDesired.maintenance.rawValue)
         let progress=try policy.begin(snapshot:snapshot,role:role,now:now)
         reports[service]=progress;originalOwned[service]=Set(snapshot.scope.ownedJobs)
-        try revoke(progress,now:now,uptime:uptime)
+        do {try revoke(progress,now:now,uptime:uptime)}
+        catch JournalError.storage {throw ServiceDrainBeginError.cancellationDeferred(progress)}
         return progress
     }
     func poll(service:ManagedService,now:Int64,uptime:Int64)throws->ServiceDrainProgress {

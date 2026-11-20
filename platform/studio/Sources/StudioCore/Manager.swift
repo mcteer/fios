@@ -415,6 +415,11 @@ public enum ManagerRuntime {
                             if service == .mlx,activeNativeControl != nil,let command=try nativeMaintenance.beginReconciliation() {enqueueNative(command)}
                             response["drain"]=ServiceDrainController.summary(progress)
                             response["maintenance_applied"]=true;response["native_action_applied"]=false
+                        }catch ServiceDrainBeginError.cancellationDeferred(let progress) {
+                            response["ok"]=false;response["error"]="internal"
+                            response["maintenance_applied"]=true;response["native_action_applied"]=false
+                            response["cancellation_deferred"]=true
+                            response["drain"]=ServiceDrainController.summary(progress)
                         }catch ServiceError.stale {
                             response["ok"]=false;response["error"]="native_unsupported";response["applied"]=false
                         }catch ServiceError.invalid {
