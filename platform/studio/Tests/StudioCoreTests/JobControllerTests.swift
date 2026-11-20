@@ -326,7 +326,14 @@ private func checkSandboxResponseOverflowIsolation(artifactFailure:Bool=false) t
     guard sqlite3_exec(writer,"BEGIN IMMEDIATE",nil,nil,nil)==SQLITE_OK else {throw JournalError.storage}
     let frame=Data("{\"version\":1,\"type\":\"model.done\"}".utf8)
     if artifactFailure {
-        try sandbox.publishExport(job:ids[0],exportID:UUID().uuidString.lowercased(),owner:owner,bytes:Data([42]),now:10500)
+        let export=UUID().uuidString.lowercased(),bytes=Data([42])
+        do {try sandbox.publishExport(job:ids[0],exportID:export,owner:String(repeating:"b",count:64),bytes:bytes,now:10500);fatalError("Foreign owner published a sandbox export")}
+        catch ArtifactServiceFailure.unauthorized {}
+        do {try sandbox.publishExport(job:ids[0],exportID:"invalid",owner:owner,bytes:bytes,now:10500);fatalError("Malformed export correlation accepted")}
+        catch ArtifactServiceFailure.invalid {}
+        try sandbox.publishExport(job:ids[0],exportID:export,owner:owner,bytes:bytes,now:10500)
+        do {try sandbox.publishExport(job:ids[0],exportID:export,owner:owner,bytes:bytes,now:10500);fatalError("Duplicate pending export retried publication")}
+        catch ArtifactServiceFailure.capacity {}
         let expiry=UUID().uuidString.lowercased()
         try artifacts.expire(request:expiry,now:10500)
         var batch:[ArtifactServiceResult]=[]
@@ -345,6 +352,10 @@ private func checkSandboxResponseOverflowIsolation(artifactFailure:Bool=false) t
         try sandbox.deliverModelResponses([ids[0]:Array(repeating:frame,count:65),ids[1]:[frame]],now:10500,uptime:10500)
     }
     guard tasks.cancellationPending(for:ids[0]),!tasks.cancellationPending(for:ids[1]) else {fatalError("Response overflow cancelled the wrong sandbox")}
+    do {
+        try sandbox.publishExport(job:ids[0],exportID:UUID().uuidString.lowercased(),owner:owner,bytes:Data([42]),now:10501)
+        fatalError("Quarantined session acquired a fresh export slot")
+    } catch ArtifactServiceFailure.unauthorized {}
     try sandbox.deliverModelResponses([ids[1]:Array(repeating:frame,count:63)],now:10501,uptime:10501)
     guard !tasks.cancellationPending(for:ids[1]) else {fatalError("Sibling exceeded exactly 64 frames")}
     try sandbox.deliverModelResponses([ids[1]:[frame]],now:10502,uptime:10502)

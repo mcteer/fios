@@ -72,8 +72,13 @@ final class SandboxTaskController {
         }
     }
     func publishExport(job:String,exportID:String,owner:String,bytes:Data,now:Int64)throws {
-        guard pendingExports.count<2 else {throw ArtifactServiceFailure.capacity}
+        // A batch can contain both a verified export and done. Terminal is
+        // allowed here, but a revoked or unrelated session cannot publish.
+        guard let session=sessions[job],session.owner==owner,!session.stream.revoked else {throw ArtifactServiceFailure.unauthorized}
+        guard UUID(uuidString:exportID)?.uuidString.lowercased()==exportID else {throw ArtifactServiceFailure.invalid}
         let request=UUID().uuidString.lowercased()
+        guard pendingExports.count<2,pendingExports[request]==nil,
+              !pendingExports.values.contains(where:{$0.job==job && $0.id==exportID}) else {throw ArtifactServiceFailure.capacity}
         try artifacts.publish(request:request,job:job,owner:owner,data:bytes,now:now)
         pendingExports[request]=(job,exportID)
     }
