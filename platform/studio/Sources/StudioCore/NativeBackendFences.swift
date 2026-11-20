@@ -83,8 +83,7 @@ struct NativeBackendFenceDiagnostics {
     }
     mutating func completed(_ sample:NativeBackendFenceSample,expectedInstance:String,now:Int64) {
         guard configured,!fenced else {failed();return}
-        guard (0...ActivityPolicy.maximumTimestamp).contains(now) else {failed();return}
-        guard now>=previousNow else {fenced=true;failed();return}
+        guard (0...ActivityPolicy.maximumTimestamp).contains(now),now>=previousNow else {fenced=true;failed();return}
         // Keep local clock continuity even when the native reply is rejected;
         // this never advances its source sequence/time or clears uncertainty.
         previousNow=now

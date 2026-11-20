@@ -17,8 +17,7 @@ struct NativePrimaryActivityDiagnostics {
     }
     mutating func completed(_ sample:NativePrimaryActivitySample,expectedInstance:String,now:Int64) {
         guard configured,!fenced else {failed();return}
-        guard (0...ActivityPolicy.maximumTimestamp).contains(now) else {failed();return}
-        guard now>=previousNow else {fenced=true;failed();return}
+        guard (0...ActivityPolicy.maximumTimestamp).contains(now),now>=previousNow else {fenced=true;failed();return}
         // Wall-clock continuity is independent of reply validity. A replay or
         // malformed sample cannot hide a later local rollback.
         previousNow=now

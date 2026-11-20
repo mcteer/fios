@@ -66,7 +66,13 @@ func runRegistryActivityWireTests(nativeFrame:String?=nil)throws {
     var sticky=NativePrimaryActivityDiagnostics(configured:true),uncertain=frame
     uncertain[7]=1;uncertain[99]=2
     sticky.completed(NativePrimaryActivitySample(peer:peer,receivedAt:1000,registry:try NativeRegistryActivityWire.reply(uncertain,instance:instance)),expectedInstance:instance,now:1000)
+    var invalidClock=NativePrimaryActivityDiagnostics(configured:true)
+    let healthy=NativePrimaryActivitySample(peer:peer,receivedAt:1000,registry:value)
+    invalidClock.completed(healthy,expectedInstance:instance,now:1000)
+    invalidClock.completed(healthy,expectedInstance:instance,now:Int64.min)
     var clear=frame;clear[31]=3
+    invalidClock.completed(NativePrimaryActivitySample(peer:peer,receivedAt:1001,registry:try NativeRegistryActivityWire.reply(clear,instance:instance)),expectedInstance:instance,now:1001)
+    guard invalidClock.summary(now:1001)["state"] as? String=="fenced" else {fatalError("Invalid local clock reopened primary diagnostics")}
     sticky.completed(NativePrimaryActivitySample(peer:peer,receivedAt:1000,registry:try NativeRegistryActivityWire.reply(clear,instance:instance)),expectedInstance:instance,now:1000)
     guard sticky.summary(now:1000)["state"] as? String=="fenced",sticky.summary(now:1000)["retained_uncertainty"] as? Bool==true else {fatalError("New registry state cleared old uncertainty")}
     if let nativeFrame {

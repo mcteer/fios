@@ -31,6 +31,11 @@ func runCurrentBackendFenceWireTests(nativeFrame:String?=nil,backgroundFrame:Str
     diagnostic.failed()
     diagnostic.completed(try sample(0,65,3),expectedInstance:instance,now:1000)
     guard diagnostic.summary(now:1000)["state"] as? String=="fenced",diagnostic.summary(now:1000)["retained_uncertainty"] as? Bool==true else {fatalError("New successful flags cleared earlier independent uncertainty")}
+    var invalidClock=NativeBackendFenceDiagnostics(configured:true)
+    invalidClock.completed(try sample(0,65,2),expectedInstance:instance,now:1000)
+    invalidClock.completed(try sample(0,65,3),expectedInstance:instance,now:Int64.max)
+    invalidClock.completed(try sample(0,65,4),expectedInstance:instance,now:1001)
+    guard invalidClock.summary(now:1001)["state"] as? String=="fenced" else {fatalError("Invalid local clock reopened backend diagnostics")}
     var unavailable=NativeBackendFenceDiagnostics(configured:true)
     unavailable.completed(try sample(0,0,2),expectedInstance:instance,now:1000)
     guard unavailable.summary(now:1000)["state"] as? String=="unavailable" else {fatalError("Compiled-out sources became available zeros")}
