@@ -191,6 +191,22 @@ final class StudioOpenTelemetryTests:XCTestCase {
         XCTAssertFalse(names.contains("fios.platform.host.memory.available"))
     }
 
+    func testStaleCPUDoesNotSuppressFreshHostOrVMGauges() throws {
+        let telemetry=StudioOpenTelemetry()
+        for delta:Int64 in [-6000,3000] {
+            let now=HostResources.nowMilliseconds()
+            telemetry.resources(ResourceSample(sampledAt:now,physical:1024,available:512,
+                vmAvailable:0,diskFree:4096,cpu:0,pressure:.normal,thermal:.nominal,vmSampledAt:now,cpuSampledAt:now+delta))
+            let metrics=telemetry.collectMetrics().filter{!$0.data.points.isEmpty}
+            XCTAssertFalse(metrics.contains{$0.name=="fios.platform.host.cpu.utilization"})
+            XCTAssertTrue(metrics.contains{$0.name=="fios.platform.host.memory.available"})
+            let vm=try XCTUnwrap(metrics.first{$0.name=="fios.platform.vm.memory.available"})
+            XCTAssertEqual((vm.data.points as? [DoublePointData])?.first?.value,0)
+            let clock=try XCTUnwrap(metrics.first{$0.name=="fios.platform.vm.sample.time"})
+            XCTAssertEqual((clock.data.points as? [DoublePointData])?.first?.value,Double(now)/1000)
+        }
+    }
+
     func testOversizedVMEnvelopeDoesNotSuppressHostMemory() throws {
         let telemetry=StudioOpenTelemetry(),now=HostResources.nowMilliseconds()
         telemetry.resources(ResourceSample(sampledAt:now,physical:1024,available:512,
