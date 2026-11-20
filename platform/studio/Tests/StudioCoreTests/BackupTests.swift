@@ -294,7 +294,23 @@ func runBackupTests() throws {
         do {_=try StoppedStateBackup.verify(directory:foreignBundle,expectedSHA256:hash);fatalError("Foreign host/user snapshot was adopted")} catch JournalError.invalid {}
     }
     let restoredState=root.appendingPathComponent("restored-state")
-    _=try StoppedStateBackup.restore(directory:bundle,expectedSHA256:bundleReceipt.sha256,destination:restoredState)
+    var restoreCalls=0
+    _=try StoppedStateBackup.restore(directory:bundle,expectedSHA256:bundleReceipt.sha256,destination:restoredState,
+                                    migrateFrom:nil,uptime:{restoreCalls+=1;return 100})
+    let lateTarget=root.appendingPathComponent("late-restore")
+    let beforeRestore=Set(try FileManager.default.contentsOfDirectory(atPath:root.path))
+    var lateRestoreCalls=0
+    do {
+        _=try StoppedStateBackup.restore(directory:bundle,expectedSHA256:bundleReceipt.sha256,destination:lateTarget,
+                                        migrateFrom:nil,uptime:{lateRestoreCalls+=1;return lateRestoreCalls==restoreCalls ? 130:100})
+        fatalError("Stopped restore published at its exact deadline")
+    } catch RuntimeError.deadline {}
+    let retainedNames=Set(try FileManager.default.contentsOfDirectory(atPath:root.path)).subtracting(beforeRestore)
+    guard lateRestoreCalls==restoreCalls,retainedNames.count==1,let retained=retainedNames.first,retained.hasPrefix(".fios-restore-"),
+          !FileManager.default.fileExists(atPath:lateTarget.path),
+          try Data(contentsOf:root.appendingPathComponent(retained).appendingPathComponent("backup.json"))==manifestBytes else {
+        fatalError("Late restore did not retain private staging without publication")
+    }
     var custodyLock=stat()
     guard lstat(restoredState.appendingPathComponent("serving-custody.lock").path,&custodyLock)==0,
           custodyLock.st_mode&S_IFMT==S_IFREG,custodyLock.st_mode&0o7777==0o600,
