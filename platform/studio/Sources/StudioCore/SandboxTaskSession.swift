@@ -50,6 +50,13 @@ final class SandboxTaskSession {
         if !terminal {try response(receipt)}
     }
     func renew() throws {try response(Data("{\"version\":1,\"type\":\"lease.renew\"}".utf8))}
+    func acceptRuntimeFrame(_ frame:Data,now:Int64)throws -> SandboxStreamEvent? {
+        guard !terminal,!revoked else {throw ControlError.invalid_request}
+        guard let event=try stream.accept(frame,now:now) else {return nil}
+        switch event {case .done,.revoked:terminal=true;default:break}
+        if terminal {source.removeAll();responses.removeAll();responseBytes=0}
+        return event
+    }
     func poll(attach:DockerAttach,started:Bool,now:Int64,uptime:TimeInterval) throws -> [SandboxStreamEvent] {
         guard !revoked,now>=previous,now<deadline else {revoke(attach:attach);throw ControlError.invalid_request}
         previous=now
@@ -84,13 +91,7 @@ final class SandboxTaskSession {
                 }
                 if attach.eof {break}
                 for frame in try attach.poll(now:uptime) {
-                    guard !terminal else {throw ControlError.invalid_request}
-                    if let event=try stream.accept(frame,now:now) {
-                        if case .done=event {terminal=true}
-                        if case .revoked=event {terminal=true}
-                        if terminal {source.removeAll();responses.removeAll();responseBytes=0}
-                        events.append(event)
-                    }
+                    if let event=try acceptRuntimeFrame(frame,now:now) {events.append(event)}
                 }
             }
             if attach.eof && !terminal {throw ControlError.invalid_request}
