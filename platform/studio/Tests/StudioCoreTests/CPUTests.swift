@@ -33,14 +33,17 @@ func runCPUTests() throws {
         }
     }
     var timed=CPUSampler()
-    func measure(_ start:Int64,_ end:Int64,_ tick:UInt32)->(value:Double,at:Int64)? {
-        var times=[start,end]
-        return timed.measure(now:{times.removeFirst()},read:{[tick,tick,tick,0]})
+    func measure(_ start:Int64,_ end:Int64,_ tick:UInt32,_ uptime:[UInt64]=[0,0])->(value:Double,at:Int64)? {
+        var times=[start,end],monotonic=uptime
+        return timed.measure(now:{times.removeFirst()},uptime:{monotonic.removeFirst()},read:{[tick,tick,tick,0]})
     }
-    guard measure(1000,1000,1)==nil,measure(2000,7000,2)?.at==2000,
+    guard measure(1000,1000,1)==nil,measure(2000,7000,2,[0,5_000_000_000])?.at==2000,
           measure(8000,8000,3)==nil,measure(9000,14001,4)==nil,
           measure(14002,14002,5)==nil,measure(15000,15000,6)?.at==15000,
-          measure(16000,15999,7)==nil,measure(17000,17000,8)==nil else {
+          measure(16000,15999,7)==nil,measure(17000,17000,8)==nil,
+          measure(18000,18001,9,[0,5_000_000_001])==nil,measure(19000,19000,10)==nil,
+          measure(20000,20000,11,[1,0])==nil,measure(21000,21000,12)==nil,
+          measure(22000,22000,13)?.at==22000 else {
         fatalError("Late or regressed CPU read was published, redated or retained as baseline")
     }
     var discontinuity=CPUSampler()

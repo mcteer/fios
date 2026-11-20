@@ -1,5 +1,6 @@
 import Foundation
 import Darwin
+import Dispatch
 
 struct CPUSampler {
     private var previous:([UInt32],Int64)?
@@ -20,12 +21,14 @@ struct CPUSampler {
     }
     // Mach supplies no collection timestamp. A bounded read may use its
     // original start, but a failed or late read must break the interval.
-    mutating func measure(now:()->Int64=HostResources.nowMilliseconds,read:()->[UInt32]?=readTicks)->(value:Double,at:Int64)? {
-        let start=now()
+    mutating func measure(now:()->Int64=HostResources.nowMilliseconds,
+                          uptime:()->UInt64={DispatchTime.now().uptimeNanoseconds},read:()->[UInt32]?=readTicks)->(value:Double,at:Int64)? {
+        let started=uptime(),start=now()
         guard (clockWatermark...ActivityPolicy.maximumTimestamp).contains(start) else {previous=nil;return nil}
         let ticks=read()
-        let end=now()
-        guard (start...ActivityPolicy.maximumTimestamp).contains(end),end-start<=5000 else {
+        let end=now(),ended=uptime()
+        guard (start...ActivityPolicy.maximumTimestamp).contains(end),end-start<=5000,
+              ended>=started,ended-started<=5_000_000_000 else {
             _=observe(ticks:nil,now:start)
             return nil
         }
