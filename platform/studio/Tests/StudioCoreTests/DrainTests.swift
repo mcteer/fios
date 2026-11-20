@@ -107,6 +107,20 @@ func runDrainTests()throws {
     drainClock.time=61
     let expired=try timedDrain.poll(snapshot:busy,now:2000)
     guard expired.state == .refused(.deadline),expired.revokeOwned.isEmpty else {fatalError("Expired drain requested another revocation")}
+    for discontinuity in [1.5,Double.nan,Double.infinity] {
+        drainClock.time=1
+        _=try timedDrain.begin(snapshot:busy,role:.operator,now:1000)
+        drainClock.time=2
+        guard try timedDrain.poll(snapshot:ready,now:2000).state == .ready(identity) else {throw ServiceError.invalid}
+        drainClock.time=discontinuity
+        let blocked=try timedDrain.poll(snapshot:busy,now:2000)
+        drainClock.time=3
+        let caughtUp=try timedDrain.poll(snapshot:ready,now:2000)
+        guard blocked.state == .refused(.deadline),blocked.revokeOwned.isEmpty,
+              caughtUp.state == .refused(.deadline),caughtUp.revokeOwned.isEmpty else {
+            fatalError("Discontinuous uptime revived drain or requested revocation")
+        }
+    }
     for role:ControlRole in [.observer,.task,.sandbox] {
         do {_ = try drain.begin(snapshot:busy,role:role,now:1000);fatalError("Non-operator began service drain")}catch ServiceError.invalid {}
         do {_ = try force.prepareForce(scope:initial,role:role,now:1000);fatalError("Non-operator prepared force")}catch ServiceError.invalid {}
