@@ -239,6 +239,9 @@ func runTaskCommandTests() throws {
           artifacts.reservingDisk(in:sample).diskCommitted==UInt64(source.count) else {
         fatalError("Retiring read handles released durable export disk charge")
     }
+    let retainedSibling=Data("independent retained export".utf8)
+    try artifacts.publish(request:UUID().uuidString.lowercased(),job:independent,owner:independentOwner,data:retainedSibling,now:61022)
+    guard case .success(.published(let siblingArtifact))=try wait()[0].result else {throw RuntimeError.invalid}
     let retentionEdge:Int64=1005+86_400_000
     try commands.tick(now:retentionEdge-2,uptime:retentionEdge-2,artifactResults:[])
     let nearRetention=try repeatDownload(now:retentionEdge-2)
@@ -251,11 +254,21 @@ func runTaskCommandTests() throws {
     catch ArtifactError.unavailable {}
     do {_=try call("artifact.read",["phase":"next","stream":retentionHandle],now:retentionEdge);fatalError("Expired export handle revived")}
     catch TaskCommandError.unauthorized {}
-    guard artifacts.reservingDisk(in:sample).diskCommitted==UInt64(source.count) else {fatalError("Read-side refusal released durable bytes")}
+    guard artifacts.reservingDisk(in:sample).diskCommitted==UInt64(source.count+retainedSibling.count) else {fatalError("Read-side refusal released durable bytes")}
+    let siblingDownload=try call("artifact.read",["phase":"begin","artifact":siblingArtifact],auth:foreign,now:retentionEdge)
+    guard let siblingStream=siblingDownload["stream"] as? String else {throw RuntimeError.invalid}
+    try commands.tick(now:retentionEdge,uptime:retentionEdge,artifactResults:wait())
     try artifacts.expire(request:UUID().uuidString.lowercased(),now:retentionEdge)
     try commands.tick(now:retentionEdge,uptime:retentionEdge,artifactResults:wait())
-    guard artifacts.statistics.bytes==0,artifacts.reservingDisk(in:sample).diskCommitted==0 else {
-        fatalError("Proven artifact expiry did not release retained charge")
+    guard artifacts.statistics.bytes==Int64(retainedSibling.count),artifacts.statistics.jobs==1,
+          artifacts.reservingDisk(in:sample).diskCommitted==UInt64(retainedSibling.count) else {
+        fatalError("Proven artifact expiry did not release only its exact retained charge")
+    }
+    guard try call("artifact.read",["phase":"next","stream":siblingStream],auth:foreign,now:retentionEdge)["artifact"] as? String==siblingArtifact,
+          try call("artifact.read",["phase":"next","stream":siblingStream],auth:foreign,now:retentionEdge)["data"] as? String==retainedSibling.base64EncodedString(),
+          try call("artifact.read",["phase":"next","stream":siblingStream],auth:foreign,now:retentionEdge)["type"] as? String=="end",
+          try journal.hasClaim(job:independent,attempt:0),try journal.uncertainCount()==1 else {
+        fatalError("Expiry changed unrelated export or native inference custody")
     }
     print("PASS: task-role/opaque-owner API, closed/source-loss admission, reserve-before-input, once-only validation, proof-gated cancel and asynchronous owner-only finite artifact routing")
 }
