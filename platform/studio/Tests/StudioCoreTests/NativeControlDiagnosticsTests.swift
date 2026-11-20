@@ -113,6 +113,15 @@ func runNativeControlContinuityTests() throws {
             fatalError("Combined diagnostics conflated source ages or projected partial zero as authority")
         }
     }
+    guard combined.completed(sample(43,1001),receivedAt:1001,primaryActivity:.failure(.unavailable)) else {throw NativeControlError.invalid}
+    let gap=combined.summary(now:1001)
+    guard (gap["primary_activity"] as? [String:Any])?["state"] as? String=="unavailable",
+          (gap["backend_fences"] as? [String:Any])?["state"] as? String=="received",
+          combined.capture(now:1001)?.sequence==43 else {fatalError("An independent primary gap erased unrelated diagnostics")}
+    guard combined.completed(sample(44,1002),receivedAt:1002,primaryActivity:.success(primary)),
+          (combined.summary(now:1002)["primary_activity"] as? [String:Any])?["state"] as? String=="unavailable" else {
+        fatalError("New ingress capture disguised replay of the pre-gap primary capture")
+    }
     var legacy=sample();legacy.nativeSampleSequence=nil;legacy.nativeSampledAt=nil
     var mixed=NativeControlDiagnostics(configured:true)
     mixed.completed(sample(),receivedAt:1000)
