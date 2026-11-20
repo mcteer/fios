@@ -263,6 +263,10 @@ node scripts/check-platform-session-driver.mjs --isolated
 node scripts/check-platform-supervisor-lock.mjs --isolated
 node scripts/check-platform-supervisor-budget.mjs --isolated
 node scripts/check-platform-watchdog.mjs --isolated
+# Private supervisor status-only write refusal; same manager must survive without a restart.
+node scripts/check-platform-supervisor-publication.mjs --isolated
+# Optional: validate the same fixture with an exact reviewed inactive development package.
+node scripts/check-platform-supervisor-publication.mjs --isolated --release /ABS/PRIVATE_RELEASE --sha256 REVIEWED_MANIFEST_DIGEST
 # Disposable local runtime fixture; existing immutable fios:current base only.
 node scripts/check-platform-sandbox.mjs --isolated
 # Full finite isolation/cgroup + lost-result/restart/owned-cleanup rehearsal.
