@@ -37,6 +37,18 @@ func runTransferTests() throws {
     do {_=try rollback.finish(now:1001);fatalError("Transfer clock rollback accepted")}catch TransferError.expired{}
     do {_=try rollback.finish(now:1003);fatalError("Rollback stream resurrected")}catch TransferError.invalid{}
     for (kind,duration) in [(TransferKind.input,Int64(10000)),(.artifact,Int64(30000))] {
+        let maximum=ActivityPolicy.maximumTimestamp
+        let emptyHash=SHA256.hash(data:Data()).map {String(format:"%02x",$0)}.joined()
+        var empty=try ChunkTransfer(length:0,sha256:emptyHash,created:maximum-duration,kind:kind)
+        guard try empty.finish(now:maximum-1).isEmpty else {fatalError("Empty stream altered output at upper clock boundary")}
+        do {_=try ChunkTransfer(length:0,sha256:emptyHash,created:maximum-duration+1,kind:kind);fatalError("Transfer deadline exceeded clock domain")}
+        catch TransferError.invalid {}
+        var extreme=try ChunkTransfer(length:data.count,sha256:hash,created:1000,kind:kind)
+        try extreme.append(index:0,base64:data.base64EncodedString(),now:1001)
+        do {_=try extreme.finish(now:Int64.max);fatalError("Out-of-domain clock completed an active transfer")}
+        catch TransferError.expired {}
+        do {_=try extreme.finish(now:1002);fatalError("Active transfer revived after invalid time")}
+        catch TransferError.invalid {}
         var boundary=try ChunkTransfer(length:data.count,sha256:hash,created:1000,kind:kind)
         try boundary.append(index:0,base64:data.base64EncodedString(),now:1000+duration-1)
         guard try boundary.finish(now:1000+duration-1)==data else {fatalError("Last valid transfer millisecond refused")}
