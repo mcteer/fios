@@ -167,6 +167,7 @@ try{
  assert.equal(cleanupResources.resources.vmSampledAt,null,'Unbound synthetic VM timestamp became public evidence');
  assert.equal(cleanupResources.resource_observation.vm_sampled_at,null);
  assert.equal(cleanupResources.resource_observation.signals.vm_available.sampled_at,null);
+ assert.equal(cleanupResources.resource_observation.signals.vm_available.age_ms,null);
  assert.equal(cleanupResources.resources.cpu,0);
  assert.equal(cleanupResources.resource_observation.signals.cpu.availability,'observed');
  const readonly=await until(()=>status(state,['export']));
