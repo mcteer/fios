@@ -6,14 +6,24 @@ import {mkdirSync,mkdtempSync,readFileSync,renameSync,rmdirSync,rmSync} from 'no
 import {setTimeout as delay} from 'node:timers/promises';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
+import {validatePlatformRelease} from './lib/platform-release.mjs';
 assert(process.platform==='darwin'&&process.getuid()!==0);
-assert(process.argv.length===3&&process.argv[2]==='--isolated','Usage: check-platform-supervisor-publication.mjs --isolated');
+const args=process.argv.slice(2);
+assert(args[0]==='--isolated'&&(args.length===1||(args.length===5&&args[1]==='--release'&&args[3]==='--sha256')),
+ 'Usage: check-platform-supervisor-publication.mjs --isolated [--release ABS_RELEASE --sha256 REVIEWED_SHA256]');
 const root=fileURLToPath(new URL('../',import.meta.url));
 const env={PATH:'/usr/bin:/bin:/usr/sbin:/sbin',HOME:process.env.HOME,LANG:'C',LC_ALL:'C'};
 function run(file,args,timeout=120000){return spawnSync(file,args,{cwd:root,env,encoding:'utf8',timeout,maxBuffer:1<<20});}
-assert.equal(run('/usr/bin/swift',['build','--package-path','platform/studio']).status,0);
-const shown=run('/usr/bin/swift',['build','--package-path','platform/studio','--show-bin-path']);assert.equal(shown.status,0);
-const bin=shown.stdout.trim(),state=mkdtempSync('/tmp/fios009-supervisor-publication-');
+let bin;
+if(args.length===5){
+ validatePlatformRelease(args[2],args[4]);
+ bin=path.join(args[2],'bin');
+}else{
+ assert.equal(run('/usr/bin/swift',['build','--package-path','platform/studio']).status,0);
+ const shown=run('/usr/bin/swift',['build','--package-path','platform/studio','--show-bin-path']);assert.equal(shown.status,0);
+ bin=shown.stdout.trim();
+}
+const state=mkdtempSync('/tmp/fios009-supervisor-publication-');
 const child=spawn(path.join(bin,'studio-supervisor'),['--state',state],{env,stdio:'ignore'});
 let managerPID;
 const exited=()=>child.exitCode!==null||child.signalCode!==null;
