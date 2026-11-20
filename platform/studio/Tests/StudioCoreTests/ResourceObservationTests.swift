@@ -56,7 +56,8 @@ func runResourceObservationTests() throws {
     for unbound:String? in [nil,"",String(repeating:"A",count:64),String(repeating:"a",count:63)] {
         let noVM=try ResourceObservationExport.encode(sample:sample,gpu:nil,gpuSampledAt:nil,now:10000,epoch:epoch,sequence:1,vmEpoch:unbound)
         guard noVM.resources["vmAvailable"] is NSNull,quality(noVM,"vm_available")=="unknown",
-              noVM.observation["vm_epoch"] is NSNull,noVM.resources["cpu"] as? Double==0 else {fatalError("Unbound VM capacity published or CPU discarded")}
+              noVM.observation["vm_epoch"] is NSNull,noVM.observation["vm_sampled_at"] is NSNull,
+              noVM.resources["vmSampledAt"] is NSNull,noVM.resources["cpu"] as? Double==0 else {fatalError("Unbound VM capacity published or CPU discarded")}
     }
     for bytes:UInt64 in [(64<<30)+1,UInt64.max] {
         let oversized=try frame(10000,sample.replacingVM(bytes,sampledAt:10000))
