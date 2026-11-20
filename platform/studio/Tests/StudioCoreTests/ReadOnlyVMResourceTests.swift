@@ -61,6 +61,15 @@ func runReadOnlyVMResourceTests() throws {
     cachedCap.envelope=sample(1000).envelope
     cachedWork.replies=[reply(cachedCap)]
     cached.tick(records:[record],jobs:[job],physical:host.physical,now:3001)
+    let reportEpoch=UUID().uuidString.lowercased()
+    for now:Int64 in [6000,6001] {
+        let bound=cached.epoch(now:now),sample=cached.applying(to:host,now:now)
+        let report=try ResourceObservationExport.encode(sample:sample,gpu:nil,gpuSampledAt:nil,now:now,epoch:reportEpoch,sequence:1,vmEpoch:bound)
+        let metric=ResourceObservationExport.telemetrySample(sample,vmEpoch:bound)
+        guard (report.observation["vm_epoch"] as? String)==bound,
+              (report.resources["vmAvailable"] as? UInt64)==metric.vmAvailable,
+              metric.vmSampledAt==(now==6000 ? 1000:nil) else {fatalError("VM epoch and original time diverged across report and telemetry")}
+    }
     guard cached.applying(to:host,now:6000).vmSampledAt==1000,cached.epoch(now:6000)==hash,
           cached.applying(to:host,now:6001).vmAvailable==nil,cached.epoch(now:6001)==nil else {
         fatalError("Read-only VM cap inherited the newer kernel's freshness")

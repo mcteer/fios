@@ -4,6 +4,10 @@ import Foundation
 // idle, model-completion, lifecycle, or runtime-management authority.
 enum ResourceObservationExport {
     struct Frame { let resources:[String:Any]; let observation:[String:Any] }
+    private static func hasVMEpoch(_ epoch:String?)->Bool {epoch.map(WireScalar.sha256)==true}
+    static func telemetrySample(_ sample:ResourceSample,vmEpoch:String?)->ResourceSample {
+        hasVMEpoch(vmEpoch) ? sample:sample.replacingVM(nil)
+    }
     static func encode(sample:ResourceSample,gpu:GPUSample?,gpuSampledAt:Int64?,now:Int64,epoch:String,sequence:Int64,vmEpoch:String?)throws->Frame {
         guard WireScalar.uuid(epoch),now>=0,now<=ActivityPolicy.maximumTimestamp,sequence>=0,sequence<=ActivityPolicy.maximumTimestamp else {throw ControlError.internal_error}
         let empty=NSNull(),maximum=UInt64(ActivityPolicy.maximumTimestamp)
@@ -25,7 +29,7 @@ enum ResourceObservationExport {
         publish("pressure",key:"pressure",value:sample.pressure == .unknown ? nil:sample.pressure.rawValue,at:sample.sampledAt,unknown:"unknown")
         publish("thermal",key:"thermal",value:sample.thermal == .unknown ? nil:sample.thermal.rawValue,at:sample.sampledAt,unknown:"unknown")
         publish("low_power_mode",key:"lowPowerMode",value:sample.lowPowerMode,at:sample.sampledAt)
-        let boundVM=vmEpoch.map(WireScalar.sha256) == true
+        let boundVM=hasVMEpoch(vmEpoch)
         publish("vm_available",key:"vmAvailable",value:boundVM && physical != nil ? sample.vmAvailable.flatMap {$0<=sample.physical ? bytes($0):nil}:nil,at:sample.vmSampledAt)
         publish("gpu",key:"gpu",value:gpu.flatMap{$0.utilization}.flatMap{$0.isFinite && (0...100).contains($0) ? $0:nil},at:gpuSampledAt)
         publish("gpu_in_use_memory",key:"gpu_in_use_bytes",value:bytes(gpu?.inUseBytes),at:gpuSampledAt)

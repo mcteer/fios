@@ -108,7 +108,7 @@ public enum ManagerRuntime {
         func publishResources(_ sample:ResourceSample,now:Int64) {
             // A cached fixture sample is not an observed VM gauge without
             // a source epoch. Do not alter the separate admission sample.
-            telemetry.resources(vmEpoch(now:now).map(WireScalar.sha256)==true ? sample:sample.replacingVM(nil))
+            telemetry.resources(ResourceObservationExport.telemetrySample(sample,vmEpoch:vmEpoch(now:now)))
         }
         func timestamp()->Int64 { Int64(Date().timeIntervalSince1970*1000) }
         try audit.record(.started,now:timestamp())
