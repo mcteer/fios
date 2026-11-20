@@ -90,8 +90,15 @@ func runTaskCommandTests() throws {
     try journal.transitionJob(id:independent,to:.running,now:1003)
     try journal.claim(job:independent,attempt:0,model:"fixture/model")
     try journal.markUncertain(job:independent,attempt:0)
-    try commands.tick(now:1003,uptime:1003,artifactResults:[],output:Array(repeating:SandboxTaskOutput(job:id,stream:"stdout",data:opaque),count:65),
+    let absentJobs=(0..<4).map {_ in UUID().uuidString.lowercased()}
+    let lateOutput=absentJobs.map {SandboxTaskOutput(job:$0,stream:"stdout",data:opaque)}
+    try commands.tick(now:1003,uptime:1003,artifactResults:[],
+        output:lateOutput+Array(repeating:SandboxTaskOutput(job:id,stream:"stdout",data:opaque),count:65),
         model:[independent:[.complete]])
+    for absent in absentJobs {
+        do {_=try call("job.status",["job":absent],now:1003);fatalError("Late output recreated a missing job")}
+        catch TaskCommandError.unauthorized {}
+    }
     let lost=try call("job.status",["job":id],now:1003)
     guard lost["output_lost"] as? Bool==true,lost["event"]==nil,try journal.jobs().first(where:{$0.id==id})?.state == .revoking else {fatalError("Backpressure did not irreversibly revoke task")}
     try commands.tick(now:1003,uptime:1003,artifactResults:[],output:[SandboxTaskOutput(job:id,stream:"stdout",data:opaque)])

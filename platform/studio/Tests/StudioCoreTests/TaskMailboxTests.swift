@@ -68,6 +68,17 @@ func runTaskMailboxTests() throws {
     guard exactFrame?["event_index"] as? Int==0,exactFrame?["data"] as? String==exactData else {
         fatalError("Mailbox frame limit altered valid data or consumed its ordinal")
     }
+    var retired=TaskMailbox()
+    let retiredJobs=(0..<3).map {_ in UUID().uuidString.lowercased()}
+    for id in retiredJobs+[job] {try retired.append(job:id,fields:fields,now:1000)}
+    guard retired.expire(now:3000,retained:[job])==[job] else {fatalError("Retired output became a revocation candidate")}
+    for id in retiredJobs {
+        guard try retired.pop(job:id,now:3000)==nil else {fatalError("Retired output remained visible")}
+    }
+    try retired.append(job:job,fields:fields,now:3001)
+    guard try retired.pop(job:job,now:3001)?["event_index"] as? Int==1 else {fatalError("Pruning retired jobs reset retained ordinal")}
+    _=retired.expire(now:3001,retained:[])
+    guard !retired.hasRetainedState else {fatalError("Mailbox retained counter state beyond journal retention")}
     var other=TaskMailbox()
     for _ in 0..<4 {try other.append(job:UUID().uuidString.lowercased(),fields:fields,now:1000)}
     do {try other.append(job:UUID().uuidString.lowercased(),fields:fields,now:1001);fatalError("Output exceeded four jobs")} catch MailboxError.capacity {}
