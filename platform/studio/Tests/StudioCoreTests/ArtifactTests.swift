@@ -92,7 +92,18 @@ func runArtifactTests() throws {
     metadata[deletion]["state"]="deleting"
     metadata[pendingSurvivor]["state"]="pending"
     index["records"]=metadata
-    try AtomicState.write(JSONSerialization.data(withJSONObject:index),to:indexURL)
+    let mixedBytes=try JSONSerialization.data(withJSONObject:index)
+    try AtomicState.write(mixedBytes,to:indexURL)
+    var mixedTicks:[TimeInterval]=[100,100,100,100,200,210]
+    do {
+        _=try ArtifactStore(directory:directory,readUptime:{mixedTicks.isEmpty ? 210:mixedTicks.removeFirst()})
+        fatalError("Mixed recovery ignored pending read cutoff")
+    } catch ArtifactError.unavailable {}
+    guard mixedTicks.isEmpty,try Data(contentsOf:indexURL)==mixedBytes,
+          try Data(contentsOf:directory.appendingPathComponent(second+".blob"))==Data("second export".utf8),
+          try Data(contentsOf:directory.appendingPathComponent(survivor+".blob"))==Data("retained export".utf8) else {
+        fatalError("Pending deadline changed mixed recovery custody")
+    }
     store=try ArtifactStore(directory:directory)
     guard !FileManager.default.fileExists(atPath:directory.appendingPathComponent(second+".blob").path),
           try store!.retrieve(id:survivor,ownerHash:owner,now:retention+4)==Data("retained export".utf8) else {
