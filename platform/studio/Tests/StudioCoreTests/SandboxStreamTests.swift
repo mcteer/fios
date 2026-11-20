@@ -15,10 +15,20 @@ func runSandboxStreamTests() throws {
     guard case .artifact(let request,let bytes)=try stream.accept(frame("artifact.end",["id":id]),now:1004),request==id,bytes==data else {fatalError("Artifact transfer was not verified")}
     let saved=UUID().uuidString.lowercased()
     var terminalFirst=stream
-    guard case .done(true)=try terminalFirst.accept(frame("done",["status":"complete","exit_code":0,"output_bytes":text.count+data.count]),now:1005) else {
+    let sibling=UUID().uuidString.lowercased(),siblingSaved=UUID().uuidString.lowercased()
+    _=try terminalFirst.accept(frame("artifact.begin",["id":sibling,"length":data.count,"sha256":hash]),now:1005)
+    _=try terminalFirst.accept(frame("artifact.chunk",["id":sibling,"index":0,"data":data.base64EncodedString()]),now:1006)
+    guard case .artifact(let siblingRequest,let siblingBytes)=try terminalFirst.accept(frame("artifact.end",["id":sibling]),now:1007),
+          siblingRequest==sibling,siblingBytes==data else {fatalError("Sibling export lost its request identity")}
+    guard case .done(true)=try terminalFirst.accept(frame("done",["status":"complete","exit_code":0,"output_bytes":text.count+2*data.count]),now:1008) else {
         fatalError("Completion could not precede a durable export receipt")
     }
     do {_=try terminalFirst.saved(id:id,artifactID:"invalid");fatalError("Malformed durable receipt accepted")}catch ControlError.invalid_request {}
+    do {_=try terminalFirst.saved(id:UUID().uuidString.lowercased(),artifactID:siblingSaved);fatalError("Unrelated receipt accepted")}catch ControlError.invalid_request {}
+    let siblingReceipt=try JSONSerialization.jsonObject(with:terminalFirst.saved(id:sibling,artifactID:siblingSaved)) as! [String:Any]
+    guard siblingReceipt["id"] as? String==sibling,siblingReceipt["artifact_id"] as? String==siblingSaved else {
+        fatalError("Malformed or unrelated receipt consumed sibling acknowledgement")
+    }
     let lateReceipt=try JSONSerialization.jsonObject(with:terminalFirst.saved(id:id,artifactID:saved)) as! [String:Any]
     guard lateReceipt["id"] as? String==id,lateReceipt["artifact_id"] as? String==saved else {fatalError("Late receipt lost exact correlation")}
     do {_=try terminalFirst.saved(id:id,artifactID:saved);fatalError("Late receipt replayed")}catch ControlError.invalid_request {}
