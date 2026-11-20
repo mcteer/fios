@@ -165,6 +165,12 @@ try{
  assert(Number.isSafeInteger(cleanupResources.resources.vmSampledAt),'Synthetic cached source did not supply its original time');
  assert.equal(cleanupResources.resources.cpu,0);
  assert.equal(cleanupResources.resource_observation.signals.cpu.availability,'observed');
+ const readonly=await until(()=>status(state,['export']));
+ assert.equal(readonly.manager_epoch,reopened.epoch);
+ assert.equal(readonly.coverage,'unsupported');
+ assert.equal(readonly.outstanding_owners,null);
+ assert.deepEqual(Object.keys(readonly.resources).sort(),['pressure','sampled_at','thermal']);
+ for(const key of ['vmAvailable','vm_epoch','resource_observation'])assert(!Object.hasOwn(readonly,key));
  const afterResources=await until(()=>status(state));
  assert.equal(afterResources.epoch,reopened.epoch);
  assert.equal(afterResources.runtime_cleanup.pending_sandboxes,2);
