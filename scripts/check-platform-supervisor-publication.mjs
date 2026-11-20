@@ -38,9 +38,13 @@ try {
  assert.equal(result.status,0,'Coalescing made independently read status stale');
  const statusPath=path.join(state,'supervisor.json'),progressPath=path.join(state,'progress.json');
  const before=JSON.parse(readFileSync(progressPath));
+ const budgetPath=path.join(state,'restart-budget.json'),originalBudget=readFileSync(budgetPath);
  renameSync(statusPath,path.join(state,'prior-supervisor.json'));
  mkdirSync(statusPath,{mode:0o700}); // Refuse only the private status rename, not restart-budget persistence.
  try {
+  const unavailable=run(path.join(bin,'studioctl'),['--state',state,'supervisor'],3000);
+  assert.equal(unavailable.status,1,'Supervisor reader did not refuse unavailable status path');
+  assert.equal(unavailable.stdout,'','Unavailable status emitted a healthy sample');
   const deadline=performance.now()+5000;
   for(;;){
    assert(!exited(),'Status write failure terminated the supervisor');
@@ -58,6 +62,10 @@ try {
   if(value){assert.equal(value.pid,child.pid);assert.equal(value.state,'running');assert.equal(value.starts,1);assert(value.sampled_uptime_ms>last);break;}
   assert(!exited()&&performance.now()<recoveryDeadline,'Status publication did not recover');await delay(25);
  }
+ const recovered=run(path.join(bin,'studioctl'),['--state',state,'supervisor'],3000);
+ assert.equal(recovered.status,0,'Recovered status not readable through ordinary CLI');
+ assert.equal(JSON.parse(recovered.stdout).supervisor.starts,1);
+ assert.deepEqual(readFileSync(budgetPath),originalBudget,'Status retries rewrote the restart budget');
  console.log(`PASS: real unchanged supervisor publishes ${publications.size} fresh bounded snapshots/2.25s, not four durable writes/second; same manager survives status-only write refusal and publication recovers without a restart; no native action.`);
 }finally {
  if(!exited())child.kill('SIGTERM');
