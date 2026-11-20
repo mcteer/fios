@@ -97,6 +97,22 @@ func runNativeControlContinuityTests() throws {
     guard transportGap.completed(sample(43,1001),receivedAt:1001),transportGap.capture(now:1001)?.sequence==43 else {
         fatalError("Ordinary source transport gap was confused with a local clock fence")
     }
+    var combined=NativeControlDiagnostics(configured:true,backendFencesConfigured:true,primaryActivityConfigured:true)
+    let peer=NativeControlPeer(pid:42,start:100,executable:try VerifiedExecutable(path:"/fixture/native",sha256:String(repeating:"a",count:64)))
+    let primary=NativePrimaryActivitySample(peer:peer,receivedAt:1000,activity:NativePrimaryActivity(phaseVersion:2,
+        instance:instance,sampleSequence:11,sampledAt:900,uncertain:false,owners:0,ingress:0,preparing:0,queued:0,active:0,responding:0,models:[]))
+    let backend=NativeBackendFenceSample(peer:peer,receivedAt:1000,fences:NativeBackendFences(instance:instance,sampleSequence:19,
+        sampledAt:1000,mimoWarmUncertain:false,ds4MetalUncertainty:0,ds4HostUncertainty:0))
+    guard combined.completed(sample(),receivedAt:1000,backendFences:.success(backend),primaryActivity:.success(primary)) else {throw NativeControlError.invalid}
+    for now:Int64 in [5900,5901] {
+        let view=combined.summary(now:now)
+        let primaryView=view["primary_activity"] as? [String:Any],backendView=view["backend_fences"] as? [String:Any]
+        guard combined.capture(now:now)?.sequence==42,view["authoritative"] as? Bool==false,
+              primaryView?["authority"] as? Bool==false,backendView?["authority"] as? Bool==false,
+              primaryView?["state"] as? String==(now==5900 ? "received":"stale"),backendView?["state"] as? String=="received" else {
+            fatalError("Combined diagnostics conflated source ages or projected partial zero as authority")
+        }
+    }
     var legacy=sample();legacy.nativeSampleSequence=nil;legacy.nativeSampledAt=nil
     var mixed=NativeControlDiagnostics(configured:true)
     mixed.completed(sample(),receivedAt:1000)
