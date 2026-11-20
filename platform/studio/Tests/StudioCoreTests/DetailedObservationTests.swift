@@ -83,13 +83,23 @@ enum DetailedObservationTests {
             do {_=try consumer.accept(bytes,now:now);fatalError("Fresh activity hid stale/future resource summary")}catch PolicyError.staleObservation{}
         }
         var gap=validator()
-        _=try gap.accept(encode(),now:1000)
+        guard try gap.accept(encode(response),now:1000) == .busy(model:"fixture/model") else {
+            fatalError("Source-gap fixture did not start from coherent busy")
+        }
         let absent=ActivityObservationMetadata(host:host,endpointHash:endpoint,profileHash:profile,managerEpoch:manager,nativeEpoch:native,
             sequence:2,sampledAt:1001,nativeSequence:nil,nativeSampledAt:nil)
         let missing=try ActivityObservationExport.encode(metadata:absent,coverage:.unknown,sourceCoverage:.unknown)
-        guard try gap.accept(missing,now:1001) == .unknown else {fatalError("Source outage became idle")}
+        let gapView=try ActivityObservationExport.decode(missing).view
+        guard gapView.owners==nil,gapView.model==nil,try gap.accept(missing,now:1001) == .unknown else {
+            fatalError("Source outage retained previous busy evidence or became idle")
+        }
         let reset=try ActivityObservationExport.encode(metadata:meta(3,1,1002,1002),coverage:.all_clients,sourceCoverage:.all_clients)
         do {_=try gap.accept(reset,now:1002);fatalError("Unknown source gap reset native replay tracking")}catch ObservationError.replay{}
+        let recovered=try ActivityObservationExport.encode(metadata:meta(3,2,1002,1002),coverage:.all_clients,sourceCoverage:.all_clients,
+            totals:response,models:[NativeModelActivity(model:"fixture/model",resident:true,counts:response)])
+        guard try gap.accept(recovered,now:1002) == .busy(model:"fixture/model") else {
+            fatalError("Ordinary gap rejected independently advancing busy evidence")
+        }
         let entries=(0..<64).map {NativeModelActivity(model:String($0)+String(repeating:"\\",count:1000),resident:false,counts:.zero)}
         let bounded=try ActivityObservationExport.encode(metadata:meta(),coverage:.all_clients,sourceCoverage:.all_clients,models:entries)
         guard bounded.count<=65536,try ActivityObservationExport.decode(bounded).reason == .observation_too_large else {fatalError("Large detailed export truncated into idle")}
