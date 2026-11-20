@@ -76,7 +76,9 @@ func runPythonFactoryTests() throws {
     guard let mockPort=ProcessInfo.processInfo.environment["FIOS_PLATFORM_MOCK_PORT"],
           let selectedPort=Int(mockPort),(49152...65535).contains(selectedPort),String(selectedPort)==mockPort else {throw RuntimeError.invalid}
     mock.environment=["PATH":"/usr/bin:/bin","LANG":"C","FIOS_PLATFORM_MOCK_PORT":mockPort]
-    mock.standardInput=input;mock.standardOutput=output;mock.standardError=FileHandle.nullDevice
+    // The bundled mock receives only a private path, epoch and fixture port.
+    // Keep its own startup error visible; ordinary worker stderr stays private.
+    mock.standardInput=input;mock.standardOutput=output;mock.standardError=FileHandle.standardError
     progress("mock launch begin")
     try mock.run()
     progress("mock launch ready")
@@ -96,10 +98,14 @@ func runPythonFactoryTests() throws {
     while !ready.contains(10) && ProcessInfo.processInfo.systemUptime<readyDeadline {
         var bytes=[UInt8](repeating:0,count:4096)
         let count=Darwin.read(fd,&bytes,bytes.count)
+        if count==0 {throw RuntimeError.launch}
+        if count<0 && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR {throw RuntimeError.launch}
         if count>0 { ready.append(contentsOf:bytes.prefix(count)) }
         guard ready.count<=4096 else { throw RuntimeError.outputLimit }
+        if !ready.contains(10),!mock.isRunning {throw RuntimeError.launch}
         Thread.sleep(forTimeInterval:0.01)
     }
+    guard ready.contains(10) else {throw RuntimeError.deadline}
     guard let descriptor=try JSONSerialization.jsonObject(with:ready) as? [String:Any],
           let port=descriptor["port"] as? Int,port==selectedPort else { throw RuntimeError.launch }
     progress("mock endpoint ready")
