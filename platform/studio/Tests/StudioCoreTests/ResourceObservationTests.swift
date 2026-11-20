@@ -1,6 +1,17 @@
 import Foundation
 
 func runResourceObservationTests() throws {
+    let bound=WireScalar.maximumTimestamp
+    for invalid in [Int64.min,-1,bound+1,Int64.max] {
+        guard ResourceClock.age(now:invalid,sampledAt:10_000)==nil,
+              ResourceClock.age(now:10_000,sampledAt:invalid)==nil,
+              !ResourceClock.fresh(now:invalid,sampledAt:invalid) else {
+            fatalError("Invalid resource consumer or source clock entered age arithmetic")
+        }
+    }
+    guard ResourceClock.age(now:0,sampledAt:bound) == -bound,
+          ResourceClock.age(now:bound,sampledAt:0) == bound,
+          ResourceClock.fresh(now:bound,sampledAt:bound) else {fatalError("Valid endpoint bounds changed")}
     let epoch=UUID().uuidString.lowercased(),vmEpoch=String(repeating:"a",count:64)
     var sample=ResourceSample(sampledAt:10000,physical:64<<30,available:32<<30,vmAvailable:4<<30,diskFree:100<<30,cpu:0,pressure:.normal,thermal:.nominal,vmSampledAt:10000)
     sample.lowPowerMode=false;sample.cpuSampledAt=10000
