@@ -64,6 +64,20 @@ func runRuntimeTests() throws {
         let empty=try runtime.run(arguments:[],timeout:2,maximumOutput:0)
         guard empty.status==0,empty.output.isEmpty else {fatalError("Output refusal leaked a command slot or confused empty output")}
     }
+    // /bin/ls emits only stderr for a missing file; the fixed runtime
+    // pipe must account for those bytes just like stdout from echo.
+    let listPath="/bin/ls"
+    let listHash=SHA256.hash(data:try Data(contentsOf:URL(fileURLWithPath:listPath))).map {String(format:"%02x",$0)}.joined()
+    let listReader=try VerifiedExecutable(path:listPath,sha256:listHash)
+    let missing="/var/empty/fios-runtime-\(UUID().uuidString.lowercased())"
+    let stderr=try listReader.run(arguments:[missing],timeout:2,maximumOutput:4096)
+    guard stderr.status != 0,!stderr.output.isEmpty else {fatalError("Missing inert file did not produce a diagnostic")}
+    let exactStderr=try listReader.run(arguments:[missing],timeout:2,maximumOutput:stderr.output.count)
+    guard exactStderr.status==stderr.status,exactStderr.output==stderr.output else {fatalError("Exact stderr limit altered diagnostic bytes")}
+    do {
+        _=try listReader.run(arguments:[missing],timeout:2,maximumOutput:stderr.output.count-1)
+        fatalError("Stderr bypassed the fixed output budget")
+    } catch RuntimeError.outputLimit {}
     // A silent child must not keep the actor blocked in output collection.
     let sleepURL=URL(fileURLWithPath:"/bin/sleep")
     let sleepDigest=SHA256.hash(data:try Data(contentsOf:sleepURL)).map {String(format:"%02x",$0)}.joined()
