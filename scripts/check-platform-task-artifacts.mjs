@@ -82,7 +82,11 @@ try {
  assert.equal(call({job:fixture.finished_job},'job.status',1,otherOwner).error,'unauthorized');
  assert.equal(call({job:fixture.finished_job},'job.renew',1,otherOwner).error,'unauthorized');
  assert.equal(call({job:fixture.finished_job},'job.renew',1).error,'job_conflict');
- assert.equal(call({job:fixture.finished_job},'job.status').state,'removed');
+ for(let poll=0;poll<2;poll++){
+  const finished=call({job:fixture.finished_job},'job.status');
+  assert.equal(finished.state,'removed');assert.equal(finished.unresolved_managed_requests,0);
+  assert.equal(finished.event,undefined,'Status replayed output for a finished job after restart');
+ }
  assert.deepEqual(readFileSync(join(state,'fixture.json')),fixtureBytes,'Replacement reseeded fixture ownership');
  const records=[];
  for(const [index,artifact] of fixture.artifacts.entries()){
