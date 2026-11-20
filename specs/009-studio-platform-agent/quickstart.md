@@ -245,6 +245,8 @@ node scripts/check-platform.mjs --isolated-metrics
 # Artifact-only staging/corruption/publication rehearsal; independently reviewed receipt required.
 node scripts/check-platform-staging.mjs --isolated --release /ABSOLUTE/REVIEWED_RELEASE --sha256 REVIEWED_MANIFEST_SHA
 node scripts/check-platform-process.mjs --isolated
+# Same finite disposable process and resource-provenance checks, using reviewed inactive binaries.
+node scripts/check-platform-process.mjs --isolated --release /ABS/PRIVATE_RELEASE --sha256 REVIEWED_MANIFEST_DIGEST
 node scripts/check-platform-service-status.mjs --isolated
 # Normal task CLI correlation and real-manager multi-chunk/empty exports only.
 node scripts/check-platform-task-client.mjs --isolated
