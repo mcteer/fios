@@ -109,6 +109,8 @@ func runTaskCommandTests() throws {
           try journal.hasClaim(job:independent,attempt:0),try journal.uncertainCount()==1 else {
         fatalError("Mailbox saturation or cancellation changed independent custody")
     }
+    do {_=try call("job.status",["job":independent],now:1004);fatalError("Foreign owner polled independent terminal output")}
+    catch TaskCommandError.unauthorized {}
     let independentStatus=try call("job.status",["job":independent],auth:foreign,now:1004)
     let independentEvent=independentStatus["event"] as? [String:Any]
     guard independentStatus["unresolved_managed_requests"] as? Int==1,
