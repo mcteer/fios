@@ -180,6 +180,10 @@ try{
  assert.equal(afterResources.epoch,reopened.epoch);
  assert.equal(afterResources.runtime_cleanup.pending_sandboxes,2);
  assert.equal(afterResources.runtime_cleanup.storage_continuity_unknown,2);
+ const beforeRead=reopened.runtime_cleanup,afterRead=afterResources.runtime_cleanup;
+ assert(Number.isSafeInteger(afterRead.observed_at)&&afterRead.observed_at>=beforeRead.observed_at);
+ assert(Number.isSafeInteger(afterRead.observed_wait_ms)&&afterRead.observed_wait_ms>=beforeRead.observed_wait_ms);
+ assert(afterRead.observed_wait_ms>=afterRead.manager_observation_age_ms,'Wait was reset later than its manager snapshot');
  assert.equal(afterResources.unresolved_requests,1);
  assert.equal(reopened.runtime_cleanup.waiting_over_60s,false);
  assert(Number.isSafeInteger(reopened.runtime_cleanup.manager_observation_age_ms)&&reopened.runtime_cleanup.manager_observation_age_ms>=0);
