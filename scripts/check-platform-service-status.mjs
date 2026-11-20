@@ -121,7 +121,17 @@ try{
      const refusal=JSON.parse(denied.stdout);
      assert.equal(refusal.error,'native_unsupported');assert.equal(refusal.applied,false);
     }
-    assert.equal(status(state,['service',service,'status']).desired,restarted.services[service].desired);
+   }
+   const afterRefusals=status(state);
+   assert.equal(afterRefusals.epoch,restarted.epoch);
+   assert.equal(afterRefusals.native_control.state,restarted.native_control.state);
+   assert.equal(afterRefusals.native_control.authoritative,false);
+   for(const service of ['mlx','orbstack']){
+    const selected=status(state,['service',service,'status']);
+    for(const key of ['desired','observed','launch_pending','sampled_at','message']){
+     assert.equal(afterRefusals.services[service][key],restarted.services[service][key],`${mode} ${service} refusal changed ${key}`);
+     assert.equal(selected[key],afterRefusals.services[service][key],`${mode} ${service} status disagrees on ${key}`);
+    }
    }
    child.kill('SIGTERM');await until(()=>exited(child));assert.equal(child.exitCode,0);child=null;
   }
