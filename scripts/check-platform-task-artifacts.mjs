@@ -72,6 +72,9 @@ try {
   if(event.type==='begin'){assert.equal(event.artifact,fixture.artifacts[0]);break;}
   assert.equal(event.state,'pending');await delay(10);
  }
+ const sibling=call({phase:'begin',artifact:fixture.artifacts[1]});
+ assert.equal(sibling.state,'pending');assert.notEqual(sibling.stream,interrupted.stream);
+ assert.equal(call({phase:'begin',artifact:fixture.artifacts[1]},'artifact.read',1).error,'resource_limit');
  await stop();
  const retainedArtifactFiles=['index.json',...fixture.artifacts.map(id=>id+'.blob')];
  const retainedArchive=()=>Object.fromEntries(retainedArtifactFiles.map(name=>{
@@ -82,7 +85,9 @@ try {
  assert(!existsSync(join(state,'task.sock')),'Stopped fixture left a task socket');
  child=launch('--resume');
  await ready();
- assert.equal(call({phase:'next',stream:interrupted.stream},'artifact.read',1).error,'unauthorized');
+ for(const stream of [interrupted.stream,sibling.stream]){
+  assert.equal(call({phase:'next',stream},'artifact.read',1).error,'unauthorized');
+ }
  assert.equal(call({job:fixture.finished_job},'job.status').state,'removed');
  assert.equal(call({job:fixture.finished_job},'job.status',1,otherOwner).error,'unauthorized');
  assert.equal(call({job:fixture.finished_job},'job.renew',1,otherOwner).error,'unauthorized');
