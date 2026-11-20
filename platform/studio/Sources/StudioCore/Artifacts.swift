@@ -7,6 +7,7 @@ enum ArtifactError: Error { case invalid, unauthorized, unavailable, capacity, s
 // Single-manager, generated-path export store. No archive extraction, caller
 // filenames, workload logging or automatic deletion outside this directory.
 final class ArtifactStore {
+    private enum ReadFailure:Error {case deadline}
     private enum State:String,Codable { case pending, ready, failed, deleting }
     private struct Record:Codable {
         let id:String; let job:String; let ownerHash:String; let created:Int64
@@ -67,9 +68,14 @@ final class ArtifactStore {
             guard names.allSatisfy({allowed.contains($0)}) else { throw ArtifactError.invalid }
             for index in records.indices where records[index].state == .pending {
                 let record=records[index]
-                if (try? read(record.id+".blob",maximum:record.bytes,expectedSHA256:record.sha256)) != nil {
+                do {
+                    _=try read(record.id+".blob",maximum:record.bytes,expectedSHA256:record.sha256)
                     records[index].state = .ready
-                } else { records[index].state = .failed }
+                } catch ReadFailure.deadline {
+                    // Timing cannot establish corrupt or incomplete publication.
+                    // Refuse the reopen without rewriting any pending records.
+                    throw ArtifactError.unavailable
+                } catch {records[index].state = .failed}
             }
             try save()
             try finishDeletions()
@@ -93,7 +99,7 @@ final class ArtifactStore {
         var previous=began
         func checkReadClock()throws {
             let now=readUptime()
-            guard began.isFinite,began>=0,now.isFinite,now>=previous,now-began<10 else {throw ArtifactError.unavailable}
+            guard began.isFinite,began>=0,now.isFinite,now>=previous,now-began<10 else {throw ReadFailure.deadline}
             previous=now
         }
         // Check descriptor type without waiting on an unexpected pipe.
@@ -154,7 +160,8 @@ final class ArtifactStore {
         guard let record=records.first(where:{$0.id==id}),record.state == .ready,
               now<record.created+86_400_000 else { throw ArtifactError.unavailable }
         guard record.ownerHash==ownerHash else { throw ArtifactError.unauthorized }
-        return try read(record.id+".blob",maximum:record.bytes,expectedSHA256:record.sha256)
+        do {return try read(record.id+".blob",maximum:record.bytes,expectedSHA256:record.sha256)}
+        catch ReadFailure.deadline {throw ArtifactError.unavailable}
     }
     func download(id:String,ownerHash:String,now:Int64) throws -> ArtifactDownload {
         let data=try retrieve(id:id,ownerHash:ownerHash,now:now)

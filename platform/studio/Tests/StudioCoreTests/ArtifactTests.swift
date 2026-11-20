@@ -50,7 +50,18 @@ func runArtifactTests() throws {
     var index=try JSONSerialization.jsonObject(with:Data(contentsOf:indexURL)) as! [String:Any]
     var metadata=index["records"] as! [[String:Any]]
     metadata[0]["state"]="pending";index["records"]=metadata
-    try AtomicState.write(JSONSerialization.data(withJSONObject:index),to:indexURL)
+    let pendingBytes=try JSONSerialization.data(withJSONObject:index)
+    try AtomicState.write(pendingBytes,to:indexURL)
+    // The small index read finishes first; expire the following blob read.
+    var recoveryTicks:[TimeInterval]=[100,100,100,100,200,210]
+    do {
+        _=try ArtifactStore(directory:directory,readUptime:{recoveryTicks.isEmpty ? 210:recoveryTicks.removeFirst()})
+        fatalError("Timing failure accepted pending publication recovery")
+    } catch ArtifactError.unavailable {}
+    guard recoveryTicks.isEmpty,try Data(contentsOf:indexURL)==pendingBytes,
+          try Data(contentsOf:blob)==Data("private result".utf8) else {
+        fatalError("Timing failure changed durable pending publication")
+    }
     store=try ArtifactStore(directory:directory)
     guard try store!.retrieve(id:id,ownerHash:owner,now:1002)==Data("private result".utf8) else { fatalError("Restart lost artifact") }
     do { _=try store!.publish(job:job,ownerHash:owner,data:Data(repeating:0,count:16<<20),now:1003);fatalError("Per-job export cap exceeded") } catch ArtifactError.capacity {}
