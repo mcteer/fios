@@ -43,7 +43,12 @@ func runArtifactDiskAdmissionTests() throws {
     guard service.reservingDisk(in:sample(floor+debt)).diskCommitted==debt else {fatalError("Rejected queued publication leaked or durable failed debt disappeared")}
     var recovered=AdmissionPolicy()
     try recovered.reserveWorker(key:"after-refusal",sample:service.reservingDisk(in:sample(floor+debt)),now:1000)
-    let readyStore=try ArtifactStore(directory:root.appendingPathComponent("ready"),availableBytes:{20<<30})
+    var expirySyncs=0
+    let readyStore=try ArtifactStore(directory:root.appendingPathComponent("ready"),availableBytes:{20<<30},syncDeletionDirectory:{directory in
+        expirySyncs+=1
+        if expirySyncs==1 {throw ArtifactError.storage}
+        try ArtifactStore.syncDirectory(directory)
+    })
     let readyService=AsyncArtifacts(store:readyStore)
     func readyResult()throws->ArtifactServiceResult {
         let limit=ProcessInfo.processInfo.systemUptime+3
@@ -60,6 +65,11 @@ func runArtifactDiskAdmissionTests() throws {
     guard readyService.reservingDisk(in:sample(floor)).diskCommitted==1 else {fatalError("Ready publication released debt against a pre-write free-space sample")}
     try workerDenied(readyService.reservingDisk(in:sample(floor)))
     try readyService.expire(request:UUID().uuidString.lowercased(),now:1000+86400000)
+    guard case .failure(.unavailable)=try readyResult().result,
+          readyService.statistics.bytes==1,readyService.statistics.jobs==1,
+          readyService.reservingDisk(in:sample(floor)).diskCommitted==1 else {fatalError("Failed expiry released sampled disk commitment")}
+    try workerDenied(readyService.reservingDisk(in:sample(floor)))
+    try readyService.expire(request:UUID().uuidString.lowercased(),now:1001+86400000)
     guard case .success(.expired)=try readyResult().result,
           readyService.reservingDisk(in:sample(floor)).diskCommitted==0 else {fatalError("Proven retained export cleanup did not release its disk commitment")}
     print("PASS: failed/queued/ready export disk commitments, exact10GiB-after-debt admission, short/overflow refusal, VM preservation and cleanup-only debt release")
