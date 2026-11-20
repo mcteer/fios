@@ -120,6 +120,16 @@ func runResourceObservationTests() throws {
     let invalid=ResourceSample(sampledAt:10000,physical:64<<30,available:65<<30,vmAvailable:nil,diskFree:UInt64.max,cpu:.nan,pressure:.unknown,thermal:.unknown)
     let rejected=try frame(10000,invalid)
     guard rejected.resources["available"] is NSNull,rejected.resources["diskFree"] is NSNull,rejected.resources["cpu"] is NSNull else {fatalError("Invalid/noninteroperable signal published")}
+    let shortAvailable=HostResources.freeMemory(physical:sample.physical,pageSize:4096) { _,count in count-=1;return 0 }
+    let shortPressure=HostResources.memoryPressure { level,count in level=1;count-=1;return 0 }
+    let shortReads=ResourceSample(sampledAt:10000,physical:sample.physical,available:shortAvailable,vmAvailable:nil,
+                                  diskFree:sample.diskFree,cpu:0,pressure:shortPressure,thermal:.nominal,cpuSampledAt:10000)
+    let incomplete=try frame(10000,shortReads)
+    guard incomplete.resources["available"] is NSNull,quality(incomplete,"available_memory")=="unknown",
+          incomplete.resources["pressure"] as? String=="unknown",quality(incomplete,"pressure")=="unknown",
+          quality(incomplete,"disk_free")=="observed",quality(incomplete,"cpu")=="observed" else {
+        fatalError("Short kernel reads fabricated host resources or hid independent signals")
+    }
     let bytes=try JSONSerialization.data(withJSONObject:["resources":rejected.resources,"resource_observation":rejected.observation])
     guard bytes.count<8192 else {fatalError("Resource export exceeded bounded metadata")}
     print("PASS: per-signal age/availability, independent host/GPU/VM timing, exact freshness edges, observed zero/power and invalid/unbound capacity refusal; no native-idle authority")
