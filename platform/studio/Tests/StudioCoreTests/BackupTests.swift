@@ -218,7 +218,21 @@ func runBackupTests() throws {
         try marker.write(to:wal)
         defer {try? FileManager.default.removeItem(at:wal)}
         try FileManager.default.setAttributes([.posixPermissions:0o600],ofItemAtPath:wal.path)
-        let sealed=try JournalSchemaSnapshot(source:bundle,sealedJournalSHA256:expected)
+        var checkpoints=0
+        let sealed=try JournalSchemaSnapshot(source:bundle,sealedJournalSHA256:expected,uptime:{checkpoints+=1;return 100})
+        for late in [110,100.25,Double.nan] {
+            var calls=0
+            do {
+                _=try JournalSchemaSnapshot(source:bundle,sealedJournalSHA256:expected,uptime:{
+                    calls+=1
+                    return calls==1 ? 100:calls==checkpoints ? late:100.5
+                })
+                fatalError("Sealed snapshot published after invalid final clock")
+            } catch RuntimeError.deadline {}
+            guard calls==checkpoints,try Data(contentsOf:bundle.appendingPathComponent("state.sqlite"))==journalBytes else {
+                fatalError("Expired snapshot mutated sealed source or failed before final checkpoint")
+            }
+        }
         guard try Data(contentsOf:sealed.directory.appendingPathComponent("state.sqlite"))==journalBytes,
               !FileManager.default.fileExists(atPath:sealed.directory.appendingPathComponent("state.sqlite-wal").path),
               try Data(contentsOf:wal)==marker else {fatalError("Sealed compatibility snapshot imported an unreviewed sidecar")}

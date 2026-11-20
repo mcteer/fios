@@ -7,16 +7,24 @@ import CryptoKit
 // restored WAL-mode main files. Never let that preflight repair the original.
 final class JournalSchemaSnapshot {
     let directory:URL
-    init(source:URL,stopped:StoppedPlatformState?=nil,sealedJournalSHA256:String?=nil)throws {
+    init(source:URL,stopped:StoppedPlatformState?=nil,sealedJournalSHA256:String?=nil,
+         uptime:()->TimeInterval={ProcessInfo.processInfo.systemUptime})throws {
+        let began=uptime()
+        var previous=began
+        func checkClock()throws {
+            let now=uptime()
+            guard began.isFinite,began>=0,now.isFinite,now>=previous,now-began<10 else {throw RuntimeError.deadline}
+            previous=now
+        }
         guard stopped==nil || stopped?.directory==source.standardizedFileURL else {throw JournalError.invalid}
         directory=FileManager.default.temporaryDirectory.appendingPathComponent("fios-schema-"+UUID().uuidString.lowercased())
         guard mkdir(directory.path,0o700)==0 else {throw JournalError.storage}
         var completed=false
         defer {if !completed {try? FileManager.default.removeItem(at:directory)}}
-        let deadline=ProcessInfo.processInfo.systemUptime+10
         // A sealed backup has already authenticated its main-file digest.
         // Never let a live sidecar alter the bytes inspected for compatibility.
         for suffix in sealedJournalSHA256 == nil ? ["","-wal","-journal","-shm"] : [""] {
+            try checkClock()
             let original=source.appendingPathComponent("state.sqlite"+suffix)
             let input=open(original.path,O_RDONLY|O_NOFOLLOW|O_CLOEXEC|O_NONBLOCK)
             if input<0,errno==ENOENT,suffix != "" {continue}
@@ -33,7 +41,7 @@ final class JournalSchemaSnapshot {
             defer {close(output)}
             var bytes=[UInt8](repeating:0,count:32768),total:Int64=0,digest=SHA256()
             while true {
-                guard ProcessInfo.processInfo.systemUptime<deadline else {throw RuntimeError.deadline}
+                try checkClock()
                 let count=Darwin.read(input,&bytes,bytes.count)
                 if count<0,errno==EINTR {continue}
                 guard count>=0 else {throw JournalError.storage}
@@ -42,7 +50,7 @@ final class JournalSchemaSnapshot {
                 if sealedJournalSHA256 != nil {digest.update(data:Data(bytes.prefix(count)))}
                 var offset=0
                 while offset<count {
-                    guard ProcessInfo.processInfo.systemUptime<deadline else {throw RuntimeError.deadline}
+                    try checkClock()
                     let written=bytes.withUnsafeBytes {Darwin.write(output,$0.baseAddress!.advanced(by:offset),count-offset)}
                     if written<0,errno==EINTR {continue}
                     guard written>0 else {throw JournalError.storage};offset+=written
@@ -61,6 +69,7 @@ final class JournalSchemaSnapshot {
                 guard digest.finalize().map({String(format:"%02x",$0)}).joined()==expected else {throw JournalError.invalid}
             }
         }
+        try checkClock()
         completed=true
     }
     deinit {try? FileManager.default.removeItem(at:directory)}
