@@ -40,6 +40,12 @@ private struct UnavailableStatusSource:NativeReadOnlyClientSource {
                 _=try journal.reserveSandbox(job:DurableJob(id:id,idempotency:UUID().uuidString.lowercased(),ownerHash:hash,requestHash:hash,created:now),configuration:config)
                 try journal.commitSandboxCreate(config,now:now)
                 try SandboxLifecycle(journal:journal).created(job:id,runtimeID:String(repeating:"b",count:64))
+                // A second durable create lost its local response. Both the
+                // saved-ID and original-name listing must refuse empty output.
+                let lostID=UUID().uuidString.lowercased()
+                let lost=try SandboxConfiguration(job:lostID,nonce:String(repeating:"c",count:64),image:image,memory:512<<20,cpus:1)
+                _=try journal.reserveSandbox(job:DurableJob(id:lostID,idempotency:UUID().uuidString.lowercased(),ownerHash:hash,requestHash:hash,created:now),configuration:lost)
+                try journal.commitSandboxCreate(lost,now:now)
                 let modelID=UUID().uuidString.lowercased()
                 _=try journal.reserveJob(DurableJob(id:modelID,idempotency:UUID().uuidString.lowercased(),ownerHash:hash,requestHash:hash,created:now))
                 try journal.transitionJob(id:modelID,to:.running,now:now)
