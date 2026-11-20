@@ -159,6 +159,25 @@ func runReadOnlyVMResourceTests() throws {
     rollbackWork.replies=[reply(sample())]
     rollback.tick(records:[record],jobs:[job],physical:host.physical,now:3000)
     guard rollbackWork.requests.count==1,rollback.epoch(now:3000)==nil else {fatalError("VM observation clock rollback reopened pending work")}
+    let fencedHost=rollback.applying(to:host,now:3000),fencedEpoch=rollback.epoch(now:3000)
+    let fencedMetric=ResourceObservationExport.telemetrySample(fencedHost,vmEpoch:fencedEpoch)
+    let fencedReport=try ResourceObservationExport.encode(sample:fencedHost,gpu:nil,gpuSampledAt:nil,now:3000,
+        epoch:UUID().uuidString.lowercased(),sequence:1,vmEpoch:fencedEpoch)
+    guard fencedMetric.vmAvailable==nil,fencedMetric.vmSampledAt==nil,fencedMetric.cpuSampledAt==1000,
+          fencedReport.resources["vmAvailable"] is NSNull,fencedReport.observation["vm_epoch"] is NSNull,
+          fencedReport.resources["cpu"] as? Double==0 else {fatalError("VM clock fence leaked capacity or discarded independent CPU")}
+    for invalid in [Int64.min,WireScalar.maximumTimestamp+1,Int64.max] {
+        let work=VMObservationFixture(),subject=ReadOnlyVMResources(work:work)
+        subject.tick(records:[record],jobs:[job],physical:host.physical,now:1000)
+        work.replies=[reply(sample())]
+        subject.tick(records:[record],jobs:[job],physical:host.physical,now:1001)
+        guard subject.epoch(now:1001)==hash else {fatalError("Missing healthy VM clock control")}
+        subject.tick(records:[record],jobs:[job],physical:host.physical,now:invalid)
+        subject.tick(records:[record],jobs:[job],physical:host.physical,now:3000)
+        guard subject.epoch(now:3000)==nil,subject.applying(to:host,now:3000).vmAvailable==nil,work.requests.count==1 else {
+            fatalError("Invalid VM clock refreshed a cached observation or reopened work")
+        }
+    }
     let capacityWork=VMObservationFixture(),capacity=ReadOnlyVMResources(work:capacityWork)
     capacityWork.capacity=true;capacity.tick(records:[record],jobs:[job],physical:host.physical,now:1000)
     capacityWork.capacity=false;capacity.tick(records:[record],jobs:[job],physical:host.physical,now:1001)
