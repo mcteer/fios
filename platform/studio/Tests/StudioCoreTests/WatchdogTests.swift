@@ -70,6 +70,14 @@ func runWatchdogTests() throws {
     expect(try valid.policy(currentBoot:oldBoot).startHistory==[1000,11000])
     expect(try valid.policy(currentBoot:currentBoot).startHistory.isEmpty)
     let budgetPath=directory.appendingPathComponent("restart-budget.json")
+    for final in [11.999,12,9.999,Double.infinity] {
+        var reads=0
+        do {
+            let missing=try SupervisorRestartBudget.read(directory:directory,uptime:{reads+=1;return reads==1 ? 10:final})
+            expect(final==11.999 && missing==nil)
+        } catch JournalError.invalid {expect(final != 11.999)}
+        expect(!FileManager.default.fileExists(atPath:budgetPath.path))
+    }
     let malformedBytes=try JSONEncoder().encode(malformed)
     try malformedBytes.write(to:budgetPath)
     guard chmod(budgetPath.path,0o600)==0 else {throw RuntimeError.launch}
@@ -78,6 +86,20 @@ func runWatchdogTests() throws {
     expect(try Data(contentsOf:budgetPath)==malformedBytes)
     try JSONEncoder().encode(valid).write(to:budgetPath)
     expect(try SupervisorRestartBudget.read(directory:directory)?.starts==valid.starts)
+    let budgetBytes=try Data(contentsOf:budgetPath)
+    var budgetReads=0
+    _=try SupervisorRestartBudget.read(directory:directory,uptime:{budgetReads+=1;return 10})
+    for final in [11.999,12,10.25,Double.nan] {
+        var reads=0
+        do {
+            let result=try SupervisorRestartBudget.read(directory:directory,uptime:{
+                reads+=1
+                return reads==1 ? 10:reads==budgetReads ? final:10.5
+            })
+            expect(final==11.999 && result?.starts==valid.starts)
+        } catch JournalError.invalid {expect(final != 11.999)}
+        expect(try Data(contentsOf:budgetPath)==budgetBytes)
+    }
     let status=directory.appendingPathComponent("supervisor.json")
     guard mkfifo(status.path,0o600)==0 else {throw RuntimeError.launch}
     do {_=try SupervisorStatus.read(directory:directory,expectedExecutable:"/bin/false");fatalError("Nonregular supervisor status admitted")}

@@ -13,20 +13,30 @@ struct SupervisorRestartBudget:Codable {
         let restored=try WatchdogPolicy(restoringStarts:starts)
         return boot==currentBoot ? restored:WatchdogPolicy()
     }
-    static func read(directory:URL)throws->SupervisorRestartBudget? {
+    static func read(directory:URL,uptime:()->TimeInterval={ProcessInfo.processInfo.systemUptime})throws->SupervisorRestartBudget? {
+        let began=uptime()
+        var previous=began
+        func checkClock()throws {
+            let now=uptime()
+            guard began.isFinite,began>=0,now.isFinite,now>=previous,now-began<2 else {throw JournalError.invalid}
+            previous=now
+        }
         guard getuid() != 0,getuid()==geteuid() else {throw ControlError.unauthorized}
         let path=directory.appendingPathComponent("restart-budget.json").path
         let fd=open(path,O_RDONLY|O_NOFOLLOW|O_CLOEXEC|O_NONBLOCK)
-        if fd<0 {if errno==ENOENT{return nil};throw JournalError.invalid}
+        if fd<0 {
+            guard errno==ENOENT else {throw JournalError.invalid}
+            try checkClock()
+            return nil
+        }
         defer {Darwin.close(fd)}
         var before=stat(),after=stat(),named=stat()
         guard fstat(fd,&before)==0,before.st_mode & S_IFMT == S_IFREG,
               before.st_uid==geteuid(),before.st_nlink==1,before.st_mode & 0o7777==0o600,
               before.st_size>0,before.st_size<=4096 else {throw JournalError.invalid}
         var bytes=[UInt8](repeating:0,count:Int(before.st_size)+1),offset=0
-        let began=ProcessInfo.processInfo.systemUptime
         while offset<bytes.count {
-            guard ProcessInfo.processInfo.systemUptime-began<2 else {throw JournalError.invalid}
+            try checkClock()
             let remaining=bytes.count-offset
             let count=bytes.withUnsafeMutableBytes {Darwin.read(fd,$0.baseAddress!.advanced(by:offset),remaining)}
             if count<0 && errno==EINTR {continue}
@@ -49,6 +59,7 @@ struct SupervisorRestartBudget:Codable {
         let starts=raw.compactMap{WireScalar.integer($0)}
         guard starts.count==raw.count else {throw JournalError.invalid}
         _ = try WatchdogPolicy(restoringStarts:starts)
+        try checkClock()
         return .init(boot:boot,starts:starts)
     }
 }
