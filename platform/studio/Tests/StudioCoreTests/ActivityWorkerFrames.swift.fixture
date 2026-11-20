@@ -28,6 +28,11 @@ import Foundation
             } catch PolicyError.staleObservation where !expected {}
             try data.write(to:directory.appendingPathComponent("resource-\(offset).json"))
         }
+        let shortPressure=HostResources.memoryPressure {level,count in level=1;count-=1;return 0}
+        let context=ActivityObservationContext(sampledAt:now,pressure:shortPressure,thermal:.nominal)
+        let shortFrame=try ActivityObservationExport.encode(metadata:metadata,coverage:.all_clients,sourceCoverage:.all_clients,
+            totals:responding,models:[NativeModelActivity(model:"fixture/model@studio-a",resident:true,counts:responding)],context:context)
+        try shortFrame.write(to:directory.appendingPathComponent("short-pressure.json"))
         try emitPreparation(directory:directory)
     }
 }

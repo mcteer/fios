@@ -36,6 +36,12 @@ for offset in (-5001,-5000,1000,1001):
         assert offset in (-5000,1000),f'Invalid resource age accepted: {offset}'
 print('PASS Swift responding frames -> installed Python: independent resource-clock boundaries')
 
+short_pressure=json.loads((root/'short-pressure.json').read_text())
+assert short_pressure['resources']['pressure']=='unknown'
+assert short_pressure['resources']['thermal']=='nominal'
+validate_observation(short_pressure,profile,command,short_pressure['sampled_at'])
+print('PASS short pressure sample remains unknown through activity wire; independent thermal sample retained')
+
 preparation=json.loads((root/'preparation.json').read_text())
 validate_preparation_observation(preparation,profile,command,'18446744073709551615',int(time.time()*1000))
 for changes in ({'source_coverage':'unknown'},{'root_sequence':'1'},{'lease_expires_at':int(time.time()*1000)}):
