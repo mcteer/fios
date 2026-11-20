@@ -136,6 +136,16 @@ try {
     assert.deepEqual(readFileSync(join(copy,'artifacts/index.json')),incompleteBytes);
     assert.deepEqual(readFileSync(join(copy,incompleteBlob)),prefix);
   }
+  const inconsistent=join(scratch,'inconsistent-pending-bundle'),noRestore=join(scratch,'inconsistent-restore');
+  cpSync(incompleteBackup,inconsistent,{recursive:true});
+  const wrongManifest={...incompleteManifest,artifact_files:incompleteManifest.artifact_files.map(file=>({...file,bytes:incomplete.records[0].bytes,sha256:incomplete.records[0].sha256}))};
+  const wrongBytes=Buffer.from(JSON.stringify(wrongManifest));
+  writeFileSync(join(inconsistent,'backup.json'),wrongBytes);
+  const wrongDigest=hash(wrongBytes);
+  cli(inconsistent,['verify-backup','--sha256',wrongDigest],{expected:1});
+  cli(inconsistent,['restore-state','--sha256',wrongDigest,'--to',noRestore],{expected:1});
+  assert.equal(existsSync(noRestore),false);
+  assert.deepEqual(readFileSync(join(inconsistent,incompleteBlob)),prefix);
   assert.deepEqual(JSON.parse(run(helper,['check-incomplete',incompleteRestore])),{uncertain:1,exports:0,failed_exports:1});
   assert.deepEqual(readFileSync(join(incompleteRestore,incompleteBlob)),prefix);
   for(const copy of [incompleteState,incompleteBackup])assert.deepEqual(readFileSync(join(copy,'artifacts/index.json')),incompleteBytes);
