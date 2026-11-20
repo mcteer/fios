@@ -64,7 +64,18 @@ func runJobJournalTests() throws {
     var restored=AdmissionPolicy()
     _=try WorkerReconciler(journal:journal!,admission:&restored)
     let sensors=ResourceSample(sampledAt:10_000,physical:128<<30,available:64<<30,vmAvailable:8<<30,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal,vmSampledAt:10_000,cpuSampledAt:10_000)
-    try restored.reserve(job:UUID().uuidString.lowercased(),memory:512<<20,cpus:1,sample:sensors,now:10_000)
+    let unavailable=ResourceSample(sampledAt:10_000,physical:128<<30,available:nil,vmAvailable:nil,diskFree:nil,cpu:nil,pressure:.normal,thermal:.nominal)
+    do {try restored.reserveWorker(key:"second",sample:unavailable,now:10_000);fatalError("Missing sensors admitted a worker")} catch AdmissionError.capacity {}
+    let nextSandbox=UUID().uuidString.lowercased()
+    do {try restored.reserve(job:nextSandbox,memory:512<<20,cpus:1,sample:unavailable,now:10_000);fatalError("Missing sensors admitted a sandbox")} catch AdmissionError.capacity {}
+    let native=HostRAMBudget.nativeHeadroom(physicalBytes:128<<30)
+    let tight=ResourceSample(sampledAt:10_000,physical:128<<30,available:native+(1536<<20)-1,vmAvailable:8<<30,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal,vmSampledAt:10_000,cpuSampledAt:10_000)
+    do {try restored.reserveWorker(key:"second",sample:tight,now:10_000);fatalError("A restored charge was omitted from combined memory headroom")} catch AdmissionError.capacity {}
+    let exact=ResourceSample(sampledAt:10_000,physical:128<<30,available:native+(1536<<20),vmAvailable:8<<30,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal,vmSampledAt:10_000,cpuSampledAt:10_000)
+    var exactWorker=restored,exactSandbox=restored
+    try exactWorker.reserveWorker(key:"second",sample:exact,now:10_000)
+    try exactSandbox.reserve(job:nextSandbox,memory:512<<20,cpus:1,sample:exact,now:10_000)
+    try restored.reserve(job:nextSandbox,memory:512<<20,cpus:1,sample:sensors,now:10_000)
     do {try restored.reserve(job:UUID().uuidString.lowercased(),memory:512<<20,cpus:1,sample:sensors,now:10_000);fatalError("Issued sandbox lost its slot alongside worker recovery")} catch AdmissionError.capacity {}
     try restored.reserveWorker(key:"second",sample:sensors,now:10_000)
     do { try restored.reserveWorker(key:"third",sample:sensors,now:10_000);fatalError("Unbound launch lost its memory slot on restart") } catch AdmissionError.capacity {}
