@@ -58,6 +58,14 @@ final class StudioOpenTelemetryTests:XCTestCase {
         XCTAssertEqual(logs.records.first?.resource,state.resource)
         telemetry.supervisor(PlatformSupervisorSample(state:.recovering,starts:1,sampledAt:now))
         XCTAssertEqual((try metric("fios.platform.supervisor.state").data.points as! [DoublePointData]).first?.attributes["fios.supervisor.state"],.string("recovering"))
+        telemetry.supervisor(nil)
+        telemetry.event(.rejected)
+        let cleared=telemetry.collectMetrics().filter{$0.name.hasPrefix("fios.platform.supervisor.")}
+        XCTAssertTrue(cleared.allSatisfy{$0.data.points.isEmpty},"Status publication refusal retained stale supervisor gauges")
+        let recoveredAt=HostResources.nowMilliseconds()
+        telemetry.supervisor(PlatformSupervisorSample(state:.running,starts:1,sampledAt:recoveredAt))
+        XCTAssertEqual((try metric("fios.platform.supervisor.starts").data.points as! [DoublePointData]).first?.value,1)
+        XCTAssertEqual((try metric("fios.platform.supervisor.sample.time").data.points as! [DoublePointData]).first?.value,Double(recoveredAt)/1000)
         telemetry.supervisor(PlatformSupervisorSample(state:.recovering,starts:1,sampledAt:now-6000))
         XCTAssertFalse(telemetry.collectMetrics().contains{$0.name=="fios.platform.supervisor.state" && !$0.data.points.isEmpty})
     }
