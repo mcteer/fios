@@ -27,7 +27,7 @@ final class TaskCommands {
     private var mailbox=TaskMailbox()
     private var outputLost=Set<String>()
     private var outcomes:[String:SandboxTaskFinished]=[:]
-    private struct Download {let owner:String;var stream:ArtifactDownload?;var failure=false;let created:Int64;var previous:Int64}
+    private struct Download {let owner:String;let beginRequest:String;var stream:ArtifactDownload?;var failure=false;let created:Int64;var previous:Int64}
     private var downloads:[String:Download]=[:]
     init(journal:Journal,tasks:TaskController,sandbox:SandboxTaskController,artifacts:AsyncArtifacts,
          approvedImages:Set<String>,enrolled:Bool=false,peerUID:uid_t,
@@ -196,10 +196,12 @@ final class TaskCommands {
             if phase=="begin" {
                 try exact(["phase","artifact"])
                 guard let id=value["artifact"] as? String,UUID(uuidString:id)?.uuidString.lowercased()==id else {throw TaskCommandError.invalid_request}
-                guard downloads.count<2,downloads[request.id]==nil else {throw TaskCommandError.resource_limit}
-                try artifacts.download(request:request.id,id:id,owner:owner,now:now)
-                downloads[request.id]=Download(owner:owner,created:now,previous:now)
-                return ["stream":request.id,"state":"pending"]
+                let handle=UUID().uuidString.lowercased()
+                guard downloads.count<2,downloads[handle]==nil,
+                      !downloads.values.contains(where:{$0.beginRequest==request.id}) else {throw TaskCommandError.resource_limit}
+                try artifacts.download(request:handle,id:id,owner:owner,now:now)
+                downloads[handle]=Download(owner:owner,beginRequest:request.id,created:now,previous:now)
+                return ["stream":handle,"state":"pending"]
             }
             try exact(["phase","stream"])
             guard phase=="next",let id=value["stream"] as? String,var download=downloads[id],download.owner==owner else {throw TaskCommandError.unauthorized}

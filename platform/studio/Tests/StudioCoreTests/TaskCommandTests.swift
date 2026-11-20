@@ -129,7 +129,13 @@ func runTaskCommandTests() throws {
         throw RuntimeError.deadline
     }
     guard case .success(.published(let artifact))=try wait()[0].result else {fatalError("Fixture artifact failed")}
-    let started=try call("artifact.read",["phase":"begin","artifact":artifact],now:1006)
+    let downloadBegin=try request("artifact.read",["phase":"begin","artifact":artifact])
+    func repeatDownload(now:Int64)throws->[String:Any] {
+        try commands.handle(downloadBegin,role:.task,sample:sample,admission:&admission,binding:{_ in nil},nativeCapacityProven:false,now:now,uptime:1000)
+    }
+    let started=try repeatDownload(now:1006)
+    do {_=try repeatDownload(now:1006);fatalError("Active begin correlation opened a duplicate stream")}
+    catch TaskCommandError.resource_limit {}
     guard let stream=started["stream"] as? String else {fatalError("No finite download handle")}
     try commands.tick(now:1007,uptime:1007,artifactResults:wait())
     do {_=try call("artifact.read",["phase":"next","stream":stream],auth:foreign,now:1008);fatalError("Foreign owner used download handle")} catch TaskCommandError.unauthorized {}
@@ -137,7 +143,10 @@ func runTaskCommandTests() throws {
           try call("artifact.read",["phase":"next","stream":stream],now:1009)["data"] as? String==source.base64EncodedString(),
           try call("artifact.read",["phase":"next","stream":stream],now:1010)["type"] as? String=="end" else {fatalError("Owner artifact stream invalid")}
     do {_=try call("artifact.read",["phase":"next","stream":stream],now:1011);fatalError("Consumed artifact stream revived")} catch TaskCommandError.unauthorized {}
-    let waiting=try call("artifact.read",["phase":"begin","artifact":artifact],now:1011)
+    let waiting=try repeatDownload(now:1011)
+    guard waiting["stream"] as? String != stream else {fatalError("Reused begin correlation revived a consumed handle")}
+    do {_=try call("artifact.read",["phase":"next","stream":stream],now:1011);fatalError("Old handle aliased a fresh stream")}
+    catch TaskCommandError.unauthorized {}
     guard let pendingStream=waiting["stream"] as? String,
           try call("artifact.read",["phase":"next","stream":pendingStream],now:1012)["state"] as? String=="pending" else {
         fatalError("Missing pending artifact stream")

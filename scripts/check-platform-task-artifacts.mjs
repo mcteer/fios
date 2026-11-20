@@ -53,7 +53,7 @@ try {
  // response as if it did not exist. Neither stream may publish metadata.
  for(const artifact of [fixture.artifacts[0],randomUUID()]){
   const started=call({phase:'begin',artifact},'artifact.read',0,otherOwner);
-  assert.equal(started.state,'pending');assert.equal(started.stream,started.id);
+  assert.equal(started.state,'pending');assert.match(started.stream,/^[a-f0-9-]{36}$/);assert.notEqual(started.stream,started.id);
   const deadline=performance.now()+5000;
   for(;;){
    assert(performance.now()<deadline,'Unowned artifact stream did not terminate');
@@ -91,7 +91,7 @@ try {
  const records=[];
  for(const [index,artifact] of fixture.artifacts.entries()){
   const expected=Buffer.from(index===0?'Hello, Studio 👋\n'.repeat(4096):'');
-  const started=call({phase:'begin',artifact});assert.equal(started.state,'pending');assert.equal(started.stream,started.id);
+  const started=call({phase:'begin',artifact});assert.equal(started.state,'pending');assert.match(started.stream,/^[a-f0-9-]{36}$/);assert.notEqual(started.stream,started.id);
   const denied=call({phase:'next',stream:started.stream},'artifact.read',1,otherOwner);
   assert.equal(denied.error,'unauthorized');
   const deadline=performance.now()+5000,parts=[];let metadata,done=false;
