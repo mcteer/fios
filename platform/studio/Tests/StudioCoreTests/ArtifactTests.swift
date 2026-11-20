@@ -111,8 +111,19 @@ func runArtifactTests() throws {
     }
     // Model interruption after unlink but before clearing the durable marker.
     store=nil
-    try AtomicState.write(JSONSerialization.data(withJSONObject:index),to:indexURL)
-    store=try ArtifactStore(directory:directory)
+    metadata[pendingSurvivor]["state"]="ready";index["records"]=metadata
+    let restartIntent=try JSONSerialization.data(withJSONObject:index)
+    try AtomicState.write(restartIntent,to:indexURL)
+    var restartSyncs=0
+    do {
+        _=try ArtifactStore(directory:directory,syncDeletionDirectory:{_ in restartSyncs+=1;throw ArtifactError.storage})
+        fatalError("Restart cleared already-unlinked intent without successful sync")
+    } catch ArtifactError.storage {}
+    guard restartSyncs==1,try Data(contentsOf:indexURL)==restartIntent else {fatalError("Restart sync failure rewrote durable intent")}
+    store=try ArtifactStore(directory:directory,syncDeletionDirectory:{target in
+        restartSyncs+=1;try ArtifactStore.syncDirectory(target)
+    })
+    guard restartSyncs==2 else {fatalError("Restart retry skipped exact absence sync")}
     let cleaned=try JSONSerialization.jsonObject(with:Data(contentsOf:indexURL)) as! [String:Any]
     let remaining=cleaned["records"] as! [[String:Any]]
     guard remaining.count==1,remaining.first?["id"] as? String==survivor,remaining.first?["state"] as? String=="ready",
