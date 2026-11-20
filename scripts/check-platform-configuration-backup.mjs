@@ -76,9 +76,10 @@ try {
   assert.equal(lstatSync(join(restored,'configuration/runtime-enrollment.json')).mode&0o7777,0o600);
   assert.equal(readFileSync(join(configuration,'unrelated.json'),'utf8'),'retain separately');
   assert.deepEqual(JSON.parse(run(helper,['check',restored])),{uncertain:1,exports:1});
-  const restoredInode=lstatSync(restored).ino,restoredJournal=readFileSync(join(restored,'state.sqlite'));
+  const restoredDirectory=lstatSync(restored),restoredJournal=readFileSync(join(restored,'state.sqlite'));
+  assert(restoredDirectory.isDirectory());assert.equal(restoredDirectory.mode&0o7777,0o700);
   cli(bundle,['restore-state','--sha256',receipt.sha256,'--to',restored],{expected:1});
-  assert.equal(lstatSync(restored).ino,restoredInode);
+  assert.equal(lstatSync(restored).ino,restoredDirectory.ino);
   assert.deepEqual(readFileSync(join(restored,'state.sqlite')),restoredJournal);
   cli(state,['backup-state','--configuration',configuration,'--to',bundle],{expected:1});
   assert.equal(hash(readFileSync(join(bundle,'backup.json'))),receipt.sha256);

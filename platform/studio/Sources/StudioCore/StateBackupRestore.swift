@@ -29,7 +29,11 @@ extension StoppedStateBackup {
         let disk=try FileManager.default.attributesOfFileSystem(forPath:parent.path)
         guard let free=(disk[.systemFreeSize] as? NSNumber)?.int64Value,free>=receipt.bytes+(10<<30) else {throw JournalError.storage}
         let temporary=parent.appendingPathComponent(".fios-restore-"+UUID().uuidString.lowercased())
-        guard mkdir(temporary.path,0o700)==0 else {throw JournalError.storage}
+        guard mkdirat(outer,temporary.lastPathComponent,0o700)==0 else {throw JournalError.storage}
+        let folder=openat(outer,temporary.lastPathComponent,O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC)
+        guard folder>=0 else {throw JournalError.storage};defer {close(folder)}
+        var copied=stat()
+        guard fstat(folder,&copied)==0,copied.st_uid==geteuid(),copied.st_mode&0o7777==0o700 else {throw JournalError.invalid}
         // Retain a failed private copy for diagnosis. Publication removes this
         // name by exclusive rename; no recursive cleanup follows uncertainty.
         var recovery=try serviceRecoveryPayload(directory:directory)==nil ? []:["service-recovery.json"]
@@ -81,10 +85,7 @@ extension StoppedStateBackup {
         let artifacts=open(artifactDirectory.path,O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC)
         guard artifacts>=0 else {throw JournalError.storage};defer {close(artifacts)}
         guard fsync(artifacts)==0 else {throw JournalError.storage}
-        let folder=open(temporary.path,O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC)
-        guard folder>=0 else {throw JournalError.storage};defer {close(folder)}
-        var copied=stat()
-        guard fstat(folder,&copied)==0,fsync(folder)==0 else {throw JournalError.storage}
+        guard fsync(folder)==0 else {throw JournalError.storage}
         // Publish and sync against the same retained destination parent.
         func matchesCopy(_ name:String)->Bool {
             var entry=stat()
