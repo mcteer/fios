@@ -17,6 +17,22 @@ func runSandboxModelTests() throws {
     } catch ControlError.invalid_request {}
     var foreign=try SandboxModelChannel(job:job,runtimeID:runtime)
     do { _=try foreign.accept(call,runtimeID:String(repeating:"b",count:64));fatalError("Foreign runtime used model channel") } catch ControlError.unauthorized {}
+    var cancelled=try SandboxModelChannel(job:job,runtimeID:runtime)
+    _=try cancelled.accept(call,runtimeID:runtime)
+    let cancel=try packet(["version":1,"type":"model.cancel","id":request])
+    guard case .cancel(let cancelledID)=try cancelled.accept(cancel,runtimeID:runtime),cancelledID==request,
+          try cancelled.forward(.text(kind:"delta",content:"late text")).isEmpty else {
+        fatalError("Cancellation retained or forwarded late sandbox output")
+    }
+    let terminal=try cancelled.forward(.complete)
+    guard terminal.count==1,let done=try JSONSerialization.jsonObject(with:terminal[0]) as? [String:Any],
+          done["id"] as? String==request,done["status"] as? String=="interrupted",
+          try cancelled.forward(.interrupted).isEmpty else {fatalError("Cancelled request published success or replayed terminal output")}
+    var revoked=try SandboxModelChannel(job:job,runtimeID:runtime)
+    _=try revoked.accept(call,runtimeID:runtime)
+    revoked.revoke()
+    guard try revoked.forward(.text(kind:"delta",content:"late text")).isEmpty,
+          try revoked.forward(.complete).isEmpty else {fatalError("Revoked sandbox channel forwarded late output")}
     var valid=try SandboxModelChannel(job:job,runtimeID:runtime)
     for _ in 0..<4 {
         let id=UUID().uuidString.lowercased()
