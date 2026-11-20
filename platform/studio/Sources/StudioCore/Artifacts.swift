@@ -15,6 +15,7 @@ final class ArtifactStore {
     private struct Index:Codable { let version:Int; let records:[Record] }
     private let directory:URL
     private let availableBytes:()->UInt64?
+    private let readUptime:()->TimeInterval
     private var records:[Record]=[]
     private var lock:Int32 = -1
     private var previous:Int64 = -1
@@ -26,9 +27,9 @@ final class ArtifactStore {
     }
     private static func hash(_ data:Data)->String { SHA256.hash(data:data).map { String(format:"%02x",$0) }.joined() }
 
-    init(directory:URL,availableBytes:(()->UInt64?)?=nil) throws {
+    init(directory:URL,availableBytes:(()->UInt64?)?=nil,readUptime:@escaping ()->TimeInterval={ProcessInfo.processInfo.systemUptime}) throws {
         guard directory.isFileURL else { throw ArtifactError.invalid }
-        self.directory=directory
+        self.directory=directory;self.readUptime=readUptime
         self.availableBytes=availableBytes ?? {
             let attributes=try? FileManager.default.attributesOfFileSystem(forPath:directory.path)
             return (attributes?[.systemFreeSize] as? NSNumber)?.uint64Value
@@ -66,7 +67,7 @@ final class ArtifactStore {
             guard names.allSatisfy({allowed.contains($0)}) else { throw ArtifactError.invalid }
             for index in records.indices where records[index].state == .pending {
                 let record=records[index]
-                if let data=try? read(record.id+".blob",maximum:record.bytes),data.count==record.bytes,Self.hash(data)==record.sha256 {
+                if (try? read(record.id+".blob",maximum:record.bytes,expectedSHA256:record.sha256)) != nil {
                     records[index].state = .ready
                 } else { records[index].state = .failed }
             }
@@ -87,7 +88,14 @@ final class ArtifactStore {
         guard data.count<=1<<20 else { throw ArtifactError.capacity }
         try AtomicState.write(data,to:directory.appendingPathComponent("index.json"))
     }
-    private func read(_ name:String,maximum:Int) throws -> Data {
+    private func read(_ name:String,maximum:Int,expectedSHA256:String?=nil) throws -> Data {
+        let began=readUptime()
+        var previous=began
+        func checkReadClock()throws {
+            let now=readUptime()
+            guard began.isFinite,began>=0,now.isFinite,now>=previous,now-began<10 else {throw ArtifactError.unavailable}
+            previous=now
+        }
         // Check descriptor type without waiting on an unexpected pipe.
         let fd=open(directory.appendingPathComponent(name).path,O_RDONLY|O_NOFOLLOW|O_CLOEXEC|O_NONBLOCK)
         guard fd>=0 else { throw ArtifactError.unavailable };defer { close(fd) }
@@ -96,10 +104,19 @@ final class ArtifactStore {
               info.st_mode & 0o077==0,info.st_nlink==1,info.st_size>=0,info.st_size<=maximum else { throw ArtifactError.invalid }
         var data=Data(),buffer=[UInt8](repeating:0,count:32_768)
         while true {
+            try checkReadClock()
             let count=Darwin.read(fd,&buffer,min(buffer.count,maximum-data.count+1))
             if count<0 && errno==EINTR { continue }
             guard count>=0 else { throw ArtifactError.storage }
-            if count==0 { return data }
+            if count==0 {
+                try checkReadClock()
+                if let expectedSHA256 {
+                    let verified=data.count==maximum && Self.hash(data)==expectedSHA256
+                    try checkReadClock()
+                    guard verified else {throw ArtifactError.invalid}
+                }
+                return data
+            }
             guard count<=maximum-data.count else { throw ArtifactError.invalid }
             data.append(contentsOf:buffer.prefix(count))
         }
@@ -137,9 +154,7 @@ final class ArtifactStore {
         guard let record=records.first(where:{$0.id==id}),record.state == .ready,
               now<record.created+86_400_000 else { throw ArtifactError.unavailable }
         guard record.ownerHash==ownerHash else { throw ArtifactError.unauthorized }
-        let data=try read(record.id+".blob",maximum:record.bytes)
-        guard data.count==record.bytes,Self.hash(data)==record.sha256 else { throw ArtifactError.invalid }
-        return data
+        return try read(record.id+".blob",maximum:record.bytes,expectedSHA256:record.sha256)
     }
     func download(id:String,ownerHash:String,now:Int64) throws -> ArtifactDownload {
         let data=try retrieve(id:id,ownerHash:ownerHash,now:now)

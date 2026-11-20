@@ -6,9 +6,25 @@ func runArtifactTests() throws {
     defer { try? FileManager.default.removeItem(at:directory) }
     let job=UUID().uuidString.lowercased(), owner=String(repeating:"a",count:64)
     var disk:UInt64?=20<<30
-    var store:ArtifactStore?=try ArtifactStore(directory:directory,availableBytes:{disk})
+    var ticks:[TimeInterval]=[],clockReads=0
+    var store:ArtifactStore?=try ArtifactStore(directory:directory,availableBytes:{disk},readUptime:{
+        clockReads+=1
+        return ticks.isEmpty ? 100:ticks.removeFirst()
+    })
     let id=try store!.publish(job:job,ownerHash:owner,data:Data("private result".utf8),now:1000)
-    guard try store!.retrieve(id:id,ownerHash:owner,now:1001)==Data("private result".utf8) else { fatalError("Artifact mismatch") }
+    clockReads=0
+    guard try store!.retrieve(id:id,ownerHash:owner,now:1001)==Data("private result".utf8),clockReads>=3 else { fatalError("Artifact mismatch") }
+    let phases=clockReads
+    for final in [109.999,110,100.25,Double.nan] {
+        ticks=[100]+Array(repeating:100.5,count:phases-2)+[final]
+        do {
+            let value=try store!.retrieve(id:id,ownerHash:owner,now:1001)
+            guard final==109.999,value==Data("private result".utf8) else {fatalError("Artifact read completed past original clock bound")}
+        } catch ArtifactError.unavailable {
+            guard final != 109.999 else {fatalError("Valid artifact read refused")}
+        }
+        guard ticks.isEmpty else {fatalError("Artifact test did not reach final clock")}
+    }
     do { _=try store!.retrieve(id:id,ownerHash:String(repeating:"b",count:64),now:1001);fatalError("Foreign owner read artifact") } catch ArtifactError.unauthorized {}
     do { _=try store!.retrieve(id:"../../outside",ownerHash:owner,now:1001);fatalError("Traversal accepted") } catch ArtifactError.invalid {}
     var download=try store!.download(id:id,ownerHash:owner,now:1001)
