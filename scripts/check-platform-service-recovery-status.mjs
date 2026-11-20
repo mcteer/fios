@@ -101,7 +101,14 @@ try{
  turnoverManager.kill('SIGTERM');await until(()=>exited(turnoverManager));assert.equal(turnoverManager.exitCode,0);
  turnoverManager=start('manager','known');
  await until(()=>status()?.launch_pending);await delay(2200);
- assert.equal(status(['status']).service_recovery,'configured');
+ const combinedTurnover=status(['status']);
+ assert.equal(combinedTurnover.service_recovery,'configured');
+ assert.equal(combinedTurnover.native_control.authoritative,false);
+ for(const [service,args] of [['mlx',undefined],['orbstack',orbstackArgs]]){
+  const selected=status(args),combined=combinedTurnover.services[service];
+  for(const key of ['desired','observed','launch_pending','message'])assert.equal(selected[key],combined[key],`${service} disagreement on ${key}`);
+  for(const key of ['budget_state','starts_in_window'])assert.equal(selected.recovery[key],combined.recovery[key],`${service} recovery disagreement on ${key}`);
+ }
  assert.equal(status().desired,'maintenance');
  assert.equal(status(orbstackArgs).desired,'stopped');
  assert.equal(status(orbstackArgs).launch_pending,false);
