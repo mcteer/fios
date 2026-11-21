@@ -243,7 +243,10 @@ diff --git a/src/engines/mlx/runtime/model_state.zig b/src/engines/mlx/runtime/m
 diff --git a/src/engines/mlx/scheduler.zig b/src/engines/mlx/scheduler.zig
 --- a/src/engines/mlx/scheduler.zig
 +++ b/src/engines/mlx/scheduler.zig
-@@ -1112,6 +1112,7 @@
+@@ -1182,12 +1182,13 @@
+         try self.unload_queue.append(self.allocator, &req);
+         self.queue_cond.broadcast(self.io);
+     }
      req.done_mu.lockUncancelable(self.io);
      while (!req.done) req.done_cond.waitUncancelable(self.io, &req.done_mu);
      req.done_mu.unlock(self.io);
@@ -251,6 +254,9 @@ diff --git a/src/engines/mlx/scheduler.zig b/src/engines/mlx/scheduler.zig
      if (req.fios_failed) return error.InvalidQueuedOrigins;
  }
  
+ /// The least recently used resident model nobody is holding, other than `keep`; its id
+ /// outlives the unload (the entry stays registered as a stub).
+ pub fn idleModelToUnload(self: *Scheduler, keep: []const u8) ?[]const u8 {
 diff --git a/src/host/gpu_thread/requests.zig b/src/host/gpu_thread/requests.zig
 --- a/src/host/gpu_thread/requests.zig
 +++ b/src/host/gpu_thread/requests.zig
