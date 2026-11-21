@@ -9,7 +9,7 @@ import pathlib,subprocess,socket,tempfile,os,time,http.client,json,signal,sys,st
 assert sys.platform=="darwin" and os.geteuid()>0
 assert len(sys.argv) in [4,5] and sys.argv[1]=="--isolated"
 mode=sys.argv[4] if len(sys.argv)==5 else None
-assert mode in [None,"--expected-instance","--exact-target","--startup","--correlation","--activity","--retirement","--preparation","--pristine-preparation","--background-sealed","--route-guards","--route-legacy"]
+assert mode in [None,"--expected-instance","--exact-target","--startup","--startup-26113","--correlation","--activity","--retirement","--preparation","--pristine-preparation","--background-sealed","--route-guards","--route-legacy"]
 check_route_legacy=mode=="--route-legacy"
 check_route_guards=mode in ["--route-guards","--route-legacy"]
 route_guard_records=[]
@@ -18,7 +18,8 @@ check_instance=mode in ["--expected-instance","--exact-target","--correlation","
 check_target=mode in ["--exact-target","--correlation","--retirement","--preparation","--pristine-preparation"]
 check_correlation=mode in ["--correlation","--retirement"]
 check_retirement=mode=="--retirement"
-check_startup=mode=="--startup"
+startup_version={"--startup":b"26.11.2-fios-source-fixture","--startup-26113":b"26.11.3-fios-source-fixture"}.get(mode)
+check_startup=startup_version is not None
 check_activity=mode=="--activity"
 check_preparation=mode in ["--preparation","--pristine-preparation"]
 check_pristine=mode=="--pristine-preparation"
@@ -138,7 +139,7 @@ try:
   # Metadata-only calls remain available while the original process owns
   # the reservation; these do not enter serving or load a model.
   version=subprocess.run([str(binary),"--version"],cwd=home,env=env,capture_output=True,timeout=3)
-  assert version.returncode==0 and b"26.11.2-fios-source-fixture" in version.stdout,"CURRENT_NATIVE_METADATA_VERSION_BLOCKED"
+  assert version.returncode==0 and startup_version in version.stdout,"CURRENT_NATIVE_METADATA_VERSION_BLOCKED"
   usage=subprocess.run([str(binary),"--help"],cwd=home,env=env,capture_output=True,timeout=3)
   assert usage.returncode==0 and b"mlx-serve" in usage.stdout,"CURRENT_NATIVE_METADATA_HELP_BLOCKED"
   # A second ordinary empty-model invocation shares the private reservation,
