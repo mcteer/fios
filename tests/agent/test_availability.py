@@ -106,6 +106,18 @@ class AvailabilityTests(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn('PRIVATE_TEST_KEY', json.dumps(result))
         self.assertTrue(all(r.method == 'GET' for r in calls))
 
+    async def test_exact_bonjour_peer_mapping_does_not_rename_model(self):
+        route = {'id': 'org/model@Mac.home', 'lan_peer': 'Mac.home'}
+        endpoint = 'http://fios-edge-b.local:11234/v1'
+        async def handle(request):
+            gateway = request.url.host == 'gateway'
+            self.assertIn(request.url.host, ('gateway', 'fios-edge-b.local'))
+            self.assertEqual(request.headers.get('authorization'), 'Bearer MOCK_GATEWAY_KEY' if gateway else None)
+            return httpx2.Response(200, json={'status': 'ok'} if request.url.path == '/health' else {'data': [route if gateway else {'id': 'org/model'}]})
+        for peers, reason in [({'fios-edge-b': endpoint}, 'host_unverified'), ({'Mac.home': endpoint}, 'ok')]:
+            result = await discover(Settings('http://gateway/v1', 'MOCK_GATEWAY_KEY', peers), transport=httpx2.MockTransport(handle))
+            self.assertEqual([(m['id'], m['reason']) for m in result['models']], [(route['id'], reason)])
+
     async def test_unknown_peer_and_invalid_gateway_fail_closed(self):
         async def handle(request):
             if request.url.path == '/health': return httpx2.Response(200, json={'status': 'ok'})
