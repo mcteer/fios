@@ -1,0 +1,36 @@
+--- a/build/macos.zig
++++ b/build/macos.zig
+@@ -201,7 +201,17 @@
+ 
+         if (host.frameworks) |fw_path| mod.addFrameworkPath(.{ .cwd_relative = fw_path });
+         for ([_][]const u8{ "IOKit", "CoreFoundation", "Foundation", "Metal", "IOSurface" }) |f| mod.linkFramework(f, .{});
+-        if (s.fios_source_sdk) config.sourceSystemCxx(b, mod, host);
++        if (s.fios_source_sdk) {
++            config.sourceSystemCxx(b, mod, host);
++            mod.addCSourceFile(.{
++                .file = b.path("src/fios/current_sdk_owners.cpp"),
++                .flags = &.{ "-std=c++20", "-DNDEBUG" },
++            });
++            if (s.fios_ds4_root != null) mod.addCSourceFile(.{
++                .file = b.path("src/fios/current_ds4_owners.cpp"),
++                .flags = &.{ "-std=c++20", "-DNDEBUG" },
++            });
++        }
+         return mod;
+     }
+ };
+@@ -210,14 +220,6 @@
+ pub fn addServer(g: *const Graph, plugin_names: []const []const u8) void {
+     const b = g.b;
+     const mod = g.exe_mod;
+-    if (g.fios_source_sdk) mod.addCSourceFile(.{
+-        .file = b.path("src/fios/current_sdk_owners.cpp"),
+-        .flags = &.{ "-std=c++20", "-DNDEBUG" },
+-    });
+-    if (g.fios_source_ds4) mod.addCSourceFile(.{
+-        .file = b.path("src/fios/current_ds4_owners.cpp"),
+-        .flags = &.{ "-std=c++20", "-DNDEBUG" },
+-    });
+     const exe = b.addExecutable(.{
+         .name = "mlx-serve",
+         .root_module = mod,
