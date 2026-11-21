@@ -185,8 +185,38 @@ private func verifyDeferredTerminalWrite()throws {
     }
 }
 
+private func verifyDeferredTerminalRestart()throws {
+    let directory=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer {try? FileManager.default.removeItem(at:directory)}
+    let id=UUID().uuidString.lowercased(),hash=String(repeating:"a",count:64)
+    do {
+        let journal=try Journal(directory:directory),controller=TaskController(journal:journal,broker:ModelBroker(journal:journal))
+        _=try journal.reserveJob(DurableJob(id:id,idempotency:UUID().uuidString.lowercased(),ownerHash:hash,requestHash:hash,created:1000))
+        try journal.transitionJob(id:id,to:.running,now:1000)
+        try journal.claim(job:id,attempt:0,model:"fixture/model",requestID:id)
+        try journal.markUncertain(job:id,attempt:0)
+        var writer:OpaquePointer?
+        guard sqlite3_open_v2(directory.appendingPathComponent("state.sqlite").path,&writer,SQLITE_OPEN_READWRITE|SQLITE_OPEN_FULLMUTEX,nil)==SQLITE_OK else {throw JournalError.storage}
+        defer {sqlite3_close(writer)}
+        guard sqlite3_exec(writer,"BEGIN IMMEDIATE",nil,nil,nil)==SQLITE_OK else {throw JournalError.storage}
+        try controller.settleModelJobs(journal.jobs(),events:[id:[.interrupted]],now:1001)
+        guard try journal.jobs().first?.state == .running,sqlite3_exec(writer,"ROLLBACK",nil,nil,nil)==SQLITE_OK else {throw JournalError.storage}
+    }
+    let reopened=try Journal(directory:directory),controller=TaskController(journal:reopened,broker:ModelBroker(journal:reopened))
+    let recovered=try reopened.jobs()
+    guard recovered.first?.state == .reconciling,recovered.first?.lease.revoked==true,try reopened.uncertainCount()==1 else {
+        fatalError("Restart treated a pending local transition as durable terminal evidence")
+    }
+    var admission=AdmissionPolicy()
+    let events=try controller.tick(now:1002,uptime:1002,admission:&admission,source:{_ in nil})
+    guard events.isEmpty,try reopened.jobs().first?.state == .removed,try reopened.uncertainCount()==1 else {
+        fatalError("Restart replayed the terminal event or lost independent native uncertainty")
+    }
+}
+
 func runTaskCompletionTests()throws {
     try verifyDeferredTerminalWrite()
+    try verifyDeferredTerminalRestart()
     let directory=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer {try? FileManager.default.removeItem(at:directory)}
     let token=TaskOwner.newToken()
