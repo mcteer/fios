@@ -79,6 +79,10 @@ enum InferenceScopeTests {
         let wrongModelText=String(decoding:try JSONSerialization.data(withJSONObject:wrongModel),as:UTF8.self)
         let invalidPayloads=[
             text.dropLast()+",\"foreign_proof\":true}",
+            // Schema9 has no process-binding issuer. A decorated persisted
+            // scope must not be accepted as a future original-process witness.
+            text.dropLast()+",\"originalProcess\":{\"pid\":1312,\"start\":\"fixture-start\",\"boot\":\"fixture-boot\",\"artifact\":\"fixture-binary\"}}",
+            text.dropLast()+",\"processAbsent\":true}",
             text.dropLast()+",\"host\":\"fios-edge-a.lab\"}",
             text.replacingOccurrences(of:"\"sequence\":1",with:"\"sequence\":1.0"),
             text.replacingOccurrences(of:"\"sequence\":1",with:"\"sequence\":true"),
