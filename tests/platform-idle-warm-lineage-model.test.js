@@ -101,6 +101,41 @@ test('checked step guard release does not settle the original lineage or cache',
   assert.equal(apply(between, 'retire', {now: 31, ...cacheReceipt}).phase, 'retired');
 });
 
+// The SDK may reuse an already retained context without taking another
+// tracker reference. Publication must still reserve against the producer
+// gate. Outstanding permits survive gate closure until an exact receipt.
+function producerTransition(producer, {worker, kind, permit, checked = false}) {
+  if (worker !== producer.worker) return producer;
+  if (kind === 'reserve' && producer.open && Number.isSafeInteger(permit) &&
+      permit > producer.lastPermit && producer.pending.length < 2) {
+    return {...producer, lastPermit: permit, pending: [...producer.pending, permit]};
+  }
+  if (kind === 'close' && producer.open) return {...producer, open: false};
+  if (kind === 'retire' && checked && producer.pending.includes(permit)) {
+    return {...producer, pending: producer.pending.filter(value => value !== permit)};
+  }
+  return producer;
+}
+
+test('reused SDK contexts cannot bypass the producer publication gate', () => {
+  const initial = {worker: 7, open: true, lastPermit: 0, pending: []};
+  const reserved = producerTransition(initial, {worker: 7, kind: 'reserve', permit: 1});
+  const second = producerTransition(reserved, {worker: 7, kind: 'reserve', permit: 2});
+  assert.equal(producerTransition(second, {worker: 7, kind: 'reserve', permit: 3}), second);
+  const closing = producerTransition(second, {worker: 7, kind: 'close'});
+  assert.equal(closing.open, false);
+  assert.deepEqual(closing.pending, [1, 2]);
+  assert.equal(producerTransition(closing, {worker: 7, kind: 'reserve', permit: 3}), closing);
+  assert.equal(producerTransition(closing, {worker: 6, kind: 'retire', permit: 1, checked: true}), closing);
+  assert.equal(producerTransition(closing, {worker: 7, kind: 'retire', permit: 1}), closing);
+  const partlyRetired = producerTransition(closing, {worker: 7, kind: 'retire', permit: 1, checked: true});
+  assert.deepEqual(partlyRetired.pending, [2]);
+  assert.equal(producerTransition(partlyRetired, {worker: 7, kind: 'retire', permit: 1, checked: true}), partlyRetired);
+  const closed = producerTransition(partlyRetired, {worker: 7, kind: 'retire', permit: 2, checked: true});
+  assert.deepEqual(closed.pending, []);
+  assert.equal(closed.open, false);
+});
+
 test('a non-slot sweep still needs checked step and cache callback closure', () => {
   const acquired = apply(apply(make(), 'publish'), 'pickup');
   assert.equal(apply(acquired, 'relinquish_step_guard', {checkedStepRetirement: true}), acquired);
