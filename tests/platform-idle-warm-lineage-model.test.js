@@ -3,30 +3,38 @@ import test from 'node:test';
 
 // A contract model only. IDs represent exact capabilities supplied by a future
 // locked tracker/queue handoff, not strings accepted from a native caller.
-function reserve({roots, job, epoch, deadline}, now, liveRoots) {
+function reserve({roots, job, epoch, deadline, cache}, now, liveRoots) {
   if (!roots.length || roots.length > 256 || new Set(roots).size !== roots.length || !roots.every(root => liveRoots.has(root)) ||
-      !job || !epoch || !Number.isSafeInteger(now) || now < 0 || !Number.isSafeInteger(deadline) || now >= deadline) return null;
-  return {roots: Object.freeze([...roots]), job, epoch, deadline, observedAt: now, phase: 'staged'};
+      !job || !epoch || !cache || !Number.isSafeInteger(now) || now < 0 || !Number.isSafeInteger(deadline) || now >= deadline) return null;
+  return {roots: Object.freeze([...roots]), job, epoch, cache, deadline, observedAt: now, worker: 0, phase: 'staged'};
 }
 
 function transition(owner, event) {
   if (event.job !== owner.job || event.epoch !== owner.epoch || event.roots.length !== owner.roots.length ||
       new Set(event.roots).size !== owner.roots.length || !owner.roots.every(root => event.roots.includes(root))) return owner;
   const beforeExpiry = Number.isSafeInteger(event.now) && event.now >= owner.observedAt && event.now < owner.deadline;
-  let phase = owner.phase;
+  let {phase, worker} = owner;
   if (phase === 'staged' && event.kind === 'publish' && beforeExpiry) phase = 'queued';
-  else if ((phase === 'queued' || phase === 'between_steps') && event.kind === 'pickup' && beforeExpiry && event.exactModelAvailable) phase = 'acquired';
-  else if ((phase === 'queued' || phase === 'staged') && event.kind === 'withdraw' && event.exactNonDispatch) phase = 'retired';
-  else if (phase === 'acquired' && event.kind === 'relinquish_step_guard' && event.checkedStepRetirement) phase = 'between_steps';
-  else if ((phase === 'acquired' || phase === 'between_steps') && event.kind === 'retire' && event.checkedRetirement) phase = 'retired';
+  else if ((phase === 'queued' || phase === 'between_steps') && event.kind === 'pickup' && beforeExpiry &&
+           event.exactModelAvailable && Number.isSafeInteger(event.worker) && event.worker > worker) {
+    phase = 'acquired';
+    worker = event.worker;
+  } else if ((phase === 'queued' || phase === 'staged') && event.kind === 'withdraw' && event.exactNonDispatch) phase = 'retired';
+  else if (phase === 'acquired' && event.kind === 'relinquish_step_guard' && event.worker === worker &&
+           event.checkedStepRetirement && event.callbackPublicationClosed) phase = 'between_steps';
+  else if (phase === 'between_steps' && event.kind === 'retire' && event.worker === worker &&
+           event.cache === owner.cache && event.checkedCacheRetirement && event.callbackPublicationClosed) phase = 'retired';
   else if ((phase === 'acquired' || phase === 'between_steps') && event.kind === 'refuse') phase = 'held';
-  return phase === owner.phase ? owner : {...owner, phase, observedAt: beforeExpiry ? event.now : owner.observedAt};
+  return phase === owner.phase ? owner : {...owner, phase, worker, observedAt: beforeExpiry ? event.now : owner.observedAt};
 }
 
-const original = {roots: [Symbol('original'), Symbol('joined')], job: Symbol('queue item'), epoch: Symbol('process'), deadline: 30};
+const original = {roots: [Symbol('original'), Symbol('joined')], job: Symbol('queue item'),
+  epoch: Symbol('process'), cache: Symbol('original cache'), deadline: 30};
+const stepReceipt = {checkedStepRetirement: true, callbackPublicationClosed: true};
+const cacheReceipt = {checkedCacheRetirement: true, callbackPublicationClosed: true};
 const make = () => reserve(original, 10, new Set(original.roots));
 const apply = (owner, kind, options = {}) => transition(owner, {
-  ...original, kind, now: 20, exactModelAvailable: true, ...options,
+  ...original, kind, now: 20, worker: kind === 'pickup' ? owner.worker + 1 : owner.worker, exactModelAvailable: true, ...options,
 });
 
 test('idle warm reserves the original live root before queue publication', () => {
@@ -74,29 +82,43 @@ test('idle pickup wins over withdrawal; only checked retirement can discharge it
   const acquired = apply(apply(make(), 'publish'), 'pickup');
   assert.equal(apply(acquired, 'withdraw', {now: 31, exactNonDispatch: true}), acquired);
   assert.equal(apply(acquired, 'retire', {now: 40}), acquired);
-  assert.equal(apply(acquired, 'retire', {now: 40, checkedRetirement: true}).phase, 'retired');
+  assert.equal(apply(acquired, 'retire', {now: 40, ...cacheReceipt}), acquired);
+  const between = apply(acquired, 'relinquish_step_guard', {now: 40, ...stepReceipt});
+  assert.equal(apply(between, 'retire', {now: 40, ...cacheReceipt}).phase, 'retired');
 });
 
 test('checked step guard release does not settle the original lineage or cache', () => {
   const acquired = apply(apply(make(), 'publish'), 'pickup');
   assert.equal(apply(acquired, 'relinquish_step_guard'), acquired);
-  const between = apply(acquired, 'relinquish_step_guard', {checkedStepRetirement: true});
+  const between = apply(acquired, 'relinquish_step_guard', stepReceipt);
   assert.equal(between.phase, 'between_steps');
   assert.equal(apply(between, 'withdraw', {exactNonDispatch: true}), between);
   assert.equal(apply(between, 'pickup', {now: 30}), between);
-  assert.equal(apply(between, 'pickup', {now: 25}).phase, 'acquired');
-  assert.equal(apply(between, 'retire', {now: 31, checkedRetirement: true}).phase, 'retired');
+  assert.equal(apply(between, 'pickup', {now: 25, worker: acquired.worker}), between);
+  const next = apply(between, 'pickup', {now: 25});
+  assert.equal(next.phase, 'acquired');
+  assert.equal(apply(next, 'relinquish_step_guard', {...stepReceipt, worker: acquired.worker}), next);
+  assert.equal(apply(between, 'retire', {now: 31, ...cacheReceipt}).phase, 'retired');
+});
+
+test('a non-slot sweep still needs checked step and cache callback closure', () => {
+  const acquired = apply(apply(make(), 'publish'), 'pickup');
+  assert.equal(apply(acquired, 'relinquish_step_guard', {checkedStepRetirement: true}), acquired);
+  const between = apply(acquired, 'relinquish_step_guard', stepReceipt);
+  assert.equal(apply(between, 'retire', {checkedCacheRetirement: true}), between);
+  assert.equal(apply(between, 'retire', {...cacheReceipt, cache: Symbol('other cache')}), between);
+  assert.equal(apply(between, 'retire', cacheReceipt).phase, 'retired');
 });
 
 test('idle refusal holds the exact owner despite expiry or later apparent success', () => {
-  const acquired = apply(apply(make(), 'publish'), 'pickup');
-  assert.equal(apply(acquired, 'retire', {roots: [original.roots[0]], checkedRetirement: true}), acquired);
-  assert.equal(apply(acquired, 'retire', {roots: [original.roots[0], original.roots[0]], checkedRetirement: true}), acquired);
+  const between = apply(apply(apply(make(), 'publish'), 'pickup'), 'relinquish_step_guard', stepReceipt);
+  assert.equal(apply(between, 'retire', {...cacheReceipt, roots: [original.roots[0]]}), between);
+  assert.equal(apply(between, 'retire', {...cacheReceipt, roots: [original.roots[0], original.roots[0]]}), between);
   for (const key of ['job', 'epoch']) {
-    assert.equal(apply(acquired, 'retire', {[key]: Symbol('foreign'), checkedRetirement: true}), acquired);
+    assert.equal(apply(between, 'retire', {...cacheReceipt, [key]: Symbol('foreign')}), between);
   }
-  const held = apply(acquired, 'refuse');
+  const held = apply(between, 'refuse');
   assert.equal(held.phase, 'held');
-  assert.equal(apply(held, 'retire', {checkedRetirement: true, now: 40}), held);
+  assert.equal(apply(held, 'retire', {...cacheReceipt, now: 40}), held);
   assert.equal(apply(held, 'withdraw', {exactNonDispatch: true, now: 40}), held);
 });
