@@ -62,7 +62,7 @@ e16eb5279034380af4ce671899164932bb421867b808edd0192240d57570a9c7  mlx-serve-26.1
 e10965ddce0c59974a9e523f4fcac38e24b31f8f5f4b854034e68cfc2f6735c0  mlx-serve-26.11.3-build-input-preservation.patch
 7faa37feca71ccbb7756d937b4ca188e009b3a640a46c2a8e726a4203c37318f  mlx-serve-26.11.3-system-cxx.patch
 4f593337b50542caf60db183df804e4b9f945a09b89a0323f43d9088a28fc212  mlx-serve-26.11.2-http-activity.patch
-04010b05f32e844dccfa6b5d45040a8c325ee2bade76b35c0afb91b54e829b12  mlx-serve-26.11.3-registry-owner-transitions.patch
+6ba27aea9663c64632abae4c62a2993a2e8fb194e2a0abfd756a0787f2d99068  mlx-serve-26.11.3-registry-owner-transitions.patch
 121e16045a9b6055b1b8977bf4b1a7c5d8f6c868f4106e1c4380e5e7537e2522  mlx-serve-26.11.3-cold-load-publication.patch
 a94d3b785e1b11e7408082750fe8adfe5234bb7ffcaedc653401dd0da82370eb  mlx-serve-26.11.3-worker-eviction-checkpoints.patch
 5beee600bd812613aa0493d9b9d6b841b63bec8a55868b555b78fc78ccd1c67e  mlx-serve-26.11.2-jinja-source-build.patch

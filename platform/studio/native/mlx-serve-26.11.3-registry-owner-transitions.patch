@@ -337,14 +337,14 @@ diff --git a/src/host/registry/registry.zig b/src/host/registry/registry.zig
 +    try testing.expect(reg.pickIdleEvictable(entry.last_used_ms.load(.acquire) + 900_000, 900_000) == null);
 +}
 +
-+test "fios current registry forced planning retains known request ownership" {
++test "fios current registry capacity planning retains known request ownership" {
 +    const io = std.testing.io;
 +    const owners = @import("../../fios/request_ownership.zig");
 +    owners.shared().primary_guard = false;
 +    try owners.shared().initialize(io, @splat(202));
 +    const reg = try ModelRegistry.init(std.heap.page_allocator, io, null, 1, 0, null);
 +    defer reg.deinit();
-+    const entry = try makeReadyStub(reg, "fixture/forced-owner", 1024);
++    const entry = try makeReadyStub(reg, "fixture/capacity-owner", 1024);
 +    entry.fios_owner_guard = true;
 +    const token = try owners.shared().enter(io);
 +    defer owners.shared().leave(io, token) catch unreachable;
@@ -353,7 +353,7 @@ diff --git a/src/host/registry/registry.zig b/src/host/registry/registry.zig
 +    var out: [2]*LoadedModel = undefined;
 +    reg.mutex.lockUncancelable(io);
 +    defer reg.mutex.unlock(io);
-+    try testing.expect(reg.planEvictionsLocked("fixture/incoming", entry, &out, 1024) == null);
++    try testing.expect(reg.planEvictionsLocked("fixture/incoming", &out, 1024) == null);
 +    try testing.expectEqual(LoadState.ready, entry.state);
 +    try testing.expectEqual(@as(u64, 1024), reg.current_resident_bytes);
 +}
