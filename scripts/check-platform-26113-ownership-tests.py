@@ -27,6 +27,12 @@ IDLE_WARM = (
     'engines.mlx.warm_requests.test.fios current warm refusal retains its original idle and twin on forget and stop',
     'engines.mlx.warm_requests.test.fios current idle warm handoff refusal retains the twin without a stale slot pointer',
 )
+EAGER_WARM = (
+    'engines.mlx.load.test.fios current eager publication allocates every CPU shell before transfer',
+    'engines.mlx.warm_requests.test.fios current eager warm retires an empty owned cache',
+    'engines.mlx.warm_requests.test.fios current eager warm refusal retains the original heap cache',
+    'engines.mlx.runtime.load_requests.test.fios current typed post-transfer refusal keeps the original load claim and charge',
+)
 
 
 def require(ok, reason):
@@ -51,14 +57,17 @@ def messages(raw):
 
 def main():
     options = sys.argv[4:]
-    allowed = {'--include-submit-refusal', '--include-idle-warm'}
+    allowed = {'--include-submit-refusal', '--include-idle-warm', '--include-eager-warm'}
     if len(sys.argv) < 4 or sys.argv[1] != '--isolated' or not set(options) <= allowed or len(options) != len(set(options)):
-        raise SystemExit('usage: --isolated /private/tmp/.../test REVIEWED_SHA256 [--include-submit-refusal] [--include-idle-warm]')
+        raise SystemExit('usage: --isolated /private/tmp/.../test REVIEWED_SHA256 '
+                         '[--include-submit-refusal] [--include-idle-warm] [--include-eager-warm]')
     selected = TESTS
     if '--include-submit-refusal' in options:
         selected += (SUBMIT_REFUSAL,)
     if '--include-idle-warm' in options:
         selected += IDLE_WARM
+    if '--include-eager-warm' in options:
+        selected += EAGER_WARM
     require(sys.platform == 'darwin' and os.geteuid() != 0, 'requires unprivileged macOS')
     binary, expected = Path(sys.argv[2]), sys.argv[3]
     require(binary.is_absolute() and binary == binary.resolve(strict=True)

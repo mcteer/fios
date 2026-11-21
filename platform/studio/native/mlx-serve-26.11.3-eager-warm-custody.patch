@@ -1,0 +1,487 @@
+--- a/src/engines/mlx/load.zig
++++ b/src/engines/mlx/load.zig
+@@ -57,6 +57,45 @@
+ const loadRequirementBytes = @import("runtime/preflight.zig").loadRequirementBytes;
+ const scheduler_mod = @import("scheduler.zig");
+ 
++pub const LocalLoadOutcome = enum { ready, held_after_transfer };
++
++/// These are CPU shells only. Until all allocations succeed the registry
++/// and original native objects remain untouched.
++const EntryStaging = struct {
++    head: ?*generate_mod.MtpHeadRef,
++    path: ?[]u8,
++    cache: ?*prefix_cache_mod.HotPrefixCache,
++
++    fn prepare(a: std.mem.Allocator, head_ref: ?generate_mod.MtpHeadRef, path: ?[]const u8, with_cache: bool) !EntryStaging {
++        const head = if (head_ref) |ref| blk: {
++            const p = try a.create(generate_mod.MtpHeadRef);
++            p.* = ref;
++            break :blk p;
++        } else null;
++        errdefer if (head) |p| a.destroy(p);
++        const owned_path = if (path) |value| try a.dupe(u8, value) else null;
++        errdefer if (owned_path) |value| a.free(value);
++        const cache = if (with_cache) try a.create(prefix_cache_mod.HotPrefixCache) else null;
++        return .{ .head = head, .path = owned_path, .cache = cache };
++    }
++};
++
++test "fios current eager publication allocates every CPU shell before transfer" {
++    const t = std.testing;
++    // The fixture only copies this pointer; it never dereferences a head.
++    const fake_head: generate_mod.MtpHeadRef = .{ .qwen = @ptrFromInt(4096) };
++    for (0..3) |index| {
++        var failing = t.FailingAllocator.init(t.allocator, .{ .fail_index = index });
++        try t.expectError(error.OutOfMemory, EntryStaging.prepare(failing.allocator(), fake_head, "fixture/drafter", true));
++    }
++    const staged = try EntryStaging.prepare(t.allocator, fake_head, "fixture/drafter", true);
++    defer t.allocator.destroy(staged.head.?);
++    defer t.allocator.free(staged.path.?);
++    defer t.allocator.destroy(staged.cache.?);
++    try t.expect(staged.head.?.qwen == fake_head.qwen);
++    try t.expectEqualStrings("fixture/drafter", staged.path.?);
++}
++
+ /// Phase A1 → Plan 05: do the full model load on the inference thread.
+ /// mlx ops here bind to this thread's GPU stream from t0; subsequent
+ /// forwards stay on the same thread.
+@@ -68,10 +107,9 @@
+ /// `draft_block_size_explicit`, `kv_quant_config`, `prefix_cache_capacity`,
+ /// `prefix_cache_mem_bytes`. The function reads them by name.
+ ///
+-/// On any error the partial state has already been freed via errdefer; the
+-/// caller decides how to surface (startup → recordLoadError + signal
+-/// started; on-demand → req.error_name + done broadcast).
+-pub fn doLoadOnInferenceThread(sch: *Scheduler, params: anytype) !void {
++/// Error unwinds construction; a held publication instead returns normally
++/// so pre-transfer errdefers cannot free the already-transferred graph.
++pub fn doLoadOnInferenceThread(sch: *Scheduler, params: anytype) !LocalLoadOutcome {
+     if (model_registry_mod.cleanupUncertain(sch.io)) return error.NativeCleanupUncertain;
+     // ── An engine beside MLX: a GGUF on ds4 or llama.cpp (the stub config/tok/chat_config move onto the entry),
+     //    or an MLX pack on the Neural Engine. `params` is `LoadParams` (startup) or `*LoadRequest` (cold load).
+@@ -80,10 +118,16 @@
+     const Inner = if (TyInfo == .pointer) TyInfo.pointer.child else Ty;
+     params.entry.load_progress.start(io_util.nowMsMonotonic(sch.io));
+     // A model an outside engine plugin names is its, over every built-in.
+-    if (@import("../../host/plugins/loader.zig").engineFor(std.fs.path.basename(params.model_dir))) |p| return engines_load.loadOutside(sch, params, p);
++    if (@import("../../host/plugins/loader.zig").engineFor(std.fs.path.basename(params.model_dir))) |p| {
++        try engines_load.loadOutside(sch, params, p);
++        return .ready;
++    }
+     const ane_declined = if (@hasField(Inner, "ane_declined")) params.ane_declined else false;
+-    if (params.gguf == null and engines_served.aneWanted(params.config, params.ane) and !ane_declined and try engines_load.aneAdmit(sch, params) and try engines_load.aneOpen(sch, params)) return;
+-    if (params.gguf) |route| return engines_load.loadGguf(sch, params, route);
++    if (params.gguf == null and engines_served.aneWanted(params.config, params.ane) and !ane_declined and try engines_load.aneAdmit(sch, params) and try engines_load.aneOpen(sch, params)) return .ready;
++    if (params.gguf) |route| {
++        try engines_load.loadGguf(sch, params, route);
++        return .ready;
++    }
+     // ── media-gen fast path: the (stub) config's model_type marks an image/
+     //    audio/video model (FLUX / Qwen3-TTS / LTX). Build the modality engine
+     //    instead of the MLX safetensors path. Works for BOTH the startup
+@@ -91,7 +135,7 @@
+     //    (preloadCpuState builds it), since both dispatch off model_type.
+     if (gen_mod.modalityFromType(params.config.model_type)) |modality| {
+         try doLoadGenOnInferenceThread(sch, params, modality);
+-        return;
++        return .ready;
+     }
+     const model_bytes = params.resident_model_bytes orelse blk: {
+         const scanned = try residentModelDiskBytes(sch.allocator, sch.io, params.model_dir, params.config);
+@@ -761,25 +805,7 @@
+         };
+     }
+ 
+-    // ── Phase 05: install everything onto the LoadedModel entry, mark
+-    //    ready, and update the scheduler's borrowed views. The registry
+-    //    mutex guards the state transition + `current_resident_bytes`
+-    //    accounting; `state_cond.broadcast` (inside markReadyLocked) wakes
+-    //    any waiter blocked in ensureLoaded.
+-    //
+-    //    Everything below this comment must be infallible — once we begin
+-    //    assigning to `params.entry`, the per-ptr errdefers above would
+-    //    double-free if we error-return. `drafter_path_owned` was alloc'd
+-    //    up front for exactly this reason; the per-model prefix cache
+-    //    init is a struct literal (no fallible alloc).
+-    const entry = params.entry;
+-    entry.weights = weights_ptr;
+-    entry.transformer = xfm_ptr;
+-    entry.vision_encoder = vision_ptr;
+-    entry.drafter = drafter_ptr;
+-    entry.dflash = dflash_ptr;
+-    if (entry.config) |c| c.drafter_ctx_bytes_per_token = if (dflash_ptr) |d| dflash_mod.ctxBytesPerToken(&d.config) else 0;
+-    entry.drafter_block_size = sch.drafter_block_size;
++    // Stage all remaining fallible allocations before the first entry write.
+     const head_ref: ?generate_mod.MtpHeadRef = if (mtp_ptr) |h|
+         generate_mod.MtpHeadRef{ .qwen = h }
+     else if (plugin_mtp) |h|
+@@ -788,26 +814,32 @@
+         generate_mod.MtpHeadRef{ .qwen4 = xfm_ptr.qwen4Trunk().? }
+     else
+         null;
+-    entry.mtp = if (head_ref) |r| blk: {
+-        const p = try sch.allocator.create(generate_mod.MtpHeadRef);
+-        p.* = r;
+-        break :blk p;
+-    } else null;
+-    // Resolve the auto (0) cap here so every downstream reader of
+-    // `lm.mtp_depth` (server log lines, slot params) sees the real value.
++    const late_drafter = if (drafter_path_owned.len == 0 and drafter_dir.len > 0 and (dflash_ptr != null or drafter_ptr != null)) drafter_dir else null;
++    const enable_ssm_cps = params.ssm_checkpoint_stride > 0;
++    const ram_prefix_cache = params.prefix_cache_ram_enabled;
++    const disk_prefix_cache = params.prefix_cache_disk_bytes > 0;
++    const module_binding = prefix_cache_mod.ModuleBinding.init(xfm_ptr);
++    const hot_cache_requested = params.prefix_cache_capacity > 0 and (ram_prefix_cache or disk_prefix_cache) and
++        prefix_cache_mod.HotPrefixCache.shouldUseInstance(params.config, enable_ssm_cps, xfm_ptr) and
++        (module_binding == null or ram_prefix_cache);
++    const staged = try EntryStaging.prepare(sch.allocator, head_ref, late_drafter, hot_cache_requested);
++
++    // Transfer once. From this point return a status, never an error; the
++    // pre-transfer errdefers own none of these fields any longer.
++    const entry = params.entry;
++    entry.weights = weights_ptr;
++    entry.transformer = xfm_ptr;
++    entry.vision_encoder = vision_ptr;
++    entry.drafter = drafter_ptr;
++    entry.dflash = dflash_ptr;
++    if (entry.config) |c| c.drafter_ctx_bytes_per_token = if (dflash_ptr) |d| dflash_mod.ctxBytesPerToken(&d.config) else 0;
++    entry.drafter_block_size = sch.drafter_block_size;
++    entry.mtp = staged.head;
+     const mtp_depth_cfg = params.config.mtpDepth(params.mtp_depth);
+     entry.mtp_depth = generate_mod.Generator.resolveMtpDepthCapForProfile(mtp_depth_cfg, mtp_cost_profile);
+     xfm_ptr.mtp_depth_free = generate_mod.Generator.mtpDepthCapFree(mtp_depth_cfg);
+-    // A MERGED drafter has no `--drafter` to echo, so the reported path comes
+-    // from what was actually resolved — `drafter_loaded` and `drafter_path`
+-    // must not disagree about the same sidecar.
+-    if (drafter_path_owned.len == 0 and drafter_dir.len > 0 and
+-        (dflash_ptr != null or drafter_ptr != null))
+-    {
+-        drafter_path_owned = try sch.allocator.dupe(u8, drafter_dir);
+-    }
+-    entry.drafter_path = drafter_path_owned;
+-    drafter_path_owned = &[_]u8{}; // disarm the errdefer
++    entry.drafter_path = staged.path orelse drafter_path_owned;
++    drafter_path_owned = &[_]u8{};
+     // Transfer ownership of the heap-allocated CPU state from `params` to
+     // the entry. The caller (main.zig) MUST NOT free these — `LoadedModel.deinit`
+     // walks them in the same `*X` pointer form they came in.
+@@ -820,10 +852,6 @@
+     // performance plan): with per-stride SSM checkpoints we can rewind both
+     // KV and SSM to a snapshotted prefix; without them, divergence forces a
+     // full reset, so we keep the legacy single-slot path for hybrid.
+-    const enable_ssm_cps = params.ssm_checkpoint_stride > 0;
+-    const ram_prefix_cache = params.prefix_cache_ram_enabled;
+-    const disk_prefix_cache = params.prefix_cache_disk_bytes > 0;
+-    const module_binding = prefix_cache_mod.ModuleBinding.init(xfm_ptr);
+     if (plugin_driver.auxBinding(xfm_ptr) != null and !plugin_driver.auxEnabled(xfm_ptr)) {
+         log.info("[hot-cache] module auxiliary retention is disabled for this loaded instance; using legacy resume\n", .{});
+     }
+@@ -831,10 +859,7 @@
+     if (module_binding != null and (params.prefix_cache_capacity == 0 or !ram_prefix_cache)) {
+         log.warn("[hot-cache] no RAM prefix cache (--prefix-cache-entries 0 or --no-prefix-cache-ram): this model retains no conversation, every prompt prefills cold\n", .{});
+     }
+-    if (params.prefix_cache_capacity > 0 and (ram_prefix_cache or disk_prefix_cache) and
+-        prefix_cache_mod.HotPrefixCache.shouldUseInstance(params.config, enable_ssm_cps, xfm_ptr) and
+-        (module_binding == null or ram_prefix_cache))
+-    {
++    if (staged.cache) |new_hc| {
+         // The weights are resident here, so the resolver's active-memory read
+         // is honest; the raw launch budget never reaches initWithMem (a 40 GB
+         // cap beside a ~70 GB pack was the uncatchable Metal OOM).
+@@ -846,7 +871,6 @@
+             resolve(params.config, params.prefix_cache_mem_bytes, .{}, &ssd_idle_mem)
+         else
+             params.prefix_cache_mem_bytes;
+-        const new_hc = try sch.allocator.create(prefix_cache_mod.HotPrefixCache);
+         new_hc.* = prefix_cache_mod.HotPrefixCache.initWithMem(
+             sch.allocator,
+             if (ram_prefix_cache) params.prefix_cache_capacity else 0,
+@@ -956,17 +980,23 @@
+     // `--warmup-full`: ready only once it has served its own first requests, so whoever asks next measures the model,
+     // not its compiles. Otherwise it is ready now and owes a short warm-up for when the server is idle.
+     const chat = ModelRegistry.chatCapable(entry);
++    var served_marker: ?[:0]const u8 = null;
+     if (params.warmup_full) if (warm_marker) |marker| {
+-        if (!chat or warm_requests.run(sch, entry)) warm_requests.remember(marker);
++        if (!chat or (warm_requests.run(sch, entry) catch return .held_after_transfer)) served_marker = marker;
+         warm_marker = null;
+     };
++    if (model_registry_mod.cleanupUncertain(sch.io)) return .held_after_transfer;
+ 
+     sch.registry.mutex.lockUncancelable(sch.io);
+     entry.bytes_live = bytes_live;
+     sch.registry.markReadyLocked(entry, bytes_resident);
++    const published = entry.state == .ready and !entry.fios_load_uncertain.load(.acquire);
+     sch.registry.mutex.unlock(sch.io);
++    if (!published) return .held_after_transfer;
++    if (served_marker) |marker| warm_requests.remember(marker);
+     if (warm_marker) |marker| warm_requests.owe(sch, entry, marker, verify_rows, chat);
+     publishHotCacheResidency(sch);
++    return .ready;
+ }
+ 
+ /// A module tier borrows its loaded transformer and keeps its compatibility identity in its own root.
+--- a/src/engines/mlx/warm_requests.zig
++++ b/src/engines/mlx/warm_requests.zig
+@@ -177,12 +177,32 @@
+ /// Serve the full plan on the inference thread, inside the load. The requests run against a RAM twin of the model's
+ /// prefix cache and count in no metric, so the model comes up as if nothing had been asked of it. False when a
+ /// shutdown cut the plan short: the next load still owes it.
+-pub fn run(sch: *Scheduler, entry: *LoadedModel) bool {
++pub fn run(sch: *Scheduler, entry: *LoadedModel) !bool {
++    if (cleanupUncertain(sch.io) or sch.fios_eager_warm_twin != null) return error.NativeCleanupUncertain;
+     const cfg = entry.config orelse return true;
++    if (twinOf(entry)) |value| {
++        const twin = sch.allocator.create(prefix_cache_mod.HotPrefixCache) catch return false;
++        twin.* = value;
++        sch.fios_eager_warm_twin = twin;
++    }
++    const completed = try runEagerPlan(sch, entry, cfg);
++    try retireEagerTwin(sch);
++    return completed;
++}
++
++fn retireEagerTwin(sch: *Scheduler) !void {
++    if (cleanupUncertain(sch.io)) return error.NativeCleanupUncertain;
++    if (sch.fios_eager_warm_twin) |cache| {
++        cache.deinit();
++        if (cleanupUncertain(sch.io)) return error.NativeCleanupUncertain;
++        sch.fios_eager_warm_twin = null;
++        sch.allocator.destroy(cache);
++    }
++}
++
++fn runEagerPlan(sch: *Scheduler, entry: *LoadedModel, cfg: anytype) !bool {
+     log.info("First load of this build with this model: compiling its kernels before it reports ready.\n", .{});
+     const sw = io_util.Stopwatch.init(sch.io);
+-    var twin = twinOf(entry);
+-    defer if (twin) |*t| t.deinit();
+ 
+     var buf: [LONGEST]u32 = undefined;
+     var done: usize = 0;
+@@ -195,7 +215,8 @@
+             if (ladder_sw.?.read() > LADDER_BUDGET_NS) break;
+         }
+         if (cap != 0 and r.len + r.gen > cap) break;
+-        serve(sch, entry, if (twin) |*t| t else null, fill(&buf, cfg.vocab_size, r), r) catch |err| {
++        serve(sch, entry, sch.fios_eager_warm_twin, fill(&buf, cfg.vocab_size, r), r) catch |err| {
++            if (err == error.NativeCleanupUncertain) return err;
+             if (err == error.Shutdown) return false;
+             log.warn("Warm request {d} of {d} failed ({s}); the first prompts compile what is left.\n", .{ done + 1, FULL.len, @errorName(err) });
+             break;
+@@ -248,17 +269,11 @@
+     return slot;
+ }
+ 
+-/// Give the request's slot back and free it here, on the thread that owns its arrays.
+-fn release(sch: *Scheduler, slot: *Slot) void {
+-    scheduler_mod.complete(sch, slot);
+-    while (runtime_loop.drainSideQueues(sch)) {}
+-}
+-
+ const IdleRetirement = enum { not_handed_off, retained_after_handoff, retired };
+ 
+ /// This scheduler thread is the only cleanup consumer. Watch the exact
+ /// queued slot, never inspect it after `complete` transfers its custody.
+-fn releaseIdle(sch: *Scheduler, slot: *Slot) IdleRetirement {
++fn releaseWatched(sch: *Scheduler, slot: *Slot) IdleRetirement {
+     if (cleanupUncertain(sch.io) or slot.in_pass.load(.acquire) != 0) {
+         slot.cancelled.store(true, .release);
+         owners.shared().fence(sch.io);
+@@ -292,7 +307,12 @@
+ 
+ fn serve(sch: *Scheduler, entry: *LoadedModel, cache: ?*prefix_cache_mod.HotPrefixCache, ids: []const u32, r: Request) !void {
+     const slot = try submit(sch, entry, cache, ids, r);
+-    defer release(sch, slot);
++    const result = serveOne(sch, slot);
++    if (releaseWatched(sch, slot) != .retired) return error.NativeCleanupUncertain;
++    return result;
++}
++
++fn serveOne(sch: *Scheduler, slot: *Slot) !void {
+     const sw = io_util.Stopwatch.init(sch.io);
+     while (true) {
+         switch (outcome(slot, sw, LIMIT_NS)) {
+@@ -455,7 +475,7 @@
+     }
+     if (w.slot) |slot| {
+         w.spent_ns += w.asked.read();
+-        if (!acceptRetirement(w, releaseIdle(sch, slot))) return false;
++        if (!acceptRetirement(w, releaseWatched(sch, slot))) return false;
+     }
+     sch.queue_mu.lockUncancelable(sch.io);
+     sch.warm_in_flight = 0;
+@@ -740,6 +760,31 @@
+     try testing.expect(!served(f.marker));
+ }
+ 
++test "fios current eager warm retires an empty owned cache" {
++    var sch: Scheduler = undefined;
++    sch.allocator = testing.allocator;
++    sch.io = testing.io;
++    const twin = try sch.allocator.create(prefix_cache_mod.HotPrefixCache);
++    twin.* = prefix_cache_mod.HotPrefixCache.initWithMem(sch.allocator, 2, 16);
++    sch.fios_eager_warm_twin = twin;
++    try retireEagerTwin(&sch);
++    try testing.expect(sch.fios_eager_warm_twin == null);
++}
++
++test "fios current eager warm refusal retains the original heap cache" {
++    var sch: Scheduler = undefined;
++    sch.allocator = std.heap.page_allocator;
++    sch.io = testing.io;
++    const twin = try sch.allocator.create(prefix_cache_mod.HotPrefixCache);
++    twin.* = prefix_cache_mod.HotPrefixCache.initWithMem(sch.allocator, 2, 16);
++    sch.fios_eager_warm_twin = twin;
++    try owners.shared().initialize(sch.io, @splat(152));
++    owners.shared().fence(sch.io);
++    try testing.expectError(error.NativeCleanupUncertain, retireEagerTwin(&sch));
++    try testing.expect(sch.fios_eager_warm_twin == twin);
++    // Retain the exact private allocation until process exit.
++}
++
+ test "fios current warm refusal retains its original idle and twin on forget and stop" {
+     const a = std.heap.page_allocator;
+     const io = testing.io;
+--- a/src/engines/mlx/runtime/loop.zig
++++ b/src/engines/mlx/runtime/loop.zig
+@@ -88,7 +88,15 @@
+             signalStarted(sch);
+             return;
+         }
+-        if (doLoadOnInferenceThread(sch, params)) |_| {
++        if (doLoadOnInferenceThread(sch, params)) |outcome| {
++            if (outcome == .held_after_transfer) {
++                recordLoadError(sch, "NativeCleanupUncertain");
++                sch.registry.mutex.lockUncancelable(sch.io);
++                sch.registry.markLoadUncertainLocked(params.entry);
++                sch.registry.mutex.unlock(sch.io);
++                signalStarted(sch);
++                return;
++            }
+             log.info("Model ready (loaded on inference thread).\n", .{});
+             signalStarted(sch);
+         } else |err| {
+--- a/src/engines/mlx/runtime/load_requests.zig
++++ b/src/engines/mlx/runtime/load_requests.zig
+@@ -194,7 +194,10 @@
+     // (conn thread frees pre-parsed CPU state — ownership stays on req on
+     // the failure path).
+     const had_error = mlx.errorPending();
+-    doLoadOnInferenceThread(sch, req) catch |err| {
++    const outcome = doLoadOnInferenceThread(sch, req) catch |err| {
++        // An explicit checked refusal owns unresolved work; don't try to
++        // clean it up by draining the GPU or consuming its diagnostic latch.
++        if (err == error.NativeCleanupUncertain) return failLoadRequest(sch, req, err);
+         // The load's own MLX error is reported here; latched, it would fail the next request. Its eval's other
+         // command buffers fail after it, so they are waited out before the latch is dropped.
+         mlx.drainGpu();
+@@ -202,6 +205,7 @@
+         mlx.dropLatchedErrorUnless(had_error);
+         return failLoadRequest(sch, req, cause);
+     };
++    if (outcome == .held_after_transfer) return failLoadRequest(sch, req, error.NativeCleanupUncertain);
+     // Re-apply so `fit` capacity covers everything this load brought in
+     // (MTP head / drafter / vision land after the mid-load apply).
+     logWiredPolicy(mlx.applyWiredPolicy());
+@@ -242,24 +246,30 @@
+ fn failLoadRequest(sch: *Scheduler, req: *LoadRequest, err: anyerror) void {
+     log.err("[registry] load failed for model id={s}: {s}\n", .{ req.entry.id, loadErrorName(err) });
+     sch.registry.mutex.lockUncancelable(sch.io);
++    const result = recordLoadRefusalLocked(sch, req, err);
++    sch.registry.mutex.unlock(sch.io);
++    finishLoadRequest(sch, req, result);
++}
++
++/// Exact original claim transition, independent of waiter acknowledgement.
++fn recordLoadRefusalLocked(sch: *Scheduler, req: *LoadRequest, err: anyerror) []const u8 {
+     if (req.entry.fios_owner_guard)
+         releaseUntouchedVictimsLocked(sch, req.evict_entries, &req.fios_plan.victim_mutations, req.fios_eviction_attempted);
+     if (!originalLoadingClaimLocked(req)) {
+         // The original sender cannot change a later claim's state/accounting.
+         fios_owners.shared().fence(sch.io);
+-        sch.registry.mutex.unlock(sch.io);
+-        return finishLoadRequest(sch, req, "NativeCleanupUncertain");
++        return "NativeCleanupUncertain";
+     }
+-    if (failureRetries(loadErrorName(err))) {
++    if (err == error.NativeCleanupUncertain) {
++        sch.registry.markLoadUncertainLocked(req.entry);
++    } else if (failureRetries(loadErrorName(err))) {
+         sch.registry.markUnloadedLocked(req.entry);
+     } else {
+         // markErrorLocked dupes the error name onto the entry; the
+         // conn thread reads it back from the entry, not from req.
+         sch.registry.markErrorLocked(req.entry, loadErrorName(err));
+     }
+-    const uncertain = req.entry.fios_load_uncertain.load(.acquire);
+-    sch.registry.mutex.unlock(sch.io);
+-    finishLoadRequest(sch, req, if (uncertain) "NativeCleanupUncertain" else loadErrorName(err));
++    return if (req.entry.fios_load_uncertain.load(.acquire)) "NativeCleanupUncertain" else loadErrorName(err);
+ }
+ 
+ /// A load whose own MLX error is a GPU out-of-memory or a GPU timeout fails for that reason, not as the
+@@ -711,6 +721,50 @@
+             page.destroy(sch);
+         }
+     }
++}
++
++test "fios current typed post-transfer refusal keeps the original load claim and charge" {
++    const io = std.testing.io;
++    const a = std.heap.page_allocator;
++    try fios_owners.shared().initialize(io, @splat(155));
++    const registry = try model_registry_mod.ModelRegistry.init(a, io, null, 2, 0, null);
++    const entry = try registry.registerStub("fixture/post-transfer", "/fixture/no-model", 91);
++    entry.fios_owner_guard = true;
++    registry.mutex.lockUncancelable(io);
++    try std.testing.expect(registry.tryBeginLoadLocked(entry));
++    registry.reserveLoadLocked(entry, 91);
++    registry.mutex.unlock(io);
++    const original_claim = entry.fios_load_claim_sequence;
++    // Synthetic identity only; no production weight object or backend call.
++    const weight_identity: @TypeOf(entry.weights.?) = @ptrFromInt(4096);
++    entry.weights = weight_identity;
++    var sch: Scheduler = undefined;
++    sch.allocator = a;
++    sch.io = io;
++    sch.registry = registry;
++    var req: LoadRequest = undefined;
++    req.entry = entry;
++    req.allocator = a;
++    req.error_name = null;
++    req.done = false;
++    req.done_mu = .init;
++    req.done_cond = .init;
++    req.evict_entries = &.{};
++    req.fios_plan = .{ .claim_sequence = original_claim };
++    req.fios_eviction_attempted = 0;
++    try std.testing.expect(!model_registry_mod.cleanupUncertainLocked(io));
++    registry.mutex.lockUncancelable(io);
++    const cause = recordLoadRefusalLocked(&sch, &req, error.NativeCleanupUncertain);
++    registry.mutex.unlock(io);
++    try std.testing.expect(!req.done);
++    finishLoadRequest(&sch, &req, cause);
++    try std.testing.expect(req.done and entry.fios_load_uncertain.load(.acquire));
++    try std.testing.expectEqualStrings("NativeCleanupUncertain", req.error_name.?);
++    try std.testing.expect(entry.state == .error_state and entry.weights == weight_identity);
++    try std.testing.expect(entry.fios_load_claim_sequence == original_claim);
++    try std.testing.expectEqual(@as(u64, 91), registry.reserved_bytes);
++    try std.testing.expectEqual(@as(u64, 0), registry.current_resident_bytes);
++    // Keep the original private graph; no cleanup of the synthetic pointer.
+ }
+ 
+ test "fios current per-model uncertainty retains parents before source epoch initialization" {
+--- a/src/host/gpu_thread/scheduler.zig
++++ b/src/host/gpu_thread/scheduler.zig
+@@ -90,6 +90,9 @@
+     warmup_full: bool,
+     /// Warm-ups ready models still owe, first in first served (`warm_requests.tick`). Inference thread only.
+     warm_queue: std.ArrayList(*handles.WarmUp) = .empty,
++    /// Original heap cache borrowed by full warm-up, retained on refusal.
++    /// Inference thread only; a stack frame must never own this allocation.
++    fios_eager_warm_twin: ?*handles.HotPrefixCache = null,
+     /// 1 while a warm request is in `in_flight`: it is nobody's company. Guarded by `queue_mu`.
+     warm_in_flight: u32 = 0,
+     /// Launch-flag prefix-cache settings, retained so COLD-LOADED models

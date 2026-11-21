@@ -14,7 +14,7 @@ if(!manifestOnly&&(args.length!==2||args[0]!=='--source-archive'||!isAbsolute(ar
 const sha256=bytes=>createHash('sha256').update(bytes).digest('hex');
 const native=fileURLToPath(new URL('../platform/studio/native/',import.meta.url));
 const entries=readFileSync(join(native,'mlx-serve-26.11.3-source-series.txt'),'utf8').split('\n').filter(line=>line&&!line.startsWith('#'));
-assert.equal(entries.length,72);
+assert.equal(entries.length,73);
 const seen=new Set();
 const patches=entries.map(line=>{
  const [,hash,name]=line.match(/^([0-9a-f]{64})  (mlx-serve-(?:26\.11\.[23]-[a-z0-9-]+|current-ds4-checked-cleanup)\.patch)$/)||[];
@@ -65,6 +65,14 @@ try{
  assert.match(requests,/if \(!warm_requests\.forget\(sch, entry\)\) return refuseUnloadRequest\(sch, req\);\n    moveHotCacheViewOff/);
  const loop=readFileSync(join(scratch,'src/engines/mlx/runtime/loop.zig'),'utf8');
  assert.match(loop,/if \(!warm_requests\.stop\(sch\) or cleanupUncertain\(sch\.io\)\) return;\n    persistAtShutdown/);
+ const load=readFileSync(join(scratch,'src/engines/mlx/load.zig'),'utf8');
+ const staged=load.indexOf('try EntryStaging.prepare(sch.allocator');
+ const installed=load.indexOf('entry.weights = weights_ptr;',staged);
+ const eager=load.indexOf('warm_requests.run(sch, entry) catch return .held_after_transfer',installed);
+ assert.ok(staged>=0&&staged<installed&&installed<eager,'stage the allocatable CPU shells before transfer and eager work');
+ assert.match(load,/if \(!published\) return \.held_after_transfer;\n    if \(served_marker\) \|marker\| warm_requests\.remember\(marker\);/);
+ assert.match(loop,/if \(outcome == \.held_after_transfer\) \{\n\s+recordLoadError\(sch, "NativeCleanupUncertain"\);\n\s+sch\.registry\.mutex\.lockUncancelable\(sch\.io\);\n\s+sch\.registry\.markLoadUncertainLocked\(params\.entry\);\n\s+sch\.registry\.mutex\.unlock\(sch\.io\);\n\s+signalStarted\(sch\);\n\s+return;/);
+ assert.match(requests,/if \(outcome == \.held_after_transfer\) return failLoadRequest\(sch, req, error\.NativeCleanupUncertain\);/);
  const macos=readFileSync(join(scratch,'build/macos.zig'),'utf8');
  const shared=macos.slice(macos.indexOf('const Shared = struct'),macos.indexOf('pub fn addServer('));
  for(const bridge of ['sdk','ds4']){

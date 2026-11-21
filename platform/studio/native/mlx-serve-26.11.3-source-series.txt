@@ -72,3 +72,4 @@ fd9f0d3b004146bfb9c59dff785869306ba2fbb277860f80303b119cccb9a0cc  mlx-serve-26.1
 571b1a0c1fe9fc2cdf4ed37e13994ff71d09fc5d9aa59a24a64d6d7f2ccb6ead  mlx-serve-current-ds4-checked-cleanup.patch
 a8272e52501adf15e2136ab68bd99c560873a1ed656acbe3702873c5b554071b  mlx-serve-26.11.3-background-seal.patch
 311a760ea9dd551fe63a521396920bf85d3ef493c7e94c8e4aeb7fc38ff8ab5f  mlx-serve-26.11.3-idle-warm-custody.patch
+30ee4dfe161486115528d29078712358c5002df8ce482f6bcbf9c435d2baa74e  mlx-serve-26.11.3-eager-warm-custody.patch
