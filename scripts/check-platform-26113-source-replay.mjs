@@ -15,7 +15,7 @@ const source=readFileSync(args[1]);
 assert.equal(sha256(source),'f48a65d735a77fb2366b77d0000ff7f13794a505e66b67c1bab0dedc43500271','unexpected source archive digest');
 const native=fileURLToPath(new URL('../platform/studio/native/',import.meta.url));
 const entries=readFileSync(join(native,'mlx-serve-26.11.3-source-series.txt'),'utf8').split('\n').filter(line=>line&&!line.startsWith('#'));
-assert.equal(entries.length,68);
+assert.equal(entries.length,69);
 const seen=new Set();
 const patches=entries.map(line=>{
  const [,hash,name]=line.match(/^([0-9a-f]{64})  (mlx-serve-26\.11\.[23]-[a-z0-9-]+\.patch)$/)||[];
@@ -50,6 +50,10 @@ try{
  assert.ok(nonblocking.includes('return submitWaiting(self, params, false);'));
  assert.match(scheduler,/fn submitWaiting\([^\n]+\{\n    if \(model_registry_mod\.cleanupUncertain\(self\.io\)\) return error\.NativeCleanupUncertain;/,
   'both blocking and nonblocking submissions must share the pre-allocation refusal');
+ const requests=readFileSync(join(scratch,'src/engines/mlx/runtime/load_requests.zig'),'utf8');
+ const queued=requests.split('test "fios current queued unload preserves sender and worker origins"')[1]?.split('\ntest "')[0];
+ assert.ok(queued?.includes('model.fios_owner_guard = true;')&&queued.includes('expectError(error.ModelOwned,'),
+  'guarded fixture must distinguish an active model owner from the administrative sender');
  const macos=readFileSync(join(scratch,'build/macos.zig'),'utf8');
  const shared=macos.slice(macos.indexOf('const Shared = struct'),macos.indexOf('pub fn addServer('));
  for(const bridge of ['sdk','ds4']){

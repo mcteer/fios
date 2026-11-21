@@ -1,0 +1,54 @@
+--- a/src/engines/mlx/scheduler.zig
++++ b/src/engines/mlx/scheduler.zig
+@@ -684,6 +684,25 @@
+     try testing.expectError(error.QueueFull, submitNow(&sch, undefined));
+ }
+ 
++test "fios current blocking and immediate submission refuse before reading the model" {
++    // Replay one case per process: the synthetic fence is intentionally sticky.
++    const owners = @import("../../fios/request_ownership.zig");
++    try owners.shared().initialize(testing.io, @splat(219));
++    owners.shared().fence(testing.io);
++    var sch: Scheduler = undefined;
++    sch.io = testing.io;
++    sch.queue_mu = .init;
++    sch.queue_cap = 1;
++    sch.in_flight = 0;
++    var model: LoadedModel = undefined;
++    model.config = null;
++    var params: SubmitParams = undefined;
++    params.model = &model;
++    try testing.expectError(error.NativeCleanupUncertain, submit(&sch, params));
++    try testing.expectError(error.NativeCleanupUncertain, submitNow(&sch, params));
++    try testing.expect(sch.in_flight == 0);
++}
++
+ /// Give back the slot's session claim. Caller holds `queue_mu`.
+ fn releaseSessionLocked(self: *Scheduler, slot: *Slot) void {
+     slot.model.session_claims -= 1;
+--- a/src/engines/mlx/runtime/load_requests.zig
++++ b/src/engines/mlx/runtime/load_requests.zig
+@@ -463,7 +463,8 @@
+     try owners.shared().initialize(io, @splat(79));
+     const root = try owners.shared().enter(io);
+     defer owners.shared().leave(io, root) catch {};
+-    try owners.shared().bind(io, root, model.id);
++    // The unload requester is administrative, not an active model owner.
++    model.fios_owner_guard = true;
+     owners.current().* = root;
+     defer owners.current().* = null;
+     const original = (try owners.retainCurrent(io)).?;
+@@ -505,6 +506,13 @@
+             self.restored = owners.current_group().* == null and std.meta.eql(owners.current().*.?, self.root);
+         }
+     };
++    {
++        const active = try owners.shared().enter(io);
++        defer owners.shared().leave(io, active) catch unreachable;
++        try owners.shared().bind(io, active, model.id);
++        try std.testing.expectError(error.ModelOwned, scheduler.unloadModelIfIdle(model.id, null));
++        try std.testing.expect(model.state == .ready and scheduler.unload_queue.items.len == 0);
++    }
+     var sender: Sender = .{ .scheduler = &scheduler, .root = root };
+     owners.current().* = null;
+     const thread = try std.Thread.spawn(.{}, Sender.run, .{&sender});

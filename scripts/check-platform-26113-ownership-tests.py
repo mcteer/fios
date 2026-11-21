@@ -19,6 +19,7 @@ TESTS = (
     'engines.mlx.runtime.load_requests.test.fios current old victim snapshot cannot unload or refund a later ticket',
     'engines.mlx.runtime.load_requests.test.fios current attempted worker eviction retains custody while untouched siblings release',
 )
+SUBMIT_REFUSAL = 'engines.mlx.scheduler.test.fios current blocking and immediate submission refuse before reading the model'
 
 
 def require(ok, reason):
@@ -42,8 +43,9 @@ def messages(raw):
 
 
 def main():
-    if len(sys.argv) != 4 or sys.argv[1] != '--isolated':
-        raise SystemExit('usage: --isolated /private/tmp/.../test REVIEWED_SHA256')
+    if len(sys.argv) not in (4, 5) or sys.argv[1] != '--isolated' or sys.argv[4:] not in ([], ['--include-submit-refusal']):
+        raise SystemExit('usage: --isolated /private/tmp/.../test REVIEWED_SHA256 [--include-submit-refusal]')
+    selected = TESTS + (SUBMIT_REFUSAL,) if len(sys.argv) == 5 else TESTS
     require(sys.platform == 'darwin' and os.geteuid() != 0, 'requires unprivileged macOS')
     binary, expected = Path(sys.argv[2]), sys.argv[3]
     require(binary.is_absolute() and binary == binary.resolve(strict=True)
@@ -54,7 +56,7 @@ def main():
             and 0 < observed.st_size <= 64 * 1024 * 1024, 'unexpected test executable metadata')
     digest = hashlib.sha256(binary.read_bytes()).hexdigest()
     require(digest == expected, 'test executable digest mismatch')
-    root = Path(tempfile.mkdtemp(prefix='fios-26113-stock-ownership-', dir='/private/tmp'))
+    root = Path(tempfile.mkdtemp(prefix='fios-26113-ownership-', dir='/private/tmp'))
     print(f'Retained evidence: {root}', flush=True)
     command = ['/usr/bin/sandbox-exec', '-p', '(version 1)(allow default)(deny network*)',
                str(binary), '--listen=-']
@@ -63,7 +65,9 @@ def main():
         home = root / str(label)
         home.mkdir(mode=0o700)
         env = {'PATH': '/usr/bin:/bin', 'HOME': str(home), 'XDG_CACHE_HOME': str(home / 'cache'),
-               'LANG': 'C', 'LC_ALL': 'C'}
+               'LANG': 'C', 'LC_ALL': 'C', 'MLX_SERVE_CACHE_LIMIT': '0'}
+        # This path only exercises synthetic local accounting. Suppress the
+        # generic runner's live allocator initialization in this child only.
         # The runner is a single process; each selected test gets a fresh
         # process so intentional process-sticky uncertainty cannot leak cases.
         result = subprocess.run(command, input=request + packet(0), capture_output=True, cwd=home,
@@ -85,21 +89,25 @@ def main():
         end = strings.find(b'\0', offset)
         require(0 < offset < end, 'invalid test name offset')
         names.append(strings[offset:end].decode())
-    require(all(names.count(name) == 1 for name in TESTS), 'missing or ambiguous reviewed test')
+    require(all(names.count(name) == 1 for name in selected), 'missing or ambiguous reviewed test')
     (root / 'names.json').write_text(json.dumps(names, indent=2))
     results = []
-    for name in TESTS:
+    for name in selected:
         i = names.index(name)
-        frames = call(i, packet(5, struct.pack('<I', i)))
-        require([tag for tag, _ in frames] == [5, 4] and frames[0][1] == b'',
-                f'missing test start/result: {name}')
-        index, flags = struct.unpack('<IQ', frames[1][1])
-        require(index == i, 'test result identity mismatch')
-        results.append({'name': name, 'status': flags & 3, 'log_errors': (flags >> 3) & ((1 << 30) - 1),
-                        'leaks': flags >> 33})
+        item = {'name': name, 'index': i}
+        try:
+            frames = call(i, packet(5, struct.pack('<I', i)))
+            require([tag for tag, _ in frames] == [5, 4] and frames[0][1] == b'',
+                    f'missing test start/result: {name}')
+            index, flags = struct.unpack('<IQ', frames[1][1])
+            require(index == i, 'test result identity mismatch')
+            item.update(status=flags & 3, log_errors=(flags >> 3) & ((1 << 30) - 1), leaks=flags >> 33)
+        except (OSError, RuntimeError, ValueError, struct.error, subprocess.TimeoutExpired) as error:
+            item['error'] = str(error)
+        results.append(item)
     (root / 'receipt.json').write_text(json.dumps({'binary_sha256': digest, 'listed': count, 'cases': results,
                                                   'network': 'denied', 'model_requests': 0}, indent=2))
-    require(all(result['status'] == 0 and result['leaks'] == 0 and result['log_errors'] == 0
+    require(all(result.get('status') == 0 and result['leaks'] == 0 and result['log_errors'] == 0
                 for result in results), 'ownership case failed; see retained receipt')
     print(f'PASS: {len(results)} model-free ownership cases; separate processes; no inference')
 

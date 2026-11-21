@@ -68,3 +68,4 @@ a94d3b785e1b11e7408082750fe8adfe5234bb7ffcaedc653401dd0da82370eb  mlx-serve-26.1
 5beee600bd812613aa0493d9b9d6b841b63bec8a55868b555b78fc78ccd1c67e  mlx-serve-26.11.2-jinja-source-build.patch
 fd9f0d3b004146bfb9c59dff785869306ba2fbb277860f80303b119cccb9a0cc  mlx-serve-26.11.2-gui-listener-ownership.patch
 938e37d3dc71785a7b239b120b063bbc21451f821c59a0ea288ea1b16f00facf  mlx-serve-26.11.3-shared-source-hooks.patch
+79f5822c7c7783bf7df768aa713bad43a56b38af92af0161ae61d869b6d36177  mlx-serve-26.11.3-submission-and-unload-fixtures.patch
