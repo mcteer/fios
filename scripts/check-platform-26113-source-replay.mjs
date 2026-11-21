@@ -57,5 +57,8 @@ try{
   assert.equal(macos.split(file).length,2,`expected one reference to ${file}`);
   assert.ok(shared.includes(file),`${file} must attach to the common executable/test module builder`);
  }
+ assert.ok(readFileSync(join(scratch,'src/tests.zig'),'utf8').includes(
+  'if (@import("build_options").fios_source_sdk) _ = @import("fios/sdk_request_ownership.zig");'),
+ 'instrumented unit root must export the same ownership functions as the server');
  console.log(`PASS: pinned archive, ${entries.length} ordered patch hashes, refusal scopes and shared hooks; source only`);
 }finally{rmSync(scratch,{recursive:true,force:true});}

@@ -34,3 +34,15 @@
      const exe = b.addExecutable(.{
          .name = "mlx-serve",
          .root_module = mod,
+diff --git a/src/tests.zig b/src/tests.zig
+--- a/src/tests.zig
++++ b/src/tests.zig
+@@ -9,6 +9,8 @@
+ comptime {
+     // The plugins' host surface: plugin_host.zig's list, every name re-exported here.
+     @import("plugin_host_check.zig").reexports(@This());
++    // Include the genuine hooks exported for the SDK/DS4 constructors.
++    if (@import("build_options").fios_source_sdk) _ = @import("fios/sdk_request_ownership.zig");
+ }
+ 
+ /// The test process caps MLX's buffer pool as the server's `main` does; `build/test_runner.zig` calls it first.

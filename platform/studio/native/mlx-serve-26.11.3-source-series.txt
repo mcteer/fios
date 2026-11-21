@@ -67,4 +67,4 @@ e10965ddce0c59974a9e523f4fcac38e24b31f8f5f4b854034e68cfc2f6735c0  mlx-serve-26.1
 a94d3b785e1b11e7408082750fe8adfe5234bb7ffcaedc653401dd0da82370eb  mlx-serve-26.11.3-worker-eviction-checkpoints.patch
 5beee600bd812613aa0493d9b9d6b841b63bec8a55868b555b78fc78ccd1c67e  mlx-serve-26.11.2-jinja-source-build.patch
 fd9f0d3b004146bfb9c59dff785869306ba2fbb277860f80303b119cccb9a0cc  mlx-serve-26.11.2-gui-listener-ownership.patch
-f90f44bf4981e3331757b61f0be49918a619703404eeebcb8aa1187303dd0717  mlx-serve-26.11.3-shared-source-hooks.patch
+938e37d3dc71785a7b239b120b063bbc21451f821c59a0ea288ea1b16f00facf  mlx-serve-26.11.3-shared-source-hooks.patch
