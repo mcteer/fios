@@ -15,10 +15,11 @@ function transition(owner, event) {
   const beforeExpiry = Number.isSafeInteger(event.now) && event.now >= owner.observedAt && event.now < owner.deadline;
   let phase = owner.phase;
   if (phase === 'staged' && event.kind === 'publish' && beforeExpiry) phase = 'queued';
-  else if (phase === 'queued' && event.kind === 'pickup' && beforeExpiry && event.exactModelAvailable) phase = 'acquired';
+  else if ((phase === 'queued' || phase === 'between_steps') && event.kind === 'pickup' && beforeExpiry && event.exactModelAvailable) phase = 'acquired';
   else if ((phase === 'queued' || phase === 'staged') && event.kind === 'withdraw' && event.exactNonDispatch) phase = 'retired';
-  else if (phase === 'acquired' && event.kind === 'retire' && event.checkedRetirement) phase = 'retired';
-  else if (phase === 'acquired' && event.kind === 'refuse') phase = 'held';
+  else if (phase === 'acquired' && event.kind === 'relinquish_step_guard' && event.checkedStepRetirement) phase = 'between_steps';
+  else if ((phase === 'acquired' || phase === 'between_steps') && event.kind === 'retire' && event.checkedRetirement) phase = 'retired';
+  else if ((phase === 'acquired' || phase === 'between_steps') && event.kind === 'refuse') phase = 'held';
   return phase === owner.phase ? owner : {...owner, phase, observedAt: beforeExpiry ? event.now : owner.observedAt};
 }
 
@@ -74,6 +75,17 @@ test('idle pickup wins over withdrawal; only checked retirement can discharge it
   assert.equal(apply(acquired, 'withdraw', {now: 31, exactNonDispatch: true}), acquired);
   assert.equal(apply(acquired, 'retire', {now: 40}), acquired);
   assert.equal(apply(acquired, 'retire', {now: 40, checkedRetirement: true}).phase, 'retired');
+});
+
+test('checked step guard release does not settle the original lineage or cache', () => {
+  const acquired = apply(apply(make(), 'publish'), 'pickup');
+  assert.equal(apply(acquired, 'relinquish_step_guard'), acquired);
+  const between = apply(acquired, 'relinquish_step_guard', {checkedStepRetirement: true});
+  assert.equal(between.phase, 'between_steps');
+  assert.equal(apply(between, 'withdraw', {exactNonDispatch: true}), between);
+  assert.equal(apply(between, 'pickup', {now: 30}), between);
+  assert.equal(apply(between, 'pickup', {now: 25}).phase, 'acquired');
+  assert.equal(apply(between, 'retire', {now: 31, checkedRetirement: true}).phase, 'retired');
 });
 
 test('idle refusal holds the exact owner despite expiry or later apparent success', () => {
