@@ -29,7 +29,7 @@ c400f37087f98b7598137bfcb85e3eaf62e7f67069931658bb1a0c770b82b046  mlx-serve-26.1
 8b30675caa40c60d7b4c44c1eb375a7284947c4b2155399cbfd1b37bf350cc8f  mlx-serve-26.11.3-unload-refusal.patch
 2b69b5d7104e9520f106ab169bec12f7b235c1e7547586837aeccf633ed30bdc  mlx-serve-26.11.2-scheduler-cleanup.patch
 dd34857e2f32705ce14315fd3e3ac0fc6bb80d4a78098bb0f31dfdef37cb2b24  mlx-serve-26.11.2-media-close.patch
-f4d8d39bdd7dff0aab5b9f6d88b679dd549ab0d6987c32a03a98aaa86659be6a  mlx-serve-26.11.3-slot-cleanup.patch
+3edbf84bcc3b8f2e9c14aaee5a3cfea17f6f22684afc039fca5fa62aba134419  mlx-serve-26.11.3-slot-cleanup.patch
 12a05258f6976a829a15247f1212a1afc2a42c281fba29ec5557748ca9bf5c62  mlx-serve-26.11.2-book-cleanup.patch
 5108c2490c54dfbac842dcc6f3ea0e91e7b422317935ad534a07cfde29944de6  mlx-serve-26.11.3-mlx-registry-cleanup.patch
 c06fe232a8f07db29dd3739d20d4fb539062fb1c1c83f4bd15f540fa810abda0  mlx-serve-26.11.3-served-open.patch

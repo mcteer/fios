@@ -44,5 +44,11 @@ try{
  assert.equal(scheduler.split(typedRefusal).length,2,'missing or duplicate unload refusal');
  assert.ok(unload.indexOf('self.unload_queue.append(')>=0);
  assert.ok(unload.indexOf(typedRefusal)>unload.indexOf('while (!req.done)'), 'typed refusal not at unload acknowledgement');
- console.log('PASS: pinned upstream archive, 67 ordered patch hashes, exact unload acknowledgement scope; source only');
+ const blocking=scheduler.slice(scheduler.indexOf('pub fn submit('),scheduler.indexOf('pub fn submitNow('));
+ const nonblocking=scheduler.slice(scheduler.indexOf('pub fn submitNow('),scheduler.indexOf('fn submitWaiting('));
+ assert.ok(blocking.includes('return submitWaiting(self, params, true);'));
+ assert.ok(nonblocking.includes('return submitWaiting(self, params, false);'));
+ assert.match(scheduler,/fn submitWaiting\([^\n]+\{\n    if \(model_registry_mod\.cleanupUncertain\(self\.io\)\) return error\.NativeCleanupUncertain;/,
+  'both blocking and nonblocking submissions must share the pre-allocation refusal');
+ console.log('PASS: pinned archive, 67 ordered patch hashes, exact unload and dual-submit refusal scopes; source only');
 }finally{rmSync(scratch,{recursive:true,force:true});}

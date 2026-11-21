@@ -114,14 +114,14 @@ diff --git a/src/engines/mlx/scheduler.zig b/src/engines/mlx/scheduler.zig
      self.cleanup_queue.deinit(self.allocator);
      // Vision/embed queues should be empty (encodeVision/computeEmbedding
      // block until done) but guard against shutdown-mid-encode by signaling
-@@ -509,6 +536,7 @@
- /// Blocks if the queue is full (i.e. `in_flight >= queue_cap`). When
- /// the scheduler is shutting down this returns `error.Shutdown`.
- pub fn submit(self: *Scheduler, params: SubmitParams) !*Slot {
-+    if (model_registry_mod.cleanupUncertain(self.io)) return error.NativeCleanupUncertain;
-     return submitWaiting(self, params, true);
+@@ -522,6 +549,7 @@
+     return submitWaiting(self, params, false);
  }
  
+ fn submitWaiting(self: *Scheduler, params: SubmitParams, wait: bool) !*Slot {
++    if (model_registry_mod.cleanupUncertain(self.io)) return error.NativeCleanupUncertain;
+     // Construct the slot up front so we don't hold the queue mutex
+     // through any allocation. Per-request `kv_quant_config` override (Wave
 @@ -544,12 +572,14 @@
      // Every decode path reads the prompt's last token; `""` on a BOS-less vocab encodes to none.
      if (params.prompt_ids.len == 0) return error.EmptyPrompt;
